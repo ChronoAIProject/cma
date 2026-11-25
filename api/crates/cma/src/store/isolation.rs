@@ -17,6 +17,9 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     retained_consents::COLLECTION,
     super::migrations::measured_custody::COLLECTION,
     super::migrations::measured_batches::COLLECTION,
+    super::migrations::measured_index::PROJECTIONS,
+    super::migrations::measured_index::MANIFESTS,
+    super::migrations::measured_index::BATCHES,
     super::budget::COLLECTION,
     super::agent_observation::COLLECTION,
     super::sandbox_metric_bindings::COLLECTION,
@@ -191,6 +194,9 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     retained_consents::COLLECTION,
     super::migrations::measured_custody::COLLECTION,
     super::migrations::measured_batches::COLLECTION,
+    super::migrations::measured_index::PROJECTIONS,
+    super::migrations::measured_index::MANIFESTS,
+    super::migrations::measured_index::BATCHES,
     super::sandbox_usage_export::CAPTURES,
     super::sandbox_usage_export::EVIDENCE,
     super::sandbox_usage_export::OUTBOX,
@@ -210,8 +216,11 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     "resource_execution_records_v1",
     "resource_revocation_operations_v1",
 ];
-const MEASURED_BATCHES: &str = super::migrations::measured_batches::COLLECTION;
-const MEASURED_CUSTODY: &str = super::migrations::measured_custody::COLLECTION;
+mod measured;
+#[cfg(test)]
+use measured::MEASURED_CUSTODY;
+use measured::{MEASURED_APPEND_ONLY, MEASURED_MANIFESTS};
+pub(super) const MEASURED_MANIFEST_ACTIONS: &[&str] = &["find", "insert", "update", "listIndexes"];
 pub(super) const MEASURED_CUSTODY_ACTIONS: &[&str] = &["find", "insert", "listIndexes"];
 const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
 const MIGRATION_ACTIONS: &[&str] = &["find", "insert", "update", "createCollection"];
@@ -311,8 +320,10 @@ fn validate_index_role(
                 action == "listCollections"
             } else if collection == super::provenance_progress::COLLECTION {
                 super::provenance_progress::ACTIONS.contains(&action)
-            } else if [MEASURED_CUSTODY, MEASURED_BATCHES].contains(&collection) {
+            } else if MEASURED_APPEND_ONLY.contains(&collection) {
                 MEASURED_CUSTODY_ACTIONS.contains(&action)
+            } else if collection == MEASURED_MANIFESTS {
+                MEASURED_MANIFEST_ACTIONS.contains(&action)
             } else if collection == retained_consents::COLLECTION {
                 retained_consents::ACTIONS.contains(&action)
             } else if migration_ledger && collection == MIGRATION_COLLECTION {
@@ -353,18 +364,11 @@ fn validate_index_role(
     {
         return Err(denied());
     }
-    if [MEASURED_CUSTODY, MEASURED_BATCHES]
-        .into_iter()
-        .any(|name| {
-            grants.get(name).is_some_and(|actions| {
-                !MEASURED_CUSTODY_ACTIONS
-                    .iter()
-                    .all(|action| actions.contains(*action))
-            })
-        })
+    if !measured::complete(&grants)
         || !COLLECTIONS.iter().all(|name| {
             *name == retained_consents::COLLECTION
-                || [MEASURED_CUSTODY, MEASURED_BATCHES].contains(name)
+                || *name == MEASURED_MANIFESTS
+                || MEASURED_APPEND_ONLY.contains(name)
                 || (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
                 || ACTIONS
                     .iter()

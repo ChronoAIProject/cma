@@ -2,7 +2,6 @@
 use super::{
     digest,
     interval::{normalize_series, CustodySample, MeasuredInterval, Unresolved},
-    PhysicalIdentity,
 };
 use crate::sandbox_usage::UsageEvent;
 use layer3_adapter::sandbox_metrics::SourceMetric;
@@ -248,21 +247,9 @@ fn candidates(
         if !support.contains(&observation.timestamp_ms) {
             continue;
         }
-        let binding = &observation.binding;
-        let identity = PhysicalIdentity::for_binding(
-            binding,
-            observation.metric,
-            observation.mapping_revision,
-        )
-        .map_err(|_| CoverageError::Custody)?;
-        let series = digest(&(
-            &observation.source,
-            &binding.cluster,
-            &binding.namespace,
-            observation.metric,
-            identity,
-        ))
-        .map_err(|_| CoverageError::Custody)?;
+        let series = observation
+            .series_id()
+            .map_err(|_| CoverageError::Custody)?;
         grouped.entry(series).or_default().push(sample);
     }
     let mut result = Vec::new();

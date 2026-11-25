@@ -27,6 +27,14 @@ type Result<T> = std::result::Result<T, &'static str>;
 mod tests;
 
 pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
+    if let [command] = arguments {
+        if matches!(
+            command.as_str(),
+            "--measured-index-backfill" | "--measured-index-certify"
+        ) {
+            return index_command(command).await;
+        }
+    }
     if arguments.first().is_some_and(|value| {
         matches!(
             value.as_str(),
@@ -48,7 +56,7 @@ pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
         return tokio::time::timeout(Duration::from_secs(30), async {
             verify_authority(&database).await?;
             check_schema(&database).await?;
-            MeasuredCapture::new(&database)
+            capture_store(&database)?
                 .preview(anchor, window)
                 .await
                 .map_err(|_| PREVIEW_UNAVAILABLE)
@@ -102,7 +110,10 @@ async fn batch_command(arguments: &[String]) -> Result<Value> {
         if !crate::store::migrations::measured_batches_ready(&database).await? {
             return Err("measured batch custody requires its explicit schema migration");
         }
-        let ledger = MeasuredLedger::new(&database);
+        let mut ledger = MeasuredLedger::new(&database);
+        if let Some(indexed) = indexed_store(&database)? {
+            ledger = ledger.with_indexed(indexed);
+        }
         if matches!(command.as_str(), "--measured-period-read" | "--measured-period-replay") {
             let windows = if command == "--measured-period-read" {
                 let request: PeriodReadRequest = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
@@ -157,7 +168,76 @@ async fn verify_authority(database: &Database) -> Result<()> {
         "resource": {"db": database.name(), "collection": COLLECTION},
         "actions": isolation::MEASURED_CUSTODY_ACTIONS,
     }]};
-    verify_shared_schema(&status, database.name(), &custody).map_err(|_| AUTHORITY)
+    verify_shared_schema(&status, database.name(), &custody).map_err(|_| AUTHORITY)?;
+    use crate::store::migrations::measured_index::{BATCHES, MANIFESTS, PROJECTIONS};
+    let indexed = doc! {"privileges": [
+        {"resource": {"db":database.name(),"collection":PROJECTIONS},
+         "actions":isolation::MEASURED_CUSTODY_ACTIONS},
+        {"resource": {"db":database.name(),"collection":BATCHES},
+         "actions":isolation::MEASURED_CUSTODY_ACTIONS},
+        {"resource": {"db":database.name(),"collection":MANIFESTS},
+         "actions":isolation::MEASURED_MANIFEST_ACTIONS},
+    ]};
+    let indexed_grant = verify_shared_schema(&status, database.name(), &indexed).is_ok();
+    if indexed_store(database)?.is_some() {
+        if !indexed_grant {
+            return Err("measured index writer floor requires its matching isolated credential");
+        }
+        if !crate::store::migrations::measured_index::inspect(database)
+            .await?
+            .is_empty()
+        {
+            return Err("measured index requires its explicit schema migration");
+        }
+    } else {
+        let manifest_grant = doc! {"privileges":[{"resource":{"db":database.name(),"collection":MANIFESTS},
+        "actions":["find"]}]};
+        if verify_shared_schema(&status, database.name(), &manifest_grant).is_ok()
+            && indexed::started(database).await.map_err(|_| AUTHORITY)?
+        {
+            return Err("measured index generation forbids legacy capture and finalization");
+        }
+    }
+    Ok(())
+}
+
+fn indexed_store(database: &Database) -> Result<Option<indexed::IndexedCustody>> {
+    match std::env::var("CHRONO_MEASURED_INDEX_WRITER_FLOOR_SHA256") {
+        Ok(floor) => indexed::IndexedCustody::new(database, floor)
+            .map(Some)
+            .map_err(|_| AUTHORITY),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(_) => Err(AUTHORITY),
+    }
+}
+
+fn capture_store(database: &Database) -> Result<MeasuredCapture> {
+    let store = MeasuredCapture::new(database);
+    Ok(match indexed_store(database)? {
+        Some(indexed) => store.with_indexed(indexed),
+        None => store,
+    })
+}
+
+// The floor identifies the independently documented exclusion and drain of
+// v1-only writers. The operator must establish it before starting backfill.
+async fn index_command(command: &str) -> Result<Value> {
+    let database = open_database().await?;
+    tokio::time::timeout(Duration::from_secs(300), async {
+        verify_authority(&database).await?;
+        check_schema(&database).await?;
+        let indexed = indexed_store(&database)?.ok_or(AUTHORITY)?;
+        if command == "--measured-index-backfill" {
+            indexed.begin().await.map_err(|_| UNAVAILABLE)?;
+            let (rows, exhausted) = indexed.advance().await.map_err(|_| UNAVAILABLE)?;
+            Ok(json!({"projected_rows":rows, "exhausted":exhausted}))
+        } else {
+            let proof = indexed.certify().await.map_err(|_| UNAVAILABLE)?;
+            serde_json::to_value(proof).map_err(|_| UNAVAILABLE)
+        }
+    })
+    .await
+    .map_err(|_| UNAVAILABLE)?
 }
 
 fn invocation(arguments: &[String], now: u64) -> Result<(&str, Range)> {
@@ -271,7 +351,7 @@ async fn execute(
             "unattributed_source_samples": unattributed_samples,
         }));
     }
-    let store = MeasuredCapture::new(database);
+    let store = capture_store(database)?;
     let (mut inserted, mut replayed, mut disputed) = (0, 0, 0);
     for observation in &observations {
         match store.capture(observation).await.map_err(|_| UNAVAILABLE)? {

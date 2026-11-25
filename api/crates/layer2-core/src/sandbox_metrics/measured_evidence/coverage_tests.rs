@@ -1,6 +1,6 @@
 use super::*;
 use crate::sandbox_metrics::{
-    measured_evidence::{ObservationV1, RetainedObservation},
+    measured_evidence::{ObservationV1, PhysicalIdentity, RetainedObservation},
     tests::binding,
     Binding, BindingKind, SOURCE,
 };

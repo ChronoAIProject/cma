@@ -25,7 +25,11 @@ pub(super) fn role_for(database: &str, apply: bool, step: Step) -> Document {
             vec!["listIndexes"]
         } else if matches!(
             step,
-            Step::Activity | Step::AgentLogSegments | Step::MeasuredCustody | Step::MeasuredBatches
+            Step::Activity
+                | Step::AgentLogSegments
+                | Step::MeasuredCustody
+                | Step::MeasuredBatches
+                | Step::MeasuredIndex
         ) {
             vec!["listIndexes", "createIndex", "createCollection"]
         } else {
@@ -40,6 +44,7 @@ pub(super) fn role_for(database: &str, apply: bool, step: Step) -> Document {
             | Step::SandboxUsageCapture
             | Step::MeasuredCustody
             | Step::MeasuredBatches
+            | Step::MeasuredIndex
     ) {
         grants
             .push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});

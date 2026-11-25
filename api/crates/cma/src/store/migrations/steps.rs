@@ -2,7 +2,8 @@
 use super::{
     activity_indexes, activity_page_index, agent_log_segments, agent_log_source_keys,
     agent_owner_index, binding_indexes, collection_indexes, command_cohort_index, measured_batches,
-    measured_custody, opening_index, sandbox_usage_capture, turn_policy_index, Result,
+    measured_custody, measured_index, opening_index, sandbox_usage_capture, turn_policy_index,
+    Result,
 };
 use mongodb::bson::{doc, Document};
 
@@ -21,10 +22,12 @@ pub(super) enum Step {
     SandboxUsageCapture,
     MeasuredCustody,
     MeasuredBatches,
+    MeasuredIndex,
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 13] = [
+    pub(super) const ALL: [Self; 14] = [
+        Self::MeasuredIndex,
         Self::MeasuredBatches,
         Self::MeasuredCustody,
         Self::SandboxUsageCapture,
@@ -50,6 +53,7 @@ impl Step {
             Self::CommandCohort => command_cohort_index::ID,
             Self::MeasuredCustody => measured_custody::ID,
             Self::MeasuredBatches => measured_batches::ID,
+            Self::MeasuredIndex => measured_index::ID,
             Self::SandboxUsageCapture => sandbox_usage_capture::ID,
             Self::BindingIndexes => binding_indexes::ID,
             Self::Activity => activity_indexes::ID,
@@ -67,6 +71,7 @@ impl Step {
             Self::CommandCohort => command_cohort_index::checksum(),
             Self::MeasuredCustody => measured_custody::checksum(),
             Self::MeasuredBatches => measured_batches::checksum(),
+            Self::MeasuredIndex => measured_index::checksum(),
             Self::SandboxUsageCapture => sandbox_usage_capture::checksum(),
             Self::BindingIndexes => binding_indexes::checksum(),
             Self::Activity => activity_indexes::checksum(),
@@ -86,6 +91,7 @@ impl Step {
         match self {
             Self::CommandCohort => 1,
             Self::MeasuredCustody | Self::MeasuredBatches => 1,
+            Self::MeasuredIndex => 5,
             Self::SandboxUsageCapture => crate::store::sandbox_usage_export::schema::MAX_STEPS,
             Self::BindingIndexes => 11,
             Self::Activity => 2,
@@ -102,6 +108,11 @@ impl Step {
         match self {
             Self::MeasuredCustody => &[measured_custody::COLLECTION],
             Self::MeasuredBatches => &[measured_batches::COLLECTION],
+            Self::MeasuredIndex => &[
+                measured_index::PROJECTIONS,
+                measured_index::MANIFESTS,
+                measured_index::BATCHES,
+            ],
             Self::SandboxUsageCapture => crate::store::sandbox_usage_export::COLLECTIONS,
             Self::BindingIndexes => crate::store::bindings::schema::COLLECTIONS,
             Self::Activity | Self::ActivityPage => &["activity"],
@@ -126,6 +137,7 @@ impl Step {
             | Self::CommandCohort
             | Self::MeasuredCustody
             | Self::MeasuredBatches
+            | Self::MeasuredIndex
             | Self::BindingIndexes => "created_indexes",
         }
     }
@@ -141,6 +153,7 @@ impl Step {
                 .collect()),
             Self::MeasuredCustody => measured_custody::inspect(database).await,
             Self::MeasuredBatches => measured_batches::inspect(database).await,
+            Self::MeasuredIndex => measured_index::inspect(database).await,
             Self::SandboxUsageCapture => Err("usage migration requires schema-unit inspection"),
             Self::BindingIndexes => binding_indexes::inspect(database).await,
             Self::Activity => Ok(activity_indexes::inspect(database)
@@ -183,6 +196,7 @@ impl Step {
             Self::CommandCohort if collection == "agent_commands" => {
                 command_cohort_index::create(database, index).await
             }
+            Self::MeasuredIndex => measured_index::create(database, collection, index).await,
             Self::MeasuredBatches if collection == measured_batches::COLLECTION => {
                 measured_batches::create(database, index).await
             }

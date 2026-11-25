@@ -49,7 +49,14 @@ impl MeasuredCapture {
             .snapshot(true)
             .await
             .map_err(|_| CaptureError::Unavailable)?;
-        let positions = self.read_positions(&mut session, row_limit).await?;
+        let positions = match &self.indexed {
+            Some(indexed) => {
+                indexed
+                    .read_anchor(anchor, from_ms, to_ms, &mut session)
+                    .await?
+            }
+            None => self.read_positions(&mut session, row_limit).await?,
+        };
         let snapshot = session.snapshot_time().ok_or(CaptureError::Unavailable)?;
         let intervals = normalize(&positions, anchor, from_ms..to_ms)?;
         Ok(json!({
@@ -99,7 +106,10 @@ impl MeasuredCapture {
     }
 }
 
-fn retain(positions: &mut BTreeMap<String, Position>, row: &Document) -> Result<(), CaptureError> {
+pub(super) fn retain(
+    positions: &mut BTreeMap<String, Position>,
+    row: &Document,
+) -> Result<(), CaptureError> {
     let physical = row
         .get_str("physical_sample_id")
         .map_err(|_| CaptureError::Corrupt)?;

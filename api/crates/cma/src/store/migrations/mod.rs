@@ -19,6 +19,7 @@ mod index_plan;
 mod index_toolkit;
 pub(in crate::store) mod measured_batches;
 pub(in crate::store) mod measured_custody;
+pub(in crate::store) mod measured_index;
 pub(in crate::store) mod opening_index;
 mod sandbox_usage_capture;
 mod steps;
@@ -208,7 +209,7 @@ async fn apply_indexes(
         .map_err(|_| "migration requires a supported replica set or mongos")?;
     if matches!(
         step,
-        Step::BindingIndexes | Step::MeasuredCustody | Step::MeasuredBatches
+        Step::BindingIndexes | Step::MeasuredCustody | Step::MeasuredBatches | Step::MeasuredIndex
     ) {
         step.inspect(database).await?;
     }

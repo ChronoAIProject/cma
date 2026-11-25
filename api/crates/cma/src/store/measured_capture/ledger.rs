@@ -22,6 +22,8 @@ const MAX_HISTORY: usize = 4096;
 const MAX_REVISIONS: usize = 128;
 const MAX_BATCH_PAYLOAD: usize = 8 * 1024 * 1024;
 const MAX_HISTORY_BYTES: usize = 16 * 1024 * 1024;
+#[path = "ledger/interval_admission.rs"]
+mod interval_admission;
 #[path = "ledger/period.rs"]
 mod period;
 pub(crate) use period::{ExactPeriodReadRequest, PeriodReadRequest, SelectedWindow};
@@ -44,6 +46,7 @@ pub(super) struct ReadRequest {
 pub(crate) struct MeasuredLedger {
     database: Database,
     rows: Collection<Document>,
+    indexed: Option<super::indexed::IndexedCustody>,
 }
 
 impl MeasuredLedger {
@@ -51,7 +54,13 @@ impl MeasuredLedger {
         Self {
             database: database.clone(),
             rows: majority_collection(database, measured_batches::COLLECTION),
+            indexed: None,
         }
+    }
+
+    pub(super) fn with_indexed(mut self, indexed: super::indexed::IndexedCustody) -> Self {
+        self.indexed = Some(indexed);
+        self
     }
 
     pub(super) async fn freeze(
@@ -108,7 +117,14 @@ impl MeasuredLedger {
             return Err(CaptureError::Unavailable);
         }
         let capture = MeasuredCapture::new(&self.database);
-        let positions = capture.read_positions(&mut session, MAX_ROWS).await?;
+        let positions = match &self.indexed {
+            Some(indexed) => {
+                indexed
+                    .read_scope(&request.scope, request.source_cutoff_ms, &mut session)
+                    .await?
+            }
+            None => capture.read_positions(&mut session, MAX_ROWS).await?,
+        };
         let samples = custody_samples(&positions)?;
         let events = self
             .allocation(&request.scope, request.source_cutoff_ms, &mut session)
@@ -124,6 +140,9 @@ impl MeasuredLedger {
             previous,
         )
         .map_err(|_| CaptureError::Unavailable)?;
+        if self.indexed.is_some() {
+            return self.publish_interval(evidence, history_limit).await;
+        }
         let expected = encode(&evidence)?;
         // Preserve replay of every retained revision even after this append.
         checked_history_bytes(
@@ -180,43 +199,67 @@ impl MeasuredLedger {
         scope: &EvidenceScope,
         session: &mut ClientSession,
     ) -> Result<(Vec<FrozenEvidence>, usize), CaptureError> {
-        let mut cursor = self
-            .rows
-            .find(doc! {"stream_id":stream_id})
-            .sort(doc! {"revision":1})
-            .limit((MAX_REVISIONS + 1) as i64)
-            .max_time(Duration::from_secs(10))
-            .read_concern(ReadConcern::snapshot())
-            .session(&mut *session)
+        self.history_at(stream_id, scope, session, true)
             .await
-            .map_err(|_| CaptureError::Unavailable)?;
+            .map_err(super::indexed::store_error)
+    }
+
+    async fn history_at(
+        &self,
+        stream_id: &str,
+        scope: &EvidenceScope,
+        session: &mut ClientSession,
+        snapshot: bool,
+    ) -> Result<(Vec<FrozenEvidence>, usize), super::TransactionError> {
         let mut history = Vec::new();
         let mut bytes = 0;
-        while let Some(row) = cursor
-            .next(&mut *session)
-            .await
-            .transpose()
-            .map_err(|_| CaptureError::Unavailable)?
-        {
-            bytes = checked_history_bytes(
-                bytes,
-                row.get_str("payload")
-                    .map_err(|_| CaptureError::Corrupt)?
-                    .len(),
-                MAX_HISTORY_BYTES,
-            )?;
-            let entry = decode(&row)?;
-            if entry.scope() != scope || history.len() >= MAX_REVISIONS {
-                return Err(CaptureError::Corrupt);
+        let mut collections = vec![(&self.rows, 1_i64)];
+        let indexed = majority_collection(
+            &self.database,
+            crate::store::migrations::measured_index::BATCHES,
+        );
+        if self.indexed.is_some() {
+            collections.push((&indexed, 2));
+        }
+        for (rows, version) in collections {
+            let mut query = rows
+                .find(doc! {"stream_id":stream_id})
+                .sort(doc! {"revision":1})
+                .limit((MAX_REVISIONS + 1) as i64)
+                .max_time(Duration::from_secs(10));
+            if snapshot {
+                query = query.read_concern(ReadConcern::snapshot());
             }
-            if let Some(previous) = history.last() {
+            let mut cursor = query.session(&mut *session).await?;
+            while let Some(row) = cursor.next(&mut *session).await.transpose()? {
+                bytes = checked_history_bytes(
+                    bytes,
+                    row.get_str("payload")
+                        .map_err(|_| CaptureError::Corrupt)?
+                        .len(),
+                    MAX_HISTORY_BYTES,
+                )?;
+                if row.get_i64("schema_version").ok() != Some(version)
+                    || history.len() >= MAX_REVISIONS
+                {
+                    return Err(CaptureError::Corrupt.into());
+                }
+                let entry = decode(&row)?;
+                if entry.scope() != scope {
+                    return Err(CaptureError::Corrupt.into());
+                }
+                history.push(entry);
+            }
+        }
+        history.sort_by_key(FrozenEvidence::revision);
+        for (index, entry) in history.iter().enumerate() {
+            if let Some(previous) = index.checked_sub(1).and_then(|index| history.get(index)) {
                 entry
                     .validate_successor(previous)
                     .map_err(|_| CaptureError::Corrupt)?;
             } else if entry.revision() != 1 {
-                return Err(CaptureError::Corrupt);
+                return Err(CaptureError::Corrupt.into());
             }
-            history.push(entry);
         }
         Ok((history, bytes))
     }
@@ -371,13 +414,35 @@ fn encode(evidence: &FrozenEvidence) -> Result<Document, CaptureError> {
     }
     Ok(document)
 }
+fn encode_interval(evidence: &FrozenEvidence) -> Result<Document, CaptureError> {
+    let mut document = encode(evidence)?;
+    document.insert("schema_version", 2_i64);
+    if evidence.revision() == 1 {
+        document.remove("window_seconds");
+        document.insert(
+            "from_ms",
+            i64::try_from(evidence.scope().from_ms).map_err(|_| CaptureError::Corrupt)?,
+        );
+        document.insert(
+            "to_ms",
+            i64::try_from(evidence.scope().to_ms).map_err(|_| CaptureError::Corrupt)?,
+        );
+    }
+    Ok(document)
+}
+
 fn decode(row: &Document) -> Result<FrozenEvidence, CaptureError> {
     let payload = row.get_str("payload").map_err(|_| CaptureError::Corrupt)?;
     if payload.len() > MAX_BATCH_PAYLOAD {
         return Err(CaptureError::Corrupt);
     }
     let evidence = FrozenEvidence::decode(payload.as_bytes()).map_err(|_| CaptureError::Corrupt)?;
-    if encode(&evidence)? != *row {
+    let expected = match row.get_i64("schema_version") {
+        Ok(1) => encode(&evidence)?,
+        Ok(2) => encode_interval(&evidence)?,
+        _ => return Err(CaptureError::Corrupt),
+    };
+    if expected != *row {
         return Err(CaptureError::Corrupt);
     }
     Ok(evidence)
