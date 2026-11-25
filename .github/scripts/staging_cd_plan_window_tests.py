@@ -639,7 +639,8 @@ class ReleaseQueueWindowTests(unittest.TestCase):
                 tree = Path(directory)
                 (tree / MANIFEST).parent.mkdir(parents=True)
                 (tree / MANIFEST).write_text(json.dumps({name: manifest[name] for name in names}))
-                result = subprocess.run([sys.executable, "-B", "-c", script, str(Path(queue.__file__).parent / "ci_tracks"),
+                # This manifest check also runs in the parser-free staging CI environment.
+                result = subprocess.run([sys.executable, "-S", "-B", "-c", script, str(Path(queue.__file__).parent / "ci_tracks"),
                                          str(tree)], capture_output=True, text=True, timeout=60, check=True)
                 self.assertEqual(result.stdout.strip(), expected)
 

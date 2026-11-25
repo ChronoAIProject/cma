@@ -17,7 +17,6 @@ from docker_inputs import ignored, matches, stage_sources
 from policy import closure
 from publication_inputs import contract_images
 from rust_build_inputs import inputs as reviewed_build_inputs
-from rust_inputs import included_files, test_modules
 from uncertainty import SelectionIntegrityError
 
 MANIFEST = '.github/scripts/deployables.json'
@@ -43,6 +42,9 @@ def recipes(root, fallback=None):
 
 
 def embedded_inputs(root, directories, tests, build_scripts):
+    # Manifest-only consumers do not install the Rust syntax parser.
+    from rust_inputs import included_files
+
     embedded = set()
     opaque = set()
     root = root.resolve()
@@ -82,6 +84,8 @@ def embedded_inputs(root, directories, tests, build_scripts):
 
 
 def cargo_inputs(root, workspace, package, files, exclusions, workspace_exclusions, analysis=None, source_cache=None):
+    from rust_inputs import test_modules
+
     packages = closure({package}, workspace.production)
     directories = {directory for directory, name in workspace.directories.items() if name in packages}
     # Runtime variants share source analysis. This cache belongs to one
