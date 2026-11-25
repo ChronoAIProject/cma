@@ -42,6 +42,9 @@ impl<'de> Deserialize<'de> for Secret {
 #[serde(deny_unknown_fields)]
 pub struct ChannelSecrets {
     #[serde(default, skip_serializing)]
+    #[schema(ignore)]
+    pub profile_revisions: Option<super::ProfileRevisions>,
+    #[serde(default, skip_serializing)]
     pub native_lark: Option<super::NativeLarkCredentials>,
     pub agent_key_hash: String,
     #[serde(default, skip_serializing)]
@@ -100,6 +103,9 @@ impl ChannelDefinition {
                 .iter()
                 .map(|(id, secret)| json!([id, secret.as_str()]))
                 .collect();
+        }
+        if let Some(revisions) = &self.secrets.profile_revisions {
+            secrets["profile_revisions"] = revisions.private_json();
         }
         if let Some(mutation) = &self.mutation {
             object.insert(

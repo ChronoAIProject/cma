@@ -17,6 +17,7 @@ mod lifecycle;
 pub mod management;
 pub(crate) mod mutation;
 pub mod observer;
+pub(crate) mod profile_assignment;
 mod relay_telegram;
 mod requests;
 pub mod resolver;

@@ -192,6 +192,12 @@ impl ChannelResolver {
             .await
             .unwrap_or(Err(ResolveError::Unavailable))
     }
+    pub(crate) fn profile_assignment_store(
+        &self,
+    ) -> Result<crate::replicas::store::Store, ResolveError> {
+        crate::replicas::store::Store::new((*self.inner.records).clone(), self.inner.keys.clone())
+            .map_err(|_| ResolveError::Unavailable)
+    }
     pub fn invalidate(&self, id: &str) {
         let _guard = self.inner.publication.lock().unwrap();
         self.inner.cache.invalidate(id);

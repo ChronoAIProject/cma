@@ -232,6 +232,7 @@ pub(crate) async fn serve(
             config.turns.clone(),
         )
         .with_activity(observers.activity.clone())
+        .with_profile_resolver(state.resolver.clone())
         .with_media_tool_providers(tool_providers)
         .with_media(
             media.clone(),
