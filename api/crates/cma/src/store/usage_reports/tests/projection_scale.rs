@@ -59,6 +59,7 @@ fn chart_buckets(range: Range, step: u64, member: usize, dense: bool) -> Vec<Buc
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
+    let mut failures = Vec::new();
     for (members, dense) in [(64, false), (64, true), (20_001, false), (20_001, true)] {
         for (window, seconds, step) in [
             ("24h", 86_400, 60),
@@ -108,8 +109,10 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
             let report_id = &lease.report.report_id;
             let seed_started = Instant::now();
             let mut accepted = 0;
-            let mut seed_error = None;
-            let batch_size = if dense { 8 } else { 100 };
+            let mut refused_batch_bytes = None;
+            let mut charged_bytes = 0_i64;
+            let mut chart_count = 0_i64;
+            let batch_size = if dense { 8 } else { 250 };
             for offset in (0..members).step_by(batch_size) {
                 let states: Vec<_> = (offset..(offset + batch_size).min(members))
                     .map(|member| {
@@ -149,16 +152,35 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
                         );
                     }
                 }
-                match store
+                let row_bytes: i64 = rows
+                    .iter()
+                    .map(|row| {
+                        let document =
+                            super::super::work::row_document(&lease.report, row).unwrap();
+                        mongodb::bson::serialize_to_vec(&document).unwrap().len() as i64
+                    })
+                    .sum();
+                let chunk_bytes = row_bytes
+                    + charts
+                        .iter()
+                        .map(|doc| doc.as_bytes().len() as i64)
+                        .sum::<i64>();
+                let batch_charts = charts.len() as i64;
+                let outcome = store
                     .write_prepared_report_chunk(&lease, &rows, charts)
-                    .await
-                {
-                    Ok(()) => accepted += rows.len(),
-                    Err(error) => {
-                        seed_error = Some(error);
-                        break;
-                    }
+                    .await;
+                if charged_bytes + chunk_bytes > store.budgets.report_bytes {
+                    assert!(
+                        matches!(outcome, Err(MetricsError::Busy)),
+                        "expected report byte budget refusal: {outcome:?}"
+                    );
+                    refused_batch_bytes = Some(chunk_bytes);
+                    break;
                 }
+                outcome.unwrap_or_else(|error| panic!("unexpected source write failure window={window} members={members} dense={dense} offset={offset}: {error:?}"));
+                charged_bytes += chunk_bytes;
+                chart_count += batch_charts;
+                accepted += rows.len();
             }
             let before = store
                 .collection(JOBS)
@@ -166,15 +188,37 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
                 .await
                 .unwrap()
                 .unwrap();
-            eprintln!("projection_scale seed window={window} members={members} owners={} dense={dense} accepted={accepted} elapsed_ms={} bytes={} outcome={seed_error:?}", members.min(431), seed_started.elapsed().as_millis(), before.get_i64("bytes").unwrap());
-            if let Some(error) = seed_error {
-                assert!(matches!(
-                    error,
-                    MetricsError::Busy | MetricsError::Unavailable
-                ));
+            assert_eq!(before.get_i64("bytes").unwrap(), charged_bytes);
+            assert_eq!(before.get_i64("row_count").unwrap(), accepted as i64);
+            assert_eq!(before.get_i64("chart_count").unwrap(), chart_count);
+            assert_eq!(
+                before.get_i64("reserved_bytes").unwrap(),
+                store.budgets.report_bytes
+            );
+            eprintln!("projection_scale seed window={window} members={members} owners={} dense={dense} accepted={accepted} elapsed_ms={} bytes={charged_bytes} budget_bytes={} refused_batch_bytes={refused_batch_bytes:?}", members.min(431), seed_started.elapsed().as_millis(), store.budgets.report_bytes);
+            if refused_batch_bytes.is_some() {
+                assert!(
+                    dense && members == 20_001,
+                    "unexpected source report byte budget"
+                );
+                assert_eq!(before.get_str("state").unwrap(), "running");
+                store
+                    .finish_report(&lease, lease.report.clone(), false)
+                    .await
+                    .unwrap();
+                let failed = store
+                    .collection(JOBS)
+                    .find_one(doc! {"_id":report_id})
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(failed.get_str("state").unwrap(), "failed");
+                assert_eq!(failed.get_i64("bytes").unwrap(), charged_bytes);
+                assert!(!failed.contains_key("projection_generation"));
                 store.db.drop().await.unwrap();
                 continue;
             }
+            assert_eq!(accepted, members);
             let mut report = lease.report.clone();
             report.summary = Some(Summary {
                 sandbox_count: members as u64,
@@ -264,12 +308,15 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
                         .map_or(0, |body| serde_json::to_vec(body).unwrap().len());
                     let error = result.as_ref().err();
                     eprintln!("projection_scale read window={window} members={members} dense={dense} projected={projected} enabled={enabled} route={route} error={error:?} read_us={} commands={} response_bytes={bytes}", elapsed.as_micros(), commands.load(Ordering::Relaxed));
-                    if let Some(previous) = baseline.take() {
-                        if let (Ok(body), Ok(previous_body)) = (&result, previous) {
-                            assert_eq!(body, &previous_body);
+                    match result {
+                        Ok(value) if enabled => {
+                            match baseline.take() {
+                                Some(previous) if previous == value => {}
+                                _ => failures.push(format!("response parity window={window} members={members} dense={dense} route={route}")),
+                            }
                         }
-                    } else {
-                        baseline = Some(result);
+                        Ok(value) => baseline = Some(value),
+                        Err(error) => failures.push(format!("authorized read failed window={window} members={members} dense={dense} enabled={enabled} route={route}: {error:?}")),
                     }
                 }
             }
@@ -283,4 +330,5 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
             store.db.drop().await.unwrap();
         }
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

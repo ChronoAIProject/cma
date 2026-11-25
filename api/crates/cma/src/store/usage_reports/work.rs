@@ -320,7 +320,7 @@ fn retired_state(job: &Document) -> &'static str {
         "retired"
     }
 }
-fn row_document(report: &Report, row: &Row) -> Result<Document> {
+pub(super) fn row_document(report: &Report, row: &Row) -> Result<Document> {
     let (sorts, nulls) = row_sort_keys(row);
     Ok(
         doc! {"_id":format!("{}:{}",report.report_id,row.sandbox_id),"document_schema_version":1_i64,"report_id":&report.report_id,
