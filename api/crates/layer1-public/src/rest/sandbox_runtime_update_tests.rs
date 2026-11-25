@@ -237,6 +237,8 @@ async fn failed_sandbox_reports_new_runtime_without_suggesting_pending_work() {
         stored_sandbox("sbx_update", "owner", SandboxStatus::Active, 4),
         false,
     );
+    let f = runtime_update_fixture(original.clone(), true).await;
+    let active_revision = original.revision;
     original
         .transition(
             SandboxStatus::Failed,
@@ -250,7 +252,10 @@ async fn failed_sandbox_reports_new_runtime_without_suggesting_pending_work() {
     original.validate().unwrap();
     assert!(original.lifecycle.operation.is_none());
     assert!(original.runtime_update_request().is_none());
-    let f = runtime_update_fixture(original.clone(), true).await;
+    f.store
+        .save_sandbox(active_revision, original.clone())
+        .await
+        .unwrap();
     let (status, body) = json_response(
         &f.router,
         authenticated(Method::GET, "/api/v1/sandboxes/sbx_update", None, None),
