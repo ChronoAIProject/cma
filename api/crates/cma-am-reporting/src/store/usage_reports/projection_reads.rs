@@ -422,3 +422,76 @@ fn line(id: &str, points: Vec<Point>) -> Line {
         points,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::usage_reports::chart_projections::{append_line, ProjectionBatch};
+    use layer2_core::sandbox_metrics::{Range, ReportQuery, ReportStatus, Scope};
+
+    #[test]
+    fn projected_line_requires_complete_frozen_time_extent() {
+        let report = Report {
+            schema_version: 1,
+            report_id: "fixture".into(),
+            status: ReportStatus::Ready,
+            report_complete: true,
+            scope: Scope {
+                principal: "fixture-owner".into(),
+                admin: true,
+            },
+            query: ReportQuery {
+                from: 0,
+                to: 120,
+                step_seconds: 60,
+                filters: Default::default(),
+            },
+            as_of: 180,
+            measurement_cutoff: 120,
+            effective_range: Range { from: 0, to: 120 },
+            expires_at: 300,
+            allocation_watermark: String::new(),
+            mapping_revision: 0,
+            available_from: None,
+            tracking_started_at: None,
+            warnings: Vec::new(),
+            source_health: "complete".into(),
+            summary: None,
+            poll_url: String::new(),
+            retry_after_seconds: 0,
+        };
+        let buckets = [
+            Bucket {
+                from: 0,
+                to: 60,
+                ..Default::default()
+            },
+            Bucket {
+                from: 60,
+                to: 120,
+                ..Default::default()
+            },
+        ];
+        let check = |buckets: &[Bucket]| {
+            let mut batch = ProjectionBatch::new(32_768);
+            append_line(&mut batch, &doc! {"report_id":"fixture","generation":1_i64,"metric":0_i64,"document_schema_version":1_i64}, "chart_total", "", Some(buckets.to_vec())).unwrap();
+            let documents = batch.into_documents();
+            let bytes = documents
+                .iter()
+                .map(|document| document.as_bytes().len() as i64)
+                .sum();
+            let manifest = ProjectionManifest::build(1, &documents, bytes).unwrap();
+            let manifest = ProjectionManifest::parse(1, &manifest).unwrap();
+            let mut chunks = ProjectionChunks::default();
+            for document in documents {
+                chunks.push(Document::try_from(document).unwrap()).unwrap();
+            }
+            chunks.finish(&manifest, 0, &report, "chart_total", "")
+        };
+        assert_eq!(check(&buckets).unwrap().unwrap().unwrap().len(), 2);
+        assert!(matches!(
+            check(&buckets[..1]),
+            Err(MetricsError::Unavailable)
+        ));
+    }
+}

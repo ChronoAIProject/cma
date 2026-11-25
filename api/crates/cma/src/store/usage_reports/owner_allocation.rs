@@ -369,3 +369,71 @@ fn owner_totals(report: &Report, field: &str) -> [Document; 2] {
         "complete":{"$min":"$record.allocated_period.complete"}}},
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mongodb::bson::RawDocumentBuf;
+
+    #[test]
+    fn allocation_page_requires_the_committed_order_and_lookahead() {
+        let owners = [("a", 3.0), ("b", 2.0), ("c", 1.0)];
+        let documents: Vec<_> = owners.iter().enumerate().map(|(rank, (owner, amount))| doc! {
+            "generation":1_i64,"kind":"owner_allocation","metric":0_i64,"series":owner,
+            "chunk":0_i64,"allocation_rank":rank as i64,"allocated_hours":amount,"sandbox_count":1_i64,"complete":true,
+        }).collect();
+        let raw: Vec<_> = documents
+            .iter()
+            .map(|doc| RawDocumentBuf::try_from(doc).unwrap())
+            .collect();
+        let bytes = raw.iter().map(|doc| doc.as_bytes().len() as i64).sum();
+        let manifest = ProjectionManifest::build(1, &raw, bytes).unwrap();
+        let manifest = ProjectionManifest::parse(1, &manifest).unwrap();
+        let row = |index: usize| {
+            doc! {"_id":owners[index].0,"allocated_hours":owners[index].1,
+            "sandbox_count":1_i64,"complete":true,"projection_document":&documents[index]}
+        };
+        let response = |page: Vec<Document>| doc! {"page":page,"count":[{"total":3}],"identities":[{"_id":"a"},{"_id":"b"},{"_id":"c"}]};
+        verify_allocation_page(
+            &manifest,
+            Metric::Cpu,
+            None,
+            1,
+            &response(vec![row(0), row(1)]),
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_allocation_page(&manifest, Metric::Cpu, None, 1, &response(vec![row(0)])),
+            Err(MetricsError::Unavailable)
+        ));
+        let after = Cursor {
+            principal: "fixture".into(),
+            admin: true,
+            filter_hash: String::new(),
+            report_id: "fixture".into(),
+            sort: Sort::AllocatedCpuCoreHours,
+            order: Order::Desc,
+            last_value: 3.0.into(),
+            last_null: false,
+            sandbox_id: "a".into(),
+        };
+        verify_allocation_page(
+            &manifest,
+            Metric::Cpu,
+            Some(&after),
+            1,
+            &response(vec![row(1), row(2)]),
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_allocation_page(
+                &manifest,
+                Metric::Cpu,
+                Some(&after),
+                1,
+                &response(vec![row(2)])
+            ),
+            Err(MetricsError::Unavailable)
+        ));
+    }
+}
