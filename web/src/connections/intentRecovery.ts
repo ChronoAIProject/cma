@@ -111,11 +111,11 @@ export class ConnectionIntentRecovery {
     this.update(record);
   }
 
-  interrupt(clearPending: boolean) {
+  interrupt(clearPending: boolean, needsResume = true) {
     if (this.record === undefined) return;
     this.update({
       ...this.record,
-      needsResume: true,
+      needsResume,
       pending: clearPending ? undefined : this.pending,
     });
   }
