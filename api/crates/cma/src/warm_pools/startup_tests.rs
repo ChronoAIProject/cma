@@ -1,7 +1,9 @@
 use super::super::startup::{
     await_ready, await_ready_with_fencing, observed_capacity, observed_ready, StartupPoolPolicy,
+    WarmPoolStartup,
 };
 use super::*;
+use crate::startup::Admission;
 
 fn fixture() -> (Memory, Provider) {
     let calls = Arc::new(Mutex::new(vec![]));
@@ -160,8 +162,12 @@ async fn empty_startup_requires_opt_in_exact_admission_and_fresh_durable_target(
     ));
     let enabled = pools.with_empty_pool_startup(true);
     let started = tokio::time::Instant::now();
-    enabled.await_default_ready().await.unwrap();
-    assert_eq!(started.elapsed(), Duration::ZERO);
+    let boot = enabled
+        .await_default_ready_until(Some(&Admission::new()))
+        .await
+        .unwrap();
+    assert!(matches!(boot, WarmPoolStartup::CapacityDeferred(proof) if proof.desired() == 2));
+    assert_eq!(started.elapsed(), Duration::from_secs(240));
     let stored = store.find(&original.id).await.unwrap().unwrap();
     assert_eq!(stored.target_replicas, 2);
     assert_eq!(stored.binding, original.binding);
@@ -180,15 +186,31 @@ async fn empty_startup_requires_opt_in_exact_admission_and_fresh_durable_target(
 
     planner.retiring.store(true, Ordering::SeqCst);
     assert!(matches!(
-        await_ready_with_fencing(&*store, &planner, &original.plan, limit, policy, None, None)
-            .await,
+        await_ready_with_fencing(
+            &*store,
+            &planner,
+            &original.plan,
+            tokio::time::Instant::now() + limit,
+            policy,
+            Some(&Admission::new()),
+            None
+        )
+        .await,
         Err(WarmPoolError::Conflict)
     ));
     planner.retiring.store(false, Ordering::SeqCst);
     store.find_error.store(true, Ordering::SeqCst);
     assert!(matches!(
-        await_ready_with_fencing(&*store, &planner, &original.plan, limit, policy, None, None)
-            .await,
+        await_ready_with_fencing(
+            &*store,
+            &planner,
+            &original.plan,
+            tokio::time::Instant::now() + limit,
+            policy,
+            Some(&Admission::new()),
+            None
+        )
+        .await,
         Err(WarmPoolError::Unavailable)
     ));
     assert_eq!(

@@ -416,6 +416,16 @@ async fn reconcile_one(
 async fn reconcile_claimed(
     store: &dyn PoolTargetStore,
     provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
+    target: PoolTarget,
+    target_fencing: bool,
+) -> Result<bool, WarmPoolError> {
+    apply_claimed(store, provider, target, target_fencing).await?;
+    Ok(true)
+}
+
+async fn apply_claimed(
+    store: &dyn PoolTargetStore,
+    provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
     mut target: PoolTarget,
     target_fencing: bool,
 ) -> Result<bool, WarmPoolError> {
@@ -456,5 +466,5 @@ async fn reconcile_claimed(
     );
     store.finish(&target, success).await?;
     telemetry::applied(&target, success);
-    Ok(true)
+    Ok(success)
 }
