@@ -149,6 +149,16 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
         ))
     }
 
+    /// Qualify the original initial-mint retirement obligation using the
+    /// separately committed provider receipt under the current lifecycle claim.
+    async fn settle_retirement_issuance(
+        &self,
+        _sandbox: &Sandbox,
+        _intent: &super::CredentialIssuance,
+    ) -> Result<bool, CredentialCustodyError> {
+        Ok(false)
+    }
+
     /// Retain only the non-secret authority of a late mint in a committed
     /// retirement obligation. True means the result cannot be delivered.
     async fn retain_late_retirement_result(

@@ -106,6 +106,15 @@ pub(super) fn native_custody_worker(
     enabled: bool,
     pending_children: bool,
 ) -> (Arc<SandboxWorker>, Arc<dyn SandboxCredentialController>) {
+    native_custody_worker_with_policy(f, enabled, pending_children, SandboxPolicy::default())
+}
+
+pub(super) fn native_custody_worker_with_policy(
+    f: &Fixture,
+    enabled: bool,
+    pending_children: bool,
+    policy: SandboxPolicy,
+) -> (Arc<SandboxWorker>, Arc<dyn SandboxCredentialController>) {
     let store = Arc::new(f.store.clone());
     let registry = Arc::new(LiveAgentRegistry::default());
     let spec = CodexSandboxSpec::default();
@@ -116,13 +125,8 @@ pub(super) fn native_custody_worker(
         f.controller.clone(),
         store.clone(),
     );
-    let mut config = SandboxWorkerConfig::new(
-        "retirement-custody",
-        "work-contract",
-        image,
-        SandboxPolicy::default(),
-    )
-    .with_replicas(true);
+    let mut config = SandboxWorkerConfig::new("retirement-custody", "work-contract", image, policy)
+        .with_replicas(true);
     config.retry_delay = Duration::ZERO;
     config.retirement_finalizer = Some(Arc::new(crate::sandbox::NativeRetirementFinalizer::new(
         store.clone(),

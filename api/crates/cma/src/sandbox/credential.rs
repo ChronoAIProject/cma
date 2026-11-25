@@ -22,6 +22,7 @@ pub(crate) struct ManagedSandboxCredentials {
     tokens: Arc<dyn OwnerTokenSource>,
     custody: Arc<dyn SandboxCredentialCustody>,
     exact_connections: Option<Arc<crate::trigger::CmaServiceConnectionBroker>>,
+    retirement_settlement_enabled: bool,
 }
 
 impl ManagedSandboxCredentials {
@@ -35,6 +36,7 @@ impl ManagedSandboxCredentials {
             tokens,
             custody,
             exact_connections: None,
+            retirement_settlement_enabled: false,
         })
     }
 
@@ -45,6 +47,13 @@ impl ManagedSandboxCredentials {
         Arc::get_mut(&mut self)
             .expect("credential controller is configured before use")
             .exact_connections = Some(broker);
+        self
+    }
+
+    pub(crate) fn with_retirement_settlement(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("credential controller is configured before use")
+            .retirement_settlement_enabled = enabled;
         self
     }
 
@@ -205,7 +214,14 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
                     "credential obligation changed owner or source".into(),
                 ));
             }
-            if intent.state == IssuanceState::Unknown {
+            if intent.state == IssuanceState::Unknown
+                && (!self.retirement_settlement_enabled
+                    || !self
+                        .custody
+                        .settle_retirement_issuance(sandbox, &intent)
+                        .await
+                        .map_err(custody_error)?)
+            {
                 return Err(CredentialError::Uncertain);
             }
         }

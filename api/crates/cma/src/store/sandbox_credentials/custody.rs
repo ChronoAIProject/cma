@@ -72,6 +72,14 @@ impl SandboxCredentialCustody for MongoSandboxCredentialStore {
         issuance::retain_retirement(self, sandbox, now).await
     }
 
+    async fn settle_retirement_issuance(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        intent: &crate::sandbox::CredentialIssuance,
+    ) -> Result<bool, CredentialCustodyError> {
+        issuance::retirement_settlement::settle(self, sandbox, intent).await
+    }
+
     async fn retain_late_retirement_result(
         &self,
         sandbox: &layer2_core::sandbox::Sandbox,

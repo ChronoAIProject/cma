@@ -25,6 +25,7 @@ pub(in crate::store) mod legacy;
 mod retirement;
 mod retirement_claim;
 mod retirement_effect;
+pub(in crate::store::sandbox_credentials) mod retirement_settlement;
 mod transactions;
 pub(super) use retirement::{retain_late_result, retain_retirement};
 

@@ -121,6 +121,10 @@ pub(super) fn sandbox_credentials(
                     );
             ManagedSandboxCredentials::new(issuer, tokens, stores.sandbox_credentials.clone())
                 .with_exact_connections(broker)
+                .with_retirement_settlement(
+                    config.features.native_retirement_finality_enabled
+                        && config.features.native_retirement_revocation_enabled,
+                )
         }
         None => Arc::new(UnavailableSandboxCredentials),
     };

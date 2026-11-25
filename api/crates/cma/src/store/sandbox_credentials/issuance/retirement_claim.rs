@@ -26,11 +26,18 @@ pub(crate) struct RetirementRevocationClaim {
 }
 
 pub(super) fn marker(row: &Document) -> Result<&Document, CredentialCustodyError> {
+    marker_for_state(row, "pending")
+}
+
+pub(super) fn marker_for_state<'a>(
+    row: &'a Document,
+    state: &str,
+) -> Result<&'a Document, CredentialCustodyError> {
     let marker = row
         .get_document("retirement_custody")
         .map_err(|_| corrupt())?;
     if marker.get_i64("version").ok() != Some(1)
-        || marker.get_str("state").ok() != Some("pending")
+        || marker.get_str("state").ok() != Some(state)
         || marker.get_str("reason").ok() != Some("initial_issuance_unresolved")
     {
         return Err(corrupt());
@@ -52,8 +59,9 @@ fn authority<T: serde::de::DeserializeOwned>(
         .map_err(|_| corrupt())
 }
 
-fn work(
+pub(super) fn work_for_state(
     row: &Document,
+    state: &str,
 ) -> Result<
     (
         CredentialIssuance,
@@ -63,7 +71,7 @@ fn work(
     CredentialCustodyError,
 > {
     let intent = decode(row.clone())?;
-    let marker = marker(row)?;
+    let marker = marker_for_state(row, state)?;
     let owner: RetirementOwnerAuthority = authority(marker, "owner_authority")?;
     let provider: SandboxCredentialAuthority = authority(marker, "late_provider_authority")?;
     if intent.generation != 1
@@ -248,7 +256,8 @@ impl MongoSandboxCredentialStore {
             .await
             .map_err(unavailable)?;
         for row in rows {
-            let checked = work(&row).and_then(|work| Ok((work, legacy_schedule(&row)?)));
+            let checked =
+                work_for_state(&row, "pending").and_then(|work| Ok((work, legacy_schedule(&row)?)));
             let ((issuance, owner_authority, provider_authority), legacy_due) = match checked {
                 Ok(checked) => checked,
                 Err(CredentialCustodyError::Corrupt(_)) => {
@@ -295,7 +304,7 @@ impl MongoSandboxCredentialStore {
                     "expires_at":after_seconds(LEASE_SECONDS)},
                 "retirement_discovery_at":after_seconds(LEASE_SECONDS)
             }}]).return_document(ReturnDocument::After).await.map_err(unavailable)? else { continue; };
-            let (read_issuance, read_owner, read_provider) = work(&claimed)?;
+            let (read_issuance, read_owner, read_provider) = work_for_state(&claimed, "pending")?;
             let lease = marker(&claimed)?
                 .get_document("claim")
                 .map_err(|_| corrupt())?;

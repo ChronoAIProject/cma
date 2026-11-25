@@ -839,3 +839,319 @@ async fn independent_retirement_effect_erasure_precedes_real_owner_resolution() 
         f.cleanup().await;
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn independent_retirement_settlement_reuses_exact_receipt_through_cleanup_and_purge() {
+    use crate::sandbox::retirement_revocation::RetirementRevocationWorker;
+    use layer2_core::sandbox::SandboxPolicy;
+    let mut f = Fixture::new_with_runtime("retirement_settlement_receipt", true, true).await;
+    f.controller =
+        ManagedSandboxCredentials::new(f.issuer.clone(), Arc::new(ExactTokens), f.custody.clone());
+    let issuing = f.issue(1);
+    let mint = f.prepare().await;
+    let intent = f.custody.issuance(&f.claim).await.unwrap().unwrap();
+    let (_worker, _) = retirement_fixture::begin(&f).await;
+    let (worker, _) = retirement_fixture::native_custody_worker(&f, true, false);
+    assert!(worker
+        .run_one(&f.claim.id, SystemTime::now())
+        .await
+        .unwrap());
+    let before = f.store.get_sandbox(&f.claim.id).await.unwrap().unwrap();
+    assert_eq!(
+        before.work.step,
+        SandboxWorkStep::RevokeRetirementCredentials
+    );
+    assert!(before.runtime.is_some());
+    accepted(mint);
+    assert!(matches!(
+        issuing.await.unwrap().unwrap(),
+        Err(CredentialError::Uncertain)
+    ));
+    let independent = independent_custody(&f).await;
+    let revoker = RetirementRevocationWorker::new(
+        independent.clone(),
+        f.issuer.clone(),
+        Arc::new(RevocationTokens {
+            expected: selector(&f.claim.owner),
+            available: true,
+        }),
+        "settlement-revoker".into(),
+    );
+    let task = tokio::spawn(async move { revoker.run_one().await });
+    let request = f.peer.next().await;
+    assert_eq!(request.uri.path(), "/api/v1/api-keys/fixture-provider-key");
+    request.respond(200, "fixture response");
+    assert!(task.await.unwrap().unwrap());
+    let records = f
+        .client
+        .database(&f.name)
+        .collection::<Document>("sandbox_credential_issuance");
+    let filter = doc! {"_id": f.claim.id.as_str()};
+    let parent_rows = f
+        .client
+        .database(&f.name)
+        .collection::<Document>("sandboxes");
+    let original = records.find_one(filter.clone()).await.unwrap().unwrap();
+    assert!(!original
+        .get_document("retirement_custody")
+        .unwrap()
+        .contains_key("settlement"));
+    // The controller's default-off path still refuses the original Unknown.
+    assert!(worker
+        .run_one(&f.claim.id, SystemTime::now())
+        .await
+        .unwrap());
+    assert_eq!(
+        f.store
+            .get_sandbox(&f.claim.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .work
+            .step,
+        SandboxWorkStep::RevokeRetirementCredentials
+    );
+    assert_eq!(
+        records.find_one(filter.clone()).await.unwrap().unwrap(),
+        original
+    );
+
+    f.controller =
+        ManagedSandboxCredentials::new(f.issuer.clone(), Arc::new(ExactTokens), f.custody.clone())
+            .with_retirement_settlement(true);
+    let policy = SandboxPolicy {
+        retention_grace: Duration::ZERO,
+        ..SandboxPolicy::default()
+    };
+    let (enabled, _) =
+        retirement_fixture::native_custody_worker_with_policy(&f, true, false, policy.clone());
+    f.custody
+        .queue_revocation(crate::sandbox::CredentialRevocation {
+            sandbox_id: f.claim.id.clone(),
+            owner: f.claim.owner.clone(),
+            provider_key_id: "another-fixture-key".into(),
+        })
+        .await
+        .unwrap();
+    parent_rows
+        .update_one(
+            filter.clone(),
+            doc! {"$set":{"work_ready_at":at(-1),"record.work.ready_at":at(-1)}},
+        )
+        .await
+        .unwrap();
+    assert!(enabled
+        .run_one(&f.claim.id, SystemTime::now())
+        .await
+        .unwrap());
+    let blocked = f.store.get_sandbox(&f.claim.id).await.unwrap().unwrap();
+    assert_eq!(
+        blocked.work.step,
+        SandboxWorkStep::RevokeRetirementCredentials
+    );
+    assert!(!records
+        .find_one(filter.clone())
+        .await
+        .unwrap()
+        .unwrap()
+        .get_document("retirement_custody")
+        .unwrap()
+        .contains_key("settlement"));
+    f.custody
+        .delete_revocation(&f.claim.id, "another-fixture-key")
+        .await
+        .unwrap();
+    assert!(independent
+        .settle_retirement_issuance(&before, &intent)
+        .await
+        .is_err());
+    // Commit the receipt through a separate authenticated client while its
+    // commit response is withheld. The next worker must consume that exact
+    // durable receipt instead of issuing a replacement operation.
+    let app = format!("retirement-receipt-{}", uuid::Uuid::new_v4());
+    let mut options =
+        ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap())
+            .await
+            .unwrap();
+    options.app_name = Some(app.clone());
+    let receipt_client = Client::with_options(options).unwrap();
+    let receipt_store = MongoSandboxStore::open(&receipt_client, &f.name)
+        .await
+        .unwrap()
+        .with_renewable_work(true);
+    let receipt_custody =
+        MongoSandboxCredentialStore::open(&receipt_client, &f.name, "work-contract", &f.key)
+            .await
+            .unwrap();
+    parent_rows
+        .update_one(
+            filter.clone(),
+            doc! {"$set":{"work_ready_at":at(-1),"record.work.ready_at":at(-1)}},
+        )
+        .await
+        .unwrap();
+    let claim = receipt_store
+        .claim_sandbox_work(&f.claim.id, "receipt-ack", at(0), at(15))
+        .await
+        .unwrap()
+        .unwrap();
+    f.commit_failpoint(&app, 100).await;
+    let unknown = WorkAuthority::new(
+        ClaimedWork::Sandbox(Box::new(claim.clone())),
+        tokio::time::Instant::now(),
+    )
+    .run(
+        async {
+            Ok(receipt_custody
+                .settle_retirement_issuance(&claim, &intent)
+                .await)
+        },
+        || async {
+            receipt_store
+                .renew_sandbox_authority(&claim, &at(0), &at(15))
+                .await
+        },
+    )
+    .await
+    .unwrap();
+    f.clear_failpoint().await;
+    assert!(unknown.is_err());
+    let committed = records.find_one(filter.clone()).await.unwrap().unwrap();
+    assert!(committed
+        .get_document("retirement_custody")
+        .unwrap()
+        .contains_key("settlement"));
+    parent_rows
+        .update_one(
+            filter.clone(),
+            doc! {"$set":{"work_lease_expires_at":at(-1),"record.work.lease.expires_at":at(-1)}},
+        )
+        .await
+        .unwrap();
+    assert!(enabled
+        .run_one(&f.claim.id, SystemTime::now())
+        .await
+        .unwrap());
+    let advanced = f.store.get_sandbox(&f.claim.id).await.unwrap().unwrap();
+    assert_eq!(advanced.work.step, SandboxWorkStep::TeardownRuntime);
+    assert_eq!(advanced.runtime, before.runtime);
+    let persisted = records.find_one(filter.clone()).await.unwrap().unwrap();
+    assert_eq!(persisted, committed);
+    let receipt = persisted
+        .get_document("retirement_custody")
+        .unwrap()
+        .get_document("settlement")
+        .unwrap()
+        .clone();
+    assert!(receipt.get_datetime("recorded_at").is_ok());
+    assert_eq!(
+        receipt
+            .get_document("runtime")
+            .unwrap()
+            .get_str("runtime_id")
+            .unwrap(),
+        "agent-sandbox:fixture"
+    );
+    assert_eq!(
+        independent
+            .issuance(&advanced)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        IssuanceState::Unknown
+    );
+    // A fresh composed worker consumes the committed receipt across each
+    // subsequent lifecycle step without issuing another credential effect.
+    let (restarted, _) =
+        retirement_fixture::native_custody_worker_with_policy(&f, true, false, policy);
+    let mut retired = false;
+    for _ in 0..8 {
+        let Some(row) = f.store.get_sandbox(&f.claim.id).await.unwrap() else {
+            break;
+        };
+        if row.status == SandboxStatus::Retired && !retired {
+            retired = true;
+            assert!(row.runtime.is_none());
+            let db = f.client.database(&f.name);
+            let aggregates = db.collection::<Document>("sandboxes");
+            let aggregate = aggregates.find_one(filter.clone()).await.unwrap().unwrap();
+            let mut session = f.client.start_session().await.unwrap();
+            crate::store::sandbox_mongo::start_transaction(&mut session)
+                .await
+                .unwrap();
+            assert!(!crate::store::sandbox_credentials::purge::required(
+                &db,
+                &aggregate,
+                &row,
+                &mut session
+            )
+            .await
+            .unwrap());
+            session.abort_transaction().await.unwrap();
+            for field in [
+                "retirement_custody.revocation_observation",
+                "retirement_custody.owner_authority",
+                "retirement_custody.settlement",
+            ] {
+                records
+                    .update_one(filter.clone(), doc! {"$unset":{field:""}})
+                    .await
+                    .unwrap();
+                crate::store::sandbox_mongo::start_transaction(&mut session)
+                    .await
+                    .unwrap();
+                assert!(crate::store::sandbox_credentials::purge::required(
+                    &db,
+                    &aggregate,
+                    &row,
+                    &mut session
+                )
+                .await
+                .unwrap());
+                session.abort_transaction().await.unwrap();
+                records
+                    .replace_one(filter.clone(), persisted.clone())
+                    .await
+                    .unwrap();
+            }
+            let mut wrong_generation = row.clone();
+            wrong_generation.lifecycle.runtime_generation_high_water += 1;
+            crate::store::sandbox_mongo::start_transaction(&mut session)
+                .await
+                .unwrap();
+            assert!(crate::store::sandbox_credentials::purge::required(
+                &db,
+                &aggregate,
+                &wrong_generation,
+                &mut session
+            )
+            .await
+            .unwrap());
+            session.abort_transaction().await.unwrap();
+        }
+        assert!(restarted
+            .run_one(&f.claim.id, SystemTime::now())
+            .await
+            .unwrap());
+        let current = records.find_one(filter.clone()).await.unwrap().unwrap();
+        assert_eq!(
+            current
+                .get_document("retirement_custody")
+                .unwrap()
+                .get_document("settlement")
+                .unwrap(),
+            &receipt
+        );
+    }
+    assert!(retired);
+    assert!(f.store.get_sandbox(&f.claim.id).await.unwrap().is_none());
+    assert_eq!(f.peer.count_route("POST", "/api/v1/api-keys"), 1);
+    assert_eq!(
+        f.peer
+            .count_route("DELETE", "/api/v1/api-keys/fixture-provider-key"),
+        1
+    );
+    f.cleanup().await;
+}
