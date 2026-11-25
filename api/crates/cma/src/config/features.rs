@@ -111,6 +111,7 @@ pub(crate) struct FeatureFlags {
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
     pub github_repository_preflight: bool,
+    pub github_connection_recovery: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
     /// Gated writer for the stable proxy replay principal (reader floor landed first).
@@ -141,6 +142,7 @@ pub(crate) struct FeatureFlags {
     pub empty_discovery: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
     pub sandbox_binding_hold_metrics: bool,
+    pub startup_native_home_hold_enabled: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -297,6 +299,10 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED",
             )?,
+            startup_native_home_hold_enabled: flag(
+                lookup,
+                "CHRONO_STARTUP_NATIVE_HOME_HOLD_ENABLED",
+            )?,
             sandbox_binding_hold_metrics: flag(
                 lookup,
                 "CHRONO_SANDBOX_BINDING_HOLD_METRICS_ENABLED",
@@ -346,6 +352,7 @@ impl FeatureFlags {
             v2_ui_transport: tail.v2_ui_transport,
             trigger_command_admission: tail.trigger_command_admission,
             github_repository_preflight: tail.github_repository_preflight,
+            github_connection_recovery: tail.github_connection_recovery,
             nyxid_resource_request: tail.nyxid_resource_request,
             nyxid_proxy: tail.nyxid_proxy,
             nyxid_proxy_replay_principal: tail.nyxid_proxy_replay_principal,

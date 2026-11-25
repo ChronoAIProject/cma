@@ -36,6 +36,9 @@ pub(super) async fn report(
         .repository_access
         .as_ref()
         .ok_or(ConnectionError::NotFound)?;
+    if request.github_operation.is_some() && !state.repository_scope_check {
+        return Err(ConnectionError::NotFound);
+    }
     let services = state.targets.services(&caller, &request.target).await?;
     if !services
         .iter()

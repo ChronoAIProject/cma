@@ -11,7 +11,9 @@ permissions:
 jobs:
   images:
     concurrency:
-      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'cma-develop-cache-readers' || format('ci-image-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.component) }}
+      # Develop writes one BuildKit scope per component. Serialize writers to
+      # the same scope while letting independent image checks run in parallel.
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('cma-develop-ci-image-{0}', matrix.component) || format('ci-image-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.component) }}
       queue: max
       cancel-in-progress: false
     name: "Image (${{ matrix.component }})"

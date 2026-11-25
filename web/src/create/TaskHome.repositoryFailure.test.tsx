@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { CmaWebClient } from '../api/client';
-import { connectionClient } from '../connections/client';
+import { connectionClient, type ConnectionReport } from '../connections/client';
 import { AGENT_DETAIL } from '../test/agent';
 import { lifecycleStorageKey } from './lifecycleIntent';
 import { TaskHome } from './TaskHome';
@@ -14,6 +14,7 @@ import {
 } from './repositoryFailure.fixtures';
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   sessionStorage.clear();
 });
@@ -238,4 +239,83 @@ it('completes an owner-bound sign-in handoff without retrying the failed operati
   expect(screen.getByText(/Connections confirmed. The original repository/)).toBeVisible();
   expect(client.createAgentLifecycle).not.toHaveBeenCalled();
   expect(sessionStorage.getItem(retained.key)).toBe(retained.raw);
+});
+
+it.each([
+  ['failed preparation', 'Check repository connection'],
+  ['waiting task', 'Continue original task'],
+] as const)('offers existing GitHub connections for a %s', async (state, action) => {
+  vi.stubEnv('VITE_CONNECTION_INTENT_RECOVERY_ENABLED', 'true');
+  const retained = retainedRepositoryTask('owner', false);
+  const client =
+    state === 'failed preparation'
+      ? repositoryClient()
+      : repositoryClient({
+          readAgentLifecycle: async () => ({
+            ...repositoryFailure,
+            status: 'waiting_for_connection',
+            connection: {
+              services: ['api-github'],
+              target: { type: 'agent', id: 'agt_1' },
+            },
+          }),
+        });
+  const check = vi.spyOn(connectionClient, 'check').mockResolvedValue({
+    ...confirmedConnections,
+    ready: false,
+    services: [
+      {
+        service: 'api-github',
+        display_name: 'GitHub',
+        kind: 'nyxid',
+        state: 'missing',
+        connection_mode: 'manual',
+      },
+    ],
+  });
+  const start = vi.spyOn(connectionClient, 'start');
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      Response.json({
+        owner: 'owner',
+        github: {
+          manage_url: 'https://example.test/keys',
+          connections: [
+            {
+              id: 'github-existing',
+              label: 'Existing GitHub account',
+              manage_url: 'https://example.test/keys/github-existing',
+              granted_scopes: ['repo'],
+            },
+          ],
+        },
+      }),
+    ),
+  );
+  try {
+    render(home(client));
+    fireEvent.click(await screen.findByRole('button', { name: action }));
+    const dialog = await screen.findByRole('dialog');
+    expect(
+      await within(dialog).findByRole('link', { name: /Existing GitHub account/ }),
+    ).toHaveAttribute('href', 'https://example.test/keys/github-existing');
+    expect(within(dialog).queryByRole('button', { name: 'Connect all' })).not.toBeInTheDocument();
+    let complete!: (report: ConnectionReport) => void;
+    check.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Verify again' }));
+    await waitFor(() => expect(complete).toBeTypeOf('function'));
+    await act(async () => complete(confirmedConnections));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(start).not.toHaveBeenCalled();
+    expect(client.createAgentLifecycle).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(retained.key)).toBe(retained.raw);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

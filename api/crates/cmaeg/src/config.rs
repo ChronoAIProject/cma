@@ -231,6 +231,7 @@ pub struct Config {
     pub native_discord_reactions_enabled: bool,
     pub native_discord: NativeDiscordConfig,
     pub outbound_messages_writes_enabled: bool,
+    pub event_side_messages_enabled: bool,
     pub ingress: IngressConfig,
     pub turns: TurnConfig,
     pub delivery: DeliveryConfig,
@@ -471,6 +472,7 @@ impl Config {
             outbound_messages_writes_enabled: routing::write_flag(
                 "CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED",
             )?,
+            event_side_messages_enabled: routing::write_flag("CMAEG_EVENT_SIDE_MESSAGES_ENABLED")?,
             ingress: IngressConfig::from_env()?,
             turns,
             delivery: DeliveryConfig::from_env()?,

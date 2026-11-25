@@ -37,6 +37,7 @@ pub mod relay_capabilities;
 pub mod relay_resource_connections;
 pub mod reply_targets;
 pub mod schema;
+pub(crate) mod side_messages;
 pub mod telegram;
 pub mod threads;
 pub mod tools;
