@@ -17,8 +17,9 @@ use super::store::{
     SandboxAdmissionResult, SandboxLimitClass,
 };
 use super::{
-    Sandbox, SandboxCredentialState, SandboxLimits, SandboxOrigin, SandboxSignInState,
-    SandboxStatus, SandboxWorkState, SandboxWorkStep,
+    InitialServiceConnection, Sandbox, SandboxCredentialSource, SandboxCredentialState,
+    SandboxLimits, SandboxOrigin, SandboxSignInState, SandboxStatus, SandboxWorkState,
+    SandboxWorkStep,
 };
 
 struct ResolvedProfile {
@@ -31,6 +32,7 @@ struct AdmissionAuthority<'a> {
     class: SandboxLimitClass,
     lifecycle_lease: Option<&'a str>,
     creation_fence: Option<CreationFence>,
+    credential_source: SandboxCredentialSource,
 }
 
 impl SandboxService {
@@ -60,7 +62,14 @@ impl SandboxService {
         caller: &Caller,
         request: CreateSandbox,
     ) -> Result<Sandbox, SandboxServiceError> {
-        self.admit_lifecycle(caller, request, None, None).await
+        self.admit_lifecycle(
+            caller,
+            request,
+            None,
+            None,
+            SandboxCredentialSource::Managed,
+        )
+        .await
     }
 
     /// Trusted admission using the initiating lifecycle worker's claim.
@@ -71,7 +80,23 @@ impl SandboxService {
         lease: &str,
         creation_fence: Option<CreationFence>,
     ) -> Result<Sandbox, SandboxServiceError> {
-        self.admit_lifecycle(caller, request, Some(lease), creation_fence)
+        self.create_for_lifecycle_with_connection(caller, request, lease, creation_fence, None)
+            .await
+    }
+
+    /// Carry the verified initial connection into the same Sandbox admission.
+    pub async fn create_for_lifecycle_with_connection(
+        &self,
+        caller: &Caller,
+        request: CreateSandbox,
+        lease: &str,
+        creation_fence: Option<CreationFence>,
+        connection: Option<InitialServiceConnection>,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        let source = connection.map_or(SandboxCredentialSource::Managed, |initial| {
+            SandboxCredentialSource::ManagedConnection { initial }
+        });
+        self.admit_lifecycle(caller, request, Some(lease), creation_fence, source)
             .await
     }
 
@@ -81,6 +106,7 @@ impl SandboxService {
         request: CreateSandbox,
         lifecycle_lease: Option<&str>,
         creation_fence: Option<CreationFence>,
+        credential_source: SandboxCredentialSource,
     ) -> Result<Sandbox, SandboxServiceError> {
         require(caller, Capability::UseOwnSandboxes)?;
         require(caller, Capability::CreateSandbox)?;
@@ -95,7 +121,13 @@ impl SandboxService {
             .await
             .map_err(store_error)?
         {
-            return reconcile_launch_replay(caller, &request, exact_name.as_deref(), replay);
+            let sandbox = reconcile_launch_replay(caller, &request, exact_name.as_deref(), replay)?;
+            if sandbox.credential.source.initial_connection()
+                != credential_source.initial_connection()
+            {
+                return Err(SandboxServiceError::SandboxOriginConflict);
+            }
+            return Ok(sandbox);
         }
         let policy = self
             .policy
@@ -112,6 +144,7 @@ impl SandboxService {
                 class: SandboxLimitClass::Owner,
                 lifecycle_lease,
                 creation_fence,
+                credential_source,
             },
             policy,
         )
@@ -152,6 +185,7 @@ impl SandboxService {
                 class: SandboxLimitClass::Owner,
                 lifecycle_lease: None,
                 creation_fence,
+                credential_source: SandboxCredentialSource::Managed,
             },
             policy,
         )
@@ -201,6 +235,7 @@ impl SandboxService {
                 class: limit_class,
                 lifecycle_lease: None,
                 creation_fence: None,
+                credential_source: SandboxCredentialSource::Managed,
             },
             policy,
         )
@@ -325,8 +360,23 @@ impl SandboxService {
             .revision
             .content
             .credential_services(&policy.baseline_services);
-        self.check_creation_connections(caller, &profile.revision.content, &reaches)
-            .await?;
+        if let Some(initial) = authority.credential_source.initial_connection() {
+            // The lifecycle worker checked this specific authorization. The
+            // generic prerequisite would resolve the service by slug instead.
+            if !initial.selection.matches_scope(&reaches) {
+                return Err(SandboxServiceError::InvalidServiceAccess);
+            }
+            let remaining: Vec<_> = reaches
+                .iter()
+                .filter(|service| *service != &initial.selection.service)
+                .cloned()
+                .collect();
+            self.check_creation_connections(caller, &profile.revision.content, &remaining)
+                .await?;
+        } else {
+            self.check_creation_connections(caller, &profile.revision.content, &reaches)
+                .await?;
+        }
         let now = now_rfc3339();
         let sign_in = match profile.revision.content.model_access {
             ModelAccess::ChronoaiManaged => SandboxSignInState::NotRequired,
@@ -346,7 +396,7 @@ impl SandboxService {
             failure: None,
             runtime: None,
             credential: SandboxCredentialState {
-                source: Default::default(),
+                source: authority.credential_source,
                 service_grants: Vec::new(),
                 service_scope: None,
                 reaches,

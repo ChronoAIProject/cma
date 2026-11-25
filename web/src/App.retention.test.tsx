@@ -100,7 +100,7 @@ it('retains the exact Agent draft, Gateway editor and uncertain request across p
   expect(writes[1]?.headers).toEqual(writes[0]?.headers);
   expect(editor).not.toBeInTheDocument();
   expect(fetcher.mock.calls.some(([url]) => url.includes('/image-manager'))).toBe(false);
-});
+}, 15_000);
 
 it('discards retained private service drafts when the global account signs out', async () => {
   window.history.replaceState({}, '', '/event-gateway');

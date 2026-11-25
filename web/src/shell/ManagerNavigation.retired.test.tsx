@@ -5,7 +5,7 @@ import { createRef, useState } from 'react';
 import { expect, it, vi } from 'vitest';
 import type { AppRoute } from '../routing/routes';
 import { AGENT_DETAIL } from '../test/agent';
-import { navigationFixture } from '../test/hierarchy';
+import { delayedRetirementFixture, navigationFixture } from '../test/hierarchy';
 import { chooseOption, expandNavigationFilters } from '../test/select';
 import { ManagerNavigation, type EnvironmentNavigationHandle } from './ManagerNavigation';
 
@@ -181,4 +181,25 @@ it('targets the personal Environment filter without replacing another scope’s 
   act(() => view.result.current.select('agent', 'stopped'));
   view.rerender({ scope: 'organization:example' });
   expect(view.result.current.statuses).toEqual({ agent: 'working', sandbox: 'paused' });
+});
+
+it('exposes the current retirement deadline in the persistent deletion footer', async () => {
+  const delayed = delayedRetirementFixture();
+  const user = userEvent.setup();
+  const draw = (sandbox = delayed, refreshError?: string) => (
+    <ManagerNavigation
+      {...props}
+      navigation={{ ...props.navigation, items: [{ sandbox, workspaces: [] }], refreshError }}
+    />
+  );
+  const view = render(draw());
+  await user.click(screen.getByText('1 deletions need checking'));
+  expect(screen.getByText('Cleanup taking longer')).toBeVisible();
+  expect(screen.getByText(/expected deletion time has passed/)).toBeVisible();
+  expect(screen.getByRole('button', { name: 'View status for Atlas' })).toBeVisible();
+  view.rerender(draw(delayed, 'Status unavailable'));
+  expect(screen.queryByText('Cleanup taking longer')).not.toBeInTheDocument();
+  expect(screen.getByText('Deleting')).toBeVisible();
+  view.rerender(draw({ ...delayed, status: 'retired' }));
+  expect(screen.queryByRole('button', { name: 'View status for Atlas' })).not.toBeInTheDocument();
 });

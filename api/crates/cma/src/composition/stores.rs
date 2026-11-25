@@ -137,7 +137,13 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
         stores
             .with_empty_discovery(config.features.empty_discovery)
             .with_writer_policy(config.task_experience.clone())
-            .with_creation_writer_epoch(config.creation_writer_epoch.as_deref()),
+            .with_creation_writer_epoch(
+                config.creation_writer_epoch.as_deref(),
+                config
+                    .creation_outcomes
+                    .as_ref()
+                    .is_some_and(|outcomes| outcomes.terminal_settlement),
+            ),
     ))
 }
 

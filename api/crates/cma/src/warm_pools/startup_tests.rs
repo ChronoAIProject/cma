@@ -1,4 +1,6 @@
-use super::super::startup::{await_ready, observed_ready};
+use super::super::startup::{
+    await_ready, await_ready_with_fencing, observed_capacity, observed_ready, StartupPoolPolicy,
+};
 use super::*;
 
 fn fixture() -> (Memory, Provider) {
@@ -126,6 +128,136 @@ fn startup_accepts_one_spare_only_for_current_observed_durable_binding() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn empty_startup_requires_opt_in_exact_admission_and_fresh_durable_target() {
+    let store = Arc::new(resize::Targets::default());
+    let planner = resize::Planner::default();
+    let image = resize::pinned("agent", 'a');
+    let pools = resize::deployment(store.clone(), planner.clone(), &image, None);
+    pools.ensure_default().await.unwrap();
+    let original = {
+        let mut rows = store.rows.lock().unwrap();
+        let row = rows.first_mut().unwrap();
+        row.target_replicas = 2;
+        row.applied_revision = row.revision;
+        row.binding = Some(resize::Planner::binding(&row.plan));
+        row.clone()
+    };
+    let ready = NativePoolStatus {
+        binding: original.binding.clone().unwrap(),
+        desired_replicas: 2,
+        ready_replicas: 0,
+        observed: true,
+    };
+    planner.inventory.lock().unwrap().push(ready.clone());
+    let limit = Duration::from_secs(3);
+    let policy = StartupPoolPolicy {
+        allow_empty: true,
+        ..Default::default()
+    };
+    assert!(matches!(
+        await_ready(&*store, &planner, &original.plan, limit).await,
+        Err(WarmPoolError::Unavailable)
+    ));
+    let enabled = pools.with_empty_pool_startup(true);
+    let started = tokio::time::Instant::now();
+    enabled.await_default_ready().await.unwrap();
+    assert_eq!(started.elapsed(), Duration::ZERO);
+    let stored = store.find(&original.id).await.unwrap().unwrap();
+    assert_eq!(stored.target_replicas, 2);
+    assert_eq!(stored.binding, original.binding);
+    assert_eq!(stored.revision, original.revision);
+    assert_eq!(stored.view(Some(&ready), true).status, "pending");
+    assert!(stored
+        .view(Some(&ready), true)
+        .error
+        .unwrap()
+        .contains("degraded"));
+    assert!(enabled
+        .candidate_inventory(&original)
+        .await
+        .unwrap()
+        .is_none());
+
+    planner.retiring.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        await_ready_with_fencing(&*store, &planner, &original.plan, limit, policy, None, None)
+            .await,
+        Err(WarmPoolError::Conflict)
+    ));
+    planner.retiring.store(false, Ordering::SeqCst);
+    store.find_error.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        await_ready_with_fencing(&*store, &planner, &original.plan, limit, policy, None, None)
+            .await,
+        Err(WarmPoolError::Unavailable)
+    ));
+    assert_eq!(
+        store.rows.lock().unwrap()[0].error.as_deref(),
+        Some("unavailable")
+    );
+    store.rows.lock().unwrap()[0].error = None;
+
+    for observed in [1, 2] {
+        let mut status = ready.clone();
+        status.ready_replicas = observed;
+        *planner.inventory.lock().unwrap() = vec![status.clone()];
+        // Promotion requires the complete target, even when startup is enabled.
+        assert_eq!(
+            enabled
+                .candidate_inventory(&original)
+                .await
+                .unwrap()
+                .is_some(),
+            observed == 2
+        );
+        assert_eq!(
+            original.view(Some(&status), true).status,
+            if observed == 2 { "ready" } else { "pending" }
+        );
+    }
+    assert_eq!(store.rows.lock().unwrap()[0].binding, original.binding);
+}
+
+#[test]
+fn empty_capacity_requires_an_unambiguous_exact_observation() {
+    let (_, provider) = fixture();
+    let mut target = target();
+    target.binding = Some(provider.binding());
+    target.applied_revision = target.revision;
+    let zero = NativePoolStatus {
+        binding: provider.binding(),
+        desired_replicas: target.target_replicas,
+        ready_replicas: 0,
+        observed: true,
+    };
+    assert_eq!(
+        observed_capacity(&target, std::slice::from_ref(&zero)),
+        Some(0)
+    );
+    assert_eq!(
+        observed_capacity(&target, &[zero.clone(), zero.clone()]),
+        None
+    );
+    for changed in 0..3 {
+        let mut status = zero.clone();
+        match changed {
+            0 => status.binding.uid = "replacement".into(),
+            1 => status.desired_replicas += 1,
+            _ => status.observed = false,
+        }
+        assert_eq!(observed_capacity(&target, &[status]), None);
+    }
+    target.applied_revision = 0;
+    assert_eq!(
+        observed_capacity(&target, std::slice::from_ref(&zero)),
+        None
+    );
+    target.applied_revision = target.revision;
+    target.error = Some("unavailable".into());
+    assert_eq!(observed_capacity(&target, &[zero]), None);
+}
+
+#[tokio::test(start_paused = true)]
 async fn startup_awaits_only_the_default_pool_even_with_a_cold_positive_machine_target() {
     let store = Arc::new(resize::Targets::default());
     let machine_image = resize::pinned("omarchy", '1');
@@ -152,7 +284,8 @@ async fn startup_awaits_only_the_default_pool_even_with_a_cold_positive_machine_
         }]
     };
     let planner = resize::Planner {
-        inventory: Mutex::new(inventory),
+        inventory: Arc::new(Mutex::new(inventory)),
+        ..Default::default()
     };
     // The machine pool is still pulling its image: absent from inventory.
     let pools = resize::deployment(

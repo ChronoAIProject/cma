@@ -13,7 +13,7 @@ pub enum CustodySample<'a> {
 }
 
 impl CustodySample<'_> {
-    fn observation(&self) -> &ObservationV1 {
+    pub(super) fn observation(&self) -> &ObservationV1 {
         match self {
             Self::Undisputed(observation) | Self::Disputed(observation) => &observation.0,
         }
@@ -112,15 +112,17 @@ fn interval(
 
 fn normalize_pair(first: &ObservationV1, next: &ObservationV1) -> Result<Quantity, Unresolved> {
     verify_continuity(first, next)?;
+    let a = f64::from_be_bytes(first.source_value_be);
+    let b = f64::from_be_bytes(next.source_value_be);
+    if first.metric == SourceMetric::CpuCounter && b < a {
+        return Err(Unresolved::CounterReset);
+    }
     let elapsed = next
         .timestamp_ms
         .checked_sub(first.timestamp_ms)
         .filter(|elapsed| (1..=MAX_NORMAL_SPACING_MS).contains(elapsed))
         .ok_or(Unresolved::Coverage)?;
-    let a = f64::from_be_bytes(first.source_value_be);
-    let b = f64::from_be_bytes(next.source_value_be);
     let quantity = match first.metric {
-        SourceMetric::CpuCounter if b < a => return Err(Unresolved::CounterReset),
         SourceMetric::CpuCounter => Quantity::Cpu(cpu_delta(a, b)?),
         SourceMetric::WorkingSet | SourceMetric::PvcUsed | SourceMetric::PvcCapacity => {
             let bytes = u128::from(exact_bytes(a)?);

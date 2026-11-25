@@ -37,7 +37,8 @@ pub(super) fn connections(
 ) -> Result<Connections, String> {
     let broker = connection_broker(config, auth.clone(), subscriptions.clone())?;
     let prerequisite =
-        crate::connections::ConnectionPrerequisite::new(auth, broker.clone(), policy.clone());
+        crate::connections::ConnectionPrerequisite::new(auth, broker.clone(), policy.clone())
+            .with_exact_github(broker.clone());
     let browser = crate::connections::BrowserConnections::new(
         stores.clone(),
         policy,

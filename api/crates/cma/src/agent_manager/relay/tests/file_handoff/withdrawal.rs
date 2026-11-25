@@ -62,6 +62,7 @@ pub(super) async fn close_outer_admission(
     let old_read_count = owner.runtime.reads.load(SeqCst);
     let local_read_count = peer.runtime.reads.load(SeqCst);
     let old_entry_count = owner.probe.requests.load(SeqCst);
+    let old_admission_refusals = owner.relay_log.refusals("admission_closed");
     owner.admission.close();
     assert_eq!(
         peer.instance.relay.destination(id).await.unwrap().token,
@@ -83,12 +84,22 @@ pub(super) async fn close_outer_admission(
             serde_json::json!({"status": "not-ready", "reason": "draining"})
         );
     }
+    assert_eq!(
+        owner.relay_log.refusals("admission_closed"),
+        old_admission_refusals
+    );
 
     assert_reads(&reads(peer, id, "outer_admission_closed").await);
     let head = download(peer, id, Method::HEAD).send().await.unwrap();
     assert_eq!(head.status(), StatusCode::OK);
     assert!(!head.headers().contains_key(file_read::HANDOFF_HEADER));
     assert!(head.bytes().await.unwrap().is_empty());
+    peer.relay_log
+        .assert_outer_admission_correlated(&owner.relay_log);
+    assert_eq!(
+        owner.relay_log.refusals("admission_closed"),
+        old_admission_refusals + 4,
+    );
     assert_eq!(owner.runtime.reads.load(SeqCst), old_read_count);
     assert_eq!(owner.probe.requests.load(SeqCst), old_entry_count);
     assert_eq!(peer.runtime.reads.load(SeqCst), local_read_count + 4);

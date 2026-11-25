@@ -2288,6 +2288,8 @@ dependencies = [
  "layer3-adapter",
  "metrics",
  "moka",
+ "num-bigint",
+ "num-rational",
  "quick-xml",
  "ring",
  "serde",

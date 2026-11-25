@@ -57,7 +57,7 @@ export function validateMint(body) {
     || !/^cma:work-recovery-fixture:mint_[a-f0-9]{32}$/.test(body.name)
     || body.scopes !== 'proxy read'
     || typeof body.expires_at !== 'string'
-    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(body.expires_at)
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(body.expires_at)
     || !(Date.parse(body.expires_at) > Date.now())
     || JSON.stringify(body.allowed_service_ids) !== JSON.stringify([id.service])
     || JSON.stringify(body.allowed_node_ids) !== JSON.stringify([id.node])

@@ -22,6 +22,7 @@ pub(super) async fn create_profiles(
     limits: layer2_core::sandbox::SandboxLimits,
     behavior: LifecycleBehavior,
     availability: layer2_core::profiles::SandboxProfileAvailability,
+    operation_id: &str,
 ) -> Result<
     (AgentProfileRevision, WorkspaceProfileRef, SandboxProfileRef),
     AgentLifecycleProvisioningError,
@@ -51,7 +52,7 @@ pub(super) async fn create_profiles(
         },
         async {
             let workspace_content = WorkspaceProfileContent {
-                location: repository_location(request, behavior)?,
+                location: repository_location(request, behavior, operation_id)?,
                 name: if behavior == LifecycleBehavior::Legacy && request.repository.is_some() {
                     String::new()
                 } else {
@@ -137,8 +138,10 @@ pub(super) fn inline_sandbox_content(
 ) -> Result<SandboxProfileContent, AgentLifecycleProvisioningError> {
     let profile = request.profile.clone().unwrap_or_default();
     let mut permissions = validation::services_for(&profile.permissions, behavior)?;
-    if request.initial_message.is_some()
-        && request.repository.is_some()
+    if behavior != LifecycleBehavior::PublicRepository
+        && request.repository.as_ref().is_some_and(|repository| {
+            request.initial_message.is_some() || repository.operation.is_some()
+        })
         && !permissions
             .iter()
             .any(|service| service.as_str() == "api-github")

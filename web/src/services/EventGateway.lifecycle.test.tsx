@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { EventGateway } from './EventGateway';
+// Load the real graph module before exercising lifecycle and editor interactions.
+import './DeliveryFlowCanvas';
 import type { Channel, ChannelListItem } from './channelTypes';
 
 const session = {

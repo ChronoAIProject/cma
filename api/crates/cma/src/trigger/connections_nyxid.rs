@@ -37,8 +37,8 @@ use response::decode;
 )]
 pub(crate) use composition::CmaServiceConnectionBroker;
 pub(crate) use github::{
-    GitHubConnections, GitHubRepositoryNeed, GitHubScopeCheck, VerifiedGitHubConnection,
-    GITHUB_SERVICE,
+    GitHubConnections, GitHubRepositoryCheck, GitHubRepositoryNeed, GitHubScopeCheck,
+    VerifiedGitHubConnection, GITHUB_SERVICE,
 };
 
 const CONNECT_LINKS_PATH: &str = "/api/v1/connect-links";

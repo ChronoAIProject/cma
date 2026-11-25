@@ -37,6 +37,7 @@ impl AgentManager {
         if self.coordinator.contains_failures() {
             return self.service_retirements(candidates).await;
         }
+        self.coordinator.poll_acquisitions().await?;
         self.retire_inactive().await?;
         let completed = self
             .contained

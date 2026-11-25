@@ -357,6 +357,15 @@ impl OwnershipStore for MongoAgentOwnership {
         self.acquire_owner(agent_id, instance_id).await
     }
 
+    async fn reconcile_acquisition(
+        &self,
+        agent_id: &AgentId,
+        instance_id: &str,
+    ) -> Result<Option<OwnershipToken>, OwnershipError> {
+        self.reconcile_owner_acquisition(agent_id, instance_id)
+            .await
+    }
+
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError> {
         self.renew_owner(token).await
     }

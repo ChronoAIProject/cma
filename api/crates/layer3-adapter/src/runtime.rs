@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::GithubRepositoryScope;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -397,12 +398,18 @@ pub struct GithubCredentialRoute {
     pub catalog_id: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub other_services: Vec<PlatformServiceRoute>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_scope: Option<GithubRepositoryScope>,
 }
 
 impl GithubCredentialRoute {
     pub fn is_valid(&self) -> bool {
         valid_proxy_selector(&self.service_id)
             && valid_proxy_selector(&self.catalog_id)
+            && self
+                .repository_scope
+                .as_ref()
+                .is_none_or(|scope| scope.is_valid(&self.service_id))
             && self.other_services.len() <= 32
             && self.other_services.iter().all(|service| {
                 valid_proxy_selector(&service.service_id)

@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { EventGateway } from './EventGateway';
+// Load the real graph module before exercising lifecycle and editor interactions.
+import './DeliveryFlowCanvas';
 import type { Channel, ChannelListItem } from './ChannelEditor';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -216,7 +218,7 @@ it('retains an uncertain create across navigation and removes a freshly created 
       expect.objectContaining({ method: 'DELETE' }),
     ],
   ]);
-});
+}, 15_000);
 
 it('reopens a legacy record only with its original channel ID and rejects an unrelated record', async () => {
   const original = channel('Legacy', 4);

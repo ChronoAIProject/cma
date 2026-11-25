@@ -325,6 +325,8 @@ def main():
                     metric["reason"] = cache.export_reason
                 if accepted and cache.export_headroom == "low":
                     metric["headroom"] = "low"
+                if accepted and cache.export_retained_groups is not None:
+                    metric["retained_groups"] = cache.export_retained_groups
                 cache_metrics.append(metric)
                 with Path(env["GITHUB_OUTPUT"]).open("a") as status:
                     if accepted:
