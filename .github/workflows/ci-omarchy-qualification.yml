@@ -4,8 +4,8 @@ permissions:
   contents: read
   issues: read
 jobs:
-  omarchy:
-    name: Omarchy qualification ${{ matrix.scan_order }} trial ${{ matrix.trial }}
+  build:
+    name: Build the shared Omarchy qualification archive
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     permissions:
@@ -133,6 +133,100 @@ jobs:
         if timeout 5m bash -ec 'bash .github/scripts/staging_cd_transport.sh && bash .github/scripts/install-image-gitleaks.sh'; then
           echo "ready=true" >> "$GITHUB_OUTPUT"
         fi
+    - name: Scan the shared archive before uploading it
+      timeout-minutes: 32
+      env:
+        SCANNER_READY: "${{ steps.omarchy-scanner-install.outputs.ready }}"
+      run: |
+        test "$SCANNER_READY" = true
+        python3 -B .github/scripts/omarchy-ci-scan.py start "$GITHUB_SHA"
+        python3 -B .github/scripts/omarchy-ci-scan.py promote "$GITHUB_SHA"
+    - name: Retain the exact shared scan archive
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: omarchy-qualification-input-${{ github.run_id }}-${{ github.run_attempt
+          }}
+        path: "${{ runner.temp }}/ci-native-image"
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 1
+    outputs:
+      layer_requested: omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}
+      layer_matched: "${{ steps.omarchy-cache-restore.outputs.cache-matched-key }}"
+      layer_hit: "${{ steps.omarchy-cache-restore.outputs.cache-hit }}"
+      layer_outcome: "${{ steps.omarchy-cache-restore.outcome }}"
+  omarchy:
+    name: Omarchy qualification ${{ matrix.scan_order }} trial ${{ matrix.trial }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      issues: read
+      actions: read
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      with:
+        fetch-depth: 2
+    - name: Identify the shared qualification baseline
+      id: qualification-base
+      run: printf "sha=%s\n" "$(git rev-parse HEAD^)" >> "$GITHUB_OUTPUT"
+    - name: Reserve space on the disposable Omarchy runner
+      run: |
+        test "$GITHUB_ACTIONS" = true
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+        df -h /
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      with:
+        node-version: 26
+        package-manager-cache: false
+    - name: Omarchy desktop fixture regressions
+      run: |
+        python3 -B .github/scripts/omarchy-cache-key-tests.py
+        python3 -B .github/scripts/omarchy-ci-scan-tests.py
+        python3 -B .github/scripts/runtime_image_layers_tests.py
+        python3 -B .github/scripts/runtime_image_metadata_tests.py
+        python3 -B .github/scripts/runtime_image_private_keyrings_tests.py
+        python3 -B .github/scripts/runtime_image_machine_id_tests.py
+        python3 -B .github/scripts/runtime_image_hygiene_tests.py
+        python3 .github/scripts/omarchy-close-browser-tests.py
+        python3 .github/scripts/omarchy-browser-input-tests.py
+        node --test .github/scripts/omarchy-browser-page.test.cjs
+        node --test .github/scripts/desktop-seccomp.test.mjs
+    - name: Arch packager key expiry
+      run: |
+        python3 -B .github/scripts/omarchy_key_expiry_tests.py
+        python3 -B .github/scripts/omarchy_key_expiry.py
+    - name: Ledger image qualification regressions
+      run: node --test .github/scripts/runtime-ledger-evidence.test.mjs .github/scripts/runtime-ledger-downgrade.test.mjs
+    - name: Debian desktop fixture regressions
+      run: |
+        python3 -B .github/scripts/desktop-ownership-probe-tests.py
+        python3 .github/scripts/desktop-browser-input-tests.py
+        node --test .github/scripts/desktop-browser-page.test.cjs
+    - name: Download the exact shared scan archive
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: omarchy-qualification-input-${{ github.run_id }}-${{ github.run_attempt
+          }}
+        path: "${{ runner.temp }}/omarchy-ci-scan-input"
+    - name: Load the verified shared qualification image
+      id: load
+      timeout-minutes: 15
+      run: python3 -B .github/scripts/load-omarchy-qualification-image.py "$RUNNER_TEMP/omarchy-ci-scan-input"
+    - name: Verify every Omarchy image layer
+      timeout-minutes: 20
+      run: python3 -B .github/scripts/runtime_image_hygiene.py --image cma-runtime-omarchy:ci
+        --component runtime-omarchy --output "$RUNNER_TEMP/omarchy-evidence/layer-hygiene.json"
+    - name: Install pinned image secret scanner
+      id: omarchy-scanner-install
+      if: success()
+      timeout-minutes: 6
+      env:
+        CD_COMPONENT: runtime-omarchy
+      run: |
+        if timeout 5m bash -ec 'bash .github/scripts/staging_cd_transport.sh && bash .github/scripts/install-image-gitleaks.sh'; then
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+        fi
     - name: Start wall-clock and runner headroom measurement
       timeout-minutes: 1
       run: python3 -B .github/scripts/omarchy-qualification-sampler.py start "$RUNNER_TEMP/omarchy-evidence"
@@ -177,14 +271,14 @@ jobs:
         restore-keys: cache-trivy-
     - name: Record restored cache identities
       env:
-        OMARCHY_REQUESTED: omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}
-        OMARCHY_MATCHED: ${{ steps.omarchy-cache-restore.outputs.cache-matched-key }}
-        OMARCHY_HIT: ${{ steps.omarchy-cache-restore.outputs.cache-hit }}
-        OMARCHY_OUTCOME: ${{ steps.omarchy-cache-restore.outcome }}
+        OMARCHY_REQUESTED: "${{ needs.build.outputs.layer_requested }}"
+        OMARCHY_MATCHED: "${{ needs.build.outputs.layer_matched }}"
+        OMARCHY_HIT: "${{ needs.build.outputs.layer_hit }}"
+        OMARCHY_OUTCOME: "${{ needs.build.outputs.layer_outcome }}"
         TRIVY_REQUESTED: cache-trivy-readonly
-        TRIVY_MATCHED: ${{ steps.trivy-cache-restore.outputs.cache-matched-key }}
-        TRIVY_HIT: ${{ steps.trivy-cache-restore.outputs.cache-hit }}
-        TRIVY_OUTCOME: ${{ steps.trivy-cache-restore.outcome }}
+        TRIVY_MATCHED: "${{ steps.trivy-cache-restore.outputs.cache-matched-key }}"
+        TRIVY_HIT: "${{ steps.trivy-cache-restore.outputs.cache-hit }}"
+        TRIVY_OUTCOME: "${{ steps.trivy-cache-restore.outcome }}"
       run: python3 -B .github/scripts/omarchy-qualification-sampler.py cache "$RUNNER_TEMP/omarchy-evidence"
     - name: Scan tested Omarchy image
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
@@ -238,7 +332,7 @@ jobs:
           cp "$RUNNER_TEMP/ci-native-image/metadata.json" "$dir/tested-image.json"
         fi
     - name: Retain Omarchy image evidence
-      if: always() && steps.build.outcome == 'success'
+      if: always() && steps.load.outcome == 'success'
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: omarchy-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{
@@ -267,6 +361,7 @@ jobs:
         trial:
         - 1
         - 2
+    needs: build
 'on':
   push:
     branches:
