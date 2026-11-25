@@ -5,10 +5,23 @@ use layer2_core::agent_ownership::OwnershipError;
 #[ignore = "requires a disposable MongoDB replica set"]
 async fn failed_inspection_parks_across_owner_takeover() {
     tokio::try_join!(
-        observe_takeover(AgentWorkStep::CloseProcess, "auth", false),
-        observe_takeover(AgentWorkStep::PublishConnection, "auth", false),
-        observe_takeover(AgentWorkStep::PublishConnection, "confirm_ambiguous", false),
-        observe_takeover(AgentWorkStep::CloseProcess, "auth", true),
+        Box::pin(observe_takeover(AgentWorkStep::CloseProcess, "auth", false)),
+        Box::pin(observe_takeover(
+            AgentWorkStep::PublishConnection,
+            "auth",
+            false
+        )),
+        Box::pin(observe_takeover(
+            AgentWorkStep::PublishConnection,
+            "confirm_ambiguous",
+            false
+        )),
+        Box::pin(observe_takeover(AgentWorkStep::CloseProcess, "auth", true)),
+        Box::pin(observe_takeover(
+            AgentWorkStep::CloseProcess,
+            "after_close",
+            false
+        )),
     )
     .unwrap();
 }
@@ -39,7 +52,8 @@ async fn observe_takeover(
     worktree.revision += 1;
     standalone.save_worktree(revision, worktree).await.unwrap();
     let home = bind_runtime(&standalone, &agent, HANDLE).await;
-    let runtime = Runtime::start(refusal).await;
+    let crash_after_close = refusal == "after_close";
+    let runtime = Runtime::start(if crash_after_close { "auth" } else { refusal }).await;
     let confirmations = usize::from(refusal == "confirm_ambiguous");
     if step == AgentWorkStep::CloseProcess {
         standalone
@@ -133,7 +147,7 @@ async fn observe_takeover(
         second.clone(),
         second_manager.clone(),
         runtime.transport.clone(),
-        home,
+        home.clone(),
         None,
     );
     let healthy = ready_conversation_fixture(&standalone, "healthy").await;
@@ -266,13 +280,87 @@ async fn observe_takeover(
     assert!(!consume(&second.agents, agent.id.as_str(), park_id)
         .await
         .unwrap());
+    if crash_after_close {
+        runtime.repair();
+        runtime.hold_first_close();
+        let target = agent.id.clone();
+        let task = tokio::spawn(async move { worker.run_one(&target, SystemTime::now()).await });
+        tokio::time::timeout(Duration::from_secs(8), runtime.close_received())
+            .await
+            .unwrap();
+        assert!(!second.agent_inspection_parked(&agent.id).await.unwrap());
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        runtime.release_close();
+        let second_owners = second.agent_ownership.as_ref().unwrap();
+        second_owners.heartbeat("second", true).await?;
+        tokio::time::timeout(Duration::from_secs(18), async {
+            while second_owners.owner(&agent.id).await.unwrap().is_some() {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+        .await
+        .expect("the interrupted Close retains the original lease until expiry");
+        let successor = Arc::new(
+            MongoSandboxStore::open(&client, &name)
+                .await
+                .unwrap()
+                .enable_agent_ownership("first-restarted".into())
+                .await
+                .unwrap()
+                .with_agent_inspection_parking(true),
+        );
+        let manager = OwnershipCoordinator::register(
+            successor.agent_ownership.as_ref().unwrap().clone(),
+            member("first-restarted"),
+        )
+        .await?;
+        let worker = build_worker(
+            successor.clone(),
+            manager,
+            runtime.transport.clone(),
+            home,
+            None,
+        );
+        assert!(worker.run_one(&agent.id, SystemTime::now()).await.unwrap());
+        let advanced = successor.get_agent(&agent.id).await.unwrap().unwrap();
+        assert_eq!(advanced.work.step, AgentWorkStep::PublishStopped);
+        assert_eq!(
+            advanced
+                .work
+                .receipts
+                .iter()
+                .filter(|receipt| receipt.step == step)
+                .count(),
+            1
+        );
+        runtime.assert_close_replayed();
+        client.database(&name).drop().await.unwrap();
+        return Ok(());
+    }
     if confirmations == 0 {
         runtime.repair();
         assert!(worker.run_one(&agent.id, SystemTime::now()).await.unwrap());
-        runtime.assert_repaired_probe();
+        let advanced = second.get_agent(&agent.id).await.unwrap().unwrap();
+        let controls = if step == AgentWorkStep::CloseProcess {
+            assert_eq!(advanced.work.step, AgentWorkStep::PublishStopped);
+            assert_eq!(
+                advanced
+                    .work
+                    .receipts
+                    .iter()
+                    .filter(|receipt| receipt.step == step)
+                    .count(),
+                1
+            );
+            3
+        } else {
+            assert_eq!(advanced.work.step, AgentWorkStep::None);
+            assert_eq!(advanced.conversation, parked.conversation);
+            2
+        };
+        runtime.assert_repaired_probe(controls);
         assert!(!second.agent_inspection_parked(&agent.id).await.unwrap());
-        assert!(!worker.run_one(&agent.id, SystemTime::now()).await.unwrap());
-        runtime.assert_repaired_probe();
     } else {
         assert!(!worker.run_one(&agent.id, SystemTime::now()).await.unwrap());
         runtime.assert_counts_with_confirmation(2, 2 * confirmations);

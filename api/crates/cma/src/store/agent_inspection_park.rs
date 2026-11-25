@@ -12,6 +12,8 @@ use mongodb::bson::{doc, Bson, Document};
 use mongodb::ClientSession;
 
 mod claim;
+mod confirm;
+pub(super) use confirm::confirm;
 pub(super) mod recovery;
 pub(super) use claim::{for_claim, ClaimPark};
 pub(crate) use recovery::command;
@@ -47,6 +49,7 @@ pub(super) fn filter(store: &MongoSandboxStore, matching: bool) -> Vec<Document>
         {"$eq": [format!("{marker}.ready_at"), "$record.work.ready_at"]},
         {"$eq": [format!("{marker}.attempts"), "$record.work.attempts"]},
         {"$ne": [format!("{marker}.retry"), true]},
+        {"$ne": [format!("{marker}.inspection_confirmed"), true]},
         {"$or": [
             {"$ne": [{"$type": format!("{marker}.probe_at")}, "date"]},
             {"$gt": [format!("{marker}.probe_at"), "$$NOW"]},

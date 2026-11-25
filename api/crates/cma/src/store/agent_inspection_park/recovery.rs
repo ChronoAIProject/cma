@@ -94,6 +94,7 @@ fn current_claim_park(agent: &str) -> Document {
     doc! {
         "_id": agent,
         format!("{FIELD}.version"): 1_i64,
+        format!("{FIELD}.inspection_confirmed"): {"$ne": true},
         "$expr": {"$and": [
             {"$eq": [format!("{marker}.step"), "$record.work.step"]},
             {"$eq": [format!("{marker}.fence"), "$record.work.next_fence"]},

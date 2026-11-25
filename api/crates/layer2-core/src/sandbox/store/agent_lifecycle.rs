@@ -328,6 +328,15 @@ pub trait AgentWorkerStore: Send + Sync {
         Ok(false)
     }
 
+    /// Retire the consumed inspection park before attempting another effect.
+    async fn confirm_agent_inspection(
+        &self,
+        _claimed: &Agent,
+        _binding: &crate::sandbox::RuntimeBinding,
+    ) -> Result<(), SandboxStoreError> {
+        Ok(())
+    }
+
     async fn claim_agent_work_observed(
         &self,
         id: &AgentId,

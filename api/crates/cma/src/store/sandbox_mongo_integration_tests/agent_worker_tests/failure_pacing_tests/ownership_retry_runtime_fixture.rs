@@ -28,12 +28,24 @@ impl HostedBackend for Backend {
     async fn adopt(
         &self,
         handle: &l3::RuntimeHandle,
-        _: &l3::provider::ProviderSandboxRequest,
+        request: &l3::provider::ProviderSandboxRequest,
     ) -> l3::Result<Option<l3::RuntimeObservation>> {
         self.0
             .exchange(handle, l3::wire::RequestFrame::Resources)
             .await?;
-        Ok(None)
+        let meta = &request.metadata;
+        Ok(Some(l3::RuntimeObservation {
+            handle: handle.clone(),
+            sandbox_id: meta["cma/sandbox"].clone(),
+            generation: meta["cma/runtime-generation"].parse().unwrap(),
+            image_sha256: meta["cma/image-sha256"].clone(),
+            spec_fingerprint: meta["cma/spec-sha256"].clone(),
+            runtime_contract: meta["cma/runtime-contract"].clone(),
+            lifecycle: l3::RuntimeLifecycle {
+                state: "running".into(),
+                reason: None,
+            },
+        }))
     }
     async fn provision(
         &self,
@@ -59,9 +71,30 @@ impl HostedBackend for Backend {
         l3::ConversationChannel,
         l3::wire::FencedReceipt<l3::wire::AgentOpenReceipt>,
     )> {
-        self.1
-            .open_agent(handle, launch, resume, settings, updates)
-            .await
+        let Some(conversation) = resume else {
+            return self
+                .1
+                .open_agent(handle, launch, None, settings, updates)
+                .await;
+        };
+        let request = launch.request;
+        Ok((
+            l3::ConversationChannel {
+                input: l3::ConversationInputSender::spawn(1, |_| async { Ok(()) }),
+                conversation_id: Some(conversation.clone()),
+            },
+            l3::wire::FencedReceipt::new(
+                launch.authority_fence,
+                l3::wire::AgentOpenReceipt {
+                    operation_id: request.operation_id,
+                    request_sha256: request.request_sha256,
+                    agent_id: request.agent_id,
+                    cwd: request.cwd,
+                    home: request.home,
+                    conversation_id: Some(conversation),
+                },
+            ),
+        ))
     }
     async fn teardown(&self, handle: &l3::RuntimeHandle) -> l3::Result<()> {
         self.1.teardown(handle).await
@@ -78,6 +111,11 @@ pub(super) struct Counts {
     pub(super) cleanup: AtomicBool,
     restarted: AtomicBool,
     repaired: AtomicBool,
+    hold_first_close: AtomicBool,
+    close_received: tokio::sync::Notify,
+    close_reply: tokio::sync::Notify,
+    close_receipt: std::sync::Mutex<Option<l3::wire::AgentCloseReceipt>>,
+    closes: AtomicUsize,
     pub(super) replace_after_revocation: AtomicBool,
 }
 
@@ -166,10 +204,27 @@ impl Runtime {
         self.counts.repaired.store(true, Ordering::SeqCst);
     }
 
-    pub(super) fn assert_repaired_probe(&self) {
-        assert_eq!(self.counts.challenge.load(Ordering::SeqCst), 2);
-        assert_eq!(self.counts.confirm.load(Ordering::SeqCst), 1);
-        assert_eq!(self.counts.control.load(Ordering::SeqCst), 1);
+    pub(super) fn hold_first_close(&self) {
+        self.counts.hold_first_close.store(true, Ordering::SeqCst);
+    }
+
+    pub(super) async fn close_received(&self) {
+        self.counts.close_received.notified().await;
+    }
+
+    pub(super) fn release_close(&self) {
+        self.counts.close_reply.notify_one();
+    }
+
+    pub(super) fn assert_close_replayed(&self) {
+        assert_eq!(self.counts.closes.load(Ordering::SeqCst), 2);
+        assert!(self.counts.close_receipt.lock().unwrap().is_some());
+    }
+
+    pub(super) fn assert_repaired_probe(&self, controls: usize) {
+        assert_eq!(self.counts.challenge.load(Ordering::SeqCst), controls + 1);
+        assert_eq!(self.counts.confirm.load(Ordering::SeqCst), controls);
+        assert_eq!(self.counts.control.load(Ordering::SeqCst), controls);
         assert_eq!(self.counts.acp.load(Ordering::SeqCst), 0);
     }
 
@@ -335,10 +390,7 @@ async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: 
         } else if path.contains("/runtime/control ") {
             counts.control.fetch_add(1, Ordering::SeqCst);
             if repaired {
-                (
-                    200,
-                    json!(l3::wire::ResponseFrame::Resources(Default::default())),
-                )
+                (200, json!(repair_response(&body, &counts).await))
             } else {
                 (500, json!({}))
             }
@@ -380,5 +432,57 @@ impl l3::HomeVolumeStore for Home {
         _: Option<&l3::HomeVolumeReceipt>,
     ) -> l3::Result<()> {
         panic!("reconnect cannot delete its retained home")
+    }
+}
+
+async fn repair_response(bytes: &[u8], counts: &Counts) -> l3::wire::ResponseFrame {
+    use l3::wire::{AgentCloseReceipt, FencedReceipt, RequestFrame, ResponseFrame};
+    match serde_json::from_slice::<RequestFrame>(bytes).unwrap() {
+        RequestFrame::Resources => ResponseFrame::Resources(Default::default()),
+        RequestFrame::RuntimeStatus(request) => ResponseFrame::RuntimeStatus(l3::RuntimeStatus {
+            agent_browser: false,
+            agent_filesystem: false,
+            agent_attachment_upload: false,
+            agent_skill_install: false,
+            agent_skill_upgrade: false,
+            agent_model_catalog: false,
+            agent_resource_preparation: false,
+            agent_process_restart: false,
+            exact_github_credential_route: false,
+            sandbox_id: request.sandbox_id,
+            generation: request.generation,
+            home_identity: request.home_identity,
+            boot_id: "a".repeat(32),
+            installation_ready: true,
+            credential_ready: true,
+            restore_pending: false,
+            agent_processes: 1,
+        }),
+        RequestFrame::CloseAgent(close) => {
+            let receipt = AgentCloseReceipt {
+                operation_id: close.request.operation_id,
+                request_sha256: close.request.request_sha256,
+                agent_id: close.request.agent_id,
+            };
+            {
+                let mut durable = counts.close_receipt.lock().unwrap();
+                if let Some(previous) = &*durable {
+                    assert_eq!(previous, &receipt);
+                } else {
+                    *durable = Some(receipt.clone());
+                }
+            }
+            if counts.closes.fetch_add(1, Ordering::SeqCst) == 0
+                && counts.hold_first_close.load(Ordering::SeqCst)
+            {
+                counts.close_received.notify_one();
+                counts.close_reply.notified().await;
+            }
+            ResponseFrame::CloseAgent(FencedReceipt::new(close.authority_fence, receipt))
+        }
+        other => panic!(
+            "unexpected repaired runtime request: {:?}",
+            other.operation()
+        ),
     }
 }

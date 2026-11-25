@@ -164,6 +164,7 @@ impl AgentWorker {
             }
             failure
         })?;
+        self.confirm_inspection(agent, &sandbox).await?;
         Ok(AgentContext {
             sandbox,
             workspace,

@@ -1,5 +1,6 @@
 //! Only the bound-runtime read can supply evidence for this disposition.
 use super::super::lifecycle_failure::{LifecycleAttempt, LifecycleTaskFailure, Origin};
+use super::support::WorkerFailure;
 use super::*;
 use layer2_core::agent_ownership::OwnershipToken;
 use layer2_core::sandbox::{RuntimeBinding, Sandbox};
@@ -34,7 +35,32 @@ pub(super) async fn observe<F: Future>(agent: &Agent, sandbox: &Sandbox, read: F
     read.await
 }
 
+pub(super) const INSPECTION_HANDOFF: &str = "agent_inspection_handoff_unconfirmed";
+
 impl AgentWorker {
+    pub(super) async fn confirm_inspection(
+        &self,
+        agent: &Agent,
+        sandbox: &Sandbox,
+    ) -> Result<(), WorkerFailure> {
+        if !self.dependencies.store.agent_inspection_parking_enabled() {
+            return Ok(());
+        }
+        if let Some(binding) = &sandbox.runtime {
+            self.dependencies
+                .store
+                .confirm_agent_inspection(agent, binding)
+                .await
+                .map_err(|_| {
+                    WorkerFailure::retryable(
+                        INSPECTION_HANDOFF,
+                        "inspection handoff could not be confirmed",
+                    )
+                })?;
+        }
+        Ok(())
+    }
+
     pub(super) async fn park_failed_inspection(
         &self,
         attempt: &LifecycleAttempt,

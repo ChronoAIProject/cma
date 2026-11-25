@@ -23,6 +23,7 @@ pub(in crate::store) async fn for_claim(
         return Ok(ClaimPark::Proceed);
     };
     if marker.get_i64("version").ok() != Some(1)
+        || marker.get_bool("inspection_confirmed").unwrap_or(false)
         || marker.get_str("id").is_err()
         || marker.get_str("step").ok() != Some(current.work.step.operation_name())
         || marker.get_str("ready_at").ok() != Some(current.work.ready_at.as_str())

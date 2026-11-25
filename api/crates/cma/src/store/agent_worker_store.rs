@@ -364,6 +364,14 @@ impl AgentWorkerStore for MongoSandboxStore {
         super::agent_inspection_park::park(self, owner, claimed, binding, failure).await
     }
 
+    async fn confirm_agent_inspection(
+        &self,
+        claimed: &Agent,
+        binding: &layer2_core::sandbox::RuntimeBinding,
+    ) -> Result<(), SandboxStoreError> {
+        super::agent_inspection_park::confirm(self, claimed, binding).await
+    }
+
     async fn claim_agent_work_observed(
         &self,
         id: &AgentId,

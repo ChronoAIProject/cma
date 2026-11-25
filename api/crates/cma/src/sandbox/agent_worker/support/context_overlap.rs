@@ -52,6 +52,7 @@ impl AgentWorker {
             "Agent parent reads and runtime inspection completed"
         );
         let (runtime, status) = attached.map_err(adapter_failure)?;
+        self.confirm_inspection(agent, &sandbox).await?;
         Ok(AgentContext {
             sandbox,
             workspace,
