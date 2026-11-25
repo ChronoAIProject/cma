@@ -39,7 +39,8 @@ function reduceCohort(row, workload) {
     const interval = { lower_ms: Math.max(0, at - s.admission_confirmed_ns - m.clock_resolution_ns) / 1e6,
       upper_ms: (at - s.commit_lower_ns + m.clock_resolution_ns) / 1e6 };
     if (s.first_post_ns === null) {
-      if (s.admitted && s.expired_before_start_ns === null) ages.push(interval);
+      if (s.admitted && s.post_attempts === 0 && s.unknown === null
+        && s.expired_before_start_ns === null) ages.push(interval);
       reasons.add('first_write_unknown');
     } else {
       lags.push(interval);

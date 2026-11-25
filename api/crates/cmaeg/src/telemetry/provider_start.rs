@@ -8,6 +8,7 @@ use std::{
 
 pub(crate) const MAX_SAMPLES: usize = 8192;
 const WINDOW: Duration = Duration::from_secs(2 * 60 * 60);
+const CLOCK_RESOLUTION_NS: u64 = 1_000_000;
 
 #[derive(Clone, Debug)]
 pub struct Measurement(Arc<Inner>);
@@ -22,6 +23,7 @@ struct Inner {
 struct State {
     rows: BTreeMap<String, Sample>,
     overflow: bool,
+    window_exceeded: bool,
     active: u64,
     peak: u64,
     executor_attempts: u64,
@@ -90,6 +92,10 @@ impl Measurement {
         let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
         let now = self.now();
         if now > WINDOW.as_nanos() as u64 {
+            if !state.window_exceeded {
+                state.window_exceeded = true;
+                count("measurement_window_exceeded");
+            }
             return;
         }
         if !state.rows.contains_key(id) {
@@ -158,10 +164,11 @@ impl Measurement {
             }
         });
     }
-    pub(crate) fn attempt(&self, id: &str) -> Attempt {
+    pub(crate) fn attempt(&self, id: &str, first_attempt: bool) -> Attempt {
         Attempt {
             measurement: self.clone(),
             id: id.into(),
+            first_attempt,
             written: Arc::new(OnceLock::new()),
         }
     }
@@ -236,7 +243,7 @@ impl Measurement {
             schema_version: 2,
             measurement_enabled: true,
             clock: "process_monotonic_ns",
-            clock_resolution_ns: 1_000_000,
+            clock_resolution_ns: CLOCK_RESOLUTION_NS,
             process: self.0.process.clone(),
             window_ns: now,
             capacity: self.0.capacity,
@@ -254,6 +261,7 @@ impl Measurement {
 pub(crate) struct Attempt {
     measurement: Measurement,
     id: String,
+    first_attempt: bool,
     written: Arc<OnceLock<u64>>,
 }
 impl Attempt {
@@ -265,6 +273,13 @@ impl Attempt {
         self.measurement.update(&self.id, |row, _| {
             row.post_attempts += 1;
             if row.first_post_ns.is_none() {
+                if !self.first_attempt {
+                    if row.post_attempts == 1 {
+                        count("first_start_lag_unknown");
+                    }
+                    row.unknown.get_or_insert("first_post_observation_missing");
+                    return;
+                }
                 row.first_post_ns = Some(at);
                 count("first_started");
                 if let Some((lower, upper)) = start_lag(row, at) {
@@ -326,7 +341,12 @@ fn start_lag(row: &Sample, written_ns: u64) -> Option<(u64, u64)> {
         return None;
     }
     let upper = written_ns.checked_sub(commit_lower)?;
-    Some((written_ns.saturating_sub(confirmed), upper))
+    Some((
+        written_ns
+            .saturating_sub(confirmed)
+            .saturating_sub(CLOCK_RESOLUTION_NS),
+        upper.saturating_add(CLOCK_RESOLUTION_NS),
+    ))
 }
 
 fn count(outcome: &'static str) {

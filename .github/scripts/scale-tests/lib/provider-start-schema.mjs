@@ -29,8 +29,10 @@ function sample(row, window, ids, version) {
   check(row.unknown === null || ['retained_or_uncertain_admission', 'single_target_required',
     'dispatch_refused_or_failed'].includes(row.unknown)
     || (version === 2 && row.unknown === 'first_post_observation_missing'), 'provider_start_unknown_reason_invalid');
-  check((row.first_post_ns !== null) === (row.post_attempts > 0), 'provider_start_post_count_mismatch');
-  check(row.accepted_attempt_post_ns === null || (row.accepted_ns !== null && row.first_post_ns !== null),
+  const unprovedFirstWrite = version === 2 && row.unknown !== null && row.first_post_ns === null && row.post_attempts > 0;
+  check((row.first_post_ns !== null) === (row.post_attempts > 0) || unprovedFirstWrite,
+    'provider_start_post_count_mismatch');
+  check(row.accepted_attempt_post_ns === null || (row.accepted_ns !== null && row.post_attempts > 0),
     'provider_start_accepting_attempt_invalid');
   check(row.admitted || (row.commit_lower_ns === null && row.admission_confirmed_ns === null),
     'provider_start_admission_invalid');
@@ -45,7 +47,7 @@ function sample(row, window, ids, version) {
   ordered('accepted_attempt_post_ns', 'accepted_ns');
   ordered('accepted_ns', 'completed_ns');
   ordered('admission_confirmed_ns', 'expired_before_start_ns');
-  check(row.expired_before_start_ns === null || row.first_post_ns === null, 'provider_start_expiry_after_post');
+  check(row.expired_before_start_ns === null || row.post_attempts === 0, 'provider_start_expiry_after_post');
   check(row.expired_before_start_ns === null || (row.admitted && row.commit_lower_ns !== null
     && row.admission_confirmed_ns !== null && row.unknown === null && row.accepted_ns === null
     && row.completed_ns === null), 'provider_start_expiry_without_original_observation');

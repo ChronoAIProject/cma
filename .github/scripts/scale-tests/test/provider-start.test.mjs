@@ -81,6 +81,19 @@ test('expiry with missing original observation stays BLOCKED without inventing e
   }
 });
 
+test('a proved retry write with an unknown first POST stays out of lag percentiles', () => {
+  const e = versionTwo(fixture());
+  const sample = first(e).measurement.samples[0];
+  sample.first_post_ns = null;
+  sample.unknown = 'first_post_observation_missing';
+  const c = reduceProviderStart(bind(e)).cohorts[0];
+  assert.equal(c.status, 'BLOCKED');
+  assert.equal(c.counts.first_started, 99);
+  assert.equal(c.counts.post_attempts, 100);
+  assert.equal(c.lag_ms.upper.n, 99);
+  assert.equal(c.oldest_unstarted_ms, 'UNKNOWN');
+});
+
 test('both schema versions reject contradictory expiry and version two requires exact fields', () => {
   for (const version of [1, 2]) {
     const e = version === 1 ? fixture() : versionTwo(fixture());

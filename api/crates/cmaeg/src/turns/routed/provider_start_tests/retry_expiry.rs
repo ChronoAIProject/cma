@@ -134,3 +134,54 @@ async fn expiry_without_original_post_observation_is_unknown_even_with_known_adm
         assert_eq!(http.seen().len(), 1);
     }
 }
+
+#[tokio::test]
+async fn retry_after_another_dispatcher_post_is_not_a_first_write_sample() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+    let measurement = Measurement::new(4).unwrap();
+    let setup = setup(Some(measurement.clone())).await;
+    let http = HttpServer::start().await;
+    {
+        let mut state = http.memory.lock().unwrap();
+        state.config.post_status = 429;
+        state.config.post_error_body = Some(
+            json!({"error":{"type":"invalid_request_error","code":"conversation_not_ready"}})
+                .to_string(),
+        );
+    }
+    let identity = &setup.plan.identity;
+    let target = &setup.target().id;
+    assert!(matches!(
+        http_port(&setup, &http, None)
+            .dispatcher()
+            .dispatch(identity, target, "remote-owner")
+            .await
+            .unwrap(),
+        DispatchOutcome::Retry
+    ));
+    {
+        let mut state = http.memory.lock().unwrap();
+        state.config.post_status = 200;
+        state.config.post_error_body = None;
+    }
+    assert!(matches!(
+        http_port(&setup, &http, Some(measurement.clone()))
+            .dispatcher()
+            .dispatch(identity, target, "admission-owner")
+            .await
+            .unwrap(),
+        DispatchOutcome::Replay { .. }
+    ));
+    assert_eq!(http.seen().len(), 2);
+    let row = measurement.snapshot().samples.remove(0);
+    assert!(row.admission_confirmed_ns.is_some());
+    assert_eq!(row.first_post_ns, None);
+    assert_eq!(row.post_attempts, 1);
+    assert!(row.accepted_attempt_post_ns.is_some());
+    assert_eq!(row.unknown, Some("first_post_observation_missing"));
+    assert!(!recorder
+        .handle()
+        .render()
+        .contains(crate::telemetry::names::PROVIDER_START_LAG));
+}

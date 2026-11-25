@@ -25,11 +25,11 @@ fn retry_and_replay_preserve_original_admission_and_first_socket_write() {
     let first = m.snapshot();
     m.offered("synthetic");
     m.admitted("synthetic", 999, 1, None);
-    let attempt = m.attempt("synthetic");
+    let attempt = m.attempt("synthetic", true);
     let at = Instant::now();
     attempt.written(at);
     attempt.written(at);
-    let retry = m.attempt("synthetic");
+    let retry = m.attempt("synthetic", false);
     retry.written(Instant::now());
     retry.accepted();
     let rows = m.snapshot().samples;
@@ -98,9 +98,12 @@ fn provider_start_lag_reports_only_proven_single_target_bounds() {
     let single = &snapshot.samples[0];
     let commit = single.commit_lower_ns.unwrap();
     let confirmed = single.admission_confirmed_ns.unwrap();
-    let written = confirmed + 10;
-    assert_eq!(start_lag(single, written), Some((10, written - commit)));
-    assert_eq!(start_lag(single, commit), Some((0, 0)));
+    let written = confirmed + CLOCK_RESOLUTION_NS + 10;
+    assert_eq!(
+        start_lag(single, written),
+        Some((10, written - commit + CLOCK_RESOLUTION_NS))
+    );
+    assert_eq!(start_lag(single, commit), Some((0, CLOCK_RESOLUTION_NS)));
     for row in &snapshot.samples[1..] {
         assert_eq!(start_lag(row, written), None);
     }

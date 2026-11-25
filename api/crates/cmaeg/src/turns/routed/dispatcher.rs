@@ -237,7 +237,10 @@ impl Dispatcher {
             self.journal.transition(lease, Phase::Unknown).await?;
             return Ok(RunResult::Done(DispatchOutcome::Unknown));
         }
-        if lease.state.phase == Phase::Pending {
+        // Pending has no prepared body or durable start marker. A Prepared
+        // target may already have posted from another owner and been refused.
+        let first_attempt = lease.state.phase == Phase::Pending;
+        if first_attempt {
             if let Err(error) = self.prepare_pending(plan, target, lease, current).await {
                 self.observe_preparation_failure(plan, target, &error).await;
                 return Err(error);
@@ -287,7 +290,7 @@ impl Dispatcher {
             .plans
             .start_measurement
             .as_ref()
-            .map(|m| m.attempt(&plan.admission_id));
+            .map(|m| m.attempt(&plan.admission_id, first_attempt));
         let timing = attempt.clone().map(|a| {
             crate::telemetry::timing::IngressTiming::with_provider_start("routed", Some(a))
         });
