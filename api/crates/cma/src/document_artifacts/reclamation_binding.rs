@@ -63,8 +63,22 @@ impl quota::MongoDocumentQuotaStore {
             return Err(DocumentError::Conflict);
         }
         let result = self.rows.update_one(doc! {"_id":quota::STATE, "phase":"ready", "activation_id":activation, "inventory_sha256":inventory,
-            "$or":[{"storage_namespace_sha256":{"$exists":false}},{"storage_namespace_sha256":namespace}]}, vec![doc! {"$set":{"storage_namespace_sha256":namespace, "storage_namespace_bound_at":{"$ifNull":["$storage_namespace_bound_at","$$NOW"]}}}]).await.map_err(quota::unavailable)?;
+            "$or":[{"storage_namespace_sha256":{"$exists":false}},{"storage_namespace_sha256":namespace}]}, vec![doc! {"$set":{"storage_namespace_sha256":namespace, "source_generations":true, "storage_namespace_bound_at":{"$ifNull":["$storage_namespace_bound_at","$$NOW"]}}}]).await.map_err(quota::unavailable)?;
         if result.matched_count != 1 {
+            return Err(DocumentError::Conflict);
+        }
+        let bound = self
+            .rows
+            .find_one(doc! {"_id":quota::STATE})
+            .max_time(quota::IO)
+            .await
+            .map_err(quota::unavailable)?
+            .ok_or(DocumentError::Unavailable)?;
+        let verified = Binding::read(&bound, namespace)?;
+        if verified.activation != activation
+            || verified.inventory != inventory
+            || !quota::generation_enabled(&bound)?
+        {
             return Err(DocumentError::Conflict);
         }
         Ok(())

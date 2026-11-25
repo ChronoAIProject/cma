@@ -22,8 +22,9 @@ use std::collections::BTreeMap;
 mod discovery;
 #[path = "reclamation_identity.rs"]
 mod identity;
-pub(super) use discovery::{DISCOVERY_INTERVAL, DISCOVERY_SLICE};
+pub(super) use discovery::{ScanLane, DISCOVERY_INTERVAL, DISCOVERY_SLICE};
 
+#[cfg(test)]
 const LIMIT: i64 = 32;
 pub(super) const ACCOUNTING_LIMIT: i64 = 96;
 const AGE_MS: i64 = 60 * 60 * 1000;
@@ -45,6 +46,7 @@ pub(super) struct Candidate {
 pub(super) struct AccountingEntry {
     pub key: String,
     pub candidate: Option<Candidate>,
+    pub error: Option<DocumentError>,
 }
 
 enum CandidateMode {
@@ -73,33 +75,63 @@ impl ReclamationStore {
         self.ledger.create_index(IndexModel::builder().keys(
             doc! { "kind": 1, "authority_version": 1, "state": 1, "claim_until": 1, "_id": 1 },
         ).build()).await.map_err(quota::unavailable)?;
+        self.ledger
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"kind":1,"authority_version":1,"state":1,"_id":1,"claim_until":1})
+                    .build(),
+            )
+            .await
+            .map_err(quota::unavailable)?;
         Ok(())
     }
 
+    pub(super) async fn expired_entries(
+        &self,
+        after: Option<&str>,
+        now: DateTime,
+        limit: i64,
+    ) -> Result<Vec<AccountingEntry>, DocumentError> {
+        let mut rows = self
+            .ledger
+            .find(doc! {
+                "kind":"source_commit", "authority_version": AUTHORITY_VERSION,
+                "state":"delete_pending", "claim_until":{"$lte":now},
+                "_id":{"$gt":after.unwrap_or("source_commit:"),"$lt":"source_commit;"},
+            })
+            .sort(doc! {"_id":1})
+            .limit(limit)
+            .max_time(quota::IO)
+            .await
+            .map_err(quota::unavailable)?;
+        let mut entries = Vec::new();
+        while let Some(row) = rows.try_next().await.map_err(quota::unavailable)? {
+            let key = row
+                .get_str("_id")
+                .map_err(|_| DocumentError::Corrupt)?
+                .to_owned();
+            let candidate = Authority::decode(&row).map(|authority| {
+                Some(Candidate {
+                    source: authority.source.clone(),
+                    mode: CandidateMode::Current(authority),
+                })
+            });
+            entries.push(AccountingEntry::from_result(key, candidate));
+        }
+        Ok(entries)
+    }
+
+    #[cfg(test)]
     pub(super) async fn expired_claims(
         &self,
         now: DateTime,
     ) -> Result<Vec<Candidate>, DocumentError> {
-        let mut candidates = Vec::new();
-        let mut cursor = self
-            .ledger
-            .find(doc! {
-                "kind": "source_commit", "authority_version": AUTHORITY_VERSION,
-                "state": "delete_pending", "claim_until": { "$lte": now },
-            })
-            .sort(doc! { "claim_until": 1, "_id": 1 })
-            .limit(LIMIT)
-            .max_time(quota::IO)
-            .await
-            .map_err(quota::unavailable)?;
-        while let Some(row) = cursor.try_next().await.map_err(quota::unavailable)? {
-            let authority = Authority::decode(&row)?;
-            candidates.push(Candidate {
-                source: authority.source.clone(),
-                mode: CandidateMode::Current(authority),
-            });
-        }
-        Ok(candidates)
+        Ok(self
+            .expired_entries(None, now, LIMIT)
+            .await?
+            .into_iter()
+            .filter_map(|entry| entry.candidate)
+            .collect())
     }
 
     pub(super) async fn accounting_page(
@@ -124,8 +156,12 @@ impl ReclamationStore {
         let sources = rows
             .iter()
             .map(quota::source_from_charge)
-            .collect::<Result<Vec<_>, _>>()?;
-        let keys: Vec<_> = sources.iter().map(object_authority::key).collect();
+            .collect::<Vec<_>>();
+        let keys: Vec<_> = sources
+            .iter()
+            .filter_map(|source| source.as_ref().ok())
+            .map(object_authority::key)
+            .collect();
         let markers: Vec<Document> = self
             .ledger
             .find(doc! {"_id":{"$in":&keys}})
@@ -146,33 +182,16 @@ impl ReclamationStore {
             })
             .collect::<Result<BTreeMap<_, _>, DocumentError>>()?;
         let mut page = Vec::new();
-        for ((row, source), marker_key) in rows.into_iter().zip(sources).zip(keys) {
+        for (row, source) in rows.into_iter().zip(sources) {
             let key = row
                 .get_str("_id")
                 .map_err(|_| DocumentError::Corrupt)?
                 .to_owned();
-            let marker = markers.remove(&marker_key);
-            let mode = match marker {
-                Some(row) if row.contains_key("authority_version") => {
-                    let authority = Authority::decode(&row)?;
-                    if authority.source != source {
-                        return Err(DocumentError::Corrupt);
-                    }
-                    let due = match authority.state {
-                        State::Reserved | State::Published => {
-                            authority.updated_at <= mature_before(now)
-                        }
-                        State::DeletePending | State::Settled => false,
-                    };
-                    due.then_some(CandidateMode::Current(authority))
-                }
-                other if legacy_mature => Some(CandidateMode::Legacy(other)),
-                _ => None,
-            };
-            page.push(AccountingEntry {
-                key,
-                candidate: mode.map(|mode| Candidate { source, mode }),
+            let candidate = source.and_then(|source| {
+                let marker = markers.remove(&object_authority::key(&source));
+                candidate_from(source, marker, now, legacy_mature)
             });
+            page.push(AccountingEntry::from_result(key, candidate));
         }
         Ok(page)
     }
@@ -423,6 +442,46 @@ impl ReclamationStore {
         }
         Ok(())
     }
+}
+
+impl AccountingEntry {
+    fn from_result(key: String, result: Result<Option<Candidate>, DocumentError>) -> Self {
+        match result {
+            Ok(candidate) => Self {
+                key,
+                candidate,
+                error: None,
+            },
+            Err(error) => Self {
+                key,
+                candidate: None,
+                error: Some(error),
+            },
+        }
+    }
+}
+
+fn candidate_from(
+    source: DocumentSourceReservation,
+    marker: Option<Document>,
+    now: DateTime,
+    legacy_mature: bool,
+) -> Result<Option<Candidate>, DocumentError> {
+    let mode = match marker {
+        Some(row) if row.contains_key("authority_version") => {
+            let authority = Authority::decode(&row)?;
+            if authority.source != source {
+                return Err(DocumentError::Corrupt);
+            }
+            let due = matches!(authority.state, State::Reserved | State::Published)
+                && authority.updated_at <= mature_before(now);
+            due.then_some(CandidateMode::Current(authority))
+        }
+        Some(row) if row != source_marker(&source) => return Err(DocumentError::Corrupt),
+        other if legacy_mature => Some(CandidateMode::Legacy(other)),
+        _ => None,
+    };
+    Ok(mode.map(|mode| Candidate { source, mode }))
 }
 
 enum Action<'a> {

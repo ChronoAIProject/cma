@@ -26,12 +26,12 @@ async fn document_quota_reclamation_preserves_charge_until_the_claim_is_confirme
     store.ensure_indexes().await.unwrap();
     let quota = store.quota(true);
     let baseline = activate(&quota, &database, &[]).await;
+    let source = source("owner", 1, b"body");
+    quota.reserve(&source).await.unwrap();
     quota
         .bind_storage(&baseline.activation, &baseline.digest, &namespace())
         .await
         .unwrap();
-    let source = source("owner", 1, b"body");
-    quota.reserve(&source).await.unwrap();
     let reclaimer = ReclamationStore::new(store.clone(), namespace());
     reclaimer.ensure_indexes().await.unwrap();
     reclaimer.enable_generations().await.unwrap();
@@ -261,10 +261,6 @@ async fn document_quota_reclamation_upgrades_a_marker_for_an_identical_source_ed
     predecessor.ensure_indexes().await.unwrap();
     let quota = predecessor.quota(true);
     let baseline = activate(&quota, &database, &[]).await;
-    quota
-        .bind_storage(&baseline.activation, &baseline.digest, &namespace())
-        .await
-        .unwrap();
     let blobs = Arc::new(memory::MemoryDocumentBlobs::default());
     let owner = Caller::new(
         SubjectId::new("owner"),
@@ -286,6 +282,10 @@ async fn document_quota_reclamation_upgrades_a_marker_for_an_identical_source_ed
                 origin_agent_id: None,
             },
         )
+        .await
+        .unwrap();
+    quota
+        .bind_storage(&baseline.activation, &baseline.digest, &namespace())
         .await
         .unwrap();
     let first = predecessor.get(&created.id).await.unwrap().unwrap();

@@ -1,5 +1,7 @@
 //! Supervised, bounded recovery of durable Document storage effects.
-use super::reclamation_store::{Candidate, ReclamationStore, DISCOVERY_INTERVAL, DISCOVERY_SLICE};
+use super::reclamation_store::{
+    Candidate, ReclamationStore, ScanLane, DISCOVERY_INTERVAL, DISCOVERY_SLICE,
+};
 use super::MongoDocumentStore;
 use crate::document_storage::maintenance::StorageMaintenance;
 use layer2_core::document_artifacts::DocumentError;
@@ -64,12 +66,31 @@ impl ReclamationWorker {
         if Instant::now() < self.retry_at || !self.store.ready().await? {
             return Ok(());
         }
-        for candidate in self.store.expired_claims(now).await?.into_iter().take(4) {
-            self.reclaim(&candidate, now).await?;
+        let lane = ScanLane::Effect;
+        let cursor = self.store.cursor(lane).await?;
+        let page = self
+            .store
+            .expired_entries(cursor.after.as_deref(), now, 4)
+            .await?;
+        let mut next = None;
+        let mut resolved = Vec::new();
+        for entry in page {
+            let outcome = match (entry.error, entry.candidate) {
+                (Some(error), _) => Err(error),
+                (None, Some(candidate)) => self.reclaim(&candidate, now).await,
+                (None, None) => Ok(()),
+            };
+            match outcome {
+                Ok(()) => resolved.push(entry.key.clone()),
+                Err(error) => self.store.repair(lane, &entry.key, error, now).await?,
+            }
+            next = Some(entry.key);
             if Instant::now() < self.retry_at {
                 break;
             }
         }
+        self.store.resolved(lane, &resolved, now).await?;
+        self.store.advance_cursor(lane, cursor, next).await?;
         Ok(())
     }
 

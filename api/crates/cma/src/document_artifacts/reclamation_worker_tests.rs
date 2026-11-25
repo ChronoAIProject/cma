@@ -34,14 +34,16 @@ async fn verify_worker_accounting_page(generation_writes: bool) {
     documents.ensure_indexes().await.unwrap();
     let quota = documents.quota(true);
     let baseline = activate(&quota, &database, &[]).await;
-    quota
-        .bind_storage(
-            &baseline.activation,
-            &baseline.digest,
-            &storage.namespace_sha256(),
-        )
-        .await
-        .unwrap();
+    if generation_writes {
+        quota
+            .bind_storage(
+                &baseline.activation,
+                &baseline.digest,
+                &storage.namespace_sha256(),
+            )
+            .await
+            .unwrap();
+    }
     let service = DocumentService::with_storage_quota(
         Arc::new(documents.clone()),
         Arc::new(memory::MemoryDocumentBlobs::default()),
@@ -71,6 +73,14 @@ async fn verify_worker_accounting_page(generation_writes: bool) {
         );
     }
     if !generation_writes {
+        quota
+            .bind_storage(
+                &baseline.activation,
+                &baseline.digest,
+                &storage.namespace_sha256(),
+            )
+            .await
+            .unwrap();
         // An unmarked predecessor source can still have a live reference.
         let upgraded = documents.clone().with_generation_writes(true).quota(true);
         for document in &created {
@@ -114,6 +124,9 @@ async fn verify_worker_accounting_page(generation_writes: bool) {
         seed_expired_claims(&quota).await
     };
 
+    // A corrupt expired authority sorts before the real claim but has no storage right.
+    quota.rows.insert_one(doc! {"_id":"source_commit:000-invalid", "kind":"source_commit", "authority_version":1_i64,
+        "document_schema_version":1_i64,"state":"delete_pending","claim_until":DateTime::from_millis(1)}).await.unwrap();
     let key = DocumentSourceReservation {
         owner_hash: digest(b"owner"),
         document_id: deleted.id,
@@ -125,27 +138,25 @@ async fn verify_worker_accounting_page(generation_writes: bool) {
         peer.next()
             .await
             .json(serde_json::json!({"access_token":"fixture", "expires_in":3600}));
-        for expired in &expired {
+        let mut observed = std::collections::BTreeSet::new();
+        for _ in 0..=expired.len() {
             let request = peer.next().await;
             assert_eq!(request.method, reqwest::Method::DELETE);
             let query: std::collections::BTreeMap<_, _> =
                 url::form_urlencoded::parse(request.uri.query().unwrap().as_bytes())
                     .into_owned()
                     .collect();
-            assert_eq!(query["key"], expired.object_key());
             assert_eq!(query["mutationGeneration"], "2");
-            request.respond(404, "");
+            assert!(observed.insert(query["key"].clone()));
+            if query["key"] == key {
+                request.json(serde_json::json!({"data":{"deleted":true,"key":key,"generation":2,"fenceVersion":1}}));
+            } else {
+                assert!(expired
+                    .iter()
+                    .any(|source| source.object_key() == query["key"]));
+                request.respond(404, "");
+            }
         }
-        let request = peer.next().await;
-        assert_eq!(request.method, reqwest::Method::DELETE);
-        let query: std::collections::BTreeMap<_, _> =
-            url::form_urlencoded::parse(request.uri.query().unwrap().as_bytes())
-                .into_owned()
-                .collect();
-        assert_eq!(query["key"], key);
-        assert_eq!(query["mutationGeneration"], "2");
-        request.json(serde_json::json!({ "data": { "deleted": true, "key": key,
-            "generation": 2, "fenceVersion": 1 } }));
     };
     let after_lease = DateTime::from_millis(now.timestamp_millis() + 91_000);
     let passes = async {
@@ -158,6 +169,14 @@ async fn verify_worker_accounting_page(generation_writes: bool) {
     .await
     .unwrap();
     assert_eq!(usage(&quota, "owner").await, [4, 16, 4]);
+    assert!(quota
+        .rows
+        .find_one(
+            doc! {"kind":"reclamation_repair","row_key":"source_commit:000-invalid","lane":"effect"}
+        )
+        .await
+        .unwrap()
+        .is_some());
     for source in &expired {
         let charge = object_row(source).unwrap();
         assert_eq!(
