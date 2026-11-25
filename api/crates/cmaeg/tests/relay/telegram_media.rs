@@ -107,8 +107,29 @@ async fn nyxid_media_shapes_are_refused_off_and_admitted_on() {
     }
 }
 
+#[test]
+fn captioned_relay_photo_is_correlated_on_refusal_and_delivered_when_enabled() {
+    // The relay counters belong to the process. Keep this case from changing
+    // the exact deltas asserted by the other Telegram media tests.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "telegram_media::captioned_relay_photo_is_correlated_on_refusal_and_delivered_when_enabled_child",
+            "--ignored",
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[tokio::test]
-async fn captioned_relay_photo_is_correlated_on_refusal_and_delivered_when_enabled() {
+#[ignore = "runs in a separate process through the captioned relay photo test"]
+async fn captioned_relay_photo_is_correlated_on_refusal_and_delivered_when_enabled_child() {
     use axum::body::Body;
     use cmaeg::{http::callbacks, turns::observer::ActivityObserver};
     use cmaeg_core::ids::{EventId, RecordId};
