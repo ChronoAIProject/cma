@@ -26,10 +26,10 @@ RELEASE_AUDITS = {
     "cma": (("cma", "cma-allocator-qualification", "cma-am-auth",
              "cma-am-mongo-primitives", "cma-am-reporting", "cma-qualification",
              "cma-service-auth", "layer1-public", "layer2-core", "layer3-adapter"),
-            "55d60345cc88ed28033801fe053185d6848826552629cf1b804c3e21915cb938", "a8e5ebe19b07fa9a45dfb5f5234b22582424de55ff85006b0f06689973af600c"),
+            "5c78148ce2ae527cc12d66c5e09ce9694e8c53d33da1eef1be6e75cc45a48bee", "b277864d8fac0c771e1da327f8840556b6c305a076d7fef59ff0f2cc64cf72bd"),
     "cmaeg": (("cma-allocator-qualification", "cma-service-auth", "cmaeg", "cmaeg-core",
                "cmaeg-engine", "cmaeg-execution", "cmaeg-http"),
-              "24eeaed8b82086e9a1effacc44957622bdba9f9503f53a24b0c1bec9c815aebb", "8ac8174523d6d2a59f5b5f4012b9b8e36c0fbf5eed3efe8072788f529e8ee949"),
+              "790fb6d60b917a3100fa6a411f40677b7781d089283370026abfb634172cb6af", "41675341237c59c2ff996d93f1b0fbf82ee69290587ede2c732c37efd458fabf"),
 }
 COMPILER_ENV = (
     "AR", "CC", "CFLAGS", "CXX", "CXXFLAGS", "LDFLAGS", "RUSTC", "RUSTFLAGS",

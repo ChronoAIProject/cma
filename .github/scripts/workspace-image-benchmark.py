@@ -163,7 +163,8 @@ def seal_seed(tool, bundle, builder, reserved, source, receipt):
     key = CargoKey(key.family.replace("cma-cd-cargo-v3-", "cma-cd-cargo-v4-", 1), key.graph, key.source)
     started = time.monotonic()
     tool.transfer("extract", bundle, builder.name, namespace=builder.namespace,
-                  timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES)
+                  timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES,
+                  compact_registry=reserved["component"] == "am")
     receipt.update(export_seconds=round(time.monotonic() - started, 3),
                    compressed_bytes=sum(item.stat().st_size for item in bundle.glob("*.tar.gz")),
                    expanded_limit_exceeded=(bundle / "oversize").exists())

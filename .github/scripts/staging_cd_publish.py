@@ -272,7 +272,8 @@ def main():
                             prepared_checksum = prepared.sha256
                             reused_prepared.append(True)
                             if prepared.cache_namespace is not None:
-                                cache = BuildCache(root, env, source, reservation["component"])
+                                cache = BuildCache(root, env, source, reservation["component"],
+                                                   revision=reservation["source"])
                                 cache.namespace = prepared.cache_namespace
                         else:
                             archive = try_reuse(release, directory, api, env.get("GH_TOKEN"),
