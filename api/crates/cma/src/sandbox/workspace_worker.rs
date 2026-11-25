@@ -156,7 +156,9 @@ impl WorkspaceWorker {
         {
             Ok(receipt) if valid_prepare_receipt(&request, &receipt, &workspace.path) => {
                 let mut next = workspace;
-                if let WorkspaceSource::RepositorySnapshot { source_commit, .. } = &mut next.source
+                if let WorkspaceSource::RepositorySnapshot { source_commit, .. }
+                | WorkspaceSource::PublicRepositorySnapshot { source_commit, .. } =
+                    &mut next.source
                 {
                     *source_commit = receipt.source_commit;
                 }

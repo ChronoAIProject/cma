@@ -76,6 +76,9 @@ fn valid_prepare_request(
                         crate::paths::validate_selector(reference, "repository ref").is_ok()
                     })
             }
+            layer3_adapter::WorkspaceSource::PublicRepositorySnapshot { url, commit } => {
+                layer3_adapter::public_repository_archive_url(url, commit).is_some()
+            }
             layer3_adapter::WorkspaceSource::Init => true,
         }
 }
@@ -141,6 +144,9 @@ fn valid_workspace_receipt(
         && match request.source {
             layer3_adapter::WorkspaceSource::RepositorySnapshot { .. } => {
                 receipt.source_commit.as_deref().is_some_and(valid_commit)
+            }
+            layer3_adapter::WorkspaceSource::PublicRepositorySnapshot { ref commit, .. } => {
+                receipt.source_commit.as_ref() == Some(commit)
             }
             _ => receipt.source_commit.is_none(),
         }

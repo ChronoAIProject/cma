@@ -109,12 +109,8 @@ impl ControlPlaneComposition {
             stores.agent_lifecycle.clone(),
             Some(stores.sandbox_model.clone()),
             Some(adapter::desktop_creation(config, adapter.clone(), &stores)?),
-        )
-        .with_released_runtime(stores.released_runtime.clone())
-        .with_task_experience(config.task_experience.clone())
-        .with_session_guidance(config.features.session_guidance_v4, config.features.session_guidance_v5)
-        .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
-        .with_repository_preflight_config(config, broker.clone());
+        );
+        let inline_lifecycle = runtime::configure_inline_lifecycle(config, &stores, inline_lifecycle, broker.clone());
         let lifecycle_drain = inline_lifecycle.drain_handle();
         if let Some(manager) = &agent_manager {
             manager.register_lifecycle(lifecycle_drain.clone())?;

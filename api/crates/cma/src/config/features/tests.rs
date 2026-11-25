@@ -32,6 +32,21 @@ fn startup_health_serving_requires_a_strict_opt_in() {
 }
 
 #[test]
+fn empty_warm_pool_startup_requires_a_strict_opt_in() {
+    let key = "CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |name| {
+            Ok((name == key).then_some(value).flatten().map(str::to_owned))
+        })
+        .unwrap();
+        assert_eq!(flags.am_empty_warm_pool_startup, expected);
+    }
+    assert!(
+        FeatureFlags::from_lookup(&mut |name| Ok((name == key).then(|| "yes".into()))).is_err()
+    );
+}
+
+#[test]
 fn document_quotas_require_an_independent_strict_opt_in() {
     let key = "CHRONO_DOCUMENT_QUOTAS_ENABLED";
     for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {

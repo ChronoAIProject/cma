@@ -18,7 +18,9 @@ pub(in crate::store) mod home_backup_catalog;
 mod index_inventory;
 mod index_plan;
 mod index_toolkit;
+pub(in crate::store) mod measured_batches;
 pub(in crate::store) mod measured_custody;
+pub(in crate::store) mod measured_index;
 pub(in crate::store) mod opening_index;
 mod sandbox_usage_capture;
 mod steps;
@@ -71,6 +73,10 @@ pub(in crate::store) async fn require_command_cohort_index(
         return Err("Command cohort index is missing");
     }
     Ok(uuid.clone())
+}
+
+pub(in crate::store) async fn measured_batches_ready(database: &mongodb::Database) -> Result<bool> {
+    Ok(measured_batches::inspect(database).await?.is_empty())
 }
 
 pub(in crate::store) async fn measured_custody_ready(database: &mongodb::Database) -> Result<bool> {
@@ -204,7 +210,11 @@ async fn apply_indexes(
         .map_err(|_| "migration requires a supported replica set or mongos")?;
     if matches!(
         step,
-        Step::BindingIndexes | Step::MeasuredCustody | Step::AgentLogActiveProofs
+        Step::BindingIndexes
+            | Step::MeasuredCustody
+            | Step::MeasuredBatches
+            | Step::MeasuredIndex
+            | Step::AgentLogActiveProofs
     ) {
         step.inspect(database).await?;
     }

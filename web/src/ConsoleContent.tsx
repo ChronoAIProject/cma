@@ -71,7 +71,10 @@ export function ConsoleContent({
   const surfaceRef = useViewArrival(routePath(route), true, false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const selectedAgent = route.kind === 'agent' ? route.agentId : undefined;
-  const { panel, setPanel, detailsOpen, setDetailsOpen } = useAgentPanel(user.id, selectedAgent);
+  const { panel, setPanel, setComputerOpen, detailsOpen, setDetailsOpen } = useAgentPanel(
+    user.id,
+    selectedAgent,
+  );
   const [positions] = useState(() => new AgentViewPositions());
   const viewPosition = useMemo(() => positions.forAgent(selectedAgent), [positions, selectedAgent]);
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
@@ -218,7 +221,7 @@ export function ConsoleContent({
         detail={shared}
         onAccessChanged={agentAccess.reload}
         filesOpen={panel !== undefined && panel !== 'details'}
-        onFilesOpenChange={(open) => setPanel(open ? 'browser' : undefined)}
+        onFilesOpenChange={setComputerOpen}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
         onNavigate={onNavigate}
@@ -242,7 +245,7 @@ export function ConsoleContent({
           accessAuthorized={agentAccess.personalReady && !accessUncertain}
           firstSendContext={{ authEpoch, visible: visible && !user.visitor }}
           filesOpen={panel !== undefined && panel !== 'details'}
-          onFilesOpenChange={(open) => setPanel(open ? 'browser' : undefined)}
+          onFilesOpenChange={setComputerOpen}
           detailsOpen={detailsOpen}
           onDetailsOpenChange={setDetailsOpen}
           onNavigate={onNavigate}

@@ -60,6 +60,15 @@ pub trait NativePoolControl: Send + Sync {
         replicas: u32,
     ) -> Result<NativePoolStatus>;
     async fn inventory(&self) -> Result<Vec<NativePoolStatus>>;
+    /// Read the exact pool and its admission barrier from the provider.
+    async fn observe_admitting_pool(
+        &self,
+        _binding: &NativePoolBinding,
+    ) -> Result<NativePoolStatus> {
+        Err(crate::AdapterError::Unsupported(
+            "native pool admission observation is unavailable".into(),
+        ))
+    }
     async fn resize(&self, binding: &NativePoolBinding, replicas: u32) -> Result<NativePoolStatus>;
     /// Apply the original durable target generation, retaining it across retries.
     /// A provider without receiver fencing cannot serve replica-mode resizing.
@@ -122,6 +131,12 @@ impl NativePoolControl for AgentSandboxPools {
     }
     async fn inventory(&self) -> Result<Vec<NativePoolStatus>> {
         self.inventory().await
+    }
+    async fn observe_admitting_pool(
+        &self,
+        binding: &NativePoolBinding,
+    ) -> Result<NativePoolStatus> {
+        self.observe_admitting_pool(binding).await
     }
     async fn resize(&self, binding: &NativePoolBinding, replicas: u32) -> Result<NativePoolStatus> {
         self.resize(binding, replicas).await
