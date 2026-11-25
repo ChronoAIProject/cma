@@ -418,7 +418,15 @@ async fn observe_takeover(
             3
         } else {
             assert_eq!(advanced.work.step, AgentWorkStep::None);
-            assert_eq!(advanced.conversation, parked.conversation);
+            let mut expected_conversation = parked.conversation.clone();
+            expected_conversation.last_seq += 1;
+            assert_eq!(advanced.conversation, expected_conversation);
+            let completion = second
+                .agent_log(&agent.id, parked.conversation.last_seq, 2)
+                .await
+                .unwrap();
+            assert_eq!(completion.len(), 1);
+            assert_eq!(completion[0].kind, AgentLogKind::WorkStepCompleted { step });
             2
         };
         runtime.assert_repaired_probe(controls);
