@@ -151,8 +151,10 @@ impl WorkerCredentials {
         version: u64,
         blob: &[u8],
     ) -> Result<(), RecordError> {
-        let (payload, _) = open_retained_channel(&self.keys, record_id, version, blob)
-            .map_err(|_| RecordError::Rejected("cannot classify sealed channel credentials".into()))?;
+        let (payload, _) =
+            open_retained_channel(&self.keys, record_id, version, blob).map_err(|_| {
+                RecordError::Rejected("cannot classify sealed channel credentials".into())
+            })?;
         let definition: ChannelDefinition = serde_json::from_slice(&payload.payload)
             .map_err(|_| RecordError::Rejected("cannot classify channel definition".into()))?;
         definition

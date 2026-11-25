@@ -3,10 +3,10 @@ use super::definition::{
     build_definition, build_update, channel_pointer, validate_create_request,
     validate_update_request, ChannelCreateRequest, ChannelUpdateRequest, SourceRequest,
 };
-pub use super::inspection::{load, load_by_record};
 pub(crate) use super::inspection::inspect;
-pub use super::lifecycle::{delete, rekey};
+pub use super::inspection::{load, load_by_record};
 pub(crate) use super::lifecycle::retire_unready;
+pub use super::lifecycle::{delete, delete_legacy, rekey};
 pub use super::state::{
     CreatedChannel, LoadedChannel, ManagementError, ManagementState, RecordedChannel,
 };

@@ -92,10 +92,14 @@ pub async fn import_with(
             tracking_checked = true;
         }
         let records = db.collection_with_options::<Document>(kind.collection(), options.clone());
-        let id = desired.get_str("_id").map_err(|_| RecordError::Rejected("invalid record ID".into()))?;
+        let id = desired
+            .get_str("_id")
+            .map_err(|_| RecordError::Rejected("invalid record ID".into()))?;
         let query = doc! {"_id":id};
         if kind == RecordKind::Channel {
-            let version = desired.get_i64("version").ok()
+            let version = desired
+                .get_i64("version")
+                .ok()
                 .and_then(|version| u64::try_from(version).ok())
                 .ok_or_else(|| RecordError::Rejected("invalid imported channel version".into()))?;
             let blob = desired

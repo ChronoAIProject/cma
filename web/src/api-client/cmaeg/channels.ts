@@ -97,6 +97,22 @@ export class CmaegChannels {
     );
   }
 
+  retireLegacyChannelRecord(
+    recordId: string,
+    expectedVersion: number,
+    options: ChannelRecordManagementOptions = {},
+  ) {
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1)
+      throw new ValidationError('expectedVersion must be a positive safe integer');
+    return requestVoid(
+      this.config,
+      query(`/v1/channel-records/${segment(recordId)}/management`, {
+        expected_version: expectedVersion,
+      }),
+      { ...options, method: 'DELETE', expectedStatus: 204, headers: ownerHeaders(options.owner) },
+    );
+  }
+
   updateChannel(channelId: string, body: ChannelUpdateRequest, options: OperationOptions = {}) {
     return read(this.config, `/v1/channels/${segment(channelId)}`, ChannelResponseSchema, {
       ...options,

@@ -56,9 +56,13 @@ pub async fn load_by_record(
             RecordError::NotFound => ManagementError::NotFound,
             other => ManagementError::Record(other),
         })?;
-    let (opened, retirement_expected_version) =
-        open_retained_channel(&state.master_keys, record_id.as_str(), record.version, &record.blob)
-            .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
+    let (opened, retirement_expected_version) = open_retained_channel(
+        &state.master_keys,
+        record_id.as_str(),
+        record.version,
+        &record.blob,
+    )
+    .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
     let definition: ChannelDefinition = serde_json::from_slice(&opened.payload)
         .map_err(|_| ManagementError::Internal("channel definition cannot be read".into()))?;
     if definition.record_id != *record_id
@@ -113,9 +117,15 @@ async fn inspect_unowned(
             RecordError::NotFound => ManagementError::NotFound,
             other => ManagementError::Record(other),
         })?;
-    let (opened, retirement_expected_version) =
-        open_retained_channel(&state.master_keys, pointer.record_id.as_str(), record.version, &record.blob)
-            .map_err(|error| ManagementError::Internal(format!("channel blob cannot be opened: {error}")))?;
+    let (opened, retirement_expected_version) = open_retained_channel(
+        &state.master_keys,
+        pointer.record_id.as_str(),
+        record.version,
+        &record.blob,
+    )
+    .map_err(|error| {
+        ManagementError::Internal(format!("channel blob cannot be opened: {error}"))
+    })?;
     let definition: ChannelDefinition =
         serde_json::from_slice(&opened.payload).map_err(|error| {
             ManagementError::Internal(format!("channel definition is malformed: {error}"))
@@ -136,4 +146,3 @@ async fn inspect_unowned(
         retirement_expected_version,
     ))
 }
-

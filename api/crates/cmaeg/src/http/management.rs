@@ -62,7 +62,7 @@ pub fn management_router(state: ManagementState) -> Router {
         )
         .route(
             "/v1/channel-records/{record_id}/management",
-            get(super::record_management::read),
+            get(super::record_management::read).delete(super::record_management::retire),
         )
         .route(
             "/v1/channels/{channel_id}",

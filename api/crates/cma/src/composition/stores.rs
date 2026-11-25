@@ -56,9 +56,11 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_global_sandbox_limit(config.global_sandbox_limit)
             .with_launch_admission_policy(config.features.launch_admission_policy()),
     );
+    let mut sandbox_model = (*stores.sandbox_model).clone();
+    sandbox_model.runtime_image_origin_enabled = config.features.runtime_image_origin_enabled;
+    sandbox_model.desktop_verified_runtime_image = config.desktop_verified_runtime_image.clone();
     stores.sandbox_model = Arc::new(
-        (*stores.sandbox_model)
-            .clone()
+        sandbox_model
             .with_runtime_loss_bounded_proof(config.features.runtime_loss_bounded_proof_enabled)
             .with_ownership_retry_hints(config.features.ownership_retry_hints_enabled)
             .with_renewable_work(config.agent_manager_replicas.is_some())

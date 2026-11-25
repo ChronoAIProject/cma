@@ -38,9 +38,8 @@ pub mod whatsapp_reaction;
 pub use console_login::{open_console_login, seal_console_login, ConsoleLogin, CONSOLE_LOGIN_TTL};
 pub use event_ref::{EventRef, EventRefPayload, ReplyAddress};
 pub use interaction::{
-    open_blob, open_connection, open_consumer_interaction, open_interaction, seal_blob,
-    open_retained_channel, seal_connection, seal_consumer_interaction, seal_interaction,
-    seal_retired_channel,
+    open_blob, open_connection, open_consumer_interaction, open_interaction, open_retained_channel,
+    seal_blob, seal_connection, seal_consumer_interaction, seal_interaction, seal_retired_channel,
 };
 pub use lineage::{Lineage, RootId};
 pub use media_link::{MediaLinkPayload, MediaLinkRef, MAX_MEDIA_LINK_TTL};

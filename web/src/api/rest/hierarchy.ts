@@ -129,6 +129,8 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
 export function runtimeUpdate(value: Wire.SandboxRuntimeUpdate): SandboxRuntimeUpdate {
   return {
     currentVersion: value.current_version,
+    currentVersionConfirmed: value.current_version_confirmed,
+    imageOrigin: value.image_origin,
     latestVersion: value.latest_version,
     updateAvailable: value.update_available,
     state: value.state,

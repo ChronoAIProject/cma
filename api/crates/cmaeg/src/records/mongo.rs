@@ -282,7 +282,9 @@ impl MongoRecords {
         }
         if self.kind == RecordKind::Channel {
             if let Some(tracking) = &self.worker_credentials {
-                let version = expected.unwrap_or(0).checked_add(1)
+                let version = expected
+                    .unwrap_or(0)
+                    .checked_add(1)
                     .ok_or_else(|| RecordError::Rejected("invalid record revision".into()))?;
                 tracking.record_blob(id, version, blob).await?;
             }

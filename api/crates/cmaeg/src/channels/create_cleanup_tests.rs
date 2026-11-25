@@ -140,7 +140,8 @@ async fn retirement_holds_an_incomplete_channel_across_instances_and_lost_ack() 
         let version = original.record.version;
         let id = &original.channel_id;
         let original_plaintext = open_blob(&fixture.keys, &original.record.blob)
-            .unwrap().payload;
+            .unwrap()
+            .payload;
         assert!(matches!(
             management::retire_unready(&state, &owner("bob", false), id, version).await,
             Err(ManagementError::NotFound)
@@ -168,8 +169,18 @@ async fn retirement_holds_an_incomplete_channel_across_instances_and_lost_ack() 
         let (retired, retirement) = management::inspect(&other, &creator, id).await.unwrap();
         assert_eq!(retirement, Some(version));
         assert!(!retired.definition.creation.as_ref().unwrap().ready);
-        assert_eq!(open_retained_channel(&fixture.keys, record_id.as_str(), retired.record.version,
-            &retired.record.blob).unwrap().0.payload, original_plaintext);
+        assert_eq!(
+            open_retained_channel(
+                &fixture.keys,
+                record_id.as_str(),
+                retired.record.version,
+                &retired.record.blob
+            )
+            .unwrap()
+            .0
+            .payload,
+            original_plaintext
+        );
         assert_eq!(retired.record.version, original.record.version + 1);
         management::retire_unready(&other, &creator, id, version)
             .await
@@ -183,7 +194,9 @@ async fn retirement_holds_an_incomplete_channel_across_instances_and_lost_ack() 
             management::inspect(&state, &creator, id)
                 .await
                 .unwrap()
-                .0.record.version,
+                .0
+                .record
+                .version,
             retired.record.version
         );
         assert_eq!(fixture.peer.calls.lock().unwrap().as_slice(), ["PUT"]);
@@ -285,10 +298,14 @@ async fn check_maximum_record_retirement(native: bool) {
     let body = fixture.body();
     let record_id = RecordId::new(body["record_id"].as_str().unwrap()).unwrap();
     *fixture.peer.refuse_bind.lock().unwrap() = Some(StatusCode::BAD_REQUEST);
-    assert!(management::create(&state, &creator, serde_json::from_value(body).unwrap())
-        .await.is_err());
+    assert!(
+        management::create(&state, &creator, serde_json::from_value(body).unwrap())
+            .await
+            .is_err()
+    );
     let pending = super::creation::load_record(&state, &creator, &record_id)
-        .await.unwrap();
+        .await
+        .unwrap();
     assert!(pending.definition.mutation.is_none());
     let mut value = pending.definition.to_blob_json();
     value["sources"] = json!([{
@@ -296,12 +313,16 @@ async fn check_maximum_record_retirement(native: bool) {
         "auth": {"type": "hmac", "key_id": "route-key"},
         "attachments": {"origins": ["https://media.example"]}
     }]);
-    value["secrets"]["hmac_secrets"] = json!([["route-key","attachment-fixture"]]);
+    value["secrets"]["hmac_secrets"] = json!([["route-key", "attachment-fixture"]]);
     value["profile"]["environment"] = json!({"padding": ""});
-    let mut definition: cmaeg_core::channel::ChannelDefinition = serde_json::from_value(value).unwrap();
+    let mut definition: cmaeg_core::channel::ChannelDefinition =
+        serde_json::from_value(value).unwrap();
     definition.profile_digest = definition.profile.digest();
     // Pad a valid environment value and include legacy JSON whitespace.
-    let spare = MAX_BLOB_BYTES - serde_json::to_vec(&definition.to_blob_json()).unwrap().len();
+    let spare = MAX_BLOB_BYTES
+        - serde_json::to_vec(&definition.to_blob_json())
+            .unwrap()
+            .len();
     definition.profile.environment = Some(json!({"padding": "x".repeat(spare - 1)}));
     definition.profile_digest = definition.profile.digest();
     definition.validate().unwrap();
@@ -309,37 +330,80 @@ async fn check_maximum_record_retirement(native: bool) {
     plaintext.push(b'\n');
     assert_eq!(plaintext.len(), MAX_BLOB_BYTES);
     let original = seal_blob(&fixture.keys, &plaintext).unwrap();
-    let version = state.records.put(&record_id, &creator.subject, &original, Some(pending.record.version))
-        .await.unwrap();
+    let version = state
+        .records
+        .put(
+            &record_id,
+            &creator.subject,
+            &original,
+            Some(pending.record.version),
+        )
+        .await
+        .unwrap();
 
     let history = Arc::new(Memory::default());
     let retiring = if native {
-        fixture.state_with_tracking(WorkerCredentials::new(history.clone(), fixture.keys.clone())).await
+        fixture
+            .state_with_tracking(WorkerCredentials::new(
+                history.clone(),
+                fixture.keys.clone(),
+            ))
+            .await
     } else {
         fixture.state().await
     };
     let id = &pending.channel_id;
-    management::retire_unready(&retiring, &creator, id, version).await.unwrap();
+    management::retire_unready(&retiring, &creator, id, version)
+        .await
+        .unwrap();
     let (retired, receipt) = management::inspect(&state, &creator, id).await.unwrap();
     assert_eq!(receipt, Some(version));
     assert_eq!(retired.record.version, version + 1);
     assert_eq!(retired.record.blob.len(), original.len());
     assert!(open_blob(&fixture.keys, &retired.record.blob).is_err());
-    assert!(open_retained_channel(&fixture.keys, record_id.as_str(), version, &retired.record.blob).is_err());
-    assert!(open_retained_channel(&fixture.keys, "another-record", version + 1, &retired.record.blob).is_err());
-    assert_eq!(open_retained_channel(&fixture.keys, record_id.as_str(), version + 1, &retired.record.blob)
-        .unwrap().0.payload, plaintext);
+    assert!(open_retained_channel(
+        &fixture.keys,
+        record_id.as_str(),
+        version,
+        &retired.record.blob
+    )
+    .is_err());
+    assert!(open_retained_channel(
+        &fixture.keys,
+        "another-record",
+        version + 1,
+        &retired.record.blob
+    )
+    .is_err());
+    assert_eq!(
+        open_retained_channel(
+            &fixture.keys,
+            record_id.as_str(),
+            version + 1,
+            &retired.record.blob
+        )
+        .unwrap()
+        .0
+        .payload,
+        plaintext
+    );
     if native {
         let hash = super::definition::hash_secret("fixture-agent-key");
-        assert!(history.was_worker(hash.strip_prefix("sha256:").unwrap_or(&hash)).await.unwrap());
+        assert!(history
+            .was_worker(hash.strip_prefix("sha256:").unwrap_or(&hash))
+            .await
+            .unwrap());
     } else {
         // The rollback-era attachment audit uses the ordinary blob reader.
         let audit = super::audit::audit_custom_attachments(&state.records, &fixture.keys, true)
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!((audit.scanned, audit.unreadable, audit.cleared), (1, 1, 0));
         assert!(!audit.complete());
     }
-    management::retire_unready(&retiring, &creator, id, version).await.unwrap();
+    management::retire_unready(&retiring, &creator, id, version)
+        .await
+        .unwrap();
     let (replayed, receipt) = management::inspect(&state, &creator, id).await.unwrap();
     assert_eq!(receipt, Some(version));
     assert_eq!(replayed.record, retired.record);

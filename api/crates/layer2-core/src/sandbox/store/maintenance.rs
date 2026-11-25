@@ -251,6 +251,11 @@ pub fn apply_image_rotation(
         ));
     }
     if !image_rotation_required(current, &request.expected_runtime_version)
+        || (current.has_managed_desktop_image()
+            && (!current.supports_retained_runtime_update()
+                || current
+                    .runtime_update_request()
+                    .is_none_or(|update| update.completed_at.is_some())))
         || !crate::sandbox::runtime_update_agents_are_idle(agents)
         || current.runtime_update_request().is_some_and(|update| {
             update.completed_at.is_none()

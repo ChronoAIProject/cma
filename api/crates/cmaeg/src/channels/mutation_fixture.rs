@@ -102,8 +102,12 @@ impl Fixture {
         &self,
         tracking: crate::worker_credentials::WorkerCredentials,
     ) -> ManagementState {
-        let records = self.mongo.as_ref().unwrap()
-            .records_with_tracking(&self.base, Some(tracking)).await;
+        let records = self
+            .mongo
+            .as_ref()
+            .unwrap()
+            .records_with_tracking(&self.base, Some(tracking))
+            .await;
         self.with_records(records, self.custody)
     }
     fn with_records(&self, records: RecordClient, custody: bool) -> ManagementState {
@@ -263,8 +267,9 @@ async fn delete(
 
 async fn list(State(peer): State<Peer>) -> Json<Value> {
     let rows = peer.rows.lock().unwrap();
-    let items: Vec<_> = rows.iter().map(|(id, row)| {
-        json!({"record_id": id, "owner": row["owner"], "version": row["version"]})
-    }).collect();
+    let items: Vec<_> = rows
+        .iter()
+        .map(|(id, row)| json!({"record_id": id, "owner": row["owner"], "version": row["version"]}))
+        .collect();
     Json(json!({"items": items}))
 }

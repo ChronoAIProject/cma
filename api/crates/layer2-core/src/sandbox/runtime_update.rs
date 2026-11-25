@@ -64,7 +64,7 @@ impl Sandbox {
     }
 
     pub fn supports_retained_runtime_update(&self) -> bool {
-        self.profile.content.runtime_image.is_none()
+        self.has_managed_runtime_image()
             && self.lifecycle.home.as_ref().is_some_and(|home| {
                 !home.released
                     && home.native_pool.is_some()
@@ -106,7 +106,7 @@ impl Sandbox {
         at: String,
     ) -> Result<bool, SandboxModelError> {
         self.validate()?;
-        if self.profile.content.runtime_image.is_some()
+        if !self.has_managed_runtime_image()
             || !valid_version(&target)
             || seconds_from_rfc3339(&at).is_none()
         {

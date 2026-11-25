@@ -278,7 +278,9 @@ pub async fn load_record(
     creator: &Creator,
     id: &RecordId,
 ) -> Result<LoadedChannel, ManagementError> {
-    inspect_record(state, creator, id).await.map(|(loaded, _)| loaded)
+    inspect_record(state, creator, id)
+        .await
+        .map(|(loaded, _)| loaded)
 }
 
 async fn load_record_for_create(
@@ -305,9 +307,13 @@ async fn inspect_record(
             RecordError::NotFound => ManagementError::NotFound,
             other => ManagementError::Record(other),
         })?;
-    let (opened, retirement) =
-        open_retained_channel(&state.master_keys, id.as_str(), record.version, &record.blob)
-            .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
+    let (opened, retirement) = open_retained_channel(
+        &state.master_keys,
+        id.as_str(),
+        record.version,
+        &record.blob,
+    )
+    .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
     let definition: ChannelDefinition = serde_json::from_slice(&opened.payload)
         .map_err(|_| ManagementError::Internal("channel definition cannot be read".into()))?;
     if definition.owner.subject != creator.subject
@@ -330,10 +336,13 @@ async fn inspect_record(
     if recovered.payload != pointer {
         return Err(ManagementError::NotFound);
     }
-    Ok((LoadedChannel {
-        channel_id: creation.channel_id.clone(),
-        pointer,
-        definition,
-        record,
-    }, retirement))
+    Ok((
+        LoadedChannel {
+            channel_id: creation.channel_id.clone(),
+            pointer,
+            definition,
+            record,
+        },
+        retirement,
+    ))
 }
