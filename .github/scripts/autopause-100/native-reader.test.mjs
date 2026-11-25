@@ -21,11 +21,15 @@ test('real HTTP reads return bounded suspension evidence without private fields'
   assert.equal(live.requests.length, 7);
 });
 
-test('current Running snapshot preserves its original home and reports its live Pod', async t => {
-  const live = await server(t, fixture('Running'));
+test('a typed PodList without item type fields still reports its live Pod', async t => {
+  const data = fixture('Running');
+  // The Kubernetes codec puts the type metadata on the list envelope.
+  delete data.pod.kind;
+  delete data.pod.apiVersion;
+  const live = await server(t, data);
   const result = await createNativeReader({origin: live.origin, binding: live.data.binding})();
   assert.equal(result.operating_mode, 'Running');
-  assert.equal(result.pods.length, 1);
+  assert.deepEqual(result.pods, [{name: 'worker', uid: 'pod-uid', phase: 'Running', deleting: false}]);
   assert.equal(isNativeSuspended(result), false);
   sameHome({...live.data.binding, native_uid: live.data.binding.sandbox.uid}, result);
 });
