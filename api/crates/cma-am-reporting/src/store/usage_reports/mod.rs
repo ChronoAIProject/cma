@@ -10,6 +10,7 @@ mod projection_codec;
 mod projection_manifest;
 pub use projection_manifest::ProjectionManifest;
 mod projection_reads;
+mod ranked_buckets;
 mod reports;
 mod rows;
 mod total_projection;

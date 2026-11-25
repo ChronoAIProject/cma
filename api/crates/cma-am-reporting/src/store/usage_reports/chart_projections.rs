@@ -4,44 +4,10 @@ use super::*;
 use layer2_core::sandbox_metrics::{series::Bucket, Metric, Point, Report};
 use mongodb::bson::RawDocumentBuf;
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, time::Instant};
+use std::time::Instant;
 
-pub(super) const MAX_TOP: usize = 20;
-
-pub(super) struct RankedBuckets {
-    ranks: HashMap<String, usize>,
-    other: [Option<Vec<Bucket>>; MAX_TOP],
-}
-
-impl RankedBuckets {
-    pub(super) fn new(ranked_series: Vec<String>) -> Self {
-        Self {
-            ranks: ranked_series
-                .into_iter()
-                .enumerate()
-                .map(|(index, id)| (id, index))
-                .collect(),
-            other: std::array::from_fn(|_| None),
-        }
-    }
-
-    // Each cutoff folds its own residual cohort in Sandbox order. This keeps
-    // the legacy null semantics and floating-point addition order.
-    pub(super) fn add_sandbox(&mut self, id: &str, buckets: &[Bucket]) {
-        let remaining_cutoffs = if id == "other" {
-            MAX_TOP
-        } else {
-            self.ranks.get(id).copied().unwrap_or(MAX_TOP)
-        };
-        for remaining in &mut self.other[..remaining_cutoffs] {
-            merge_buckets(remaining.get_or_insert_with(Vec::new), buckets);
-        }
-    }
-
-    pub(super) fn into_other(self) -> [Option<Vec<Bucket>>; MAX_TOP] {
-        self.other
-    }
-}
+use super::ranked_buckets::RankedBuckets;
+pub(super) use super::ranked_buckets::MAX_TOP;
 
 pub(super) const POINTS_PER_CHUNK: usize = 168;
 
@@ -231,9 +197,9 @@ async fn build_ranked_with_batch(
             deadline,
             optional_query_error,
             |sandbox, owner, points| {
-                sandbox_remaining.add_sandbox(sandbox, &points);
+                sandbox_remaining.add_sandbox(sandbox, &points)?;
                 if report.scope.admin {
-                    owner_remaining.add_sandbox(owner, &points);
+                    owner_remaining.add_sandbox(owner, &points)?;
                 }
                 Ok(())
             },
@@ -384,7 +350,9 @@ mod tests {
 
         let mut projection = RankedBuckets::new(ranks.iter().map(|id| id.to_string()).collect());
         for (id, value) in identities.iter().zip(&buckets) {
-            projection.add_sandbox(id, std::slice::from_ref(value));
+            projection
+                .add_sandbox(id, std::slice::from_ref(value))
+                .unwrap();
         }
 
         for (cutoff, cached) in projection.into_other().into_iter().enumerate() {
