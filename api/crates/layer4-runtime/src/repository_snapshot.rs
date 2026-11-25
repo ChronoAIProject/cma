@@ -13,6 +13,7 @@ use crate::{fs_durability, git::GitRunner, paths, workspace_source};
 
 mod error_diagnostics;
 use error_diagnostics::{read_hint, ResponseHint};
+mod credentialed;
 
 const MAX_ARCHIVE: usize = 64 * 1024 * 1024;
 const MAX_EXPANDED: u64 = 256 * 1024 * 1024;
@@ -106,113 +107,70 @@ async fn prepare_source(
     request: &WorkspaceRequest,
     pinned_commit: Option<&str>,
 ) -> Result<WorkspaceReceipt> {
-    let WorkspaceSource::RepositorySnapshot { url, reference } = &request.source else {
-        return Err(invalid("repository source is missing"));
-    };
-    workspace_source::validate_clone_url(url, false)?;
     paths::safe_component(&request.workspace_id, "workspace id")?;
     paths::safe_component(&request.name, "workspace name")?;
-    if let Some(reference) = reference {
-        paths::validate_selector(reference, "repository ref")?;
-    }
     let mut reference_digest = Sha256::new();
     reference_digest.update(b"cma.repository-preparation.operation.v1\0");
     reference_digest.update(request.operation_id.as_bytes());
     let operation_ref = format!("{:x}", reference_digest.finalize());
-    let proxy = config.github_proxy.as_ref().ok_or_else(|| {
-        observe_failure(
-            &operation_ref,
-            ReadStage::ProxySetup,
-            None,
-            ReadFailure::ProxyMissing,
-            ResponseHint::Unknown,
-        );
-        RuntimeError::rejected(
-            "repository_connection_required",
-            "GitHub connection is required before repository preparation",
-        )
-    })?;
-    let client = reqwest::Client::builder()
-        .unix_socket(proxy.socket())
-        .no_proxy()
-        .timeout(Duration::from_secs(120))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|error| transport_failure(&operation_ref, ReadStage::ProxySetup, None, &error))?;
-    let parsed = url::Url::parse(url).map_err(|_| invalid("invalid repository URL"))?;
-    let repository = parsed.path().trim_matches('/').trim_end_matches(".git");
-    let authority = match &request.repository_connection_id {
-        Some(connection) => Some(
-            crate::upstream::github_scope::verify_repository_scope(&client, repository, connection)
-                .await?,
-        ),
-        None => None,
-    };
-    let source_read = |url: &str| {
-        let request = client.get(url);
-        match &authority {
-            Some(authority) => request.header(
-                crate::upstream::github_scope::SOURCE_AUTHORITY_HEADER,
-                authority,
-            ),
-            None => request,
+    let (source_commit, archive) = match &request.source {
+        WorkspaceSource::RepositorySnapshot { url, reference } => {
+            workspace_source::validate_clone_url(url, false)?;
+            if let Some(reference) = reference {
+                paths::validate_selector(reference, "repository ref")?;
+            }
+            credentialed::archive(
+                config,
+                url,
+                reference,
+                request.repository_connection_id.as_deref(),
+                pinned_commit,
+                &operation_ref,
+            )
+            .await?
         }
+        WorkspaceSource::PublicRepositorySnapshot { url, commit } => {
+            if request.repository_connection_id.is_some() {
+                return Err(invalid("public source cannot carry a selected connection"));
+            }
+            if pinned_commit.is_some_and(|retained| retained != commit) {
+                return Err(invalid(
+                    "original source commit differs from the public snapshot",
+                ));
+            }
+            let archive = layer3_adapter::public_repository_archive_url(url, commit)
+                .ok_or_else(|| invalid("invalid public repository snapshot"))?;
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(120))
+                .redirect(reqwest::redirect::Policy::none())
+                .user_agent("CMA-public-source/1.0")
+                .build()
+                .map_err(|_| unavailable())?;
+            (commit.clone(), client.get(archive))
+        }
+        _ => return Err(invalid("repository source is missing")),
     };
-    let endpoint = format!("http://api.github.com/repos/{repository}");
-    let source_commit = if let Some(commit) = pinned_commit {
-        commit.to_owned()
-    } else {
-        let bytes = fetch(
-            source_read(&endpoint),
-            "repository_unavailable",
-            &operation_ref,
-            ReadStage::Metadata,
-        )
-        .await?;
-        let metadata: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|_| invalid("invalid repository metadata"))?;
-        let reference = match reference {
-            Some(reference) => reference.clone(),
-            None => metadata["default_branch"]
-                .as_str()
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| invalid("repository has no default branch"))?
-                .to_owned(),
-        };
-        let commits = fetch(
-            source_read(&format!("{endpoint}/commits"))
-                .query(&[("sha", reference.as_str()), ("per_page", "1")]),
-            "repository_ref_not_found",
-            &operation_ref,
-            ReadStage::Commits,
-        )
-        .await?;
-        let commits: serde_json::Value = serde_json::from_slice(&commits)
-            .map_err(|_| invalid("invalid repository commit response"))?;
-        commits[0]["sha"]
-            .as_str()
-            .filter(|value| valid_commit(value))
-            .ok_or_else(|| invalid("repository ref did not resolve to a commit"))?
-            .to_owned()
-    };
-    if request.repository_connection_id.is_some() && reference.as_ref() != Some(&source_commit) {
-        return Err(invalid(
-            "repository commit does not match the admitted source",
-        ));
-    }
     let path = home.join(&request.name);
     std::fs::create_dir(&path).map_err(|_| {
         RuntimeError::rejected("workspace_exists", "repository destination already exists")
     })?;
     fs_durability::write(&path.join(".cma-source-pin"), source_commit.as_bytes())
         .map_err(io_error)?;
-    let bytes = fetch(
-        source_read(&format!("{endpoint}/zipball/{source_commit}")),
-        "repository_archive_unavailable",
-        &operation_ref,
-        ReadStage::Archive,
-    )
-    .await?;
+    let bytes = if matches!(
+        request.source,
+        WorkspaceSource::PublicRepositorySnapshot { .. }
+    ) {
+        fetch_public_archive(archive).await?
+    } else {
+        fetch(
+            archive,
+            "repository_archive_unavailable",
+            &operation_ref,
+            ReadStage::Archive,
+        )
+        .await?
+    };
     let extraction_path = path.clone();
     tokio::task::spawn_blocking(move || extract(&bytes, &extraction_path))
         .await
@@ -260,6 +218,30 @@ async fn prepare_source(
         resolved_commit,
         source_commit: Some(source_commit),
     })
+}
+
+async fn fetch_public_archive(request: reqwest::RequestBuilder) -> Result<Vec<u8>> {
+    let response = request.send().await.map_err(|_| unavailable())?;
+    match response.status().as_u16() {
+        200 => {}
+        401 | 403 | 404 | 410 => {
+            return Err(RuntimeError::rejected(
+                "repository_archive_unavailable",
+                "The verified public repository archive is no longer accessible",
+            ))
+        }
+        _ => return Err(unavailable()),
+    }
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| unavailable())?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_ARCHIVE {
+            return Err(invalid("repository response exceeds 64 MiB"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 async fn fetch(
@@ -450,7 +432,11 @@ fn extract(bytes: &[u8], destination: &Path) -> Result<()> {
 }
 
 pub(crate) fn source_commit(path: &Path, source: &WorkspaceSource) -> Result<Option<String>> {
-    if !matches!(source, WorkspaceSource::RepositorySnapshot { .. }) {
+    if !matches!(
+        source,
+        WorkspaceSource::RepositorySnapshot { .. }
+            | WorkspaceSource::PublicRepositorySnapshot { .. }
+    ) {
         return Ok(None);
     }
     for directory in [path.join(".git"), path.join(".git/info")] {
@@ -472,7 +458,9 @@ pub(crate) fn source_commit(path: &Path, source: &WorkspaceSource) -> Result<Opt
     }
     let mut value = String::new();
     file.take(65).read_to_string(&mut value).map_err(io_error)?;
-    if !valid_commit(&value) {
+    if !valid_commit(&value)
+        || matches!(source, WorkspaceSource::PublicRepositorySnapshot { commit, .. } if commit != &value)
+    {
         return Err(invalid("source commit evidence is invalid"));
     }
     Ok(Some(value))

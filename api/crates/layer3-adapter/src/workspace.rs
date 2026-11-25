@@ -16,12 +16,45 @@ pub enum WorkspaceSource {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reference: Option<String>,
     },
+    PublicRepositorySnapshot {
+        url: String,
+        commit: String,
+    },
     Clone {
         url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reference: Option<String>,
     },
     Init,
+}
+
+/// Build the credential-free archive URL for an exact public GitHub commit.
+/// Only canonical repository locators and lowercase commit IDs are accepted.
+pub fn public_repository_archive_url(repository: &str, commit: &str) -> Option<url::Url> {
+    let path = repository.strip_prefix("https://github.com/")?;
+    let (owner, name) = path.split_once('/')?;
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part.len() <= 100
+            && !matches!(part, "." | "..")
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    };
+    if !valid(owner)
+        || !valid(name)
+        || commit.len() != 40
+        || !commit
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return None;
+    }
+    let mut url = url::Url::parse("https://codeload.github.com").ok()?;
+    url.path_segments_mut()
+        .ok()?
+        .extend([owner, name, "zip", commit]);
+    Some(url)
 }
 
 /// Prepare one named directory directly below the sandbox home.
@@ -85,6 +118,11 @@ impl WorkspaceRequest {
                 digest.update([3]);
                 field(&mut digest, url);
                 optional_field(&mut digest, reference.as_deref());
+            }
+            WorkspaceSource::PublicRepositorySnapshot { url, commit } => {
+                digest.update([4]);
+                field(&mut digest, url);
+                field(&mut digest, commit);
             }
             WorkspaceSource::Clone { url, reference } => {
                 digest.update([1]);

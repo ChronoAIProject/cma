@@ -36,6 +36,31 @@ impl GithubRepositoryFixture {
         Self { provider }
     }
 
+    pub(crate) fn set_default_private_read(&self, granted: bool) {
+        let scope = if granted { "repo" } else { "public_repo" };
+        self.provider.state.set_services_reply(Reply::json(json!({
+            "services":[{
+                "id":"selected", "slug":"api-github", "catalog_service_id":"github-catalog",
+                "is_active":true, "credential_source":{"type":"personal"}
+            }]
+        })));
+        self.provider
+            .state
+            .credential_replies
+            .lock()
+            .unwrap()
+            .insert(
+                "selected".into(),
+                Reply::json(json!({
+                    "id":"selected", "slug":"api-github", "label":"selected",
+                    "catalog_service_id":"github-catalog", "is_active":true,
+                    "status":"active", "connection_status":"active", "credential_type":"oauth2",
+                    "granted_scopes":[scope]
+                })),
+            );
+        *self.provider.state.github_proxy_scopes.lock().unwrap() = Some(scope.into());
+    }
+
     pub(crate) fn broker(&self) -> Arc<crate::trigger::CmaServiceConnectionBroker> {
         Arc::new(
             crate::trigger::CmaServiceConnectionBroker::with_fixture_provider(broker(

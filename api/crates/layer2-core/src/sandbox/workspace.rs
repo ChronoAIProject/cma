@@ -32,6 +32,12 @@ pub enum WorkspaceSource {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source_commit: Option<String>,
     },
+    PublicRepositorySnapshot {
+        url: String,
+        commit: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_commit: Option<String>,
+    },
     GitRepository {
         url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

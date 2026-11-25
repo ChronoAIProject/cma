@@ -245,6 +245,16 @@ impl AgentSandboxPools {
         Err(unavailable("native pool inventory exceeds its page bound"))
     }
 
+    pub async fn observe_admitting_pool(
+        &self,
+        binding: &NativePoolBinding,
+    ) -> Result<NativePoolStatus> {
+        let (_, pool) = self.bound_resources(binding).await?;
+        super::retirement::admitting(&pool)?;
+        self.verify_seed(&binding.spec.home).await?;
+        status(binding.clone(), &pool)
+    }
+
     /// Select only the exact immutable image/resources/home and current Pod
     /// policy. The caller must persist this binding before creating a claim.
     pub async fn select(&self, spec: &NativePoolSpec) -> Result<Option<NativePoolBinding>> {
