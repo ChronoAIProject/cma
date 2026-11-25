@@ -106,24 +106,14 @@ async fn projected_reports_preserve_series_owner_pages_and_fail_closed() {
                 serde_json::to_value(legacy).unwrap()
             );
         }
-        let first = OwnerAllocationQuery {
-            metric,
-            limit: Some(1),
-            cursor: None,
-        };
-        let next = old
-            .owner_allocations(&report, first.clone(), OwnerContextAccess::DateOnly)
-            .await
-            .unwrap()
-            .next;
-        for query in [
-            first,
-            OwnerAllocationQuery {
+        let mut cursor = None;
+        let mut count = 0;
+        loop {
+            let query = OwnerAllocationQuery {
                 metric,
-                limit: Some(1),
-                cursor: next,
-            },
-        ] {
+                limit: Some(7),
+                cursor,
+            };
             let legacy = old
                 .owner_allocations(&report, query.clone(), OwnerContextAccess::DateOnly)
                 .await
@@ -133,11 +123,16 @@ async fn projected_reports_preserve_series_owner_pages_and_fail_closed() {
                 .await
                 .unwrap();
             assert_eq!(
-                serde_json::to_value(cached.items).unwrap(),
-                serde_json::to_value(legacy.items).unwrap()
+                serde_json::to_value(&cached).unwrap(),
+                serde_json::to_value(&legacy).unwrap()
             );
-            assert_eq!(cached.total_count, legacy.total_count);
+            count += cached.items.len();
+            cursor = cached.next;
+            if cursor.is_none() {
+                break;
+            }
         }
+        assert_eq!(count, 22);
     }
 
     let removed = store

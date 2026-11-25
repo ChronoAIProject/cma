@@ -6,6 +6,7 @@ mod charts;
 mod control;
 mod controlled_updates;
 mod owners;
+mod projection_codec;
 mod projection_reads;
 mod reports;
 mod rows;

@@ -1,4 +1,5 @@
 use super::charts::{fold_sandbox_series, merge_buckets, ranked_series};
+use super::projection_codec::encode_points;
 use super::*;
 use layer2_core::sandbox_metrics::{series::Bucket, Metric, Point, Report};
 use mongodb::bson::RawDocumentBuf;
@@ -220,8 +221,8 @@ fn append_line(
         document.extend(doc! {
             "kind": kind, "series":series,
             "chunk":chunk as i64, "chunks":chunks as i64, "present":present,
-            "points":encode(&&points[start..end])?,
         });
+        document.extend(encode_points(&points[start..end])?);
         batch.push(document)?;
     }
     Ok(())

@@ -1,5 +1,6 @@
 use super::chart_projections::{MAX_TOP, POINTS_PER_CHUNK};
 use super::charts::{fold_sandbox_series, read_series};
+use super::projection_codec::decode_points;
 use super::*;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::{
@@ -150,13 +151,7 @@ impl ProjectionChunks {
             return Err(MetricsError::Unavailable);
         }
         self.expected = Some((chunks, present));
-        let part: Vec<Point> = mongodb::bson::deserialize_from_bson(
-            document
-                .get("points")
-                .cloned()
-                .ok_or(MetricsError::Unavailable)?,
-        )
-        .map_err(unavailable)?;
+        let part = decode_points(&document)?;
         if part.len() > POINTS_PER_CHUNK
             || (index + 1 < chunks && part.len() != POINTS_PER_CHUNK)
             || (!present && (chunks != 1 || !part.is_empty()))
