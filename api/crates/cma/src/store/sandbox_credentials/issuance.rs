@@ -154,7 +154,7 @@ pub(super) async fn accept(
         return Err(corrupt());
     }
     let material = store.document(material).map_err(custody_store_error)?;
-    let mut session = transactions::start(store, sandbox).await?;
+    let mut session = transactions::start_acceptance(store, sandbox).await?;
     let outcome = async {
         let mut accepted = intent.clone();
         accepted.state = IssuanceState::Accepted;

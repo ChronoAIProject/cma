@@ -1,24 +1,71 @@
 use super::*;
+use crate::store::sandbox_mongo::is_transient;
 use crate::store::transaction_terminal::GuardedTerminal as _;
+
+const ACCEPTANCE_START_ATTEMPTS: usize = 3;
+
+enum StartError {
+    Driver(mongodb::error::Error),
+    Custody(CredentialCustodyError),
+}
+
+impl StartError {
+    fn into_custody(self) -> CredentialCustodyError {
+        match self {
+            Self::Driver(error) => unavailable(error),
+            Self::Custody(error) => error,
+        }
+    }
+}
 
 pub(super) async fn start(
     store: &MongoSandboxCredentialStore,
     sandbox: &Sandbox,
 ) -> Result<ClientSession, CredentialCustodyError> {
-    let mut session = store.client.start_session().await.map_err(unavailable)?;
-    start_transaction(&mut session).await.map_err(unavailable)?;
+    start_once(store, sandbox)
+        .await
+        .map_err(StartError::into_custody)
+}
+
+pub(super) async fn start_acceptance(
+    store: &MongoSandboxCredentialStore,
+    sandbox: &Sandbox,
+) -> Result<ClientSession, CredentialCustodyError> {
+    // The provider result is already in memory. A confirmed abort while
+    // acquiring the Mongo fence permits another snapshot under the same claim.
+    for _ in 1..ACCEPTANCE_START_ATTEMPTS {
+        match start_once(store, sandbox).await {
+            Err(StartError::Driver(error)) if is_transient(&error) => continue,
+            result => return result.map_err(StartError::into_custody),
+        }
+    }
+    start(store, sandbox).await
+}
+
+async fn start_once(
+    store: &MongoSandboxCredentialStore,
+    sandbox: &Sandbox,
+) -> Result<ClientSession, StartError> {
+    let mut session = store
+        .client
+        .start_session()
+        .await
+        .map_err(StartError::Driver)?;
+    start_transaction(&mut session)
+        .await
+        .map_err(StartError::Driver)?;
     let outcome = async {
-        if sandbox.work.authority_protocol.is_none() { return Err(corrupt()); }
-        let identity = crate::store::work_claim_authority::sandbox_claim(sandbox).map_err(|_| corrupt())?;
-        let identity = crate::store::work_publication::sandbox(identity, sandbox.id.as_str()).map_err(|_| corrupt())?;
+        if sandbox.work.authority_protocol.is_none() { return Err(StartError::Custody(corrupt())); }
+        let identity = crate::store::work_claim_authority::sandbox_claim(sandbox).map_err(|_| StartError::Custody(corrupt()))?;
+        let identity = crate::store::work_publication::sandbox(identity, sandbox.id.as_str()).map_err(|_| StartError::Custody(corrupt()))?;
         let result = store.sandboxes.update_one(doc! {"$and":[identity,{
             "document_schema_version":3_i64,
-            "record.credential":mongodb::bson::serialize_to_bson(&sandbox.credential).map_err(|_| corrupt())?,
+            "record.credential":mongodb::bson::serialize_to_bson(&sandbox.credential).map_err(|_| StartError::Custody(corrupt()))?,
             "$or":[{"credential_issuance_fence":{"$exists":false}},
                 {"credential_issuance_fence":{"$type":"long","$lt":i64::MAX}}],
         }]},doc! {"$inc":{"credential_issuance_fence":1_i64}})
-            .session(&mut session).await.map_err(unavailable)?;
-        if result.matched_count != 1 { return Err(corrupt()); }
+            .session(&mut session).await.map_err(StartError::Driver)?;
+        if result.matched_count != 1 { return Err(StartError::Custody(corrupt())); }
         Ok(())
     }.await;
     if let Err(error) = outcome {

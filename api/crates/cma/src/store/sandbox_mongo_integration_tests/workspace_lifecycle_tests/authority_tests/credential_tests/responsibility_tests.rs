@@ -59,6 +59,41 @@ async fn rejected_issuance_barrier_cannot_dispatch_an_unowned_key() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a replica set"]
+async fn known_abort_opening_result_custody_reuses_the_original_mint() {
+    let mut f = Fixture::new("issuance_acceptance_start_aborted").await;
+    let app = format!("acceptance-start-aborted-{}", uuid::Uuid::new_v4());
+    f.use_custody_app(&app).await;
+    let issuing = f.issue(1);
+    let mint = f.prepare().await;
+    let intent = f.custody.issuance(&f.claim).await.unwrap().unwrap();
+    let before = f
+        .client
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint":"failCommand", "mode":{"times":1_i32},
+            "data":{"failCommands":["update"], "appName":&app, "errorCode":112_i32,
+                "errorLabels":["TransientTransactionError"]}
+        })
+        .await
+        .unwrap()
+        .get_i32("count")
+        .unwrap();
+    accepted(mint);
+    let result = issuing.await.unwrap().unwrap();
+    finish_rejection(&f, before).await;
+    let material = result.unwrap();
+    let recorded = f.custody.issuance(&f.claim).await.unwrap().unwrap();
+    assert_eq!(recorded.operation_id, intent.operation_id);
+    assert_eq!(recorded.state, IssuanceState::Accepted);
+    let stored = f.custody.list(&f.claim.id).await.unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].authority, material.authority);
+    assert_eq!(f.peer.count_route("POST", "/api/v1/api-keys"), 1);
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a replica set"]
 async fn rejected_result_write_keeps_discoverable_responsibility_after_return() {
     let mut f = Fixture::new("issuance_result_rejected").await;
     let app = format!("result-rejected-{}", uuid::Uuid::new_v4());
