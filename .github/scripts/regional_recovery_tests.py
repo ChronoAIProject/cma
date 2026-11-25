@@ -12,7 +12,7 @@ from staging_cd_common import Refusal
 from staging_cd_targets import TARGETS
 
 
-def stamp(minutes, day=18):
+def stamp(minutes, day=19):
     return (datetime(2026, 11, day, tzinfo=timezone.utc) + timedelta(minutes=minutes)).isoformat().replace('+00:00', 'Z')
 
 
@@ -22,7 +22,7 @@ class Campaign:
         self.root = root
         self.evidence = root / 'observations'
         self.evidence.mkdir()
-        self.day = 26 if recheck else 18
+        self.day = 26 if recheck else 19
         self.candidate = {'source': 'a' * 40, 'images': {name: 'sha256:' + sha256(name) for name in TARGETS},
                           **{key: sha256(key) for key in ('configuration_sha256', 'flags_sha256', 'environment_sha256')}}
         inventory = {}
@@ -35,19 +35,23 @@ class Campaign:
                               'source_domain_sha256': sha256('source-runtime_region'), 'backup_domain_sha256': sha256('backup')}
         self.inventory = inventory
         self.scope = {'schema': 'cma-regional-recovery-v1', 'mode': 'synthetic', 'phase': 'frozen_recheck' if recheck else 'initial',
-                      'candidate': self.candidate, 'window': {'start': self.time(0), 'end': self.time(720)},
+                      'candidate': self.candidate, 'window': {'start': self.time(0), 'end': stamp(720, 26 if recheck else 23)},
                       'initial_report_sha256': None, 'frozen_at': stamp(0, 25) if recheck else None, 'inventory': inventory,
                       'home_sample': list(inventory)[:10], 'copy_changes': {key: {'steady': 10, 'peak': 100} for key in inventory},
                       'failure_scopes': {name: {'source_domain_sha256': sha256('source-' + name), 'recovery_domain_sha256': sha256('restore-' + name),
                                                 'review_sha256': sha256('review-' + name), 'quota_bytes': 1000000,
                                                 'consumer_order': [sha256('priority-1'), sha256('priority-2')]} for name in SCOPES},
-                      'coverage_sha256': None, 'backup_campaign_sha256': None, 'commitments': {}}
+                      'coverage_sha256': None, 'backup_campaign_sha256': None, 'commitments': {}, 'exercise_copy_receipts': {}}
         self.index = {'scope_sha256': '', 'coverage': None, 'backup_campaign': None, 'commitments': {}, 'regional': {},
                       'home_sample': {}, 'initial_report': None}
         self.backups()
         self.commitments()
+        if not recheck:
+            self.day = 23
         for i, name in enumerate(sorted(SCOPES)):
             self.index['regional'][name] = self.execution(name, inventory, 62 + i, regional=True)
+        if not recheck:
+            self.day = 19
         for i, key in enumerate(self.scope['home_sample']):
             self.index['home_sample'][key] = self.execution(key, {key: inventory[key]}, 70 + i, regional=False)
 
@@ -113,21 +117,32 @@ class Campaign:
         target = self.scope['failure_scopes'][name]['recovery_domain_sha256'] if regional else sha256('sample-' + name)
         fault_ref = self.reference(name + '-fault', {'run_id': run, 'fault_sha256': fault, 'case': name, 'loss_at': self.time(minute),
                                                      'source_domain_sha256': source, 'recovery_domain_sha256': target, 'source_unavailable': True})
-        checkpoint = sha256('checkpoint-' + str(self.day) + 'peak')
-        cut = {'run_id': run, 'fault_sha256': fault, 'mongo_at': self.time(minute - 2), 'common_at': self.time(42),
-               'checkpoint_sha256': checkpoint, 'data_classes': {kind: {'checkpoint_sha256': checkpoint, 'available_at': self.time(minute - 1),
+        checkpoint = sha256(run + 'checkpoint')
+        copies = {key: {**{field: home[field] for field in ('source_storage_sha256', 'home_sha256', 'manifest_sha256', 'backup_domain_sha256')},
+                        'backup_sha256': sha256(run + key + 'exercise-backup'),
+                        'backup_storage_sha256': sha256(run + key + 'exercise-storage'), 'checkpoint_sha256': checkpoint,
+                        'captured_at': self.time(minute - 20), 'completed_at': self.time(minute - 10)} for key, home in inventory.items()}
+        copy_ref = self.reference(name + '-copies', {'run_id': run, 'fault_sha256': fault, 'candidate_sha256': sha256(self.candidate), 'homes': copies})
+        self.scope['exercise_copy_receipts'][name] = copy_ref['sha256']
+        mongo_point = self.reference(name + '-mongo-point', {'run_id': run, 'fault_sha256': fault, 'copy_sha256': sha256(run + 'mongo'),
+            'earliest_at': self.time(minute - 30), 'latest_at': self.time(minute - 2), 'recoverable_at': self.time(minute - 2),
+            'observed_at': self.time(minute - 1)})
+        cut = {'run_id': run, 'fault_sha256': fault, 'mongo_at': self.time(minute - 2), 'common_at': self.time(minute - 20),
+               'checkpoint_sha256': checkpoint, 'mongo_point': mongo_point, 'data_classes': {kind: {'checkpoint_sha256': checkpoint, 'available_at': self.time(minute - 1),
                                                                           'independent_copy_sha256': sha256(run + kind), 'copy_domain_sha256': sha256('backup')} for kind in CUSTODY},
-               'home_backups': {key: {**{field: home[field] for field in ('backup_sha256', 'backup_storage_sha256', 'backup_domain_sha256')},
-                                          'checkpoint_sha256': checkpoint, 'available_at': self.time(52)} for key, home in inventory.items()}}
+               'home_backups': {key: {**{field: copy[field] for field in ('backup_sha256', 'backup_storage_sha256', 'backup_domain_sha256')},
+                                          'checkpoint_sha256': checkpoint, 'available_at': copy['completed_at']} for key, copy in copies.items()}}
         cut_ref = self.reference(name + '-cut', cut)
         verified = minute + (100 if regional else 20)
         homes = {key: {**{field: home[field] for field in set(home) - {'class', 'source_storage_sha256', 'source_domain_sha256'}},
+                       **{field: copies[key][field] for field in ('backup_sha256', 'backup_storage_sha256', 'backup_domain_sha256')},
                        'restored_storage_sha256': sha256(run + key + 'restored'), 'restored_domain_sha256': target,
                        'started_at': self.time(minute + 4), 'verified_at': self.time(verified - 1)} for key, home in inventory.items()}
         readback = {'run_id': run, 'fault_sha256': fault, 'checkpoint_sha256': checkpoint, 'mongo_restored_at': self.time(minute + 3),
                     'service_verified_at': self.time(verified), 'homes': homes, 'old_writer_fenced': True, 'tombstones_replayed': True,
                     'key_custody_verified': True, 'object_inventory_verified': True, 'duplicate_effects': 0,
-                    'unreadable_records': 0, 'secret_matches': 0, 'resurrected_records': 0}
+                    'unreadable_records': 0, 'secret_matches': 0, 'resurrected_records': 0,
+                    'mongo_recoverable_at': self.time(minute - 2), 'mongo_copy_sha256': sha256(run + 'mongo')}
         readback_ref = self.reference(name + '-readback', readback)
         stages = None
         if regional:
@@ -139,7 +154,7 @@ class Campaign:
             stages = self.reference(name + '-stages', stage_data)
         row = {'case': name, 'mode': self.scope['mode'], 'candidate_sha256': sha256(self.candidate), 'run_id': run, 'attempt': 1,
                'cancelled': False, 'status': 'PASS', 'started_at': self.time(minute - 1), 'finished_at': self.time(verified + 1),
-               'samples': len(inventory), 'fault': fault_ref, 'cut': cut_ref, 'readback': readback_ref, 'stages': stages}
+               'samples': len(inventory), 'fault': fault_ref, 'copies': copy_ref, 'cut': cut_ref, 'readback': readback_ref, 'stages': stages}
         return self.reference(name + '-execution', row)
 
     def mutate_execution(self, name, artifact, mutation, sample=False):
@@ -149,6 +164,8 @@ class Campaign:
             return
         row = self.read(ref)
         self.change(row[artifact], mutation)
+        if artifact == 'copies':
+            self.scope['exercise_copy_receipts'][name] = row[artifact]['sha256']
         ref.update(self.reference(ref['path'][:-5], row))
 
     def verify(self):
@@ -205,13 +222,13 @@ class RecoveryTests(unittest.TestCase):
         self.rejected('readback', lambda row: row['homes'][key].update(restored_storage_sha256=home['source_storage_sha256']))
 
     def test_mongo_rpo_exceeded(self):
-        self.rejected('cut', lambda row: row.update(mongo_at=stamp(55)))
+        self.rejected('cut', lambda row: row.update(mongo_at=stamp(55, 23)))
 
     def test_integrated_rpo_exceeded(self):
-        self.rejected('cut', lambda row: row.update(common_at=stamp(0)))
+        self.rejected('cut', lambda row: row.update(common_at=stamp(0, 23)))
 
     def test_recovery_rto_exceeded(self):
-        self.rejected('readback', lambda row: row.update(service_verified_at=stamp(610)))
+        self.rejected('readback', lambda row: row.update(service_verified_at=stamp(610, 23)))
 
     def test_duplicate_fault(self):
         ref = self.campaign.index['regional']['control_plane']
@@ -225,6 +242,41 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             self.campaign.verify()
 
+    def test_mongo_pitr_copy_must_support_claimed_point(self):
+        self.rejected('cut', lambda row: row['data_classes']['mongo'].update(available_at=row['common_at']))
+
+    def test_historical_backup_storage_cannot_be_restore_target(self):
+        key = next(iter(self.campaign.inventory))
+        historical = self.campaign.read(self.campaign.index['backup_campaign'])['homes'][key][0]['storage_sha256']
+        self.rejected('readback', lambda row: row['homes'][key].update(restored_storage_sha256=historical))
+
+    def change_backup(self, mutation):
+        ref = self.campaign.index['backup_campaign']
+        self.campaign.change(ref, mutation)
+        self.campaign.scope['backup_campaign_sha256'] = ref['sha256']
+
+    def test_capture_destination_cannot_alias_another_source(self):
+        other = list(self.campaign.inventory.values())[1]['source_storage_sha256']
+        self.change_backup(lambda row: next(iter(row['homes'].values()))[0].update(storage_sha256=other))
+        with self.assertRaises(Refusal):
+            self.campaign.verify()
+
+    def test_actual_capture_cadence_thirty_minute_boundary(self):
+        self.change_backup(lambda row: next(iter(row['homes'].values()))[1].update(captured_at=stamp(32)))
+        self.campaign.verify()
+        self.change_backup(lambda row: next(iter(row['homes'].values()))[1].update(captured_at=stamp(41), finished_at=stamp(41)))
+        with self.assertRaises(Refusal):
+            self.campaign.verify()
+
+    def test_future_exercise_copy_refuses_even_when_reviewed(self):
+        key = next(iter(self.campaign.inventory))
+        self.campaign.mutate_execution('runtime_region', 'copies', lambda row: row['homes'][key].update(completed_at=stamp(70, 23)))
+        self.rejected('cut', lambda row: row['home_backups'][key].update(available_at=stamp(70, 23)))
+
+    def test_stale_exercise_copy_refuses_even_when_reviewed(self):
+        self.campaign.mutate_execution('runtime_region', 'copies', lambda row: [value.update(captured_at=stamp(0, 23)) for value in row['homes'].values()])
+        self.rejected('cut', lambda row: row.update(common_at=stamp(0, 23)))
+
     def test_missing_backup_cadence(self):
         ref = self.campaign.index['backup_campaign']
         self.campaign.change(ref, lambda row: next(iter(row['homes'].values())).pop())
@@ -233,7 +285,7 @@ class RecoveryTests(unittest.TestCase):
             self.campaign.verify()
 
     def test_common_cut_cannot_postdate_actual_backup(self):
-        self.rejected('cut', lambda row: row.update(common_at=stamp(55)))
+        self.rejected('cut', lambda row: row.update(common_at=stamp(55, 23)))
 
     def test_copy_in_failed_domain_is_refused(self):
         key = next(iter(self.campaign.inventory))
@@ -258,6 +310,15 @@ class RecoveryTests(unittest.TestCase):
         other.index['initial_report'] = reference
         other.scope['initial_report_sha256'] = reference['sha256']
         self.assertEqual(other.verify()['phase'], 'frozen_recheck')
+        invalid = dict(first, runs=[], faults=[], restored_storage=[])
+        reference = other.reference('empty-initial', invalid)
+        other.index['initial_report'] = reference
+        other.scope['initial_report_sha256'] = reference['sha256']
+        with self.assertRaises(Refusal):
+            other.verify()
+        reference = other.reference('initial', first)
+        other.index['initial_report'] = reference
+        other.scope['initial_report_sha256'] = reference['sha256']
         other.scope['candidate']['source'] = 'b' * 40
         with self.assertRaises(Refusal):
             other.verify()
