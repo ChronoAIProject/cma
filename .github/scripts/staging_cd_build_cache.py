@@ -67,6 +67,7 @@ class BuildCache:
         self.restore_result = "miss"
         self.export_reason = None
         self.export_headroom = None
+        self.export_retained_groups = None
 
     def restore(self):
         self.restore_result = "miss"
@@ -113,6 +114,7 @@ class BuildCache:
         # day long made each build recompile everything merged since that seed.
         self.export_reason = None
         self.export_headroom = None
+        self.export_retained_groups = None
         if self.key is None:
             return False
         require(not self.pending.exists(), "Cargo cache export must be fresh")
@@ -120,7 +122,13 @@ class BuildCache:
             tool = bridge()
             tool.transfer("extract", self.pending, namespace=self.namespace,
                           timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES,
-                          compact_registry=self.component == "am")
+                          compact_registry=self.component == "am", max_archive=MAX_BUNDLE_BYTES)
+            compacted = self.pending / "compacted"
+            if compacted.exists():
+                groups = int(compacted.read_text())
+                require(0 < groups <= tool.MAX_MEMBERS, "invalid compacted cache group count")
+                self.export_retained_groups = groups
+                compacted.unlink()
             tool.seal(self.pending, self.key.prefix, family=self.key.family,
                       max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
             size = sum((self.pending / name).lstat().st_size for name in ("registry.tar.gz", "target.tar.gz"))
