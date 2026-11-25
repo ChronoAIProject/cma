@@ -72,8 +72,8 @@ export class Results {
     catch { throw new CheckError('phase_capture_failed'); }
     return outcome === 'complete';
   }
-  block(name, reason) {
-    this.samples.push({ case: name, run: null, outcome: 'blocked', code: reason });
+  block(name, reason, run = null) {
+    this.samples.push({ case: name, run, outcome: 'blocked', code: reason });
   }
   async save(directory) {
     await mkdir(directory, { recursive: true });

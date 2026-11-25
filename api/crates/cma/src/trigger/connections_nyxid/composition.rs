@@ -26,13 +26,59 @@ enum BrokerMode {
 }
 
 impl CmaServiceConnectionBroker {
+    #[cfg(test)]
+    pub(in crate::trigger) fn with_fixture_provider(broker: NyxidServiceConnectionBroker) -> Self {
+        Self {
+            mode: BrokerMode::Provider(Box::new(broker)),
+            subscriptions: None,
+        }
+    }
+
     pub(crate) async fn github_connections(
         &self,
         owner: &SubjectId,
+        observe_accounts: bool,
     ) -> Option<super::GitHubConnections> {
         match &self.mode {
-            BrokerMode::Provider(broker) => Some(broker.github_connections(owner).await),
+            BrokerMode::Provider(broker) => {
+                Some(broker.github_connections(owner, observe_accounts).await)
+            }
             BrokerMode::Trusted => None,
+        }
+    }
+
+    pub(crate) async fn verify_github_repository(
+        &self,
+        owner: &SubjectId,
+        repository: &layer1_public::rest::AgentLifecycleRepository,
+        retained_connection: Option<&str>,
+        pinned_commit: Option<&str>,
+    ) -> super::GitHubRepositoryCheck {
+        match &self.mode {
+            BrokerMode::Provider(broker) => {
+                broker
+                    .verify_github_repository(owner, repository, retained_connection, pinned_commit)
+                    .await
+            }
+            BrokerMode::Trusted => super::GitHubRepositoryCheck::Scope(
+                super::GitHubScopeCheck::VerificationUnavailable,
+            ),
+        }
+    }
+
+    pub(crate) async fn exact_github_scope_check(
+        &self,
+        owner: &SubjectId,
+        connection_id: &str,
+        need: super::GitHubRepositoryNeed,
+    ) -> super::GitHubScopeCheck {
+        match &self.mode {
+            BrokerMode::Provider(broker) => {
+                broker
+                    .exact_github_scope_check(owner, connection_id, need)
+                    .await
+            }
+            BrokerMode::Trusted => super::GitHubScopeCheck::VerificationUnavailable,
         }
     }
 
@@ -47,6 +93,27 @@ impl CmaServiceConnectionBroker {
                     .verify_github_repo_token(
                         credential,
                         connection_id,
+                        tokio::time::Instant::now() + PROVIDER_HTTP_TIMEOUT,
+                    )
+                    .await
+            }
+            BrokerMode::Trusted => Err(ServiceConnectionError::Refused),
+        }
+    }
+
+    pub(crate) async fn verify_github_token_for(
+        &self,
+        credential: &crate::auth::persistence::SecretValue,
+        connection_id: &str,
+        need: super::GitHubRepositoryNeed,
+    ) -> Result<VerifiedGitHubConnection, ServiceConnectionError> {
+        match &self.mode {
+            BrokerMode::Provider(broker) => {
+                broker
+                    .verify_github_token_for(
+                        credential,
+                        connection_id,
+                        Some(need),
                         tokio::time::Instant::now() + PROVIDER_HTTP_TIMEOUT,
                     )
                     .await

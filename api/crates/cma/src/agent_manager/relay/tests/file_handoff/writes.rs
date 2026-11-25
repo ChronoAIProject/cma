@@ -71,6 +71,12 @@ async fn only_a_proved_pre_entry_refusal_recovers_a_concurrent_file_edit() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+    ingress.relay_log.assert_correlated(
+        &owner.relay_log,
+        "write",
+        "verified_write_not_entered",
+        StatusCode::OK,
+    );
     assert!(!response
         .headers()
         .contains_key(file_write::NOT_ENTERED_HEADER));
@@ -127,6 +133,12 @@ async fn only_a_proved_pre_entry_refusal_recovers_a_concurrent_file_edit() {
     };
     let (response, ()) = tokio::join!(request, replace);
     assert_eq!(response.unwrap().status(), StatusCode::CONFLICT);
+    ingress.relay_log.assert_correlated(
+        &owner.relay_log,
+        "write",
+        "verified_write_not_entered",
+        StatusCode::CONFLICT,
+    );
     assert_eq!(owner.runtime.writes.load(SeqCst), 1);
     assert_eq!(ingress.runtime.writes.load(SeqCst), 3);
     db.drop().await.unwrap();

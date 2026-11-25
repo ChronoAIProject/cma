@@ -31,6 +31,7 @@ PUBLISHER_PATHS = (
     '.github/scripts/staging_cd_publication_diagnostics.py',
     '.github/scripts/staging_cd_build.py',
     '.github/scripts/staging_cd_build_cache.py',
+    '.github/scripts/staging_cd_cache_compaction.py',
     '.github/scripts/staging_cd_registry.py',
     '.github/scripts/staging_cd_contract.py',
     '.github/scripts/staging_cd_compatibility.py',

@@ -37,15 +37,19 @@ pub(super) fn connections(
 ) -> Result<Connections, String> {
     let broker = connection_broker(config, auth.clone(), subscriptions.clone())?;
     let prerequisite =
-        crate::connections::ConnectionPrerequisite::new(auth, broker.clone(), policy.clone());
+        crate::connections::ConnectionPrerequisite::new(auth, broker.clone(), policy.clone())
+            .with_exact_github(broker.clone());
     let browser = crate::connections::BrowserConnections::new(
         stores.clone(),
         policy,
         broker.clone(),
         subscriptions,
-        (config.features.github_repository_preflight || config.features.github_connection_recovery)
+        (config.features.github_repository_preflight
+            || config.features.github_connection_recovery
+            || config.features.github_connection_approval)
             .then(|| broker.clone()),
         config.features.github_repository_preflight,
+        config.features.github_connection_approval,
     );
     Ok(Connections {
         broker,

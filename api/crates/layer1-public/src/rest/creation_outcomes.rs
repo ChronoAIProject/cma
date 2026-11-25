@@ -241,13 +241,19 @@ pub fn wire_digest(bytes: &[u8]) -> String {
 pub enum RefusalCode {
     SandboxLimitReached,
     TrustConfirmationRequired,
+    CreationFailed,
+    CreationCancelled,
+    CreationExpired,
 }
 
 impl RefusalCode {
-    const fn code(self) -> &'static str {
+    pub const fn code(self) -> &'static str {
         match self {
             Self::SandboxLimitReached => "sandbox_limit_reached",
             Self::TrustConfirmationRequired => "trust_confirmation_required",
+            Self::CreationFailed => "creation_failed",
+            Self::CreationCancelled => "creation_cancelled",
+            Self::CreationExpired => "creation_expired",
         }
     }
 }

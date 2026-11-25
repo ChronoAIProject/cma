@@ -13,6 +13,59 @@ fn ready(fixture: &Fixture, binding: &NativePoolBinding, count: u32) {
 }
 
 #[tokio::test]
+async fn admitting_pool_observes_current_generation_zero_and_refuses_retiring_binding() {
+    let fixture = Fixture::new().await;
+    let original = fixture.client.configure(&spec(), 2).await.unwrap().binding;
+    for count in [Some(json!(0)), None] {
+        fixture.edit("sandboxwarmpools", &original.name, |row| {
+            row["status"] = json!({"observedGeneration":row["metadata"]["generation"]});
+            if let Some(count) = count {
+                row["status"]["readyReplicas"] = count;
+            }
+        });
+        let observed = fixture
+            .client
+            .observe_admitting_pool(&original)
+            .await
+            .unwrap();
+        assert!(observed.observed);
+        assert_eq!(observed.binding, original);
+        assert_eq!((observed.desired_replicas, observed.ready_replicas), (2, 0));
+    }
+    for status in [json!({}), json!({"observedGeneration":0,"readyReplicas":0})] {
+        fixture.edit("sandboxwarmpools", &original.name, |row| {
+            row["status"] = status
+        });
+        assert!(
+            !fixture
+                .client
+                .observe_admitting_pool(&original)
+                .await
+                .unwrap()
+                .observed
+        );
+    }
+    fixture.edit("sandboxwarmpools", &original.name, |row| {
+        row["status"] =
+            json!({"observedGeneration":row["metadata"]["generation"],"readyReplicas":"zero"});
+    });
+    assert!(fixture
+        .client
+        .observe_admitting_pool(&original)
+        .await
+        .is_err());
+    ready(&fixture, &original, 0);
+    fixture.edit("sandboxwarmpools", &original.name, |row| {
+        row["metadata"]["annotations"][super::retirement::RETIRING] = json!("true");
+    });
+    assert!(fixture
+        .client
+        .observe_admitting_pool(&original)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn planned_creation_keeps_pod_policy_after_lost_ack_and_rejects_other_scope() {
     let fixture = Fixture::new().await;
     let plan = fixture.client.plan(&spec()).unwrap();

@@ -1,10 +1,13 @@
 use super::*;
 use layer2_core::profiles::WorkspaceProfileSnapshot;
 use layer2_core::sandbox::store::{SandboxReconciliationStore, SandboxRuntimeLossRequest};
+use layer2_core::sandbox::work_retry::WORK_RETRY_EXTERNAL_BUDGET;
 use layer2_core::sandbox::{
-    SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoveryVerifier, Workspace,
-    WorkspaceOrigin, WorkspaceSource, WorkspaceStatus, WorkspaceWorkState, WorkspaceWorkStep,
+    SandboxLifecycleResult, SandboxRuntimeUpdateService, SandboxUnpublishedRecoveryRequest,
+    SandboxUnpublishedRecoveryVerifier, Workspace, WorkspaceOrigin, WorkspaceSource,
+    WorkspaceStatus, WorkspaceWorkState, WorkspaceWorkStep,
 };
+use layer2_core::{Authorization, Caller, Capability};
 
 const TARGET: &str = "registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
@@ -55,6 +58,76 @@ async fn advance_fixture(f: &Fixture, id: &SandboxId, now: SystemTime, phase: us
 async fn admitted() -> (Fixture, Sandbox, Workspace, SystemTime) {
     admitted_generation(None).await
 }
+
+#[tokio::test]
+async fn refused_quiescence_parks_same_runtime_update_and_owner_retry_reuses_its_proof() {
+    let (fixture, admitted, _, mut now) = admitted().await;
+    fixture.backend.nonexecuting.store(false, Ordering::SeqCst);
+    for attempt in 0..=WORK_RETRY_EXTERNAL_BUDGET {
+        now += Duration::from_secs(6);
+        fixture.step(&admitted.id, now, TARGET).await;
+        let current = fixture.harness.stored(&admitted.id).await;
+        assert_eq!(current.lifecycle.home, admitted.lifecycle.home);
+        assert_eq!(
+            current.lifecycle.suspended_runtime,
+            admitted.lifecycle.suspended_runtime
+        );
+        assert_eq!(
+            current.lifecycle.unpublished_recovery,
+            admitted.lifecycle.unpublished_recovery
+        );
+        assert_eq!(current.lifecycle.operation, admitted.lifecycle.operation);
+        assert!(current.runtime.is_none());
+        assert!(current.work.lease.is_none());
+        if attempt < WORK_RETRY_EXTERNAL_BUDGET {
+            assert_eq!(current.work.step, SandboxWorkStep::RunLifecycleOperation);
+            assert_eq!(current.work.attempts, attempt + 1);
+        }
+    }
+    let parked = fixture.harness.stored(&admitted.id).await;
+    assert_eq!(parked.work.step, SandboxWorkStep::None);
+    assert_eq!(
+        parked
+            .runtime_update_request()
+            .unwrap()
+            .failure
+            .as_ref()
+            .unwrap()
+            .class,
+        "terminal_validation"
+    );
+    let result = SandboxLifecycleResult::observe(&parked, None, now, true).unwrap();
+    assert_eq!(result.code, Some("runtime_update_parked"));
+    assert!(!result.continuing);
+    assert!(
+        !fixture.backend.calls.snapshot().iter().any(|call| matches!(
+            call.as_str(),
+            "suspend" | "resume" | "upgrade" | "delete-retained"
+        ))
+    );
+
+    let retried = retry_parked_update(&fixture, &parked).await;
+    assert_eq!(retried.work.step, SandboxWorkStep::RunLifecycleOperation);
+    assert_eq!(retried.work.attempts, 0);
+    assert!(retried.runtime_update_request().unwrap().failure.is_none());
+    assert_eq!(retried.lifecycle.operation, parked.lifecycle.operation);
+    assert_eq!(
+        retried.lifecycle.unpublished_recovery,
+        parked.lifecycle.unpublished_recovery
+    );
+}
+
+async fn retry_parked_update(fixture: &Fixture, parked: &Sandbox) -> Sandbox {
+    let service = SandboxRuntimeUpdateService::new(fixture.harness.store.clone(), TARGET.into());
+    let caller = Caller {
+        subject: parked.owner.clone(),
+        authorization: Authorization::new([Capability::UseOwnSandboxes]),
+    };
+    service.request(&caller, &parked.id, TARGET).await.unwrap()
+}
+
+#[path = "quiescence_recovery_tests.rs"]
+mod quiescence_recovery_tests;
 
 pub(super) async fn stalled(
     provider_generation: Option<u64>,

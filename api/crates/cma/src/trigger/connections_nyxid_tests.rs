@@ -22,6 +22,8 @@ use crate::auth::persistence::SecretValue;
 mod deadline;
 #[path = "connections_nyxid_tests/github.rs"]
 mod github;
+mod github_repository;
+pub(crate) use github_repository::GithubRepositoryFixture;
 
 const VISITOR_TOKEN: &str = "visitor-access-secret";
 const PROVIDER_EXPIRES_AT: &str = "2026-09-05T12:15:00.731Z";
@@ -138,6 +140,14 @@ impl Provider {
             .route("/api/v1/services", get(read_catalog))
             .route("/api/v1/keys/{id}", get(read_credential))
             .route("/api/v1/proxy/{id}/user", get(read_github_proxy))
+            .route(
+                "/api/v1/proxy/{id}/repos/{owner}/{name}",
+                get(read_github_repository),
+            )
+            .route(
+                "/api/v1/proxy/{id}/repos/{owner}/{name}/commits/{reference}",
+                get(read_github_reference),
+            )
             .route("/api/v1/assistant/readiness", get(read_readiness))
             .with_state(Arc::clone(&state));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -271,16 +281,72 @@ async fn read_github_proxy(
         authorization(&headers),
         Some(format!("Bearer {VISITOR_TOKEN}"))
     );
+    let selected = query.get("_nyxid_via").unwrap().clone();
+    let login = format!("fixture-{selected}");
     state
         .github_proxy_reads
         .lock()
         .unwrap()
-        .push((catalog, query.get("_nyxid_via").unwrap().clone()));
-    let mut response = Reply::json(json!({"id": 19})).response();
+        .push((catalog, selected));
+    let mut response = Reply::json(json!({"id": 19, "login": login})).response();
     if let Some(scopes) = state.github_proxy_scopes.lock().unwrap().as_deref() {
         response
             .headers_mut()
             .insert("x-oauth-scopes", scopes.parse().unwrap());
+    }
+    response
+}
+
+async fn read_github_repository(
+    State(state): State<Arc<ProviderState>>,
+    Path((catalog, owner, name)): Path<(String, String, String)>,
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let identity = read_github_proxy(State(state), Path(catalog), query, headers).await;
+    let mut response = if owner == "example"
+        && matches!(name.as_str(), "project" | "restricted" | "private-project")
+    {
+        Reply::json(json!({
+            "full_name": format!("{owner}/{name}"),
+            "default_branch": "main",
+            "private": name == "private-project",
+            "disabled": false,
+            "archived": false,
+            "permissions": {"push": name == "project"},
+        }))
+        .response()
+    } else {
+        Reply::error(StatusCode::NOT_FOUND, "repository missing").response()
+    };
+    if let Some(scopes) = identity.headers().get("x-oauth-scopes") {
+        response
+            .headers_mut()
+            .insert("x-oauth-scopes", scopes.clone());
+    }
+    response
+}
+
+async fn read_github_reference(
+    State(state): State<Arc<ProviderState>>,
+    Path((catalog, owner, name, reference)): Path<(String, String, String, String)>,
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    assert_eq!(owner, "example");
+    assert!(matches!(name.as_str(), "project" | "private-project"));
+    let identity = read_github_proxy(State(state), Path(catalog), query, headers).await;
+    let commit = "a".repeat(40);
+    let mut response =
+        if matches!(reference.as_str(), "main" | "branch/synthetic") || reference == commit {
+            Reply::json(json!({"sha":commit})).response()
+        } else {
+            Reply::error(StatusCode::NOT_FOUND, "ref missing").response()
+        };
+    if let Some(scopes) = identity.headers().get("x-oauth-scopes") {
+        response
+            .headers_mut()
+            .insert("x-oauth-scopes", scopes.clone());
     }
     response
 }

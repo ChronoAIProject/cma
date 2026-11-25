@@ -65,6 +65,15 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             select(['../escape'], self.graph)
 
+    def test_key_provider_contract_paths_select_am(self):
+        for path in ['.github/scripts/work-recovery/provider-protocol.mjs',
+                     '.github/scripts/work-recovery/fixtures/mint-expiry.json',
+                     '.github/scripts/key-provider-contracts.py',
+                     '.github/scripts/key-provider-contracts.test.mjs',
+                     '.github/scripts/mongo-contract-exceptions.json']:
+            with self.subTest(path=path):
+                self.assertTrue(select([path], self.graph)['am'])
+
     def test_new_dependency_inherits_owner(self):
         data = metadata(self.root)
         data['packages'].append({'id': 'new', 'name': 'new', 'manifest_path': '/synthetic/api/crates/new/Cargo.toml', 'dependencies': []})

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 337,
+  "openapi_operations": 338,
   "operations": {
     "POST /api/v1/admin/sandboxes/{id}/runtime-migration": {
       "classification": "openapi",
@@ -2813,6 +2813,17 @@
         "not_authenticated",
         "not_found",
         "temporarily_unavailable"
+      ]
+    },
+    "POST /api/v1/agent-lifecycle/{id}/cancel": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Owner-scoped cancellation before allocation.",
+      "required_problems": [
+        "not_authenticated",
+        "not_found",
+        "temporarily_unavailable",
+        "permission_denied",
+        "creation_cancellation_unavailable"
       ]
     },
     "GET /api/v1/bots/connections": {

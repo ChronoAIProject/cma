@@ -5,6 +5,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tracing::instrument::WithSubscriber;
 
+#[path = "repository_snapshot_tests/response_hint.rs"]
+mod response_hint;
+
 const PRIVATE_BODY: &str = "PRIVATE_RESPONSE_SENTINEL credential=PRIVATE_CREDENTIAL_SENTINEL";
 
 struct Fixture {
@@ -61,6 +64,21 @@ impl Fixture {
     }
 
     fn serve(&mut self, failure: Option<(&'static str, u16)>) {
+        self.serve_response(failure.map(|(stage, _)| stage), move || {
+            (
+                axum::http::StatusCode::from_u16(failure.unwrap().1).unwrap(),
+                [("x-private", "PRIVATE_HEADER_SENTINEL")],
+                PRIVATE_BODY,
+            )
+                .into_response()
+        });
+    }
+
+    fn serve_response(
+        &mut self,
+        failed_stage: Option<&'static str>,
+        failure: impl Fn() -> axum::response::Response + Clone + Send + Sync + 'static,
+    ) {
         let listener = self.proxy();
         let reads = self.reads.clone();
         let app = Router::new().fallback(get(move |request: Request| {
@@ -72,16 +90,10 @@ impl Fixture {
                 "metadata"
             };
             reads.lock().unwrap().push(stage.into());
+            let failure = failure.clone();
             async move {
-                if let Some((failed_stage, status)) = failure {
-                    if failed_stage == stage {
-                        return (
-                            axum::http::StatusCode::from_u16(status).unwrap(),
-                            [("x-private", "PRIVATE_HEADER_SENTINEL")],
-                            PRIVATE_BODY,
-                        )
-                            .into_response();
-                    }
+                if failed_stage == Some(stage) {
+                    return failure();
                 }
                 match stage {
                     "metadata" => {
@@ -422,4 +434,90 @@ async fn pinned_archive_refusal_never_resolves_a_new_ref_and_references_are_oper
         );
     }
     assert_ne!(references[0], references[1]);
+}
+
+#[tokio::test]
+async fn github_scope_refuses_revoked_push_and_archived_repositories_before_archive_read() {
+    use layer3_adapter::{
+        CredentialFrame, GithubCredentialRoute, GithubRepositoryScope, GithubRepositoryScopeNeed,
+    };
+    let repository = "example/project";
+    for (push, archived) in [(false, false), (true, true)] {
+        let mut f = Fixture::new();
+        f.request = WorkspaceRequest::new(
+            "prepare",
+            "workspace",
+            "checkout",
+            WorkspaceSource::RepositorySnapshot {
+                url: format!("https://github.com/{repository}"),
+                reference: Some("a".repeat(40)),
+            },
+        )
+        .with_repository_connection(Some("selected".into()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream = format!("http://{}", listener.local_addr().unwrap());
+        let reads = f.reads.clone();
+        let app = Router::new().fallback(get(move |request: Request| {
+            assert_eq!(request.uri().query(), Some("_nyxid_via=selected"));
+            let path = request.uri().path().to_owned();
+            reads.lock().unwrap().push(path.clone());
+            async move {
+                let metadata = match path.as_str() {
+                    "/api/v1/proxy/catalog/repos/example/project" => serde_json::json!({
+                        "full_name": repository, "private": false, "disabled": false, "archived": archived,
+                        "permissions": {"push":push}, "default_branch":"main",
+                    }),
+                    _ => serde_json::json!([{"sha":"a".repeat(40)}]),
+                };
+                ([("x-oauth-scopes", "public_repo")], Json(metadata))
+            }
+        }));
+        f.server = Some(tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap()
+        }));
+        let proxy = crate::github_proxy::configuration(
+            &f.root,
+            &mut Default::default(),
+            Some(&crate::config::ProxyConfig {
+                role: "platform",
+                bind: "127.0.0.1:9092".parse().unwrap(),
+                upstream,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+        let holder = crate::upstream::CredentialHolder::new();
+        holder
+            .install(&CredentialFrame {
+                operation_id: "scope-generation-2".into(),
+                value: "synthetic-scoped-value".into(),
+                custody_generation: Some(2),
+                github_route: Some(GithubCredentialRoute {
+                    service_id: "selected".into(),
+                    catalog_id: "catalog".into(),
+                    other_services: vec![],
+                    repository_scope: Some(GithubRepositoryScope {
+                        repository: repository.into(),
+                        required_scope: GithubRepositoryScopeNeed::PublicRepo,
+                        manage_url: "https://nyx.example/keys/selected".into(),
+                    }),
+                }),
+            })
+            .await
+            .unwrap();
+        crate::github_proxy::PreparedGithubProxy::bind(&proxy)
+            .await
+            .unwrap()
+            .start(holder);
+        f.config.github_proxy = Some(proxy);
+        let error = prepare(&f.config, &f.config.home, &f.request)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "repository_connection_required");
+        assert_eq!(
+            *f.reads.lock().unwrap(),
+            ["/api/v1/proxy/catalog/repos/example/project"]
+        );
+        assert!(!f.config.home.join("checkout").exists());
+    }
 }

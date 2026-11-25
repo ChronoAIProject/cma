@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { expect, it, vi } from 'vitest';
-import { ProtocolError, TimeoutError, ValidationError } from '../index.js';
+import { ProtocolError, TimeoutError, TransportError, ValidationError } from '../index.js';
 import {
   agent,
   incarnation,
@@ -175,7 +175,6 @@ it.each([
   ],
   ['unknown event', frame('cma.agent.ready', {})],
   ['invalid JSON', 'event: cma.agent.event\ndata: {\n\n'],
-  ['truncated frame', frame('cma.agent.event', durable(1), cursor(1)).slice(0, -1)],
   [
     'live ID',
     frame('cma.agent.live', { ...live(), turn_sequence: 1, after_sequence: 1 }, cursor(1)),
@@ -204,6 +203,52 @@ it.each([
   await expect(t.api.events(agent, { onEvent, onCursor })).rejects.toBeInstanceOf(ProtocolError);
   expect(onEvent).not.toHaveBeenCalled();
   expect(onCursor).not.toHaveBeenCalled();
+});
+it.each(['delimiter', 'UTF-8'] as const)(
+  'reports EOF inside a partial %s as a retryable interruption without acknowledging it',
+  async (cut) => {
+    const t = harness();
+    const complete = frame('cma.agent.event', durable(1), cursor(1));
+    const partial = frame(
+      'cma.agent.event',
+      durable(2, { type: 'message', role: 'assistant', content: '🙂' }),
+      cursor(2),
+    );
+    const body = new TextEncoder().encode(complete + partial);
+    const end = cut === 'delimiter' ? body.length - 1 : body.indexOf(0xf0) + 2;
+    t.fetch.mockResolvedValueOnce(sse(body.slice(0, end), 19));
+    const onEvent = vi.fn();
+    const onCursor = vi.fn();
+    await expect(t.api.events(agent, { onEvent, onCursor })).rejects.toBeInstanceOf(TransportError);
+    expect(onEvent).toHaveBeenCalledOnce();
+    expect(onCursor.mock.calls).toEqual([[cursor(1)]]);
+  },
+);
+it('resumes the durable cursor after a severed UTF-8 SSE comment', async () => {
+  const t = harness();
+  const complete = frame('cma.agent.event', durable(1), cursor(1));
+  const interrupted = new TextEncoder().encode(complete + ': keepalive 🙂');
+  t.fetch.mockResolvedValueOnce(sse(interrupted.slice(0, -2), 19));
+  t.fetch.mockResolvedValueOnce(
+    sse(': keepalive 🙂\n\n' + frame('cma.agent.event', durable(2), cursor(2)), 1),
+  );
+  const onEvent = vi.fn();
+  const onCursor = vi.fn();
+  await expect(t.api.events(agent, { onEvent, onCursor })).rejects.toBeInstanceOf(TransportError);
+  expect(onEvent).toHaveBeenCalledOnce();
+  expect(onCursor.mock.calls).toEqual([[cursor(1)]]);
+  await t.api.events(agent, { afterCursor: cursor(1), follow: false, onEvent, onCursor });
+  expect(onEvent.mock.calls.map(([event]) => event.data.sequence)).toEqual([1, 2]);
+  expect(onCursor.mock.calls).toEqual([[cursor(1)], [cursor(2)]]);
+  expect(new URL(String(t.fetch.mock.calls[1]![0])).searchParams.get('after_cursor')).toBe(
+    cursor(1),
+  );
+});
+it('rejects malformed UTF-8 inside a comment during streaming', async () => {
+  const t = harness();
+  const bytes = new TextEncoder().encode(': malformed ');
+  t.fetch.mockResolvedValueOnce(sse(Uint8Array.from([...bytes, 0xf0, 0x28, 0x0a]), 1));
+  await expect(t.api.events(agent, { onEvent: vi.fn() })).rejects.toBeInstanceOf(ProtocolError);
 });
 it('rejects invalid UTF-8 and stops observation', async () => {
   const t = harness();

@@ -22,6 +22,7 @@ mod retirement;
 pub(crate) mod startup;
 mod supervision;
 mod telemetry;
+mod view;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PoolTarget {
@@ -61,46 +62,6 @@ pub(crate) struct PoolTarget {
 pub(crate) struct OperatorReplicas {
     pub replicas: u32,
     pub at: mongodb::bson::DateTime,
-}
-
-impl PoolTarget {
-    pub fn view(&self, live: Option<&NativePoolStatus>, available: bool) -> WarmPoolView {
-        let exact = live.filter(|status| self.binding.as_ref() == Some(&status.binding));
-        let observed = exact.is_some_and(|status| {
-            status.observed && status.desired_replicas == self.target_replicas
-        });
-        let ready = exact
-            .filter(|_| observed)
-            .map(|status| status.ready_replicas);
-        let status = if !available || self.error.is_some() {
-            "unavailable"
-        } else if self.applied_revision != self.revision || !observed {
-            "pending"
-        } else {
-            match (self.target_replicas, ready) {
-                (0, Some(0)) => "disabled",
-                (target, Some(count)) if target > 0 && count >= target => "ready",
-                _ => "pending",
-            }
-        };
-        WarmPoolView {
-            id: self.id.clone(),
-            revision: self.revision as u64,
-            image: self.plan.spec.image.uri.clone(),
-            config_sha256: self.plan.config_sha256.clone(),
-            cpu_millis: self.plan.spec.cpu_millis,
-            memory_mib: self.plan.spec.memory_mib,
-            target_replicas: self.target_replicas,
-            ready_replicas: ready,
-            observed,
-            status: status.into(),
-            resource_name: self.binding.as_ref().map(|binding| binding.name.clone()),
-            error: self.error.clone().or_else(|| {
-                (!available).then(|| "Native warm pool inventory is unavailable.".into())
-            }),
-            machine: self.machine,
-        }
-    }
 }
 
 #[async_trait]
@@ -197,6 +158,7 @@ pub(crate) struct NativeWarmPools {
     default_target: u32,
     machine_target: u32,
     target_fencing: bool,
+    allow_empty_startup: bool,
 }
 
 impl NativeWarmPools {
@@ -219,6 +181,7 @@ impl NativeWarmPools {
             default_target,
             machine_target,
             target_fencing: false,
+            allow_empty_startup: false,
         })
         .with_target_fencing(false)
     }

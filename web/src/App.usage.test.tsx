@@ -8,6 +8,8 @@ import { createMockAuthProvider } from './auth/mock';
 import { agentClient } from './test/agent';
 import { metricsClient, reportFixture } from './usage/metrics/testFixtures';
 import './test/connectedAccounts';
+// These assertions exercise navigation and retention, with the real Usage view loaded.
+import './usage/UsageDialog';
 
 vi.mock('./usage/metrics/MetricChart', () => ({ MetricChart: () => <p>Measured chart</p> }));
 afterEach(() => window.history.replaceState(null, '', '/'));
@@ -63,7 +65,9 @@ it.each([false, true])(
     fireEvent.change(editor, { target: { value: 'Preserve this unsent draft' } });
     const trigger = screen.getByRole('button', { name: /Account menu for/ });
     await actor.click(trigger);
-    await actor.click(screen.getByRole('menuitem', { name: 'Usage' }));
+    await act(async () => {
+      await actor.click(screen.getByRole('menuitem', { name: 'Usage' }));
+    });
     const dialog = await screen.findByRole('dialog', { name: 'Your usage' });
     expect(window.location.pathname).toBe('/usage');
     const saved = window.history.state;

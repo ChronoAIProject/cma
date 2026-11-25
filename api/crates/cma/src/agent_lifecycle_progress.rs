@@ -116,6 +116,49 @@ impl InlineAgentLifecycle {
 
 #[async_trait]
 impl AgentLifecycleOperationReader for InlineAgentLifecycle {
+    async fn cancel_unallocated(
+        &self,
+        caller: &Caller,
+        operation_id: &str,
+    ) -> Result<AgentLifecycleOperationView, AgentLifecycleOperationReadError> {
+        if !caller.authorization.allows(Capability::UseOwnSandboxes)
+            || !caller.authorization.allows(Capability::CreateSandbox)
+        {
+            return Err(AgentLifecycleOperationReadError::Forbidden);
+        }
+        let record = self
+            .operations
+            .read_for_owner(&caller.subject, operation_id)
+            .await
+            .map_err(|_| AgentLifecycleOperationReadError::Unavailable)?
+            .ok_or(AgentLifecycleOperationReadError::NotFound)?;
+        if record.creation_fence.is_none() {
+            return Err(AgentLifecycleOperationReadError::Conflict("This creation predates durable creation evidence. Recover the original operation and confirm its allocation before releasing the reservation.".into()));
+        }
+        if !self.operations.creation_terminal_settlement_enabled() {
+            return Err(AgentLifecycleOperationReadError::Unavailable);
+        }
+        if !self
+            .operations
+            .cancel_fenced_creation(&caller.subject, &record)
+            .await
+            .map_err(|_| AgentLifecycleOperationReadError::Unavailable)?
+        {
+            return Err(AgentLifecycleOperationReadError::Conflict("Creation can no longer be cancelled before allocation. Read the exact creation outcome and settle any associated Sandbox through its lifecycle.".into()));
+        }
+        let settled = self
+            .operations
+            .read_for_owner(&caller.subject, operation_id)
+            .await
+            .map_err(|_| AgentLifecycleOperationReadError::Unavailable)?
+            .ok_or(AgentLifecycleOperationReadError::Unavailable)?;
+        if settled.status != "failed" || settled.sandbox_id.is_some() || settled.agent_id.is_some()
+        {
+            return Err(AgentLifecycleOperationReadError::Unavailable);
+        }
+        Ok(settled.view())
+    }
+
     async fn read(
         &self,
         caller: &Caller,

@@ -18,6 +18,12 @@ mod http;
 mod repositories;
 mod skills;
 
+pub(crate) async fn resolve_public_snapshot(
+    repository: &RepositoryRequest,
+) -> Result<RepositoryResolution, AuthoringSourceError> {
+    repositories::resolve_public_snapshot(repository).await
+}
+
 pub(crate) struct CmaProfileAuthoringSource {
     issuer: Option<Arc<KeyIssuer>>,
     tokens: Option<Arc<dyn OwnerTokenSource>>,

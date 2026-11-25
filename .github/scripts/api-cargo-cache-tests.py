@@ -212,10 +212,130 @@ class CacheTests(unittest.TestCase):
         compact = cache.dockerfile("extract", bound, compact_registry=True)
         self.assertNotIn("--exclude=./src", ordinary)
         self.assertIn("--exclude=./src", compact)
-        self.assertIn(f"-gt {bound // 1024} ]", compact)
-        self.assertIn("tar -C /cache/registry -cf - $skip_src .", compact)
-        self.assertIn("tar -C /cache/target -cf - .", compact)
+        self.assertIn(f"max_expanded={bound}", compact)
+        self.assertIn(f"max_compressed={cache.MAX_ARCHIVE_BYTES}", compact)
+        self.assertIn('archive_stream "$registry" "$registry_archive" $skip_src .', compact)
+        self.assertIn('archive_stream "$target" "$target_archive" .', compact)
+        self.assertIn('archive_stream "$target" "$target_archive" "$@"', compact)
         self.assertNotIn("rm -rf /cache", compact)
+
+    def test_am_compaction_restores_complete_groups_and_cross_group_links(self):
+        import os
+        import random
+
+        registry = self.root / "registry"
+        target = self.root / "target"
+        output = self.root / "export"
+        registry.mkdir()
+        (registry / "package.crate").write_bytes(b"package archive")
+        random_source = random.Random(42)
+
+        def group(name, size):
+            directory = target / "release" / "incremental" / name / "s-complete"
+            directory.mkdir(parents=True)
+            (directory / "work-products.bin").write_bytes(random_source.randbytes(size))
+            return directory
+
+        am = group("cma-111", 16000)
+        core = group("layer2_core-222", 4000)
+        large = group("large-333", 200000)
+        unfinished = group("unfinished-444", 100)
+        (unfinished.parent / "s-aborted-working").mkdir()
+        os.link(large / "work-products.bin", large / "another-name")
+        # Link to a small regular file whose other path is in the omitted group.
+        (large / "shared").write_bytes(b"shared object")
+        os.link(large / "shared", am / "linked-object")
+        os.link(am / "work-products.bin", core / "linked-retained")
+        before = {path.relative_to(target): path.read_bytes() for path in target.rglob("*") if path.is_file()}
+        script = cache.export_script(100000, 40000, 200)
+        subprocess.run(["bash", "-c", script, "export", str(registry), str(target), str(output)],
+                       env={**os.environ, "COPYFILE_DISABLE": "1"}, check=True)
+        self.assertEqual((output / "compacted").read_text().strip(), "2")
+        (output / "compacted").unlink()
+        cache.seal(output, self.prefix, family="example", max_archive=40000, max_content=100000)
+        restored = self.root / "restored"
+        restored.mkdir()
+        restored_registry = self.root / "restored-registry"
+        restored_registry.mkdir()
+        subprocess.run(["tar", "-xzpf", str(output / "registry.tar.gz"), "-C", str(restored_registry)], check=True)
+        subprocess.run(["tar", "-xzpf", str(output / "target.tar.gz"), "-C", str(restored)], check=True)
+        self.assertEqual((restored_registry / "package.crate").read_bytes(), b"package archive")
+        for selected in (am, core):
+            for path in selected.iterdir():
+                self.assertEqual((restored / path.relative_to(target)).read_bytes(), path.read_bytes())
+        self.assertFalse((restored / large.parent.relative_to(target)).exists())
+        self.assertFalse((restored / unfinished.parent.relative_to(target)).exists())
+        self.assertEqual(before, {path.relative_to(target): path.read_bytes() for path in target.rglob("*") if path.is_file()})
+
+    def test_am_compaction_obeys_compressed_and_member_limits_independently(self):
+        import random
+
+        registry = self.root / "registry"
+        target = self.root / "target"
+        registry.mkdir()
+        (registry / "package.crate").write_bytes(b"package archive")
+        random_source = random.Random(815)
+        for name in ("cma-111", "layer2_core-222", "other-333"):
+            directory = target / "release/incremental" / name / "s-complete"
+            directory.mkdir(parents=True)
+            (directory / "work-products.bin").write_bytes(random_source.randbytes(12000))
+        for tag, max_compressed, max_members in (("compressed", 20000, 100), ("members", 1000000, 6)):
+            with self.subTest(tag=tag):
+                output = self.root / tag
+                script = cache.export_script(1000000, max_compressed, max_members)
+                subprocess.run(["bash", "-c", script, "export", str(registry), str(target), str(output)],
+                       env={**os.environ, "COPYFILE_DISABLE": "1"}, check=True)
+                self.assertEqual((output / "compacted").read_text().strip(), "1")
+                (output / "compacted").unlink()
+                with patch.object(cache, "MAX_MEMBERS", max_members):
+                    cache.seal(output, self.prefix, family="example", max_archive=max_compressed, max_content=1000000)
+                with tarfile.open(output / "target.tar.gz") as archive:
+                    self.assertTrue(all("cma-111" in member.name for member in archive))
+
+    def test_many_candidates_bound_the_number_of_archive_compressions(self):
+        import random
+        import shutil
+
+        registry, target, output = (self.root / name for name in ("registry", "target", "export"))
+        registry.mkdir()
+        (registry / "package.crate").write_bytes(b"package")
+        source = random.Random(3358)
+        for number in range(30):
+            group = target / "release/incremental" / f"crate-{number:02d}" / "s-final"
+            group.mkdir(parents=True)
+            (group / "work-products.bin").write_bytes(source.randbytes(32768))
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        calls = self.root / "gzip-calls"
+        gzip = shutil.which("gzip")
+        self.assertIsNotNone(gzip)
+        wrapper = bin_dir / "gzip"
+        wrapper.write_text('#!/bin/sh\n[ "$1" != "-1" ] || echo compress >> "$COUNT_FILE"\nexec "$REAL_GZIP" "$@"\n')
+        wrapper.chmod(0o755)
+        env = {**os.environ, "COPYFILE_DISABLE": "1", "PATH": f"{bin_dir}:{os.environ['PATH']}",
+               "COUNT_FILE": str(calls), "REAL_GZIP": gzip}
+        script = cache.export_script(400000, 140000, 500)
+        subprocess.run(["bash", "-c", script, "export", str(registry), str(target), str(output)], env=env, check=True)
+        self.assertLessEqual(len(calls.read_text().splitlines()), 5)
+        self.assertTrue((output / "compacted").exists())
+        (output / "compacted").unlink()
+        cache.seal(output, self.prefix, family="example", max_archive=140000, max_content=400000)
+
+    def test_am_compaction_refuses_when_no_complete_group_fits(self):
+        registry = self.root / "registry"
+        target = self.root / "target"
+        output = self.root / "export"
+        registry.mkdir()
+        (registry / "package.crate").write_bytes(b"package archive")
+        group = target / "release/incremental/cma-111/s-complete"
+        group.mkdir(parents=True)
+        (group / "work-products.bin").write_bytes(b"x" * 100000)
+        script = cache.export_script(40000, 20000, 100)
+        subprocess.run(["bash", "-c", script, "export", str(registry), str(target), str(output)],
+                       env={**os.environ, "COPYFILE_DISABLE": "1"}, check=True)
+        self.assertEqual(sorted(path.name for path in output.iterdir()), ["empty"])
+        with self.assertRaisesRegex(ValueError, "empty mount"):
+            cache.seal(output, self.prefix)
 
     def test_archive_symlink_and_extra_files_are_rejected(self):
         self.bundle()
