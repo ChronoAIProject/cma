@@ -74,6 +74,7 @@ pub(crate) struct SandboxReconciler {
     recovery_schedule: tokio::sync::Mutex<recovery::Schedule>,
     progress: tokio::sync::Mutex<Option<sweep::Progress>>,
     binding_holds: Arc<binding_holds::BindingHolds>,
+    startup_native_home_hold_enabled: bool,
     platform_spend: Option<Arc<dyn platform::PlatformSpendSweep>>,
     platform_schedule: platform::PlatformSpendSchedule,
     background_work: crate::background::BackgroundWork,
@@ -106,6 +107,7 @@ impl SandboxReconciler {
             recovery_schedule: tokio::sync::Mutex::new(recovery::Schedule::default()),
             progress: tokio::sync::Mutex::new(None),
             binding_holds: Default::default(),
+            startup_native_home_hold_enabled: false,
             platform_spend: None,
             platform_schedule: Default::default(),
             background_work: crate::background::BackgroundWork::new(

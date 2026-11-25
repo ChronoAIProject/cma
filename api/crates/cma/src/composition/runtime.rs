@@ -167,6 +167,7 @@ pub(super) fn lifecycle_config(
             .is_some_and(|replicas| replicas.defer_foreign_reconciliation),
         sandbox_reconciliation_reserved_lane: config.features.sandbox_reconciliation_reserved_lane,
         sandbox_binding_hold_metrics: config.features.sandbox_binding_hold_metrics,
+        startup_native_home_hold_enabled: config.features.startup_native_home_hold_enabled,
         home_policy: config
             .runtime
             .home_policy
