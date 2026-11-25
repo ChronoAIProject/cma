@@ -207,9 +207,15 @@ const agent = createServer(async (request, response) => {
   try {
     if (request.method !== 'POST' || !['/navigate', '/input'].includes(request.url)) { response.writeHead(404).end(); return; }
     let body = '';
-    for await (const chunk of request) {
+    request.setEncoding('utf8');
+    for await (const chunk of request.iterator({ destroyOnReturn: false })) {
       body += chunk;
-      if (body.length > 16384) throw new Error('Navigation too large');
+      if (body.length > 16384) {
+        // Flush the refusal before closing, even if the caller is still sending.
+        response.setHeader('connection', 'close');
+        if (request.url === '/navigate') throw refused('browser_navigation_invalid');
+        throw new Error('Browser input too large');
+      }
     }
     const value = JSON.parse(body);
     const result = await serialized(() => {

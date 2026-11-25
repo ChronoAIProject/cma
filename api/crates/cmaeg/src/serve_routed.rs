@@ -26,6 +26,7 @@ pub(crate) struct Composition {
     pub scheduler: Scheduler,
     pub media_scheduler: Option<Scheduler>,
     pub replica_routes: axum::Router,
+    pub provider_start: Option<crate::telemetry::provider_start::Measurement>,
 }
 pub(crate) fn start_workers(
     composition: Option<Composition>,
@@ -39,6 +40,16 @@ pub(crate) fn start_workers(
         workers.push(Worker::start(scheduler, readiness));
     }
     workers
+}
+
+pub(crate) async fn start_metrics(
+    address: std::net::SocketAddr,
+    metrics: metrics_exporter_prometheus::PrometheusHandle,
+    composition: Option<&Composition>,
+) -> Result<crate::http::metrics::MetricsServer, std::io::Error> {
+    let measurement = composition.and_then(|routed| routed.provider_start.clone());
+    crate::http::metrics::MetricsServer::start_with_provider_start(address, metrics, measurement)
+        .await
 }
 
 pub(crate) struct Deps {
@@ -69,6 +80,10 @@ pub(crate) async fn compose(
         );
     }
     let mut plans = PlanStore::new((*state.records).clone(), state.master_keys.clone());
+    if config.routing.provider_start_measurement_enabled {
+        use crate::telemetry::provider_start::{Measurement, MAX_SAMPLES};
+        plans = plans.with_start_measurement(Measurement::new(MAX_SAMPLES)?);
+    }
     let mut journal = Journal::new((*state.records).clone(), state.master_keys.clone())
         .with_activity(state.activity.clone())
         .with_execution_verifiers(state.providers.execution_verifiers.clone());
@@ -232,6 +247,7 @@ pub(crate) async fn compose(
         .filter(|provider| provider.paths.recovery.is_some())
         .map(|provider| provider.slug.as_str().to_owned())
         .collect();
+    let provider_start = plans.start_measurement.clone();
     let ingress = Arc::new(
         RoutedIngress::new(
             plans,
@@ -259,5 +275,6 @@ pub(crate) async fn compose(
         scheduler,
         media_scheduler,
         replica_routes,
+        provider_start,
     }))
 }
