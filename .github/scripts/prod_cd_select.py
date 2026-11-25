@@ -221,7 +221,7 @@ def staging_verified(images, request, download, *, pointer_source=None, pointer_
                     if (component in pending and isinstance(row, dict) and row.get("state") == VERIFIED
                             and row.get("image") == pending[component]
                             and (component != "runtime" or pointer_source is None
-                                 or (row.get("source_sha") == pointer_source and pointer_verified(row, "staging")))):
+                                 or (row.get("source_sha") == pointer_source and pointer_verified(component, row, "staging")))):
                         verified.add(component)
                         del pending[component]
                         if component == "runtime" and pointer_evidence is not None:
@@ -249,16 +249,25 @@ def pointer_artifact(reference, request, download):
     return run, evidence_rows(archive)
 
 
-def initial_pointer_qualification(reference, request, download):
+def initial_pointer_qualification(reference, request, download, *, tags, history):
     """The reviewed activation names an immutable staging two-lane artifact."""
     run, evidence = pointer_artifact(reference, request, download)
     require(run["conclusion"] == "success", "Initial staging pointer qualification workflow did not pass")
     lanes = ("runtime", "runtime-omarchy")
-    require(all(isinstance(evidence.get(lane), dict) and pointer_verified(evidence[lane], "staging")
+    require(all(pointer_verified(lane, evidence.get(lane), "staging", transition=True)
                 for lane in lanes), "Initial staging qualification lacks both pointer promotions")
     require(all(evidence["runtime"]["pointer"][key] == evidence["runtime-omarchy"]["pointer"][key]
                 for key in ("build", "build_digest")),
             "Initial staging qualification used different Agent Manager builds")
+    for lane in lanes:
+        row = evidence[lane]
+        history.position(row["source_sha"])
+        publications = [tag for tag in tags(lane) if tag.get("target") == row["source_sha"]
+                        and isinstance(tag.get("receipt"), dict)
+                        and tag["receipt"].get("source") == row["source_sha"]
+                        and tag.get("name") == tag["receipt"].get("tag")
+                        and row["image"] == tag["receipt"].get("repository", "") + "@" + tag["receipt"].get("digest", "")]
+        require(len(publications) == 1, "Initial staging pointer promotion has no matching final publication")
 
 
 def gh_download(token):
@@ -318,7 +327,7 @@ def plan(env, api, registry, policy, *, root, download, deployables, runner=subp
             require(approved_initial == initial, "The initial staging qualification differs from production approval")
         else:
             approved_promotion = None
-        initial_pointer_qualification(initial, api.request, download)
+        initial_pointer_qualification(initial, api.request, download, tags=api.tags, history=history)
         if pointer_evidence is not None:
             pointer_evidence.append(initial)
         # Only finals on the approved production release are eligible, even
@@ -334,7 +343,7 @@ def plan(env, api, registry, policy, *, root, download, deployables, runner=subp
             _, evidence = pointer_artifact(approved_promotion, api.request, download)
             row = evidence.get("runtime")
             require(isinstance(row, dict) and row.get("image") == images["runtime"]
-                    and row.get("source_sha") == runtime["source"] and pointer_verified(row, "staging"),
+                    and row.get("source_sha") == runtime["source"] and pointer_verified("runtime", row, "staging"),
                     "The approved staging pointer promotion differs from the release")
             verified = staging_verified({key: image for key, image in images.items() if key != "runtime"},
                                         api.request, download) | {"runtime"}

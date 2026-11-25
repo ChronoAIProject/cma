@@ -9,22 +9,38 @@ from staging_cd_common import matches, require
 from staging_cd_receipts import canonical, sha256
 from staging_cd_set import document, private_document, release_set, validate_set
 from staging_cd_targets import RUNTIME_TARGETS
+from staging_cd_versions import DEPLOYABLES
 
 SCHEMA = "cma-private-deployment-result-v1"
 STATES = {"controller-verified": "none", "withheld": "deployed-compatibility-unqualified",
           "unverified": "deployment-unverified"}
 INVALID_EVIDENCE = "invalid-public-evidence"
-POINTER_SCHEMA = "cma-runtime-pointer-promotion-v1"
+POINTER_SCHEMA = "cma-runtime-pointer-promotion-v2"
+DIGEST = r"sha256:[0-9a-f]{64}"
 
 
-def pointer_verified(row, environment):
+def pointer_verified(component, row, environment, *, transition=False):
+    if component not in RUNTIME_TARGETS or not isinstance(row, dict):
+        return False
+    image = row.get("image")
+    repository = "ghcr.io/chronoaiproject/" + DEPLOYABLES[component]
     proof = row.get("pointer")
-    return (row.get("state") == "controller-verified" and isinstance(proof, dict)
-            and set(proof) == {"schema", "environment", "revision", "build", "build_digest"}
+    if not (row.get("state") == "controller-verified" and isinstance(image, str)
+            and image.startswith(repository + "@") and matches(DIGEST, image.split("@", 1)[1])
+            and matches(r"[0-9a-f]{40}", row.get("source_sha")) and isinstance(proof, dict)
+            and set(proof) == {"schema", "environment", "revision", "build", "build_digest", "previous"}
             and proof["schema"] == POINTER_SCHEMA and proof["environment"] == environment
             and type(proof["revision"]) is int and proof["revision"] > 0
-            and matches(r"[0-9a-f]{40}", proof["build"])
-            and matches(r"sha256:[0-9a-f]{64}", proof["build_digest"]))
+            and matches(r"[0-9a-f]{40}", proof["build"]) and matches(DIGEST, proof["build_digest"])):
+        return False
+    previous = proof["previous"]
+    if not (isinstance(previous, dict) and set(previous) == {"digest", "revision"}
+            and matches(DIGEST, previous["digest"]) and type(previous["revision"]) is int
+            and previous["revision"] > 0):
+        return False
+    if previous["digest"] == image.split("@", 1)[1]:
+        return not transition and previous["revision"] == proof["revision"]
+    return previous["revision"] < proof["revision"]
 
 
 def validate(result, request, code):
@@ -44,7 +60,7 @@ def validate(result, request, code):
                 and row["source_sha"] == request["components"][component]["source_sha"],
                 "Private deployment outcome contains unexpected data")
         if "pointer" in row:
-            require(component in RUNTIME_TARGETS and any(pointer_verified(row, environment)
+            require(component in RUNTIME_TARGETS and any(pointer_verified(component, row, environment)
                     for environment in ("staging", "production"))
                     and (component == "runtime" or row["pointer"]["environment"] == "staging"),
                     "Private runtime pointer outcome is invalid")

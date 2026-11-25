@@ -142,16 +142,20 @@ def execute(script, path, request, receipts, started, env, child_env, *, limit, 
             ), "Runtime release authority changed outside this deployment")
         return current["lanes"]
 
-    def fence(candidates):
-        observe(remaining(started))
+    def require_current(candidates):
         if target == PRODUCTION:
             released, current = release_bounds(env, Path.cwd())
             require(released == current.head, "A newer production release owns runtime pointer publication")
             require_released_versions(candidates, current)
-            require(datetime.now(timezone(timedelta(hours=8))).hour != 2,
-                    "Production runtime pointer writes are paused during the release blackout")
         else:
             api.require_current_versions(candidates)
+
+    def fence(candidates):
+        observe(remaining(started))
+        require_current(candidates)
+        if target == PRODUCTION:
+            require(datetime.now(timezone(timedelta(hours=8))).hour != 2,
+                    "Production runtime pointer writes are paused during the release blackout")
         remaining(started)
         authorized.update(candidates)
 
@@ -163,6 +167,9 @@ def execute(script, path, request, receipts, started, env, child_env, *, limit, 
 
     active = promote(receipts, publications, history, registry, read_ready, environment=target, fence=fence,
                      deadline=deadline - 5)
+    remaining(started, limit)
+    require_current(receipts)
+    remaining(started, limit)
 
     components = {component: {"state": "controller-verified", "reason": "none",
                               "image": row["image"], "source_sha": row["source_sha"]}
@@ -172,6 +179,7 @@ def execute(script, path, request, receipts, started, env, child_env, *, limit, 
         components[component]["pointer"] = {
             "schema": POINTER_SCHEMA, "environment": target, "revision": lane["revision"],
             "build": baseline["build"]["source"], "build_digest": baseline["build"]["digest"],
+            "previous": baseline["lanes"][component],
         }
     write_result(path.with_name("component-result.json"), request, components)
     return 0

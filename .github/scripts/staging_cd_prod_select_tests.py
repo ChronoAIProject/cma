@@ -152,7 +152,8 @@ class EvidenceTests(unittest.TestCase):
         request = self.staging_runs([run_view(14)], {14: [artifact(7, 14)]})
         row = {"state": select.VERIFIED, "image": image, "source_sha": RELEASED}
         proof = {"schema": POINTER_SCHEMA, "environment": "staging", "revision": 2,
-                 "build": MERGE, "build_digest": "sha256:" + "9" * 64}
+                 "build": MERGE, "build_digest": "sha256:" + "9" * 64,
+                 "previous": {"digest": "sha256:" + "7" * 64, "revision": 1}}
         artifacts = (row, dict(row, pointer=dict(proof, environment="production")),
                      dict(row, source_sha=PREVIOUS, pointer=proof), dict(row, pointer=proof))
         for index, artifact_row in enumerate(artifacts):
@@ -163,24 +164,47 @@ class EvidenceTests(unittest.TestCase):
 
     def test_initial_runtime_qualification_requires_two_promotions_on_one_build(self):
         proof = {"schema": POINTER_SCHEMA, "environment": "staging", "revision": 2,
-                 "build": MERGE, "build_digest": "sha256:" + "9" * 64}
-        agent = {"state": select.VERIFIED, "pointer": proof}
-        machine = {"state": select.VERIFIED, "pointer": dict(proof, revision=3)}
+                 "build": MERGE, "build_digest": "sha256:" + "9" * 64,
+                 "previous": {"digest": "sha256:" + "7" * 64, "revision": 1}}
+        agent_digest, machine_digest = "sha256:" + "8" * 64, "sha256:" + "6" * 64
+        agent = {"state": select.VERIFIED, "pointer": proof, "source_sha": RELEASED,
+                 "image": "ghcr.io/chronoaiproject/cma-runtime@" + agent_digest}
+        machine = {"state": select.VERIFIED, "pointer": dict(proof, revision=3), "source_sha": RELEASED,
+                   "image": "ghcr.io/chronoaiproject/cma-runtime-omarchy@" + machine_digest}
         request = Mock(side_effect=[run_view(14), {"artifacts": [artifact(7, 14)]}])
         archive = evidence({"runtime": agent, "runtime-omarchy": machine})
         reference = "14:7:" + hashlib.sha256(archive).hexdigest()
-        select.initial_pointer_qualification(reference, request, Mock(return_value=archive))
-        cases = ({"runtime": agent},
-                 {"runtime": agent, "runtime-omarchy": dict(machine, pointer=dict(proof, build=PREVIOUS))})
+        def final(component):
+            image = agent["image"] if component == "runtime" else machine["image"]
+            repository, digest = image.split("@")
+            name = repository.rsplit("/", 1)[-1] + "/v0.10.1"
+            return [{"name": name, "target": RELEASED, "receipt": {
+                "source": RELEASED, "tag": name, "repository": repository, "digest": digest,
+            }}]
+        authority = {"tags": final, "history": History([RELEASED])}
+        select.initial_pointer_qualification(reference, request, Mock(return_value=archive), **authority)
+        same_agent = dict(agent, pointer=dict(proof, revision=1, previous={"digest": agent_digest, "revision": 1}))
+        same_machine = dict(machine, pointer=dict(proof, revision=1, previous={"digest": machine_digest, "revision": 1}))
+        cases = (
+            {"runtime": agent},
+            {"runtime": agent, "runtime-omarchy": dict(machine, pointer=dict(proof, build=PREVIOUS))},
+            {"runtime": same_agent, "runtime-omarchy": same_machine},
+            {"runtime": agent, "runtime-omarchy": dict(machine, image=agent["image"])},
+            {"runtime": agent, "runtime-omarchy": dict(machine, source_sha="unqualified")},
+        )
         for rows in cases:
             request = Mock(side_effect=[run_view(14), {"artifacts": [artifact(7, 14)]}])
             incomplete = evidence(rows)
             with self.assertRaises(Refusal):
                 select.initial_pointer_qualification(
-                    "14:7:" + hashlib.sha256(incomplete).hexdigest(), request, Mock(return_value=incomplete))
+                    "14:7:" + hashlib.sha256(incomplete).hexdigest(), request, Mock(return_value=incomplete), **authority)
+        request = Mock(side_effect=[run_view(14), {"artifacts": [artifact(7, 14)]}])
+        with self.assertRaisesRegex(Refusal, "no matching final publication"):
+            select.initial_pointer_qualification(reference, request, Mock(return_value=archive),
+                                                 tags=lambda _: [], history=authority["history"])
         request = Mock(side_effect=[run_view(14), {"artifacts": [artifact(7, 14)]}])
         with self.assertRaisesRegex(Refusal, "qualification changed"):
-            select.initial_pointer_qualification(reference, request, Mock(return_value=evidence(cases[0])))
+            select.initial_pointer_qualification(reference, request, Mock(return_value=evidence(cases[0])), **authority)
 
     def staging_runs(self, runs, artifacts, workflow="staging-cd.yml"):
         """A request stub: workflow run listings, then each run's own artifacts."""
@@ -383,7 +407,8 @@ class PlanTests(unittest.TestCase):
         image = candidate["repository"] + "@" + candidate["digest"]
         active = {"state": select.VERIFIED, "image": image, "source_sha": RELEASED,
                   "pointer": {"schema": POINTER_SCHEMA, "environment": "staging", "revision": 2,
-                              "build": MERGE, "build_digest": "sha256:" + "9" * 64}}
+                              "build": MERGE, "build_digest": "sha256:" + "9" * 64,
+                              "previous": {"digest": candidate["digest"], "revision": 2}}}
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
             env.update(CD_RELEASE_SET="fixture", CD_RUNTIME_POINTER_PUBLICATION_ENABLED="true",

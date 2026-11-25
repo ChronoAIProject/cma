@@ -57,22 +57,39 @@ class PointerDeployTests(unittest.TestCase):
         runner, mask = Mock(), Mock()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "release.json"
-            with patch.object(deploy, "GitHub"), patch.object(deploy, "Registry"), \
+            with patch.object(deploy, "GitHub") as api, patch.object(deploy, "Registry"), \
                     patch.object(deploy, "cohort", return_value=cohort) as observe, \
                     patch.object(deploy, "promote", side_effect=observe_promotion) as promote:
                 self.assertEqual(deploy.run(runner, Path("controller.py"), path, request, receipts, timestamp(), "release",
                                             "staging", env, {"LANG": "C"}, 990, mask), 0)
                 self.assertEqual(observe.call_count, 2)
                 promote.assert_called_once()
+                api.return_value.require_current_versions.assert_called_once_with(receipts)
             result = document(path.with_name("component-result.json").read_text())
             self.assertEqual(result["request"], sha256(request))
             self.assertEqual(result["components"]["runtime"]["state"], "controller-verified")
             self.assertEqual(result["components"]["runtime"]["image"], request["components"]["runtime"]["image"])
             self.assertEqual(result["components"]["runtime"]["pointer"],
                              {"schema": deploy.POINTER_SCHEMA, "environment": "staging", "revision": 2,
-                              "build": "e" * 40, "build_digest": "sha256:" + "f" * 64})
+                              "build": "e" * 40, "build_digest": "sha256:" + "f" * 64,
+                              "previous": {"digest": receipt["digest"], "revision": 2}})
         runner.assert_not_called()
         mask.assert_called_once_with("fixture-package-key")
+
+    def test_superseded_idempotent_observation_cannot_write_receipt(self):
+        receipt = fixture_runtime_receipt()
+        receipts = {"runtime": receipt}
+        request = private_document(release_set(receipts))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "release.json"
+            with patch.object(deploy, "GitHub") as api, patch.object(deploy, "Registry") as registry, \
+                    patch.object(deploy, "cohort", return_value=observed(receipt)), \
+                    patch.object(deploy, "promote", side_effect=observe_promotion):
+                api.return_value.require_current_versions.side_effect = Refusal("candidate superseded")
+                with self.assertRaisesRegex(Refusal, "candidate superseded"):
+                    deploy.execute(Path("controller.py"), path, request, receipts, timestamp(), {}, {}, limit=990)
+                registry.return_value.write_runtime_pointer.assert_not_called()
+            self.assertFalse(path.with_name("component-result.json").exists())
 
     def test_partial_manager_replacement_prevents_runtime_deployment_receipt(self):
         receipt = fixture_runtime_receipt()
