@@ -108,14 +108,23 @@ impl RoutedIngress {
         self
     }
 
-    async fn assign_profile(&self, request: &LaunchRequest) -> Result<LaunchRequest, Problem> {
+    async fn assign_profile(
+        &self,
+        request: &LaunchRequest,
+    ) -> Result<
+        (
+            LaunchRequest,
+            Option<crate::channels::profile_assignment::Admission>,
+        ),
+        Problem,
+    > {
         let mut request = request.clone();
-        crate::channels::profile_assignment::pin_legacy(
+        let admission = crate::channels::profile_assignment::prepare_admission(
             self.profile_resolver.as_ref(),
             &mut request,
         )
         .await?;
-        Ok(request)
+        Ok((request, admission))
     }
 
     pub fn with_native_discovery(
@@ -259,28 +268,29 @@ impl RoutedIngress {
                         "routed_delivery_unsupported",
                     )
                 })?;
-                let assigned = if let Some(target) = plan.targets.iter_mut().find(|target| {
-                    target.consumer.is_default()
-                        && request
-                            .channel
-                            .definition
-                            .secrets
-                            .profile_revisions
-                            .is_some()
-                }) {
+                let (assigned, assignment) = if let Some(target) =
+                    plan.targets.iter_mut().find(|target| {
+                        target.consumer.is_default()
+                            && request
+                                .channel
+                                .definition
+                                .secrets
+                                .profile_revisions
+                                .is_some()
+                    }) {
                     let mut desired = request.clone();
                     desired.consumer = None;
                     desired.conversation_id = target.event.conversation_id.clone();
-                    let mut assigned = self.assign_profile(&desired).await?;
+                    let (mut assigned, assignment) = self.assign_profile(&desired).await?;
                     target.provider = assigned.channel.definition.provider.clone();
                     assigned.consumer = request.consumer.clone();
                     assigned.conversation_id = request.conversation_id.clone();
-                    assigned
+                    (assigned, assignment)
                 } else {
-                    request.clone()
+                    (request.clone(), None)
                 };
                 let request = &assigned;
-                let candidate = if message_plan.is_some() {
+                let mut candidate = if message_plan.is_some() {
                     Candidate::prepare_message_event_with_generation(
                         request,
                         &plan,
@@ -319,6 +329,7 @@ impl RoutedIngress {
                     )
                 }
                 .map_err(admission_problem)?;
+                candidate.profile_admission = assignment;
                 let committed = if let Some(github_fence) = github_fence {
                     let authority_guards = vec![
                         crate::records::AuthorityGuard {

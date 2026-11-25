@@ -51,13 +51,13 @@ impl Assignment {
 /// key, channel and consumer. It also identifies legacy AM mappings whose
 /// original event records have expired. A revision or credential change cannot
 /// create a second assignment for that conversation.
-pub(crate) async fn admit(
+async fn prepare(
     store: &Store,
     current: &ResolvedChannel,
     consumer: &ConsumerId,
     conversation: &ConversationId,
     allow_new: bool,
-) -> Result<Option<Assignment>, Error> {
+) -> Result<Option<(Assignment, Option<crate::records::mongo::ReplicaWrite>)>, Error> {
     let channel = &current.definition;
     let Some(history) = channel.secrets.profile_revisions.as_ref() else {
         return Ok(None);
@@ -104,7 +104,7 @@ pub(crate) async fn admit(
             return Err(Error::Corrupt);
         }
         assignment.view(channel)?;
-        Ok(Some(assignment))
+        Ok(Some((assignment, None)))
     };
     match store.read::<Assignment>(&id, false).await? {
         Some((retained, 1)) => return validate(retained),
@@ -112,51 +112,31 @@ pub(crate) async fn admit(
         None if !allow_new => return Err(Error::Lost),
         None => {}
     }
-    // The Mongo channel guard writes the channel row and inserts the permanent
-    // assignment in one transaction. Profile publication updates that row.
-    let result = store
-        .write(
-            &id,
-            &candidate.owner,
-            &candidate,
-            Write {
-                channel: Some((channel.record_id.to_string(), current.version)),
-                ..Default::default()
-            },
-        )
-        .await;
-    match result {
-        Ok(1) => Ok(Some(candidate)),
-        Ok(_) => Err(Error::Corrupt),
-        Err(error) => match store.read::<Assignment>(&id, false).await? {
-            Some((retained, 1)) => validate(retained),
-            Some(_) => Err(Error::Corrupt),
-            None => Err(error),
+    let write = store.prepare(
+        &id,
+        &candidate.owner,
+        &candidate,
+        Write {
+            channel: Some((channel.record_id.to_string(), current.version)),
+            ..Default::default()
         },
-    }
+    )?;
+    Ok(Some((candidate, Some(write))))
+}
+
+pub(crate) struct Admission {
+    pub channel_record_id: String,
+    pub channel_version: u64,
+    pub insert: Option<crate::records::mongo::ReplicaWrite>,
 }
 
 /// Project the pinned execution profile after validating its retained credential.
-pub(crate) async fn execution_channel(
-    resolver: &super::resolver::ChannelResolver,
-    current: std::sync::Arc<ResolvedChannel>,
-    consumer: &ConsumerId,
-    conversation: &ConversationId,
-    allow_new: bool,
-) -> Result<std::sync::Arc<ResolvedChannel>, super::resolver::ResolveError> {
-    use super::resolver::ResolveError;
-    if current.definition.secrets.profile_revisions.is_none() || !consumer.is_default() {
-        return Ok(current);
-    }
-    let store = resolver.profile_assignment_store()?;
-    let assignment = admit(&store, &current, consumer, conversation, allow_new)
-        .await
-        .map_err(|_| ResolveError::Unavailable)?
-        .ok_or(ResolveError::InvalidDefinition)?;
-    let view = assignment
-        .view(&current.definition)
-        .map_err(|_| ResolveError::InvalidDefinition)?;
-    let mut execution = (*current).clone();
+fn project(
+    current: &ResolvedChannel,
+    assignment: &Assignment,
+) -> Result<std::sync::Arc<ResolvedChannel>, Error> {
+    let view = assignment.view(&current.definition)?;
+    let mut execution = current.clone();
     execution.definition.provider = view.provider.clone();
     execution.definition.profile_digest = view.profile_digest.to_owned();
     execution.definition.profile = view.profile;
@@ -165,10 +145,28 @@ pub(crate) async fn execution_channel(
     Ok(std::sync::Arc::new(execution))
 }
 
-pub(crate) async fn pin_legacy(
+pub(crate) async fn execution_channel(
+    resolver: &super::resolver::ChannelResolver,
+    current: std::sync::Arc<ResolvedChannel>,
+    consumer: &ConsumerId,
+    conversation: &ConversationId,
+) -> Result<std::sync::Arc<ResolvedChannel>, super::resolver::ResolveError> {
+    use super::resolver::ResolveError;
+    if current.definition.secrets.profile_revisions.is_none() || !consumer.is_default() {
+        return Ok(current);
+    }
+    let store = resolver.profile_assignment_store()?;
+    let (assignment, _) = prepare(&store, &current, consumer, conversation, false)
+        .await
+        .map_err(|_| ResolveError::Unavailable)?
+        .ok_or(ResolveError::InvalidDefinition)?;
+    project(&current, &assignment).map_err(|_| ResolveError::InvalidDefinition)
+}
+
+pub(crate) async fn prepare_admission(
     resolver: Option<&super::resolver::ChannelResolver>,
     request: &mut crate::ingress::launch::LaunchRequest,
-) -> Result<(), cmaeg_core::problem::Problem> {
+) -> Result<Option<Admission>, cmaeg_core::problem::Problem> {
     use cmaeg_core::problem::{Problem, ProblemCode};
     if request
         .channel
@@ -177,7 +175,7 @@ pub(crate) async fn pin_legacy(
         .profile_revisions
         .is_none()
     {
-        return Ok(());
+        return Ok(None);
     }
     let unavailable = || {
         Problem::new(
@@ -191,16 +189,27 @@ pub(crate) async fn pin_legacy(
         .resolve_current(request.channel.id.as_str())
         .await
         .map_err(|_| unavailable())?;
-    if current.version != request.channel.version {
+    if current.version != request.channel.version || current.definition.mutation.is_some() {
         return Err(unavailable());
     }
     let consumer = request
         .consumer
         .clone()
         .unwrap_or_else(ConsumerId::default_consumer);
-    request.channel =
-        execution_channel(resolver, current, &consumer, &request.conversation_id, true)
+    let store = resolver
+        .profile_assignment_store()
+        .map_err(|_| unavailable())?;
+    let Some((assignment, insert)) =
+        prepare(&store, &current, &consumer, &request.conversation_id, true)
             .await
-            .map_err(|_| unavailable())?;
-    Ok(())
+            .map_err(|_| unavailable())?
+    else {
+        return Ok(None);
+    };
+    request.channel = project(&current, &assignment).map_err(|_| unavailable())?;
+    Ok(Some(Admission {
+        channel_record_id: current.definition.record_id.to_string(),
+        channel_version: current.version,
+        insert,
+    }))
 }

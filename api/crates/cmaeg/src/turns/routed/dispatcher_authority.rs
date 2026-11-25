@@ -51,19 +51,11 @@ impl Authority for ChannelResolver {
         target: &'a StoredTarget,
     ) -> BoxFuture<'a, Result<Arc<ResolvedChannel>, ExecutionError>> {
         Box::pin(async move {
-            let baseline = current
-                .definition
-                .secrets
-                .profile_revisions
-                .as_ref()
-                .is_some_and(|history| !history.baseline_complete)
-                && current.definition.provider == target.launch.provider;
             crate::channels::profile_assignment::execution_channel(
                 self,
                 current,
                 &target.launch.consumer,
                 &target.launch.event.conversation_id,
-                baseline,
             )
             .await
             .map_err(|_| ExecutionError::AuthorityChanged)

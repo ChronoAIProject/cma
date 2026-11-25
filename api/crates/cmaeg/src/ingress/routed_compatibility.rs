@@ -46,9 +46,9 @@ impl RoutedIngress {
                         "routed_admission_paused",
                     ));
                 }
-                let assigned = self.assign_profile(request).await?;
+                let (assigned, assignment) = self.assign_profile(request).await?;
                 let request = &assigned;
-                let candidate = Candidate::prepare_compatibility(
+                let mut candidate = Candidate::prepare_compatibility(
                     request,
                     &source.body,
                     &self.keys,
@@ -82,6 +82,7 @@ impl RoutedIngress {
                         "routed_delivery_unsupported",
                     )
                 })?;
+                candidate.profile_admission = assignment;
                 self.plans
                     .admit_compatibility(&candidate, request)
                     .await

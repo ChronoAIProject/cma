@@ -36,7 +36,6 @@ const FENCE_SLACK: Duration = Duration::from_secs(5);
 #[derive(Clone)]
 pub struct TurnRunner {
     providers: Arc<ProviderClient>,
-    profile_resolver: Option<crate::channels::resolver::ChannelResolver>,
     tracker: Arc<TurnTracker>,
     delivery: Arc<dyn DeliverySink>,
     config: TurnConfig,
@@ -61,7 +60,6 @@ impl TurnRunner {
     ) -> Self {
         Self {
             providers,
-            profile_resolver: None,
             tracker,
             delivery,
             config,
@@ -71,13 +69,6 @@ impl TurnRunner {
             prepare: PrepareConfig::default(),
             activity: Arc::new(super::observer::NoopObserver),
         }
-    }
-    pub(crate) fn with_profile_resolver(
-        mut self,
-        resolver: crate::channels::resolver::ChannelResolver,
-    ) -> Self {
-        self.profile_resolver = Some(resolver);
-        self
     }
     /// Observe durable dispatch facts through the composition's shared observer.
     pub fn with_activity(mut self, activity: Arc<dyn super::observer::ActivityObserver>) -> Self {
@@ -365,13 +356,18 @@ impl TurnRunner {
             // Authority/retained-admission reads have their own bounded
             // deadline. Do not turn a slow denied lookup into Deferred/202:
             // at this point no new work has been submitted.
-            if let Err(problem) = crate::channels::profile_assignment::pin_legacy(
-                self.profile_resolver.as_ref(),
-                &mut request,
-            )
-            .await
+            if request
+                .channel
+                .definition
+                .secrets
+                .profile_revisions
+                .is_some()
             {
-                return LaunchOutcome::Refused(problem);
+                return LaunchOutcome::Refused(Problem::new(
+                    ProblemCode::ProviderUnavailable,
+                    503,
+                    "durable partition profile admission required",
+                ));
             }
             match custom_replay::lookup(
                 &self.providers,

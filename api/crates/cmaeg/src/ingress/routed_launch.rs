@@ -70,7 +70,13 @@ impl IngressState {
         self.routed
             .as_ref()
             .filter(|routing| {
-                routing.plans.replicas_enabled()
+                request
+                    .channel
+                    .definition
+                    .secrets
+                    .profile_revisions
+                    .is_some()
+                    || routing.plans.replicas_enabled()
                     || (routing.selected_request(request) && ordinary(request))
             })
             .map(|_| VerifiedIngress {
@@ -109,7 +115,14 @@ impl IngressState {
             .as_ref()
             .filter(|routing| routing.selected_request(&request) && ordinary(&request))
         {
-            let selected_source = if routing.plans.replicas_enabled() {
+            let selected_source = if routing.plans.replicas_enabled()
+                || request
+                    .channel
+                    .definition
+                    .secrets
+                    .profile_revisions
+                    .is_some()
+            {
                 source.clone()
             } else {
                 source.take()
@@ -137,7 +150,15 @@ impl IngressState {
                 "telegram_member_join_durable_admission_unavailable",
             ));
         }
-        if let Some(routing) = self.routed.as_ref().filter(|r| r.plans.replicas_enabled()) {
+        if let Some(routing) = self.routed.as_ref().filter(|r| {
+            r.plans.replicas_enabled()
+                || request
+                    .channel
+                    .definition
+                    .secrets
+                    .profile_revisions
+                    .is_some()
+        }) {
             let Some(source) = source else {
                 return LaunchOutcome::Refused(Problem::new(
                     ProblemCode::Internal,
