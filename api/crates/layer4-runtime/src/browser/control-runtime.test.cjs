@@ -119,7 +119,7 @@ test('Agent navigation reports the first H1 of the committed main document', { t
     }, path);
   }
   await assert.rejects(navigate('/superseded-heading'), {
-    code: 1, stdout: /^\{"error":"browser_(navigation_unconfirmed|disconnected)"\}$/,
+    code: 1, stdout: /^\{"error":"browser_navigation_(unconfirmed|failed)"\}$/,
   });
   const status = await browser.call({ operation: 'status' });
   assert.equal(Object.hasOwn(status, 'first_heading'), false);
@@ -127,6 +127,29 @@ test('Agent navigation reports the first H1 of the committed main document', { t
   assert.equal(lease.state, 'user');
   await assert.rejects(navigate('/heading-final'), {
     code: 1, stdout: '{"error":"browser_control_conflict"}',
+  });
+});
+
+test('invalid navigation gives the Agent a recovery path and an unavailable browser reports disconnect', { timeout: 30000 }, async test => {
+  const browser = await fixture(test);
+  const navigate = url => run(process.execPath, [join(__dirname, 'command.cjs'), 'navigate', url], {
+    env: { ...process.env, CMA_BROWSER_SOCKET: join(browser.directory, 'browser.sock') },
+  });
+  for (const url of ['file:///workspace/preview.html', 'not-a-url', 'https://user:placeholder@example.test/',
+    'http://127.0.0.1/' + 'a'.repeat(8192)]) {
+    await assert.rejects(navigate(url), error => {
+      assert.equal(error.code, 1);
+      const result = JSON.parse(error.stdout);
+      assert.equal(result.error, 'browser_navigation_invalid');
+      assert.match(result.message, /HTTP or HTTPS URL without credentials/);
+      assert.match(result.message, /serve it over HTTP on 127\.0\.0\.1/);
+      return true;
+    });
+  }
+  assert.equal(JSON.parse((await navigate(browser.url)).stdout).navigated, true);
+  await browser.call({ operation: 'disable' });
+  await assert.rejects(navigate(browser.url), {
+    code: 1, stdout: '{"error":"browser_disconnected"}',
   });
 });
 
