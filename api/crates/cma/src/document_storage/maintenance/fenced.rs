@@ -48,7 +48,7 @@ fn verify(body: &[u8], key: &str, generation: u64) -> Result<(), DocumentError> 
     if reply.error.is_some()
         || !reply.data.deleted
         || reply.data.generation != generation
-        || reply.data.fence_version != 1
+        || reply.data.fence_version != 2
         || reply.data.key != key
     {
         return Err(DocumentError::Corrupt);
@@ -65,12 +65,18 @@ impl StorageMaintenance {
         if !self.enabled {
             return Err(DocumentError::Unavailable.into());
         }
-        if !valid_key(key) || generation <= 1 || generation > i64::MAX as u64 {
+        if !valid_key(key)
+            || generation <= 1
+            || generation > layer2_core::document_artifacts::MAX_SOURCE_GENERATION
+        {
             return Err(DocumentError::Invalid.into());
         }
         let deadline = Instant::now() + OPERATION_TIMEOUT;
         tokio::time::timeout_at(deadline, async {
             let mut url = self.objects.clone();
+            url.path_segments_mut()
+                .map_err(|_| DocumentError::Unavailable)?
+                .push("fenced-v2");
             url.query_pairs_mut()
                 .append_pair("key", key)
                 .append_pair("mutationGeneration", &generation.to_string());
@@ -96,15 +102,16 @@ mod tests {
 
     #[test]
     fn a_delete_receipt_must_prove_the_requested_generation_and_fence() {
-        let exact = br#"{"data":{"deleted":true,"generation":3,"fenceVersion":1,"key":"fixture"},"error":null}"#;
+        let exact = br#"{"data":{"deleted":true,"generation":3,"fenceVersion":2,"key":"fixture"},"error":null}"#;
         assert_eq!(verify(exact, "fixture", 3), Ok(()));
         assert_eq!(verify(exact, "fixture", 4), Err(DocumentError::Corrupt));
         for body in [
+            &br#"{"data":{"deleted":true,"generation":3,"fenceVersion":1,"key":"fixture"}}"#[..],
             &br#"{"data":{"deleted":true,"generation":3,"key":"fixture"}}"#[..],
-            br#"{"data":{"deleted":false,"generation":3,"fenceVersion":1,"key":"fixture"}}"#,
-            br#"{"data":{"deleted":true,"generation":3,"fenceVersion":1}}"#,
-            br#"{"data":{"deleted":true,"generation":3,"fenceVersion":1,"key":"different"}}"#,
-            br#"{"data":{"deleted":true,"generation":3,"fenceVersion":1,"key":"fixture"},"error":{"code":"refused"}}"#,
+            br#"{"data":{"deleted":false,"generation":3,"fenceVersion":2,"key":"fixture"}}"#,
+            br#"{"data":{"deleted":true,"generation":3,"fenceVersion":2}}"#,
+            br#"{"data":{"deleted":true,"generation":3,"fenceVersion":2,"key":"different"}}"#,
+            br#"{"data":{"deleted":true,"generation":3,"fenceVersion":2,"key":"fixture"},"error":{"code":"refused"}}"#,
         ] {
             assert_eq!(verify(body, "fixture", 3), Err(DocumentError::Corrupt));
         }

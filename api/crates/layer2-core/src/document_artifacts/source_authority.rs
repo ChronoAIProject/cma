@@ -1,5 +1,7 @@
 use super::{valid_digest, DocumentError, DocumentSourceReservation};
 
+pub const MAX_SOURCE_GENERATION: u64 = (1_u64 << 53) - 1;
+
 /// Authority is bound to the incarnation admitted before storage I/O.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentSourceFence {
@@ -9,7 +11,7 @@ pub struct DocumentSourceFence {
 
 impl DocumentSourceFence {
     pub fn new(generation: u64, reservation_id: String) -> Result<Self, DocumentError> {
-        if generation == 0 || generation > i64::MAX as u64 || !valid_digest(&reservation_id) {
+        if generation == 0 || generation > MAX_SOURCE_GENERATION || !valid_digest(&reservation_id) {
             return Err(DocumentError::Corrupt);
         }
         Ok(Self {

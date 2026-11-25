@@ -85,7 +85,11 @@ impl StorageDocuments {
             legacy_token: Default::default(),
         }))
     }
-    fn object_url(&self, key: &str, write: Option<(&str, u64)>) -> Result<url::Url, DocumentError> {
+    fn object_url(
+        &self,
+        key: &str,
+        write: Option<(&str, u64, bool)>,
+    ) -> Result<url::Url, DocumentError> {
         if !valid_key(key) {
             return Err(DocumentError::Invalid);
         }
@@ -96,7 +100,12 @@ impl StorageDocuments {
                 .push("download");
         }
         url.query_pairs_mut().append_pair("key", key);
-        if let Some((sha, generation)) = write {
+        if let Some((sha, generation, require_frame)) = write {
+            if require_frame {
+                url.path_segments_mut()
+                    .map_err(|_| DocumentError::Unavailable)?
+                    .push("fenced-v2");
+            }
             url.query_pairs_mut()
                 .append_pair("contentType", "text/markdown; charset=utf-8")
                 .append_pair("mutationGeneration", &generation.to_string())
@@ -153,6 +162,7 @@ impl StorageDocuments {
 #[derive(Deserialize)]
 struct StoredReply {
     data: StoredMetadata,
+    error: Option<serde_json::Value>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -170,9 +180,14 @@ impl StorageDocuments {
         key: &str,
         bytes: Vec<u8>,
         generation: u64,
+        require_frame: bool,
         deadline: Instant,
     ) -> Result<(), DocumentError> {
-        if bytes.is_empty() || bytes.len() > MAX_DOCUMENT_BYTES {
+        if bytes.is_empty()
+            || bytes.len() > MAX_DOCUMENT_BYTES
+            || generation == 0
+            || generation > layer2_core::document_artifacts::MAX_SOURCE_GENERATION
+        {
             return Err(DocumentError::Invalid);
         }
         let sha = digest(&bytes);
@@ -184,7 +199,7 @@ impl StorageDocuments {
         let response = self
             .send(
                 Method::POST,
-                self.object_url(key, Some((&sha, generation)))?,
+                self.object_url(key, Some((&sha, generation, require_frame)))?,
                 Some(bytes),
                 &mut replayed,
                 deadline,
@@ -193,13 +208,23 @@ impl StorageDocuments {
             .map_err(|failure| failure.error)?;
         let receipt: StoredReply = serde_json::from_slice(&bounded(response, 16 * 1024).await?)
             .map_err(|_| DocumentError::Corrupt)?;
+        if receipt.error.is_some() {
+            return Err(DocumentError::Corrupt);
+        }
         let mut mismatch = false;
         for (field, matches) in [
             ("key", receipt.data.key == key),
             ("length", receipt.data.content_length == size),
             ("generation", receipt.data.generation == generation),
             ("digest", receipt.data.digest == sha),
-            ("fence", receipt.data.fence_version == 1),
+            (
+                "fence",
+                if require_frame {
+                    receipt.data.fence_version == 2
+                } else {
+                    matches!(receipt.data.fence_version, 1 | 2)
+                },
+            ),
         ] {
             if !matches {
                 mismatch = true;
@@ -251,21 +276,25 @@ impl StorageDocuments {
         key: &str,
         bytes: Vec<u8>,
         generation: u64,
+        require_frame: bool,
     ) -> Result<(), DocumentError> {
         if self.read_only {
             return Err(DocumentError::Invalid);
         }
         let deadline = Instant::now() + OPERATION_TIMEOUT;
-        tokio::time::timeout_at(deadline, self.put_object(key, bytes, generation, deadline))
-            .await
-            .map_err(|_| DocumentError::Unavailable)?
+        tokio::time::timeout_at(
+            deadline,
+            self.put_object(key, bytes, generation, require_frame, deadline),
+        )
+        .await
+        .map_err(|_| DocumentError::Unavailable)?
     }
 }
 
 #[async_trait::async_trait]
 impl DocumentBlobStore for StorageDocuments {
     async fn put(&self, key: &str, bytes: Vec<u8>) -> Result<(), DocumentError> {
-        self.put_at_generation(key, bytes, 1).await
+        self.put_at_generation(key, bytes, 1, false).await
     }
 
     async fn put_source(
@@ -273,8 +302,17 @@ impl DocumentBlobStore for StorageDocuments {
         write: &DocumentSourceWrite,
         bytes: Vec<u8>,
     ) -> Result<(), DocumentError> {
-        self.put_at_generation(&write.source.object_key(), bytes, write.generation())
-            .await
+        write.source.validate()?;
+        if write.source.bytes != bytes.len() as u64 {
+            return Err(DocumentError::Invalid);
+        }
+        self.put_at_generation(
+            &write.source.object_key(),
+            bytes,
+            write.generation(),
+            write.fence.is_some(),
+        )
+        .await
     }
 
     async fn get(&self, key: &str) -> Result<Vec<u8>, DocumentError> {

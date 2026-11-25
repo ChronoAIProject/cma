@@ -1,5 +1,7 @@
 //! Persistent authority for a single content-addressed source key.
-use layer2_core::document_artifacts::{valid_digest, DocumentError, DocumentSourceReservation};
+use layer2_core::document_artifacts::{
+    valid_digest, DocumentError, DocumentSourceReservation, MAX_SOURCE_GENERATION,
+};
 use mongodb::bson::{doc, DateTime, Document};
 
 pub(super) const AUTHORITY_VERSION: i64 = 1;
@@ -110,6 +112,8 @@ impl Authority {
         if row.get_i64("document_schema_version").ok() != Some(1)
             || row.get_i64("authority_version").ok() != Some(AUTHORITY_VERSION)
             || generation == 0
+            || generation > MAX_SOURCE_GENERATION
+            || delete_generation.is_some_and(|value| value > MAX_SOURCE_GENERATION)
             || fence == 0
             || !valid_digest(&reservation)
             || (state == State::DeletePending) != lease.is_some()
@@ -256,7 +260,7 @@ pub(super) fn reservation_id() -> String {
 fn advance(value: u64) -> Result<u64, DocumentError> {
     value
         .checked_add(1)
-        .filter(|next| *next <= i64::MAX as u64)
+        .filter(|next| *next <= MAX_SOURCE_GENERATION)
         .ok_or(DocumentError::Capacity)
 }
 

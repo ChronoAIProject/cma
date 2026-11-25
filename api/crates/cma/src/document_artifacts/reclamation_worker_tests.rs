@@ -142,6 +142,7 @@ async fn verify_worker_accounting_page(generation_writes: bool) {
         for _ in 0..=expired.len() {
             let request = peer.next().await;
             assert_eq!(request.method, reqwest::Method::DELETE);
+            assert!(request.uri.path().ends_with("/objects/fenced-v2"));
             let query: std::collections::BTreeMap<_, _> =
                 url::form_urlencoded::parse(request.uri.query().unwrap().as_bytes())
                     .into_owned()
@@ -149,7 +150,7 @@ async fn verify_worker_accounting_page(generation_writes: bool) {
             assert_eq!(query["mutationGeneration"], "2");
             assert!(observed.insert(query["key"].clone()));
             if query["key"] == key {
-                request.json(serde_json::json!({"data":{"deleted":true,"key":key,"generation":2,"fenceVersion":1}}));
+                request.json(serde_json::json!({"data":{"deleted":true,"key":key,"generation":2,"fenceVersion":2}}));
             } else {
                 assert!(expired
                     .iter()

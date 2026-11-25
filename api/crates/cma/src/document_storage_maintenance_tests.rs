@@ -121,7 +121,7 @@ async fn fenced_deletion_requires_confirmation_for_the_exact_key_and_generation(
     let mut peer = Peer::start().await;
     let client = client(&peer, true);
     let key = failure_tests::key();
-    for (index, status) in [404, 200, 200].into_iter().enumerate() {
+    for (index, status) in [404, 200, 200, 200].into_iter().enumerate() {
         let namespace = client.namespace_sha256();
         let client = client.clone();
         let request_key = key.clone();
@@ -131,6 +131,7 @@ async fn fenced_deletion_requires_confirmation_for_the_exact_key_and_generation(
         }
         let request = peer.next().await;
         assert_eq!(request.method, Method::DELETE);
+        assert!(request.uri.path().ends_with("/objects/fenced-v2"));
         let query: std::collections::BTreeMap<_, _> =
             url::form_urlencoded::parse(request.uri.query().unwrap().as_bytes())
                 .into_owned()
@@ -146,8 +147,8 @@ async fn fenced_deletion_requires_confirmation_for_the_exact_key_and_generation(
         } else {
             let generation = if index == 1 { 2 } else { 3 };
             request.json(json!({ "data": { "deleted": true, "generation": generation,
-                "fenceVersion": 1, "key": key }, "error": null }));
-            if index == 1 {
+                "fenceVersion": if index == 2 { 1 } else { 2 }, "key": key }, "error": null }));
+            if index == 1 || index == 2 {
                 assert_eq!(
                     finish(task).await.unwrap_err().error,
                     DocumentError::Corrupt
