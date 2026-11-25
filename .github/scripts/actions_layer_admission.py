@@ -19,7 +19,7 @@ from staging_cd_versions import REPOSITORY
 PREFIX = "cma-layer-archive-v1-"
 KEY = re.compile(PREFIX + r"(am|eg|web|runtime|runtime-omarchy)--([1-9][0-9]*)-([1-9][0-9]*)")
 SCHEMA = "shared-cache-budget-v1"
-MAX_CHARGE = stored_bound(MAX_BYTES)
+MAX_CHARGE = stored_bound(MAX_BYTES + 4096)
 
 
 @dataclass
@@ -93,12 +93,13 @@ def select(api, run, component):
     return artifact["id"]
 
 
-def reserve(api, ledger, key, archive, revision):
+def reserve(api, ledger, key, archive, revision, *, replay_bytes=0):
     require(KEY.fullmatch(key), "Invalid archive key")
     info = archive.lstat()
     require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and 0 < info.st_size <= MAX_BYTES,
             "Layer archive exceeds byte bound")
-    cap = stored_bound(info.st_size)
+    require(type(replay_bytes) is int and 0 <= replay_bytes <= 4096, "Layer replay metadata exceeds bound")
+    cap = stored_bound(info.st_size + replay_bytes)
     api.require_live_policy(revision)
     previous, account = ledger.read()
     initial = dict(account.charges)
@@ -180,13 +181,21 @@ def main(env, mode):
     if mode == "verify":
         require(env.get("LAYER_EXACT_CACHE_HIT") == "true", "Fresh exact layer restore is required")
         with archive.open("rb") as stream:
-            require(digest(stream) == env.get("LAYER_IMPORT_ARCHIVE_DIGEST"),
-                    "BuildKit import proof does not match the restored archive")
+            require(digest(stream) == env.get("LAYER_REUSE_ARCHIVE_DIGEST"),
+                    "BuildKit reuse proof does not match the restored archive")
         result = retire_verified(api, key, env["GITHUB_SHA"], archive.parent / "verified")
         print(json.dumps(result), flush=True)
         return
     ledger = BudgetRef(api.api, account_type=Account)
-    result = reserve(api, ledger, key, archive, env["GITHUB_SHA"])
+    from staging_cd_layer_reuse import read_replay
+    replay = archive.with_name("replay.json")
+    value = read_replay(replay, sealed=True)
+    reservation = value["reservation"]
+    require((reservation["component"], reservation["run_id"], reservation["run_attempt"])
+            == (component, run["id"], run["run_attempt"]), "Layer candidate replay differs")
+    with archive.open("rb") as stream:
+        require(digest(stream) == value["archive_digest"], "Layer candidate archive differs")
+    result = reserve(api, ledger, key, archive, env["GITHUB_SHA"], replay_bytes=replay.stat().st_size)
     with Path(env["GITHUB_OUTPUT"]).open("a") as output:
         output.write(f"key={key}\nallowed={str(result['allowed']).lower()}\n")
     print(json.dumps(result), flush=True)

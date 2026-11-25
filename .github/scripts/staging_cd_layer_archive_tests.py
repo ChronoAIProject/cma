@@ -88,21 +88,22 @@ class ArchiveTests(unittest.TestCase):
                 archive.restore(stored, root / "restored")
             self.assertFalse((root / "restored").exists())
 
-    def test_import_proof_requires_actual_successful_vertex(self):
+    def test_restore_publishes_only_after_complete_validation(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             populate(root / 'source')
             stored = root / 'archive.tar'
             archive.seal(root / 'source', stored)
-            archive.restore(stored, root / 'restored')
-            vertex = {'digest': 'sha256:' + 'a' * 64,
-                      'name': 'importing cache manifest from local:synthetic', 'completed': 'now'}
-            for invalid in ([], [vertex | {'error': 'invalid synthetic cache'}], [vertex | {'completed': None}]):
-                runner = Mock(return_value=Mock(returncode=0, stdout='', stderr=json.dumps({'vertexes': invalid})))
-                with self.assertRaises(ValueError):
-                    archive.prove_import(root / 'restored', stored, runner)
-            runner = Mock(return_value=Mock(returncode=0, stdout='', stderr=json.dumps({'vertexes': [vertex]})))
-            self.assertEqual(archive.prove_import(root / 'restored', stored, runner), hashlib.sha256(stored.read_bytes()).hexdigest())
+            destination = root / 'restored'
+            def interrupted(extracted):
+                self.assertTrue((extracted / 'index.json').is_file())
+                self.assertFalse(destination.exists())
+                raise RuntimeError('synthetic interruption')
+            with patch.object(archive, 'inventory', side_effect=interrupted), self.assertRaises(RuntimeError):
+                archive.restore(stored, destination)
+            self.assertFalse(destination.exists())
+            archive.restore(stored, destination)
+            self.assertTrue(destination.is_dir())
 
 
 class AdmissionTests(unittest.TestCase):
@@ -225,7 +226,10 @@ class ProducerTests(unittest.TestCase):
         self.assertEqual(reader['cache-mode'], 'read')
         self.assertEqual(reader['concurrency'], writer['concurrency'])
         self.assertEqual(reader['steps'][-1]['if'],
-                         "steps.verify-import.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'")
+                         "steps.verify-reuse.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'")
+        for step in publisher['steps']:
+            if step.get('id') in ('producer', 'publication'):
+                self.assertEqual(step['env']['CD_LAYER_ARCHIVE_RESTORED'], "${{ steps.layer-validate.outcome == 'success' }}")
 
     def test_runtime_prefix_excludes_omarchy_in_both_restore_paths(self):
         from actions_layer_admission import archive_key
@@ -309,6 +313,48 @@ class RetirementTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             retire_verified(api, keep.key, 'a' * 40, self.restored)
         api.delete.assert_not_called()
+
+    def test_import_without_a_reused_build_result_cannot_authorize_retirement(self):
+        from staging_cd_build_progress import summarize
+        from staging_cd_layer_reuse import reused
+        imported = {'digest': 'import', 'name': 'importing cache manifest from local:synthetic',
+                    'started': '2026-01-01T00:00:00Z', 'completed': '2026-01-01T00:00:01Z'}
+        step = {'digest': 'step', 'name': '[builder 2/3] COPY fixture /fixture',
+                'started': '2026-01-01T00:00:01Z', 'completed': '2026-01-01T00:00:02Z'}
+        api = Inventory(entry(1, PREFIX + 'am--10-1'), entry(4, PREFIX + 'am--11-1'))
+        for cached in (False, True):
+            progress = summarize(json.dumps({'vertexes': [imported, step | {'cached': cached}]}).encode())
+            self.assertEqual(reused(progress), cached)
+            if not reused(progress):
+                api.delete.assert_not_called()
+
+    def test_replay_requires_matching_archive_and_real_build_step_reuse(self):
+        from staging_cd_layer_reuse import prove, seal_replay
+        from staging_cd_reservations import next_reservation
+        parent = self.restored.parent
+        stored = parent / 'archive.tar'
+        archive.seal(self.restored, stored)
+        replay = parent / 'replay.json'
+        reservation = next_reservation('am', 'a' * 40, 'b' * 40, 17, 'patch', 42, 2, [], [])
+        mount = 'c' * 32
+        replay.write_text(json.dumps({'reservation': reservation, 'mount_namespace': mount}))
+        seal_replay(replay, stored)
+        env = {'CD_COMPONENT': 'am', 'RUNNER_TEMP': str(parent)}
+        source = {'id': 42, 'run_attempt': 2, 'head_sha': 'd' * 40}
+        with patch('actions_layer_admission.source_run', return_value=source), \
+                patch('staging_cd_layer_reuse.subprocess.run', return_value=Mock(stdout='b' * 40)):
+            for cached_steps in (0, 1):
+                def builder(_root, actual, _directory, *, cache, progress):
+                    self.assertEqual(actual, reservation)
+                    self.assertEqual(cache.build_options(), ['--cache-from', 'type=local,src=' + str(self.restored),
+                                                             '--build-arg', 'BUILDKIT_CACHE_MOUNT_NS=' + mount])
+                    progress.update(complete=True, local_cache_imports=1, cached_build_steps=cached_steps)
+                if cached_steps:
+                    self.assertEqual(prove(self.restored, stored, replay, env, builder=builder),
+                                     hashlib.sha256(stored.read_bytes()).hexdigest())
+                else:
+                    with self.assertRaisesRegex(ValueError, 'did not reuse'):
+                        prove(self.restored, stored, replay, env, builder=builder)
 
 
 if __name__ == "__main__":

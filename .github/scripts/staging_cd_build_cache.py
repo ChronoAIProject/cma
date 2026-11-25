@@ -69,6 +69,7 @@ class BuildCache:
         self.export_headroom = None
         self.export_retained_groups = None
         self.layer_root = Path(env["RUNNER_TEMP"]) / "cma-layer-cache"
+        self.layer_export_requested = False
 
     def restore(self):
         self.restore_result = "miss"
@@ -93,17 +94,25 @@ class BuildCache:
         return True
 
     def build_options(self):
+        self.layer_export_requested = False
         args = layer_options(self.env, self.component) if self.build_environment() else []
         if self.env.get("CD_LAYER_ARCHIVE_CACHE") == "enabled":
             restored = self.layer_root / "restored"
             pending = self.layer_root / "pending"
             require(not self.layer_root.is_symlink() and not pending.is_symlink(), "Layer cache path is invalid")
-            if restored.is_dir() and not restored.is_symlink():
+            if (self.env.get("CD_LAYER_ARCHIVE_RESTORED") == "true"
+                    and restored.is_dir() and not restored.is_symlink()):
                 args += ["--cache-from", "type=local,src=" + str(restored)]
             if self.env.get("CD_LAYER_CACHE_WRITER_FLOOR") == "verified":
-                if pending.exists():
-                    shutil.rmtree(pending)
-                args += ["--cache-to", "type=local,mode=min,image-manifest=true,oci-mediatypes=true,ignore-error=true,dest=" + str(pending)]
+                try:
+                    (self.layer_root / "replay.json").unlink(missing_ok=True)
+                    if pending.exists():
+                        shutil.rmtree(pending)
+                    args += ["--cache-to", "type=local,mode=min,image-manifest=true,oci-mediatypes=true,ignore-error=true,dest=" + str(pending)]
+                    self.layer_export_requested = True
+                except OSError:
+                    # The ordinary build can continue with its available reads.
+                    pass
         if self.key is not None:
             args += ["--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace]
         return args
@@ -112,6 +121,21 @@ class BuildCache:
         # The legacy remote layer export is permanently read-only. Local
         # archives are verified and admitted separately after publication.
         return False
+
+    def record_layer_replay(self, reservation):
+        if not self.layer_export_requested or not (self.layer_root / "pending").is_dir():
+            return
+        # The exact successful build and its cache mount name are needed for
+        # a clean-builder replay. Failure only withholds the optional cache.
+        replay = self.layer_root / "replay.json"
+        try:
+            with tempfile.TemporaryDirectory(dir=self.layer_root) as directory:
+                candidate = Path(directory) / "replay.json"
+                candidate.write_text(json.dumps({"reservation": reservation,
+                                                 "mount_namespace": self.namespace if self.key else None}))
+                candidate.replace(replay)
+        except OSError:
+            pass
 
     def build_environment(self):
         # Buildx's cache client needs these; build steps, registry transport and

@@ -7,7 +7,6 @@ import os
 import re
 import shutil
 import stat
-import subprocess
 import tarfile
 from graphlib import TopologicalSorter
 from pathlib import Path
@@ -157,10 +156,14 @@ def restore(archive, root):
     require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and 0 < info.st_size <= MAX_BYTES,
             "cache archive differs from storage bound")
     require(not root.exists() and not root.is_symlink(), "cache restore destination already exists")
-    root.mkdir(mode=0o700)
-    names = set()
-    total = 0
-    try:
+    # The final path is the publication boundary for the validated archive.
+    # An interruption may leave temporary files, but no consumer can import
+    # them through the final path before all checks complete.
+    with TemporaryDirectory(prefix=".layer-restore-", dir=root.parent) as temporary:
+        extracted = Path(temporary) / "validated"
+        extracted.mkdir(mode=0o700)
+        names = set()
+        total = 0
         with tarfile.open(archive, "r:") as source:
             for member in source:
                 require(member.isreg() and member_name(member.name) and member.name not in names,
@@ -168,58 +171,31 @@ def restore(archive, root):
                 names.add(member.name)
                 total += member.size
                 require(len(names) <= MAX_MEMBERS and total <= MAX_BYTES, "cache archive exceeds bound")
-                path = root / member.name
+                path = extracted / member.name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with source.extractfile(member) as data, path.open("xb") as output:
                     shutil.copyfileobj(data, output, CHUNK)
-        inventory(root)
-    except BaseException:
-        shutil.rmtree(root)
-        raise
-
-
-def prove_import(root, archive, runner=subprocess.run):
-    """Require an affirmative import from the actual restored cache bytes."""
-    inventory(root)
-    with TemporaryDirectory(prefix="layer-cache-import-") as directory:
-        source = Path(directory)
-        (source / "Dockerfile").write_text("FROM scratch\nCOPY fixture /fixture\n")
-        (source / "fixture").write_text("cache import qualification\n")
-        result = runner(["docker", "buildx", "build", "--network=none", "--progress=rawjson",
-                         "--output", "type=cacheonly", "--cache-from", "type=local,src=" + str(root),
-                         str(source)], capture_output=True, text=True, timeout=180, check=False)
-    require(result.returncode == 0, "BuildKit cache import probe failed")
-    imported = {}
-    for line in (result.stdout + "\n" + result.stderr).splitlines():
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
-        for vertex in event.get("vertexes", []):
-            if vertex.get("name", "").startswith("importing cache manifest from local:"):
-                require(not vertex.get("error"), "BuildKit refused the restored cache")
-                imported[vertex["digest"]] = bool(vertex.get("completed"))
-    require(len(imported) == 1 and all(imported.values()), "BuildKit did not complete the cache import")
-    with archive.open("rb") as stream:
-        return digest(stream)
+        inventory(extracted)
+        require(not root.exists() and not root.is_symlink(), "cache restore destination already exists")
+        extracted.rename(root)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("seal", "restore", "prove-import"))
+    parser.add_argument("mode", choices=("seal", "restore"))
     parser.add_argument("directory", type=Path)
     parser.add_argument("archive", type=Path)
+    parser.add_argument("--replay", type=Path)
     args = parser.parse_args()
     try:
         if args.mode == "seal":
             seal(args.directory, args.archive)
-        elif args.mode == "restore":
-            restore(args.archive, args.directory)
+            if args.replay is not None:
+                from staging_cd_layer_reuse import seal_replay
+                seal_replay(args.replay, args.archive)
         else:
-            proof = prove_import(args.directory, args.archive)
-            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
-                output.write(f"archive_digest={proof}\n")
-    except (OSError, ValueError, TypeError, KeyError, AttributeError, tarfile.TarError, subprocess.SubprocessError) as error:
+            restore(args.archive, args.directory)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, tarfile.TarError) as error:
         print(f"BuildKit cache archive withheld ({type(error).__name__})")
         return 1
     return 0

@@ -117,12 +117,16 @@ class CacheTests(unittest.TestCase):
         restored = cache.layer_root / 'restored'
         pending = cache.layer_root / 'pending'
         restored.mkdir(parents=True)
+        (restored / 'index.json').write_text('interrupted validation')
         pending.mkdir()
         (pending / 'old').write_text('previous build')
-        self.assertIn('type=local,src=' + str(restored), cache.build_options())
+        self.assertNotIn('type=local,src=' + str(restored), cache.build_options())
         self.assertNotIn('--cache-to', cache.build_options())
         self.assertTrue(pending.exists())
         cache.env = dict(env, CD_LAYER_CACHE_WRITER_FLOOR='verified')
+        self.assertNotIn('type=local,src=' + str(restored), cache.build_options())
+        self.assertFalse(pending.exists())
+        cache.env = dict(cache.env, CD_LAYER_ARCHIVE_RESTORED='true')
         options = cache.build_options()
         self.assertIn('type=local,src=' + str(restored), options)
         self.assertIn('type=local,mode=min,image-manifest=true,oci-mediatypes=true,ignore-error=true,dest=' + str(pending), options)

@@ -196,7 +196,9 @@ jobs:
         continue-on-error: true
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          path: ${{ runner.temp }}/cma-layer-cache/archive.tar
+          path: |
+            ${{ runner.temp }}/cma-layer-cache/archive.tar
+            ${{ runner.temp }}/cma-layer-cache/replay.json
           key: ${{ steps.reserve-layer-archive.outputs.key }}
   verify_layers:
     name: Verify bounded layer cache on a fresh runner
@@ -217,7 +219,7 @@ jobs:
         component: [am, eg, web, runtime, runtime-omarchy]
     cache-mode: read
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 90
     continue-on-error: true
     permissions:
       contents: read
@@ -226,13 +228,16 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Restore exact immutable archive key
         id: verify-restore
         continue-on-error: true
         timeout-minutes: 5
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          path: ${{ runner.temp }}/cma-layer-cache/archive.tar
+          path: |
+            ${{ runner.temp }}/cma-layer-cache/archive.tar
+            ${{ runner.temp }}/cma-layer-cache/replay.json
           key: cma-layer-archive-v1-${{ matrix.component }}--${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           fail-on-cache-miss: false
       - name: Verify restored archive bytes and graph
@@ -246,13 +251,18 @@ jobs:
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
           cache-binary: false
-      - name: Prove import of the exact restored archive
-        id: verify-import
+      - name: Prove reuse from the exact restored archive
+        id: verify-reuse
         if: steps.verify-archive.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
-        timeout-minutes: 5
-        run: python3 -B .github/scripts/buildkit_cache_archive.py prove-import "$RUNNER_TEMP/cma-layer-cache/verified" "$RUNNER_TEMP/cma-layer-cache/archive.tar"
+        timeout-minutes: 75
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_COMPONENT: ${{ matrix.component }}
+          CD_LAYER_ARCHIVE_CACHE: enabled
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
+        run: python3 -B .github/scripts/staging_cd_layer_reuse.py
       - name: Retire verified compatible archive predecessors
-        if: steps.verify-import.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
+        if: steps.verify-reuse.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
         timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
@@ -260,7 +270,7 @@ jobs:
           CD_LAYER_ARCHIVE_CACHE: enabled
           CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
           LAYER_EXACT_CACHE_HIT: ${{ steps.verify-restore.outputs.cache-hit }}
-          LAYER_IMPORT_ARCHIVE_DIGEST: ${{ steps.verify-import.outputs.archive_digest }}
+          LAYER_REUSE_ARCHIVE_DIGEST: ${{ steps.verify-reuse.outputs.archive_digest }}
         run: python3 -B .github/scripts/actions_layer_admission.py verify
   recover_native_buildkit:
     if: >-
