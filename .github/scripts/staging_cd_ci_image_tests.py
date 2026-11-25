@@ -57,6 +57,14 @@ class StagingImageTests(unittest.TestCase):
         with self.assertRaisesRegex(Refusal, "differs from CI source"):
             matching_receipt(ref, oid, "runtime", receipt["source"], "e" * 40, api)
 
+    def test_backlog_final_from_a_later_develop_push_uses_fallback(self):
+        receipt = fixture_runtime_receipt()
+        ref, oid, tag, run = final(receipt)
+        api = Mock()
+        api.request.side_effect = [tag, dict(run, head_sha="9" * 40)]
+        self.assertIsNone(matching_receipt(ref, oid, "runtime", receipt["source"],
+                                           receipt["identity"]["tree"], api))
+
     def test_wait_ends_at_the_deadline_and_returns_a_later_final(self):
         time = [7.0]
         clock = lambda: time[0]

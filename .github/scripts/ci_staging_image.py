@@ -73,12 +73,14 @@ def matching_receipt(ref, oid, component, source, tree, api):
     run = api.request(f"actions/runs/{release['run_id']}/attempts/{release['run_attempt']}")
     require(isinstance(run, dict) and run.get("id") == release["run_id"]
             and run.get("run_attempt") == release["run_attempt"] and run.get("event") == "push"
-            and run.get("head_branch") == "develop" and run.get("head_sha") == source
+            and run.get("head_branch") == "develop" and matches(r"[0-9a-f]{40}", run.get("head_sha"))
             and run.get("path") == ".github/workflows/staging-cd.yml"
             and (run.get("repository") or {}).get("full_name") == REPOSITORY
             and (run.get("head_repository") or {}).get("full_name") == REPOSITORY,
             "Staging final names a different workflow")
-    return receipt
+    # Staging can publish an earlier source while draining a release backlog.
+    # Its valid final is not a build by this head's staging run.
+    return receipt if run["head_sha"] == source else None
 
 
 def await_ref(component, source, *, lookup=refs, clock=time.monotonic, sleep=time.sleep):
@@ -171,6 +173,8 @@ def qualification(env, root):
     try:
         api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(root), deadline=time.monotonic() + 90)
         receipt = matching_receipt(*found, component, source, tree, api)
+        if receipt is None:
+            return None, "historical-final"
         target = DEPLOYABLES[component] + ":ci"
         digest = adopt(receipt, target, root, Registry(deadline=time.monotonic() + 90))
     except (Refusal, subprocess.TimeoutExpired) as error:
