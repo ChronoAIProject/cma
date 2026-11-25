@@ -10,6 +10,7 @@ SCHEMA = "cma-web-asset-continuity-v1"
 PROOF_SCHEMA = "cma-web-asset-publication-proof-v1"
 PREIMAGE_SCHEMA = "cma-web-continuity-preimage-v1"
 BOOTSTRAP_SCHEMA = "cma-web-continuity-bootstrap-v1"
+BOOTSTRAP_EVIDENCE_SCHEMA = "cma-web-continuity-bootstrap-evidence-v1"
 REPOSITORY = "ghcr.io/chronoaiproject/cma-web"
 IMAGE = r"ghcr\.io/chronoaiproject/cma-web@sha256:[0-9a-f]{64}"
 HASH = r"[0-9a-f]{64}"
@@ -132,7 +133,7 @@ def validate_proof(proof, continuity, identity, promote_image, promote_archive):
             "Web continuity publication archive or shared layer differs")
 
 
-def bootstrap_inputs(bootstrap, incumbent, finalized):
+def bootstrap_inputs(bootstrap, evidence, incumbent, finalized):
     require(isinstance(bootstrap, dict)
             and set(bootstrap) == {"schema", "incumbent", "retained", "approved_deployments_sha256"}
             and bootstrap["schema"] == BOOTSTRAP_SCHEMA and bootstrap["incumbent"] == incumbent
@@ -149,10 +150,27 @@ def bootstrap_inputs(bootstrap, incumbent, finalized):
     expected = sorted({row["image"] for row in bootstrap["retained"]})
     require([row["image"] for row in bootstrap["retained"]] == expected,
             "Bootstrap Web lineage is ambiguous")
+    require(isinstance(evidence, dict) and set(evidence) == {"schema", "deployments"}
+            and evidence["schema"] == BOOTSTRAP_EVIDENCE_SCHEMA and isinstance(evidence["deployments"], list)
+            and sha256(evidence) == bootstrap["approved_deployments_sha256"],
+            "Bootstrap Web deployment evidence differs from its approval")
+    proved = []
+    identity_fields = {"image", "source_sha", "version"}
+    hash_fields = {"publication_receipt_sha256", "controller_result_sha256"}
+    for row in evidence["deployments"]:
+        require(isinstance(row, dict) and set(row) == identity_fields | hash_fields | {"run_id", "run_attempt"}
+                and immutable_image(row["image"])
+                and all(type(row[key]) is int and row[key] > 0 for key in ("run_id", "run_attempt"))
+                and all(matches(HASH, row[key]) for key in hash_fields),
+                "Bootstrap Web deployment evidence row is invalid")
+        proved.append({key: row[key] for key in identity_fields})
+    scope = [*bootstrap["retained"], {key: incumbent[key] for key in identity_fields}]
+    require(proved == sorted(scope, key=lambda value: value["image"]),
+            "Bootstrap Web deployment evidence does not cover the retained and incumbent images")
     return [dict(row) for row in bootstrap["retained"]]
 
 
-def retention_scope(preimage, started_at, finalized, *, bootstrap=None):
+def retention_scope(preimage, started_at, finalized, *, bootstrap=None, bootstrap_evidence=None):
     """Bind a scoped controller preimage to the lineage of its finalized serving image."""
     require(isinstance(preimage, dict) and set(preimage) == {"schema", "observed_at", "incumbent", "asset_manifest_sha256"}
             and preimage["schema"] == PREIMAGE_SCHEMA and preimage["observed_at"] == started_at,
@@ -183,6 +201,6 @@ def retention_scope(preimage, started_at, finalized, *, bootstrap=None):
     if proof is not None:
         return {"incumbent": dict(incumbent), "preimage_sha256": sha256(preimage),
                 "inputs": [dict(row) for row in proof["inputs"]]}
-    inputs = bootstrap_inputs(bootstrap, incumbent, finalized)
+    inputs = bootstrap_inputs(bootstrap, bootstrap_evidence, incumbent, finalized)
     return {"incumbent": dict(incumbent), "inputs": inputs,
             "preimage_sha256": sha256({"controller": preimage, "bootstrap": bootstrap})}

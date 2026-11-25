@@ -15,7 +15,9 @@ from staging_cd_receipts import annotation, canonical, parse_annotation, publish
 from staging_cd_receipts_tests import fixture_receipt, fixture_tag
 from staging_cd_resolve import verify
 from staging_cd_set import private_document, release_set, verify_set
-from staging_cd_web_continuity import BOOTSTRAP_SCHEMA, PREIMAGE_SCHEMA, PROOF_SCHEMA, binding, retention_scope
+from staging_cd_web_continuity import (
+    BOOTSTRAP_EVIDENCE_SCHEMA, BOOTSTRAP_SCHEMA, PREIMAGE_SCHEMA, PROOF_SCHEMA, binding, retention_scope,
+)
 
 
 REPOSITORY = "ghcr.io/chronoaiproject/cma-web"
@@ -259,14 +261,29 @@ class WebContinuityTests(unittest.TestCase):
         earlier = dict(fixture_receipt(source="c" * 40, previous="0.9.0", version="0.9.1"), digest="sha256:" + "5" * 64)
         before = {"image": REPOSITORY + "@" + earlier["digest"], "source_sha": earlier["source"],
                   "version": earlier["identity"]["version"]}
-        bootstrap = {"schema": BOOTSTRAP_SCHEMA, "incumbent": legacy, "approved_deployments_sha256": "b" * 64,
+        deployed = {"run_id": 4100, "run_attempt": 1, "publication_receipt_sha256": "b" * 64,
+                    "controller_result_sha256": "c" * 64}
+        current = {key: legacy[key] for key in ("image", "source_sha", "version")}
+        evidence = {"schema": BOOTSTRAP_EVIDENCE_SCHEMA, "deployments": [
+            dict(deployed, **before), dict(deployed, **current),
+        ]}
+        bootstrap = {"schema": BOOTSTRAP_SCHEMA, "incumbent": legacy, "approved_deployments_sha256": sha256(evidence),
                      "retained": [before]}
-        self.assertEqual(retention_scope(preimage, STARTED, [self.original, earlier], bootstrap=bootstrap),
+        options = {"bootstrap": bootstrap, "bootstrap_evidence": evidence}
+        self.assertEqual(retention_scope(preimage, STARTED, [self.original, earlier], **options),
                          {"incumbent": legacy, "inputs": [before],
                           "preimage_sha256": sha256({"controller": preimage, "bootstrap": bootstrap})})
         with self.assertRaisesRegex(Refusal, "requires an approved bootstrap lineage"):
             retention_scope(preimage, STARTED, [self.original])
         with self.assertRaisesRegex(Refusal, "lineage differs from finalized"):
-            retention_scope(preimage, STARTED, [self.original], bootstrap=bootstrap)
+            retention_scope(preimage, STARTED, [self.original], **options)
         with self.assertRaisesRegex(Refusal, "no unique finalized lineage"):
-            retention_scope(preimage, STARTED, [self.original, self.original], bootstrap=bootstrap)
+            retention_scope(preimage, STARTED, [self.original, self.original], **options)
+        mutated = dict(bootstrap, approved_deployments_sha256="0" * 64)
+        with self.assertRaisesRegex(Refusal, "evidence differs from its approval"):
+            retention_scope(preimage, STARTED, [self.original, earlier],
+                            bootstrap=mutated, bootstrap_evidence=evidence)
+        incomplete = dict(evidence, deployments=[dict(deployed, **current)])
+        with self.assertRaisesRegex(Refusal, "does not cover the retained and incumbent images"):
+            retention_scope(preimage, STARTED, [self.original, earlier], bootstrap_evidence=incomplete,
+                            bootstrap=dict(bootstrap, approved_deployments_sha256=sha256(incomplete)))

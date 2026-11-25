@@ -50,6 +50,14 @@ def read(env, masker, *, script_reader=private_script, runner=run_process, tool_
         return document(path.read_text(encoding="utf-8"))
 
 
+def seed_document(path):
+    require(not path.is_symlink(), "Web asset bootstrap links are forbidden")
+    if not path.is_file():
+        return None
+    require(0 < path.stat().st_size <= 65536, "Web asset bootstrap document is oversized")
+    return document(path.read_text(encoding="utf-8"))
+
+
 def main():
     def operation(masker):
         env = dict(os.environ)
@@ -58,15 +66,18 @@ def main():
         preimage = read(env, masker, script_reader=lambda _: script)
         # The only legacy adoption inputs come from the same immutable
         # infrastructure checkout as the controller.
-        path = script.parents[1] / "web-asset-bootstrap.json"
-        require(not path.is_symlink(), "Web asset bootstrap links are forbidden")
-        bootstrap = document(path.read_text(encoding="utf-8")) if path.is_file() else None
+        bootstrap, evidence = None, None
+        if preimage.get("asset_manifest_sha256") is None:
+            root = script.parents[1]
+            bootstrap = seed_document(root / "web-asset-bootstrap.json")
+            evidence = seed_document(root / "web-asset-bootstrap-evidence.json")
         api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(Path.cwd()))
         tags = api.tags("web")
         history = api.history()
         for tag in tags:
             history.position(tag["target"])
-        scope = retention_scope(preimage, env["CD_STARTED_AT"], [tag["receipt"] for tag in tags], bootstrap=bootstrap)
+        scope = retention_scope(preimage, env["CD_STARTED_AT"], [tag["receipt"] for tag in tags],
+                                bootstrap=bootstrap, bootstrap_evidence=evidence)
         output(env, "scope", canonical(scope))
         return True
 
