@@ -36,3 +36,6 @@ mod availability;
 
 #[path = "personal_inventory/organization.rs"]
 mod organization;
+
+#[path = "personal_inventory/list_query_budgets.rs"]
+mod list_query_budgets;
