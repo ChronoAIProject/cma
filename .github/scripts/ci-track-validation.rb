@@ -64,7 +64,7 @@ def check_component_cache_writers(documents)
   require_check(writers.size == 1 && writers.first['uses'].start_with?('actions/cache/save@') &&
     writers.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (success() && #{develop} && matrix.component == 'api' && vars.CMA_LAYER_CACHE_WRITER_FLOOR != 'true' && steps.api-cargo-cache-export.outputs.ready == 'true')",
     'only the accepted develop Cargo archive may be saved')
-  restore = 'actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830'
+  restore = 'actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25'
   npm = {'path' => '${{ steps.npm-cache.outputs.directory }}',
     'key' => "node-cache-${{ runner.os }}-${{ steps.npm-cache.outputs.architecture }}-npm-${{ hashFiles('web/package-lock.json') }}"}
   database = {'path' => '${{ github.workspace }}/.cache/trivy', 'key' => 'cache-trivy-readonly', 'restore-keys' => 'cache-trivy-'}

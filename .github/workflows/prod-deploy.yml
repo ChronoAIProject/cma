@@ -73,11 +73,16 @@ jobs:
           CD_RELEASE_SET: ${{ inputs.release_set }}
         run: python3 -B .github/scripts/prod_cd_select.py
       - name: Restore public tool download cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: public-tools-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        continue-on-error: true
         timeout-minutes: 1
         with:
           path: ${{ runner.temp }}/cma-public-tool-cache
           key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
+      - name: Discard an incomplete public tool cache restore
+        if: steps.public-tools-cache.outcome != 'success' || steps.public-tools-cache.outputs.cache-hit != 'true'
+        run: rm -rf -- "${RUNNER_TEMP:?}/cma-public-tool-cache"
       - name: Prepare isolated deployment tools
         env:
           CD_STARTED_AT: ${{ steps.release.outputs.started_at }}
