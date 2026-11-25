@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { connectionCopy } from '../vocabulary/connect';
 import { StateDot } from '../ui/StateDot';
 import { Button } from '../ui/Button';
@@ -24,6 +25,7 @@ interface ViewProps {
   cancel: () => void;
   authorize: () => Promise<void>;
   resumeRequired: boolean;
+  repositoryRepair?: ReactNode;
 }
 
 // The subscription row follows the ChatGPT sign-in the user sees.
@@ -51,6 +53,7 @@ export function ConnectionWizardView({
   cancel,
   authorize,
   resumeRequired,
+  repositoryRepair,
 }: ViewProps) {
   const connected = report?.services.filter((row) => row.state === 'satisfied').length ?? 0;
   const missing = report?.services.filter((row) => row.state !== 'satisfied') ?? [];
@@ -102,7 +105,16 @@ export function ConnectionWizardView({
           ))}
         </>
       )}
-      {handoff === undefined ? null : (
+      {repositoryRepair ? (
+        <>
+          <p>
+            Check your existing GitHub connection in NyxID. This task still needs verified
+            repository access. If you have no suitable connection, add one in NyxID and then verify
+            again.
+          </p>
+          {repositoryRepair}
+        </>
+      ) : handoff === undefined ? null : (
         <div className="connection-wizard__handoff">
           {handoff.user_code === undefined ? null : (
             <>
@@ -133,7 +145,7 @@ export function ConnectionWizardView({
         </p>
       )}
       <div className="connection-wizard__actions">
-        {sameTabUrl === undefined ? null : (
+        {sameTabUrl === undefined || repositoryRepair ? null : (
           <a
             href={sameTabUrl}
             onClick={(event) => {
@@ -143,7 +155,9 @@ export function ConnectionWizardView({
             {connectionCopy.sameTab}
           </a>
         )}
-        {done ? (
+        {repositoryRepair ? (
+          <Button onClick={onRetry}>Verify again</Button>
+        ) : done ? (
           <p>All connections verified.</p>
         ) : (
           <Button variant="primary" onClick={connect} disabled={busy || report === undefined}>
@@ -160,8 +174,11 @@ export function ConnectionWizardView({
                       : 'Connect all'}
           </Button>
         )}
-        {error === undefined ? null : <Button onClick={onRetry}>Verify again</Button>}
-        {report?.service_authorization_recovery === true &&
+        {error === undefined || repositoryRepair ? null : (
+          <Button onClick={onRetry}>Verify again</Button>
+        )}
+        {!repositoryRepair &&
+        report?.service_authorization_recovery === true &&
         !running &&
         onCancel !== undefined &&
         missing.some((row) => row.kind === 'nyxid') ? (

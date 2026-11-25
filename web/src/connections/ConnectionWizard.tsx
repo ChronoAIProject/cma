@@ -14,6 +14,7 @@ import {
 } from './client';
 import { ConnectionWizardView } from './ConnectionWizardView';
 import { ConnectionIntentRecovery, savedConnection } from './intentRecovery';
+import { GitHubConnectionDetails, needsManualGitHubRepair } from './RepositoryConnectionRepair';
 import { rememberSameTabReturn } from './sameTabReturn';
 import './Connections.css';
 
@@ -30,6 +31,7 @@ interface WizardProps {
   readonly presentation?: 'inline' | 'dialog';
   readonly dialogTitle?: string;
   readonly description?: string;
+  readonly repositoryRecovery?: boolean;
   readonly client?: ConnectionClient;
 }
 
@@ -61,6 +63,7 @@ function ConnectionSequence({
   onRecoverySelected,
   forceSubscription = false,
   expectedOwner,
+  repositoryRecovery = false,
   presentation = 'inline',
   dialogTitle = 'Connect required services',
   description = 'Connect the accounts this sandbox needs. CMA verifies each connection automatically, then continues opening your Sandbox.',
@@ -132,6 +135,7 @@ function ConnectionSequence({
 
   const startNext = async (current: ConnectionReport) => {
     if (starting.current || !sequence.current || !live.current) return;
+    if (repositoryRecovery && needsManualGitHubRepair(current)) return;
     const next =
       current.services.find((row) => row.service === intentRecovery.pending?.service_id) ??
       current.services.find(
@@ -218,6 +222,12 @@ function ConnectionSequence({
         if (owner.current !== undefined && result.owner !== owner.current)
           throw new Error('Your CMA account changed. Reopen this connection step to continue.');
         owner.current = result.owner;
+        if (repositoryRecovery && needsManualGitHubRepair(result)) {
+          onRecoverySelected();
+          popup.current?.close();
+          setReport(result);
+          return;
+        }
         intentRecovery.bind(result, forceSubscription ? undefined : saved);
         if (recoveryEnabled) {
           if (saved !== undefined && intentRecovery.pending === undefined) persist(undefined);
@@ -342,7 +352,7 @@ function ConnectionSequence({
     };
     // The serialized target makes this lifecycle independent of parent renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, client, forceSubscription, expectedOwner]);
+  }, [key, client, forceSubscription, expectedOwner, repositoryRecovery]);
 
   const connect = () => {
     if (busy || report === undefined) return;
@@ -452,6 +462,10 @@ function ConnectionSequence({
     setError('Your return to CMA could not be saved. Allow pop-ups or try again.');
     return false;
   };
+  const repositoryRepair =
+    repositoryRecovery && report && needsManualGitHubRepair(report) ? (
+      <GitHubConnectionDetails owner={report.owner} target={target} />
+    ) : undefined;
   return (
     <ConnectionWizardView
       {...{
@@ -473,6 +487,7 @@ function ConnectionSequence({
         connect,
         cancel,
         authorize,
+        repositoryRepair,
         resumeRequired: intentRecovery.needsResume,
       }}
     />
