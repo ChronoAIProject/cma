@@ -378,6 +378,25 @@ class RenderTests(unittest.TestCase):
         for code in ("rollout-timeout", "status-pods", "serving", "write-timeout"):
             self.assertTrue(render("deploy-verification", code, subject="deploy")[0].endswith(" cause=operator"))
 
+    def test_specific_restart_reasons_keep_verification_operator_first(self):
+        cases = (
+            ("pod-restarts-membership", "membership or ownership renewal", "change"),
+            ("pod-restarts-startup-gate", "active warm-pool readiness", "operator"),
+            ("pod-restarts-panic", "inspect the panic", "change"),
+            ("pod-restarts", "restarted pods' logs", "change"),
+            ("unrecognized", "Add the controller's new reason", "operator"),
+        )
+        for reason, instruction, cause in cases:
+            with self.subTest(reason=reason):
+                line, annotation, row = render("deploy-verification", reason, subject="deploy", recovery="unreported")
+                self.assertEqual(line, f"FAIL verification={reason} recovery=unreported cause=operator")
+                self.assertIn("An operator reconciles staging first.", annotation)
+                self.assertIn(instruction, annotation)
+                self.assertIn(instruction, row)
+                line, annotation, _ = render("deploy-release", reason, subject="deploy")
+                self.assertEqual(line, f"FAIL release={reason} recovery=verified cause={cause}")
+                self.assertIn(instruction, annotation)
+
     def test_a_caller_may_lower_an_annotation_to_a_warning_but_not_invent_a_level(self):
         line, annotation, _ = render("deploy-private", "clock", subject="deploy", level="warning")
         self.assertEqual(line, "FAIL precondition=private-clock cause=transient")
