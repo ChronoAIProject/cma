@@ -250,7 +250,7 @@ jobs:
       - name: Set up the actual BuildKit importer
         if: steps.verify-archive.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
         timeout-minutes: 3
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
         with:
           cache-binary: false
       - name: Prove reuse from the exact restored archive

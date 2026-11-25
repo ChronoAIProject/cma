@@ -794,6 +794,33 @@ class StagingWorkflowTest < Minitest::Test
     end
   end
 
+  def test_infra_reader_token_authority_is_identical_in_every_release_workflow
+    action = 'actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc'
+    inputs = {
+      'app-id' => '${{ vars.CMA_INFRA_APP_ID }}',
+      'private-key' => '${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}',
+      'owner' => 'ChronoAIProject',
+      'repositories' => 'cma-infra',
+      'permission-contents' => 'read',
+    }
+    jobs = {
+      'staging-cd' => 'infrastructure', 'staging-deploy' => 'deploy', 'redeploy-staging' => 'resolve',
+      'prod-cd' => 'resolve', 'prod-deploy' => 'deploy',
+    }
+    jobs.each do |workflow_name, job|
+      steps = workflow(workflow_name).fetch('jobs').fetch(job).fetch('steps')
+      tokens = steps.select { |step| step['uses'].to_s.start_with?('actions/create-github-app-token@') }
+      assert_equal %w[infra-token infra-token-retry], tokens.map { |step| step['id'] }, workflow_name
+      tokens.each do |step|
+        assert_equal action, step['uses'], workflow_name
+        assert_equal inputs, step['with'], workflow_name
+      end
+      assert_equal true, tokens.first['continue-on-error'], workflow_name
+      refute tokens.last.key?('continue-on-error'), workflow_name
+      assert_includes tokens.last['if'], "steps.infra-token.outcome == 'failure'", workflow_name
+    end
+  end
+
   def test_catch_up_only_re_runs_the_develop_push_run_and_staging_stays_push_only
     staging = workflow('staging-cd')
     assert_equal 'Staging CD', staging['name'], 'the catch-up trigger names this workflow'

@@ -44,7 +44,7 @@ module OmarchyCIContract
         python3 .github/scripts/omarchy-browser-input-tests.py
         node --test .github/scripts/omarchy-browser-page.test.cjs
       SH
-      { "uses" => "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+      { "uses" => "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
         "with" => { "cache-binary" => "${{ #{DEVELOP_PUSH} }}" } },
       { "name" => "Set immutable Omarchy image version", "id" => "identity",
         "run" => 'echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"' },
