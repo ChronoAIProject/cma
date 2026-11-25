@@ -641,6 +641,11 @@ A persisted channel whose original creation has not completed returns 409
 `conflict` with detail beginning `channel_creation_pending`. The owner must
 complete the original creation request using its exact reserved `record_id`
 and original policy/credentials. Repeated event delivery cannot finish creation.
+Channel and routing edits use this same refusal before admitting an update,
+even when the supplied version equals the stored version. Refresh the channel
+after its original creation completes. A first-attempt edit refused this way
+may retain an editable draft; a request with an earlier uncertain outcome must
+retain its original request identity for recovery.
 
 ## 4. Opaque references
 

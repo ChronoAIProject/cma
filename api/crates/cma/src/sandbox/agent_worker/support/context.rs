@@ -6,6 +6,9 @@ use layer2_core::sandbox::{SandboxStatus, WorkspaceStatus};
 #[cfg(test)]
 #[path = "connection_diagnostics_tests.rs"]
 mod diagnostics_tests;
+#[cfg(test)]
+#[path = "context_diagnostics_tests.rs"]
+mod inspection_tests;
 #[path = "context_overlap.rs"]
 mod overlap;
 
@@ -30,7 +33,7 @@ fn report_inspection(
         tracing::info!(target: TARGET, parent: None,
             agent_sha256 = %fields.agent_sha256, sandbox_sha256 = fields.sandbox_sha256.as_deref(),
             instance_sha256 = %fields.instance_sha256, receiver_sha256 = fields.receiver_sha256.as_deref(),
-            step = ?step, elapsed_ms = elapsed.as_millis() as u64, parent_overlap,
+            epoch = fields.epoch, step = ?step, elapsed_ms = elapsed.as_millis() as u64, parent_overlap,
             succeeded = error.is_none(), reason, "Agent runtime inspection completed");
     });
 }

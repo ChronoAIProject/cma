@@ -42,11 +42,15 @@ impl AgentWorker {
         )
         .await?;
         self.observe_runtime_startup(&sandbox, started, &attached);
-        tracing::info!(
-            elapsed_ms = started.elapsed().as_millis(),
-            succeeded = attached.is_ok(),
-            "Agent parent reads and runtime inspection completed"
-        );
+        let fields = self.inspection_correlation(agent);
+        with_root(|| {
+            tracing::info!(target: TARGET, parent: None,
+                agent_sha256 = %fields.agent_sha256, sandbox_sha256 = fields.sandbox_sha256.as_deref(),
+                instance_sha256 = %fields.instance_sha256, receiver_sha256 = fields.receiver_sha256.as_deref(),
+                epoch = fields.epoch, elapsed_ms = started.elapsed().as_millis() as u64,
+                succeeded = attached.is_ok(), parent_overlap = true,
+                "Agent parent reads and runtime inspection completed");
+        });
         let (runtime, status) = attached.map_err(adapter_failure)?;
         Ok(AgentContext {
             sandbox,
