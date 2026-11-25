@@ -9,39 +9,38 @@ use std::{
 #[tokio::test]
 async fn relay_command_addressing_rejects_unknown_and_preserves_default_controls() {
     for command in [true, false] {
-        let fixture = Fixture::new(
-            |value| {
-                value["routing"] = serde_json::json!({
-                    "version": 1,
-                    "default_consumer": {"name": "default"},
-                    "default_targets": ["default"],
-                    "addressing": {"command": command}
-                });
-            },
-            Default::default(),
-        )
-        .await;
-        fixture.recorder.outcome.store(1, Ordering::SeqCst);
-        let mut envelope = Envelope::new();
-        let text = "/to absent-fixture hello";
-        envelope.payload["content"]["text"] = text.into();
-        envelope.payload["raw_platform_data"]["message"]["text"] = text.into();
-        if command {
-            problem(fixture.send(&envelope).await, 403, "target_unknown").await;
-            assert!(fixture.recorder.requests.lock().unwrap().is_empty());
-        } else {
-            assert_eq!(fixture.send(&envelope).await.status().as_u16(), 202);
-            assert_eq!(fixture.recorder.requests.lock().unwrap().len(), 1);
-            fixture.recorder.requests.lock().unwrap().clear();
-        }
-        for text in ["/to default hello", "ordinary message"] {
+        for (text, refused) in [
+            ("/to absent-fixture hello", command),
+            ("/to default hello", false),
+            ("ordinary message", false),
+        ] {
+            let fixture = Fixture::new(
+                |value| {
+                    value["routing"] = serde_json::json!({
+                        "version": 1,
+                        "default_consumer": {"name": "default"},
+                        "default_targets": ["default"],
+                        "addressing": {"command": command}
+                    });
+                },
+                Default::default(),
+            )
+            .await;
+            fixture.recorder.outcome.store(1, Ordering::SeqCst);
+            let mut envelope = Envelope::new();
             envelope.payload["content"]["text"] = text.into();
             envelope.payload["raw_platform_data"]["message"]["text"] = text.into();
-            assert_eq!(fixture.send(&envelope).await.status().as_u16(), 202);
+            let response = fixture.send(&envelope).await;
+            if refused {
+                problem(response, 403, "target_unknown").await;
+                assert!(fixture.recorder.requests.lock().unwrap().is_empty());
+            } else {
+                assert_eq!(response.status().as_u16(), 202);
+                let requests = fixture.recorder.requests.lock().unwrap();
+                assert_eq!(requests.len(), 1);
+                assert!(requests[0].consumer.is_none());
+            }
         }
-        let requests = fixture.recorder.requests.lock().unwrap();
-        assert_eq!(requests.len(), 2);
-        assert!(requests.iter().all(|request| request.consumer.is_none()));
     }
 }
 
