@@ -182,10 +182,7 @@ impl Store {
             .start_session()
             .await
             .map_err(transaction_error)?;
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+        crate::transaction_start::start_write(&self.database, &mut session, None)
             .await
             .map_err(transaction_error)?;
         self.records
@@ -314,10 +311,7 @@ impl Store {
             .start_session()
             .await
             .map_err(transaction_error)?;
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+        crate::transaction_start::start_write(&self.database, &mut session, None)
             .await
             .map_err(transaction_error)?;
         let updated = self

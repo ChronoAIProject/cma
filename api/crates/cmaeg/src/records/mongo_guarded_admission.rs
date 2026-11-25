@@ -31,14 +31,7 @@ impl MongoRecords {
                 .ok_or_else(|| RecordError::Rejected("invalid interaction expiry".into()))?,
         );
         let mut session = self.db.client().start_session().await.map_err(failure)?;
-        session
-            .start_transaction()
-            .read_concern(mongodb::options::ReadConcern::snapshot())
-            .write_concern(
-                mongodb::options::WriteConcern::builder()
-                    .w(mongodb::options::Acknowledgment::Majority)
-                    .build(),
-            )
+        crate::transaction_start::start_write(&self.db, &mut session, None)
             .await
             .map_err(failure)?;
         let channel = self.db.collection::<Document>(RECORDS);
