@@ -361,7 +361,7 @@ async fn fenced_delete_requires_the_exact_durable_generation_receipt() {
             query.get("mutationGeneration").map(String::as_str),
             Some("2")
         );
-        request.respond(status, &body.to_string());
+        request.respond(status, body.to_string());
         assert_eq!(finish(task).await, expected);
     }
 }

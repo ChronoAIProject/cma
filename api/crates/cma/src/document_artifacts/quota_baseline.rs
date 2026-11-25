@@ -98,7 +98,7 @@ impl Inventory {
             .projection(
                 doc! {"owner_subject": 1, "document_schema_version": 1, "record.metadata.id": 1,
                 "record.metadata.owner_subject": 1, "record.revisions.object_key": 1,
-                "record.revisions.metadata.sha256": 1, "record.revisions.metadata.size_bytes": 1, "deletion": 1},
+                "record.revisions.metadata.sha256": 1, "record.revisions.metadata.size_bytes": 1, "deletion": 1, "audit": 1, "audit_owner_subject": 1},
             )
             .limit(MAX_BASELINE_OBJECTS as i64 + 1)
             .batch_size(16)

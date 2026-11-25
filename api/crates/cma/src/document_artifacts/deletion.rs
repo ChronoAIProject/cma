@@ -2,7 +2,7 @@
 use super::{mongo::MongoDocumentStore, quota};
 use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{commit_transaction, is_confirmed_body_retry, start_transaction, CommitOutcome};
-use layer2_core::document_artifacts::{digest, DocumentError, DocumentTombstone};
+use layer2_core::document_artifacts::{digest, DocumentError, DocumentTombstone, StoredDocument};
 use mongodb::{
     bson::{doc, Document, Timestamp},
     options::ReadConcern,
@@ -11,17 +11,32 @@ use mongodb::{
 
 const TOMBSTONE_VERSION: i64 = 2;
 
-pub(super) fn encode(tombstone: &DocumentTombstone) -> Result<Document, DocumentError> {
+pub(crate) fn encode(
+    tombstone: &DocumentTombstone,
+    audit: &StoredDocument,
+) -> Result<Document, DocumentError> {
     tombstone.validate()?;
+    audit.validate()?;
+    if audit.metadata.id != tombstone.receipt.id
+        || digest(audit.metadata.owner_subject.as_bytes()) != tombstone.owner_hash
+        || audit.metadata.revision != tombstone.expected_revision
+    {
+        return Err(DocumentError::Corrupt);
+    }
     let data = mongodb::bson::serialize_to_bson(tombstone).map_err(|_| DocumentError::Corrupt)?;
+    let retained = mongodb::bson::serialize_to_bson(audit).map_err(|_| DocumentError::Corrupt)?;
     Ok(doc! {
         "_id": &tombstone.receipt.id,
         "document_schema_version": TOMBSTONE_VERSION,
         "deletion": data,
+        "audit_owner_subject": &audit.metadata.owner_subject,
+        "audit": retained,
     })
 }
 
-pub(super) fn decode(row: &Document) -> Result<Option<DocumentTombstone>, DocumentError> {
+pub(crate) fn decode_audit(
+    row: &Document,
+) -> Result<Option<(DocumentTombstone, StoredDocument)>, DocumentError> {
     if row.get_i64("document_schema_version").ok() != Some(TOMBSTONE_VERSION) {
         return Ok(None);
     }
@@ -29,10 +44,18 @@ pub(super) fn decode(row: &Document) -> Result<Option<DocumentTombstone>, Docume
         row.get("deletion").ok_or(DocumentError::Corrupt)?.clone(),
     )
     .map_err(|_| DocumentError::Corrupt)?;
-    if row != &encode(&tombstone)? {
+    let audit: StoredDocument = mongodb::bson::deserialize_from_bson(
+        row.get("audit").ok_or(DocumentError::Corrupt)?.clone(),
+    )
+    .map_err(|_| DocumentError::Corrupt)?;
+    if row != &encode(&tombstone, &audit)? {
         return Err(DocumentError::Corrupt);
     }
-    Ok(Some(tombstone))
+    Ok(Some((tombstone, audit)))
+}
+
+pub(super) fn decode(row: &Document) -> Result<Option<DocumentTombstone>, DocumentError> {
+    Ok(decode_audit(row)?.map(|(tombstone, _)| tombstone))
 }
 
 pub(super) fn obligation_id(owner_hash: &str, document_id: &str) -> String {
@@ -98,7 +121,6 @@ async fn delete_bounded(
     owner: &str,
     prior: &DocumentTombstone,
 ) -> Result<bool, DocumentError> {
-    let replacement = encode(prior)?;
     let ledger = store.quota(true).rows;
     for _ in 0..5 {
         let mut session = store
@@ -112,7 +134,7 @@ async fn delete_bounded(
             Err(error) if is_confirmed_body_retry(&error) => continue,
             Err(_) => return Err(DocumentError::Unavailable),
         }
-        match write(store, &ledger, owner, prior, &replacement, &mut session).await {
+        match write(store, &ledger, owner, prior, &mut session).await {
             Ok(true) => {}
             result => {
                 let _ = session.abort_guarded().await;
@@ -187,7 +209,6 @@ async fn write(
     ledger: &mongodb::Collection<Document>,
     owner: &str,
     prior: &DocumentTombstone,
-    replacement: &Document,
     session: &mut ClientSession,
 ) -> Result<bool, WriteError> {
     let activation = ledger
@@ -218,7 +239,22 @@ async fn write(
     if fenced.matched_count != 1 {
         return Err(DocumentError::Conflict.into());
     }
-    let result = store.rows.replace_one(doc! {"_id": &prior.receipt.id, "owner_subject": owner, "revision": prior.expected_revision as i64}, replacement.clone()).session(&mut *session).await?;
+    let filter = doc! {"_id": &prior.receipt.id, "owner_subject": owner, "revision": prior.expected_revision as i64};
+    let Some(live) = store
+        .rows
+        .find_one(filter.clone())
+        .session(&mut *session)
+        .await?
+    else {
+        return Ok(false);
+    };
+    let audit = super::mongo::decode(&live)?;
+    let replacement = encode(prior, &audit)?;
+    let result = store
+        .rows
+        .replace_one(filter, replacement)
+        .session(&mut *session)
+        .await?;
     if result.matched_count == 0 {
         return Ok(false);
     }

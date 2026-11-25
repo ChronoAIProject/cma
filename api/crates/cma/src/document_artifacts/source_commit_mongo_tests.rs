@@ -1,3 +1,5 @@
+#[path = "deletion_mongo_tests.rs"]
+mod deletion_tests;
 use super::*;
 use crate::document_artifacts::{
     source_commit::{reconcile_after_majority_read, source_marker},

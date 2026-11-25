@@ -43,6 +43,7 @@ impl MongoDocumentStore {
     pub async fn ensure_indexes(&self) -> Result<(), DocumentError> {
         for keys in [
             doc! {"owner_subject": 1, "_id": 1},
+            doc! {"audit_owner_subject": 1, "_id": 1},
             doc! {"recipient_subjects": 1, "_id": 1},
         ] {
             self.rows

@@ -90,6 +90,80 @@ async fn document_references_are_redacted_without_changing_the_owner() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn deleted_document_audit_redacts_recipient_without_changing_deletion_revision() {
+    let db = fixture().await;
+    let original = document();
+    let tombstone = DocumentTombstone {
+        owner_hash: digest(original.metadata.owner_subject.as_bytes()),
+        request_hash: digest(b"delete"),
+        expected_revision: original.metadata.revision,
+        receipt: DocumentDeletionReceipt {
+            id: original.metadata.id.clone(),
+            revision: original.metadata.revision + 1,
+            deleted_at: AT.into(),
+        },
+    };
+    let row = crate::document_artifacts::deletion::encode(&tombstone, &original).unwrap();
+    let collection = db.collection::<Document>("cma_document_artifacts");
+    collection.insert_one(row.clone()).await.unwrap();
+    assert_eq!(
+        redact(&db, "cma_document_artifacts", &row, &subjects())
+            .await
+            .unwrap(),
+        Redaction::Updated
+    );
+    assert_eq!(
+        redact(&db, "cma_document_artifacts", &row, &subjects())
+            .await
+            .unwrap(),
+        Redaction::Conflict
+    );
+    let current = collection
+        .find_one(doc! {"_id": &original.metadata.id})
+        .await
+        .unwrap()
+        .unwrap();
+    let (retained, audit) = crate::document_artifacts::deletion::decode_audit(&current)
+        .unwrap()
+        .unwrap();
+    assert_eq!(retained, tombstone);
+    assert_eq!(audit.metadata.revision, original.metadata.revision);
+    assert_eq!(audit.revisions[0].metadata, original.revisions[0].metadata);
+    assert_eq!(
+        audit
+            .shares
+            .iter()
+            .map(|s| s.subject.as_str())
+            .collect::<Vec<_>>(),
+        ["other"]
+    );
+    assert_eq!(
+        audit
+            .comments
+            .iter()
+            .map(|c| c.author_subject.as_str())
+            .collect::<Vec<_>>(),
+        ["other"]
+    );
+    assert_eq!(
+        audit.receipts["comment-receipt"]
+            .outcome
+            .comment
+            .as_ref()
+            .unwrap()
+            .author_subject,
+        "deleted-account"
+    );
+    assert!(MongoDocumentStore::new(db.clone())
+        .get(&original.metadata.id)
+        .await
+        .unwrap()
+        .is_none());
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn redaction_uses_revision_cas() {
     let db = fixture().await;
     let store = MongoDocumentStore::new(db.clone());

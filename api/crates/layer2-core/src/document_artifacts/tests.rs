@@ -352,6 +352,21 @@ async fn document_deletion_fences_owner_revision_and_replays_the_original_receip
         Err(DocumentError::Unavailable)
     );
     let service = service.with_deletion_enabled(true);
+    for (revision, markdown) in [(1, "# Replacement".to_owned()), (2, body().markdown)] {
+        service
+            .update(
+                &owner,
+                &doc.id,
+                &format!("edit-{revision}"),
+                UpdateDocument {
+                    expected_revision: revision,
+                    title: None,
+                    markdown: Some(markdown),
+                },
+            )
+            .await
+            .unwrap();
+    }
     let shared = service
         .grant(
             &owner,
@@ -359,7 +374,7 @@ async fn document_deletion_fences_owner_revision_and_replays_the_original_receip
             "grant",
             "guest",
             GrantDocument {
-                expected_revision: 1,
+                expected_revision: 3,
                 permission: DocumentPermission::Read,
             },
         )

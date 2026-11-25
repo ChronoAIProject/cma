@@ -261,7 +261,10 @@ impl Publication<'_> {
             .await
             .map_err(super::quota::unavailable)?
             .ok_or(DocumentError::Unavailable)
-            .and_then(|row| decode(&row))?;
+            .and_then(|row| match super::deletion::decode_audit(&row)? {
+                Some((_, audit)) => Ok(audit),
+                None => decode(&row),
+            })?;
         let exact = match self.edit {
             Some((_, key, fingerprint)) => current.receipts.get(key).is_some_and(|receipt| {
                 receipt.fingerprint == fingerprint

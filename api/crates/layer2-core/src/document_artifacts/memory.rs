@@ -99,7 +99,7 @@ impl UserDirectoryStore for MemoryRecipientDirectory {
 #[derive(Default)]
 pub struct MemoryDocuments(
     pub Mutex<BTreeMap<String, StoredDocument>>,
-    Mutex<BTreeMap<String, DocumentTombstone>>,
+    Mutex<BTreeMap<String, (DocumentTombstone, StoredDocument)>>,
 );
 #[async_trait::async_trait]
 impl DocumentStore for MemoryDocuments {
@@ -107,7 +107,12 @@ impl DocumentStore for MemoryDocuments {
         Ok(self.0.lock().await.get(id).cloned())
     }
     async fn tombstone(&self, id: &str) -> Result<Option<DocumentTombstone>, DocumentError> {
-        Ok(self.1.lock().await.get(id).cloned())
+        Ok(self
+            .1
+            .lock()
+            .await
+            .get(id)
+            .map(|(tombstone, _)| tombstone.clone()))
     }
     async fn delete(
         &self,
@@ -127,8 +132,8 @@ impl DocumentStore for MemoryDocuments {
         }) {
             return Ok(false);
         }
-        rows.remove(id);
-        deleted.insert(id.clone(), tombstone.clone());
+        let audit = rows.remove(id).ok_or(DocumentError::Corrupt)?;
+        deleted.insert(id.clone(), (tombstone.clone(), audit));
         Ok(true)
     }
     async fn insert(&self, record: &StoredDocument) -> Result<bool, DocumentError> {

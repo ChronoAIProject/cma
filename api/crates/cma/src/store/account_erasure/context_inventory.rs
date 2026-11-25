@@ -106,6 +106,11 @@ async fn classify(
         present.insert(id.to_owned());
         if let Some(candidate) = candidates.get_mut(id) {
             observe(candidate, &row, owner, &context.subject);
+            if set == Set::Documents {
+                candidate.foreign |= strings(&row, "audit_owner_subject")
+                    .iter()
+                    .any(|owner| *owner != context.subject);
+            }
             if matches!(set, Set::Launches | Set::Bindings) && strings(&row, owner).is_empty() {
                 candidate.foreign = true;
             }
@@ -242,7 +247,7 @@ async fn protect_roots(
 }
 
 fn projection() -> Document {
-    doc! {"owner":1,"owner_subject":1,"record.owner":1,"sandbox_id":1,
+    doc! {"owner":1,"owner_subject":1,"audit_owner_subject":1,"record.owner":1,"sandbox_id":1,
     "record.sandbox_id":1,"record.resolution.sandbox.id":1,"record.previous.sandbox_id":1,
     "workspace_id":1,"record.workspace_id":1,"worktree_id":1,"record.worktree_id":1,
     "agent_id":1,"record.agent_id":1,"binding_id":1,"record.binding_id":1}
