@@ -119,10 +119,10 @@ fn project_with_chunks(entry: &AgentLogEntry, turn: u64, bounded: bool) -> Vec<A
             call_id,
             title,
             kind,
-            ..
+            status,
         } => vec![make(
             "TOOL_CALL_START",
-            json!({"toolCallId": call_id, "toolCallName": title, "cma:toolKind": kind}),
+            json!({"toolCallId": call_id, "toolCallName": title, "cma:toolKind": kind, "cma:status": status}),
         )],
         AgentLogKind::ToolCallUpdated {
             call_id,
@@ -304,5 +304,23 @@ mod observation_tests {
                 "description_is_setup_preview":true
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_tool_start_preserves_the_status_in_replay() {
+        let entry: AgentLogEntry = serde_json::from_value(json!({
+            "agent_id":"agt_fixture", "seq":1, "appended_at":"2026-11-05T14:33:00Z",
+            "kind":{"type":"tool_call_started","call_id":"delivery",
+                "title":"mcp.cma_access.describe_deliverable","kind":"execute","status":"failed"}
+        }))
+        .unwrap();
+        let frames = project(&entry, 1);
+        assert_eq!(frames[0].kind, "TOOL_CALL_START");
+        assert_eq!(frames[0].body["cma:status"], "failed");
     }
 }

@@ -3,6 +3,7 @@
 mod config;
 mod connections;
 mod construction;
+pub(crate) mod deliverable_output;
 pub use construction::{CodexAdapter, CodexSandboxSpec};
 mod filesystem;
 mod home;
