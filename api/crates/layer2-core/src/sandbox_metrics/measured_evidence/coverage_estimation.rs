@@ -55,7 +55,7 @@ pub(super) fn estimate_interior(
             &candidates[index + 1],
         );
         let elapsed = gap.interval.to_ms - gap.interval.from_ms;
-        if !gap.attributed
+        if !uniquely_attributed(gap, candidates, allocation)
             || gap.interval.quantity != Err(Unresolved::Coverage)
             || elapsed > MAX_INTERIOR_GAP_MS
             || cutoff_ms.saturating_sub(gap.interval.to_ms) < LATE_GRACE_MS

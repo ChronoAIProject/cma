@@ -288,3 +288,49 @@ fn resets_and_ambiguous_neighbors_cannot_fund_an_interior_estimate() {
     assert_eq!(row.measurement_status, MeasurementStatus::Pending);
     assert_eq!(row.quantity, None);
 }
+
+#[test]
+fn interrupted_disk_allocation_and_overlapping_series_invalidate_the_entire_gap() {
+    let home = binding(BindingKind::Home);
+    let disk = allocation(false);
+    let mut no_disk = disk.clone();
+    no_disk.disk_gib = 0;
+    let mut raw = [(0, 10.0), (60_000, 10.0), (180_000, 30.0), (240_000, 30.0)]
+        .into_iter()
+        .map(|(time, value)| sample(&home, SourceMetric::PvcUsed, time, value))
+        .collect::<Vec<_>>();
+    let interrupted = [
+        event(1, 0, 90, disk.clone(), no_disk.clone()),
+        event(2, 90, 150, no_disk, disk.clone()),
+        event(3, 150, 240, disk.clone(), disk.clone()),
+    ];
+    let check = |rows: Vec<CoverageInterval>, middle| {
+        let gap = rows
+            .iter()
+            .filter(|row| {
+                row.metric == SourceMetric::PvcUsed && row.from_ms >= 60_000 && row.to_ms <= 180_000
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(gap.len(), 3);
+        assert_eq!(gap[0].measurement_status, MeasurementStatus::Pending);
+        assert_eq!(gap[1].measurement_status, middle);
+        assert_eq!(gap[2].measurement_status, MeasurementStatus::Pending);
+        assert!(gap.iter().all(|row| row.quantity.is_none()));
+    };
+    check(
+        settle(&raw, &interrupted, 0, 240_000, 180_000 + LATE_GRACE_MS),
+        MeasurementStatus::NotAllocated,
+    );
+    let mut other = home.clone();
+    other.id = "second-home".into();
+    other.pvc_uid = "second-pvc".into();
+    raw.extend([
+        sample(&other, SourceMetric::PvcUsed, 90_000, 5.0),
+        sample(&other, SourceMetric::PvcUsed, 150_000, 5.0),
+    ]);
+    let continuous = [event(1, 0, 240, disk.clone(), disk)];
+    check(
+        settle(&raw, &continuous, 0, 240_000, 180_000 + LATE_GRACE_MS),
+        MeasurementStatus::Unmapped,
+    );
+}
