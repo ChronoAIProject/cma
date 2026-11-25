@@ -112,3 +112,24 @@ fn provider_start_lag_reports_only_proven_single_target_bounds() {
     conflicting.commit_lower_ns = Some(commit + 1);
     assert_eq!(start_lag(&conflicting, written), None);
 }
+
+#[test]
+fn oldest_unstarted_uses_admission_bounds_and_reports_missing_history() {
+    let measurement = Measurement::new(3).unwrap();
+    measurement.admitted("pending", 123, 1, Some(measurement.now()));
+    measurement.admitted("finished", 123, 1, None);
+    measurement.completed("finished");
+    let pending = &measurement.snapshot().samples[0];
+    let now = pending.admission_confirmed_ns.unwrap() + CLOCK_RESOLUTION_NS + 10;
+    let (lower, upper) = start_lag(pending, now).unwrap();
+    assert_eq!(
+        oldest_unstarted(&measurement.0.state.lock().unwrap(), now),
+        Some([lower, upper])
+    );
+
+    measurement.admitted("uncertain", 123, 1, None);
+    assert_eq!(
+        oldest_unstarted(&measurement.0.state.lock().unwrap(), now),
+        None
+    );
+}

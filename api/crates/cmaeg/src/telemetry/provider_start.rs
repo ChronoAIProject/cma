@@ -233,6 +233,27 @@ impl Measurement {
         );
         state.last_active_ns = now;
     }
+    pub(crate) fn record_window_metrics(&self) {
+        let state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
+        let now = self.now();
+        let window_valid = !state.overflow && now <= WINDOW.as_nanos() as u64;
+        metrics::gauge!(super::names::PROVIDER_START_WINDOW_VALID).set(if window_valid {
+            1.0
+        } else {
+            0.0
+        });
+        let ages = window_valid
+            .then(|| oldest_unstarted(&state, now))
+            .flatten();
+        for (bound, index) in [("lower", 0), ("upper", 1)] {
+            let value = ages.map_or(f64::NAN, |elapsed| {
+                Duration::from_nanos(elapsed[index]).as_secs_f64()
+            });
+            metrics::gauge!(super::names::PROVIDER_START_OLDEST_UNSTARTED, "bound" => bound)
+                .set(value);
+        }
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
         let now = self.now();
@@ -331,6 +352,22 @@ impl Drop for ExecutorGuard {
         metrics::gauge!(super::names::PROVIDER_START_ACTIVE).decrement(1.0);
     }
 }
+fn oldest_unstarted(state: &State, now: u64) -> Option<[u64; 2]> {
+    let mut oldest = [0, 0];
+    for row in state.rows.values().filter(|row| {
+        row.admitted
+            && row.first_post_ns.is_none()
+            && row.expired_before_start_ns.is_none()
+            && row.accepted_ns.is_none()
+            && row.completed_ns.is_none()
+    }) {
+        let (lower, upper) = start_lag(row, now)?;
+        oldest[0] = oldest[0].max(lower);
+        oldest[1] = oldest[1].max(upper);
+    }
+    Some(oldest)
+}
+
 fn start_lag(row: &Sample, written_ns: u64) -> Option<(u64, u64)> {
     if row.target_count != 1 || row.unknown.is_some() {
         return None;

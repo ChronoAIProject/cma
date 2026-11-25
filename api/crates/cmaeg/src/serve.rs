@@ -383,7 +383,8 @@ pub(crate) async fn serve(
         .github_enabled
         .then(|| crate::github::Initialization::start(state.clone(), ingress.clone()));
     let ingress = ingress.with_receipt_observer(Arc::new(connections.clone()));
-    let metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
+    let metrics =
+        crate::serve_routed::start_metrics(config.metrics_listen, metrics, routed.as_ref()).await?;
     let replica_routes = routed
         .as_ref()
         .map(|composition| composition.replica_routes.clone())
@@ -416,7 +417,6 @@ pub(crate) async fn serve(
     .map_err(|_| std::io::Error::other("native Discord runtime configuration is invalid"))?;
     listener::announce(&listener, metrics.address(), ephemeral)?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
-
     let (shutdown_started, shutdown_signal) = oneshot::channel();
     let side_messages = delivery_engine.side_messages_if(config.event_side_messages_enabled);
     let mut router = router_with_state(state)
