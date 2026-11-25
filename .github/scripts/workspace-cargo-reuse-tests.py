@@ -189,6 +189,31 @@ pub fn snapshot(_: proc_macro::TokenStream) -> proc_macro::TokenStream {
         self.enterContext(patch.dict(cache.RELEASE_AUDITS, {"cma": (packages, entrypoint, dependencies)}))
         self.enterContext(patch.object(cache, "tool_output", native_tool))
 
+    def test_chef_layer_cannot_restore_workspace_fingerprints(self):
+        main = self.split_targets()
+        self.approved_projection(main)
+        library = "crates/cma/src/lib.rs"
+        with tempfile.TemporaryDirectory() as temporary:
+            chef = Path(temporary) / "chef"
+            self.write(library, "pub fn value() -> u32 { 99 }")
+            self.command("cargo", "build", "--release", "--locked", "--offline", "--bin", "cma")
+            for binary in ("cma", "cmaeg"):
+                recipe = (ROOT / f"api/crates/{binary}/Dockerfile").read_text()
+                dependencies = recipe.split("FROM chef AS dependencies\n", 1)[1].split("\nFROM ", 1)[0]
+                self.assertRegex(dependencies, r"cargo chef cook [^\n]+\\\n"
+                                               r"    && cargo clean --release --workspace --locked")
+            self.command("cargo", "clean", "--release", "--workspace", "--locked")
+            self.target.rename(chef)
+            self.target.mkdir()
+            self.write(library, "pub fn value() -> u32 { 41 }")
+            self.assertEqual(self.build("first", chef)[2], "first:41:41")
+            self.write(library, "pub fn value() -> u32 { 42 }")
+            self.assertEqual(self.build("second", chef)[2], "second:41:42")
+            notes, rust, output = self.build("third", chef)
+            self.assertIn("Invalidated: cma", notes)
+            self.assertIn("Fresh untouched", rust)
+            self.assertEqual(output, "third:41:42")
+
     def test_audited_stamp_and_executable_edit_retain_same_package_library(self):
         main = self.split_targets()
         self.approved_projection(main)

@@ -16,7 +16,8 @@ RUN cargo chef prepare --recipe-path /recipe.json
 FROM chef AS dependencies
 COPY --from=planner /recipe.json /recipe.json
 RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,sharing=locked \
-    cargo chef cook --release --locked --bin cmaeg --recipe-path /recipe.json
+    cargo chef cook --release --locked --bin cmaeg --recipe-path /recipe.json \
+    && cargo clean --release --workspace --locked
 
 FROM rust:1.96.1-alpine AS build
 RUN apk add --no-cache binutils musl-dev python3
