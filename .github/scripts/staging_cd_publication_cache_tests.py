@@ -31,8 +31,8 @@ class CacheTests(unittest.TestCase):
                     "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "CD_COMPONENT": "eg",
                     "RUNNER_TEMP": str(self.root), "CD_TASKS": json.dumps([{"component": "eg", "mode": "resume"}])}
 
-    def cache(self):
-        return BuildCache(ROOT, self.env, ROOT, "eg")
+    def cache(self, *, day=None):
+        return BuildCache(ROOT, self.env, ROOT, "eg", cache_day=day)
 
     def populate(self, directory, target_member="release/incremental/synthetic/work-products.bin"):
         directory.mkdir()
@@ -155,7 +155,7 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(prepare(ROOT, env)['key'], actual.archive_key(env))
             source = snapshot.call_args.args[2]
             snapshot.assert_called_once_with(ROOT, reservation["source"], source)
-            key.assert_called_once_with(source, 'eg')
+            key.assert_called_once_with(source, 'eg', day=None)
         task['reservation'] = dict(reservation, source='invalid')
         with self.assertRaises(Refusal):
             prepare(ROOT, dict(env, CD_TASKS=json.dumps([task])))
@@ -248,18 +248,29 @@ class CacheTests(unittest.TestCase):
             self.assertFalse(self.cache().restore())
             self.assertEqual(transfer.call_count, 2)
 
-    def test_yesterdays_bundle_seeds_only_incremental_state_after_midnight(self):
-        import staging_cd_build_cache
+    def test_workspace_build_can_restore_registry_from_a_legacy_bundle_with_the_same_graph(self):
         tool = bridge()
-        yesterday, today = date(2026, 11, 20), date(2026, 11, 21)
-        with patch.object(staging_cd_build_cache, 'identity',
-                          side_effect=lambda root, component: identity(root, component, day=yesterday)):
-            producer = self.cache()
+        day = date(2026, 11, 25)
+        producer = self.cache(day=day)
         self.populate(producer.accepted)
         tool.seal(producer.accepted, producer.key.prefix, family=producer.key.family)
-        with patch.object(staging_cd_build_cache, 'identity',
-                          side_effect=lambda root, component: identity(root, component, day=today)):
-            cache = self.cache()
+        consumer = BuildCache(ROOT, self.env, ROOT, "eg", revision=self.env["GITHUB_SHA"], cache_day=day)
+        self.assertNotEqual(producer.key.prefix, consumer.key.prefix)
+        self.assertEqual(producer.key.graph, consumer.key.graph)
+        with patch.object(tool, "transfer") as transfer, patch("staging_cd_build_cache.bridge", return_value=tool):
+            self.assertTrue(consumer.restore())
+        self.assertEqual(consumer.restore_result, "partial")
+        transfer.assert_called_once_with("inject", consumer.accepted, namespace=consumer.namespace,
+                                         timeout=360, max_content=6 * 1024 ** 3)
+
+    def test_yesterdays_bundle_seeds_only_incremental_state_after_midnight(self):
+        tool = bridge()
+        yesterday, today = date(2026, 11, 20), date(2026, 11, 21)
+        producer = self.cache(day=yesterday)
+        self.populate(producer.accepted)
+        tool.seal(producer.accepted, producer.key.prefix, family=producer.key.family)
+        cache = self.cache(day=today)
+        self.assertEqual(self.cache(day=producer.cache_day).key, producer.key)
         self.assertEqual(cache.key.family, producer.key.family)
         self.assertNotEqual(cache.key.prefix, producer.key.prefix)
         with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
@@ -517,7 +528,7 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(base, identity(fake, 'eg'))
         self.assertEqual(prepare(fake, self.env), {
             "directory": str(self.root / "cma-build-cache/accepted"), "key": base.prefix + "123-1",
-            "prefix": base.prefix, "family": base.family})
+            "prefix": base.prefix, "graph": base.graph, "family": base.family})
         for relative, old, new in [('api/rust-toolchain.toml', '1.96.1', '1.97.0'),
                                    ('api/crates/cmaeg/Dockerfile', 'codegen-units=256', 'codegen-units=16'),
                                    ('api/crates/cmaeg/Dockerfile', 'rust:1.96.1-alpine', 'rust:other'),
@@ -539,8 +550,12 @@ class CacheTests(unittest.TestCase):
         self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'", workflow)
         self.assertIn("run: python3 -B .github/scripts/staging_cd_cargo_artifact.py", workflow)
         self.assertIn("CD_CARGO_CACHE_FAMILY: ${{ steps.build-cache.outputs.family }}", workflow)
+        self.assertIn("CD_CARGO_CACHE_GRAPH: ${{ steps.build-cache.outputs.graph }}", workflow)
         self.assertIn("name: ${{ steps.publication.outputs.build-cache-artifact }}", workflow)
         self.assertIn("path: ${{ steps.build-cache.outputs.directory }}", workflow)
+        self.assertIn("if: steps.cargo-bundle.outcome == 'success'", workflow)
+        self.assertIn("name: ${{ steps.publication.outputs.build-cache-index }}", workflow)
+        self.assertIn("path: ${{ steps.build-cache.outputs.directory }}/manifest.json", workflow)
         self.assertIn('actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd', workflow)
         self.assertIn('core.setSecret(value)', workflow)
         self.assertNotIn('core.info(value)', workflow)
