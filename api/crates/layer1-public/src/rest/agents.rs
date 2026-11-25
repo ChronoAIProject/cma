@@ -53,6 +53,10 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
             "/api/v1/agent-lifecycle/{id}",
             get(read_lifecycle_operation),
         )
+        .route(
+            "/api/v1/agent-lifecycle/{id}/cancel",
+            post(cancel_lifecycle_operation),
+        )
         .route("/api/v1/agents/{id}", get(read).delete(delete_agent))
         .route(
             "/api/v1/agents/{id}/restart",
@@ -114,6 +118,29 @@ pub(crate) async fn read_lifecycle_operation(
     };
     reader
         .read(&caller, &operation_id)
+        .await
+        .map(|view| (StatusCode::OK, Json(view)).into_response())
+        .unwrap_or_else(IntoResponse::into_response)
+}
+
+/// Cancel an owner-scoped creation only when its durable evidence still excludes allocation.
+#[utoipa::path(post, path = "/api/v1/agent-lifecycle/{id}/cancel", tag = "agents",
+    params(("id" = String, Path)),
+    responses((status = 200, body = crate::rest::AgentLifecycleOperationView),
+        (status = 403, body = crate::rest::ProblemDocument),
+        (status = 404, body = crate::rest::ProblemDocument),
+        (status = 409, body = crate::rest::ProblemDocument),
+        (status = 503, body = crate::rest::ProblemDocument)))]
+pub(crate) async fn cancel_lifecycle_operation(
+    State(state): State<AgentRoutesState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(operation_id): Path<String>,
+) -> Response {
+    let Some(reader) = state.lifecycle_operations else {
+        return AgentLifecycleProvisioningError::Unavailable.into_response();
+    };
+    reader
+        .cancel_unallocated(&caller, &operation_id)
         .await
         .map(|view| (StatusCode::OK, Json(view)).into_response())
         .unwrap_or_else(IntoResponse::into_response)

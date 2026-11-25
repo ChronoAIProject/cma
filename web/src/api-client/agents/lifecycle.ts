@@ -157,6 +157,13 @@ export function readAgentLifecycle(config: ResolvedConfig, id: string, options: 
   );
 }
 
+export function cancelAgentLifecycle(config: ResolvedConfig, id: string, options: OperationOptions) {
+  return read(config, `/api/v1/agent-lifecycle/${segment(id)}/cancel`, identity(agentLifecycleOperation, id), {
+    ...options,
+    method: 'POST',
+  });
+}
+
 export function recoverAgentWorktree(config: ResolvedConfig, id: string, options: CommandOptions) {
   return read(config, `/api/v1/agents/${segment(id)}/recover-worktree`, identity(agent, id), {
     ...command(options),

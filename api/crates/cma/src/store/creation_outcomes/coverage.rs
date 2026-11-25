@@ -125,6 +125,12 @@ impl CreationOutcomes {
                         if !matches!(tokio::time::timeout(Duration::from_secs(2), self.close_elapsed_days()).await, Ok(Ok(()))) {
                             tracing::warn!("Sandbox creation coverage closure did not complete");
                         }
+                        if !matches!(tokio::time::timeout(Duration::from_secs(5), self.settle_expired_unlinked()).await, Ok(Ok(()))) {
+                            tracing::warn!("Sandbox creation terminal settlement did not complete");
+                        }
+                        if !matches!(tokio::time::timeout(Duration::from_secs(5), self.settle_failed_linked()).await, Ok(Ok(()))) {
+                            tracing::warn!("Sandbox creation failed-operation settlement did not complete");
+                        }
                     }
                 }
             }
