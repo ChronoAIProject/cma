@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from subprocess import SubprocessError
@@ -12,6 +13,8 @@ from actions_cache_buildkit_inventory import (
 )
 from actions_cache_retention import BUDGET
 from actions_cache_sweep import authorized_completion
+
+MAX_INDEX_RETIREMENTS = 8
 
 
 def authorized(env):
@@ -30,22 +33,34 @@ def idle(api):
     return all(run["id"] == api.run_id for run in api.active_runs())
 
 
-def recover(api, reader, revision, now):
+def recover(api, reader, revision, now, *, retire_indexes=False):
     api.require_live_policy(revision)
     initial = sum(row.size for row in api.entries())
     result = {"before_bytes": initial, "budget_bytes": BUDGET, "candidate_bytes": 0,
-              "confirmed_deleted_bytes": 0, "status": "under-target"}
+              "confirmed_deleted_bytes": 0, "status": "under-target", "confirmed_retired_indexes": 0,
+              "superseded_index_count": 0, "projected_candidate_bytes_after_index_retirement": 0}
+    retired_ids = set()
     if initial >= BUDGET:
         result["status"] = "target-unmet"
         if not idle(api):
             result["status"] = "reader-held"
         else:
             try:
-                pinned, candidates, _, _ = observe(api, reader, revision, now)
+                observation = observe(api, reader, revision, now)
             except ProofError as error:
                 result.update(status="proof-incomplete", proof_phase=error.phase, error_class=error.cause_type)
                 candidates = []
-            result["candidate_bytes"] = sum(row.size for row in candidates)
+                retiring_indexes = False
+            else:
+                pinned, candidates = observation.pinned, observation.candidates
+                result.update(candidate_bytes=sum(row.size for row in candidates),
+                              superseded_index_count=len(observation.superseded),
+                              projected_candidate_bytes_after_index_retirement=observation.projected_candidate_bytes)
+                # Layers made unreachable here are considered only by a later,
+                # independent observation against the surviving indexes.
+                retiring_indexes = retire_indexes and not candidates and observation.projected_candidate_bytes > 0
+                if retiring_indexes:
+                    candidates = observation.superseded[:MAX_INDEX_RETIREMENTS]
             remaining = sum(row.size for row in api.entries())
             for candidate in candidates:
                 if remaining < BUDGET:
@@ -55,14 +70,21 @@ def recover(api, reader, revision, now):
                     if not idle(api):
                         result["status"] = "reader-held"
                         break
-                    if indexes(entries_with_prefix(api, INDEX_PREFIX)) != pinned or api.visible(candidate) != candidate:
+                    if indexes(entries_with_prefix(api, INDEX_PREFIX)) != pinned:
+                        result["status"] = "proof-changed"
+                        break
+                    visible = api.visible(candidate)
+                    if retiring_indexes and visible:
+                        visible = replace(visible, accessed=visible.created)
+                    if visible != candidate:
                         result["status"] = "proof-changed"
                         break
                     api.require_live_policy(revision)
                 except (OSError, ValueError, RuntimeError, SubprocessError):
                     result["status"] = "proof-changed"
                     break
-                print(json.dumps({"action": "native-blob-delete-intent", "id": candidate.id,
+                action = "native-index-delete-intent" if retiring_indexes else "native-blob-delete-intent"
+                print(json.dumps({"action": action, "id": candidate.id,
                                   "bytes": candidate.size}), flush=True)
                 try:
                     removed = api.delete(candidate.id)
@@ -76,16 +98,25 @@ def recover(api, reader, revision, now):
                     result["uncertain_id"] = candidate.id
                     result["status"] = "candidate-disappeared"
                     break
-                result["confirmed_deleted_bytes"] += candidate.size
+                if retiring_indexes:
+                    retired_ids.add(candidate.id)
+                    pinned = {index_id: row for index_id, row in pinned.items() if index_id != candidate.id}
+                else:
+                    result["confirmed_deleted_bytes"] += candidate.size
                 remaining = sum(row.size for row in api.entries())
     final = api.entries()
+    remaining_ids = {row.id for row in final}
+    result["confirmed_retired_indexes"] = len(retired_ids - remaining_ids)
     result["after_bytes"] = sum(row.size for row in final)
     result["bytes_to_admit"] = max(0, result["after_bytes"] - BUDGET + 1)
     if "uncertain_id" in result:
-        result["uncertain_id_absent"] = all(row.id != result["uncertain_id"] for row in final)
+        result["uncertain_id_absent"] = result["uncertain_id"] not in remaining_ids
     elif result["status"] in {"under-target", "target-unmet"}:
         if result["after_bytes"] < BUDGET:
             result["status"] = "recovered" if initial >= BUDGET else "under-target"
+        elif retired_ids:
+            result["status"] = ("indexes-retired" if retired_ids.isdisjoint(remaining_ids)
+                                else "retirement-awaiting-readback")
         else:
             result["status"] = "target-unmet"
     return result
@@ -95,7 +126,8 @@ def main(env):
     if not authorized(env):
         raise ValueError("native BuildKit recovery requires verified writer and reader floor")
     api, reader = client(env)
-    result = recover(api, reader, env["GITHUB_SHA"], datetime.now(timezone.utc))
+    result = recover(api, reader, env["GITHUB_SHA"], datetime.now(timezone.utc),
+                     retire_indexes=env.get("CD_LEGACY_BUILDKIT_INDEX_RETIREMENT") == "enabled")
     print(json.dumps(result), flush=True)
     if env.get("GITHUB_STEP_SUMMARY"):
         with Path(env["GITHUB_STEP_SUMMARY"]).open("a") as summary:

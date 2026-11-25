@@ -303,9 +303,10 @@ jobs:
               core.setSecret(value);
               core.exportVariable(name, value);
             }
-      - name: Retire only proven unreachable native blobs
+      - name: Recover native cache with verified replacement and reachability evidence
         env:
           GH_TOKEN: ${{ github.token }}
           CD_LEGACY_BUILDKIT_GC: ${{ vars.CMA_LEGACY_BUILDKIT_GC == 'true' && 'enabled' || '' }}
           CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
+          CD_LEGACY_BUILDKIT_INDEX_RETIREMENT: ${{ vars.CMA_LEGACY_BUILDKIT_INDEX_RETIREMENT == 'true' && 'enabled' || '' }}
         run: python3 -B .github/scripts/actions_cache_buildkit_recovery.py
