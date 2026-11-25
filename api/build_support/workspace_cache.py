@@ -238,6 +238,23 @@ def reset(target, *, allow_legacy=False):
         discard(interrupted)
 
 
+def incremental_object_ids(target, binary):
+    """Identify codegen objects and the completed compiler sessions containing them."""
+    identities = {}
+    incremental = target / "release/incremental"
+    for directory in incremental.glob(f"{binary.replace('-', '_')}-*"):
+        if not INCREMENTAL_DIR.fullmatch(directory.name):
+            continue
+        for session in directory.glob("s-*"):
+            if session.name.endswith("-working") or not (session / "work-products.bin").is_file():
+                continue
+            for artifact in session.glob("*.o"):
+                info = artifact.stat()
+                identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+                identities.setdefault(identity, set()).add(session.relative_to(incremental).as_posix())
+    return identities
+
+
 def prepare(root, target, binary, plan):
     path = target / SEED
     try:
@@ -262,6 +279,7 @@ def prepare(root, target, binary, plan):
         plan.unlink(missing_ok=True)
         return
 
+    track_incremental = False
     try:
         require(prior is not None and prior["compiler"] == compiler, "incompatible compiler inputs")
         require(prior["outputs"] == inventory(target, skip=(SEED, "CACHEDIR.TAG", ".rustc_info.json")),
@@ -295,11 +313,21 @@ def prepare(root, target, binary, plan):
         print(f"Workspace cache compatible. Invalidated: {invalidated}", flush=True)
         if retain and keep_service_library:
             print(f"Workspace cache retained {binary} library under its release audit", flush=True)
+        track_incremental = keep_incremental
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f"Workspace cache fallback: {error}", flush=True)
         reset(target, allow_legacy=prior is None)
 
-    plan.write_text(json.dumps({"compiler": compiler, "files": files, "packages": list(directories.values())}))
+    state = {"compiler": compiler, "files": files, "packages": list(directories.values())}
+    if track_incremental:
+        try:
+            state["incremental_object_ids"] = [
+                (identity, sorted(sessions))
+                for identity, sessions in sorted(incremental_object_ids(target, binary).items())
+            ]
+        except OSError:
+            pass
+    plan.write_text(json.dumps(state))
 
 
 def invalidate_service(target, binary, *, keep_incremental):
@@ -375,6 +403,7 @@ def finish(target, plan, binary):
     if not plan.exists():
         return
     state = json.loads(plan.read_text())
+    previous_ids = state.pop("incremental_object_ids", None)
     require(state["files"] == inventory(target.parent, skip=(target.name,)),
             "compiler mutated source while collecting workspace outputs")
     try:
@@ -388,6 +417,18 @@ def finish(target, plan, binary):
         temporary.replace(target / SEED)
     except (OSError, ValueError) as error:
         print(f"Workspace cache export unavailable ({type(error).__name__})", flush=True)
+        return
+    if previous_ids is not None:
+        try:
+            current_ids = incremental_object_ids(target, binary)
+        except OSError:
+            return
+        reused = sum(
+            bool(current_ids.get(tuple(identity), set()).difference(sessions))
+            for identity, sessions in previous_ids
+        )
+        print(f"Workspace cache incremental objects: restored={len(previous_ids)} reused={reused}",
+              flush=True)
 
 
 def main():

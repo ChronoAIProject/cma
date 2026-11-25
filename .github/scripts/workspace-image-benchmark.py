@@ -137,8 +137,12 @@ def workspace_units(progress):
     state = re.findall(r"(?m)^Workspace cache compatible\. Invalidated: ([A-Za-z0-9_, -]+)$", messages)
     retained = re.findall(r"(?m)^Workspace cache retained (\S+) library under its release audit$", messages)
     targets = re.findall(r"(?m)^\s*Running [^\n]*[/ ]crates/(cma|cmaeg)/src/(lib|main)\.rs\s", messages)
+    incremental = re.findall(r"(?m)^Workspace cache incremental objects: restored=(\d+) reused=(\d+)$",
+                             messages)
     return {"fresh": fresh, "compiled": rebuilt, "workspace_invalidation": state,
-            "retained_workspace_libraries": retained, "service_targets": sorted({":".join(pair) for pair in targets})}
+            "retained_workspace_libraries": retained, "service_targets": sorted({":".join(pair) for pair in targets}),
+            "incremental_objects": [{"restored": int(restored), "reused_in_place": int(reused)}
+                                    for restored, reused in incremental]}
 
 
 def reservation(component, revision, pending=()):
