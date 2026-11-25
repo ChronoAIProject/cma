@@ -94,7 +94,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
               retainPreparationDraftOwner(next.user.id);
             } else if (next.status === 'anonymous') {
               releaseNavigationGuard();
-              retainAgentDraftOwner();
+              // A lapsed session hides the composer until the owner is verified again.
+              // Explicit sign-out and a different verified owner clear the saved Agent draft.
               retainPreparationDraftOwner();
             }
             if (next.status !== 'error') last = next;
@@ -212,7 +213,6 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
           retainAgentDraftOwner(next.user.id);
           retainPreparationDraftOwner(next.user.id);
         } else if (next.status === 'anonymous') {
-          retainAgentDraftOwner();
           retainPreparationDraftOwner();
         }
         allowSessionReads(next.status === 'authenticated');
