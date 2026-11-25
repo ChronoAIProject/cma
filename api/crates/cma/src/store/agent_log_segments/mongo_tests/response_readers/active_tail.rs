@@ -405,6 +405,7 @@ async fn early_sealed_page_refuses_missing_or_mismatched_terminal_seal() {
     schema::migrate(&db).await.unwrap();
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let (agent, rows) = super::super::fixtures::segmented_with_width(&store, 3, 256, 100).await;
+    super::super::fixtures::certify(&store, &agent, &rows).await;
     let f = fixture::Fixture {
         agent: agent.clone(),
         target: rows[..256].to_vec(),
