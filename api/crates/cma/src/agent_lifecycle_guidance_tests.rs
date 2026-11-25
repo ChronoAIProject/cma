@@ -106,6 +106,23 @@ fn new_admission_guidance_requires_explicit_activation() {
 }
 
 #[test]
+fn feedback_guidance_checks_the_target_before_recommending_github_scope() {
+    let guidance = managed_v5();
+    for required in [
+        "For CMA feedback, the target is ChronoAIProject/cma.",
+        "verify the target repository's current visibility and issue policy",
+        "When the target is public, classic GitHub OAuth public_repo can suffice",
+        "For an actual private or internal target, classic OAuth requires repo",
+        "limited to the intended repository with Issues write permission",
+        "Treat anything submitted there as public and redact it",
+        "owner's authorization to file",
+    ] {
+        assert!(guidance.contains(required), "missing guidance: {required}");
+    }
+    assert!(!guidance.contains("the internal ChronoAIProject/cma repository"));
+}
+
+#[test]
 fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() {
     for instructions in [
         GITHUB_API_V1,
@@ -284,7 +301,7 @@ fn current_guidance_preserves_github_bytes_and_bounds_memory_management() {
         ),
         (
             managed_v5(),
-            "2b0a6aaebac42dcc3b58d06fd806e8699ce7415f8ef157191acc80307258f2df",
+            "c880d275b266d34db85da31ac0189fb017bcd5aa3d645ad023159c07267c2e40",
         ),
     ] {
         assert_eq!(format!("{:x}", Sha256::digest(guidance)), hash);
