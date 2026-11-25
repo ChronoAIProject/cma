@@ -1,7 +1,6 @@
 use super::stream_profile::NoExternalCalls;
 use super::*;
 use crate::sandbox::binding_lifecycle_test_support::ConnectionSweep;
-use futures_util::future::join_all;
 use layer1_public::{
     agent_page::AgentPageOrigin,
     rest::{agent_router, AgentRoutesState},
@@ -15,6 +14,9 @@ use layer2_core::{
     sandbox::{AgentReadService, AgentService},
 };
 use layer3_adapter::ConversationUpdate;
+
+mod timing;
+use timing::{measure_window, WaitMeter};
 
 struct HttpForeground {
     address: String,
@@ -64,7 +66,8 @@ impl HttpForeground {
         ))
         .layer(axum::middleware::from_fn(
             crate::background::interactive_request,
-        ));
+        ))
+        .layer(axum::middleware::from_fn(timing::foreground));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = format!("http://{}", listener.local_addr().unwrap());
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -80,13 +83,17 @@ struct Manager {
     store: Arc<MongoSandboxStore>,
 }
 
-async fn measured_client(uri: &str, meter: &Meter) -> Client {
+async fn measured_client(uri: &str, meter: &Meter, waits: &WaitMeter) -> Client {
     let mut options = ClientOptions::parse(uri).await.unwrap();
     let checkouts = meter.checkouts.clone();
-    options.cmap_event_handler = Some(EventHandler::callback(move |event| {
-        if matches!(event, CmapEvent::ConnectionCheckedOut(_)) {
+    let waits = waits.clone();
+    options.cmap_event_handler = Some(EventHandler::callback(move |event| match event {
+        CmapEvent::ConnectionCheckedOut(event) => {
             checkouts.fetch_add(1, Ordering::SeqCst);
+            waits.record(event.duration, false);
         }
+        CmapEvent::ConnectionCheckoutFailed(event) => waits.record(event.duration, true),
+        _ => {}
     }));
     Client::with_options(options).unwrap()
 }
@@ -174,17 +181,22 @@ impl Manager {
 #[ignore = "manual paired scheduler measurement against a disposable replica set"]
 async fn matched_live_ownership_profile() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let phase_ms = std::env::var("CMA_PROFILE_HTTP_PHASE_MS")
+        .map(|value| value.parse::<u64>().unwrap())
+        .unwrap_or(0);
+    assert!(phase_ms < 125);
     for replicas in [1, 2] {
         let meter = Meter {
             checkouts: Arc::new(AtomicU64::new(0)),
         };
+        let waits = WaitMeter::default();
         let name = format!("cma_matched_{}", uuid::Uuid::new_v4().simple());
-        let client = measured_client(&uri, &meter).await;
+        let client = measured_client(&uri, &meter, &waits).await;
         let fixture = MongoSandboxStore::open(&client, &name).await.unwrap();
         let agents = population::seed(&fixture).await;
         let mut managers = Vec::new();
         for index in 0..replicas {
-            let client = measured_client(&uri, &meter).await;
+            let client = measured_client(&uri, &meter, &waits).await;
             managers.push(Manager::start(&client, &name, format!("owner-{index}")).await);
         }
 
@@ -225,7 +237,7 @@ async fn matched_live_ownership_profile() {
         for foreground in [false, true] {
             for defer in [false, true, true, false] {
                 measure_window(
-                    &meter, &managers, &servers, &http, target, defer, foreground,
+                    &meter, &waits, &managers, &servers, &http, target, defer, foreground, phase_ms,
                 )
                 .await;
             }
@@ -244,101 +256,6 @@ async fn matched_live_ownership_profile() {
         drop(managers);
         client.database(&name).drop().await.unwrap();
     }
-}
-
-async fn measure_window(
-    meter: &Meter,
-    managers: &[Manager],
-    servers: &[HttpForeground],
-    client: &reqwest::Client,
-    target: &AgentId,
-    defer: bool,
-    foreground: bool,
-) {
-    let before = meter.checkouts.load(Ordering::SeqCst);
-    let cpu = cpu_seconds();
-    let started = Instant::now();
-    let background = async {
-        for index in 0..8 {
-            tokio::time::sleep_until((started + Duration::from_secs(index)).into()).await;
-            if index % 3 == 0 {
-                for manager in managers {
-                    manager.coordinator.maintain().await.unwrap();
-                }
-            }
-            for result in join_all(managers.iter().map(|manager| {
-                let worker = if defer {
-                    &manager.deferred
-                } else {
-                    &manager.baseline
-                };
-                async move {
-                    let mut sweep = ConnectionSweep::default();
-                    let mut slices = 0;
-                    loop {
-                        slices += 1;
-                        assert!(slices <= 50, "reconciliation must complete the cohort");
-                        if worker
-                            .reconcile_connection_slice(SystemTime::now(), &mut sweep)
-                            .await
-                            .unwrap()
-                        {
-                            break;
-                        }
-                    }
-                    slices
-                }
-            }))
-            .await
-            {
-                assert!(result >= 2, "the live population must span pages");
-            }
-        }
-    };
-    let reads = async {
-        let mut latencies = Vec::new();
-        let mut statuses = std::collections::BTreeMap::new();
-        if foreground {
-            for index in 0..64 {
-                tokio::time::sleep_until((started + Duration::from_millis(index * 125)).into())
-                    .await;
-                let requested = Instant::now();
-                let server = &servers[index as usize % servers.len()];
-                let response = client
-                    .get(format!("{}/api/v1/agents/{}", server.address, target))
-                    .send()
-                    .await
-                    .unwrap();
-                let status = response.status().as_u16();
-                let body = response.bytes().await.unwrap();
-                latencies.push(requested.elapsed().as_secs_f64() * 1000.);
-                *statuses.entry(status).or_insert(0) += 1;
-                if status == 200 {
-                    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
-                    assert_eq!(value["id"], target.as_str());
-                }
-            }
-        }
-        latencies.sort_by(f64::total_cmp);
-        (latencies, statuses)
-    };
-    let ((), (reads, statuses)) = tokio::join!(background, reads);
-    tokio::time::sleep_until((started + Duration::from_secs(8)).into()).await;
-    let elapsed = started.elapsed().as_secs_f64();
-    let checkouts = meter.checkouts.load(Ordering::SeqCst) - before;
-    println!(
-        "MATCHED_SCHEDULER {}",
-        serde_json::json!({
-            "replicas": managers.len(), "defer": defer, "foreground": foreground,
-            "sweeps": 8 * managers.len(), "foreground_reads": reads.len(),
-            "elapsed_seconds": elapsed, "checkouts": checkouts,
-            "checkouts_per_second": checkouts as f64 / elapsed,
-            "mean_cores": (cpu_seconds() - cpu) / elapsed,
-            "http_p95_ms": reads.get(reads.len().saturating_mul(95).div_ceil(100).saturating_sub(1)),
-            "http_status_counts": statuses,
-            "rss_kib": rss_kib(),
-        })
-    );
 }
 
 fn rss_kib() -> u64 {
