@@ -92,9 +92,9 @@ async fn reconnect_during_renewal_still_releases_the_lease_and_returns() {
         .unwrap()
         .unwrap();
     assert_eq!(lease.lease_until, 0, "the next attempt can take the lease");
-    assert_eq!(lease.checkpoint, Some(checkpoint.clone()));
+    assert!(lease.checkpoint.as_ref() == Some(&checkpoint));
     let successor = f.acquire().await.unwrap();
-    assert_eq!(successor.checkpoint().await.unwrap(), Some(checkpoint));
+    assert!(successor.checkpoint().await.unwrap() == Some(checkpoint));
     let view = statuses.view(&f.record, None);
     assert_eq!(view.lease, "released");
     assert_eq!(view.outcome, super::super::status::Outcome::Pending);
@@ -124,7 +124,7 @@ async fn invalid_session_clear_timeout_keeps_the_lease_until_cleanup_is_confirme
     assert_eq!(cleanup.await.reason, EndReason::InvalidSession);
 
     // The stalled write has not applied. A second release must not expose this checkpoint.
-    assert_eq!(journal.checkpoint().await.unwrap(), Some(checkpoint));
+    assert!(journal.checkpoint().await.unwrap() == Some(checkpoint));
     assert!(matches!(f.acquire().await, Err(GatewayError::Authority)));
     held.notify_one();
 }
@@ -156,10 +156,10 @@ async fn confirmed_invalid_session_releases_without_a_checkpoint_even_if_ack_is_
             .unwrap();
         assert_eq!(released_version, version + 1);
         assert_eq!(lease.lease_until, 0);
-        assert_eq!(lease.checkpoint, None);
+        assert!(lease.checkpoint.is_none());
 
         let successor = f.acquire().await.unwrap();
-        assert_eq!(successor.checkpoint().await.unwrap(), None);
+        assert!(successor.checkpoint().await.unwrap().is_none());
         assert_eq!(
             successor.authorize_connection(Some(&checkpoint)).await,
             Err(GatewayError::Authority)
@@ -178,8 +178,15 @@ async fn unconfirmed_invalid_session_discards_the_checkpoint_and_retains_the_lea
         invalid_session(&journal, false).await.reason,
         EndReason::InvalidSession
     );
-    assert_eq!(journal.checkpoint().await.unwrap(), None);
+    assert!(journal.checkpoint().await.unwrap().is_none());
     assert!(matches!(f.acquire().await, Err(GatewayError::Authority)));
     f.advance(30_001);
-    assert_eq!(f.acquire().await.unwrap().checkpoint().await.unwrap(), None);
+    assert!(f
+        .acquire()
+        .await
+        .unwrap()
+        .checkpoint()
+        .await
+        .unwrap()
+        .is_none());
 }
