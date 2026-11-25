@@ -64,12 +64,13 @@ class AllocationSnapshot(Reservations):
         refs = self.ref_oids()
         develop_head = refs.pop("refs/heads/develop", None)
         require(develop_head is not None, "Develop head could not be verified")
-        if event_source is not None and develop_head != event_source:
-            return False
-        # Head and watermarks come from the same advertisement. A delayed API
-        # head must not make the actual newest event silently lose its build.
+        # Head and watermarks come from the same advertisement. Skip this
+        # push only when the advertised head is proved to supersede it.
         self.progress("all", "history")
-        self.api.history_at(develop_head, root=self.root)
+        history = self.api.history_at(develop_head, root=self.root)
+        if event_source is not None and develop_head != event_source:
+            require(event_source in history.positions, "Develop history has not reached the push")
+            return False
         selected, claims = [], {}
         for reference, oid in refs.items():
             name = reference.removeprefix("refs/tags/")

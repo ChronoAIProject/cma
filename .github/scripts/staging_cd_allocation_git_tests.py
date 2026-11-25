@@ -10,6 +10,7 @@ from staging_cd_allocation_io import AllocationIO
 from staging_cd_allocation_snapshot import AllocationConflict, AllocationSnapshot, SnapshotAPI
 from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
+from staging_cd_history import DevelopHistory
 from staging_cd_receipts import canonical
 from staging_cd_reservations import next_reservation, pending_name
 from staging_cd_resolve import ObsoleteSource, verify
@@ -88,6 +89,26 @@ class AllocationGitTests(unittest.TestCase):
             self.assertFalse(any("cma-allocation-outcome/" in arg for arg in push))
             self.assertNotIn("--force", push)
         self.assertEqual(self.store.list(), values)
+
+    def test_only_first_parent_advancement_marks_the_push_superseded(self):
+        f = self.fixture
+        newer = f.git("commit-tree", f.tree, "-p", f.source, data="Second develop push\n")
+        f.git("update-ref", "HEAD", f.source)
+        with self.assertRaisesRegex(Refusal, "Develop history has not reached the push"):
+            self.store.load(event_source=newer)
+        self.assertFalse(self.store.loaded)
+        self.assertFalse(any(args[1] == "push" for args in self.calls))
+
+        planner = f.root / "planner"
+        f.git("clone", "--quiet", "--depth=1", "--branch", "develop", f.remote.as_uri(), str(planner))
+        self.assertEqual(f.git("-C", str(planner), "rev-parse", "--is-shallow-repository"), "true")
+        f.git("push", str(f.remote), newer + ":refs/heads/develop")
+        bounded = DevelopHistory.from_head(newer, root=planner, runner=f.runner, depth=2)
+        self.assertIn(f.source, bounded.positions)
+        self.assertEqual(f.git("-C", str(planner), "rev-parse", "HEAD"), f.source)
+        old = AllocationSnapshot(f.api, "fixture", f.work, AllocationIO(self.runner))
+        self.assertFalse(old.load(event_source=f.source))
+        self.assertIs(self.store.load(event_source=newer), self.store)
 
     def test_live_ref_oids_reuse_local_tags_and_fetch_only_missing_objects(self):
         f = self.fixture
