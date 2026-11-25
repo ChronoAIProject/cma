@@ -1,16 +1,83 @@
+use super::stream_profile::NoExternalCalls;
 use super::*;
 use crate::sandbox::binding_lifecycle_test_support::ConnectionSweep;
 use futures_util::future::join_all;
+use layer1_public::{
+    agent_page::AgentPageOrigin,
+    rest::{agent_router, AgentRoutesState},
+};
 use layer2_core::agent_ownership::{
     MaintenancePolicy, Member, OwnershipCoordinator, PROTOCOL_VERSION,
 };
+use layer2_core::{
+    profiles::InMemoryProfileStore,
+    resource_access::ResourceAccessService,
+    sandbox::{AgentReadService, AgentService},
+};
 use layer3_adapter::ConversationUpdate;
+
+struct HttpForeground {
+    address: String,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for HttpForeground {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl HttpForeground {
+    async fn start(manager: &Manager, client: &Client, database: &str, owner: &SubjectId) -> Self {
+        let auth = crate::auth::AuthState::in_memory(
+            crate::auth::AuthMode::Trusted {
+                subject: owner.to_string(),
+            },
+            None,
+        );
+        let store = manager.store.clone();
+        let access = Arc::new(ResourceAccessService::new(store.clone(), auth.clone()));
+        let reads = AgentReadService::new(store.clone(), Arc::new(NoExternalCalls))
+            .with_resource_access(access);
+        let agents = AgentService::new(
+            store.clone(),
+            Arc::new(InMemoryProfileStore::default()),
+            manager.registry.clone(),
+            RuntimeCapabilities::new([RuntimeCapability::Conversation]),
+        );
+        let operations = AgentOperationService::new(store, manager.registry.clone());
+        let records = Arc::new(
+            crate::store::operation::MongoOperationStore::open_for_test(client, database)
+                .await
+                .unwrap(),
+        );
+        let app = agent_router(AgentRoutesState::new(
+            AgentPageOrigin::new("https://measurement.example.test").unwrap(),
+            agents,
+            reads,
+            operations,
+            records,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            auth,
+            crate::auth::attach_subject,
+        ))
+        .layer(axum::middleware::from_fn(
+            crate::background::interactive_request,
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        Self { address, task }
+    }
+}
 
 struct Manager {
     coordinator: Arc<OwnershipCoordinator>,
     baseline: Arc<AgentWorker>,
     deferred: Arc<AgentWorker>,
     registry: Arc<LiveAgentRegistry>,
+    store: Arc<MongoSandboxStore>,
 }
 
 async fn measured_client(uri: &str, meter: &Meter) -> Client {
@@ -77,6 +144,7 @@ impl Manager {
             deferred: worker(true),
             coordinator,
             registry,
+            store,
         }
     }
 
@@ -145,12 +213,21 @@ async fn matched_live_ownership_profile() {
             "MATCHED_COHORT replicas={replicas} live={} custody={custody:?}",
             agents.len()
         );
-        let target = ResourceTarget::Agent {
-            agent_id: agents[0].id.clone(),
-        };
+        let mut servers = Vec::new();
+        for manager in &managers {
+            servers.push(HttpForeground::start(manager, &client, &name, &agents[0].owner).await);
+        }
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let target = &agents[0].id;
         for foreground in [false, true] {
             for defer in [false, true, true, false] {
-                measure_window(&meter, &fixture, &managers, &target, defer, foreground).await;
+                measure_window(
+                    &meter, &managers, &servers, &http, target, defer, foreground,
+                )
+                .await;
             }
         }
         for agent in &agents {
@@ -162,6 +239,7 @@ async fn matched_live_ownership_profile() {
         for (manager, count) in managers.iter().zip(custody) {
             assert_eq!(manager.coordinator.owned().await.len(), count);
         }
+        drop(servers);
         drop(streams);
         drop(managers);
         client.database(&name).drop().await.unwrap();
@@ -170,9 +248,10 @@ async fn matched_live_ownership_profile() {
 
 async fn measure_window(
     meter: &Meter,
-    fixture: &MongoSandboxStore,
     managers: &[Manager],
-    target: &ResourceTarget,
+    servers: &[HttpForeground],
+    client: &reqwest::Client,
+    target: &AgentId,
     defer: bool,
     foreground: bool,
 ) {
@@ -218,19 +297,32 @@ async fn measure_window(
     };
     let reads = async {
         let mut latencies = Vec::new();
+        let mut statuses = std::collections::BTreeMap::new();
         if foreground {
             for index in 0..64 {
                 tokio::time::sleep_until((started + Duration::from_millis(index * 125)).into())
                     .await;
                 let requested = Instant::now();
-                fixture.resource_access_snapshot(target).await.unwrap();
+                let server = &servers[index as usize % servers.len()];
+                let response = client
+                    .get(format!("{}/api/v1/agents/{}", server.address, target))
+                    .send()
+                    .await
+                    .unwrap();
+                let status = response.status().as_u16();
+                let body = response.bytes().await.unwrap();
                 latencies.push(requested.elapsed().as_secs_f64() * 1000.);
+                *statuses.entry(status).or_insert(0) += 1;
+                if status == 200 {
+                    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    assert_eq!(value["id"], target.as_str());
+                }
             }
         }
         latencies.sort_by(f64::total_cmp);
-        latencies
+        (latencies, statuses)
     };
-    let ((), reads) = tokio::join!(background, reads);
+    let ((), (reads, statuses)) = tokio::join!(background, reads);
     tokio::time::sleep_until((started + Duration::from_secs(8)).into()).await;
     let elapsed = started.elapsed().as_secs_f64();
     let checkouts = meter.checkouts.load(Ordering::SeqCst) - before;
@@ -242,7 +334,22 @@ async fn measure_window(
             "elapsed_seconds": elapsed, "checkouts": checkouts,
             "checkouts_per_second": checkouts as f64 / elapsed,
             "mean_cores": (cpu_seconds() - cpu) / elapsed,
-            "store_read_p95_ms": reads.get(reads.len().saturating_mul(95).div_ceil(100).saturating_sub(1)),
+            "http_p95_ms": reads.get(reads.len().saturating_mul(95).div_ceil(100).saturating_sub(1)),
+            "http_status_counts": statuses,
+            "rss_kib": rss_kib(),
         })
     );
+}
+
+fn rss_kib() -> u64 {
+    let result = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    String::from_utf8(result.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
 }
