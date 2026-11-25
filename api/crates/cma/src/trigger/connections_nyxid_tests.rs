@@ -304,11 +304,13 @@ async fn read_github_repository(
     headers: HeaderMap,
 ) -> Response {
     let identity = read_github_proxy(State(state), Path(catalog), query, headers).await;
-    let mut response = if owner == "example" && matches!(name.as_str(), "project" | "restricted") {
+    let mut response = if owner == "example"
+        && matches!(name.as_str(), "project" | "restricted" | "private-project")
+    {
         Reply::json(json!({
             "full_name": format!("{owner}/{name}"),
             "default_branch": "main",
-            "private": false,
+            "private": name == "private-project",
             "disabled": false,
             "archived": false,
             "permissions": {"push": name == "project"},
@@ -331,7 +333,8 @@ async fn read_github_reference(
     query: axum::extract::Query<std::collections::HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    assert_eq!((owner.as_str(), name.as_str()), ("example", "project"));
+    assert_eq!(owner, "example");
+    assert!(matches!(name.as_str(), "project" | "private-project"));
     let identity = read_github_proxy(State(state), Path(catalog), query, headers).await;
     let commit = "a".repeat(40);
     let mut response =

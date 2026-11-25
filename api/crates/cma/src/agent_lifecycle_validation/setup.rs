@@ -31,7 +31,10 @@ pub(in crate::agent_lifecycle) fn admitted_first_message(
     if let Some(message) = &input.request.initial_message {
         return Some(message.clone());
     }
-    if input.behavior == LifecycleBehavior::PublicRepository {
+    if matches!(
+        input.behavior,
+        LifecycleBehavior::RepositoryChoice | LifecycleBehavior::PublicRepository
+    ) {
         return input.setup_message.clone();
     }
     input.behavior.uses_repository_profile().then(|| {

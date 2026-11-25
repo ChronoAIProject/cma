@@ -133,7 +133,7 @@ impl InlineAgentLifecycle {
                     repository.operation.is_none() && repository.connection_id.is_none()
                 })
             {
-                LifecycleBehavior::PublicRepository
+                LifecycleBehavior::RepositoryChoice
             } else {
                 LifecycleBehavior::ManagedRepository
             }
@@ -171,7 +171,7 @@ impl InlineAgentLifecycle {
             let input = LifecycleInput {
                 behavior,
                 managed_agent_instructions: Some(instructions.into()),
-                setup_message: Some(if behavior == LifecycleBehavior::PublicRepository {
+                setup_message: Some(if behavior == LifecycleBehavior::RepositoryChoice {
                     validation::public_repository_setup_message(&request)
                 } else {
                     validation::setup_message(&request)

@@ -228,7 +228,10 @@ impl MongoAgentLifecycleStore {
         let mut filter = lease.filter();
         filter.insert("sandbox_id", Bson::Null);
         filter.insert("repository_commit", Bson::Null);
-        filter.insert("input.behavior", "public_repository");
+        filter.insert(
+            "input.behavior",
+            doc! {"$in": ["repository_choice", "public_repository"]},
+        );
         filter.insert("repository_access_pin", Bson::Null);
         let pin = doc! {"url": &pin.url, "commit": &pin.commit};
         filter.insert(

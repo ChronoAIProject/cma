@@ -273,7 +273,10 @@ impl crate::agent_lifecycle::repository_preflight::PublicRepositoryReadiness for
         request: &layer2_core::profiles::authoring::RepositoryRequest,
     ) -> Result<layer2_core::profiles::authoring::RepositoryResolution, AuthoringSourceError> {
         self.0.fetch_add(1, Ordering::SeqCst);
-        if request.url == "https://github.com/example/unavailable" {
+        if matches!(
+            request.url.as_str(),
+            "https://github.com/example/unavailable" | "https://github.com/example/private-project"
+        ) {
             return Err(AuthoringSourceError::RepositoryNotFound);
         }
         assert_eq!(request.url, "https://github.com/example/project");
@@ -586,7 +589,7 @@ async fn retained_public_pin_requires_current_allocation_policy() {
     )
     .await
     .unwrap();
-    let sandbox = validation::create_sandbox_with_fence(
+    let sandbox = admission::create_sandbox_with_fence(
         admitted.sandbox.as_ref(),
         &owner.caller,
         profile,
@@ -614,5 +617,146 @@ async fn retained_public_pin_requires_current_allocation_policy() {
     let capacity = restarted.sandbox.capacity(&owner.caller).await.unwrap();
     assert_eq!(capacity.live, 1);
     assert_eq!(probe.0.load(Ordering::SeqCst), 1);
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
+async fn url_only_private_repository_uses_default_connection_and_repairs_before_allocation() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let client = mongodb::Client::with_uri_str(uri).await.unwrap();
+    let database = client.database(&format!(
+        "repository_choice_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let operations = Arc::new(MongoAgentLifecycleStore::open(&database).await.unwrap());
+    let profiles = Arc::new(
+        crate::store::MongoProfileStore::open(&client, database.name())
+            .await
+            .unwrap(),
+    );
+    let store = Arc::new(InMemorySandboxStore::default());
+    let image = format!("registry.example/runtime@sha256:{}", "a".repeat(64));
+    let provider = crate::trigger::GithubRepositoryFixture::start().await;
+    provider.set_default_private_read(false);
+    let probe = Arc::new(PublicProbe(AtomicUsize::new(0)));
+    let service = fixture::facade_with_limit(
+        store,
+        profiles.clone(),
+        operations.clone(),
+        4,
+        layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready,
+    )
+    .with_task_experience(fixture::task_policy())
+    .with_released_runtime(Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+        image.clone(),
+        None,
+    )))
+    .with_managed_repository_preflight(true)
+    .with_public_repository_images([image.clone()].into_iter().collect(), true)
+    .with_public_repository_probe(probe.clone());
+    assert!(service
+        .managed_repository_runtime_images
+        .set((image.clone(), vec![image]))
+        .is_ok());
+    assert!(service
+        .managed_repository_broker
+        .set(provider.broker())
+        .is_ok());
+    let mut owner = fixture::context("owner");
+    owner.caller.authorization =
+        Authorization::new([Capability::UseOwnSandboxes, Capability::CreateSandbox]);
+    let input = request(json!({
+        "name":"Private source", "initial_message":"Read the source",
+        "repository":{"url":"https://github.com/example/private-project"}
+    }));
+    let first = service
+        .create(
+            &owner.caller,
+            Some(&owner),
+            None,
+            input.clone(),
+            "private-repair",
+        )
+        .await
+        .unwrap();
+    let held = read_operation_when(&operations, &first.id, |row| {
+        row.status == "waiting_for_connection"
+    })
+    .await;
+    assert_eq!(held.input.behavior, LifecycleBehavior::RepositoryChoice);
+    assert!(
+        held.sandbox_id.is_none()
+            && held.public_repository.is_none()
+            && held.repository_access_pin.is_none()
+    );
+    let connection = held.connection.unwrap();
+    assert_eq!(
+        connection.repository_access,
+        Some(layer1_public::rest::RepositoryAccessRefusal::InsufficientScope)
+    );
+    let repair = connection.repository_scope_repair.unwrap();
+    assert_eq!(repair.connection_id, "selected");
+    assert_eq!(repair.required_scope, "repo");
+    assert_eq!(
+        service.sandbox.capacity(&owner.caller).await.unwrap().live,
+        0
+    );
+
+    provider.set_default_private_read(true);
+    let replay = service
+        .create(
+            &owner.caller,
+            Some(&owner),
+            None,
+            input.clone(),
+            "private-repair",
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.id, first.id);
+    let direct = service
+        .create(&owner.caller, Some(&owner), None, input, "private-ready")
+        .await
+        .unwrap();
+    for receipt in [replay, direct] {
+        let allocated =
+            read_operation_when(&operations, &receipt.id, |row| row.sandbox_id.is_some()).await;
+        assert!(allocated.public_repository.is_none());
+        let pin = allocated.repository_access_pin.unwrap();
+        assert_eq!(pin.connection.selection.connection_id, "selected");
+        assert_eq!(
+            pin.connection.requirement,
+            layer2_core::sandbox::RepositoryCredentialRequirement::PrivateRepositoryRead
+        );
+        assert_eq!(pin.commit, "a".repeat(40));
+        let sandbox = service
+            .sandbox
+            .read(&owner.caller, &SandboxId(allocated.sandbox_id.unwrap()))
+            .await
+            .unwrap();
+        let reference = &sandbox.profile.content.workspace_profiles[0];
+        let revision = layer2_core::profiles::WorkspaceProfileStore::workspace_profile_revision(
+            &*profiles,
+            &reference.id,
+            reference.revision,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            revision.content.location,
+            layer2_core::profiles::WorkspaceLocation::RepositorySnapshot {
+                url: "https://github.com/example/private-project".into(),
+                reference: Some("a".repeat(40)),
+                connection_id: Some("selected".into()),
+            }
+        );
+    }
+    assert_eq!(
+        service.sandbox.capacity(&owner.caller).await.unwrap().live,
+        2
+    );
+    assert_eq!(probe.0.load(Ordering::SeqCst), 3);
     database.drop().await.unwrap();
 }

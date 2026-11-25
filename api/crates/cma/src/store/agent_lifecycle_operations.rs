@@ -49,6 +49,8 @@ pub(crate) enum LifecycleBehavior {
     PromptRepository,
     /// This admission cannot allocate before verifying the GitHub connection.
     ManagedRepository,
+    /// Generic URL-only source admission. The durable pin chooses the source mode.
+    RepositoryChoice,
     PublicRepository,
 }
 
@@ -56,7 +58,10 @@ impl LifecycleBehavior {
     pub(crate) fn uses_repository_profile(self) -> bool {
         matches!(
             self,
-            Self::PromptRepository | Self::ManagedRepository | Self::PublicRepository
+            Self::PromptRepository
+                | Self::ManagedRepository
+                | Self::RepositoryChoice
+                | Self::PublicRepository
         )
     }
 }

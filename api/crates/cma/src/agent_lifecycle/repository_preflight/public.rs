@@ -38,87 +38,95 @@ impl InlineAgentLifecycle {
         self
     }
 
+    pub(super) async fn try_public_repository(
+        &self,
+        input: &mut ProvisionInput,
+    ) -> Result<bool, AgentLifecycleProvisioningError> {
+        if input.first_message.is_none()
+            || input.existing_sandbox_id.is_some()
+            || !self.public_repository_allocation_enabled(input)
+        {
+            return Ok(false);
+        }
+        let repository = input
+            .request
+            .repository
+            .as_ref()
+            .ok_or(AgentLifecycleProvisioningError::Unavailable)?;
+        let request = RepositoryRequest {
+            url: repository.url.clone(),
+            reference: repository.reference.clone(),
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(30),
+            self.resolve_public_repository(&request),
+        )
+        .await;
+        let Ok(Ok(resolved)) = result else {
+            return Ok(false);
+        };
+        let pin = PublicRepositoryPin {
+            url: resolved.url,
+            commit: resolved.commit_sha,
+        };
+        if layer3_adapter::public_repository_archive_url(&pin.url, &pin.commit).is_none() {
+            return Ok(false);
+        }
+        self.operations
+            .pin_public_repository(&input.lease, &pin)
+            .await
+            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
+        Self::apply_public_repository_pin(input, &pin)?;
+        Ok(true)
+    }
+
     pub(super) async fn preflight_public_repository(
         &self,
         caller: &Caller,
         input: &mut ProvisionInput,
-        retained: Option<&PublicRepositoryPin>,
+        pin: &PublicRepositoryPin,
     ) -> Result<(), AgentLifecycleProvisioningError> {
         if input.first_message.is_none() {
             return Err(AgentLifecycleProvisioningError::Unavailable);
         }
-        let pin = match retained {
-            Some(pin) => {
-                if input.existing_sandbox_id.is_none() {
-                    // Allocation and the operation marker are separate commits.
-                    // Reconcile the exact owned origin before treating this as a new allocation.
-                    let origin = self
-                        .public_repository_allocation(caller, &input.lease.id)
-                        .await?;
-                    if let Some(id) = origin {
-                        self.operations
-                            .mark_sandbox(&input.lease, id.as_str())
-                            .await
-                            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
-                        input.existing_sandbox_id = Some(id.to_string());
-                    } else {
-                        if !self.public_repository_allocation_enabled(input) {
-                            return self.wait_for_public_repository_access(caller, input).await;
-                        }
-                        let request = RepositoryRequest {
-                            url: pin.url.clone(),
-                            reference: Some(pin.commit.clone()),
-                        };
-                        let check = tokio::time::timeout(
-                            Duration::from_secs(30),
-                            self.resolve_public_repository(&request),
-                        )
-                        .await;
-                        if !matches!(check, Ok(Ok(resolved)) if resolved.url == pin.url && resolved.commit_sha == pin.commit)
-                        {
-                            return self.wait_for_public_repository_access(caller, input).await;
-                        }
-                    }
-                }
-                pin.clone()
-            }
-            None => {
-                if input.existing_sandbox_id.is_some()
-                    || !self.public_repository_allocation_enabled(input)
-                {
+        if input.existing_sandbox_id.is_none() {
+            // Allocation and the operation marker are separate commits. Recover
+            // the exact owned origin before applying new-allocation policy.
+            if let Some(id) = self
+                .public_repository_allocation(caller, &input.lease.id)
+                .await?
+            {
+                self.operations
+                    .mark_sandbox(&input.lease, id.as_str())
+                    .await
+                    .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
+                input.existing_sandbox_id = Some(id.to_string());
+            } else {
+                if !self.public_repository_allocation_enabled(input) {
                     return self.wait_for_public_repository_access(caller, input).await;
                 }
-                let repository = input
-                    .request
-                    .repository
-                    .as_ref()
-                    .ok_or(AgentLifecycleProvisioningError::Unavailable)?;
                 let request = RepositoryRequest {
-                    url: repository.url.clone(),
-                    reference: repository.reference.clone(),
+                    url: pin.url.clone(),
+                    reference: Some(pin.commit.clone()),
                 };
-                let result = tokio::time::timeout(
+                let check = tokio::time::timeout(
                     Duration::from_secs(30),
                     self.resolve_public_repository(&request),
                 )
                 .await;
-                let Ok(Ok(resolved)) = result else {
-                    return self.wait_for_public_repository_access(caller, input).await;
-                };
-                let pin = PublicRepositoryPin {
-                    url: resolved.url,
-                    commit: resolved.commit_sha,
-                };
-                if layer3_adapter::public_repository_archive_url(&pin.url, &pin.commit).is_none() {
+                if !matches!(check, Ok(Ok(resolved)) if resolved.url == pin.url && resolved.commit_sha == pin.commit)
+                {
                     return self.wait_for_public_repository_access(caller, input).await;
                 }
-                self.operations
-                    .pin_public_repository(&input.lease, &pin)
-                    .await
-                    .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
-                pin
             }
-        };
+        }
+        Self::apply_public_repository_pin(input, pin)
+    }
+
+    fn apply_public_repository_pin(
+        input: &mut ProvisionInput,
+        pin: &PublicRepositoryPin,
+    ) -> Result<(), AgentLifecycleProvisioningError> {
         if layer3_adapter::public_repository_archive_url(&pin.url, &pin.commit).is_none() {
             return Err(AgentLifecycleProvisioningError::Unavailable);
         }
@@ -127,8 +135,9 @@ impl InlineAgentLifecycle {
             .repository
             .as_mut()
             .ok_or(AgentLifecycleProvisioningError::Unavailable)?;
-        repository.url = pin.url;
-        repository.reference = Some(pin.commit);
+        repository.url = pin.url.clone();
+        repository.reference = Some(pin.commit.clone());
+        input.behavior = LifecycleBehavior::PublicRepository;
         Ok(())
     }
 

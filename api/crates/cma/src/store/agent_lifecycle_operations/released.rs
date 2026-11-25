@@ -17,8 +17,12 @@ pub(crate) fn managed_lifecycle_release_lane(
     if request.machine_included {
         Some(ReleasedLane::Machine)
     } else {
-        (request.desktop || behavior == LifecycleBehavior::PublicRepository)
-            .then_some(ReleasedLane::Agent)
+        (request.desktop
+            || matches!(
+                behavior,
+                LifecycleBehavior::RepositoryChoice | LifecycleBehavior::PublicRepository
+            ))
+        .then_some(ReleasedLane::Agent)
     }
 }
 
@@ -104,7 +108,7 @@ pub(in crate::store) async fn protects_pool(
             "$or",
             [
                 doc! {"input.request.desktop": true},
-                doc! {"input.behavior": "public_repository"},
+                doc! {"input.behavior": {"$in": ["repository_choice", "public_repository"]}},
             ],
         );
     }

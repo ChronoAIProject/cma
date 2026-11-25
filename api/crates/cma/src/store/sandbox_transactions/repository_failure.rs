@@ -184,12 +184,33 @@ fn original_repository_task(operation: &LifecycleRecord, workspace: &Workspace) 
     }
     match (&operation.input.behavior, &workspace.source) {
         (
-            LifecycleBehavior::PublicRepository,
+            LifecycleBehavior::RepositoryChoice | LifecycleBehavior::PublicRepository,
             WorkspaceSource::PublicRepositorySnapshot { url, commit, .. },
-        ) => operation
-            .public_repository
-            .as_ref()
-            .is_some_and(|pin| &pin.url == url && &pin.commit == commit),
+        ) => {
+            operation.repository_access_pin.is_none()
+                && operation.repository_commit.is_none()
+                && operation
+                    .public_repository
+                    .as_ref()
+                    .is_some_and(|pin| &pin.url == url && &pin.commit == commit)
+        }
+        (
+            LifecycleBehavior::RepositoryChoice,
+            WorkspaceSource::RepositorySnapshot { url, reference, .. },
+        ) => {
+            request.initial_message.is_some()
+                && operation.public_repository.is_none()
+                && operation.repository_access_pin.as_ref().is_some_and(|pin| {
+                    pin.owner == operation.owner
+                        && request
+                            .repository
+                            .as_ref()
+                            .is_some_and(|repository| repository.url == pin.repository)
+                        && *url == format!("https://github.com/{}", pin.connection.repository)
+                        && reference.as_ref() == Some(&pin.commit)
+                        && operation.repository_commit.as_ref() == Some(&pin.commit)
+                })
+        }
         (
             LifecycleBehavior::PromptRepository | LifecycleBehavior::ManagedRepository,
             WorkspaceSource::RepositorySnapshot { url, reference, .. },
@@ -356,7 +377,7 @@ fn never_dispatched(agent: &Agent, workspace: &Workspace, operation: &LifecycleR
                                 && first.text == message
                         }
                         None => {
-                            operation.input.behavior == LifecycleBehavior::PublicRepository
+                            operation.public_repository.is_some()
                                 && first.purpose == Some(FirstMessagePurpose::Setup)
                                 && operation.input.setup_message.as_deref()
                                     == Some(first.text.as_str())
