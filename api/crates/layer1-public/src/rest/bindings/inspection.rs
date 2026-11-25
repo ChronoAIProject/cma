@@ -9,6 +9,16 @@ pub struct BindingConversationInspectionView {
     pub agent_id: String,
     pub state: String,
     pub agent_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_drift: Option<BindingProfileDriftView>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct BindingProfileDriftView {
+    pub assigned_profile_digest: String,
+    pub prompt: bool,
+    pub skills: bool,
+    pub model: bool,
 }
 
 #[utoipa::path(get, operation_id = "inspect_binding_conversation",
@@ -38,6 +48,12 @@ pub(super) async fn get(
                 agent_id: value.conversation.agent_id.to_string(),
                 state: view.state,
                 agent_status: value.agent_status.map(|status| status.name().into()),
+                profile_drift: value.profile_drift.map(|drift| BindingProfileDriftView {
+                    assigned_profile_digest: drift.assigned_profile_digest,
+                    prompt: drift.prompt,
+                    skills: drift.skills,
+                    model: drift.model,
+                }),
             })
             .into_response()
         }
@@ -46,7 +62,10 @@ pub(super) async fn get(
 }
 
 #[derive(utoipa::OpenApi)]
-#[openapi(paths(get), components(schemas(BindingConversationInspectionView)))]
+#[openapi(
+    paths(get),
+    components(schemas(BindingConversationInspectionView, BindingProfileDriftView))
+)]
 struct InspectionApiDoc;
 
 pub(crate) fn document() -> utoipa::openapi::OpenApi {

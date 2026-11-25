@@ -17,6 +17,17 @@ pub struct ConversationInspection {
     pub agent_id: String,
     pub state: String,
     pub agent_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_drift: Option<BindingProfileDrift>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BindingProfileDrift {
+    pub assigned_profile_digest: String,
+    pub prompt: bool,
+    pub skills: bool,
+    pub model: bool,
 }
 
 impl ProviderClient {
