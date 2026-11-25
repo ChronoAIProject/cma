@@ -150,14 +150,28 @@ function PreparationHost(
     label: 'Retry setup status',
     kind: 'status',
   });
+  const observation = controller.progressObservation;
+  const confirmedSandbox =
+    observation?.sandbox.id === detail.sandbox.id && !observation.stale
+      ? observation.sandbox
+      : undefined;
+  const sandboxStatus = confirmedSandbox?.status ?? detail.sandbox.status;
+  const setupFailure = detail.status === 'failed' || sandboxStatus === 'failed';
+  const failureDetail = detail.failure ?? confirmedSandbox?.failure;
   const model = derivePreparationView({
     receipt: intent?.receipt,
     operation: matched ? operation : undefined,
     readError: failure,
     requestAccepted: first?.purpose === 'task',
+    setupFailure: setupFailure
+      ? [
+          failureDetail?.detail ?? 'The Agent could not finish setup.',
+          failureDetail?.remediation ?? 'Review its environment before trying again.',
+        ].join(' ')
+      : undefined,
     canonicalTitle: detail.ownerTitle || detail.title,
     initialTask: first?.purpose === 'task' && first.state === 'queued' ? 'not-started' : 'unknown',
-    environmentReady: detail.sandbox.status === 'active' && detail.status !== 'starting',
+    environmentReady: sandboxStatus === 'active' && detail.status !== 'starting',
   });
   return (
     <section className="agent-surface agent-preparation">
@@ -169,7 +183,7 @@ function PreparationHost(
             <ProvisioningProgress
               title="Recorded setup progress"
               steps={agentProgress(detail, ready?.sandboxEvents ?? [])}
-              failure={detail.failure}
+              failure={setupFailure ? undefined : detail.failure}
             />
           )
         }

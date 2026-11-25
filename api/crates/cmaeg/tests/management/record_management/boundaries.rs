@@ -274,13 +274,12 @@ async fn missing_and_rejected_or_unavailable_store_remain_distinct_and_sanitized
 }
 
 #[tokio::test]
-async fn management_read_is_additive_and_refuses_mutation_methods() {
+async fn management_preserves_reads_and_refuses_unsupported_mutations() {
     let fixture = Fixture::new().await;
     let (base, stop, task) = serve_app(fixture.state()).await;
     for method in [
         reqwest::Method::POST,
         reqwest::Method::PUT,
-        reqwest::Method::DELETE,
         reqwest::Method::PATCH,
     ] {
         headers(
@@ -305,6 +304,9 @@ async fn management_read_is_additive_and_refuses_mutation_methods() {
     let operation = &schema["paths"]["/channel-records/{record_id}/management"]["get"];
     assert_eq!(operation["operationId"], "getChannelRecordManagement");
     assert_eq!(operation["security"], json!([{"creatorBearer":[]}]));
+    let retirement = &schema["paths"]["/channel-records/{record_id}/management"]["delete"];
+    assert_eq!(retirement["operationId"], "retireLegacyChannelRecord");
+    assert_eq!(retirement["security"], json!([{"creatorBearer":[]}]));
     let recovery = &schema["paths"]["/channel-records/{record_id}"]["get"];
     assert_eq!(recovery["operationId"], "recoverChannel");
     let required = schema["components"]["schemas"]["ChannelResponse"]["required"]

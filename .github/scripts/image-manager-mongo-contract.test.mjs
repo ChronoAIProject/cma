@@ -18,6 +18,7 @@ const selections = [
   ['package(=cmaeg) and kind(lib) and test(~transaction_terminal::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~activity::history::mongo_tests::)', 'only', true],
   ['package(=cmaeg) and test(=worker_credentials::mongo::integration_tests::worker_history_cross_client_visibility_append_only_grants_and_cutover_barrier)', 'only', false],
+  ['package(=cmaeg) and kind(lib) and test(=channels::create_cleanup_tests::retirement_at_the_record_limit_preserves_tracked_worker_credentials)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~whatsapp_retention_on_real_mongo)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=mongo_isolation)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~github_integrations::)', 'only', true],
@@ -99,7 +100,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 34);
+      assert.equal(selections.length, 35);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];

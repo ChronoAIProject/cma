@@ -43,10 +43,9 @@ pub(super) fn connections(
         policy,
         broker.clone(),
         subscriptions,
-        config
-            .features
-            .github_repository_preflight
+        (config.features.github_repository_preflight || config.features.github_connection_recovery)
             .then(|| broker.clone()),
+        config.features.github_repository_preflight,
     );
     Ok(Connections {
         broker,

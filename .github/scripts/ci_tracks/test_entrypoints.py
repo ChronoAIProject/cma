@@ -33,12 +33,13 @@ class EntrypointTests(unittest.TestCase):
 
     def test_selector_writes_one_complete_schema_only_after_success(self):
         result = {'repo': True, 'am': False, 'eg': False, 'web': True, 'am_packages': [], 'eg_packages': [], 'test_tracks': {'repo': True, 'am': False, 'eg': False, 'web': True}, 'deployables': ['cma-web'], 'base': 'a' * 40, 'head': 'b' * 40, 'reasons': ['web-source']}
-        with patch.dict(os.environ, self.environment), patch('sys.argv', ['selection', '--ci']), redirect_stdout(io.StringIO()), patch.object(selection, 'determine', return_value=result):
+        with patch.dict(os.environ, self.environment), patch('sys.argv', ['selection', '--ci']), redirect_stdout(io.StringIO()), patch.object(selection, 'determine', return_value=result), patch.object(selection, 'changed_paths', return_value=['web/src/agent/conversation.ts']):
             self.assertEqual(selection.main(), 0)
         outputs = dict(line.split('=', 1) for line in self.output.read_text().splitlines())
         self.assertEqual(json.loads(outputs['deployables']), ['cma-web'])
         self.assertEqual(outputs['head'], 'b' * 40)
         self.assertEqual(outputs['web'], 'true')
+        self.assertEqual(outputs['approval_contract'], 'true')
         self.output.unlink()
         with patch.dict(os.environ, self.environment), patch('sys.argv', ['selection', '--ci']), redirect_stdout(io.StringIO()), patch.object(selection, 'determine', side_effect=ValueError('unsafe input')):
             self.assertEqual(selection.main(), 1)
@@ -121,7 +122,8 @@ class EntrypointTests(unittest.TestCase):
                         self.assertEqual(gate.main(), expected)
 
     def test_ci_entrypoints_reject_unknown_or_malformed_events(self):
-        cases = [(self.payload, 'workflow_dispatch'), ({}, 'push')]
+        cases = [(self.payload, 'workflow_run'), (self.payload, 'workflow_dispatch'),
+                 (self.payload, 'schedule'), ({}, 'push')]
         for payload, name in self.full_events():
             wrong_repo = copy.deepcopy(payload)
             wrong_repo['repository']['full_name'] = 'other/repository'
@@ -136,8 +138,13 @@ class EntrypointTests(unittest.TestCase):
             cases.append((bad, 'pull_request'))
         for payload, name in cases:
             self.event.write_text(json.dumps(payload))
+            environment = dict(
+                self.environment, GITHUB_EVENT_NAME=name, GITHUB_REF='refs/heads/main',
+                GITHUB_SHA='b' * 40, NEEDS=json.dumps(needs('repo')),
+                SELECTOR_RESULT='success', DEPLOYABLES='[]',
+            )
             with self.subTest(payload=payload, event=name), \
-                    patch.dict(os.environ, dict(self.environment, GITHUB_EVENT_NAME=name, NEEDS=json.dumps(needs('repo')), SELECTOR_RESULT='success', DEPLOYABLES='[]')), \
+                    patch.dict(os.environ, environment), \
                     redirect_stdout(io.StringIO()):
                 with patch('sys.argv', ['selection', '--ci']), patch.object(selection, 'determine') as determine:
                     self.assertEqual(selection.main(), 1)
@@ -162,13 +169,15 @@ class EntrypointTests(unittest.TestCase):
                   'base': 'a' * 40, 'head': 'b' * 40, 'reasons': ['web-source']}
         with patch.dict(os.environ, environment), patch('sys.argv', ['selection', '--ci']), \
                 redirect_stdout(io.StringIO()), patch.object(selection, 'determine', return_value=result) as determine, \
-                patch.object(selection, 'workspace') as workspace:
+                patch.object(selection, 'workspace') as workspace, \
+                patch.object(selection, 'changed_paths', return_value=['web/src/main.tsx']):
             self.assertEqual(selection.main(), 0)
             workspace.assert_not_called()
         self.assertEqual(determine.call_args.args[1:], (self.queue_event(), 'merge_group'))
         outputs = dict(line.split('=', 1) for line in self.output.read_text().splitlines())
         self.assertEqual((outputs['am'], outputs['web'], outputs['head']), ('false', 'true', 'b' * 40))
         self.assertNotIn('full-ci-event', outputs['reasons'])
+        self.assertEqual(outputs['approval_contract'], 'false')
         for track in ('am', 'eg', 'web'):
             skipped = needs(track, False)
             for job in {'rust-test-build', 'runtime-images', 'omarchy'} & set(skipped):

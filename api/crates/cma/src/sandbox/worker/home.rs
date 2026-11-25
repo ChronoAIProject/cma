@@ -90,6 +90,10 @@ impl SandboxWorker {
                     // ordinary lifecycle may already own a released image.
                     let (admitted, released) = if canary_image.is_some() {
                         (None, None)
+                    } else if let Some(admitted) =
+                        super::initial_runtime::managed_desktop_creation_release(sandbox)
+                    {
+                        (Some(admitted), None)
                     } else {
                         let admitted = self
                             .dependencies

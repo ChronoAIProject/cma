@@ -286,6 +286,7 @@ async fn http_errors_and_openapi_share_the_management_contract() {
             "recoverChannel",
             "rekeyChannel",
             "resetChannelPartition",
+            "retireLegacyChannelRecord",
             "streamChannelActivity",
             "testChannel",
             "testChannelConsumer",

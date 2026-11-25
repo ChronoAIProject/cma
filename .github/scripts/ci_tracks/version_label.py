@@ -94,7 +94,7 @@ def main():
             current = queued_pull(event, os.environ['GITHUB_REPOSITORY'])
             print(f"Queued PR: #{current['number']}")
         if full:
-            print('Version policy: not applicable (develop or candidate push, or release PR)')
+            print('Version policy: not applicable for full CI')
             return 0
         upgrade = selected_upgrade({'pull_request': current}, images)
     except (KeyError, OSError, TypeError, ValueError, subprocess.SubprocessError) as error:
