@@ -5,7 +5,11 @@ import { ApiError } from '@cma/client';
 import { DeletionDialog } from './DeletionDialog';
 import { restoreDeletion, type DeletionRequest } from './deletion';
 import { agentClient } from './test/agent';
-import { parkedRuntimeUpdateFixture, sandboxFixture } from './test/hierarchy';
+import {
+  delayedRetirementFixture,
+  parkedRuntimeUpdateFixture,
+  sandboxFixture,
+} from './test/hierarchy';
 import type { CmaWebClient } from './api/client';
 
 const initial: DeletionRequest = {
@@ -148,4 +152,25 @@ it.each([
     ['sbx_1', { idempotencyKey: initial.key }],
   ]);
   expect(updateSandboxRuntime).not.toHaveBeenCalled();
+});
+
+it('explains an overdue retirement until the exact Sandbox reports retired', async () => {
+  vi.useFakeTimers();
+  const readSandbox = vi.fn(async () => parkedRuntimeUpdateFixture());
+  const deleteSandbox = vi.fn();
+  show(agentClient({ readSandbox, deleteSandbox }));
+  await act(async () => {});
+  readSandbox.mockResolvedValue(delayedRetirementFixture());
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(screen.getByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
+  expect(screen.getByText('Cleanup taking longer')).toBeVisible();
+  expect(screen.getByText(/exceeded its expected deletion time/)).toBeVisible();
+  expect(screen.getByText(/still uses one Sandbox slot/)).toBeVisible();
+  expect(restoreDeletion('owner')).toEqual({ ...initial, accepted: true });
+  expect(screen.queryByRole('button', { name: 'Check request' })).not.toBeInTheDocument();
+  readSandbox.mockResolvedValue(sandboxFixture('retired'));
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(screen.getByRole('dialog', { name: 'Sandbox deleted' })).toBeInTheDocument();
+  expect(screen.queryByText(/exceeded its expected deletion time/)).not.toBeInTheDocument();
+  expect(deleteSandbox).not.toHaveBeenCalled();
 });

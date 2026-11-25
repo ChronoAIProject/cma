@@ -1,6 +1,5 @@
 use super::*;
-use axum::{extract::Request, http::Method, middleware::Next, response::Response};
-use layer2_core::sandbox::agent_filesystem::FileWriteTarget;
+use axum::{http::Method, response::Response};
 
 pub(super) const NOT_ENTERED_HEADER: &str = "x-cma-file-write-not-entered";
 
@@ -25,35 +24,16 @@ pub(super) fn eligible(path: &str, method: &Method, body: &[u8]) -> bool {
         })
 }
 
-pub(super) fn refusal(relay: &Relay, proof: &[u8]) -> Response {
-    let mut response = http::unavailable();
+pub(super) fn refusal(
+    relay: &Relay,
+    proof: &[u8],
+    diagnostic: Option<&relay_diagnostics::RelayDiagnostic>,
+    reason: Refusal,
+) -> Response {
+    let mut response = http::unavailable_with(diagnostic, reason);
     response.headers_mut().insert(
         NOT_ENTERED_HEADER,
         relay.authentication.write_not_entered_tag(proof),
     );
     response
-}
-
-pub(super) async fn recover(
-    relay: &Relay,
-    id: &AgentId,
-    mut request: Request,
-    next: Next,
-    permit: capacity::Permit,
-    deadline: tokio::time::Instant,
-    target: FileWriteTarget,
-) -> Response {
-    let response = tokio::time::timeout_at(deadline, async {
-        if !relay.coordinator.is_ready() {
-            return http::unavailable();
-        }
-        if let Err(refusal) = http::authorize_public(relay, id, &request, None, false).await {
-            return refusal;
-        }
-        request.extensions_mut().insert(target);
-        next.run(request).await
-    })
-    .await
-    .unwrap_or_else(|_| http::unavailable());
-    http::retain_until(response, permit, Some(deadline))
 }

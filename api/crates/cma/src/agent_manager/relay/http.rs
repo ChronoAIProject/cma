@@ -6,8 +6,8 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use environment_diagnostics::EnvironmentRead;
 use futures_util::StreamExt;
+use relay_diagnostics::RelayDiagnostic;
 
 pub(super) async fn route(
     State(relay): State<Arc<Relay>>,
@@ -74,7 +74,7 @@ async fn route_request(
     {
         return layer1_public::auth::NotAuthenticated.into_response();
     }
-    let mut environment = EnvironmentRead::from_request(&request);
+    let mut diagnostic = RelayDiagnostic::from_request(&request);
     let observer = request
         .uri()
         .path()
@@ -92,7 +92,7 @@ async fn route_request(
     let draining_file_peer =
         (file_read || write_handoff_route) && proof.is_some() && relay.coordinator.is_draining();
     if !relay.coordinator.is_ready() && !draining_file_peer {
-        return unavailable_with(environment.as_ref(), Refusal::CoordinatorNotReady);
+        return unavailable_with(diagnostic.as_ref(), Refusal::CoordinatorNotReady);
     }
     let mut body_limit = body_limit(request.uri().path());
     if write_handoff_route {
@@ -124,7 +124,7 @@ async fn route_request(
             &relay,
             &id,
             &request,
-            environment.as_ref(),
+            diagnostic.as_ref(),
             file_write && proof.is_none(),
         )
         .await
@@ -154,19 +154,17 @@ async fn route_request(
         let Some(verified) = verified else {
             return StatusCode::FORBIDDEN.into_response();
         };
-        if let Some(environment) = environment.as_mut() {
-            environment.correlate_hop(raw.as_bytes());
+        if let Some(diagnostic) = diagnostic.as_mut() {
+            diagnostic.correlate_hop(raw.as_bytes());
         }
         if verified.owner.agent_id != id
             || verified.owner.instance_id != relay.coordinator.instance_id
         {
-            return unavailable_with(environment.as_ref(), Refusal::AuthorityChanged);
+            return unavailable_with(diagnostic.as_ref(), Refusal::AuthorityChanged);
         }
         let membership = match bounded(relay.coordinator.store.membership()).await {
             Ok(membership) => membership,
-            Err(_) => {
-                return unavailable_with(environment.as_ref(), Refusal::MembershipUnavailable)
-            }
+            Err(_) => return unavailable_with(diagnostic.as_ref(), Refusal::MembershipUnavailable),
         };
         if membership.require_compatible().is_err()
             || !membership.members.iter().any(|member| {
@@ -175,18 +173,23 @@ async fn route_request(
                     && !member.draining
             })
         {
-            if let Some(environment) = &environment {
-                environment.record(Refusal::MembershipUnavailable);
+            if let Some(diagnostic) = &diagnostic {
+                diagnostic.record(Refusal::MembershipUnavailable);
             }
             return StatusCode::FORBIDDEN.into_response();
         }
         let reports_handoff = file_read && verified.reports_file_handoff();
         let reports_file_write = file_write && verified.reports_file_write_handoff();
         if reports_file_write && relay.coordinator.is_draining() {
-            return file_write::refusal(&relay, raw.as_bytes());
+            return file_write::refusal(
+                &relay,
+                raw.as_bytes(),
+                diagnostic.as_ref(),
+                Refusal::CoordinatorNotReady,
+            );
         }
         if reports_handoff && relay.coordinator.is_draining() {
-            return file_read::refusal(Refusal::CoordinatorNotReady);
+            return file_read::refusal(diagnostic.as_ref(), Refusal::CoordinatorNotReady);
         }
         let destination = match if private
             && request
@@ -203,22 +206,24 @@ async fn route_request(
         } {
             Ok(value) => value,
             Err(
-                Refusal::OwnerMissing | Refusal::OwnerMemberUnavailable | Refusal::AuthorityChanged,
+                reason @ (Refusal::OwnerMissing
+                | Refusal::OwnerMemberUnavailable
+                | Refusal::AuthorityChanged),
             ) if reports_file_write => {
-                return file_write::refusal(&relay, raw.as_bytes());
+                return file_write::refusal(&relay, raw.as_bytes(), diagnostic.as_ref(), reason);
             }
             Err(Refusal::OwnerMissing) if reports_handoff => {
-                return file_read::refusal(Refusal::OwnerMissing);
+                return file_read::refusal(diagnostic.as_ref(), Refusal::OwnerMissing);
             }
             Err(Refusal::OwnerMemberUnavailable) if reports_handoff => {
-                return file_read::refusal(Refusal::OwnerMemberUnavailable);
+                return file_read::refusal(diagnostic.as_ref(), Refusal::OwnerMemberUnavailable);
             }
             Err(Refusal::CoordinatorNotReady)
                 if reports_handoff && relay.coordinator.is_draining() =>
             {
-                return file_read::refusal(Refusal::CoordinatorNotReady);
+                return file_read::refusal(diagnostic.as_ref(), Refusal::CoordinatorNotReady);
             }
-            Err(reason) => return unavailable_with(environment.as_ref(), reason),
+            Err(reason) => return unavailable_with(diagnostic.as_ref(), reason),
         };
         if destination.token != verified.owner
             && !(verified.owner.epoch == 0
@@ -230,12 +235,17 @@ async fn route_request(
                 && destination.token.instance_id == verified.owner.instance_id)
         {
             if reports_file_write {
-                return file_write::refusal(&relay, raw.as_bytes());
+                return file_write::refusal(
+                    &relay,
+                    raw.as_bytes(),
+                    diagnostic.as_ref(),
+                    Refusal::AuthorityChanged,
+                );
             }
             return if reports_handoff {
-                file_read::refusal(Refusal::AuthorityChanged)
+                file_read::refusal(diagnostic.as_ref(), Refusal::AuthorityChanged)
             } else {
-                unavailable_with(environment.as_ref(), Refusal::AuthorityChanged)
+                unavailable_with(diagnostic.as_ref(), Refusal::AuthorityChanged)
             };
         }
         request.headers_mut().remove(PROOF);
@@ -258,19 +268,26 @@ async fn route_request(
                 // owner authority, so serve the authorized request here.
                 return retain(next.run(request).await, slot);
             }
-            Err(reason) => return unavailable_with(environment.as_ref(), reason),
+            Err(reason) => return unavailable_with(diagnostic.as_ref(), reason),
         }
     };
     if destination.member.instance_id == relay.coordinator.instance_id {
         let response = destination
             .authority
-            .run(file_read::run(next, request, file_read))
+            .run(async {
+                if file_write {
+                    layer3_adapter::file_receiver_retry::scope_conditional_write(next.run(request))
+                        .await
+                } else {
+                    file_read::run(next, request, file_read).await
+                }
+            })
             .await
             .unwrap_or_else(|_| {
                 if reports_handoff {
-                    file_read::refusal(Refusal::AuthorityChanged)
+                    file_read::refusal(diagnostic.as_ref(), Refusal::AuthorityChanged)
                 } else {
-                    unavailable_with(environment.as_ref(), Refusal::AuthorityChanged)
+                    unavailable_with(diagnostic.as_ref(), Refusal::AuthorityChanged)
                 }
             });
         // One admission covers the owner response body, including live streams.
@@ -287,27 +304,36 @@ async fn route_request(
         &request,
         bytes.as_ref(),
         deadline,
-        environment.as_mut(),
+        diagnostic.as_mut(),
     )
     .await;
-    if matches!(forwarded, Err(forward::Failure::WriteNotEntered)) {
-        if let Some(target) = write_target {
-            return file_write::recover(&relay, &id, request, next, slot, deadline, target).await;
+    let recovery = match &forwarded {
+        Err(forward::Failure::WriteNotEntered) if write_target.is_some() => Some((
+            relay_diagnostics::RecoveryTrigger::VerifiedWriteNotEntered,
+            write_target,
+        )),
+        _ if file_read => forward::handoff(&forwarded).map(|trigger| (trigger, None)),
+        _ => None,
+    };
+    if let Some((trigger, write_target)) = recovery {
+        return handoff_recovery::Recovery {
+            permit: slot,
+            deadline,
+            diagnostic: diagnostic.as_ref(),
+            trigger,
+            write_target,
         }
+        .run(&relay, &id, request, next)
+        .await;
     }
-    match forward::handoff(&forwarded) {
-        Some(reason) if file_read => {
-            file_read::recover(&relay, &id, request, next, slot, deadline, reason).await
-        }
-        _ => forward::finish(forwarded, slot, deadline, environment.as_ref()),
-    }
+    forward::finish(forwarded, slot, deadline, diagnostic.as_ref())
 }
 
 pub(super) fn authorize_public<'a>(
     relay: &'a Relay,
     id: &'a AgentId,
     request: &'a Request,
-    environment: Option<&'a EnvironmentRead>,
+    diagnostic: Option<&'a RelayDiagnostic>,
     capture_write_target: bool,
 ) -> impl std::future::Future<
     Output = Result<Option<layer2_core::sandbox::agent_filesystem::FileWriteTarget>, Response>,
@@ -331,7 +357,7 @@ pub(super) fn authorize_public<'a>(
     });
     async move {
         let access = access
-            .ok_or_else(|| unavailable_with(environment, Refusal::AuthorizationUnavailable))?;
+            .ok_or_else(|| unavailable_with(diagnostic, Refusal::AuthorizationUnavailable))?;
         let input = input.ok_or_else(|| StatusCode::UNAUTHORIZED.into_response())?;
         access
             .authorize(input)
@@ -419,36 +445,15 @@ fn body_limit(path: &str) -> usize {
     }
 }
 
-pub(super) async fn forward(
-    relay: &Relay,
-    destination: Destination,
-    request: Request,
-    body: &[u8],
-    permit: capacity::Permit,
-    mut environment: Option<EnvironmentRead>,
-) -> Response {
-    let deadline = forward::deadline();
-    let outcome = forward::send(
-        relay,
-        destination,
-        &request,
-        body,
-        deadline,
-        environment.as_mut(),
-    )
-    .await;
-    forward::finish(outcome, permit, deadline, environment.as_ref())
-}
-
 pub(super) fn unavailable() -> Response {
     (StatusCode::SERVICE_UNAVAILABLE, [("retry-after", "1"), ("content-type", "application/problem+json")], axum::Json(serde_json::json!({
         "type":"about:blank", "title":"Agent owner unavailable", "status":503, "code":"agent_owner_unavailable"
     }))).into_response()
 }
 
-pub(super) fn unavailable_with(environment: Option<&EnvironmentRead>, reason: Refusal) -> Response {
-    if let Some(environment) = environment {
-        environment.record(reason);
+pub(super) fn unavailable_with(diagnostic: Option<&RelayDiagnostic>, reason: Refusal) -> Response {
+    if let Some(diagnostic) = diagnostic {
+        diagnostic.record(reason);
     }
     unavailable()
 }
