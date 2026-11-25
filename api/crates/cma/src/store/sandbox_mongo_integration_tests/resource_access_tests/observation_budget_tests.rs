@@ -41,6 +41,8 @@ async fn measure_idle(
         .unwrap();
     let mut consumers = Vec::new();
     // Opening is measured separately, never confused with steady idle work.
+    // The unshared baseline seeks the retained prefix for every observer.
+    let open_timeout = Duration::from_secs(if shared_observation { 15 } else { 30 });
     f.meter.clear();
     let opening = (0..100).map(|index| {
         let (agents, replicas, client) = (&agents, &replicas, &client);
@@ -64,7 +66,7 @@ async fn measure_idle(
             let url = format!("{}{}", replicas[index % 2].address, path);
             let started = Instant::now();
             let response = tokio::time::timeout(
-                Duration::from_secs(15),
+                open_timeout,
                 client
                     .get(url)
                     .bearer_auth(format!("observer:{}", agent.owner))
