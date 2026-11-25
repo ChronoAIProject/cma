@@ -10,7 +10,12 @@ import type { TriggerQuickMessage } from '@cma/client';
 import { QuickMessages } from './QuickMessages';
 import type { AgentDraft } from './draft';
 import { ComposerDraftNotice } from './ComposerDraftNotice';
-import { canMessage, placeholder, FirstTextSendNotice } from './composerPresentation';
+import {
+  canMessage,
+  placeholder,
+  FirstTextSendNotice,
+  ComposerStatusNotice,
+} from './composerPresentation';
 import type { FirstTextSend } from './useFirstTextSend';
 import {
   attachmentMessage,
@@ -41,6 +46,7 @@ interface ComposerProps {
   readonly steeringMode?: SteeringMode;
   readonly onSteeringModeChange?: (mode: SteeringMode) => void;
   readonly status: AgentStatus;
+  readonly onRestart?: () => Promise<void>;
   readonly pausedNotice?: string;
   readonly running: boolean;
   readonly queueWhileRunning?: boolean;
@@ -76,6 +82,7 @@ export function Composer({
   steeringMode = 'queue',
   onSteeringModeChange,
   status,
+  onRestart,
   pausedNotice,
   running,
   queueWhileRunning = false,
@@ -334,6 +341,11 @@ export function Composer({
         onSend={submit}
       />
       {commands.panel}
+      {status === 'stopped' && onRestart ? (
+        <Button size="sm" disabled={busy || requestPending} onClick={() => void onRestart()}>
+          Restart Agent
+        </Button>
+      ) : null}
       <ComposerDraftNotice draft={draft} />
       {firstTextSend?.pending && <FirstTextSendNotice onCancel={firstTextSend.cancel} />}
       <Presence>
@@ -343,23 +355,11 @@ export function Composer({
           </p>
         ) : null}
       </Presence>
-      <Presence>
-        {!hasNotice ? null : (
-          <p id={noticeId} className="agent-composer__notice" role="status">
-            {notice}
-            {inputAvailability.savingStartedAt === undefined ? null : (
-              <>
-                {' '}
-                Saving started{' '}
-                <time dateTime={inputAvailability.savingStartedAt}>
-                  {new Date(inputAvailability.savingStartedAt).toLocaleString()}
-                </time>
-                .
-              </>
-            )}
-          </p>
-        )}
-      </Presence>
+      <ComposerStatusNotice
+        id={noticeId}
+        notice={notice}
+        savingStartedAt={inputAvailability.savingStartedAt}
+      />
       <form
         className="agent-composer__form"
         aria-label="Message Agent"
@@ -395,7 +395,7 @@ export function Composer({
                 ? 'Message Agent'
                 : running && queueWhileRunning
                   ? "Add a follow-up — it'll be queued while the agent works"
-                  : placeholder(status)
+                  : placeholder(status, onRestart !== undefined)
             }
             onChange={(event) => {
               firstTextSend?.cancel();

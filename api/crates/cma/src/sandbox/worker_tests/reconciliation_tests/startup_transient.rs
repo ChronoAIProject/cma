@@ -72,3 +72,24 @@ async fn startup_still_stops_on_a_non_transient_runtime_refusal() {
     assert_eq!(fixture.control.cleanup.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.control.homes.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn startup_native_home_hold_does_not_cover_the_binding_inventory_read() {
+    let fixture = fixture_with(1, Some(1), None, None, Duration::ZERO).await;
+    fixture
+        .control
+        .refuse_binding_inventory
+        .store(true, Ordering::SeqCst);
+    let error = fixture
+        .reconciler
+        .with_startup_native_home_hold(true)
+        .initialize_before_workers(fixture.now)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, SandboxStoreError::Unavailable(ref message)
+        if message.ends_with("native home identity changed or disappeared")));
+    assert_eq!(fixture.control.inventory_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.control.started.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.control.cleanup.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.control.homes.load(Ordering::SeqCst), 0);
+}

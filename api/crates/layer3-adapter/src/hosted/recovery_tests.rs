@@ -191,6 +191,7 @@ async fn restore_bootstrap_replays_exactly_and_fences_work_until_exact_restore()
                 operation_id: "initial-credential".into(),
                 value: RuntimeCredential::new("opaque-runtime-key"),
                 custody_generation: Some(1),
+                github_route: None,
             },
         )
         .await
@@ -250,6 +251,7 @@ async fn restore_bootstrap_replays_exactly_and_fences_work_until_exact_restore()
                 operation_id: "credential-replacement".into(),
                 value: RuntimeCredential::new("secret"),
                 custody_generation: Some(2),
+                github_route: None,
             },
         )
         .await
@@ -314,6 +316,7 @@ async fn missing_archive_is_not_acknowledged_as_a_successful_restore() {
                 operation_id: "credential".into(),
                 value: RuntimeCredential::new("opaque-runtime-key"),
                 custody_generation: Some(1),
+                github_route: None,
             },
         )
         .await

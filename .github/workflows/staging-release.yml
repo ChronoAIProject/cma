@@ -111,6 +111,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ inputs.component }}
         run: python3 -B .github/scripts/image_detector_cache.py
+      - name: Build the exact reserved release archive
+        id: producer
+        if: >-
+          vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true' && steps.ownership.outputs.superseded != 'true' &&
+          (inputs.component == 'am' || inputs.component == 'runtime' || inputs.component == 'runtime-omarchy')
+        timeout-minutes: 240
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_COMPONENT: ${{ inputs.component }}
+          CD_TASKS: ${{ inputs.tasks }}
+          CD_BUILD_CACHE: enabled
+        run: python3 -B .github/scripts/staging_cd_produce.py
       - name: Build once, scan every layer, and publish exact bytes
         timeout-minutes: 270
         id: publication
@@ -119,6 +131,7 @@ jobs:
           CD_COMPONENT: ${{ inputs.component }}
           CD_TASKS: ${{ inputs.tasks }}
           CD_RECEIPTS_PATH: ${{ runner.temp }}/public-receipts/receipts.json
+          CD_PREPARED_ARCHIVE: ${{ steps.producer.outputs.prepared }}
           CD_BUILD_CACHE: enabled
           CD_LAYER_SCAN_CACHE: enabled
         run: python3 -B .github/scripts/staging_cd_publish.py

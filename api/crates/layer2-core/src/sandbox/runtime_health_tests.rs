@@ -32,6 +32,8 @@ fn fixture() -> (Sandbox, RuntimeStatus) {
         agent_model_catalog: false,
         agent_browser: false,
         agent_resource_preparation: false,
+        agent_process_restart: false,
+        exact_github_credential_route: false,
         sandbox_id: sandbox.id.to_string(),
         generation: 1,
         home_identity: home.attachment().unwrap().identity().unwrap(),

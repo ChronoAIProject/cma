@@ -20,6 +20,7 @@ export interface OperatorClient {
   readonly admin: Pick<
     Administration,
     | 'listSandboxes'
+    | 'bindingHolds'
     | 'readSandbox'
     | 'sandboxEvents'
     | 'retireSandbox'
@@ -34,6 +35,7 @@ export interface OperatorClient {
     | 'setSandboxAlwaysOn'
     | 'listActivity'
     | 'listActivitySummary'
+    | 'searchActivityActors'
     | 'listWarmPools'
     | 'configureWarmPool'
     | 'resizeWarmPool'

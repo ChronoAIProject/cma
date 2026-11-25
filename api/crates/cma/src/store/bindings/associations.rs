@@ -1,5 +1,6 @@
 //! Owner-authorized membership reads over existing Manager records only.
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agent_provenance,
     resource_access::ReadError,
@@ -76,7 +77,7 @@ impl AgentProviderAssociationStore for MongoSandboxStore {
                 .await
                 .map_err(|_| unavailable())?;
             let result = read(self, owner, id, page, &mut session).await;
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             match result {
                 Ok(value) => return Ok(value),
                 Err(Error::Driver(error)) if is_transient(&error) => continue,

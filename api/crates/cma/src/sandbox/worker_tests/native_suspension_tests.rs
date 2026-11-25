@@ -4,6 +4,7 @@ use layer2_core::sandbox::store::{AgentStore, WorkspaceStore};
 use layer2_core::sandbox::{AgentStatus, SandboxLifecycleOperation, SandboxRevivePhase};
 mod backend;
 mod binding_retirement_tests;
+mod custom_runtime_tests;
 mod nonexecuting_recovery_tests;
 mod recovery_request_tests;
 mod recovery_tests;
@@ -31,6 +32,7 @@ struct Fixture {
     /// Native retirement admission; the production default is off.
     retirement_admission: std::sync::atomic::AtomicBool,
     reopen_output_refusal: bool,
+    retry_delay: Duration,
 }
 impl Fixture {
     async fn new() -> Self {
@@ -49,6 +51,7 @@ impl Fixture {
             backend,
             retirement_admission: std::sync::atomic::AtomicBool::new(true),
             reopen_output_refusal: false,
+            retry_delay: Duration::from_secs(5),
         }
     }
     /// Exercise the production default, where finality admission is off.
@@ -98,7 +101,7 @@ impl Fixture {
         let mut config =
             SandboxWorkerConfig::new("restarted", "test", image, self.harness.policy.clone())
                 .with_home_policy(Some(self.home_policy()));
-        config.retry_delay = Duration::from_secs(5);
+        config.retry_delay = self.retry_delay;
         config.reopen_output_refusal_enabled = self.reopen_output_refusal;
         config.retirement_finalizer = Some(Arc::new(
             crate::sandbox::native_retirement_finalizer::NativeRetirementFinalizer::new(
@@ -147,7 +150,7 @@ impl Fixture {
                 AgentWorker, AgentWorkerConfig, AgentWorkerDependencies,
             };
             let mut config = AgentWorkerConfig::new("retiring-agent", "test");
-            config.retry_delay = Duration::from_secs(5);
+            config.retry_delay = self.retry_delay;
             let worker = AgentWorker::new(
                 AgentWorkerDependencies {
                     store: self.harness.store.clone(),

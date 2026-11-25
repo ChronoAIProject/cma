@@ -53,6 +53,16 @@ pub fn validate_agent_conversation_admission(
     parent: Option<&Sandbox>,
     mutation: &AgentConversationMutation,
 ) -> Result<(), SandboxStoreError> {
+    if current
+        .conversation
+        .turn_timeout
+        .as_ref()
+        .is_some_and(|timeout| timeout.blocks_dispatch())
+        && (admits_input(current, mutation)
+            || current.conversation.turn_timeout != mutation.agent.conversation.turn_timeout)
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
     crate::sandbox::agent_preferences::validate_preferences_mutation(current, mutation)?;
     crate::sandbox::agent_managed_context::validate_mutation(current, mutation)?;
     crate::sandbox::agent_settings_validation::validate_settings_mutation(current, mutation)?;
@@ -184,6 +194,17 @@ fn admits_input(current: &Agent, mutation: &AgentConversationMutation) -> bool {
 /// Durable agent conversation state and its gap-free semantic log.
 #[async_trait]
 pub trait AgentConversationStore: Send + Sync {
+    /// Atomically publish a policy terminal and settle its exact command/lane.
+    /// The durable action must remain replayable after checkpoint advancement.
+    async fn commit_turn_timeout(
+        &self,
+        _settlement: &crate::sandbox::turn_timeout::TurnTimeoutSettlement,
+    ) -> Result<(), SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "turn policy settlement is unsupported",
+        ))
+    }
+
     /// Settle a known-aborted output append without admitting new work. A store
     /// must verify the exact snapshot and normal-capacity refusal transactionally.
     async fn commit_agent_capacity_update(

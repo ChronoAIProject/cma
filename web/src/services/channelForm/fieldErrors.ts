@@ -7,6 +7,7 @@ const labels: Record<string, string> = {
   app_id: 'App ID',
   tenant_key: 'Tenant key',
   bot_open_id: 'Bot open ID',
+  separate_app: 'Separate webhook confirmation',
   ack_after_ms: 'Acknowledgement delay',
   thread_contract: 'Thread following',
 };

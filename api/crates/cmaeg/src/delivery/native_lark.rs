@@ -1,7 +1,7 @@
 //! Text and bounded media replies through the retained app/chat, with durable confirmed target receipts.
 use super::{
     intents::{DeliveryOutcome, IntentReceipt},
-    render::{RelayText, Renderer},
+    render::{LiteralText, Renderer},
     send::{unsupported, SendContext, SendEffects, Sender},
 };
 use crate::{
@@ -69,14 +69,17 @@ impl Sender {
         let Some(consumer) = ctx.channel.consumer(event.consumer.as_ref()) else {
             return (rejected("native_lark_consumer_unavailable"), effects);
         };
-        let (parts, rendering) = RelayText.render(message, &Capabilities::native_lark());
+        let (parts, rendering) = LiteralText.render(message, &Capabilities::native_lark());
         let editable = !media && !sticker && parts.len() == 1;
         let mut result = IntentReceipt {
             message_parts: vec![],
             rendering,
             ..rejected("empty_message")
         };
-        let deadline = Instant::now() + Duration::from_secs(60);
+        let deadline = ctx
+            .gate
+            .transport_deadline()
+            .unwrap_or_else(|| Instant::now() + Duration::from_secs(60));
         let prepared = async {
             if sticker {
                 let records = self.relay.interactions.as_ref()?.channel_records();
@@ -241,7 +244,13 @@ impl Sender {
                         confirmed_at: now,
                         retained_until: now + RETENTION,
                     };
-                    if store.put(&receipt).await.is_err() {
+                    if !super::gate::within_deadline(
+                        ctx.gate,
+                        async { store.put(&receipt).await.is_ok() },
+                        false,
+                    )
+                    .await
+                    {
                         result.delivery = DeliveryOutcome::Unknown {
                             reason: "native_lark_receipt_unconfirmed".into(),
                         };

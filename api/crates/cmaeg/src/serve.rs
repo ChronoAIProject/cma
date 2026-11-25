@@ -4,7 +4,7 @@ use tokio::sync::oneshot;
 use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 
 use crate::{
-    connections, console, delivery, http, ingress, interactions, mcp, media, providers,
+    connections, console, delivery, http, ingress, interactions, media, providers,
     router_with_state, service_auth, telegram, telemetry, tools, turns, Config,
     REQUEST_BODY_LIMIT_BYTES,
 };
@@ -14,7 +14,7 @@ use crate::{
 pub(crate) async fn serve(
     mut config: Config,
     complete_replies: bool,
-    commonmark_relay: bool,
+    commonmark_relay: crate::config::CommonmarkRelay,
     native_media: bool,
     relay_text_edits: bool,
     native_discord_edits: bool,
@@ -179,7 +179,7 @@ pub(crate) async fn serve(
         .with_discord_voice_decoder(media.as_ref().and_then(|service| service.voice_decoder()))
         .with_native_whatsapp_config(&config)
         .with_complete_replies(complete_replies)
-        .with_commonmark_relay(commonmark_relay)
+        .with_commonmark_platforms(commonmark_relay)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
         .with_discord_reactions(config.native_discord_reactions_enabled)
@@ -283,7 +283,7 @@ pub(crate) async fn serve(
             .transpose()?
             .map(Arc::new),
         complete_replies_enabled: complete_replies,
-        commonmark_relay_enabled: commonmark_relay,
+        commonmark_relay,
         routed_replies: routed
             .as_ref()
             .map(|composition| composition.tool_replies.clone()),
@@ -418,6 +418,7 @@ pub(crate) async fn serve(
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();
+    let side_messages = delivery_engine.side_messages_if(config.event_side_messages_enabled);
     let mut router = router_with_state(state)
         .merge(drain_control.router(replicas.enabled))
         .merge(replica_routes)
@@ -434,9 +435,7 @@ pub(crate) async fn serve(
         .merge(http::whatsapp::router(ingress.clone()))
         .merge(http::telegram::router(ingress.clone()))
         .merge(http::callbacks::router(ingress))
-        .merge(http::tools::router(tools_state.clone()))
-        .merge(http::media::router(tools_state.clone()))
-        .merge(mcp::router(tools_state))
+        .merge(http::tools::gateway_router(tools_state, side_messages))
         .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
         .layer(CatchPanicLayer::custom(http::problems::panic_response));
     if let Some(browser) = browser {

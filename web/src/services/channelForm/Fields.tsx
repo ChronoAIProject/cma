@@ -211,20 +211,23 @@ export function Choice({
   );
 }
 export function Toggle({
+  path,
   label,
   value,
   onChange,
   disabled,
   hint,
 }: {
+  path?: string;
   label: string;
   value: unknown;
   onChange: (v: boolean) => void;
   disabled?: boolean;
   hint?: string;
 }) {
+  const validationPath = useValidationPath(path);
   return (
-    <label className="channel-toggle-field">
+    <label className="channel-toggle-field" data-validation-path={validationPath}>
       <input
         type="checkbox"
         checked={value === true}
@@ -253,8 +256,10 @@ export function StringList({
   max?: number;
   requiredItems?: boolean;
 }) {
+  const error = useServerFieldError(useValidationPath(path));
   return (
     <Section title={label} path={path}>
+      {error ? <p className="channel-field-error">{error}</p> : null}
       {value.map((item, index) => (
         <div className="channel-form-row" key={index}>
           <TextField

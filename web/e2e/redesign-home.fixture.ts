@@ -56,6 +56,7 @@ export async function redesignHomeFixture(
         info: { title: 'Synthetic', version: '1' },
         paths: {},
         'x-cma-task-templates-v1': templateSupport,
+        'x-cma-task-templates-v2': templateSupport,
         'x-cma-agent-title-mode': true,
         'x-cma-task-repository': true,
         components: {
@@ -115,6 +116,12 @@ export async function redesignHomeFixture(
     const workspace = workspaces.find((item) => path === `/api/v1/workspaces/${item.id}`);
     if (workspace) return reply(workspace);
     if (path === '/api/v1/agents/provenance') return reply({ items: [] });
+    if (
+      workspaces.some((workspace) =>
+        workspace.agents.some((agent) => path === `/api/v1/agents/${agent.id}/reply-preview`),
+      )
+    )
+      return reply({ code: 'not_found' }, 404);
     const agent = workspaces
       .flatMap((item) => item.agents)
       .find(

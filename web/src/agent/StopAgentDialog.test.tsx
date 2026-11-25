@@ -28,7 +28,7 @@ it('sends one request in StrictMode and waits for observed stopped status after 
     </StrictMode>,
   );
   expect(screen.getByRole('dialog', { name: 'Stop Agent' })).toBeVisible();
-  expect(screen.getByText(/It cannot be restarted/)).toBeVisible();
+  expect(screen.getByText(/Stopping this Agent ends its active work/)).toBeVisible();
   expect(screen.getByText(/conversation history and Worktree are retained/)).toBeVisible();
   expect(screen.getByText(/end only the current turn, use Stop response/)).toBeVisible();
   expect(stop).not.toHaveBeenCalled();

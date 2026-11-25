@@ -141,7 +141,7 @@ pub fn apply_sandbox_runtime_loss(
         if agent.conversation.last_seq != *log_head {
             return Err(SandboxStoreError::SequenceConflict);
         }
-        if let Some(outcome) = precheck_agent_time(agent, request)? {
+        if let Some(outcome) = precheck_agent_recovery(current, agent, request)? {
             return Ok(SandboxRuntimeLossApplication::Complete(outcome));
         }
         if request.native_retirement_finality && !retirement_debt_is_local(agent) {
@@ -275,7 +275,7 @@ pub fn precheck_runtime_loss_agents<'a>(
     let mut ids = BTreeSet::new();
     for agent in agents {
         validate_agent_identity(current, agent, &mut ids)?;
-        if let Some(outcome) = precheck_agent_time(agent, request)? {
+        if let Some(outcome) = precheck_agent_recovery(current, agent, request)? {
             return Ok(Some(outcome));
         }
     }
@@ -298,10 +298,21 @@ fn validate_agent_identity<'a>(
     Ok(())
 }
 
-fn precheck_agent_time(
+fn precheck_agent_recovery(
+    sandbox: &Sandbox,
     agent: &Agent,
     request: &SandboxRuntimeLossRequest,
 ) -> Result<Option<SandboxRuntimeLossOutcome>, SandboxStoreError> {
+    if sandbox.status == SandboxStatus::Retiring
+        && !request.native_retirement_finality
+        && matches!(
+            agent.work.step,
+            crate::sandbox::AgentWorkStep::RestartConversation
+                | crate::sandbox::AgentWorkStep::RestartTeardown
+        )
+    {
+        return Ok(Some(SandboxRuntimeLossOutcome::NotEligible));
+    }
     let updated_at = seconds_from_rfc3339(&agent.updated_at)
         .ok_or_else(|| corrupt("stored Agent update time is invalid"))?;
     Ok(

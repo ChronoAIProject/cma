@@ -177,6 +177,8 @@ fn fixture() -> (BrowserConnections, Arc<Broker>, Arc<Store>, Caller) {
             targets: Arc::new(Targets),
             broker: broker.clone(),
             subscriptions: CodexSubscriptions::new(store.clone()),
+            repository_access: None,
+            repository_scope_check: false,
         },
         broker,
         store,
@@ -187,6 +189,88 @@ fn target() -> ConnectionTarget {
     ConnectionTarget::Agent {
         id: layer2_core::AgentId("agent".into()),
     }
+}
+
+#[tokio::test]
+async fn repository_scope_check_is_opt_in_and_requires_the_callers_target() {
+    use crate::auth::AuthMode;
+    use serde_json::{json, Value};
+
+    let (mut connections, _, _, caller) = fixture();
+    let auth = AuthState::in_memory(
+        AuthMode::Trusted {
+            subject: caller.subject.to_string(),
+        },
+        None,
+    );
+    connections.repository_access = Some(Arc::new(
+        crate::trigger::CmaServiceConnectionBroker::from_auth_config(
+            &auth.mode,
+            None,
+            auth.clone(),
+        )
+        .unwrap(),
+    ));
+    let legacy = json!({"target": target()});
+    let requested = json!({"target": target(), "github_operation":"public_repository_write"});
+    let recovery_only = Arc::new(connections);
+    assert!(repository_access::report(
+        State(recovery_only.clone()),
+        AuthenticatedCaller(caller.clone()),
+        Json(serde_json::from_value(legacy.clone()).unwrap()),
+    )
+    .await
+    .is_ok());
+    assert!(matches!(
+        repository_access::report(
+            State(recovery_only.clone()),
+            AuthenticatedCaller(caller.clone()),
+            Json(serde_json::from_value(requested.clone()).unwrap()),
+        )
+        .await,
+        Err(ConnectionError::NotFound)
+    ));
+    let mut connections = Arc::into_inner(recovery_only).expect("the test owns the state");
+    connections.repository_scope_check = true;
+    let state = Arc::new(connections);
+    for (body, expected) in [
+        (legacy, json!({"owner":"owner"})),
+        (
+            requested.clone(),
+            json!({
+                "owner":"owner",
+                "github_scope_check": {
+                    "operation":"public_repository_write", "status":"verification_unavailable"
+                }
+            }),
+        ),
+    ] {
+        let response = repository_access::report(
+            State(state.clone()),
+            AuthenticatedCaller(caller.clone()),
+            Json(serde_json::from_value(body).unwrap()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "private, no-store"
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), expected);
+    }
+    let stranger = Caller::new(SubjectId::new("stranger"), Authorization::none());
+    assert!(matches!(
+        repository_access::report(
+            State(state),
+            AuthenticatedCaller(stranger),
+            Json(serde_json::from_value(requested).unwrap()),
+        )
+        .await,
+        Err(ConnectionError::NotFound)
+    ));
 }
 
 pub(crate) fn authorization_fixture() -> Arc<BrowserConnections> {

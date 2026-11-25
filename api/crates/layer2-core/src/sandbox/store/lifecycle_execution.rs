@@ -458,6 +458,9 @@ fn validate_next_sandbox(
         || next.name != current.name
         || next.origin != current.origin
         || next.profile != current.profile
+        || next.lifecycle.runtime_migration_admission
+            != current.lifecycle.runtime_migration_admission
+        || !super::lifecycle_execution_validation::custom_authority_preserved(current, next)
         || next.limits != current.limits
         || next.created_at != current.created_at
         || (next.lifecycle.next_authority != current.lifecycle.next_authority

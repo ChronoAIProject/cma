@@ -132,7 +132,7 @@ impl Auxiliary {
                         component(&name)?;
                     }
                     ResourceKey::AgentHome { agent_id }
-                    | ResourceKey::AgentProcess { agent_id } => component(&agent_id)?,
+                    | ResourceKey::AgentProcess { agent_id, .. } => component(&agent_id)?,
                     // Skills reserve cleanup against their parent home.
                     ResourceKey::AgentSkill { .. } => return Err(invalid()),
                 }

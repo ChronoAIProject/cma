@@ -3,6 +3,15 @@ use std::sync::Arc;
 
 use crate::{config::Config, store::MongoStores, warm_pools::NativeWarmPools};
 
+pub(super) fn image_manager_resolver(
+    config: &Config,
+) -> Result<Arc<crate::agent_lifecycle::ImageManagerResolver>, String> {
+    crate::agent_lifecycle::ImageManagerResolver::new(
+        config.image_manager_base_url.clone(),
+        config.features.image_manager_retirement,
+    )
+}
+
 pub(super) fn worker_observations(
     config: &Config,
     stores: &MongoStores,
@@ -13,52 +22,83 @@ pub(super) fn worker_observations(
 }
 
 pub(super) struct RuntimeServices {
+    pub migrations: Arc<layer2_core::sandbox::SandboxCustomRuntimeMigrationService>,
     pub warm_pools: Arc<NativeWarmPools>,
+    pub pointer: Option<Arc<crate::runtime_pointer::RuntimePointerController>>,
     pub updates: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
     pub recovery: Arc<layer2_core::sandbox::RetainedRecoveryService>,
     pub reopen: Arc<layer2_core::sandbox::RetainedReopenService>,
 }
 
 impl RuntimeServices {
+    pub fn attach_admin(
+        &self,
+        admin: layer1_public::rest::admin::AdminState,
+        stores: &MongoStores,
+    ) -> layer1_public::rest::admin::AdminState {
+        admin
+            .with_runtime_updates(self.updates.clone())
+            .with_runtime_migrations(
+                self.migrations.clone(),
+                stores.sandbox_model.runtime_migration_verifier(),
+            )
+    }
+
     pub fn new(
         config: &Config,
         stores: &MongoStores,
         adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let inspector = Arc::new(
             crate::sandbox::retained_recovery::RetainedRuntimeInspector::new(
                 adapter.clone(),
                 config.deployment_id.clone(),
             ),
         );
-        Self {
+        let warm_pools = NativeWarmPools::new(
+            stores.native_warm_pools.clone(),
+            adapter.clone(),
+            config.runtime.sandbox_image.clone(),
+            config.runtime.agent_sandbox_home_policy.clone(),
+            config.agent_manager_sandbox_capacity,
+            config.runtime.native_warm_pool_target,
+            config
+                .runtime
+                .machine_sandbox_image
+                .clone()
+                .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
+        )
+        .with_target_fencing(config.agent_manager_replicas.is_some())
+        .with_released_runtime(stores.released_runtime.clone());
+        let pointer = crate::runtime_pointer::RuntimePointerController::compose(
+            config,
+            stores,
+            warm_pools.clone(),
+        )?;
+        let mut migrations = layer2_core::sandbox::SandboxCustomRuntimeMigrationService::new(
+            stores.sandbox_model.clone(),
+            stores.sandbox_model.clone(),
+        );
+        if let Some(authority) = stores.sandbox_model.runtime_migration_authority() {
+            migrations = migrations.with_authority(authority, config.runtime.migration.enabled);
+        }
+        Ok(Self {
+            migrations: Arc::new(migrations),
             reopen: Arc::new(
                 layer2_core::sandbox::RetainedReopenService::new(
                     stores.sandbox_model.clone(),
                     inspector.clone(),
                     config.features.retained_reopen_enabled,
                 )
-                .with_suspended_admission(config.features.retained_suspended_reopen_enabled),
+                .with_suspended_admission(config.features.retained_suspended_reopen_enabled)
+                .with_repeat_admission(config.features.retained_repeat_reopen_enabled),
             ),
             recovery: Arc::new(layer2_core::sandbox::RetainedRecoveryService::new(
                 stores.sandbox_model.clone(),
                 inspector,
             )),
-            warm_pools: NativeWarmPools::new(
-                stores.native_warm_pools.clone(),
-                adapter.clone(),
-                config.runtime.sandbox_image.clone(),
-                config.runtime.agent_sandbox_home_policy.clone(),
-                config.agent_manager_sandbox_capacity,
-                config.runtime.native_warm_pool_target,
-                config
-                    .runtime
-                    .machine_sandbox_image
-                    .clone()
-                    .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
-            )
-            .with_target_fencing(config.agent_manager_replicas.is_some())
-            .with_released_runtime(stores.released_runtime.clone()),
+            warm_pools,
+            pointer,
             updates: Arc::new(
                 layer2_core::sandbox::SandboxRuntimeUpdateService::with_released(
                     stores.sandbox_model.clone(),
@@ -71,7 +111,7 @@ impl RuntimeServices {
                     ),
                 )),
             ),
-        }
+        })
     }
 }
 
@@ -107,19 +147,27 @@ pub(super) fn lifecycle_config(
         native_create_retry_enabled: config.features.native_create_retry_enabled,
         reopen_output_refusal_enabled: config.features.reopen_output_refusal_enabled,
         cleanup_continuation_enabled: config.features.cleanup_continuation_enabled,
+        owner_stop_settlement_enabled: config.features.owner_stop_settlement_enabled,
         bounded_live_fragments: config.features.bounded_live_fragments,
         coordinated_ingress: config.features.coordinated_ingress,
         quiet_output: config.features.quiet_output,
         access_transport_migration: config.agent_access_transport_migration.clone(),
         managed_documents_enabled: config.document_storage.is_some(),
         event_driven_reconciliation: config.features.event_driven_reconciliation,
+        resume_agent_reconciliation: config.features.resume_agent_reconciliation,
         stale_turn_reconciliation: config.features.stale_turn_reconciliation,
         stale_turn_terminal: config.features.stale_turn_terminal,
         skip_ineligible_reconciliation: config
             .agent_manager_replicas
             .as_ref()
             .is_some_and(|replicas| replicas.skip_ineligible_reconciliation),
+        defer_foreign_reconciliation: config
+            .agent_manager_replicas
+            .as_ref()
+            .is_some_and(|replicas| replicas.defer_foreign_reconciliation),
         sandbox_reconciliation_reserved_lane: config.features.sandbox_reconciliation_reserved_lane,
+        sandbox_binding_hold_metrics: config.features.sandbox_binding_hold_metrics,
+        startup_native_home_hold_enabled: config.features.startup_native_home_hold_enabled,
         home_policy: config
             .runtime
             .home_policy

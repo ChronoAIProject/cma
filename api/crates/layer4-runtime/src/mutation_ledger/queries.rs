@@ -7,7 +7,7 @@ use serde::Serialize;
 use super::{authority, invalid, journal, storage_error, Ledger};
 use crate::failure::Result;
 use crate::mutation_authority as v1;
-use crate::mutation_journal::{Operation, Record, Subject};
+use crate::mutation_journal::{process_history, Operation, Record, Status, Subject};
 
 pub(super) const STARTED_PAGE: &str = "SELECT identity,record FROM operations INDEXED BY outstanding WHERE scope=? AND status IN (0,1) AND status=1 AND operation_id>? ORDER BY operation_id LIMIT 64";
 
@@ -34,13 +34,45 @@ pub(crate) struct Snapshot {
 
 impl Ledger {
     pub(crate) async fn admitted(&self, operation: Operation) -> Result<bool> {
+        Ok(self.read_status(operation).await?.is_some())
+    }
+
+    pub(crate) async fn completed(&self, operation: Operation) -> Result<bool> {
+        Ok(self.read_status(operation).await? == Some(Status::Completed))
+    }
+
+    pub(crate) async fn find_operation(
+        &self,
+        operation_id: String,
+        scope_subject: Subject,
+    ) -> Result<Option<Record>> {
+        self.verify()?;
+        let config = Arc::clone(&self.config);
+        self.storage
+            .call(move |db| {
+                let scope = crate::mutation_scope::generation(&config, &scope_subject)
+                    .unwrap_or(0)
+                    .to_be_bytes();
+                journal::load_id(db, &config, &scope, &operation_id)
+            })
+            .await
+    }
+
+    async fn read_status(&self, operation: Operation) -> Result<Option<Status>> {
         self.verify()?;
         crate::mutation_journal::validate_operation(&self.config, &operation)?;
         let config = Arc::clone(&self.config);
         self.storage
             .call(move |db| {
-                Ok(journal::load(db, &config, &operation)?
-                    .is_some_and(|stored| stored.record.is_some()))
+                let record =
+                    journal::load(db, &config, &operation)?.and_then(|stored| stored.record);
+                if record.is_some() {
+                    let scope = journal::scope(&config, &operation);
+                    process_history::validate(&operation, |id| {
+                        journal::load_id(db, &config, &scope, id)
+                    })?;
+                }
+                Ok(record.map(|record| record.status()))
             })
             .await
     }
@@ -73,6 +105,17 @@ impl Ledger {
                 Ok(v1::current(records.iter())
                     .filter(|r| r.operation() == operation)
                     .map(|r| r.authority_fence))
+            })
+            .await
+    }
+
+    pub(crate) async fn has_process_writer(&self, key: v1::ResourceKey) -> Result<bool> {
+        self.verify()?;
+        let config = Arc::clone(&self.config);
+        self.storage
+            .call(move |db| {
+                let scope = config.generation.to_be_bytes();
+                Ok(!authority::load(db, &config, &key, &scope)?.is_empty())
             })
             .await
     }
@@ -117,6 +160,10 @@ impl Ledger {
                     if record.status() != crate::mutation_journal::Status::Started {
                         return Err(invalid());
                     }
+                    let scope = generation.to_be_bytes();
+                    process_history::validate(&operation, |id| {
+                        journal::load_id(db, &config, &scope, id)
+                    })?;
                     records.push(record);
                 }
                 Ok(records)

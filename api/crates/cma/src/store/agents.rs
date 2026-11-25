@@ -192,6 +192,14 @@ pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError
     .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
     super::agent_log_segments::validate_identity(document, &agent)?;
     super::trigger_first_messages::hydrate(document, &mut agent)?;
+    if let Some(timeout) = &agent.conversation.turn_timeout {
+        timeout
+            .validate()
+            .map_err(|_| SandboxStoreError::Corrupt("invalid turn policy".into()))?;
+        if !timeout.binding().matches_incarnation(&agent) {
+            return Err(SandboxStoreError::Conflict);
+        }
+    }
     agent
         .validate_worktree_recoveries()
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
@@ -325,13 +333,21 @@ impl AgentStore for MongoSandboxStore {
     }
 
     async fn get_agent(&self, id: &AgentId) -> Result<Option<Agent>, SandboxStoreError> {
-        self.agents
+        let agent = self
+            .agents
             .find_one(doc! { "_id": id.as_str() })
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
             .as_ref()
             .map(read_agent)
-            .transpose()
+            .transpose()?;
+        if let Some(agent) = &agent {
+            layer2_core::agent_ownership::receiver_diagnostics::observe_agent_sandbox(
+                &agent.id,
+                &agent.sandbox_id,
+            );
+        }
+        Ok(agent)
     }
 
     async fn save_agent(

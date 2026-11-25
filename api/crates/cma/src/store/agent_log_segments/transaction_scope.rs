@@ -43,6 +43,23 @@ impl<'session> TransactionScope<'session> {
         crate::store::work_publication::fence_transaction(store, self.session).await
     }
 
+    pub(in crate::store) async fn control_snapshot(
+        &mut self,
+        store: &crate::store::sandbox_mongo::MongoSandboxStore,
+        target: &layer2_core::sandbox::store::AgentControlTarget,
+    ) -> Result<
+        crate::store::agent_control_lineage::ControlSnapshot,
+        crate::store::agent_control_lineage::LineageError,
+    > {
+        crate::store::agent_control_lineage::load_control_snapshot(
+            store,
+            target,
+            self.session,
+            false,
+        )
+        .await
+    }
+
     pub(in crate::store) async fn live_agents(
         &mut self,
         store: &crate::store::MongoSandboxStore,
@@ -79,6 +96,18 @@ impl<'session> TransactionScope<'session> {
             policy,
         )
         .await
+    }
+
+    pub(in crate::store) async fn retained_reopen_history(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        row: &Document,
+        key: &str,
+    ) -> Result<
+        layer2_core::sandbox::RetainedReopenHistory,
+        crate::store::sandbox_unpublished_recovery::transaction::ApplyError,
+    > {
+        crate::store::retained_reopen::read_history(store, row, Some(key), self.session, None).await
     }
 
     pub(in crate::store) async fn settle_runtime_loss_budget(

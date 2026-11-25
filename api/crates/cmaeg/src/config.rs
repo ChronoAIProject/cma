@@ -218,6 +218,8 @@ pub struct Config {
     pub lark_message_effects_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
     pub native_telegram_message_events_writes_enabled: bool,
+    pub native_telegram_member_joins_enabled: bool,
+    pub relay_telegram_member_joins_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
     pub native_telegram_topic_lifecycle_enabled: bool,
     pub native_telegram_topic_creation_enabled: bool,
@@ -229,6 +231,7 @@ pub struct Config {
     pub native_discord_reactions_enabled: bool,
     pub native_discord: NativeDiscordConfig,
     pub outbound_messages_writes_enabled: bool,
+    pub event_side_messages_enabled: bool,
     pub ingress: IngressConfig,
     pub turns: TurnConfig,
     pub delivery: DeliveryConfig,
@@ -329,6 +332,12 @@ impl Config {
             )?,
             native_telegram_message_events_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED",
+            )?,
+            native_telegram_member_joins_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_MEMBER_JOINS_ENABLED",
+            )?,
+            relay_telegram_member_joins_enabled: routing::write_flag(
+                "CMAEG_RELAY_TELEGRAM_MEMBER_JOINS_ENABLED",
             )?,
             managed_telegram_setup_enabled: routing::write_flag(
                 "CMAEG_MANAGED_TELEGRAM_SETUP_ENABLED",
@@ -463,6 +472,7 @@ impl Config {
             outbound_messages_writes_enabled: routing::write_flag(
                 "CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED",
             )?,
+            event_side_messages_enabled: routing::write_flag("CMAEG_EVENT_SIDE_MESSAGES_ENABLED")?,
             ingress: IngressConfig::from_env()?,
             turns,
             delivery: DeliveryConfig::from_env()?,

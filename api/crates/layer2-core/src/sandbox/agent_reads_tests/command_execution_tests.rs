@@ -18,7 +18,7 @@ mod composer_admission;
 #[path = "command_funding_tests.rs"]
 mod funding;
 
-async fn grant(store: &InMemorySandboxStore, mode: ShareMode) -> ResourceShare {
+pub(super) async fn grant(store: &InMemorySandboxStore, mode: ShareMode) -> ResourceShare {
     let snapshot = store
         .resource_access_snapshot(&ResourceTarget::Sandbox {
             sandbox_id: SandboxId("sandbox".into()),

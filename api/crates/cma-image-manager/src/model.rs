@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const DOCUMENT_VERSION: i32 = 1;
-pub const REGISTRY: &str = "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01";
+mod registry;
+pub use registry::ImageRegistry;
+pub(crate) use registry::{project_id, resource_segment};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -222,14 +224,4 @@ pub struct Build {
     pub error: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
-}
-impl Build {
-    pub fn destination(&self) -> String {
-        format!("{REGISTRY}/{}:{}", self.image_id, self.id)
-    }
-    pub fn reference(&self) -> Option<String> {
-        self.digest
-            .as_ref()
-            .map(|d| format!("{REGISTRY}/{}@{d}", self.image_id))
-    }
 }

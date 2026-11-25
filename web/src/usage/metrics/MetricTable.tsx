@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import type { UsageMetricRow, UsageMetricSort } from '@cma/client';
+import type { UsageMetricPage, UsageMetricRow, UsageMetricSort } from '@cma/client';
 import { Button } from '../../ui/Button';
 import { Picker } from '../../ui/Picker';
 import { AllocationChart } from './AllocationChart';
@@ -11,15 +11,18 @@ import { sandboxCount } from './sandboxCount';
 import { MetricsNotice } from './MetricsNotice';
 import './UsageInventory.css';
 import type { MetricsFailure } from './failure';
+import type { AllocationCoverageEvidence } from './allocationCoverage';
 
 export function MetricTable({
   api,
   reportId,
+  reportCoverage,
   sort,
   order,
   admin,
   active,
   measured,
+  initialPage,
   onSort,
   onDetail,
   onFailure,
@@ -27,11 +30,13 @@ export function MetricTable({
 }: {
   readonly api: MetricsClient;
   readonly reportId: string;
+  readonly reportCoverage?: AllocationCoverageEvidence;
   readonly sort: UsageMetricSort;
   readonly order: 'asc' | 'desc';
   readonly admin: boolean;
   readonly active: boolean;
   readonly measured: boolean;
+  readonly initialPage?: UsageMetricPage;
   readonly focusedMetric?: Metric;
   readonly onSort: (sort: UsageMetricSort) => void;
   readonly onDetail: (row: UsageMetricRow) => void;
@@ -53,7 +58,8 @@ export function MetricTable({
     (signal: AbortSignal) => api.sandboxes(reportId, { signal, limit: 50, cursor, sort, order }),
     [api, reportId, cursor, sort, order],
   );
-  const records = useUsageRead(load, active, api);
+  const records = useUsageRead(load, active && !(cursor === undefined && initialPage), api);
+  const page = cursor === undefined && initialPage ? initialPage : records.data;
   useEffect(() => {
     if (records.error?.denied || records.error?.expired) onFailure(records.error);
   }, [records.error, onFailure]);
@@ -96,10 +102,11 @@ export function MetricTable({
   return (
     <section className="usage-inventory" aria-label="Usage inventory">
       <AllocationChart
-        page={records.data}
+        page={page}
         admin={admin}
         api={api}
         reportId={reportId}
+        reportCoverage={reportCoverage}
         active={active}
         onFailure={onFailure}
       />
@@ -130,11 +137,11 @@ export function MetricTable({
         label={measured ? 'Sandboxes and measured usage' : 'Sandboxes and allocated usage'}
         columns={columns}
         placement="usage-inventory-table"
-        loading={records.loading}
+        loading={records.loading && !page}
         loadingLabel="Loading usage page"
-        empty={records.data ? 'No Sandboxes match this selection.' : undefined}
+        empty={page ? 'No Sandboxes match this selection.' : undefined}
       >
-        {records.data?.items.map((row) => (
+        {page?.items.map((row) => (
           <UsageInventoryRow
             key={row.sandbox_id}
             row={row}
@@ -147,8 +154,7 @@ export function MetricTable({
       </Table>
       <div className="usage-metric-actions">
         <span>
-          {records.data ? `${sandboxCount(records.data.total_count)} · ` : ''}50 per page · page{' '}
-          {cursors.length}
+          {page ? `${sandboxCount(page.total_count)} · ` : ''}50 per page · page {cursors.length}
         </span>
         <Button
           size="sm"
@@ -161,9 +167,9 @@ export function MetricTable({
         <Button
           size="sm"
           variant="outline"
-          disabled={records.loading || !records.data?.next}
+          disabled={records.loading || !page?.next}
           onClick={() => {
-            const next = records.data?.next;
+            const next = page?.next;
             if (next && !cursors.includes(next)) setCursors((previous) => [...previous, next]);
           }}
         >

@@ -62,9 +62,9 @@ pub(crate) struct BuildView {
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
-impl From<Build> for BuildView {
-    fn from(build: Build) -> Self {
-        let reference = build.reference();
+impl BuildView {
+    pub(crate) fn new(build: Build, registry: &ImageRegistry) -> Self {
+        let reference = registry.reference(&build);
         Self {
             id: build.id,
             image_id: build.image_id,
@@ -88,9 +88,9 @@ pub(crate) struct VersionView {
     pub digest: Option<String>,
     pub created_at_ms: i64,
 }
-impl From<Build> for VersionView {
-    fn from(build: Build) -> Self {
-        let reference = build.reference();
+impl VersionView {
+    pub(crate) fn new(build: Build, registry: &ImageRegistry) -> Self {
+        let reference = registry.reference(&build);
         Self {
             id: build.id,
             image_id: build.image_id,

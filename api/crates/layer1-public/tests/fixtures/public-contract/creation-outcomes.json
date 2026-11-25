@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "creation-outcome-valid",
+      "operation": "POST /api/v1/sandbox-creation-outcomes/lookup",
+      "scenario": "creation_outcome_valid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-creation-outcomes/lookup",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": 1,
+          "deployment": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "method": "POST",
+          "path": "/api/v1/sandboxes",
+          "idempotency_key": "fixture-key",
+          "fingerprint": {
+            "algorithm": "sha256-wire-v1",
+            "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "version": 1,
+          "deployment": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "operation": "sandbox",
+          "identity_digest": "4d7b5091f776c55246fdcfc54ca8bcf5e5effdd6cd6ff9164a93de84740de0ca",
+          "result": {
+            "kind": "created",
+            "sandbox_id": "sbx_fixture",
+            "proof_id": "d54171b1afeff30fd884f30fabd9dcdf027011887eb7e8bf259beb65f1146e73"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "creation-outcome-foreign",
+      "operation": "POST /api/v1/sandbox-creation-outcomes/lookup",
+      "scenario": "creation_outcome_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-creation-outcomes/lookup",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": 1,
+          "deployment": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "method": "POST",
+          "path": "/api/v1/sandboxes",
+          "idempotency_key": "fixture-key",
+          "fingerprint": {
+            "algorithm": "sha256-wire-v1",
+            "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/permission_denied",
+          "title": "permission_denied",
+          "status": 403,
+          "detail": "This caller cannot inspect creation evidence.",
+          "code": "permission_denied"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "creation-outcome-unauthenticated",
+      "operation": "POST /api/v1/sandbox-creation-outcomes/lookup",
+      "scenario": "creation_outcome_unauthenticated",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-creation-outcomes/lookup",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": 1,
+          "deployment": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "method": "POST",
+          "path": "/api/v1/sandboxes",
+          "idempotency_key": "fixture-key",
+          "fingerprint": {
+            "algorithm": "sha256-wire-v1",
+            "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not_authenticated",
+          "title": "not_authenticated",
+          "status": 401,
+          "detail": "A verified owner identity is required.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "creation-outcome-unavailable",
+      "operation": "POST /api/v1/sandbox-creation-outcomes/lookup",
+      "scenario": "creation_outcome_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-creation-outcomes/lookup",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": 1,
+          "deployment": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "method": "POST",
+          "path": "/api/v1/sandboxes",
+          "idempotency_key": "fixture-key",
+          "fingerprint": {
+            "algorithm": "sha256-wire-v1",
+            "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/creation_outcome_unavailable",
+          "title": "creation_outcome_unavailable",
+          "status": 503,
+          "detail": "Creation evidence is temporarily unavailable.",
+          "code": "creation_outcome_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "creation-outcome-bad-input",
+      "operation": "POST /api/v1/sandbox-creation-outcomes/lookup",
+      "scenario": "creation_outcome_bad_input",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-creation-outcomes/lookup",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": 1,
+          "deployment": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "method": "POST",
+          "path": "/api/v1/sandboxes",
+          "idempotency_key": "",
+          "fingerprint": {
+            "algorithm": "sha256-wire-v1",
+            "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_creation_identity",
+          "title": "invalid_creation_identity",
+          "status": 400,
+          "detail": "The creation identity is invalid.",
+          "code": "invalid_creation_identity"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "creation-outcome-wrong-deployment",
+      "operation": "POST /api/v1/sandbox-creation-outcomes/lookup",
+      "scenario": "creation_outcome_wrong_deployment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-creation-outcomes/lookup",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": 1,
+          "deployment": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "method": "POST",
+          "path": "/api/v1/sandboxes",
+          "idempotency_key": "fixture-key",
+          "fingerprint": {
+            "algorithm": "sha256-wire-v1",
+            "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/creation_identity_conflict",
+          "title": "creation_identity_conflict",
+          "status": 409,
+          "detail": "This creation identity cannot be used.",
+          "code": "creation_identity_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
