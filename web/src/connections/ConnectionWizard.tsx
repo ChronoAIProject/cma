@@ -190,6 +190,29 @@ function ConnectionSequence({
     }
   };
 
+  const cancelConnection = (saved?: StartedConnection) => {
+    generation.current += 1;
+    cancelled.current = true;
+    starting.current = false;
+    recovery.current?.abort();
+    recovery.current = null;
+    recoveryPopup.current?.close();
+    recoveryPopup.current = null;
+    setBusy(false);
+    sequence.current = false;
+    setRunning(false);
+    const active = attempt.current ?? intentRecovery.pending ?? saved;
+    if (active !== undefined) void client.cancel(target, active).catch(() => undefined);
+    try {
+      intentRecovery.interrupt(true);
+    } catch {
+      /* Cancellation remains fenced in memory. */
+    }
+    persist(undefined);
+    popup.current?.close();
+    popup.current = null;
+  };
+
   useEffect(() => {
     live.current = true;
     generation.current += 1;
@@ -377,28 +400,6 @@ function ConnectionSequence({
     setError(undefined);
     if (attempt.current !== undefined) navigatePopup(attempt.current.hosted_url);
     else void startNext(report);
-  };
-  const cancelConnection = (saved?: StartedConnection) => {
-    generation.current += 1;
-    cancelled.current = true;
-    starting.current = false;
-    recovery.current?.abort();
-    recovery.current = null;
-    recoveryPopup.current?.close();
-    recoveryPopup.current = null;
-    setBusy(false);
-    sequence.current = false;
-    setRunning(false);
-    const active = attempt.current ?? intentRecovery.pending ?? saved;
-    if (active !== undefined) void client.cancel(target, active).catch(() => undefined);
-    try {
-      intentRecovery.interrupt(true);
-    } catch {
-      /* Cancellation remains fenced in memory. */
-    }
-    persist(undefined);
-    popup.current?.close();
-    popup.current = null;
   };
   const cancel = () => {
     cancelConnection();
