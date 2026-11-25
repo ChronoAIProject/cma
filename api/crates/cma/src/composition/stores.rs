@@ -59,6 +59,9 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
     let mut sandbox_model = (*stores.sandbox_model).clone();
     sandbox_model.runtime_image_origin_enabled = config.features.runtime_image_origin_enabled;
     sandbox_model.desktop_verified_runtime_image = config.desktop_verified_runtime_image.clone();
+    let sandbox_model = sandbox_model
+        .configure_active_log_proofs(config.features.active_log_proofs)
+        .await?;
     stores.sandbox_model = Arc::new(
         sandbox_model
             .with_runtime_loss_bounded_proof(config.features.runtime_loss_bounded_proof_enabled)

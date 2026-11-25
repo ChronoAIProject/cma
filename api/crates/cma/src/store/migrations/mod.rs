@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 
 mod activity_indexes;
 mod activity_page_index;
+pub(in crate::store) mod agent_log_active_proofs;
 mod agent_log_segments;
 pub(in crate::store) mod agent_log_source_keys;
 mod agent_owner_index;
@@ -201,7 +202,10 @@ async fn apply_indexes(
     super::sandbox_mongo::require_transaction_topology(database)
         .await
         .map_err(|_| "migration requires a supported replica set or mongos")?;
-    if matches!(step, Step::BindingIndexes | Step::MeasuredCustody) {
+    if matches!(
+        step,
+        Step::BindingIndexes | Step::MeasuredCustody | Step::AgentLogActiveProofs
+    ) {
         step.inspect(database).await?;
     }
     ledger.initialize().await?;

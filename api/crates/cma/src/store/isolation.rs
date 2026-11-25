@@ -16,6 +16,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "account_deletion_events",
     retained_consents::COLLECTION,
     super::migrations::measured_custody::COLLECTION,
+    super::agent_log_segments::active_proof::COLLECTION,
     super::budget::COLLECTION,
     super::agent_observation::COLLECTION,
     super::sandbox_metric_bindings::COLLECTION,
@@ -189,6 +190,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     retained_consents::COLLECTION,
     super::migrations::measured_custody::COLLECTION,
+    super::agent_log_segments::active_proof::COLLECTION,
     super::sandbox_usage_export::CAPTURES,
     super::sandbox_usage_export::EVIDENCE,
     super::sandbox_usage_export::OUTBOX,

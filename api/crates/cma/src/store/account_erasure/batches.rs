@@ -10,6 +10,10 @@ use crate::store::durability::majority_collection;
 use futures_util::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 
+#[path = "erase_source_log.rs"]
+mod log_erasure;
+use log_erasure::erase_source_log;
+
 pub(super) fn authored(name: &str, rule: Erasure) -> bool {
     matches!(name, "agent_message_feedback" | "agent_suggestions")
         && matches!(rule, Erasure::Owner(_))
@@ -91,10 +95,14 @@ pub(super) async fn remove(
         "sandbox_billing_state" => guards::billing_filter(rows, ids),
         _ => doc! {"_id":{"$in":ids}},
     };
-    let removed = majority_collection::<Document>(db, entry.collection)
-        .delete_many(filter)
-        .await?
-        .deleted_count;
+    let removed = if entry.collection == "agent_log" {
+        erase_source_log(db, rows, ids, filter, batch).await?
+    } else {
+        majority_collection::<Document>(db, entry.collection)
+            .delete_many(filter)
+            .await?
+            .deleted_count
+    };
     if removed > 0 {
         *batch.deleted.entry(entry.collection.into()).or_default() += removed;
     }

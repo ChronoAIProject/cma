@@ -240,4 +240,5 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("workspace_profiles", Reference(ReferenceRule::Profiles) => false),
     entry!("workspaces", Linked(Sandboxes, &["sandbox_id"]) => true),
     entry!("worktrees", Linked(Sandboxes, &["sandbox_id"]) => true),
+    entry!("agent_log_active_proofs_v1", Linked(Agents, &["_id"]) => true),
 ];

@@ -1,4 +1,5 @@
 //! Versioned segmented log readers and gated atomic publication.
+pub(in crate::store) mod active_proof;
 pub(in crate::store) mod admission;
 pub(in crate::store) mod audit;
 pub(in crate::store) mod audit_command;
