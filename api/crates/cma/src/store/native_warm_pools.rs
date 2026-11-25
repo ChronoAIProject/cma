@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use layer1_public::rest::admin::warm_pools::{ResizeWarmPoolBody, WarmPoolError};
 use layer2_core::StoreError;
-use layer3_adapter::agent_sandbox::NativePoolBinding;
+use layer3_adapter::agent_sandbox::{NativePoolBinding, NativePoolDrain};
 use mongodb::{
     bson::{doc, DateTime, Document},
     options::{IndexOptions, ReturnDocument},
@@ -144,7 +144,7 @@ impl PoolTargetStore for MongoNativeWarmPools {
         &self,
         target: &PoolTarget,
         image: &str,
-    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
         let durable = self.current_retirement_image(target, image).await?;
         retirement::drain_homes(self, target, &durable).await
     }

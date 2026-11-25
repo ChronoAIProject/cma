@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "bound-launch-create",
+      "operation": "POST /api/v2/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-review-create",
+          "x-cma-expected-subject": "v1.dmlzaXRvcg"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-verified-subject": "v1.dmlzaXRvcg"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "bound-launch-mismatch",
+      "operation": "POST /api/v2/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bound-mismatch",
+          "x-cma-expected-subject": "v1.b3RoZXI"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/command-subject-mismatch",
+          "title": "command subject mismatch",
+          "status": 409,
+          "detail": "Sign in with the same CMA account that made this request. The original request remains unresolved.",
+          "code": "command_subject_mismatch"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bound-launch-missing",
+      "operation": "POST /api/v2/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bound-missing"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/command-subject-condition-invalid",
+          "title": "command subject condition invalid",
+          "status": 400,
+          "detail": "A single canonical expected command account is required.",
+          "code": "command_subject_condition_invalid"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

@@ -5,7 +5,7 @@ export interface PublicClient {
     Launches,
     | 'preview'
     | 'entryIntent'
-    | 'createOrResume'
+    | 'createOrResumeBound'
     | 'read'
     | 'start'
     | 'cancel'
