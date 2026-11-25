@@ -22,7 +22,7 @@ mod worker;
 #[ignore = "requires disposable MongoDB replica set"]
 async fn document_quota_reclamation_preserves_charge_until_the_claim_is_confirmed() {
     let database = database().await;
-    let store = MongoDocumentStore::new(database.clone());
+    let store = MongoDocumentStore::new(database.clone()).with_storage_namespace(Some(namespace()));
     store.ensure_indexes().await.unwrap();
     let quota = store.quota(true);
     let baseline = activate(&quota, &database, &[]).await;
@@ -144,7 +144,9 @@ async fn document_quota_reclamation_rejects_a_delayed_publication_and_preserves_
         bytes: created.size_bytes,
     };
 
-    let writer = MongoDocumentStore::new(database.clone()).with_generation_writes(true);
+    let writer = MongoDocumentStore::new(database.clone())
+        .with_storage_namespace(Some(namespace()))
+        .with_generation_writes(true);
     writer.ensure_indexes().await.unwrap();
     let quota = writer.quota(true);
     let baseline = activate(&quota, &database, &[]).await;
@@ -209,7 +211,9 @@ async fn document_quota_reclamation_rejects_a_delayed_publication_and_preserves_
 #[ignore = "requires disposable MongoDB replica set"]
 async fn document_quota_reclamation_serializes_last_refund_with_a_new_digest() {
     let database = database().await;
-    let store = MongoDocumentStore::new(database.clone()).with_generation_writes(true);
+    let store = MongoDocumentStore::new(database.clone())
+        .with_storage_namespace(Some(namespace()))
+        .with_generation_writes(true);
     store.ensure_indexes().await.unwrap();
     let quota = store.quota(true);
     let baseline = activate(&quota, &database, &[]).await;
@@ -251,7 +255,9 @@ async fn document_quota_reclamation_serializes_last_refund_with_a_new_digest() {
 #[ignore = "requires disposable MongoDB replica set"]
 async fn document_quota_reclamation_upgrades_a_marker_for_an_identical_source_edit() {
     let database = database().await;
-    let predecessor = MongoDocumentStore::new(database.clone()).with_source_commits(true);
+    let predecessor = MongoDocumentStore::new(database.clone())
+        .with_storage_namespace(Some(namespace()))
+        .with_source_commits(true);
     predecessor.ensure_indexes().await.unwrap();
     let quota = predecessor.quota(true);
     let baseline = activate(&quota, &database, &[]).await;
@@ -340,3 +346,6 @@ async fn document_quota_reclamation_upgrades_a_marker_for_an_identical_source_ed
     );
     database.drop().await.unwrap();
 }
+
+#[path = "reclamation_fences_tests.rs"]
+mod fences;

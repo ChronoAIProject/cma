@@ -153,7 +153,7 @@ impl Publication<'_> {
                 Err(error) if is_confirmed_body_retry(&error) => continue,
                 Err(_) => return Err(DocumentError::Unavailable),
             }
-            let result = self.write(&store.rows, &ledger, &mut session).await;
+            let result = self.write(store, &ledger, &mut session).await;
             match result {
                 Ok(true) => {}
                 result => {
@@ -187,10 +187,11 @@ impl Publication<'_> {
 
     async fn write(
         &self,
-        rows: &Collection<Document>,
+        store: &MongoDocumentStore,
         ledger: &Collection<Document>,
         session: &mut ClientSession,
     ) -> Result<bool, WriteError> {
+        let rows = &store.rows;
         // Establish the transaction on a read so cancelling its first command
         // cannot strand a lock on the Document.
         if ledger
@@ -201,6 +202,22 @@ impl Publication<'_> {
             != Some(&self.reservation)
         {
             return Err(WriteError::Domain(DocumentError::Corrupt));
+        }
+        let state = ledger
+            .find_one(doc! {"_id":super::quota::STATE})
+            .session(&mut *session)
+            .await?
+            .ok_or(WriteError::Domain(DocumentError::Unavailable))?;
+        if state.contains_key("storage_namespace_sha256")
+            || super::quota::generation_enabled(&state).map_err(WriteError::Domain)?
+        {
+            super::reclamation_binding::Binding::read(
+                &state,
+                store
+                    .configured_namespace()
+                    .ok_or(WriteError::Domain(DocumentError::Unavailable))?,
+            )
+            .map_err(WriteError::Domain)?;
         }
         // The legacy marker branch must compete with a reclamation claim too.
         let owner = super::quota::owner_id(&self.source.owner_hash);

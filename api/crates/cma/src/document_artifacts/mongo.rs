@@ -10,6 +10,7 @@ pub(crate) const COLLECTION: &str = "cma_document_artifacts";
 pub struct MongoDocumentStore {
     pub(super) rows: Collection<Document>,
     generation_writes: bool,
+    storage_namespace: Option<String>,
     source_commits: bool,
 }
 impl MongoDocumentStore {
@@ -23,6 +24,7 @@ impl MongoDocumentStore {
         )
         .with_required_baseline(self.source_commits)
         .with_generation_writes(self.generation_writes)
+        .with_storage_namespace(self.storage_namespace.clone())
     }
     pub(crate) fn with_source_commits(&self, enabled: bool) -> Self {
         Self {
@@ -34,10 +36,18 @@ impl MongoDocumentStore {
         self.generation_writes = enabled;
         self
     }
+    pub(crate) fn with_storage_namespace(mut self, namespace: Option<String>) -> Self {
+        self.storage_namespace = namespace;
+        self
+    }
+    pub(super) fn configured_namespace(&self) -> Option<&str> {
+        self.storage_namespace.as_deref()
+    }
     pub fn new(database: Database) -> Self {
         Self {
             source_commits: false,
             generation_writes: false,
+            storage_namespace: None,
             rows: database.collection_with_options(
                 COLLECTION,
                 mongodb::options::CollectionOptions::builder()

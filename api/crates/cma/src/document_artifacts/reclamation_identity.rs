@@ -33,7 +33,7 @@ impl ReclamationStore {
         else {
             return Ok(None);
         };
-        if let Some((tombstone, _)) = super::deletion::decode_audit(&row)? {
+        if let Some((tombstone, _)) = crate::document_artifacts::deletion::decode_audit(&row)? {
             if tombstone.owner_hash != source.owner_hash
                 || !reclamation_slots::terminal(&self.ledger, source, session).await?
             {

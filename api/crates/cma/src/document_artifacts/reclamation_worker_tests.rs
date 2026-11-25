@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires disposable MongoDB replica set"]
-async fn document_quota_reclamation_worker_reaches_the_fifth_accounting_entry() {
+async fn document_quota_reclamation_worker_protects_live_sources_and_drains_deleted_source() {
     verify_worker_accounting_page(true).await;
     verify_worker_accounting_page(false).await;
 }
@@ -14,13 +14,34 @@ async fn verify_worker_accounting_page(generation_writes: bool) {
     use crate::document_storage::maintenance::StorageMaintenance;
     use std::time::Duration;
 
+    let mut peer = Peer::start().await;
+    let storage = StorageMaintenance::new(
+        DocumentStorageConfig {
+            resilience_enabled: true,
+            platform_origin: peer.origin.clone(),
+            bucket: "fixture".into(),
+            client_id: "fixture-machine".into(),
+            client_secret: "local-fixture".to_owned().into(),
+        },
+        true,
+    )
+    .unwrap();
     let database = database().await;
     let documents = MongoDocumentStore::new(database.clone())
         .with_source_commits(true)
-        .with_generation_writes(generation_writes);
+        .with_generation_writes(generation_writes)
+        .with_storage_namespace(Some(storage.namespace_sha256()));
     documents.ensure_indexes().await.unwrap();
     let quota = documents.quota(true);
     let baseline = activate(&quota, &database, &[]).await;
+    quota
+        .bind_storage(
+            &baseline.activation,
+            &baseline.digest,
+            &storage.namespace_sha256(),
+        )
+        .await
+        .unwrap();
     let service = DocumentService::with_storage_quota(
         Arc::new(documents.clone()),
         Arc::new(memory::MemoryDocumentBlobs::default()),
@@ -79,30 +100,12 @@ async fn verify_worker_accounting_page(generation_writes: bool) {
         .await
         .unwrap();
 
-    let mut peer = Peer::start().await;
-    let storage = StorageMaintenance::new(
-        DocumentStorageConfig {
-            resilience_enabled: true,
-            platform_origin: peer.origin.clone(),
-            bucket: "fixture".into(),
-            client_id: "fixture-machine".into(),
-            client_secret: "local-fixture".to_owned().into(),
-        },
-        true,
-    )
-    .unwrap();
-    quota
-        .bind_storage(
-            &baseline.activation,
-            &baseline.digest,
-            &storage.namespace_sha256(),
-        )
+    let mut worker = ReclamationWorker::prepare(documents.clone(), storage.clone())
         .await
         .unwrap();
-    let mut worker = ReclamationWorker::prepare(documents.clone(), storage)
-        .await
-        .unwrap();
-    worker.run_once().await.unwrap();
+    let discovery = ReclamationStore::new(documents.clone(), storage.namespace_sha256());
+    let now = DateTime::now();
+    discovery.discover_page(now).await.unwrap();
     assert_eq!(peer.count(), 0);
     assert_eq!(usage(&quota, "owner").await, [5, 20, 5]);
     let expired = if generation_writes {
@@ -144,12 +147,16 @@ async fn verify_worker_accounting_page(generation_writes: bool) {
         request.json(serde_json::json!({ "data": { "deleted": true, "key": key,
             "generation": 2, "fenceVersion": 1 } }));
     };
-    let (pass, ()) = tokio::time::timeout(Duration::from_secs(10), async {
-        tokio::join!(worker.run_once(), responses)
+    let after_lease = DateTime::from_millis(now.timestamp_millis() + 91_000);
+    let passes = async {
+        worker.run_effects(after_lease).await.unwrap();
+        worker.run_effects(after_lease).await.unwrap();
+    };
+    let ((), ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(passes, responses)
     })
     .await
     .unwrap();
-    pass.unwrap();
     assert_eq!(usage(&quota, "owner").await, [4, 16, 4]);
     for source in &expired {
         let charge = object_row(source).unwrap();
@@ -164,9 +171,9 @@ async fn verify_worker_accounting_page(generation_writes: bool) {
     }
 
     // Finish the cursor wrap and reread the protected first page.
-    worker.run_once().await.unwrap();
-    worker.run_once().await.unwrap();
-    worker.run_once().await.unwrap();
+    discovery.discover_page(now).await.unwrap();
+    discovery.discover_page(now).await.unwrap();
+    worker.run_effects(after_lease).await.unwrap();
     assert_eq!(peer.count(), 2 + expired.len());
     for live in created {
         assert_eq!(

@@ -1,13 +1,14 @@
 //! Bind physical source custody to the exact installed quota inventory.
 use super::quota;
 use layer2_core::document_artifacts::{valid_digest, DocumentError};
-use mongodb::bson::{doc, Document};
+use mongodb::bson::{doc, DateTime, Document};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Binding {
-    activation: String,
-    inventory: String,
-    namespace: String,
+    pub(super) activation: String,
+    pub(super) inventory: String,
+    pub(super) namespace: String,
+    pub(super) bound_at: DateTime,
 }
 impl Binding {
     pub(super) fn read(state: &Document, namespace: &str) -> Result<Self, DocumentError> {
@@ -27,6 +28,9 @@ impl Binding {
                 .map_err(|_| DocumentError::Corrupt)?
                 .into(),
             namespace: namespace.into(),
+            bound_at: *state
+                .get_datetime("storage_namespace_bound_at")
+                .map_err(|_| DocumentError::Corrupt)?,
         })
     }
 }
@@ -59,7 +63,7 @@ impl quota::MongoDocumentQuotaStore {
             return Err(DocumentError::Conflict);
         }
         let result = self.rows.update_one(doc! {"_id":quota::STATE, "phase":"ready", "activation_id":activation, "inventory_sha256":inventory,
-            "$or":[{"storage_namespace_sha256":{"$exists":false}},{"storage_namespace_sha256":namespace}]}, doc! {"$set":{"storage_namespace_sha256":namespace}}).await.map_err(quota::unavailable)?;
+            "$or":[{"storage_namespace_sha256":{"$exists":false}},{"storage_namespace_sha256":namespace}]}, vec![doc! {"$set":{"storage_namespace_sha256":namespace, "storage_namespace_bound_at":{"$ifNull":["$storage_namespace_bound_at","$$NOW"]}}}]).await.map_err(quota::unavailable)?;
         if result.matched_count != 1 {
             return Err(DocumentError::Conflict);
         }

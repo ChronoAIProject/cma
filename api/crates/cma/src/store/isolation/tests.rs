@@ -212,13 +212,14 @@ async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
                 &isolated, crate::document_artifacts::QUOTA_COLLECTION,
             ).insert_one(doc! { "_id": "activation", "document_schema_version": 1_i64,
                 "kind": "activation", "phase": "ready", "activation_id": uuid::Uuid::new_v4().to_string(),
-                "inventory_sha256": digest(b"inventory"), "baseline_rows": 0_i64, "next_row": 0_i64,
+                "inventory_sha256": digest(b"inventory"), "storage_namespace_sha256": digest(b"isolation-storage"), "storage_namespace_bound_at":mongodb::bson::DateTime::now(), "baseline_rows": 0_i64, "next_row": 0_i64,
             }).await.unwrap();
         }
         let fence = stores
             .document_artifacts
             .with_source_commits(enabled)
             .with_generation_writes(enabled)
+            .with_storage_namespace(Some(digest(b"isolation-storage")))
             .quota(true)
             .reserve_source(&source)
             .await

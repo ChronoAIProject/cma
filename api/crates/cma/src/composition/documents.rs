@@ -32,20 +32,21 @@ pub(super) async fn compose(
         Some(config) => StorageDocuments::new(config)?,
         None => Arc::new(UnavailableDocuments),
     };
-    let store = stores
-        .document_artifacts
-        .with_source_commits(config.features.document_source_commits)
-        .with_generation_writes(config.features.document_reclamation);
-    if config.features.document_reclamation
-        && !(config.features.document_source_commits && config.features.document_quotas)
-    {
-        return Err("Document reclamation requires source commits and quotas".into());
-    }
     let namespace = config
         .document_storage
         .as_ref()
         .map(crate::document_storage::namespace_sha256)
         .transpose()?;
+    let store = stores
+        .document_artifacts
+        .with_source_commits(config.features.document_source_commits)
+        .with_generation_writes(config.features.document_reclamation)
+        .with_storage_namespace(namespace.clone());
+    if config.features.document_reclamation
+        && !(config.features.document_source_commits && config.features.document_quotas)
+    {
+        return Err("Document reclamation requires source commits and quotas".into());
+    }
     store
         .quota(config.features.document_quotas)
         .verify_storage(namespace.as_deref(), config.features.document_reclamation)

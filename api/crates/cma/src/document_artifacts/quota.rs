@@ -18,6 +18,7 @@ pub(crate) struct MongoDocumentQuotaStore {
     enabled: bool,
     require_ready: bool,
     generation_writes: bool,
+    storage_namespace: Option<String>,
     limits: [u64; 3],
 }
 impl MongoDocumentQuotaStore {
@@ -34,6 +35,7 @@ impl MongoDocumentQuotaStore {
             enabled,
             require_ready: false,
             generation_writes: false,
+            storage_namespace: None,
             limits: [
                 OWNER_DOCUMENT_LIMIT,
                 OWNER_DOCUMENT_BYTES,
@@ -49,6 +51,11 @@ impl MongoDocumentQuotaStore {
 
     pub(super) fn with_generation_writes(mut self, enabled: bool) -> Self {
         self.generation_writes = enabled;
+        self
+    }
+
+    pub(super) fn with_storage_namespace(mut self, namespace: Option<String>) -> Self {
+        self.storage_namespace = namespace;
         self
     }
 
@@ -121,6 +128,14 @@ impl MongoDocumentQuotaStore {
             return Err(DocumentError::Unavailable.into());
         }
         let enabled = self.generation_writes || generation_enabled(&state)?;
+        if enabled || state.contains_key("storage_namespace_sha256") {
+            super::reclamation_binding::Binding::read(
+                &state,
+                self.storage_namespace
+                    .as_deref()
+                    .ok_or(DocumentError::Unavailable)?,
+            )?;
+        }
         if enabled && !generation_enabled(&state)? {
             self.rows
                 .update_one(

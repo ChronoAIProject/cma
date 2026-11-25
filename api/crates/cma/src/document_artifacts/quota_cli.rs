@@ -23,7 +23,7 @@ async fn execute(arguments: &[String]) -> Result<serde_json::Value, &'static str
     }
     let action = match arguments.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["--document-quota-status"] => Action::Status,
-        ["--document-quota-bind-storage", activation, inventory, namespace] => Action::Bind((*activation).into(), (*inventory).into(), (*namespace).into()),
+        ["--document-quota-bind-storage", activation, inventory, namespace, "--writers-drained"] => Action::Bind((*activation).into(), (*inventory).into(), (*namespace).into()),
         ["--document-quota-prepare", id] if valid_activation(id) => Action::Prepare((*id).into()),
         ["--document-quota-install", path, mode @ ("--dry-run" | "--apply")] => {
             let file = std::fs::File::open(path).map_err(|_| "inventory file unavailable")?;

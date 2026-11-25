@@ -16,12 +16,16 @@ use mongodb::{
     bson::{doc, DateTime, Document},
     ClientSession, Collection, IndexModel,
 };
+use std::collections::BTreeMap;
 
+#[path = "reclamation_discovery.rs"]
+mod discovery;
 #[path = "reclamation_identity.rs"]
 mod identity;
+pub(super) use discovery::{DISCOVERY_INTERVAL, DISCOVERY_SLICE};
 
 const LIMIT: i64 = 32;
-const ACCOUNTING_LIMIT: i64 = 4;
+pub(super) const ACCOUNTING_LIMIT: i64 = 96;
 const AGE_MS: i64 = 60 * 60 * 1000;
 const LEASE_MS: i64 = 90 * 1000;
 
@@ -48,6 +52,7 @@ enum CandidateMode {
     Legacy(Option<Document>),
 }
 
+#[derive(Clone)]
 pub(super) struct ReclamationStore {
     documents: MongoDocumentStore,
     ledger: Collection<Document>,
@@ -103,29 +108,50 @@ impl ReclamationStore {
         now: DateTime,
         legacy_mature: bool,
     ) -> Result<Vec<AccountingEntry>, DocumentError> {
-        let mut rows = self
+        let rows: Vec<Document> = self
             .ledger
             .find(doc! {
                 "kind": "object", "_id": { "$gt": after.unwrap_or("object:"), "$lt": "object;" },
             })
-            .sort(doc! { "_id": 1 })
+            .sort(doc! {"_id":1})
             .limit(ACCOUNTING_LIMIT)
             .max_time(quota::IO)
             .await
+            .map_err(quota::unavailable)?
+            .try_collect()
+            .await
             .map_err(quota::unavailable)?;
+        let sources = rows
+            .iter()
+            .map(quota::source_from_charge)
+            .collect::<Result<Vec<_>, _>>()?;
+        let keys: Vec<_> = sources.iter().map(object_authority::key).collect();
+        let markers: Vec<Document> = self
+            .ledger
+            .find(doc! {"_id":{"$in":&keys}})
+            .max_time(quota::IO)
+            .await
+            .map_err(quota::unavailable)?
+            .try_collect()
+            .await
+            .map_err(quota::unavailable)?;
+        let mut markers = markers
+            .into_iter()
+            .map(|row| {
+                let key = row
+                    .get_str("_id")
+                    .map_err(|_| DocumentError::Corrupt)?
+                    .to_owned();
+                Ok((key, row))
+            })
+            .collect::<Result<BTreeMap<_, _>, DocumentError>>()?;
         let mut page = Vec::new();
-        while let Some(row) = rows.try_next().await.map_err(quota::unavailable)? {
-            let source = quota::source_from_charge(&row)?;
+        for ((row, source), marker_key) in rows.into_iter().zip(sources).zip(keys) {
             let key = row
                 .get_str("_id")
                 .map_err(|_| DocumentError::Corrupt)?
                 .to_owned();
-            let marker = self
-                .ledger
-                .find_one(doc! { "_id": object_authority::key(&source) })
-                .max_time(quota::IO)
-                .await
-                .map_err(quota::unavailable)?;
+            let marker = markers.remove(&marker_key);
             let mode = match marker {
                 Some(row) if row.contains_key("authority_version") => {
                     let authority = Authority::decode(&row)?;
@@ -136,11 +162,7 @@ impl ReclamationStore {
                         State::Reserved | State::Published => {
                             authority.updated_at <= mature_before(now)
                         }
-                        State::DeletePending => authority
-                            .lease
-                            .as_ref()
-                            .is_some_and(|lease| lease.until <= now),
-                        State::Settled => false,
+                        State::DeletePending | State::Settled => false,
                     };
                     due.then_some(CandidateMode::Current(authority))
                 }
@@ -318,11 +340,11 @@ impl ReclamationStore {
             }
         };
         let active = self.document(source, session).await?;
-        if active.is_none()
-            && current.state == State::Published
-            && !reclamation_slots::terminal(&self.ledger, source, session).await?
+        if current.state == State::Published
+            && (active.is_some()
+                || !reclamation_slots::terminal(&self.ledger, source, session).await?)
         {
-            // A published source without live metadata requires terminal deletion evidence.
+            // Retained published history must have terminal deletion authority.
             return Ok(None);
         }
         let referenced = active.as_ref().is_some_and(|record| {

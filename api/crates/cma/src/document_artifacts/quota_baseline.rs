@@ -10,7 +10,7 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) const MAX_MANIFEST_BYTES: usize = 32 * 1024 * 1024;
-const MAX_BASELINE_OBJECTS: usize = 100_000;
+pub(super) const MAX_BASELINE_OBJECTS: usize = 100_000;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
