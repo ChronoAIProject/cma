@@ -7,6 +7,7 @@ from io import StringIO
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import time
@@ -256,6 +257,43 @@ pub fn snapshot(_: proc_macro::TokenStream) -> proc_macro::TokenStream {
         self.assertIn("unqualified workspace input change", notes)
         self.assertEqual(output, "second:42:42")
         self.assertEqual(self.clean_output("second"), output)
+
+    def test_isolated_stamp_keeps_the_edited_library_fresh_on_the_next_release(self):
+        main = self.split_targets()
+        wrapper = self.root / "build_support/release_rustc.py"
+        wrapper.parent.mkdir()
+        shutil.copy2(ROOT / "api/build_support/release_rustc.py", wrapper)
+        self.enterContext(patch.dict(os.environ, {"RUSTC_WRAPPER": str(wrapper)}))
+        self.vendored_reader('if std::env::var_os("CHRONO_BUILD_SHA").is_none() { 42 } else { 99 }')
+        self.approved_projection(main)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        chef = Path(temporary.name) / "chef"
+        self.command("cargo", "build", "--release", "--locked", "--offline", "--bin", "cma")
+        self.command("cargo", "clean", "--release", "--workspace", "--locked")
+        self.target.rename(chef)
+        self.target.mkdir()
+        self.assertEqual(self.build("first", chef)[2], "first:41:41")
+        incremental = self.target / "release/incremental"
+        retained = set(incremental.rglob("work-products.bin"))
+        self.assertTrue(retained)
+
+        self.write("crates/cma/src/lib.rs", "pub fn value() -> u32 { fixture_reader::snapshot!() }")
+        original = cache.invalidate_service
+        def inspect_invalidation(*args, **kwargs):
+            original(*args, **kwargs)
+            self.assertEqual(set(incremental.rglob("work-products.bin")), retained)
+
+        with patch.object(cache, "invalidate_service", inspect_invalidation):
+            notes, rust, output = self.build("second", chef)
+        self.assertIn("Invalidated: cma", notes)
+        self.assertIn("crates/cma/src/lib.rs --error-format", rust)
+        self.assertEqual(output, "second:41:42")
+
+        notes, rust, output = self.build("third", chef)
+        self.assertIn("retained cma library under its release audit", notes)
+        self.assertNotIn("crates/cma/src/lib.rs --error-format", rust)
+        self.assertEqual(output, "third:41:42")
 
     def test_edited_library_is_rebuilt_for_the_next_release_from_its_seed(self):
         main = self.split_targets()

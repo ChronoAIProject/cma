@@ -249,12 +249,16 @@ def main():
             if (measured["retained_workspace_libraries"] != [binary]
                     or measured["service_targets"] != [f"{binary}:main"]):
                 raise ValueError("Executable-only build did not reuse its audited workspace library")
-            for case in ("warm_library", "warm_library_next_release"):
-                measurement = result[case]
-                if (measurement["service_targets"] != [f"{binary}:lib", f"{binary}:main"]
-                        or measurement["workspace_invalidation"] != [binary]
-                        or WORKSPACE_DEPENDENCY[args.component] not in measurement["fresh"]):
-                    raise ValueError(f"{case} did not rebuild the service and reuse its workspace dependency")
+            library_build = result["warm_library"]
+            if (library_build["service_targets"] != [f"{binary}:lib", f"{binary}:main"]
+                    or library_build["workspace_invalidation"] != [binary]
+                    or WORKSPACE_DEPENDENCY[args.component] not in library_build["fresh"]):
+                raise ValueError("Library edit did not recompile the service and reuse its workspace dependency")
+            next_release = result["warm_library_next_release"]
+            if (next_release["service_targets"] != [f"{binary}:main"]
+                    or next_release["retained_workspace_libraries"] != [binary]
+                    or WORKSPACE_DEPENDENCY[args.component] not in next_release["fresh"]):
+                raise ValueError("The next release did not reuse the edited service library")
             for case in ("warm", "warm_library", "warm_library_next_release"):
                 if result[case]["seconds"] > WARM_MAX_SECONDS:
                     raise ValueError(f"{case} image build exceeds {WARM_MAX_SECONDS} seconds")

@@ -10,7 +10,7 @@
     "cargo_root": "cma",
     "broad_copy": "cargo-production",
     "component": "api",
-    "dockerfile_sha256": "3f7f85ea331257842b37b58639e947bebb6f53288c8fed42db774c1446672a5a",
+    "dockerfile_sha256": "3b5d1669ac1c5f87d8367c67708c47eef23c2934669b4dd8493bb308edb2237a",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",
@@ -35,7 +35,7 @@
     "cargo_root": "cmaeg",
     "broad_copy": "cargo-production",
     "component": "cmaeg",
-    "dockerfile_sha256": "e7a0c464ba504a8c88851be3d95ac711cfd31e834a6586b42a71fd15205e4d1f",
+    "dockerfile_sha256": "8f11ba627f98d2306a8fd98cb389cf260395d167fafc90cef56dd6ce07915dce",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",

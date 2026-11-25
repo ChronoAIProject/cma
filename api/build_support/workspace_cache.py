@@ -26,10 +26,10 @@ RELEASE_AUDITS = {
     "cma": (("cma", "cma-allocator-qualification", "cma-am-auth",
              "cma-am-mongo-primitives", "cma-am-reporting", "cma-qualification",
              "cma-service-auth", "layer1-public", "layer2-core", "layer3-adapter"),
-            "5c78148ce2ae527cc12d66c5e09ce9694e8c53d33da1eef1be6e75cc45a48bee", "b277864d8fac0c771e1da327f8840556b6c305a076d7fef59ff0f2cc64cf72bd"),
+            "6864683f9551e21bd83b37bd6ca6f5743ad241fc9f7d943cb73ced3f6a66d431", "6e82f86855aad259a734330c9bd4c0fd31039e4658fff68804ef9e13c3c4375d"),
     "cmaeg": (("cma-allocator-qualification", "cma-service-auth", "cmaeg", "cmaeg-core",
                "cmaeg-engine", "cmaeg-execution", "cmaeg-http"),
-              "790fb6d60b917a3100fa6a411f40677b7781d089283370026abfb634172cb6af", "41675341237c59c2ff996d93f1b0fbf82ee69290587ede2c732c37efd458fabf"),
+              "4ef986577e13ba18f60251bcb187f00db0109de3c21a85d261dd79972d909ea2", "5595082792acdcbda9f5987ec4a1749acab79cfbc350076124aee316b0f2cd78"),
 }
 COMPILER_ENV = (
     "AR", "CC", "CFLAGS", "CXX", "CXXFLAGS", "LDFLAGS", "RUSTC", "RUSTFLAGS",
@@ -164,35 +164,46 @@ def audited_reuse(prior, files, compiler, affected, changed):
     service = f"crates/{binary}/src/"
     entrypoint = service + "main.rs"
     rustc = compiler["rustc"].splitlines()
+    isolated = compiler["release_stamp_isolated"]
+    environment = dict(compiler["environment"])
+    if isolated:
+        environment.pop("RUSTC_WRAPPER")
     require(
         "host: x86_64-unknown-linux-musl" in rustc
         and "commit-hash: 31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd" in rustc
         and compiler["cargo"].strip() == "cargo 1.96.1 (356927216 2026-06-26)"
-        and compiler["environment"] == {"CARGO_INCREMENTAL": hashlib.sha256(b"1").hexdigest()}
+        and environment == {"CARGO_INCREMENTAL": hashlib.sha256(b"1").hexdigest()}
         and entrypoint in files and prior["files"][entrypoint][0] == files[entrypoint][0]
         and set(affected) <= {binary}
         and all(path.startswith(service) and path.endswith(".rs") for path in changed),
         "unqualified workspace input change",
     )
     previous = prior["files"]
-    if all(audit_digest(snapshot, packages, excluded=lambda path: path == entrypoint)
-           == approved_entrypoint for snapshot in (previous, files)):
-        return True
-    # The reviewed dependency graph cannot read service Rust files or release
-    # stamps in its compile-time code. An edited service can introduce such
-    # reads itself, so rebuild its own targets on every changed release until
-    # both source snapshots qualify for reuse of the service library.
-    is_service_rust = lambda path: path.startswith(service) and path.endswith(".rs")
-    require(all(audit_digest(snapshot, packages, excluded=is_service_rust)
+
+    def audited_service(snapshot):
+        return audit_digest(snapshot, packages, excluded=lambda path: path == entrypoint) == approved_entrypoint
+
+    previous_service = audited_service(previous)
+    if previous_service and audited_service(files):
+        return True, False
+
+    def service_rust(path):
+        return path.startswith(service) and path.endswith(".rs")
+
+    require(all(audit_digest(snapshot, packages, excluded=service_rust)
                 == approved_dependencies for snapshot in (previous, files)),
             "unqualified workspace input change")
-    return False
+    # With the stamp isolated, a same-source release cannot change a library
+    # compiler input. A library edit can keep incremental state from a
+    # reviewed service whose opaque compile-time reads were already audited.
+    return isolated and not changed, isolated and previous_service
 
 
-def compiler_inputs(binary, files):
+def compiler_inputs(binary, files, *, release_stamp_isolated=False):
     return {
         "format": FORMAT,
         "binary": binary,
+        "release_stamp_isolated": release_stamp_isolated,
         "rustc": tool_output("rustc", "-vV"),
         "cargo": tool_output("cargo", "-V"),
         "native": sorted(tool_output("apk", "info", "-v").splitlines()) if shutil.which("apk") else [],
@@ -242,7 +253,9 @@ def prepare(root, target, binary, plan):
         files = inventory(root, skip=(target.name,))
         directories, reverse = workspace(root, cargo_metadata(root), files)
         require(binary in directories.values(), "binary not in workspace")
-        compiler = compiler_inputs(binary, files)
+        wrapper = os.environ.get("RUSTC_WRAPPER")
+        isolated = bool(wrapper and Path(wrapper).resolve() == root / "build_support/release_rustc.py")
+        compiler = compiler_inputs(binary, files, release_stamp_isolated=isolated)
     except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
         print(f"Workspace cache disabled: {error}", flush=True)
         reset(target)
@@ -258,9 +271,10 @@ def prepare(root, target, binary, plan):
         retain = bool(changed or release_changed)
         # Opaque compile-time reads are not in Cargo's package graph.
         # Preserve only the workspace units covered by a release audit.
-        keep_service_library = not retain or audited_reuse(prior, files, compiler, affected, changed)
+        keep_service_library, keep_incremental = (audited_reuse(prior, files, compiler, affected, changed)
+                                                  if retain else (True, False))
         if not keep_service_library:
-            invalidate_service(target, binary)
+            invalidate_service(target, binary, keep_incremental=keep_incremental)
         # git archive stamps the entire checkout with the candidate commit
         # time. Now that equality is proven, its timestamps carry no freshness
         # information. Without normalization Cargo recompiles unchanged units.
@@ -288,10 +302,12 @@ def prepare(root, target, binary, plan):
     plan.write_text(json.dumps({"compiler": compiler, "files": files, "packages": list(directories.values())}))
 
 
-def invalidate_service(target, binary):
+def invalidate_service(target, binary, *, keep_incremental):
     release = target / "release"
     for directory, pattern in ((".fingerprint", PACKAGE_DIR), ("build", PACKAGE_DIR),
                                ("incremental", INCREMENTAL_DIR), ("deps", LIBRARY)):
+        if keep_incremental and directory == "incremental":
+            continue
         for item in (release / directory).glob("*"):
             match = pattern.fullmatch(item.name)
             if match and match[1] in (binary, binary.replace("-", "_")):
