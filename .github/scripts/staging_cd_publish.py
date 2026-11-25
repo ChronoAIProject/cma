@@ -20,7 +20,7 @@ from staging_cd_receipts import canonical, published_receipt, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_reservations import Reservations, SourceAlreadyFinal, validate_reservation
 from staging_cd_publication_diagnostics import PublicationDiagnostics, run_publication
-from staging_cd_versions import DEPLOYABLES, require_publishable_source
+from staging_cd_versions import DEPLOYABLES, require_publishable_release
 from staging_cd_timing import Timings
 from staging_cd_build_cache import SCOPES, BuildCache
 from staging_cd_cache_save import report_layers
@@ -47,7 +47,7 @@ def validated_tasks(tasks, env):
             require(value["component"] == component, "Reservation component differs")
             require(value["run_id"] == int(env["GITHUB_RUN_ID"])
                     and value["run_attempt"] == int(env["GITHUB_RUN_ATTEMPT"]), "Reservation owner differs")
-        require_publishable_source(component, value["source"])
+        require_publishable_release(value["identity"] if mode == "resume" else value)
         validated.append((mode, value))
     return validated
 
@@ -115,6 +115,7 @@ def push(archive, repository, version, digest, auth, registry, runner, reservati
 def publish(archive, identity, directory, registry, credential, actor, *, scanner=None,
             runner=command, qualified=False, smoke=qualify_runtime, source=None, diagnostics=None, timings=None,
             reservation_check, scan_evidence=None, retry=None):
+    require_publishable_release(identity)
     require(reservation_check() is True, "Publication reservation is not current")
     retry = dict(retry or {})
     timings = timings or Timings()

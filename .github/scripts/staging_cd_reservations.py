@@ -10,7 +10,7 @@ from deployables import known_components
 from staging_cd_common import Refusal, matches, require
 from staging_cd_receipts import canonical, final_tag_oid, final_tag_text, validate_receipt
 from staging_cd_versions import (DEPLOYABLES, LEVELS, RETIRED_SOURCES, bump,
-                                 require_publishable_source, version_floor, version_tuple)
+                                 require_publishable_release, require_publishable_source, version_floor, version_tuple)
 
 KNOWN_DEPLOYABLES = known_components()
 FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump", "run_id", "run_attempt"}
@@ -174,7 +174,7 @@ class Reservations:
     def insert(self, value):
         validate_reservation(value)
         require(value["component"] in DEPLOYABLES, "Retired images cannot reserve versions")
-        require_publishable_source(value["component"], value["source"])
+        require_publishable_release(value)
         # An annotated reservation records the owning run, so a later planner
         # can distinguish an active build from a burned failed run. The push
         # itself is ordinary insert-only git push, never force/lease/update.
@@ -213,7 +213,7 @@ class Reservations:
         """
         validate_reservation(value)
         component = value["component"]
-        require_publishable_source(component, value["source"])
+        require_publishable_release(value)
         pending, finals = self.list(component), self.api.tags(component)
         if value not in pending:
             # Pruning removes a reservation only once a final at or after its
@@ -354,7 +354,7 @@ class Reservations:
         validate_receipt(receipt)
         component = receipt["identity"]["component"]
         require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
-        require_publishable_source(component, receipt["source"])
+        require_publishable_release(receipt["identity"])
         self.mark("registry_verify")
         require(verify_digest(receipt["repository"], receipt["digest"]) is True,
                 "Final version requires the verified published digest")

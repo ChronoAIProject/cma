@@ -13,7 +13,7 @@ import staging_cd_build_tests
 from staging_cd_common import Refusal
 from image_scanner_policy import MANIFEST_SHA256
 from staging_cd_receipts import annotation, parse_annotation, published_receipt
-from staging_cd_publish import validated_tasks
+from staging_cd_publish import publish, validated_tasks
 from staging_cd_history import DevelopHistory
 from staging_cd_allocation_snapshot import AllocationSnapshot
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt, fixture_tag
@@ -78,6 +78,17 @@ class RetirementTests(unittest.TestCase):
     def test_retired_runtime_source_is_readable_but_never_enters_release_writers(self):
         source = "730c1bfcb804e86531e838f84bd2133013a6f4a2"
         receipt = fixture_receipt(component="runtime", source=source)
+        self.assert_release_writers_refuse(receipt, "Retired source cannot be published")
+        with self.assertRaisesRegex(Refusal, "Retired source cannot be published"):
+            next_reservation("runtime", source, "b" * 40, 42, "patch", 1, 1, [], [])
+        with self.assertRaisesRegex(Refusal, "Retired source cannot be published"):
+            plan_version("runtime", "patch", [], source)
+
+    def test_burned_runtime_version_refuses_a_different_source(self):
+        receipt = fixture_receipt(component="runtime", source="e" * 40)
+        self.assert_release_writers_refuse(receipt, "Burned release version cannot be reused")
+
+    def assert_release_writers_refuse(self, receipt, reason):
         identity = receipt["identity"]
         reservation = {key: value for key, value in identity.items() if key in FIELDS}
         reservation["schema"] = "cma-version-reservation-v1"
@@ -90,20 +101,25 @@ class RetirementTests(unittest.TestCase):
         allocation.loaded = True
         env = {"CD_COMPONENT": "runtime", "GITHUB_RUN_ID": str(identity["run_id"]),
                "GITHUB_RUN_ATTEMPT": str(identity["run_attempt"])}
-        operations = (
-            lambda: next_reservation("runtime", source, identity["tree"], 42, "patch", 1, 1, [], []),
-            lambda: plan_version("runtime", "patch", [], source),
-            lambda: publisher.insert(reservation),
-            lambda: allocation.insert(reservation),
-            lambda: validated_tasks([{"component": "runtime", "mode": "publish", "reservation": reservation}], env),
-            lambda: validated_tasks([{"component": "runtime", "mode": "resume", "receipt": receipt}], env),
-            lambda: publisher.require_current(reservation, build_started=True),
-            lambda: publisher.finalize(receipt, verify),
-        )
-        for operation in operations:
-            with self.subTest(line=operation.__code__.co_firstlineno), \
-                    self.assertRaisesRegex(Refusal, "Retired source cannot be published"):
+        registry, reservation_check = Mock(), Mock(return_value=True)
+        operations = {
+            "legacy insert": lambda: publisher.insert(reservation),
+            "atomic insert": lambda: allocation.insert(reservation),
+            "publish task": lambda: validated_tasks(
+                [{"component": "runtime", "mode": "publish", "reservation": reservation}], env),
+            "resume task": lambda: validated_tasks(
+                [{"component": "runtime", "mode": "resume", "receipt": receipt}], env),
+            "pre-build authority": lambda: publisher.require_current(reservation, build_started=False),
+            "started-build authority": lambda: publisher.require_current(reservation, build_started=True),
+            "publish": lambda: publish(None, identity, Path("."), registry, "fixture", "actor",
+                                       reservation_check=reservation_check),
+            "finalize": lambda: publisher.finalize(receipt, verify),
+        }
+        for action, operation in operations.items():
+            with self.subTest(action=action), self.assertRaisesRegex(Refusal, reason):
                 operation()
+        self.assertEqual(registry.mock_calls, [])
+        reservation_check.assert_not_called()
         self.assertEqual(allocation.planned, [])
         self.assertEqual(api.mock_calls, [])
         runner.assert_not_called()

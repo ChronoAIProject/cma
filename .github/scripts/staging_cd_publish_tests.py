@@ -122,8 +122,10 @@ class PublicationTests(unittest.TestCase):
 
     def test_matching_publish_and_resume_tasks_keep_their_validated_components(self):
         for component in ("web", "am", "eg", "runtime", "runtime-omarchy"):
-            receipt = (fixture_runtime_receipt(component) if component.startswith("runtime")
-                       else fixture_receipt(component=component))
+            if component.startswith("runtime"):
+                receipt = fixture_runtime_receipt(component, previous="0.10.1", version="0.10.2")
+            else:
+                receipt = fixture_receipt(component=component)
             reservation = {k: v for k, v in receipt["identity"].items() if k != "build"}
             reservation["schema"] = "cma-version-reservation-v1"
             tasks = [{"component": component, "mode": "publish", "reservation": reservation},

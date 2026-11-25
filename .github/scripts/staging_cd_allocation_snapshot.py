@@ -9,7 +9,7 @@ from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical, parse_annotation
 from staging_cd_reservations import Reservations, claim_ref, pending_name, validate_reservation
-from staging_cd_versions import DEPLOYABLES, require_publishable_source, version_tuple
+from staging_cd_versions import DEPLOYABLES, require_publishable_release, version_tuple
 
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
 # GitHub's own answer to a push, which a repeat meets again: a tag ruleset or
@@ -168,7 +168,7 @@ class AllocationSnapshot(Reservations):
         require(self.loaded and not self.commit_started, "Allocation planning is closed")
         validate_reservation(value)
         require(value["component"] in DEPLOYABLES, "Unknown reservation component")
-        require_publishable_source(value["component"], value["source"])
+        require_publishable_release(value)
         # The plan is computed from this complete inventory, so a version it
         # already holds is a planner defect, never a race with another run.
         require(pending_name(value) not in {pending_name(item) for item in self.pending + self.planned},

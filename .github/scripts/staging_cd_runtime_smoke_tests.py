@@ -239,7 +239,7 @@ class RuntimeSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
             root = Path(directory)
             output = root / "public" / "receipts.json"
-            identity = fixture_identity(component="runtime")
+            identity = fixture_identity(component="runtime", previous="0.10.1", version="0.10.2")
             reservation = dict(identity, schema="cma-version-reservation-v1")
             reservation.pop("build")
             task = {"component": "runtime", "mode": "publish", "reservation": reservation}
@@ -276,7 +276,8 @@ class RuntimeSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             archive, digest, registry, scanner, run = PublicationTests().fixture(directory)
             with patch("staging_cd_publish.inspect", return_value=digest), self.assertRaises(Refusal):
-                publish(archive, fixture_identity(component="runtime"), Path(directory), registry,
+                publish(archive, fixture_identity(component="runtime", previous="0.10.1", version="0.10.2"),
+                        Path(directory), registry,
                         "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=run,
                         smoke=Mock(side_effect=Refusal("canary_failed")))
             run.assert_not_called()
@@ -288,7 +289,8 @@ class RuntimeSmokeTests(unittest.TestCase):
                 return dict(fixture_runtime_receipt()["runtime_smoke"], digest=image_digest,
                             archive=scanned, source=identity["source"])
             with patch("staging_cd_publish.inspect", return_value=digest):
-                receipt = publish(archive, fixture_identity(component="runtime"), Path(directory), registry,
+                receipt = publish(archive, fixture_identity(component="runtime", previous="0.10.1", version="0.10.2"),
+                        Path(directory), registry,
                                   "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=run, smoke=smoke,
                                   source=fixture_source(Path(directory) / "source"))
             self.assertEqual(receipt["runtime_smoke"]["archive"], receipt["archive"])
