@@ -182,10 +182,14 @@ pub(super) async fn cleanup_custodied(
             unconfirmed: mutation_started && !terminal_refusal,
         });
     }
+    let unsettled = |error| CleanupError {
+        error,
+        unconfirmed: mutation_started,
+    };
     for _ in 0..3 {
-        let (mut current, version) = store(state).connection(id).await?;
+        let (mut current, version) = store(state).connection(id).await.map_err(unsettled)?;
         if !holds(&current, &lease) || !current.webhook_retiring {
-            return Err(Error::Conflict.into());
+            return Err(unsettled(Error::Conflict));
         }
         current.webhook_lease = None;
         if release {
@@ -196,10 +200,10 @@ pub(super) async fn cleanup_custodied(
         match store(state).save_connection(&current, Some(version)).await {
             Ok(_) => return Ok(()),
             Err(Error::Conflict) => continue,
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(unsettled(error)),
         }
     }
-    Err(Error::Conflict.into())
+    Err(unsettled(Error::Conflict))
 }
 
 pub(super) fn failure(error: crate::telegram::WebhookError) -> Error {
@@ -221,15 +225,6 @@ impl CleanupError {
         Self {
             error,
             unconfirmed: false,
-        }
-    }
-}
-
-impl From<Error> for CleanupError {
-    fn from(error: Error) -> Self {
-        Self {
-            error,
-            unconfirmed: true,
         }
     }
 }

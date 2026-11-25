@@ -1,5 +1,7 @@
 //! Expiry cannot cancel a request already accepted by Telegram.
 use super::*;
+#[path = "legacy_retirement_custody_tests.rs"]
+mod legacy_retirement;
 
 #[tokio::test]
 async fn expired_unknown_activation_keeps_pointers_and_refuses_successor() {
