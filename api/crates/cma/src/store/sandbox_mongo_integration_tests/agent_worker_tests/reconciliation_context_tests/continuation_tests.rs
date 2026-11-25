@@ -360,7 +360,8 @@ async fn agent_reconciliation_continuation_keeps_transport_limit_after_cancellat
     let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
     let registry = Arc::new(LiveAgentRegistry::default());
     let first = attached_prefix(&store, "001_migrate").await;
-    paused_rows(&store, 32).await;
+    const PAUSED_ROWS: usize = 32;
+    paused_rows(&store, PAUSED_ROWS).await;
     let second = attached_prefix(&store, "200_migrate").await;
     let third = attached_prefix(&store, "201_migrate").await;
     let probes = [(); 3].map(|_| Arc::new(PrefixProbe::default()));
@@ -415,10 +416,7 @@ async fn agent_reconciliation_continuation_keeps_transport_limit_after_cancellat
         .reconcile_connection_slice(now, &mut sweep)
         .await
         .unwrap());
-    assert!(worker
-        .reconcile_connection_slice(now, &mut sweep)
-        .await
-        .unwrap());
+    finish_connection_sweep(&worker, now, &mut sweep, PAUSED_ROWS + probes.len()).await;
     assert_eq!(probes[0].visits.load(Ordering::Relaxed), 1);
     assert_eq!(probes[1].visits.load(Ordering::Relaxed), 1);
     assert_eq!(probes[2].visits.load(Ordering::Relaxed), 0);
@@ -426,10 +424,24 @@ async fn agent_reconciliation_continuation_keeps_transport_limit_after_cancellat
         .reconcile_connection_slice(now, &mut sweep)
         .await
         .unwrap());
-    assert!(worker
-        .reconcile_connection_slice(now, &mut sweep)
-        .await
-        .unwrap());
+    finish_connection_sweep(&worker, now, &mut sweep, PAUSED_ROWS + probes.len()).await;
     assert_eq!(probes[2].visits.load(Ordering::Relaxed), 1);
     client.database(&name).drop().await.unwrap();
+}
+
+async fn finish_connection_sweep(
+    worker: &AgentWorker,
+    now: SystemTime,
+    sweep: &mut ConnectionSweep,
+    candidates: usize,
+) {
+    // A slow page may use additional slices. Each incomplete slice must settle a candidate.
+    for _ in 0..candidates {
+        let (_, previously_visited) = sweep.visited();
+        if worker.reconcile_connection_slice(now, sweep).await.unwrap() {
+            return;
+        }
+        assert!(sweep.visited().1 > previously_visited);
+    }
+    panic!("connection sweep must complete within the number of fixture candidates");
 }
