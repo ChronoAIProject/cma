@@ -308,12 +308,12 @@ impl NativePoolControl for Provider {
     async fn drain_pool(
         &self,
         binding: &NativePoolBinding,
-        retained_homes: &[HomeVolumeAttachment],
+        evidence: &layer3_adapter::agent_sandbox::NativePoolDrain,
     ) -> Result<()> {
         let mut inventory = self.inventory.lock().unwrap();
         inventory.effects.push(Effect::Drain(
             binding.config_sha256.clone(),
-            retained_homes.to_vec(),
+            evidence.homes.clone(),
         ));
         let pool = inventory.exact_mut(binding)?;
         assert!(

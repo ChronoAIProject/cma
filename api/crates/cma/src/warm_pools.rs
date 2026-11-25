@@ -8,7 +8,10 @@ use layer1_public::rest::admin::warm_pools::{
 };
 use layer2_core::{Caller, Capability};
 use layer3_adapter::{
-    agent_sandbox::{NativePoolBinding, NativePoolConfiguration, NativePoolSpec, NativePoolStatus},
+    agent_sandbox::{
+        NativePoolBinding, NativePoolConfiguration, NativePoolDrain, NativePoolSpec,
+        NativePoolStatus,
+    },
     HomeVolumePolicy, RuntimeImage, SandboxAdapter,
 };
 use serde::{Deserialize, Serialize};
@@ -92,7 +95,14 @@ pub(crate) trait PoolTargetStore: Send + Sync {
         &self,
         _target: &PoolTarget,
         _image: &str,
-    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
+    async fn retirement_authorized(
+        &self,
+        _target: &PoolTarget,
+        _image: &str,
+    ) -> Result<bool, WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
     async fn begin_retirement(&self, _target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {

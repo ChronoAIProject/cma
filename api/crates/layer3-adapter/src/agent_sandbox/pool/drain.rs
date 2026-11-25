@@ -1,7 +1,7 @@
 //! Drain only spare capacity; retained runtime upgrades govern later deletion.
 use super::{
     api_error, cleanup_inventory::complete, model, rejected, retirement::RETIRING,
-    AgentSandboxPools, NativePoolBinding, Result,
+    AgentSandboxPools, NativePoolBinding, NativePoolClaim, Result,
 };
 use crate::HomeVolumeAttachment;
 use kube::{api::DynamicObject, Resource, ResourceExt};
@@ -14,11 +14,12 @@ impl AgentSandboxPools {
         &self,
         binding: &NativePoolBinding,
         homes: &[HomeVolumeAttachment],
+        adopted_claims: &[NativePoolClaim],
     ) -> Result<()> {
         let (_, pool) = self.retirement_definitions(binding).await?;
         let Some(pool) = pool else { return Ok(()) };
         marked(&pool)?;
-        self.drain_inventory(binding, homes).await?;
+        self.drain_inventory(binding, homes, adopted_claims).await?;
         // Fence the actual target write with fresh original identities and the
         // marker. Never create a definition after a lost retirement response.
         let (template, pool) = self.retirement_definitions(binding).await?;
@@ -35,8 +36,9 @@ impl AgentSandboxPools {
         &self,
         binding: &NativePoolBinding,
         homes: &[HomeVolumeAttachment],
+        adopted_claims: &[NativePoolClaim],
     ) -> Result<()> {
-        if homes.len() > 10_000 {
+        if homes.len().saturating_add(adopted_claims.len()) > 10_000 {
             return Err(rejected("native drain homes exceed their bound"));
         }
         let mut identities = BTreeSet::new();
@@ -91,7 +93,7 @@ impl AgentSandboxPools {
                         ));
                     }
                     self.validate_native_volume(volume, origin)?;
-                    retained.push(origin);
+                    retained.push(&origin.claim);
                     true
                 }
                 (None, None, None) => {
@@ -149,6 +151,28 @@ impl AgentSandboxPools {
                 }
             }
         }
+        let mut owned_members = retained
+            .iter()
+            .filter_map(|claim| claim.sandbox_name.clone())
+            .collect::<BTreeSet<_>>();
+        for expected in adopted_claims {
+            let name = expected
+                .sandbox_name
+                .as_deref()
+                .ok_or_else(|| rejected("native drain Claim has no persisted assignment"))?;
+            let member = members
+                .iter()
+                .find(|member| member.name_any() == name)
+                .ok_or_else(|| rejected("native drain Claim member is missing"))?;
+            let claim = original(&claims, &expected.name, &expected.uid)?
+                .ok_or_else(|| rejected("native drain original Claim is missing"))?;
+            self.prove_drain_assignment(binding, expected, claim, member, &members)?;
+            if !owned_members.insert(name.to_owned()) {
+                return Err(rejected("native drain repeats a Claim member"));
+            }
+            retained.push(expected);
+        }
+        super::spare_inventory::prove(binding, &owned_members, &claims, &members, &pods, &volumes)?;
         self.verify_retained_claim_inventory(binding, &retained, &claims)
     }
 }

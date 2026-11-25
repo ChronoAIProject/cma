@@ -4,7 +4,7 @@ use super::{
 use crate::warm_pools::OperatorReplicas;
 use async_trait::async_trait;
 use layer1_public::rest::admin::warm_pools::{ResizeWarmPoolBody, WarmPoolError};
-use layer3_adapter::HomeVolumeAttachment;
+use layer3_adapter::{agent_sandbox::NativePoolDrain, HomeVolumeAttachment};
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
@@ -81,8 +81,16 @@ impl PoolTargetStore for RetirementStore {
         &self,
         target: &PoolTarget,
         image: &str,
-    ) -> Result<Option<Vec<HomeVolumeAttachment>>, WarmPoolError> {
+    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
         self.store.retirement_drain_homes(target, image).await
+    }
+
+    async fn retirement_authorized(
+        &self,
+        target: &PoolTarget,
+        image: &str,
+    ) -> Result<bool, WarmPoolError> {
+        self.store.retirement_authorized(target, image).await
     }
 
     async fn begin_retirement(&self, target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {

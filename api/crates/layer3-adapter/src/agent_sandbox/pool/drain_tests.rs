@@ -52,7 +52,7 @@ fn claim_path(home: &HomeVolumeAttachment) -> String {
 async fn drain(fixture: &Fixture, home: &HomeVolumeAttachment) -> Result<()> {
     fixture
         .client
-        .drain_pool(binding(home), std::slice::from_ref(home))
+        .drain_pool(binding(home), std::slice::from_ref(home), &[])
         .await
 }
 
@@ -159,7 +159,7 @@ async fn drain_rechecks_original_names_after_an_absent_inventory() {
     let pools = effects.pools(&fixture);
     let task = tokio::spawn(async move {
         pools
-            .drain_pool(binding(&home), std::slice::from_ref(&home))
+            .drain_pool(binding(&home), std::slice::from_ref(&home), &[])
             .await
     });
     gate.wait().await;
@@ -213,7 +213,7 @@ async fn drain_rejects_partial_absence_replacement_and_duplicate_home_without_wr
         assert!(
             fixture
                 .client
-                .drain_pool(binding(&home), &homes)
+                .drain_pool(binding(&home), &homes, &[])
                 .await
                 .is_err(),
             "{change}"
@@ -323,7 +323,7 @@ async fn drain_rechecks_late_claim_and_marker_changes_before_any_target_patch() 
         let owned = home.clone();
         let task = tokio::spawn(async move {
             pools
-                .drain_pool(binding(&owned), std::slice::from_ref(&owned))
+                .drain_pool(binding(&owned), std::slice::from_ref(&owned), &[])
                 .await
         });
         gate.wait().await;
@@ -399,5 +399,93 @@ async fn drain_retries_cas_conflicts_and_lost_replies_without_recreating_definit
             .unwrap()
             .rows
             .contains_key(&format!("{}/{resource}", prefix())));
+    }
+}
+
+#[tokio::test]
+async fn drains_two_spares_with_an_observed_claim_before_home_adoption() {
+    for change in ["none", "pending", "stale", "ambiguous", "incomplete"] {
+        let fixture = Fixture::new().await;
+        let claim = home_tests::assigned(&fixture).await;
+        let pool = &claim.request.pool;
+        let pool_resource = format!("sandboxwarmpools/{}", pool.name);
+        let pool_path = format!("{}/{pool_resource}", prefix());
+        fixture.client.begin_retirement(pool).await.unwrap();
+        {
+            let mut state = fixture.state.lock().unwrap();
+            let member = state.rows.get_mut(MEMBER).unwrap();
+            member["spec"]["podTemplate"]["metadata"]["labels"]["agents.x-k8s.io/claim-uid"] =
+                json!(claim.uid);
+            member["status"]["conditions"][0]["observedGeneration"] =
+                json!(if change == "stale" { 0 } else { 1 });
+            state.rows.insert(
+                "/api/v1/namespaces/cma-test/pods/retained-pod".into(),
+                pod(),
+            );
+            for suffix in ["one", "two"] {
+                let name = format!("{}-{suffix}", pool.name);
+                let path = MEMBER.replace("warm-member", &name);
+                let owner_uid = if change == "ambiguous" {
+                    "another-pool"
+                } else {
+                    &pool.uid
+                };
+                state.rows.insert(path, json!({
+                    "apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox",
+                    "metadata":{"name":name,"namespace":"cma-test","uid":format!("spare-{suffix}"),
+                        "resourceVersion":"210","labels":{
+                            "agents.x-k8s.io/warm-pool-sandbox":super::super::pods::name_hash(&pool.name)
+                        },"ownerReferences":[{"apiVersion":API_VERSION,"kind":"SandboxWarmPool",
+                            "name":pool.name,"uid":owner_uid,"controller":true}]}
+                }));
+            }
+            state.calls.clear();
+        }
+        if change == "pending" {
+            fixture.edit("sandboxclaims", &claim.name, |row| {
+                row["metadata"]["annotations"]["agents.x-k8s.io/sandbox-name"] =
+                    json!(format!("{}-one", pool.name));
+            });
+        }
+        if change == "incomplete" {
+            fixture.state.lock().unwrap().list_replies.push_back((
+                200, json!({"apiVersion":API_VERSION,"kind":"SandboxClaimList","metadata":{},"items":[]}),
+            ));
+        }
+        let before = fixture.state.lock().unwrap().rows.clone();
+        if change == "none" {
+            fixture.lost("PATCH", &pool_resource);
+        }
+        let evidence = std::slice::from_ref(&claim);
+        let result = fixture.client.drain_pool(pool, &[], evidence).await;
+        if change != "none" {
+            assert!(result.is_err(), "{change}");
+            no_writes(&fixture);
+            assert_eq!(fixture.state.lock().unwrap().rows, before);
+            continue;
+        }
+        result.unwrap();
+        fixture
+            .client
+            .drain_pool(pool, &[], evidence)
+            .await
+            .unwrap();
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.rows[&pool_path]["spec"]["replicas"], 0);
+        for (path, row) in before {
+            if path != pool_path {
+                assert_eq!(state.rows[&path], row, "{path}");
+            }
+        }
+        assert_eq!(
+            state
+                .calls
+                .iter()
+                .filter(|(call, _)| !call.starts_with("GET "))
+                .count(),
+            1
+        );
+        drop(state);
+        assert!(fixture.client.retire_pool(pool, &[]).await.is_err());
     }
 }
