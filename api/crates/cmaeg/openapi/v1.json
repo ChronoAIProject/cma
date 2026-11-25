@@ -5007,6 +5007,32 @@
         ],
         "type": "string"
       },
+      "LegacyRetirement": {
+        "properties": {
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/LegacyRetirementState"
+          }
+        },
+        "required": [
+          "expected_version",
+          "state"
+        ],
+        "type": "object"
+      },
+      "LegacyRetirementState": {
+        "enum": [
+          "available",
+          "blocked_missing_credential",
+          "pending",
+          "cleanup_unconfirmed"
+        ],
+        "type": "string"
+      },
       "ManageThreadRequest": {
         "additionalProperties": false,
         "properties": {
@@ -5072,6 +5098,16 @@
               },
               "provider": {
                 "$ref": "#/components/schemas/ManagedProvider"
+              },
+              "retirement": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LegacyRetirement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "state": {
                 "enum": [
@@ -11118,6 +11154,64 @@
       }
     },
     "/channel-records/{record_id}/management": {
+      "delete": {
+        "operationId": "retireLegacyChannelRecord",
+        "parameters": [
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      },
       "get": {
         "operationId": "getChannelRecordManagement",
         "parameters": [

@@ -299,7 +299,7 @@ async fn apply_admission(
         let revival = next
             .record_creation_admission_with_managed_runtime(
                 cause,
-                store.managed_agent_release().as_deref(),
+                store.managed_agent_release_for(&sandbox).as_deref(),
                 admission.event_at.clone(),
             )
             .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;

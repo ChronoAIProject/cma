@@ -1,5 +1,7 @@
 //! Expiry cannot cancel a request already accepted by Telegram.
 use super::*;
+#[path = "legacy_retirement_custody_tests.rs"]
+mod legacy_retirement;
 
 #[tokio::test]
 async fn expired_unknown_activation_keeps_pointers_and_refuses_successor() {
@@ -161,4 +163,46 @@ async fn local_presend_refusal_does_not_retain_remote_custody() {
     );
     assert!(app.stored().await.0.webhook_lease.is_none());
     assert!(!app.methods().contains(&"setWebhook".into()));
+}
+
+#[tokio::test]
+async fn legacy_disconnect_retries_exact_record_after_a_competing_webhook_lease() {
+    let app = Native::new().await;
+    let (definition, channel_id) = app.reserve_child().await;
+    app.peer.pause_webhook.store(true, Ordering::SeqCst);
+    let state = app.service.management.clone();
+    let activating = definition.clone();
+    let active =
+        tokio::spawn(async move { binding::activate(&state, &activating, &channel_id).await });
+    tokio::time::timeout(Duration::from_secs(2), app.peer.webhook_started.notified())
+        .await
+        .unwrap();
+
+    let Err(conflict) = binding::disconnect_owned(&app.service.management, &definition, None).await
+    else {
+        panic!("a held webhook lease must defer a legacy disconnect");
+    };
+    assert!(!conflict.unconfirmed);
+    assert!(!app.methods().contains(&"deleteWebhook".into()));
+
+    app.peer.pause_webhook.store(false, Ordering::SeqCst);
+    app.peer.webhook_resume.notify_one();
+    let _ = tokio::time::timeout(Duration::from_secs(2), active)
+        .await
+        .unwrap()
+        .unwrap()
+        .ok();
+    assert!(app.stored().await.0.webhook_lease.is_none());
+    assert!(
+        binding::disconnect_owned(&app.service.management, &definition, None)
+            .await
+            .is_ok()
+    );
+    assert_eq!(
+        app.methods()
+            .iter()
+            .filter(|method| *method == "deleteWebhook")
+            .count(),
+        1
+    );
 }

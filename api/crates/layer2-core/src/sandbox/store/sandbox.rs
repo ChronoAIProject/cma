@@ -124,6 +124,17 @@ pub trait SandboxStore: Send + Sync {
         None
     }
 
+    fn desktop_runtime_target_is_qualified(&self, _target: &str) -> bool {
+        false
+    }
+
+    fn managed_runtime_target<'a>(&self, sandbox: &Sandbox, target: &'a str) -> Option<&'a str> {
+        (!target.is_empty()
+            && (!sandbox.has_managed_desktop_image()
+                || self.desktop_runtime_target_is_qualified(target)))
+        .then_some(target)
+    }
+
     fn capture_released_runtime(&self) -> Option<layer3_adapter::ReleasedRuntime> {
         self.managed_runtime_version()
             .map(|agent| layer3_adapter::ReleasedRuntime {
