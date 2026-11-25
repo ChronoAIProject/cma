@@ -209,17 +209,30 @@ async fn startup_native_changed_binding_is_deferred_without_adopting_new_targets
 
 #[tokio::test]
 async fn missing_native_home_defers_only_a_superseded_binding() {
-    assert_missing_home_respects_durable_binding(false).await;
+    assert_missing_home_respects_durable_binding(false, false).await;
 }
 
 #[tokio::test]
 async fn home_disappearance_during_status_defers_only_a_superseded_binding() {
-    assert_missing_home_respects_durable_binding(true).await;
+    assert_missing_home_respects_durable_binding(true, false).await;
 }
 
-async fn assert_missing_home_respects_durable_binding(status_in_flight: bool) {
+#[tokio::test]
+async fn startup_native_home_refusal_keeps_the_binding_held_when_enabled() {
+    for status_in_flight in [false, true] {
+        assert_missing_home_respects_durable_binding(status_in_flight, true).await;
+    }
+}
+
+async fn assert_missing_home_respects_durable_binding(
+    status_in_flight: bool,
+    native_home_hold_enabled: bool,
+) {
     for binding_changed in [false, true] {
-        let fixture = NativeStartup::new(false, false).await;
+        let mut fixture = NativeStartup::new(false, false).await;
+        fixture.reconciler = fixture
+            .reconciler
+            .with_startup_native_home_hold(native_home_hold_enabled);
         fixture
             .control
             .hold_next_home_check
@@ -265,9 +278,10 @@ async fn assert_missing_home_respects_durable_binding(status_in_flight: bool) {
         let result = tokio::time::timeout(Duration::from_secs(10), startup)
             .await
             .unwrap();
-        if binding_changed {
+        if binding_changed || native_home_hold_enabled {
             result.unwrap();
             assert!(fixture.reconciler.binding_is_held(&current.id));
+            assert_eq!(fixture.control.other_settled.load(Ordering::SeqCst), 8);
         } else {
             let error = result.unwrap_err();
             assert!(

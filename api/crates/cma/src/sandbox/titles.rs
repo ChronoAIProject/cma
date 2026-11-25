@@ -215,7 +215,7 @@ impl HttpAgentTitleGenerator {
             || response
                 .headers()
                 .get(CONTENT_TYPE)
-                .is_none_or(|value| value.as_bytes() != b"application/json")
+                .is_none_or(|value| !is_utf8_json(value))
             || response.headers().contains_key(CONTENT_ENCODING)
             || headers_contain(response.headers(), request.bearer().as_bytes())
             || self
@@ -342,6 +342,23 @@ fn title_endpoint(base_url: &str) -> Option<Url> {
 fn nonempty(value: &str) -> Option<&str> {
     let value = value.trim();
     (!value.is_empty()).then_some(value)
+}
+
+fn is_utf8_json(value: &HeaderValue) -> bool {
+    let Ok(value) = value.to_str() else {
+        return false;
+    };
+    let Some((media_type, parameter)) = value.split_once(';') else {
+        return value.trim_ascii().eq_ignore_ascii_case("application/json");
+    };
+    let Some((name, charset)) = parameter.trim_ascii().split_once('=') else {
+        return false;
+    };
+    media_type
+        .trim_ascii()
+        .eq_ignore_ascii_case("application/json")
+        && name.eq_ignore_ascii_case("charset")
+        && (charset.eq_ignore_ascii_case("utf-8") || charset.eq_ignore_ascii_case("\"utf-8\""))
 }
 
 fn response_title(body: &[u8]) -> Option<String> {
