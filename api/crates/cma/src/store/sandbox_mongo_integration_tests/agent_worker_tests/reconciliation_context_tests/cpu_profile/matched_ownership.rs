@@ -125,14 +125,13 @@ async fn matched_live_ownership_profile() {
         for agent in &agents[..33] {
             let mut attached = false;
             for (index, manager) in managers.iter().enumerate() {
-                if manager
-                    .coordinator
-                    .acquire(&agent.id)
-                    .await
-                    .unwrap()
-                    .is_some()
-                {
-                    streams.push(manager.attach(agent));
+                if let Some(authority) = manager.coordinator.acquire(&agent.id).await.unwrap() {
+                    streams.push(
+                        authority
+                            .run(async { manager.attach(agent) })
+                            .await
+                            .unwrap(),
+                    );
                     custody[index] += 1;
                     attached = true;
                     break;
