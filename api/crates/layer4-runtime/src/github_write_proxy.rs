@@ -52,8 +52,8 @@ pub(super) fn set_deadline(request: &mut reqwest::Request) {
     let value = request
         .headers_mut()
         .entry(APPROVAL_WAIT)
-        // Use NyxID's connected wait. A pending async approval can return 202,
-        // which GitHub CLI clients can interpret as a completed write.
+        // Keep approvals inside the connected request so the caller receives
+        // the provider result or the approval refusal before the local deadline.
         .or_insert(HeaderValue::from_static("80"));
     let seconds = value
         .to_str()

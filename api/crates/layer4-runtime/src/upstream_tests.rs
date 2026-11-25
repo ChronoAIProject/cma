@@ -1,6 +1,7 @@
 use layer3_adapter::{CredentialFrame, RuntimeCredential};
 
 use super::*;
+use axum::http::HeaderMap;
 
 #[tokio::test]
 async fn model_credit_required_refuses_before_the_upstream_write() {
