@@ -4,6 +4,7 @@
   {"operation":"DELETE /api/v1/agents/{id}/files","positive":"filesystem-directory-delete","negative":"filesystem-delete-foreign","proof":"contract"},
   {"operation":"DELETE /api/v1/agents/{id}/share-links/{share_id}","positive":"typed-link-revoke","negative":"typed-link-revoke-not-owner","proof":"contract"},
   {"operation":"DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","positive":"binding-conversation-delete","negative":"binding-delete-conversation-forbidden","proof":"binding-contract"},
+  {"operation":"DELETE /api/v1/documents/{id}","positive":"document-delete-success","negative":"document-delete-foreign","proof":"probe"},
   {"operation":"DELETE /api/v1/documents/{id}/comments/{comment_id}","positive":"document-uncomment-success","negative":"document-uncomment-foreign","proof":"probe"},
   {"operation":"DELETE /api/v1/documents/{id}/share-links/{link_id}","positive":"document-unlink-success","negative":"document-unlink-foreign","proof":"probe"},
   {"operation":"DELETE /api/v1/documents/{id}/shares/{subject}","positive":"document-revoke-success","negative":"document-revoke-foreign","proof":"probe"},

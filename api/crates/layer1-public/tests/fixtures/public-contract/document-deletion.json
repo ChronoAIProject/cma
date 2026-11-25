@@ -1,0 +1,511 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "document-delete-success",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_owner__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-delete"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "revision": 5,
+          "deleted_at": "2026-10-22T01:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "deleted_at": "/deleted_at"
+      }
+    },
+    {
+      "id": "document-delete-replay",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_owner__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-delete"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "revision": 5,
+          "deleted_at": "2026-10-22T01:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "deleted_at": "/deleted_at"
+      }
+    },
+    {
+      "id": "document-delete-reused-key",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_owner__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-delete"
+        },
+        "body": {
+          "expected_revision": 99
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "Idempotency key identifies another request",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-delete-anonymous",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_anonymous__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-delete"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-delete-forbidden",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_forbidden__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-delete"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-delete-unavailable",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_unavailable__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-delete"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-delete-foreign",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_foreign__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-delete"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-delete-missing-key",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_missing-key__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-delete-invalid-key",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_invalid-key__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "with spaces"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-delete-malformed-json",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_malformed-json__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-delete"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-delete-missing-media-type",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_missing-media-type__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "idempotency-key": "contract-delete"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-delete-capacity",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_capacity__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-delete"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_capacity",
+          "title": "document_capacity",
+          "status": 429,
+          "detail": "Document capacity reached",
+          "code": "document_capacity"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-delete-stale",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_stale__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-delete"
+        },
+        "body": {
+          "expected_revision": 99
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_revision_conflict",
+          "title": "document_revision_conflict",
+          "status": 409,
+          "detail": "Document revision changed",
+          "code": "document_revision_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-delete-disabled",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_deletion-disabled__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-delete"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-delete-owner-erasing",
+      "operation": "DELETE /api/v1/documents/{id}",
+      "scenario": "document_owner-erasing__delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-delete"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/account_deletion_in_progress",
+          "title": "account_deletion_in_progress",
+          "status": 403,
+          "detail": "account deletion is in progress",
+          "code": "account_deletion_in_progress"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
