@@ -10,12 +10,22 @@ use layer2_core::sandbox::store::*;
 use layer2_core::sandbox::*;
 use layer2_core::{AgentId, CoreError, SandboxId, ServiceId, SubjectId, WorkspaceId};
 
-struct CapacityBindings;
+#[derive(Clone, Copy)]
+pub(super) enum TransferOutcome {
+    Reserved,
+    Missing,
+    Conflict,
+    Unavailable,
+}
+
+struct ContractBindings {
+    transfer: TransferOutcome,
+}
 
 macro_rules! unreachable_port {
     ($port:ident { $(fn $method:ident($($arg:ident: $kind:ty),*) -> $result:ty;)* }) => {
         #[async_trait]
-        impl $port for CapacityBindings {
+        impl $port for ContractBindings {
             $(async fn $method(&self, $($arg: $kind),*) -> Result<$result, SandboxStoreError> {
                 let _ = ($($arg,)*);
                 panic!("fresh capacity refusal must precede resource effects and reads")
@@ -44,7 +54,7 @@ unreachable_port!(AgentStore {
 });
 
 #[async_trait]
-impl ResourceAccessStore for CapacityBindings {
+impl ResourceAccessStore for ContractBindings {
     async fn organization_sandboxes(
         &self,
         _: &SubjectId,
@@ -77,7 +87,47 @@ impl ResourceAccessStore for CapacityBindings {
 }
 
 #[async_trait]
-impl BindingStore for CapacityBindings {
+impl BindingStore for ContractBindings {
+    async fn transfer_profile_conversation(
+        &self,
+        request: ProfileTransferRequest,
+        enabled: bool,
+    ) -> Result<ProfileTransferReceipt, BindingError> {
+        assert!(enabled);
+        assert_eq!(request.manager.as_str(), "manager");
+        assert_eq!(request.source_binding_id, "binding-source");
+        assert_eq!(request.destination_binding_id, "binding-successor");
+        assert_eq!(request.conversation_id, "conversation-contract");
+        assert_eq!(request.expected_agent_id.as_str(), "agt_original");
+        assert_eq!(request.expected_generation, 1);
+        assert_eq!(request.expected_destination_generation, 2);
+        assert_eq!(request.expected_incarnation, 0);
+        assert_eq!(request.operation_id, "b".repeat(64));
+        assert_eq!(request.request_digest, "a".repeat(64));
+        assert_eq!(
+            request.owner,
+            ResourceOwner::Person {
+                subject: SubjectId::new("owner")
+            }
+        );
+        match self.transfer {
+            TransferOutcome::Reserved => {}
+            TransferOutcome::Missing => return Err(BindingError::NotFound),
+            TransferOutcome::Conflict => return Err(BindingError::Conflict),
+            TransferOutcome::Unavailable => {
+                return Err(BindingError::Unavailable(
+                    "fixture store unavailable".into(),
+                ))
+            }
+        }
+        Ok(ProfileTransferReceipt {
+            source_conversation_id: request.conversation_id.clone(),
+            destination_generation: request.expected_destination_generation,
+            destination_agent_id: AgentId("agt_successor".into()),
+            destination_worktree_id: layer2_core::WorktreeId("wkt_successor".into()),
+            request,
+        })
+    }
     async fn binding(&self, _: &str) -> Result<Option<ProviderBinding>, SandboxStoreError> {
         Ok(None)
     }
@@ -185,10 +235,18 @@ impl AgentRuntimeRegistry for NeverResolve {
 }
 
 pub(super) fn fixture() -> Router {
+    crate::rest::binding_router(service(TransferOutcome::Reserved))
+}
+
+pub(super) fn profile_transfer_fixture(outcome: TransferOutcome) -> Router {
+    crate::rest::binding_conversation_reset_router(service(outcome), true)
+}
+
+fn service(transfer: TransferOutcome) -> Arc<BindingService> {
     let resources = Arc::new(InMemorySandboxStore::default());
     let profiles = Arc::new(InMemoryProfileStore::default());
-    crate::rest::binding_router(BindingService::new(
-        Arc::new(CapacityBindings),
+    BindingService::new(
+        Arc::new(ContractBindings { transfer }),
         BindingResources {
             sandboxes: SandboxService::new(
                 resources.clone(),
@@ -218,7 +276,7 @@ pub(super) fn fixture() -> Router {
             },
             sandbox: Arc::new(SandboxPolicy::default()),
         },
-    ))
+    )
 }
 
 #[tokio::test]
