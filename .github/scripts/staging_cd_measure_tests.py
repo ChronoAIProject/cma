@@ -51,6 +51,11 @@ class Contracts(unittest.TestCase):
         self.assertIsNone(m.seconds('2026-11-19T01:00:01Z', '2026-11-19T01:00:00Z'))
         self.assertEqual(m.seconds('2026-11-19T01:00:00Z', '2026-11-19T01:00:09Z'), 9)
 
+    def test_invalid_timer_magnitude_and_clock_shape(self):
+        self.assertFalse(m.number(10**1000))
+        self.assertIsNone(m.seconds('invalid', '2026-11-19T00:00:00Z'))
+        self.assertIsNone(m.seconds('2026-11-19T00:00:00', '2026-11-19T00:00:00Z'))
+
     def test_local_success_does_not_retain_output_or_command(self):
         result = m.local(args(command=[sys.executable, '-B', '-c', 'print("PRIVATE_CANARY")']))
         self.assertTrue(result['successful'])
@@ -108,6 +113,17 @@ class Contracts(unittest.TestCase):
             a.revision = 'f' * 40
             with self.assertRaises(ValueError):
                 m.ci(a)
+
+    def test_ci_ignores_successful_conclusion_on_incomplete_record(self):
+        job = {'head_sha': 'a' * 40, 'labels': ['ubuntu-24.04'], 'run_id': 1,
+               'name': 'plan', 'status': 'in_progress', 'conclusion': 'success',
+               'started_at': '2026-11-19T00:00:00Z', 'completed_at': '2026-11-19T00:00:01Z'}
+        auth = argparse.Namespace(returncode=0, stdout=b'account chronoai-shining ', stderr=b'')
+        a = args(runner='github-free', repo='ChronoAIProject/cma', job=1, step=None, logs=False)
+        with patch.object(m.subprocess, 'run', return_value=auth), patch.object(m, 'gh_json', return_value=job):
+            result = m.ci(a)
+        self.assertFalse(result['successful'])
+        self.assertIsNone(result['metric_seconds'])
 
     def test_ci_timer_requires_success_and_complete_task_count(self):
         job = {'head_sha': 'a' * 40, 'labels': ['ubuntu-24.04'], 'run_id': 1,

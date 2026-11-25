@@ -27,7 +27,7 @@ def digest(data):
 
 
 def number(value):
-    return type(value) in (int, float) and math.isfinite(value) and value >= 0
+    return type(value) in (int, float) and 0 <= value <= sys.float_info.max
 
 
 def parse_events(lines):
@@ -67,10 +67,16 @@ def parse_events(lines):
 
 
 def seconds(start, end):
-    if not start or not end:
+    if not isinstance(start, str) or not isinstance(end, str):
         return None
-    value = (dt.datetime.fromisoformat(end.replace('Z', '+00:00')) -
-             dt.datetime.fromisoformat(start.replace('Z', '+00:00'))).total_seconds()
+    try:
+        started = dt.datetime.fromisoformat(start.replace('Z', '+00:00'))
+        completed = dt.datetime.fromisoformat(end.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if started.tzinfo is None or completed.tzinfo is None:
+        return None
+    value = (completed - started).total_seconds()
     return value if value >= 0 else None
 
 
@@ -93,7 +99,10 @@ def local(args):
             code = process.wait(timeout=args.timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
-            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             try:
                 process.wait(timeout=1)
             except subprocess.TimeoutExpired:
@@ -141,7 +150,9 @@ def ci(args):
             raise ValueError('Requested step must match exactly one step')
         record = matches[0]
     duration = seconds(record.get('started_at'), record.get('completed_at'))
-    successful = job.get('conclusion') == 'success' and record.get('conclusion') == 'success' and duration is not None
+    successful = (job.get('status') == 'completed' and record.get('status') == 'completed'
+                  and job.get('conclusion') == 'success' and record.get('conclusion') == 'success'
+                  and duration is not None)
     result = {'mode': 'ci', 'identity': identity(args), 'job_id': args.job, 'run_id': job['run_id'],
               'job_state': job.get('conclusion') or job['status'],
               'record_state': record.get('conclusion') or record['status'],
@@ -179,7 +190,10 @@ def phases(args):
 
 
 def compare(args):
-    before = json.loads(Path(args.before).read_text()); after = json.loads(Path(args.after).read_text())
+    before_bytes = Path(args.before).read_bytes()
+    after_bytes = Path(args.after).read_bytes()
+    before = json.loads(before_bytes)
+    after = json.loads(after_bytes)
     differences = [k for k in ('workload', 'contract', 'runner', 'cache', 'component', 'phase', 'task_count')
                    if before['identity'][k] != after['identity'][k]]
     if differences or before['mode'] != after['mode'] or before.get('metric') != after.get('metric'):
@@ -203,7 +217,7 @@ def compare(args):
             'after_revision': after['identity']['revision'], 'identity': after['identity'],
             'before_seconds': a, 'after_seconds': b, 'saving_seconds': round(a - b, 6),
             'saving_percent': round((a - b) / a * 100, 3) if a else None,
-            'source_sha256': [digest(Path(p).read_bytes()) for p in (args.before, args.after)],
+            'source_sha256': [digest(before_bytes), digest(after_bytes)],
             'note': 'Isolated phase comparison only. CI single samples are descriptive, not a distribution. '
                     'Does not certify safety equivalence, cold-cache behavior or merge-to-live.'}
 
