@@ -61,22 +61,21 @@ class CacheTests(unittest.TestCase):
         self.assertFalse((cache.accepted / "compacted").exists())
         tool.validate_bundle(cache.accepted, cache.key.prefix, family=cache.key.family)
 
-    def test_layer_cache_exports_only_on_protected_develop_pushes(self):
-        for event, ref, writer in [('push', 'refs/heads/develop', True),
-                                   ('push', 'refs/heads/main', False),
-                                   ('push', 'refs/heads/topic', False),
-                                   ('pull_request', 'refs/pull/12/merge', False),
-                                   ('workflow_dispatch', 'refs/heads/develop', False),
-                                   ('pull_request_target', 'refs/heads/develop', False)]:
+    def test_legacy_layer_cache_is_read_only(self):
+        for event, ref in [('push', 'refs/heads/develop'),
+                           ('push', 'refs/heads/main'),
+                           ('push', 'refs/heads/topic'),
+                           ('pull_request', 'refs/pull/12/merge'),
+                           ('workflow_dispatch', 'refs/heads/develop'),
+                           ('pull_request_target', 'refs/heads/develop')]:
             args = layer_options(dict(self.env, GITHUB_EVENT_NAME=event, GITHUB_REF=ref), 'eg')
             self.assertIn('--cache-from', args)
-            self.assertEqual('--cache-to' in args, writer)
-            self.assertEqual(any('mode=max' in arg for arg in args), writer)
+            self.assertNotIn('--cache-to', args)
+            self.assertFalse(any('mode=max' in arg for arg in args))
             values = [arg for arg in args if not arg.startswith('--')]
             self.assertEqual(values[0], 'type=gha,version=2,scope=cma-cd-eg,timeout=2m')
             self.assertEqual(values[1], 'type=gha,version=2,scope=cma-eg,timeout=2m')
-            if writer:
-                self.assertEqual(values[2], 'type=gha,version=2,scope=cma-cd-eg,timeout=2m,mode=max,ignore-error=true')
+            self.assertEqual(len(values), 2)
         self.assertEqual(len(set(SCOPES.values())), 5)
         for component, scope in SCOPES.items():
             self.assertIn('scope=' + scope + ',', layer_options(self.env, component)[1])
@@ -84,8 +83,7 @@ class CacheTests(unittest.TestCase):
             with self.assertRaises(Refusal):
                 layer_options(env, component)
 
-    def test_cd_never_exports_a_scope_the_ci_image_builds_write(self):
-        # A shared scope let CI and CD replace each other's index; CD now only reads CI's.
+    def test_cd_and_ci_preserve_legacy_component_restore_scopes(self):
         from staging_cd_build_cache import CI_SCOPES
         self.assertFalse(set(SCOPES.values()) & CI_SCOPES)
         for component in SCOPES:
@@ -93,13 +91,12 @@ class CacheTests(unittest.TestCase):
                 args = layer_options(dict(self.env, GITHUB_EVENT_NAME="push", GITHUB_REF="refs/heads/develop"), component)
                 options = list(zip(args[::2], args[1::2]))
                 exports = [value for flag, value in options if flag == "--cache-to"]
-                self.assertEqual(len(exports), 1)
-                self.assertNotIn(exports[0].split("scope=")[1].split(",")[0], CI_SCOPES)
+                self.assertEqual(exports, [])
         ci = (Path(__file__).resolve().parents[1] / "workflows" / "ci-images.yml").read_text()
         for scope in ("cma-am", "cma-eg", "cma-web"):
             self.assertIn("'" + scope + "'", ci)
 
-    def test_runtime_builds_read_shared_stages_and_export_only_their_own_scope(self):
+    def test_runtime_builds_read_legacy_shared_stages(self):
         for component, scopes in (("runtime", ["cma-runtime", "runtime"]),
                                   ("runtime-omarchy", ["cma-runtime-omarchy", "cma-runtime", "runtime"])):
             for event in ("push", "pull_request"):
@@ -110,7 +107,31 @@ class CacheTests(unittest.TestCase):
                     exports = [value for flag, value in options if flag == "--cache-to"]
                     self.assertEqual(imports, ["type=gha,version=2,scope=" + scope + ",timeout=2m"
                                                for scope in scopes])
-                    self.assertEqual(exports, [imports[0] + ",mode=max,ignore-error=true"] if event == "push" else [])
+                    self.assertEqual(exports, [])
+
+    def test_local_layer_archive_is_opt_in_and_exports_to_a_fresh_directory(self):
+        cache = self.cache()
+        self.assertNotIn('--cache-to', cache.build_options())
+        env = dict(self.env, CD_LAYER_ARCHIVE_CACHE='enabled')
+        cache = BuildCache(ROOT, env, ROOT, 'eg')
+        restored = cache.layer_root / 'restored'
+        pending = cache.layer_root / 'pending'
+        restored.mkdir(parents=True)
+        (restored / 'index.json').write_text('interrupted validation')
+        pending.mkdir()
+        (pending / 'old').write_text('previous build')
+        self.assertNotIn('type=local,src=' + str(restored), cache.build_options())
+        self.assertNotIn('--cache-to', cache.build_options())
+        self.assertTrue(pending.exists())
+        cache.env = dict(env, CD_LAYER_CACHE_WRITER_FLOOR='verified')
+        self.assertNotIn('type=local,src=' + str(restored), cache.build_options())
+        self.assertFalse(pending.exists())
+        cache.env = dict(cache.env, CD_LAYER_ARCHIVE_RESTORED='true')
+        options = cache.build_options()
+        self.assertIn('type=local,src=' + str(restored), options)
+        self.assertIn('type=local,mode=min,image-manifest=true,oci-mediatypes=true,ignore-error=true,dest=' + str(pending), options)
+        self.assertFalse(pending.exists())
+        self.assertFalse(cache.exports_layers())
 
     def test_only_develop_producers_can_prepare_or_transfer_cargo_caches(self):
         for key, value in (("GITHUB_EVENT_NAME", "pull_request"), ("GITHUB_EVENT_NAME", "workflow_dispatch"),
@@ -411,7 +432,8 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(runner.call_args.kwargs['env'], cache.build_environment.return_value)
         self.assertNotIn('synthetic-runtime', ' '.join(runner.call_args.args[0]))
         self.assertNotIn('--secret', runner.call_args.args[0])
-        self.assertIn('--cache-to', runner.call_args.args[0])
+        self.assertNotIn('--cache-to', runner.call_args.args[0])
+        self.assertIn('--cache-from', runner.call_args.args[0])
 
     def test_dependency_graph_changes_keep_family_and_runtime_changes_keep_exact_key(self):
         fake = self.root / 'source'
@@ -488,8 +510,7 @@ class CacheTests(unittest.TestCase):
         for build in builds:
             for scope in ('cma-am', 'cma-eg', 'cma-web'):
                 self.assertIn(scope, build['cache-from'])
-            if 'cache-to' in build:
-                self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop'", build['cache-to'])
+            self.assertNotIn('cache-to', build)
 
 
 class TimingTests(unittest.TestCase):

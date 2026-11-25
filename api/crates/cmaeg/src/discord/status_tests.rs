@@ -254,3 +254,16 @@ fn ready_failure_and_cleanup_logs_carry_http_convention_record_hash() {
     assert!(!logs.contains("private-"), "{logs}");
     assert!(!logs.contains("sensitive"), "{logs}");
 }
+// #3745 observed stage ready, outcome ok, lease acquired after a reconnect
+// failure. A failed attempt must never keep reporting that it is serving.
+#[tokio::test]
+async fn failure_after_ready_never_reports_ok_before_cleanup_finishes() {
+    let r = StatusRegistry::default();
+    let a = ready(&r);
+    a.failure(FailureCode::Reconnect);
+    let view = r.view("private-record", Some("private-revision"));
+    assert_eq!(view.stage, Stage::Ready);
+    assert_eq!(view.outcome, Outcome::Pending);
+    assert_eq!(view.connected, Some(false));
+    assert_eq!(view.last_failure_code, Some(FailureCode::Reconnect));
+}

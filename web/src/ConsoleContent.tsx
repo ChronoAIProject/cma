@@ -83,11 +83,11 @@ export function ConsoleContent({
   const computerObservation = useMemo(
     () =>
       new AgentComputerObservation(
-        { client, subject: user.id, agentId: selectedAgent },
+        { client, subject: user.id, agentId: selectedAgent, authEpoch },
         () => setPanel('activity'),
         () => setPanel(undefined),
       ),
-    [client, user.id, selectedAgent, setPanel],
+    [client, user.id, selectedAgent, setPanel, authEpoch],
   );
   const scopeClient = user.visitor ? undefined : client.resourceViews;
   const {
