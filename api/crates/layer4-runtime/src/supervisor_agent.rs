@@ -6,7 +6,9 @@ use layer3_adapter::wire::{
     AgentCloseReceipt, AgentHomeReceipt, AgentHomeRemoveReceipt, AgentOpenReceipt, FencedReceipt,
     ResponseFrame,
 };
-use layer3_adapter::{AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentLaunch};
+use layer3_adapter::{
+    AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentLaunch, AgentProcessAction,
+};
 
 use super::{AgentProcess, Supervisor, MAX_AGENT_SLOTS};
 use crate::bridge::Bridge;
@@ -251,13 +253,20 @@ impl Supervisor {
         launch: AgentLaunch,
         ticket: Ticket,
     ) -> Result<ResponseFrame> {
-        let environment = match self.launch_environment(&launch) {
+        let mut environment = match self.launch_environment(&launch) {
             Ok(environment) => environment,
             Err(error) => {
                 ticket.fail(&error).await?;
                 return Err(error);
             }
         };
+        if self.credential.has_github_repository_scope().await {
+            environment.insert(
+                crate::github_proxy::ACCESS_PATH_ENV.into(),
+                crate::upstream::github_scope::ACCESS_PATH.into(),
+            );
+        }
+
         let bridge = match Bridge::start_with_recovery(
             &launch,
             &environment,
@@ -402,13 +411,9 @@ impl Supervisor {
         request: AgentCloseRequest,
         ticket: Ticket,
     ) -> Result<ResponseFrame> {
-        let bridge = self
-            .agents
-            .read()
-            .await
-            .get(&request.agent_id)
-            .map(|process| Arc::clone(&process.bridge));
-        if let Some(bridge) = bridge {
+        // Dispatch and journal recovery hold operation_gate through termination,
+        // removal, and receipt publication.
+        if let Some(bridge) = self.close_process_bridge(&request).await? {
             bridge
                 .terminate()
                 .await
@@ -423,6 +428,30 @@ impl Supervisor {
         };
         ticket.complete(&receipt).await?;
         Ok(close_response(authority_fence, receipt))
+    }
+
+    pub(super) async fn close_process_bridge(
+        &self,
+        request: &AgentCloseRequest,
+    ) -> Result<Option<Arc<Bridge>>> {
+        let agent = request.agent_id.as_str();
+        let incarnation = super::agent_validation::process_incarnation(
+            AgentProcessAction::Close,
+            agent,
+            &request.operation_id,
+        )?;
+        let agents = self.agents.read().await;
+        let Some(process) = agents.get(&request.agent_id) else {
+            return Ok(None);
+        };
+        let opened = AgentProcessAction::Open.incarnation(agent, &process.launch.operation_id);
+        if opened != Some(incarnation) {
+            return Err(RuntimeError::rejected(
+                "agent_process_incarnation_changed",
+                "the close request belongs to a different Agent process",
+            ));
+        }
+        Ok(Some(Arc::clone(&process.bridge)))
     }
 
     async fn live_launch_matches(&self, launch: &AgentLaunch) -> bool {

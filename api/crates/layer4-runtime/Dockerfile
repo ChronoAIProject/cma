@@ -25,22 +25,83 @@ ARG OMARCHY_CMA_BASE=runtime-tools
 #     output moved, from the signed indexes.
 #  4. Land it only with an independent review of both catalogs, which sets
 #     APPROVED_PACKAGE_EVIDENCE and APPROVED_OMARCHY_PACKAGE_EVIDENCE.
-ARG DEBIAN_SNAPSHOT=20261121T100000Z
+ARG DEBIAN_SNAPSHOT=20261123T154646Z
+# The Omarchy stages install Arch packages exactly as the Arch Linux Archive
+# indexed core, extra and multilib on this one date, so the same source
+# installs the same packages and rebuilds the OpenSSL CLI, wlroots, Aquamarine
+# and Hyprland with the same toolchain. They read every Arch and Omarchy
+# package only from the OMARCHY_PACKAGES_IMAGE bundle below, mounted as
+# file:// pacman repositories, so a cold build contacts no package server.
+# pacman still verifies every package signature against the keyrings the build
+# installs. The image keeps Omarchy's stable pacman.conf and mirrorlist for the
+# sandbox's own installs.
+#
+# Arch updates arrive only by bumping this value, deliberately:
+#  1. Choose a date whose following day the archive already lists, so the
+#     chosen day's tree is complete; a published tree does not change.
+#  2. Resolve every Omarchy install step offline against that date's
+#     databases and regenerate .github/scripts/omarchy-packages.lock.json
+#     with omarchy-package-bundle.py lock. The archive keeps the first upload
+#     of each file name, so compare each resolved package's served size and
+#     date with the index and list re-released packages with --reissued.
+#     Re-pin Omarchy's own packages only to files its stable repository then
+#     serves. Record the earliest expiry of every key that signed a resolved
+#     package: a date stops building once one expires, because pacman checks
+#     expiry against the build's clock. For 2026/10/22 the first is packager
+#     subkey A85E811EB4CA2E08 at 2026-12-31T09:34:44Z.
+#  3. Land the lock, dispatch omarchy-package-bundle.yml on develop with the
+#     date, and pin the digest it prints in OMARCHY_PACKAGES_IMAGE.
+#  4. Rebuild linux/amd64. Exact version checks (openssl in
+#     build-arch-openssl-cli.sh, wlroots0.20 and aquamarine in
+#     build-graphics.sh, hyprland in build-hyprland.sh, the pip wheel in
+#     normalize-omarchy.py) fail the build until they move with the date. Diff
+#     /usr/share/cma-omarchy/packages.txt and package-sha256.txt against the
+#     previous build to list what moved.
+#  5. Rebind this file's sha256 as for DEBIAN_SNAPSHOT, and each Omarchy
+#     catalog row whose package or derived output moved, from the signed
+#     packages.
+#  6. Land it only with an independent review of both catalogs, which sets
+#     APPROVED_PACKAGE_EVIDENCE and APPROVED_OMARCHY_PACKAGE_EVIDENCE.
+ARG ARCH_SNAPSHOT=2026/10/22
+# The bundle omarchy-package-bundle.yml built from that lock for ARCH_SNAPSHOT.
+ARG OMARCHY_PACKAGES_IMAGE=ghcr.io/chronoaiproject/cma-omarchy-packages@sha256:7bb92b39ed0b56a97f9a071e854b90cb1327ab1cacde931edc3fb907ceb550e6
 # CMA_MODEL_PROXY_PLACEHOLDER is supplied only in managed Agent launch plans,
 # not in the Sandbox environment, so existing runtime identities stay stable.
 # The sandbox provider schedules this image and starts the kernel-neutral Layer
 # 4 supervisor. The image supplies the one supported agent provider, the tools
 # needed to prepare git workspaces, and the NyxID CLI used through the local
 # credential proxy.
-FROM rust:1.96.1-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479 AS build
+# Cook the locked dependency graph in an exportable layer shared by both
+# runtime targets. Fresh CI builders do not inherit BuildKit cache mounts.
+FROM rust:1.96.1-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479 AS compiler-base
 RUN apk add --no-cache musl-dev
 WORKDIR /build
+
+FROM compiler-base AS chef
+COPY api/rust-toolchain.toml ./
+RUN CARGO_BUILD_JOBS=2 cargo install --locked --version 0.1.78 cargo-chef
+
+FROM chef AS planner
+COPY api/ ./
+RUN cargo chef prepare --recipe-path /recipe.json
+
+FROM chef AS dependencies
+COPY --from=planner /recipe.json /recipe.json
+RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,sharing=locked \
+    CARGO_BUILD_JOBS=2 cargo chef cook --release --locked --bin layer4-runtime --recipe-path /recipe.json
+
+FROM compiler-base AS build
 COPY api/ ./
 ARG TARGETARCH
+# Rebuild every workspace crate from actual source, even when source timestamps
+# predate the cooked placeholder artifacts. The dependency objects remain reusable.
 # Statically linked against musl, so it runs on any base the runtime stage uses.
 RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cma-runtime-target-${TARGETARCH},target=/build/target,sharing=locked \
-    cargo build --jobs 2 --release --locked --bin layer4-runtime \
+    --mount=type=bind,from=dependencies,source=/build/target,target=/dependency-target \
+    cp -a /dependency-target/. /build/target/ \
+    && cargo clean --release --workspace --locked \
+    && cargo build --jobs 2 --release --locked --bin layer4-runtime \
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
 # The base image carries only debian.sources; any other apt source is refused
@@ -206,7 +267,7 @@ ARG DESKTOP_CODEX_NATIVE_SHA256_ARM64=b32ece31af06440da980b733fb8fefdd1f19343959
 ARG DESKTOP_CODEX_LAUNCHER_SHA256=61b0194f3bb6534439c8d26a3ed57d0805f84b884588b761795323eeb92fcf70
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
-ARG CODEX_ACP_SHA256=8f0c023269496f9ad21aa2958491772fefe65011b9aebaf674c67d2aaa9fbcf4
+ARG CODEX_ACP_SHA256=11c84d6c37f3b2e15020405a2301df3ed8c16ed2d9b05c3a3a43620bba78a7d4
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.
 ARG NODE_VERSION=24.19.0
@@ -346,6 +407,8 @@ RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma
     && node /tmp/cma-codex-source/open_completion.cjs \
     && node /tmp/cma-codex-source/deferred_session_metadata.cjs \
     && node /tmp/cma-codex-source/session_open_overlap.cjs \
+    && node /tmp/cma-codex-source/prompt_output_identity.cjs \
+    && node /tmp/cma-codex-source/native_bound_dispatch.cjs \
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
     && test -x /usr/local/bin/codex-acp
 
@@ -368,6 +431,7 @@ RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma
     && export CMA_CODEX_TEST_NATIVE_SHA256="${CODEX_NATIVE_SHA256_AMD64}" \
     && if [ "${RUNTIME_DESKTOP}" = "1" ]; then export CMA_CODEX_TEST_NATIVE_SHA256="${DESKTOP_CODEX_NATIVE_SHA256_AMD64}"; fi \
     && node --test /tmp/cma-codex-source/session_open_overlap.test.cjs /tmp/cma-codex-source/native_process_identity.test.cjs /tmp/cma-codex-source/deferred_metadata_runtime.test.cjs /tmp/cma-codex-source/deferred_session_metadata.test.cjs \
+    && node --test /tmp/cma-codex-source/prompt_output_buffer.test.cjs /tmp/cma-codex-source/prompt_output_identity.test.cjs /tmp/cma-codex-source/native_bound_dispatch.test.cjs \
     && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs /tmp/cma-codex-source/endpoint_migration.test.cjs /tmp/cma-codex-source/turn_steering.test.cjs /tmp/cma-codex-source/open_completion.test.cjs /tmp/cma-codex-source/open_completion_native.test.cjs /tmp/cma-codex-source/recovery_rejoin_native.test.cjs \
     && python3 /tmp/cma-codex-source/recovery_test.py \
     && python3 /tmp/cma-codex-source/recovery_desktop_test.py \
@@ -465,12 +529,15 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
 
 COPY --link --from=runtime-application /payload/ /
 FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
+FROM ${OMARCHY_PACKAGES_IMAGE} AS omarchy-packages
 FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-bootstrap
+ARG ARCH_SNAPSHOT
 COPY api/crates/layer4-runtime/image/build-omarchy-base.sh api/crates/layer4-runtime/image/normalize-omarchy.py api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/assert-no-private-keyrings.py api/crates/layer4-runtime/image/build-arch-openssl-cli.sh api/crates/layer4-runtime/image/install-arch-openssl-cli.sh api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch api/crates/layer4-runtime/image/verify-openssl-cli-hardening.sh /tmp/
-RUN bash /tmp/build-omarchy-base.sh /payload
+RUN --mount=type=bind,from=omarchy-packages,source=/bundle,target=/run/cma-omarchy-packages,readonly bash /tmp/build-omarchy-base.sh /payload "${ARCH_SNAPSHOT}"
 FROM scratch AS omarchy-base
 COPY --link --from=omarchy-bootstrap /payload/ /
 FROM omarchy-base AS omarchy-dependencies
+ARG ARCH_SNAPSHOT
 COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
 COPY api/crates/layer4-runtime/image/normalize-omarchy.py /tmp/normalize-omarchy.py
 COPY api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/install-arch-openssl-cli.sh /tmp/
@@ -479,7 +546,7 @@ COPY api/crates/layer4-runtime/src/omarchy/secure-tools.sh /tmp/secure-omarchy-t
 COPY api/crates/layer4-runtime/src/omarchy/remove-google-account.patch /tmp/remove-google-account.patch
 COPY api/crates/layer4-runtime/src/omarchy/build-graphics.sh api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch /tmp/
 COPY api/crates/layer4-runtime/src/omarchy/build-hyprland.sh api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch /tmp/
-RUN --mount=type=bind,from=omarchy-bootstrap,source=/arch-openssl-cli,target=/run/cma-openssl-cli,readonly bash /tmp/install-omarchy.sh && sh /tmp/install-arch-openssl-cli.sh /run/cma-openssl-cli / && python -B /tmp/normalize-machine-id.py && python -B /tmp/assert-no-private-keyrings.py && rm /tmp/install-arch-openssl-cli.sh /tmp/assert-no-private-keyrings.py /tmp/normalize-machine-id.py /tmp/normalize-omarchy.py /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
+RUN --mount=type=bind,from=omarchy-bootstrap,source=/arch-openssl-cli,target=/run/cma-openssl-cli,readonly --mount=type=bind,from=omarchy-packages,source=/bundle,target=/run/cma-omarchy-packages,readonly bash /tmp/install-omarchy.sh "${ARCH_SNAPSHOT}" && sh /tmp/install-arch-openssl-cli.sh /run/cma-openssl-cli / && python -B /tmp/normalize-machine-id.py && python -B /tmp/assert-no-private-keyrings.py && rm /tmp/install-arch-openssl-cli.sh /tmp/assert-no-private-keyrings.py /tmp/normalize-machine-id.py /tmp/normalize-omarchy.py /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
 FROM omarchy-cma AS omarchy-tool-payload
 USER 0
 RUN mkdir -p /payload/usr/share /payload/usr/local /payload/etc \

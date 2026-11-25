@@ -21,7 +21,7 @@ from staging_cd_receipts import canonical
 from staging_cd_reservations import next_reservation
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
-from staging_cd_promotion import proven_components
+from staging_cd_promotion import available_proofs, proven_components
 from staging_cd_versions import DEPLOYABLES, label_level, merged_pr, version_tuple
 
 REFUSAL_CODES = {
@@ -34,7 +34,7 @@ REFUSAL_CODES = {
     "Source already has conflicting final versions": "FINAL_VERSION_CONFLICT",
     "Source must belong to exactly one merged develop PR": "MERGED_PR_NOT_UNIQUE",
     "Merged PR identity changed": "MERGED_PR_IDENTITY_CHANGED",
-    "Merged PR must carry exactly one supported version-upgrade label": "VERSION_LABEL_REQUIRED",
+    "Merged PR has conflicting or unsupported version-upgrade labels": "VERSION_LABEL_REQUIRED",
     "Version labels are malformed": "VERSION_LABELS_INVALID",
     "Release source is not on verified develop first-parent history": "SOURCE_HISTORY_INVALID",
     # Split by its cause in github_read_code; this is the code of no known cause.
@@ -168,7 +168,7 @@ def run_active(api, reservation):
     return run["status"] != "completed"
 
 
-def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, mark=lambda _component, _phase: None):
+def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dict, mark=lambda _component, _phase: None):
     require(isinstance(queue, dict) and matches(r"[0-9a-f]{40}", queue.get("head"))
             and isinstance(queue.get("changes"), list), "Release queue is invalid")
     mark("all", "final-inventory")
@@ -255,7 +255,11 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, ma
     for tag in sorted(finals, key=lambda tag: history.position(tag["target"])):
         receipt = tag["receipt"]
         latest[receipt["identity"]["component"]] = receipt
-    verified = proven_components(proofs or {}, latest, history)
+    # A deployment can finish while this run is waiting for its allocator or
+    # reading Git inventory. Check outcomes only for finals this pass can resume.
+    recoverable = any(component not in busy and newest.get(DEPLOYABLES[component]) == receipt["source"]
+                      for component, receipt in latest.items())
+    verified = proven_components(read_proofs(), latest, history) if recoverable else set()
     current_event = queue.get("event_source") == queue["head"] == history.head
     actions, needed_prs = [], {}
     for change in changes:
@@ -365,7 +369,8 @@ def allocate_current(queue, env, io, mark):
     if queue["event_source"] != queue["head"]:
         mark("all", "stale-source")
         return {"include": []}
-    proofs = json.loads(env.get("CD_CONTROLLER_PROOFS") or "{}")
+    def read_proofs():
+        return available_proofs(env.get("GH_TOKEN"), env["CD_STAGING_ENVIRONMENT"])
     api = GitHub(env.get("GH_TOKEN"), io)
     while True:
         io.remaining()
@@ -375,7 +380,7 @@ def allocate_current(queue, env, io, mark):
             return {"include": []}
         matrix = allocate_queue(queue, SnapshotAPI(api, reservations), reservations,
                                 int(env["GITHUB_RUN_ID"]), int(env["GITHUB_RUN_ATTEMPT"]),
-                                proofs=proofs, mark=mark)
+                                read_proofs=read_proofs, mark=mark)
         try:
             reservations.commit()
         except AllocationConflict:

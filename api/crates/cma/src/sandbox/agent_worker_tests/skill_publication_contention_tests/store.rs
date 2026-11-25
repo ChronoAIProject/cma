@@ -55,12 +55,9 @@ impl AgentWorkerStore for PublicationStore {
         &self,
         now: &str,
         limit: u16,
-        holds: &std::collections::BTreeSet<AgentId>,
-        startup: StartupWorkFilter<'_>,
+        filter: AgentWorkDiscovery<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
-        self.inner
-            .due_agent_work_filtered(now, limit, holds, startup)
-            .await
+        self.inner.due_agent_work_filtered(now, limit, filter).await
     }
     async fn live_agent_connections(
         &self,
@@ -96,18 +93,18 @@ impl AgentWorkerStore for PublicationStore {
         &self,
         mutation: AgentWorkMutation,
     ) -> Result<(), SandboxStoreError> {
-        let selected = mutation
-            .agent_logs
-            .iter()
-            .any(|log| matches!(log, AgentLogKind::SkillInstallationChanged { .. }));
-        if !selected {
-            let id = mutation.agent.id.clone();
-            self.inner.commit_agent_work(mutation).await?;
-            if let Fault::AfterPin(change) = self.fault {
-                self.change(&id, change).await;
-            }
-            return Ok(());
+        let id = mutation.agent.id.clone();
+        self.inner.commit_agent_work(mutation).await?;
+        if let Fault::AfterPin(change) = self.fault {
+            self.change(&id, change).await;
         }
+        Ok(())
+    }
+    async fn commit_agent_skill_result(
+        &self,
+        mutation: AgentWorkMutation,
+        guard: AgentSkillResultGuard,
+    ) -> Result<(), SandboxStoreError> {
         let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
         if matches!(self.fault, Fault::AlwaysAbort) {
             eprintln!(
@@ -132,7 +129,9 @@ impl AgentWorkerStore for PublicationStore {
                 }
                 Fault::ReadbackUnavailable => return Err(SandboxStoreError::Conflict),
                 Fault::Reconciled => {
-                    self.inner.commit_agent_work(mutation.clone()).await?;
+                    self.inner
+                        .commit_agent_skill_result(mutation.clone(), guard.clone())
+                        .await?;
                     assert_eq!(
                         self.inner.get_agent(&mutation.agent.id).await?,
                         Some(mutation.agent.clone())
@@ -159,7 +158,9 @@ impl AgentWorkerStore for PublicationStore {
                     ))
                 }
                 Fault::CommittedUnavailable => {
-                    self.inner.commit_agent_work(mutation).await?;
+                    self.inner
+                        .commit_agent_skill_result(mutation, guard)
+                        .await?;
                     return Err(SandboxStoreError::Unavailable(
                         "commit acknowledgement lost".into(),
                     ));
@@ -168,7 +169,7 @@ impl AgentWorkerStore for PublicationStore {
                 Fault::AlwaysAbort => unreachable!(),
             }
         }
-        self.inner.commit_agent_work(mutation).await
+        self.inner.commit_agent_skill_result(mutation, guard).await
     }
 }
 

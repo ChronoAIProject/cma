@@ -1,9 +1,14 @@
 //! A provider object keeps its handle while in-memory runtime Pods come and go.
 use super::*;
+mod recovery;
+mod reopen_fixture;
+mod retained_policy;
+mod retirement;
 use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
 use layer3_adapter::provider::ProviderSandboxRequest;
 use layer3_adapter::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, ResponseFrame};
 use layer3_adapter::{AgentLaunch, ConversationChannel, ConversationUpdate, RuntimeObservation};
+pub(super) use retirement::RetirementProbePause;
 
 #[derive(Clone)]
 struct Row {
@@ -14,6 +19,10 @@ struct Row {
 
 #[derive(Clone, Default)]
 pub(super) struct NativeBackend {
+    pub retirement_records: Arc<super::retirement_case6::records::FixtureRecords>,
+    pub retirement_receiver_url: Arc<Mutex<Option<String>>>,
+    pub retirement_incarnation: Arc<AtomicUsize>,
+    pub retirement_probe_pause: Arc<Mutex<Option<Arc<RetirementProbePause>>>>,
     inner: InMemoryHostedBackend,
     pub pools: Option<Arc<super::super::native_pool_tests::Pools>>,
     row: Arc<tokio::sync::Mutex<Option<Row>>>,
@@ -23,6 +32,9 @@ pub(super) struct NativeBackend {
     pub lose_resume: Arc<AtomicBool>,
     pub lose_delete: Arc<AtomicBool>,
     pub reject_reopen: Arc<AtomicBool>,
+    pub fail_reopen_transiently: Arc<AtomicBool>,
+    pub reopen_output: Arc<reopen_fixture::StartupOutput>,
+    pub adoption_pause: Arc<Mutex<Option<Arc<RetirementProbePause>>>>,
     pub hold_reopen: Arc<AtomicBool>,
     pub reopen_entered: Arc<Notify>,
     pub reopen_release: Arc<Notify>,
@@ -33,12 +45,23 @@ pub(super) struct NativeBackend {
     pub recovery_response: Arc<Mutex<Option<Vec<u8>>>>,
     pub replace_after_history: Arc<AtomicBool>,
     pub status_override: Arc<Mutex<Option<layer3_adapter::RuntimeStatus>>>,
+    pub close_transport:
+        Arc<Mutex<Option<Arc<layer3_adapter::hosted::ProviderHostedControlTransport>>>>,
+    pub deny_inventory: Arc<AtomicBool>,
+    pub deny_teardown: Arc<AtomicBool>,
+    pub hold_finality: Arc<AtomicBool>,
+    pub retirement_home: Arc<Mutex<Option<Arc<dyn layer3_adapter::HomeVolumeStore>>>>,
+    pub retirement_client:
+        Arc<Mutex<Option<Arc<layer3_adapter::agent_sandbox::AgentSandboxClient>>>>,
+    pub timeout_inventory: Arc<AtomicBool>,
     pub nonexecuting: Arc<AtomicBool>,
+    pub nonexecuting_inspection_pause: Arc<Mutex<Option<Arc<RetirementProbePause>>>>,
     pub proof_revision: Arc<AtomicU64>,
     pub change_before_suspend: Arc<AtomicBool>,
     pub run_before_suspend: Arc<AtomicBool>,
     pub interrupted_workspace: Arc<AtomicBool>,
     pub calls: ActionLog,
+    pub adoptions: Arc<AtomicUsize>,
     pub inputs: Arc<Mutex<Vec<layer3_adapter::ConversationInput>>>,
     pub inspected_generations: Arc<Mutex<Vec<u64>>>,
 }
@@ -59,20 +82,6 @@ impl NativeBackend {
     }
     pub async fn request(&self) -> ProviderSandboxRequest {
         self.row.lock().await.as_ref().unwrap().request.clone()
-    }
-    pub async fn stage_reserved_request(&self, request: ProviderSandboxRequest) {
-        let mut rows = self.row.lock().await;
-        let row = rows.as_mut().unwrap();
-        assert_eq!(row.request.image, request.image);
-        assert_eq!(row.request.volumes, request.volumes);
-        row.observation.generation = request.metadata["cma/runtime-generation"].parse().unwrap();
-        row.request = request;
-        // The retained provider object and failed Pod have not been replaced.
-    }
-    pub async fn restart_process(&self) {
-        let rows = self.row.lock().await;
-        let pod = rows.as_ref().unwrap().pod.as_ref().unwrap();
-        self.inner.restart_persistent_process(pod).await.unwrap();
     }
     pub async fn lose_object(&self) {
         self.row.lock().await.take();
@@ -100,61 +109,19 @@ fn absent() -> layer3_adapter::AdapterError {
 
 #[async_trait::async_trait]
 impl HostedBackend for NativeBackend {
-    async fn run_recovery_command(
+    fn retained_startup_policy(
         &self,
-        _: &RuntimeHandle,
-        _command: &layer3_adapter::hosted::RuntimeRecoveryCommand,
-    ) -> layer3_adapter::Result<Vec<u8>> {
-        use serde_json::json;
-        self.calls.push("inspect-history");
-        if let Some(response) = self.recovery_response.lock().unwrap().clone() {
-            return Ok(response);
-        }
-        let code = *self.recovery_code.lock().unwrap();
-        if code == Some("unavailable") {
-            return Err(layer3_adapter::AdapterError::Unavailable(
-                "private provider detail".into(),
-            ));
-        }
-        let malformed = matches!(
-            code,
-            Some("plan_missing" | "plan_mismatch" | "digest_mismatch" | "history_set")
-        );
-        if let Some(code) = code.filter(|_| !malformed) {
-            return Ok(serde_json::to_vec(
-                &json!({"version": 1, "status": "refused", "code": code}),
-            )
-            .unwrap());
-        }
-        let mut plan = self.recovery_plan.lock().unwrap().clone();
-        if plan.is_null() {
-            return Err(layer3_adapter::AdapterError::Unsupported(
-                "fixture history not configured".into(),
-            ));
-        }
-        if code == Some("plan_mismatch") {
-            plan["runtime"]["generation"] = json!(42);
-        }
-        if code == Some("history_set") {
-            plan["histories"] = json!([]);
-        }
-        let digest =
-            layer2_core::sandbox::SandboxUnpublishedRecoveryProof::provider_plan_digest(&plan)
-                .unwrap();
-        if self.replace_after_history.swap(false, Ordering::SeqCst) {
-            self.restart_process().await;
-        }
-        let mut output =
-            json!({"version": 1, "status": "inspected", "plan": plan, "planSha256": digest});
-        if code == Some("plan_missing") {
-            output.as_object_mut().unwrap().remove("plan");
-        }
-        if code == Some("digest_mismatch") {
-            output["planSha256"] = json!("0".repeat(64));
-        }
-        Ok(serde_json::to_vec(&output).unwrap())
+    ) -> Option<&dyn layer3_adapter::hosted::HostedRetainedStartupPolicy> {
+        Some(self)
     }
 
+    async fn run_recovery_command(
+        &self,
+        handle: &RuntimeHandle,
+        command: &layer3_adapter::hosted::RuntimeRecoveryCommand,
+    ) -> layer3_adapter::Result<Vec<u8>> {
+        self.run_recovery_fixture(handle, command).await
+    }
     async fn suspend_nonexecuting_runtime(
         &self,
         handle: &RuntimeHandle,
@@ -180,6 +147,11 @@ impl HostedBackend for NativeBackend {
         home: &layer3_adapter::HomeVolumeAttachment,
     ) -> layer3_adapter::Result<Option<layer3_adapter::hosted::NonexecutingRuntimeProof>> {
         use sha2::{Digest, Sha256};
+        let pause = self.nonexecuting_inspection_pause.lock().unwrap().take();
+        if let Some(pause) = pause {
+            pause.entered.notify_one();
+            pause.release.notified().await;
+        }
         self.inspected_generations
             .lock()
             .unwrap()
@@ -263,7 +235,12 @@ impl HostedBackend for NativeBackend {
             .into_iter()
             .find(|row| row.handle == pod)
             .unwrap();
-        observation.handle = RuntimeHandle::new("agent-sandbox:retained-crd:original-uid");
+        observation.handle = RuntimeHandle::new(if self.pools.is_some() {
+            // Match the original native Claim/Sandbox authority returned by Pools.
+            "agent-sandbox:warm-member:member-uid"
+        } else {
+            "agent-sandbox:retained-crd:original-uid"
+        });
         let handle = observation.handle.clone();
         *rows = Some(Row {
             request,
@@ -273,6 +250,17 @@ impl HostedBackend for NativeBackend {
         Ok(handle)
     }
     async fn inventory(&self) -> layer3_adapter::Result<Vec<RuntimeObservation>> {
+        if self.timeout_inventory.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            return Err(layer3_adapter::AdapterError::Unavailable(
+                "fixture provider deadline".into(),
+            ));
+        }
+        if self.deny_inventory.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::Rejected(
+                "fixture provider denied".into(),
+            ));
+        }
         Ok(self
             .row
             .lock()
@@ -286,6 +274,12 @@ impl HostedBackend for NativeBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> layer3_adapter::Result<Option<RuntimeObservation>> {
+        self.adoptions.fetch_add(1, Ordering::SeqCst);
+        let pause = self.adoption_pause.lock().unwrap().take();
+        if let Some(pause) = pause {
+            pause.entered.notify_one();
+            pause.release.notified().await;
+        }
         let rows = self.row.lock().await;
         let Some(row) = rows.as_ref() else {
             return Ok(None);
@@ -371,6 +365,16 @@ impl HostedBackend for NativeBackend {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> layer3_adapter::Result<ResponseFrame> {
+        let close_transport = self.close_transport.lock().unwrap().clone();
+        if matches!(request, RequestFrame::CloseAgent(_)) {
+            if let Some(transport) = close_transport {
+                use layer3_adapter::hosted::HostedControlTransport;
+                self.calls.push("receiver-close-attempt");
+                return transport
+                    .exchange(&RuntimeHandle("local-runtime".into()), request)
+                    .await;
+            }
+        }
         if matches!(request, RequestFrame::PrepareWorkspace(_))
             && self.interrupted_workspace.load(Ordering::SeqCst)
         {
@@ -408,16 +412,8 @@ impl HostedBackend for NativeBackend {
         settings: HostedAgentOpenSettings,
         updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
     ) -> layer3_adapter::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
-        if resume.is_some() {
-            if self.hold_reopen.swap(false, Ordering::SeqCst) {
-                self.reopen_entered.notify_one();
-                self.reopen_release.notified().await;
-            }
-            if self.reject_reopen.load(Ordering::SeqCst) {
-                return Err(layer3_adapter::AdapterError::Rejected(
-                    "fixture retained conversation rejected".into(),
-                ));
-            }
+        if let Some(native) = &resume {
+            self.before_reopen(native, &updates).await?;
         }
         let (mut channel, receipt) = self
             .inner
@@ -432,8 +428,42 @@ impl HostedBackend for NativeBackend {
         });
         Ok((channel, receipt))
     }
+    async fn challenge_retirement_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        _: &layer3_adapter::HomeVolumeAttachment,
+        receiver: &layer3_adapter::receiver_failure::RetirementReceiver,
+    ) -> layer3_adapter::Result<bool> {
+        self.challenge_retirement_fixture(handle, request, receiver)
+            .await
+    }
+    async fn retire_unreachable(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &layer3_adapter::HomeVolumeAttachment,
+        pod: &layer3_adapter::RetirementPod,
+    ) -> layer3_adapter::Result<()> {
+        self.check_retirement_fixture_pod(pod)?;
+        self.retire_verified_fixture(handle, request, home).await
+    }
+    async fn verify_retired(
+        &self,
+        handle: &RuntimeHandle,
+        home: &layer3_adapter::HomeVolumeAttachment,
+    ) -> layer3_adapter::Result<()> {
+        self.verify_retired_fixture(handle, home).await
+    }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> layer3_adapter::Result<()> {
         self.calls.push("delete-retained");
+        let client = self.retirement_client.lock().unwrap().clone();
+        if let Some(client) = client {
+            client.delete(handle).await?;
+        }
+        if self.deny_teardown.load(Ordering::SeqCst) {
+            return Err(absent());
+        }
         if self.hold_delete.load(Ordering::SeqCst) {
             return Err(absent());
         }

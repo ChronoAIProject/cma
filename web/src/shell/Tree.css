@@ -1,8 +1,7 @@
 .resource-tree {
   flex: 1;
   min-height: 0;
-  margin: 8px -4px;
-  overflow-y: auto;
+  margin-block: 8px;
 }
 
 .tree-row__origin {
@@ -367,6 +366,33 @@
 .agent-navigation .tree-row[data-layout='stacked'] .tree-row__meta {
   white-space: normal;
   overflow-wrap: anywhere;
+}
+/* Each fact has the full width of the shared navigation row. */
+.shared-agent-navigation .tree-row__meta {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.shared-agent-navigation .tree-row__meta > [title] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.shared-agent-navigation .tree-row__state {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shared-agent-navigation .tree-row__state > :first-child {
+  margin-inline-end: 5px;
+  vertical-align: middle;
 }
 .task-environment-notice {
   color: var(--dsw-alias-label-secondary);

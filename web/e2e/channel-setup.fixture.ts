@@ -2,11 +2,21 @@ import { expect, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { channelCapabilities, cmaSession, gatewaySession } from '../build/fixtures/eventGateway';
 
-export async function setup(page: Page, baseURL: string) {
+/** `identity` holds the CMA sign-in answer until it settles. */
+export async function setup(
+  page: Page,
+  baseURL: string,
+  identity?: Promise<unknown>,
+  managedSetup = true,
+  serviceAuthorization = false,
+) {
   const boundary = new LocalStartup();
   const writes: { body: string | null; key: string | undefined; url: string }[] = [];
   await boundary.route(page, baseURL);
-  await page.route('**/auth/session', (route) => route.fulfill({ json: cmaSession }));
+  await page.route('**/auth/session', async (route) => {
+    await identity;
+    return route.fulfill({ json: { ...cmaSession, service_authorization: serviceAuthorization } });
+  });
   await page.route('**/api/v1/bots?**', (route) =>
     route.fulfill({ json: { items: [], next_after: null } }),
   );
@@ -26,6 +36,16 @@ export async function setup(page: Page, baseURL: string) {
       return route.fulfill({
         json: {
           ...channelCapabilities,
+          platforms: managedSetup
+            ? [
+                {
+                  id: 'telegram',
+                  label: 'Telegram',
+                  connection_methods: ['existing_credential', 'managed_create'],
+                  optional_capabilities: [],
+                },
+              ]
+            : [],
           relay_authoring: {
             ...channelCapabilities.relay_authoring,
             platforms: channelCapabilities.relay_authoring.platforms.map((platform) => ({

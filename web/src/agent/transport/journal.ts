@@ -6,7 +6,7 @@ import { QueuedCancellationJournal } from './queuedJournal';
 import { QueuedInputJournal } from './queuedInputJournal';
 import { InterruptionJournal } from './interruptionJournal';
 import { LegacySuggestionJournal } from './legacySuggestionJournal';
-import { bindDraftCommand } from '../draftDelivery';
+import { bindDraftCommand, DraftBindingError } from '../draftDelivery';
 import { acceptDraftCommand, clearOwnerDrafts } from '../draftStorage';
 import {
   promptIntentJournal,
@@ -80,6 +80,14 @@ export function agentTransportJournal(
     storage.setItem(IDENTITY, JSON.stringify(identity));
   }
   return new AgentTransportJournal(storage, identity, agent, makeKey);
+}
+
+export function readRetainedPromptIntent(storage: BrowserStorage, user: string, agent: string) {
+  const identity = readIdentity(storage);
+  if (!user || !agent || identity?.user !== user) return undefined;
+  return new AgentTransportJournal(storage, identity, agent, () => crypto.randomUUID())
+    .promptSettingsIntent()
+    .read();
 }
 
 export class AgentTransportJournal {
@@ -313,8 +321,12 @@ export class AgentTransportJournal {
       receipt: null,
       ...(answerContext === undefined ? {} : { answerContext }),
     };
+    if (
+      bindDraftCommand(this.identity.user, this.agent, input, intent.key, this.storage) ===
+      'unavailable'
+    )
+      throw new DraftBindingError();
     this.save({ ...current, input: intent });
-    bindDraftCommand(this.identity.user, this.agent, input, intent.key, this.storage);
     return intent;
   }
 

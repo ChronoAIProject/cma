@@ -22,10 +22,8 @@ jobs:
       contents: read
       pull-requests: read
       actions: read
-      deployments: read
     outputs:
       queue: ${{ steps.plan.outputs.queue }}
-      controller_proofs: ${{ steps.promotions.outputs.verified }}
       changed: ${{ steps.plan.outputs.changed }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -88,13 +86,6 @@ jobs:
         env:
           CD_PLAN_REFUSED: ${{ steps.plan.outputs.refused }}
         run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete'
-      - name: Read recent staging controller outcomes
-        id: promotions
-        if: steps.plan.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CD_STAGING_ENVIRONMENT: chrono-ai-staging
-        run: python3 -B .github/scripts/staging_cd_promotion.py
   allocate:
     needs: plan
     if: needs.plan.outputs.changed == 'true'
@@ -104,7 +95,9 @@ jobs:
       contents: write
       pull-requests: read
       actions: read
+      deployments: read
     outputs:
+      matrix: ${{ steps.allocate.outputs.matrix }}
       publications: ${{ steps.routes.outputs.publications }}
       lanes: ${{ steps.routes.outputs.lanes }}
       batches: ${{ steps.routes.outputs.batches }}
@@ -119,7 +112,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CD_QUEUE: ${{ needs.plan.outputs.queue }}
-          CD_CONTROLLER_PROOFS: ${{ needs.plan.outputs.controller_proofs }}
+          CD_STAGING_ENVIRONMENT: chrono-ai-staging
         run: python3 -B .github/scripts/staging_cd_allocate.py
       # A transient refusal (a read, a write that may have committed, or the
       # budget) fails here; catch-up re-runs a head run stopped at this step,
@@ -300,6 +293,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: web
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['web']) }}
@@ -320,6 +314,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: am
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['am']) }}
@@ -340,6 +335,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: eg
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['eg']) }}
@@ -360,6 +356,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: runtime
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['runtime']) }}
@@ -380,6 +377,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: runtime-omarchy
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['runtime-omarchy']) }}
@@ -408,10 +406,54 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: contract
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['contract']) }}
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
+  publication_signal:
+    name: Signal verified image publication
+    needs: [allocate, release_web, release_am, release_eg, release_runtime, release_runtime_omarchy]
+    if: >-
+      ${{ !cancelled() && vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true' &&
+          needs.allocate.result == 'success' && needs.allocate.outputs.changed == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify complete finalized publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_PUBLICATION_MATRIX: ${{ needs.allocate.outputs.matrix }}
+          CD_PUBLISH_WEB: ${{ needs.release_web.result }}
+          CD_PUBLISH_AM: ${{ needs.release_am.result }}
+          CD_PUBLISH_EG: ${{ needs.release_eg.result }}
+          CD_PUBLISH_RUNTIME: ${{ needs.release_runtime.result }}
+          CD_PUBLISH_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.result }}
+          CD_FINALIZED_WEB: ${{ needs.release_web.outputs.finalized }}
+          CD_FINALIZED_AM: ${{ needs.release_am.outputs.finalized }}
+          CD_FINALIZED_EG: ${{ needs.release_eg.outputs.finalized }}
+          CD_FINALIZED_RUNTIME: ${{ needs.release_runtime.outputs.finalized }}
+          CD_FINALIZED_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.outputs.finalized }}
+        run: python3 -B .github/scripts/staging_cd_publication_signal.py freeze
+      - name: Retain the verified immutable publication signal
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cma-publication-signal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/publication-signal.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Notify the configured publication consumer
+        env:
+          PUBLICATION_CONSUMER: ${{ secrets.PUBLICATION_CONSUMER }}
+          PUBLICATION_SIGNAL_TOKEN: ${{ secrets.PUBLICATION_SIGNAL_TOKEN }}
+        run: python3 -B .github/scripts/staging_cd_publication_signal.py send
   recheck:
     name: Report component outcomes
     outputs:

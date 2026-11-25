@@ -1,11 +1,17 @@
+use std::sync::Arc;
+
+use layer2_core::profiles::content_digest;
 use layer2_core::sandbox::{AgentStatus, FirstMessageDelivery};
 use layer2_core::trigger_domain::{
     LaunchAuthorityClass, LaunchEffectKind, LaunchResolution, LaunchState, LaunchWorkStep,
-    ResolvedResource,
+    ResolvedResource, TriggerId, TriggerImage, TriggerInlineAgent, TriggerInlineTarget,
+    TriggerRevision,
 };
 use layer2_core::Capability;
 
-use super::fixtures_tests::{frozen_inputs, Harness};
+use super::fixtures_tests::{
+    frozen_inputs, started_launch, test_worker, time, FakeDriver, Harness, TestLaunchStore,
+};
 
 #[tokio::test]
 async fn scheduled_launch_follows_ready_resources_without_waiting_between_stages() {
@@ -144,6 +150,53 @@ async fn worker_reads_the_frozen_trigger_and_profiles_after_republish() {
         harness.driver.agent_value(&agent_id).profile.content,
         harness.inputs.profiles.agent.content
     );
+}
+
+#[tokio::test]
+async fn retained_launch_provisions_its_pinned_runtime_after_republish() {
+    let id = TriggerId("trg_retained_image".into());
+    let mut retained = frozen_inputs(id.clone(), "retained", 1, "Start", false);
+    let pinned = format!("registry.example/runtime@sha256:{}", "a".repeat(64));
+    retained.profiles.sandbox.content.runtime_image = Some(pinned.clone());
+    retained.profiles.sandbox.digest = content_digest(&retained.profiles.sandbox.content).unwrap();
+    let mut content = retained.revision.content.clone();
+    let profile = &retained.profiles.agent.content;
+    content.target.inline = Some(TriggerInlineTarget {
+        image: Some(TriggerImage {
+            id: "retained-image".into(),
+            version: Some("retained-version".into()),
+            reference: Some(pinned.clone()),
+        }),
+        agent: TriggerInlineAgent {
+            model: profile.model.clone(),
+            reasoning_effort: profile.thinking_effort,
+            permission_mode: profile.permission_level,
+            skills: profile.skills.clone(),
+            system_prompt: profile.system_prompt.clone(),
+            services: Vec::new(),
+        },
+        workspace: None,
+    });
+    retained.revision =
+        TriggerRevision::new(1, content, retained.revision.published_at.clone()).unwrap();
+    let launch = started_launch(
+        &retained,
+        LaunchAuthorityClass::Visitor,
+        LaunchResolution::pending(),
+        Vec::new(),
+    );
+    let launch_id = launch.id.clone();
+    let store = Arc::new(TestLaunchStore::default());
+    store.insert(launch);
+    let driver = FakeDriver::new(retained);
+    driver.install_context(frozen_inputs(id, "default", 2, "Start", false));
+    let worker = test_worker(store.clone(), driver.clone(), "new-replica");
+
+    assert_eq!(worker.run_due(time(1)).await.unwrap(), 1);
+    let stored = store.stored(&launch_id);
+    let sandbox = driver.sandbox_value(stored.resolution.sandbox.id().unwrap());
+    assert_eq!(sandbox.profile.content.runtime_image, Some(pinned));
+    assert_eq!(stored.state, LaunchState::MessagePending);
 }
 
 #[tokio::test]

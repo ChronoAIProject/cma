@@ -231,6 +231,8 @@ fn turn_targets_open_and_verify_the_sealed_event_ref() {
 
 fn config(media: MediaConfig) -> Config {
     Config {
+        profile_revisions_enabled: false,
+        managed_telegram_setup_enabled: false,
         native_lark_writes_enabled: false,
         native_lark_intake_enabled: false,
         native_lark_controls_enabled: false,
@@ -284,6 +286,8 @@ fn config(media: MediaConfig) -> Config {
         lark_message_effects_writes_enabled: false,
         native_discord_writes_enabled: false,
         native_telegram_message_events_writes_enabled: false,
+        native_telegram_member_joins_enabled: false,
+        relay_telegram_member_joins_enabled: false,
         native_discord_thread_history_enabled: false,
         native_telegram_topic_lifecycle_enabled: false,
         native_telegram_topic_creation_enabled: false,
@@ -295,6 +299,7 @@ fn config(media: MediaConfig) -> Config {
         native_discord_reactions_enabled: false,
         native_discord: Default::default(),
         outbound_messages_writes_enabled: false,
+        event_side_messages_enabled: false,
         listen: "127.0.0.1:0".parse().unwrap(),
         metrics_listen: "127.0.0.1:0".parse().unwrap(),
         providers: Default::default(),

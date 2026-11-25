@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use layer3_adapter::AgentProcessAction;
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuntimeConfig;
@@ -19,10 +20,22 @@ pub(super) const MAX_AUTHORITY_RECORDS: usize = 4_096;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum ResourceKey {
-    Worktree { workspace: String, name: String },
-    AgentHome { agent_id: String },
-    AgentSkill { agent_id: String, skill_id: String },
-    AgentProcess { agent_id: String },
+    Worktree {
+        workspace: String,
+        name: String,
+    },
+    AgentHome {
+        agent_id: String,
+    },
+    AgentSkill {
+        agent_id: String,
+        skill_id: String,
+    },
+    AgentProcess {
+        agent_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        incarnation: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -188,6 +201,14 @@ pub(crate) fn recovery_fence(config: &RuntimeConfig, operation: &Operation) -> R
     )
 }
 
+pub(crate) fn has_process_writer(config: &RuntimeConfig, key: &ResourceKey) -> Result<bool> {
+    Ok(
+        files_with_temporary_policy(config, io::TemporaryFiles::Refuse)?
+            .iter()
+            .any(|file| &file.record.resource == key),
+    )
+}
+
 pub(super) fn authorize(current_records: &[&Record], incoming: &Record) -> Result<bool> {
     let Some(latest) = current(current_records.iter().copied()) else {
         return Ok(true);
@@ -253,17 +274,25 @@ pub(crate) fn records(config: &RuntimeConfig) -> Result<Vec<Record>> {
 }
 
 fn files(config: &RuntimeConfig) -> Result<Vec<io::AuthorityFile>> {
+    let temporary = if config.legacy_journal_recovery_enabled {
+        io::TemporaryFiles::Preserve
+    } else {
+        io::TemporaryFiles::Remove
+    };
+    files_with_temporary_policy(config, temporary)
+}
+
+fn files_with_temporary_policy(
+    config: &RuntimeConfig,
+    temporary: io::TemporaryFiles,
+) -> Result<Vec<io::AuthorityFile>> {
     let mut files = Vec::new();
     let mut budget = crate::mutation_recovery::ScanBudget::new(
         config,
         crate::mutation_recovery::authority_limit(config),
     );
     for root in crate::mutation_scope::roots(config)? {
-        files.extend(io::scan(
-            &root,
-            &mut budget,
-            config.legacy_journal_recovery_enabled,
-        )?);
+        files.extend(io::scan(&root, &mut budget, temporary)?);
     }
     let mut grouped = BTreeMap::<ResourceKey, Vec<&Record>>::new();
     for file in &files {
@@ -388,17 +417,26 @@ pub(crate) fn resource_operation(operation: &Operation) -> (ResourceKey, Disposi
             Disposition::Absent,
         ),
         Subject::OpenAgent { agent_id, .. } => (
-            ResourceKey::AgentProcess {
-                agent_id: agent_id.clone(),
-            },
+            process_resource(agent_id, operation, AgentProcessAction::Open),
             Disposition::Present,
         ),
         Subject::CloseAgent { agent_id } => (
-            ResourceKey::AgentProcess {
-                agent_id: agent_id.clone(),
-            },
+            process_resource(agent_id, operation, AgentProcessAction::Close),
             Disposition::Absent,
         ),
+    }
+}
+
+fn process_resource(
+    agent_id: &str,
+    operation: &Operation,
+    action: AgentProcessAction,
+) -> ResourceKey {
+    ResourceKey::AgentProcess {
+        agent_id: agent_id.into(),
+        incarnation: action
+            .incarnation(agent_id, &operation.operation_id)
+            .filter(|n| *n > 1),
     }
 }
 

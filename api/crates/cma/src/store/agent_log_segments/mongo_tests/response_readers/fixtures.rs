@@ -93,11 +93,20 @@ pub(super) struct Trace {
     pub commands: std::sync::atomic::AtomicU64,
     pub bytes: std::sync::atomic::AtomicU64,
     pub writes: std::sync::atomic::AtomicU64,
+    pub output_finds: std::sync::atomic::AtomicU64,
+    pub evidence_get_mores: std::sync::atomic::AtomicU64,
 }
 impl Trace {
     pub fn reset(&self) {
         use std::sync::atomic::Ordering::SeqCst;
-        for counter in [&self.checkouts, &self.commands, &self.bytes, &self.writes] {
+        for counter in [
+            &self.checkouts,
+            &self.commands,
+            &self.bytes,
+            &self.writes,
+            &self.output_finds,
+            &self.evidence_get_mores,
+        ] {
             counter.store(0, SeqCst);
         }
         self.enabled.store(true, SeqCst);
@@ -106,6 +115,14 @@ impl Trace {
         use std::sync::atomic::Ordering::SeqCst;
         self.enabled.store(false, SeqCst);
         [&self.checkouts, &self.commands, &self.bytes, &self.writes].map(|v| v.load(SeqCst))
+    }
+
+    pub fn output_commands(&self) -> [u64; 2] {
+        use std::sync::atomic::Ordering::SeqCst;
+        [
+            self.output_finds.load(SeqCst),
+            self.evidence_get_mores.load(SeqCst),
+        ]
     }
 }
 
@@ -133,6 +150,17 @@ pub(super) async fn measured_client() -> (Client, std::sync::Arc<Trace>) {
         match event {
             CommandEvent::Started(e) => {
                 seen.commands.fetch_add(1, SeqCst);
+                if e.command_name == "find"
+                    && e.command.get_str("find").ok() == Some(EVIDENCE)
+                    && e.command.get_str("hint").ok() == Some("agent_log_output_change_seek")
+                {
+                    seen.output_finds.fetch_add(1, SeqCst);
+                }
+                if e.command_name == "getMore"
+                    && e.command.get_str("collection").ok() == Some(EVIDENCE)
+                {
+                    seen.evidence_get_mores.fetch_add(1, SeqCst);
+                }
                 if matches!(
                     e.command_name.as_str(),
                     "insert"

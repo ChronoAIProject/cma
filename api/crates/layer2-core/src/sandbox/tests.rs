@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 #[path = "answer_deliverables_tests.rs"]
 mod answer_deliverables;
+#[path = "lifecycle_transition_contract_tests.rs"]
+mod transition_contract;
 
 use super::store::{
     AgentLogStore, AgentStore, SandboxEventStore, SandboxStore, SandboxTransaction,
@@ -74,7 +76,7 @@ fn agent_snapshot() -> AgentProfileSnapshot {
     }
 }
 
-fn sandbox() -> Sandbox {
+pub(super) fn sandbox() -> Sandbox {
     Sandbox {
         id: SandboxId("sbx_test".into()),
         owner: SubjectId("owner".into()),
@@ -118,7 +120,7 @@ fn sandbox() -> Sandbox {
     }
 }
 
-fn workspace() -> Workspace {
+pub(super) fn workspace() -> Workspace {
     Workspace {
         id: WorkspaceId("wks_test".into()),
         sandbox_id: SandboxId("sbx_test".into()),
@@ -140,7 +142,7 @@ fn workspace() -> Workspace {
     }
 }
 
-fn worktree() -> Worktree {
+pub(super) fn worktree() -> Worktree {
     Worktree {
         id: WorktreeId("wkt_test".into()),
         workspace_id: WorkspaceId("wks_test".into()),
@@ -156,7 +158,7 @@ fn worktree() -> Worktree {
     }
 }
 
-fn agent() -> Agent {
+pub(super) fn agent() -> Agent {
     Agent {
         id: AgentId("agt_test".into()),
         worktree_id: WorktreeId("wkt_test".into()),
@@ -169,6 +171,7 @@ fn agent() -> Agent {
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),
@@ -246,6 +249,7 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
         (SandboxStatus::CredentialRotating, SandboxStatus::Retiring),
         (SandboxStatus::Rotating, SandboxStatus::Active),
         (SandboxStatus::Rotating, SandboxStatus::Pausing),
+        (SandboxStatus::Rotating, SandboxStatus::Paused),
         (SandboxStatus::Rotating, SandboxStatus::Retiring),
         (SandboxStatus::Failed, SandboxStatus::Retiring),
         (SandboxStatus::Retiring, SandboxStatus::Retired),
@@ -334,6 +338,7 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
         (AgentStatus::Working, AgentStatus::WaitingApproval),
         (AgentStatus::Working, AgentStatus::Paused),
         (AgentStatus::WaitingApproval, AgentStatus::Working),
+        (AgentStatus::WaitingApproval, AgentStatus::Ready),
         (AgentStatus::WaitingApproval, AgentStatus::Paused),
         (AgentStatus::Paused, AgentStatus::Ready),
         (AgentStatus::Stopped, AgentStatus::Deleted),

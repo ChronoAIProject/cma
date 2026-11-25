@@ -1,5 +1,8 @@
 //! Report observed provisioning gates without waiting for the whole Agent.
 use super::*;
+use layer2_core::sandbox::{
+    store::AgentLogStore, Agent, AgentLogEntry, AgentLogKind, AgentStatus, AgentWorkStep,
+};
 
 #[path = "agent_lifecycle_readiness.rs"]
 mod readiness;
@@ -113,6 +116,49 @@ impl InlineAgentLifecycle {
 
 #[async_trait]
 impl AgentLifecycleOperationReader for InlineAgentLifecycle {
+    async fn cancel_unallocated(
+        &self,
+        caller: &Caller,
+        operation_id: &str,
+    ) -> Result<AgentLifecycleOperationView, AgentLifecycleOperationReadError> {
+        if !caller.authorization.allows(Capability::UseOwnSandboxes)
+            || !caller.authorization.allows(Capability::CreateSandbox)
+        {
+            return Err(AgentLifecycleOperationReadError::Forbidden);
+        }
+        let record = self
+            .operations
+            .read_for_owner(&caller.subject, operation_id)
+            .await
+            .map_err(|_| AgentLifecycleOperationReadError::Unavailable)?
+            .ok_or(AgentLifecycleOperationReadError::NotFound)?;
+        if record.creation_fence.is_none() {
+            return Err(AgentLifecycleOperationReadError::Conflict("This creation predates durable creation evidence. Recover the original operation and confirm its allocation before releasing the reservation.".into()));
+        }
+        if !self.operations.creation_terminal_settlement_enabled() {
+            return Err(AgentLifecycleOperationReadError::Unavailable);
+        }
+        if !self
+            .operations
+            .cancel_fenced_creation(&caller.subject, &record)
+            .await
+            .map_err(|_| AgentLifecycleOperationReadError::Unavailable)?
+        {
+            return Err(AgentLifecycleOperationReadError::Conflict("Creation can no longer be cancelled before allocation. Read the exact creation outcome and settle any associated Sandbox through its lifecycle.".into()));
+        }
+        let settled = self
+            .operations
+            .read_for_owner(&caller.subject, operation_id)
+            .await
+            .map_err(|_| AgentLifecycleOperationReadError::Unavailable)?
+            .ok_or(AgentLifecycleOperationReadError::Unavailable)?;
+        if settled.status != "failed" || settled.sandbox_id.is_some() || settled.agent_id.is_some()
+        {
+            return Err(AgentLifecycleOperationReadError::Unavailable);
+        }
+        Ok(settled.view())
+    }
+
     async fn read(
         &self,
         caller: &Caller,
@@ -132,9 +178,94 @@ impl AgentLifecycleOperationReader for InlineAgentLifecycle {
             record.agent_id.as_deref(),
         )
         .await;
+        if record.status == "failed"
+            && record.error.as_deref().is_some_and(|error| {
+                error
+                    == AgentLifecycleProvisioningError::Conflict(worker::PREPARATION_FAILED.into())
+                        .to_string()
+            })
+        {
+            view.error = self
+                .preparation_failure_for(
+                    caller,
+                    record.agent_id.as_deref(),
+                    record.updated_at.timestamp_millis(),
+                )
+                .await
+                .map(|detail| AgentLifecycleProvisioningError::Conflict(detail).to_string())
+                .or(view.error);
+        }
         Ok(view)
     }
 }
+
+impl InlineAgentLifecycle {
+    async fn preparation_failure_for(
+        &self,
+        caller: &Caller,
+        agent_id: Option<&str>,
+        operation_updated_ms: i64,
+    ) -> Option<String> {
+        let id = AgentId(agent_id?.into());
+        let store = self.native_prepared.as_ref()?;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let agent = self.agents.read(caller, &id).await.ok()?;
+            let entry = store
+                .agent_log_entry(&agent.id, agent.conversation.last_seq)
+                .await
+                .ok()??;
+            preparation_diagnostic(&agent, &entry, operation_updated_ms)
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+}
+
+fn preparation_diagnostic(
+    agent: &Agent,
+    entry: &AgentLogEntry,
+    operation_updated_ms: i64,
+) -> Option<String> {
+    let AgentLogKind::WorkStepFailed { step, failure } = &entry.kind else {
+        return None;
+    };
+    let occurred = layer2_core::seconds_from_rfc3339(&entry.appended_at)?;
+    if agent.status != AgentStatus::Failed
+        || agent.ready_at.is_some()
+        || agent.failure.as_ref() != Some(failure)
+        || agent.id != entry.agent_id
+        || agent.conversation.last_seq != entry.seq
+        || entry.seq == 0
+        || agent.updated_at != entry.appended_at
+        || occurred > u64::try_from(operation_updated_ms).ok()? / 1000
+    {
+        return None;
+    }
+    let action = match step {
+        AgentWorkStep::WaitForWorkspace => "waiting for the Workspace",
+        AgentWorkStep::AddWorktree => "adding the Worktree",
+        AgentWorkStep::MaterializeHome => "preparing the Agent home",
+        AgentWorkStep::InstallSkill => "installing an Agent skill",
+        AgentWorkStep::OpenConversation => "opening the Agent conversation",
+        AgentWorkStep::PublishReady => "publishing Agent readiness",
+        _ => return None,
+    };
+    let category = match failure.class.as_str() {
+        "agent_runtime_rejected" => "agent_runtime_rejected",
+        "agent_runtime_unsupported" => "agent_runtime_unsupported",
+        "agent_runtime_unavailable" => "agent_runtime_unavailable",
+        "agent_runtime_contract_mismatch" => "agent_runtime_contract_mismatch",
+        _ => "agent_preparation_failed",
+    };
+    Some(format!(
+        "{category}: Agent preparation failed while {action}."
+    ))
+}
+
+#[cfg(test)]
+#[path = "agent_lifecycle_preparation_diagnostic_tests.rs"]
+mod preparation_diagnostic_tests;
 
 /// Missing or Deleted Agents yield null; observation errors leave the link unknown.
 pub(super) async fn callback_url(

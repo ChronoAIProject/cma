@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import ci_retry
-from ci_tracks.git_comparison import comparison_details, shallow
+from ci_tracks.git_comparison import comparison_details, first_parents, shallow
 from staging_cd_behind_fixture import Develop
 from staging_cd_common import Refusal
 from staging_cd_compatibility import GROUP, RECIPE, VERSION_FILE
@@ -639,7 +639,8 @@ class ReleaseQueueWindowTests(unittest.TestCase):
                 tree = Path(directory)
                 (tree / MANIFEST).parent.mkdir(parents=True)
                 (tree / MANIFEST).write_text(json.dumps({name: manifest[name] for name in names}))
-                result = subprocess.run([sys.executable, "-B", "-c", script, str(Path(queue.__file__).parent / "ci_tracks"),
+                # This manifest check also runs in the parser-free staging CI environment.
+                result = subprocess.run([sys.executable, "-S", "-B", "-c", script, str(Path(queue.__file__).parent / "ci_tracks"),
                                          str(tree)], capture_output=True, text=True, timeout=60, check=True)
                 self.assertEqual(result.stdout.strip(), expected)
 
@@ -677,6 +678,9 @@ class ReleaseQueueWindowTests(unittest.TestCase):
             self.assertTrue(shallow(clone))
             anchor = repo.commits[2]
             self.assertEqual(comparison_details(clone, {"after": anchor}, "push")[2], "shallow-history")
+            self.assertEqual(first_parents(clone, [anchor]), {anchor: repo.commits[1]})
+            with self.assertRaises(ValueError):
+                first_parents(clone, [repo.commits[0]])
             self.assertEqual(comparison_details(clone, {"after": anchor}, "push", allow_shallow_parent=True),
                              (repo.commits[1], anchor, None))
         selector = (Path(queue.__file__).parent / "ci_tracks/batch_selection.py").read_text()

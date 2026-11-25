@@ -460,3 +460,9 @@ async fn live_skill_resolution_failure_does_not_fail_the_agent_or_publish_instal
 
 #[path = "skill_upgrade_tests.rs"]
 mod upgrade_tests;
+
+#[path = "skill_parent_fence_tests/mod.rs"]
+mod parent_fence;
+
+#[path = "skill_resolution_contract_tests.rs"]
+mod resolution_contract_tests;

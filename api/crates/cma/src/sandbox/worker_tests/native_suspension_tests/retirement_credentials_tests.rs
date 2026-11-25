@@ -26,9 +26,10 @@ async fn retained_fast_paths_settle_parent_debt_before_provider_gc_even_with_los
     for state in ["suspended", "terminating", "absent", "uncredentialed"] {
         let (f, mut original, mut now) = if state == "uncredentialed" {
             let (f, row, _, now) = retirement_tests::failed_revive().await;
-            (f, row, now)
+            (f.without_retirement_admission(), row, now)
         } else {
-            let f = Fixture::new().await;
+            // The production default: finality admission off keeps this path.
+            let f = Fixture::new().await.without_retirement_admission();
             let created = f.harness.create().await;
             let mut now = start_time(&created);
             let active = f

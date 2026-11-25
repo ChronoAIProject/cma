@@ -22,6 +22,7 @@ pub use capacity::{
 };
 pub use claim_guard::NativeClaimGuardReason;
 mod readiness_observation;
+mod retirement;
 pub use readiness_observation::NativeReadinessObservation;
 mod receiver_incarnation;
 pub(crate) use receiver_incarnation::ReceiverIncarnation;
@@ -42,6 +43,7 @@ mod suspension;
 mod termination;
 pub(crate) use startup_termination::{startup_boot_identity, startup_incarnation};
 mod upgrade;
+pub use crate::{RetainedStartupPolicyPredecessor, RetainedStartupPolicyUpgrade};
 
 use crate::{AdapterError, HomeVolumeScope, Result, RuntimeHandle};
 use k8s_openapi::api::core::v1::{PersistentVolumeClaim, Pod};
@@ -67,7 +69,7 @@ pub use pool::{
 };
 pub use pool::{NativeHomeVolumes, NativePoolHomeOrigin};
 pub use pool::{NativePoolCleanup, NativePoolMember};
-pub use pool::{NativePoolConfiguration, NativePoolControl, NativePoolTarget};
+pub use pool::{NativePoolConfiguration, NativePoolControl, NativePoolDrain, NativePoolTarget};
 pub(crate) use pool::{NATIVE_HOME_ANNOTATION, NATIVE_HOME_REQUEST_LABEL};
 pub use runtime_stream::RuntimeStream;
 pub(crate) use runtime_stream::RuntimeStreamKind;
@@ -84,6 +86,7 @@ pub struct AgentSandboxClient {
     config: AgentSandboxConfig,
     scope: HomeVolumeScope,
     native_home_scope: HomeVolumeScope,
+    legacy_home_scope: HomeVolumeScope,
     pub(crate) runtime_capacity: std::sync::Arc<RuntimeCapacityAuthority>,
     #[cfg(test)]
     runtime_requests: std::sync::Arc<tokio::sync::Semaphore>,
@@ -141,6 +144,10 @@ impl AgentSandboxClient {
             sandboxes: Api::namespaced_with(client.clone(), &config.namespace, &resource),
             pods: Api::namespaced(client.clone(), &config.namespace),
             claims: Api::namespaced(client, &config.namespace),
+            legacy_home_scope: HomeVolumeScope::from_authority(
+                "kubernetes-pvc-v1",
+                &[authority, &config.namespace, &config.deployment],
+            )?,
             native_home_scope,
             scope,
             config,

@@ -138,6 +138,8 @@ export class LocalStartup {
         this.unexpected.push(`${request.method()} ${url.pathname}`);
         return reply({ code: 'unexpected_local_write' }, 500);
       }
+      if (/^\/api\/v1\/agents\/[^/]+\/reply-preview$/.test(url.pathname))
+        return reply({ code: 'not_found', detail: 'Optional capability unavailable.' }, 404);
       if (
         this.createdWorkspace &&
         url.pathname === `/api/v1/workspaces/${this.createdWorkspace.id}`
@@ -164,8 +166,21 @@ export class LocalStartup {
         );
       }
       switch (url.pathname.replace(this.agent.id, 'agt_contract')) {
+        case '/api/v1/build-info':
+          return reply({ version: '0.1.0', source_sha: 'b'.repeat(40) });
+        case '/api/v1/ui/image-manager-retirement':
+          return reply(false);
+        case '/api/v1/agents/agt_contract/preferences':
+          return reply({
+            revision: 0,
+            system_prompt: '',
+            prompt_pending: false,
+            prompt_supported: false,
+          });
         case '/api/v2/ui/task-experience':
         case '/api/v1/agents/agt_contract/suggestions':
+        case '/api/v1/agents/agt_contract/reply-preview':
+        case '/api/v1/agents/agt_contract/original-request':
           return reply({ code: 'not_found', detail: 'Optional capability unavailable.' }, 404);
         case '/api/v1/agents/agt_contract/files/tree':
           return reply({ path: url.searchParams.get('path') ?? '', entries: [] });
@@ -227,7 +242,14 @@ export class LocalStartup {
             policy_revision: 1,
           });
         case '/api/v1/profile-authoring/services':
-          return reply([{ id: 'api-github', catalog_id: 'catalog-github', name: 'GitHub' }]);
+          return reply([
+            {
+              id: 'api-github',
+              catalog_id: 'catalog-github',
+              name: 'GitHub',
+              detail_url: 'https://catalog.example.test/services/catalog-github',
+            },
+          ]);
         case '/api/v1/profile-authoring/skills':
           return reply({
             items: [{ id: url.searchParams.get('q'), name: 'TypeScript', versions: ['1.2'] }],

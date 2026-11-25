@@ -7,7 +7,7 @@ use axum::{
     http::{Method, StatusCode},
     Router,
 };
-use layer2_core::sandbox::store::SandboxStore;
+use layer2_core::sandbox::store::{SandboxEventStore, SandboxStore};
 use layer2_core::{Authorization, Capability};
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -26,6 +26,69 @@ async fn send(
     let status = response.status();
     let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
     (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+#[tokio::test]
+async fn reviewed_retirement_requires_a_guard_and_hides_the_route_from_readers() {
+    let f = fixture(false);
+    let original = sandbox("sbx_reviewed", "owner-a", "v1");
+    f.sandboxes.create_sandbox(original.clone()).await.unwrap();
+    let path = "/api/v1/admin/sandboxes/sbx_reviewed/retire-reviewed";
+    let partial = json!({"revision": original.revision});
+    let denied = send(
+        &f.app,
+        Method::POST,
+        path,
+        Some(partial.clone()),
+        &[Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(denied.0, StatusCode::NOT_FOUND);
+    assert_eq!(denied.1["code"], "sandbox_not_found");
+    let rejected = send(
+        &f.app,
+        Method::POST,
+        path,
+        Some(partial),
+        &[Capability::ControlAnySandbox],
+    )
+    .await;
+    assert_eq!(rejected.0, StatusCode::BAD_REQUEST);
+    assert_eq!(rejected.1["code"], "invalid_admin_request");
+
+    let receipt_path = format!("{path}/{}/{}", "a".repeat(64), "b".repeat(64));
+    let denied_receipt = send(
+        &f.app,
+        Method::GET,
+        &receipt_path,
+        None,
+        &[Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(denied_receipt.0, StatusCode::NOT_FOUND);
+    assert_eq!(denied_receipt.1["code"], "sandbox_not_found");
+    assert_eq!(
+        send(
+            &f.app,
+            Method::GET,
+            &receipt_path,
+            None,
+            &[Capability::ControlAnySandbox],
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        f.sandboxes.get_sandbox(&original.id).await.unwrap(),
+        Some(original.clone())
+    );
+    assert!(f
+        .sandboxes
+        .sandbox_events(&original.id, 0, 10)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -111,4 +174,84 @@ async fn administrator_approves_and_revokes_with_audit_and_filtered_inventory() 
             json!({"setting": "always_on", "status": value, "revision": revision})
         );
     }
+}
+
+#[tokio::test]
+async fn operator_retirement_revision_precondition_preserves_authority_and_one_event() {
+    let f = fixture(false);
+    let original = sandbox("sbx_batch", "owner-a", "v1");
+    f.sandboxes.create_sandbox(original.clone()).await.unwrap();
+    let path = "/api/v1/admin/sandboxes/sbx_batch/retire";
+    let control = [Capability::ControlAnySandbox];
+    for (query, capabilities, status, code) in [
+        (
+            "expectedRevision=1",
+            &[Capability::ReadAllSandboxes][..],
+            StatusCode::NOT_FOUND,
+            "sandbox_not_found",
+        ),
+        (
+            "expectedRevision=1",
+            &control[..],
+            StatusCode::BAD_REQUEST,
+            "invalid_admin_request",
+        ),
+        (
+            "expected_revision=invalid",
+            &control[..],
+            StatusCode::BAD_REQUEST,
+            "invalid_admin_request",
+        ),
+        (
+            "expected_revision=2",
+            &control[..],
+            StatusCode::CONFLICT,
+            "operator_conflict",
+        ),
+    ] {
+        let (observed, response) = send(
+            &f.app,
+            Method::POST,
+            &format!("{path}?{query}"),
+            None,
+            capabilities,
+        )
+        .await;
+        assert_eq!(observed, status);
+        assert_eq!(response["code"], code);
+    }
+    assert_eq!(
+        f.sandboxes.get_sandbox(&original.id).await.unwrap(),
+        Some(original.clone())
+    );
+    assert!(f
+        .sandboxes
+        .sandbox_events(&original.id, 0, 10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    let condition = format!("{path}?expected_revision={}", original.revision);
+    let (status, accepted) = send(&f.app, Method::POST, &condition, None, &control).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(accepted["status"], "retiring");
+    assert_eq!(accepted["revision"], original.revision + 1);
+    assert_eq!(
+        send(&f.app, Method::POST, &condition, None, &control)
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        send(&f.app, Method::POST, path, None, &control).await,
+        (StatusCode::OK, accepted)
+    );
+    assert_eq!(
+        f.sandboxes
+            .sandbox_events(&original.id, 0, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
 }

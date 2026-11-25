@@ -1,18 +1,35 @@
 //! A tool rebind is admitted only from the immutable claimed empty-session receipt.
+use crate::store::agent_admission::helper_error::HelperError;
 use crate::store::sandbox_mongo::MongoSandboxStore;
 use layer2_core::sandbox::store::AgentProvenanceSnapshot;
-use layer2_core::sandbox::{AgentOrigin, AgentStatus, AgentWorkStep, SandboxStoreError};
+#[cfg(test)]
+use layer2_core::sandbox::SandboxStoreError;
+use layer2_core::sandbox::{AgentOrigin, AgentStatus, AgentWorkStep};
 use layer3_adapter::AgentOpenRequest;
 use mongodb::ClientSession;
 
+#[cfg(test)]
 pub(in crate::store) async fn prepared_conversation(
     store: &MongoSandboxStore,
     snapshot: &AgentProvenanceSnapshot,
     request: &AgentOpenRequest,
     session: &mut ClientSession,
 ) -> Result<Option<String>, SandboxStoreError> {
+    prepared_conversation_transaction(store, snapshot, request, session)
+        .await
+        .map_err(|error| error.into_store_error(super::unavailable))
+}
+
+pub(in crate::store) async fn prepared_conversation_transaction(
+    store: &MongoSandboxStore,
+    snapshot: &AgentProvenanceSnapshot,
+    request: &AgentOpenRequest,
+    session: &mut ClientSession,
+) -> Result<Option<String>, HelperError> {
     let lineage = &snapshot.resource.lineage;
-    let Some(record) = super::adoption::claimed(store, &lineage.sandbox, session).await? else {
+    let Some(record) =
+        super::adoption::claimed_transaction(store, &lineage.sandbox, session).await?
+    else {
         return Ok(None);
     };
     let owned = record.ownership.as_ref().expect("validated claimed record");
@@ -37,7 +54,7 @@ pub(in crate::store) async fn prepared_conversation(
                     operation_id: owned.operation_id.clone(),
                 })
         {
-            return Err(fail());
+            return Err(fail().into());
         }
         return Ok(None);
     }
@@ -76,7 +93,7 @@ pub(in crate::store) async fn prepared_conversation(
             .is_some_and(|id| id != conversation)
         || request != &expected
     {
-        return Err(fail());
+        return Err(fail().into());
     }
     Ok(Some(conversation.clone()))
 }

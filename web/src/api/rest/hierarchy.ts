@@ -129,6 +129,8 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
 export function runtimeUpdate(value: Wire.SandboxRuntimeUpdate): SandboxRuntimeUpdate {
   return {
     currentVersion: value.current_version,
+    currentVersionConfirmed: value.current_version_confirmed,
+    imageOrigin: value.image_origin,
     latestVersion: value.latest_version,
     updateAvailable: value.update_available,
     state: value.state,
@@ -271,6 +273,7 @@ export function agentDetail(value: Wire.Agent): AgentDetail {
     firstMessage: firstMessage(value.first_message),
     failure: value.failure,
     stopReason: value.stop_reason,
+    restartAvailable: value.restart_available,
     createdAt: value.created_at,
     updatedAt: value.updated_at,
     readyAt: value.ready_at,

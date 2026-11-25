@@ -1,4 +1,5 @@
 import type { Channel } from '../ChannelEditor';
+import { validateHmacCredentials } from './hmacCredentials';
 
 export type Fields = Record<string, unknown>;
 export type EditorSection =
@@ -104,9 +105,12 @@ export function channelDraft(channel?: Channel, owner = ''): Fields {
     sources: d.sources.map((source) => without(object(source), ['jwks_url'])),
   };
 }
+/** A Custom producer verifies events with the shared HMAC list only under HMAC auth. */
+export const customUsesHmac = (source: Fields): boolean =>
+  source.type === 'custom' && object(source.auth).type === 'hmac';
 /** Private drafts stay local until the matching producer is saved. */
-export function producerCredentialKeys(type: unknown): readonly string[] {
-  switch (type) {
+export function producerCredentialKeys(source: Fields): readonly string[] {
+  switch (source.type) {
     case 'native_lark':
       return ['native_lark'];
     case 'whatsapp':
@@ -118,23 +122,21 @@ export function producerCredentialKeys(type: unknown): readonly string[] {
     case 'nyxid_relay':
       return ['channel_key'];
     case 'custom':
-      return ['replace_hmac', 'hmac_secrets'];
+      return customUsesHmac(source) ? ['replace_hmac', 'hmac_secrets'] : [];
     default:
       return [];
   }
 }
 export function usesHmacCredentials(draft: Fields): boolean {
   return (
-    (!draft.connection_ref && records(draft.sources).some((source) => source.type === 'custom')) ||
+    (!draft.connection_ref && records(draft.sources).some(customUsesHmac)) ||
     records(object(draft.reply).sinks).some((sink) => sink.type === 'result_webhook')
   );
 }
 export function channelCredentials(values: Fields, draft: Fields, create: boolean): Fields {
   const keys = new Set([
     'agent_key',
-    ...(!draft.connection_ref
-      ? records(draft.sources).flatMap((source) => producerCredentialKeys(source.type))
-      : []),
+    ...(!draft.connection_ref ? records(draft.sources).flatMap(producerCredentialKeys) : []),
     // The central channel editor retains explicit management of the shared HMAC list.
     ...(!create || usesHmacCredentials(draft) ? ['replace_hmac', 'hmac_secrets'] : []),
   ]);
@@ -170,7 +172,7 @@ export function credentialsPatch(values: Fields, create: boolean): Fields | unde
     const value = text(values[key]);
     if (value !== '') patch[key] = value;
   }
-  if (values.replace_hmac === true)
+  if (values.replace_hmac === true || (create && values.hmac_secrets !== undefined))
     patch.hmac_secrets = records(values.hmac_secrets).map((row) => ({
       key_id: text(row.key_id),
       secret: text(row.secret),
@@ -186,9 +188,30 @@ export function channelRequest(
 ): Fields {
   if (!channel && draft.connection_ref !== undefined && !text(draft.connection_ref))
     throw new Error('Choose a ready CMA-managed Telegram connection.');
-  const patch = credentialsPatch(channelCredentials(credentials, draft, !channel), !channel);
+  const selected = channelCredentials(credentials, draft, !channel);
+  validateHmacCredentials(draft, selected, !channel);
+  const patch = credentialsPatch(selected, !channel);
+  const provider = object(draft.provider);
+  const target = object(provider.target).type;
+  const profile = object(draft.profile);
+  const usesDefaultEnvironment =
+    !channel &&
+    provider.slug === 'cma_codex' &&
+    (target === undefined || target === 'profile') &&
+    profile.environment == null;
   return {
     ...without(draft, ['durable_custom_execution']),
+    ...(usesDefaultEnvironment
+      ? {
+          profile: {
+            ...profile,
+            environment: {
+              size: { cpu_cores: 1, memory_gib: 2 },
+              workspace: { type: 'directory', name: 'workspace' },
+            },
+          },
+        }
+      : {}),
     ...(patch ? { credentials: patch } : {}),
     ...(channel ? { expected_version: channel.version } : { record_id: record }),
   };

@@ -150,19 +150,19 @@ for (const scenario of [
     }
     expect(writes).toEqual([]);
     await expect(
-      confirmation.getByRole('button', { name: 'Delete Sandbox', exact: true }),
+      confirmation.getByRole('button', { name: 'Request deletion', exact: true }),
     ).toBeDisabled();
-    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await confirmation.getByRole('button', { name: 'Keep environment', exact: true }).click();
     await expect(confirmation).toHaveCount(0);
     expect(writes).toEqual([]);
     await more.click();
     await page.getByRole('menuitem', { name: /^Delete Sandbox/ }).click();
     await expect(confirmation.getByRole('checkbox')).not.toBeChecked();
     await expect(
-      confirmation.getByRole('button', { name: 'Delete Sandbox', exact: true }),
+      confirmation.getByRole('button', { name: 'Request deletion', exact: true }),
     ).toBeDisabled();
     await confirmation.getByRole('checkbox').check();
-    await confirmation.getByRole('button', { name: 'Delete Sandbox', exact: true }).dblclick();
+    await confirmation.getByRole('button', { name: 'Request deletion', exact: true }).dblclick();
     if (scenario.uncertain) {
       await expect(page.getByRole('dialog', { name: 'Deleting Sandbox' })).toContainText(
         'not been confirmed',
@@ -180,19 +180,45 @@ for (const scenario of [
       expect(deletes).toHaveLength(1);
       await retry.click();
     }
-    await expect(
-      page.getByText('Sandbox delete request accepted. Cleanup continues in the background.'),
-    ).toBeVisible();
+    await expect(page.getByText('Deleting 1 environment')).toBeVisible();
     expect(deletes).toHaveLength(scenario.uncertain ? 2 : 1);
     expect(deletes[0]!.key).toBeTruthy();
     if (scenario.uncertain) expect(deletes[1]).toEqual(deletes[0]);
+    const detailFirst = scenario.entry === 'panel';
+    if (detailFirst) await page.clock.install();
+    // Reload from Agent Manager so the Sandbox page's detail refresh cannot settle the receipt
+    // before the reopened status dialog observes retirement.
+    await page.goto('/agent-manager');
     await page.reload();
-    await page.getByRole('button', { name: /View Sandbox deletion status/ }).click();
+    await page.getByRole('button', { name: 'View deletion status', exact: true }).click();
+    const reopen = page.getByRole('button', { name: /View Sandbox deletion status/ });
+    await expect(reopen).toBeEnabled();
+    if (detailFirst) await page.clock.pauseAt(new Date(Date.now() + 500));
+    await reopen.press('Enter');
     const progress = page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true });
     await expect(progress).toContainText('still uses one Sandbox slot');
+    await expect(progress.getByText('Last status read:')).toBeVisible();
     expect(deletes).toHaveLength(scenario.uncertain ? 2 : 1);
     await expect(page.getByRole('dialog', { name: 'Sandbox deleted', exact: true })).toHaveCount(0);
     boundary.sandbox = { ...boundary.sandbox, status: 'retired' };
+    if (detailFirst) {
+      // Keep the dialog's poll paused while the original detail page reads terminal state.
+      const detail = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === `/api/v1/sandboxes/${boundary.sandbox.id}` &&
+          response.request().method() === 'GET' &&
+          response.ok(),
+      );
+      await page.evaluate((path) => {
+        window.dispatchEvent(new CustomEvent('cma:route-request', { detail: path }));
+      }, `/sandboxes/${boundary.sandbox.id}`);
+      expect(await (await detail).json()).toMatchObject({
+        id: boundary.sandbox.id,
+        status: 'retired',
+      });
+      await expect(page.locator('.deletion-notice')).toHaveCount(0);
+      await page.clock.resume();
+    }
     await expect(page.getByRole('dialog', { name: 'Sandbox deleted', exact: true })).toBeVisible();
     expect(writes).toEqual(
       Array(scenario.uncertain ? 2 : 1).fill(`DELETE /api/v1/sandboxes/${boundary.sandbox.id}`),

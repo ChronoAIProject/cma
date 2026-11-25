@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Bot } from '../src/api-client';
 import { LocalStartup, recorded } from './agent-startup-fixtures';
 import {
@@ -7,9 +7,185 @@ import {
   gatewaySession,
   teamChannel,
 } from '../build/fixtures/eventGateway';
+import { activityPage } from './redesign-channel.fixture';
 
 const owner = '00000000-0000-4000-8000-000000000383';
 const createdAt = '2026-11-07T00:30:12.123456789Z';
+
+async function sectionDialog(page: Page, baseURL: string, theme: 'light' | 'dark') {
+  const boundary = new LocalStartup();
+  const name = 'Team updates with a long channel title and retained delivery information';
+  await page.addInitScript((value) => localStorage.setItem('cma:appearance', value), theme);
+  await boundary.route(page, baseURL);
+  await page.route(`${baseURL}/auth/session`, (route) => route.fulfill({ json: cmaSession }));
+  await page.route(`${baseURL}/api/event-gateway/**`, (route) => {
+    const request = route.request();
+    const { pathname } = new URL(request.url());
+    if (request.method() === 'GET') {
+      if (pathname.endsWith('/auth/session')) return route.fulfill({ json: gatewaySession });
+      if (pathname.endsWith('/v1/channels'))
+        return route.fulfill({
+          json: {
+            items: [
+              {
+                ...teamChannel,
+                definition: {
+                  ...teamChannel.definition,
+                  name,
+                  routing: {
+                    ...teamChannel.definition.routing,
+                    default_consumer: { name: 'assistant', label: name },
+                  },
+                },
+              },
+            ],
+            next_cursor: null,
+          },
+        });
+      if (pathname.endsWith('/v1/channel-capabilities'))
+        return route.fulfill({ json: channelCapabilities });
+      if (pathname.endsWith('/v1/connections')) return route.fulfill({ json: { items: [] } });
+      if (pathname.endsWith('/activity/stream'))
+        return route.fulfill({
+          contentType: 'text/event-stream',
+          body: `event: activity\ndata: ${JSON.stringify(activityPage())}\n\n`,
+        });
+    }
+    boundary.unexpected.push(`${request.method()} ${pathname}`);
+    return route.abort();
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/event-gateway');
+  await page.getByRole('treeitem', { name: new RegExp(`^${name}`) }).click();
+  const opener = page
+    .getByRole('region', { name: 'Delivery map' })
+    .getByRole('button', { name: new RegExp(`^Channel: ${name}`) });
+  await opener.click();
+  const dialog = page.getByRole('dialog', { name: 'Channel settings', exact: true });
+  await expect(dialog).toBeVisible();
+  const longTitleOpener = page
+    .getByRole('region', { name: 'Delivery map' })
+    .getByRole('button', { name: `Consumer: ${name} (cma_codex)`, exact: true });
+  return { boundary, dialog, opener, longTitleOpener, name };
+}
+
+for (const theme of ['light', 'dark'] as const) {
+  for (const size of [
+    { width: 1440, height: 900, label: 'desktop', motion: 'no-preference' },
+    { width: 720, height: 900, label: 'tablet', motion: 'reduce' },
+    { width: 390, height: 844, label: 'phone390', motion: 'no-preference' },
+    { width: 360, height: 800, label: 'phone360', motion: 'reduce' },
+    { width: 320, height: 720, label: 'phone320', motion: 'reduce' },
+    { width: 720, height: 450, label: '200-percent-reflow', motion: 'reduce' },
+  ] as const) {
+    test(`LOCAL sections Modal ${theme} ${size.label} keeps readable content and keyboard access`, async ({
+      page,
+      baseURL,
+    }, info) => {
+      await page.emulateMedia({ reducedMotion: size.motion });
+      const { boundary, dialog, opener, longTitleOpener, name } = await sectionDialog(
+        page,
+        baseURL!,
+        theme,
+      );
+      expect(await page.locator('body').getAttribute('data-ds-dark-theme')).toBe(
+        theme === 'dark' ? '' : null,
+      );
+      await page.setViewportSize({ width: size.width, height: size.height });
+      const expectedWidth = size.width <= 720 ? size.width - 32 : Math.min(960, size.width * 0.6);
+      const expectedHeight = size.width <= 720 ? size.height - 32 : size.height * 0.6;
+      await expect
+        .poll(async () => (await dialog.boundingBox())!.width)
+        .toBeCloseTo(expectedWidth, 0);
+      await expect
+        .poll(async () => (await dialog.boundingBox())!.height)
+        .toBeCloseTo(expectedHeight, 0);
+      const close = dialog.getByRole('button', { name: 'Close', exact: true });
+      await close.focus();
+      await page.keyboard.press('Shift+Tab');
+      expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(
+        true,
+      );
+      await page.keyboard.press('Tab');
+      await expect(close).toBeFocused();
+      await expect(close).toBeInViewport({ ratio: 1 });
+      expect(await close.evaluate((element) => getComputedStyle(element).boxShadow)).not.toBe(
+        'none',
+      );
+      const title = dialog.locator('.modal__title');
+      expect(await title.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+        true,
+      );
+      const titleBox = (await title.boundingBox())!;
+      const closeBox = (await close.boundingBox())!;
+      expect(titleBox.x + titleBox.width).toBeLessThanOrEqual(closeBox.x);
+      expect(closeBox.width).toBeGreaterThanOrEqual(32);
+      await page.screenshot({
+        path: info.outputPath('sections-header.png'),
+        animations: 'disabled',
+      });
+
+      const navigation = dialog.getByRole('navigation', { name: 'Configuration sections' });
+      const activity = navigation.getByRole('button', { name: 'Activity', exact: true });
+      await activity.focus();
+      await expect(activity).toBeInViewport({ ratio: 1 });
+      if (size.width <= 720)
+        expect((await activity.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      await page.keyboard.press('Enter');
+      const receipt = dialog.getByText('No recipient delivery receipt recorded.', { exact: true });
+      await receipt.scrollIntoViewIfNeeded();
+      await expect(receipt).toBeInViewport({ ratio: 1 });
+      await expect(close).toBeInViewport({ ratio: 1 });
+      const inspector = dialog.locator('.channel-inspector');
+      expect(await inspector.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+      expect(
+        await inspector.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+      ).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe('hidden');
+      await page.screenshot({
+        path: info.outputPath('sections-receipt.png'),
+        animations: 'disabled',
+      });
+      await page.keyboard.press('Escape');
+      await expect(dialog).toBeHidden();
+      await expect(opener).toBeFocused();
+      await longTitleOpener.click();
+      const longDialog = page.getByRole('dialog', { name, exact: true });
+      const longTitle = longDialog.locator('.modal__title');
+      const longClose = longDialog.getByRole('button', { name: 'Close', exact: true });
+      await expect(longDialog).toBeVisible();
+      expect(
+        await longTitle.evaluate((element) => element.scrollWidth <= element.clientWidth),
+      ).toBe(true);
+      expect((await longClose.boundingBox())!.width).toBeGreaterThanOrEqual(32);
+      await expect(longClose).toBeInViewport({ ratio: 1 });
+      await page.screenshot({
+        path: info.outputPath('sections-long-title.png'),
+        animations: 'disabled',
+      });
+      await longClose.click();
+      await expect(longDialog).toBeHidden();
+      await expect(longTitleOpener).toBeFocused();
+      expect(boundary.unexpected).toEqual([]);
+      expect(boundary.writes).toEqual([]);
+      expect(boundary.errors).toEqual([]);
+      await info.attach('sections-layout.json', {
+        body: JSON.stringify({
+          theme,
+          ...size,
+          expectedWidth,
+          expectedHeight,
+          synthetic: true,
+          nativeZoom: false,
+        }),
+        contentType: 'application/json',
+      });
+    });
+  }
+}
 
 test('LOCAL a terminal gateway refusal stops automatic session reads until sign-in', async ({
   page,
@@ -245,3 +421,53 @@ for (const settings of [
     });
   });
 }
+
+test('LOCAL New channel announces the route and restores keyboard focus on Cancel', async ({
+  page,
+  baseURL,
+}) => {
+  const boundary = new LocalStartup();
+  await boundary.route(page, baseURL!);
+  await page.route(`${baseURL}/auth/session`, (route) => route.fulfill({ json: cmaSession }));
+  await page.route(`${baseURL}/api/event-gateway/**`, (route) => {
+    const { pathname } = new URL(route.request().url());
+    if (pathname.endsWith('/auth/session')) return route.fulfill({ json: gatewaySession });
+    if (pathname.endsWith('/v1/channel-capabilities'))
+      return route.fulfill({ json: channelCapabilities });
+    return route.fulfill({ json: { items: [] } });
+  });
+  await page.goto('/event-gateway');
+  for (const width of [1440, 519]) {
+    await page.setViewportSize({ width, height: 812 });
+    const create = page
+      .getByRole('region', { name: 'Channel workspace' })
+      .getByRole('button', { name: 'New channel' });
+    await create.focus();
+    await page.keyboard.press('Enter');
+    const heading = page.getByRole('heading', { name: 'New channel' });
+    await expect(heading).toBeFocused();
+    await expect(heading).toBeInViewport();
+    await expect
+      .poll(() => heading.evaluate((el) => getComputedStyle(el).boxShadow))
+      .not.toBe('none');
+    const cancel = page.getByRole('button', { name: 'Cancel', exact: true });
+    await cancel.focus();
+    await page.keyboard.press('Enter');
+    await expect(create).toBeFocused();
+  }
+  const openNavigation = page.getByRole('button', { name: 'Show navigation', exact: true });
+  await openNavigation.click();
+  const drawerCreate = page
+    .getByRole('complementary', { name: 'Application navigation' })
+    .getByRole('button', { name: 'New channel', exact: true });
+  await drawerCreate.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'New channel' })).toBeFocused();
+  await expect(openNavigation).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(
+    page
+      .getByRole('region', { name: 'Channel workspace' })
+      .getByRole('button', { name: 'New channel' }),
+  ).toBeFocused();
+});

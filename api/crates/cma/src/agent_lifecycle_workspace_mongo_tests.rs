@@ -1,5 +1,9 @@
 //! The actual facade persists admission, restarts safely and retains its parent.
 use super::*;
+#[path = "agent_lifecycle_canary_worker_tests.rs"]
+mod canary_worker;
+#[path = "agent_lifecycle_image_retirement_tests.rs"]
+mod image_retirement;
 #[path = "agent_lifecycle_repository_preflight_tests.rs"]
 mod repository_preflight;
 #[path = "agent_lifecycle_template_tests.rs"]
@@ -114,6 +118,7 @@ async fn personal_account_authority_is_not_persisted_in_lifecycle_capabilities()
 
 fn work(record: &crate::store::LifecycleRecord, existing: bool) -> ProvisionInput {
     ProvisionInput {
+        creation_fence: None,
         behavior: record.input.behavior,
         first_message: validation::admitted_first_message(&record.input),
         request: record.input.request.clone(),
@@ -126,7 +131,84 @@ fn work(record: &crate::store::LifecycleRecord, existing: bool) -> ProvisionInpu
         existing_sandbox_id: existing.then(|| record.sandbox_id.clone()).flatten(),
         existing_agent_id: existing.then(|| record.agent_id.clone()).flatten(),
         actor: record.input.actor.clone(),
+        canary_profiles: None,
+        repository_access_pin: None,
     }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn admitted_session_guidance_survives_retry_after_selection_is_disabled() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable Mongo URI is required");
+    let client = mongodb::Client::with_uri_str(uri).await.unwrap();
+    let db = client.database(&format!("cma_guidance_{}", uuid::Uuid::new_v4().simple()));
+    let store = Arc::new(InMemorySandboxStore::default());
+    let workspace = fixture::seed(&store).await;
+    let owner = fixture::context("owner");
+    let request = request(json!({
+        "name": "Guidance",
+        "workspace_id": workspace.id.as_str(),
+        "profile": {"system_prompt": "  exact owner prompt\n"},
+    }));
+    let mut first_id = None;
+    for enabled in [true, false] {
+        let operations = Arc::new(MongoAgentLifecycleStore::open(&db).await.unwrap());
+        let profiles = Arc::new(
+            crate::store::MongoProfileStore::open(&client, db.name())
+                .await
+                .unwrap(),
+        );
+        let service = fixture::facade(store.clone(), profiles, operations.clone())
+            .with_session_guidance(false, enabled);
+        let _slots = service
+            .worker_slots
+            .clone()
+            .acquire_many_owned(crate::store::DISCOVERY_BATCH as u32)
+            .await
+            .unwrap();
+        let receipt = service
+            .create(
+                &owner.caller,
+                Some(&owner),
+                None,
+                request.clone(),
+                "guidance",
+            )
+            .await
+            .unwrap();
+        let id = first_id.get_or_insert(receipt.id.clone());
+        assert_eq!(&receipt.id, id);
+        let saved = operations
+            .read_for_owner(&owner.caller.subject, id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved.input.managed_agent_instructions.as_deref(),
+            Some(guidance::admission_instructions(false, true))
+        );
+        assert_eq!(
+            serde_json::to_vec(&saved.input.request).unwrap(),
+            serde_json::to_vec(&request).unwrap()
+        );
+        if !enabled {
+            let fresh = service
+                .create(&owner.caller, Some(&owner), None, request.clone(), "fresh")
+                .await
+                .unwrap();
+            assert_ne!(&fresh.id, id);
+            let saved = operations
+                .read_for_owner(&owner.caller.subject, &fresh.id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                saved.input.managed_agent_instructions.as_deref(),
+                Some(guidance::managed_v3())
+            );
+        }
+    }
+    db.drop().await.unwrap();
 }
 
 #[tokio::test]
@@ -476,3 +558,6 @@ async fn assert_profile_counts(db: &mongodb::Database, expected_agents: u64) {
         );
     }
 }
+
+#[path = "agent_lifecycle_release_source_tests.rs"]
+mod release_source_tests;

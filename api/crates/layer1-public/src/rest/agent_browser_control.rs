@@ -213,7 +213,7 @@ impl IntoResponse for ControlProblem {
         }
         let (status, code, detail) = match self.0 {
             AgentFileError::RuntimeCapacity(capacity) => return crate::rest::problems::runtime_capacity(capacity),
-            AgentFileError::Invalid | AgentFileError::TooLarge => (StatusCode::BAD_REQUEST, "invalid_browser_control", "Browser control request is invalid."),
+            AgentFileError::Invalid | AgentFileError::TooLarge | AgentFileError::NameTooLong => (StatusCode::BAD_REQUEST, "invalid_browser_control", "Browser control request is invalid."),
             AgentFileError::Unsupported => (StatusCode::CONFLICT, "browser_control_unsupported", "This runtime has no verified browser control capability."),
             AgentFileError::NotReady => (StatusCode::CONFLICT, "browser_control_not_ready", "The browser runtime is not active."),
             AgentFileError::Conflict => (StatusCode::CONFLICT, "browser_control_conflict", "Control identity changed or the operation cannot be confirmed. Query the original operation."),

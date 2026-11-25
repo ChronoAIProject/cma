@@ -69,6 +69,26 @@ export function sandboxFixture(status: SandboxStatus = 'active'): SandboxDetail 
   };
 }
 
+export function delayedRetirementFixture(): SandboxDetail {
+  const sandbox = sandboxFixture('retiring');
+  return {
+    ...sandbox,
+    lifecycle: {
+      ...sandbox.lifecycle!,
+      result: {
+        state: 'recoverable_pending',
+        code: 'lifecycle_wait_exceeded',
+        operationId: 'retirement-fixture',
+        startedAt: '2026-09-06T00:00:00Z',
+        resultDueAt: '2026-09-06T00:01:30Z',
+        continuing: true,
+        actions: ['observe'],
+        retryAfterSeconds: 5,
+      },
+    },
+  };
+}
+
 export function navigationFixture(
   sandboxStatus: SandboxStatus = 'active',
   agentStatus: AgentStatus = 'ready',
@@ -98,6 +118,29 @@ export function parkedRuntimeUpdateFixture(): SandboxDetail {
       failure: { code: 'runtime_unavailable', message: 'The runtime could not be reopened.' },
       schedule: { timezone: 'Asia/Singapore', localTime: '02:00' },
       preservesHome: true,
+    },
+  };
+}
+
+export function parkedRuntimeResultFixture(
+  purpose: 'image_rotation' | 'revive' = 'image_rotation',
+): SandboxDetail {
+  const base = parkedRuntimeUpdateFixture();
+  return {
+    ...base,
+    status: purpose === 'revive' ? 'reviving' : 'rotating',
+    runtimeUpdate: undefined,
+    lifecycle: {
+      ...base.lifecycle!,
+      operation: { ...base.lifecycle!.operation!, purpose },
+      result: {
+        state: 'failed',
+        code: 'runtime_update_parked',
+        operationId: 'update-operation',
+        startedAt: base.lifecycle!.operation!.startedAt,
+        continuing: false,
+        actions: ['observe'],
+      },
     },
   };
 }

@@ -1,0 +1,6 @@
+# A cancelled driver commit or abort strands its server transaction and the
+# locks it holds (#3288). Production store code uses the guarded commands.
+disallowed-methods = [
+  { path = "mongodb::ClientSession::abort_transaction", reason = "use store::transaction_terminal::GuardedTerminal::abort_guarded so cancellation cannot strand the server transaction (#3288)" },
+  { path = "mongodb::ClientSession::commit_transaction", reason = "use store::transaction_terminal::GuardedTerminal::commit_guarded so cancellation cannot strand the server transaction (#3288)" },
+]

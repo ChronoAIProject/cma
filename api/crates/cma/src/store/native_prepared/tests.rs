@@ -15,7 +15,7 @@ pub(in crate::store) mod agent_replay_tests;
 mod claim_race_tests;
 mod guidance_revision_tests;
 mod installation_transfer_tests;
-mod machine_tests;
+pub(super) mod machine_tests;
 mod model_tests;
 pub(crate) mod open_ready_fixture;
 mod runtime_release_tests;
@@ -90,6 +90,7 @@ fn ready(mut record: Record) -> Record {
     let request = NativePoolClaimRequest {
         pool: NativePoolBinding {
             spec: NativePoolSpec {
+                cold_canary: false,
                 image: RuntimeImage {
                     uri: record.plan.warm.runtime_version.clone(),
                     labels: std::collections::BTreeMap::from([
@@ -221,37 +222,48 @@ async fn admission(
         .await
         .unwrap();
     let result = ops
-        .create(
-            &SubjectId::new(owner),
-            key,
-            crate::store::LifecycleInput {
-                behavior: crate::store::LifecycleBehavior::PromptRepository,
-                managed_agent_instructions: Some(
-                    plan.warm.workspaces[0].agents[0]
-                        .content
-                        .system_prompt
-                        .clone(),
-                ),
-                setup_message: None,
-                request: serde_json::from_value(
-                    serde_json::json!({"name":"Prepared test", "machine_included":plan.machine()}),
-                )
-                .unwrap(),
-                resolved_image: plan.machine().then(|| plan.warm.runtime_version.clone()),
-                capacity: Some(layer3_adapter::SandboxCapacity {
-                    cpu_millis: 1000,
-                    memory_mib: 2048,
-                }),
-                sandbox_availability: Default::default(),
-                capabilities: vec![],
-                actor: None,
-            },
-        )
+        .create(&SubjectId::new(owner), key, lifecycle_input(plan))
         .await
         .unwrap();
     let crate::store::CreateResult::Created(operation_id) = result else {
         panic!("new operation")
     };
+    sandbox_admission(store, plan, owner, key, operation_id).await
+}
+
+fn lifecycle_input(plan: &NativePreparedPlan) -> crate::store::LifecycleInput {
+    crate::store::LifecycleInput {
+        behavior: crate::store::LifecycleBehavior::PromptRepository,
+        managed_agent_instructions: Some(
+            plan.warm.workspaces[0].agents[0]
+                .content
+                .system_prompt
+                .clone(),
+        ),
+        setup_message: None,
+        request: serde_json::from_value(
+            serde_json::json!({"name":"Prepared test", "machine_included":plan.machine()}),
+        )
+        .unwrap(),
+        resolved_image: plan.machine().then(|| plan.warm.runtime_version.clone()),
+        capacity: Some(layer3_adapter::SandboxCapacity {
+            cpu_millis: 1000,
+            memory_mib: 2048,
+        }),
+        sandbox_availability: Default::default(),
+        capabilities: vec![],
+        actor: None,
+    }
+}
+
+async fn sandbox_admission(
+    store: &MongoSandboxStore,
+    plan: &NativePreparedPlan,
+    owner: &str,
+    key: &str,
+    operation_id: String,
+) -> SandboxAdmission {
+    let database = store.client.database(&store.sandboxes.namespace().db);
     let (profile, workspace) = actual_profiles(plan);
     let revision = WorkspaceProfileRevision {
         profile_id: workspace.id.clone(),

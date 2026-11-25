@@ -5,7 +5,7 @@ use layer3_adapter::agent_sandbox::*;
 use layer3_adapter::{HomeVolumeMode, HomeVolumePolicy, HomeVolumeReceipt};
 use std::collections::BTreeMap;
 
-fn retained(id: &str, native: bool) -> Sandbox {
+pub(super) fn retained(id: &str, native: bool) -> Sandbox {
     let mut sandbox = crate::store::sandbox_mongo_integration_tests::sandbox(id);
     let policy = HomeVolumePolicy {
         mode: if native {
@@ -25,6 +25,7 @@ fn retained(id: &str, native: bool) -> Sandbox {
                 request: NativePoolClaimRequest {
                     pool: NativePoolBinding {
                         spec: NativePoolSpec {
+                            cold_canary: false,
                             image: layer3_adapter::RuntimeImage {
                                 uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
                                 labels: BTreeMap::from([

@@ -7,7 +7,7 @@ use layer2_core::sandbox::store::{
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, WorktreeStatus,
 };
-use layer3_adapter::{AgentCloseRequest, AgentHomeRemoveRequest, AgentSlot, WorktreeRef};
+use layer3_adapter::{AgentHomeRemoveRequest, AgentSlot, WorktreeRef};
 
 use super::startup_support::has_startup_evidence;
 use super::support::{
@@ -17,6 +17,7 @@ use super::AgentWorker;
 
 #[path = "cleanup_retired.rs"]
 mod retired;
+pub(super) use retired::CleanupPreflightError;
 
 impl AgentWorker {
     pub(super) async fn fence_interaction(
@@ -135,14 +136,39 @@ impl AgentWorker {
                 )
                 .await;
         }
-        let request = close_request(&agent);
+        let request = match agent.close_process_request() {
+            Ok(request) => request,
+            Err(_) => return self.invalid_cleanup(agent, now).await,
+        };
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
-        match self
-            .dependencies
-            .adapter
-            .close_agent(&context.runtime, authority_fence, &request)
-            .await
-        {
+        let (closed, failure) = layer3_adapter::receiver_failure::observe(
+            self.dependencies
+                .adapter
+                .close_agent(&context.runtime, authority_fence, &request),
+        )
+        .await;
+        if let (Some(store), Some(receiver), Some(binding)) = (
+            &self.config.retirement_reporter,
+            failure.and_then(|f| f.into_receiver()),
+            &context.sandbox.runtime,
+        ) {
+            if receiver.owner.agent_id == agent.id.as_str()
+                && context.sandbox.status == layer2_core::sandbox::SandboxStatus::Retiring
+                && context.sandbox.work.step == layer2_core::sandbox::SandboxWorkStep::StopAgents
+            {
+                let observation = crate::store::native_retirement_action::RetirementObservation {
+                    owner: context.sandbox.owner.clone(),
+                    binding: binding.clone(),
+                    receiver,
+                };
+                if let Err(error) = store.note(&context.sandbox, &observation).await {
+                    tracing::debug!(sandbox_id = %context.sandbox.id,
+                        retryable = matches!(error, SandboxStoreError::Unavailable(_)),
+                        "retirement receiver observation was not recorded");
+                }
+            }
+        }
+        match closed {
             Ok(()) => {
                 self.progress(
                     agent,
@@ -172,9 +198,6 @@ impl AgentWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
-        if self.complete_retired_cleanup(&agent, now).await? {
-            return Ok(());
-        }
         if !matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed) {
             return self.invalid_cleanup(agent, now).await;
         }
@@ -206,9 +229,22 @@ impl AgentWorker {
             worktree,
         });
 
-        if has_receipt(&agent, AgentWorkStep::CloseProcess)
-            || !has_startup_evidence(&agent, AgentWorkStep::OpenConversation)
+        let open_exists = has_startup_evidence(&agent, AgentWorkStep::OpenConversation);
+        let previous_close = agent
+            .work
+            .receipts
+            .iter()
+            .find(|receipt| receipt.step == AgentWorkStep::CloseProcess);
+        if open_exists
+            && previous_close.is_some_and(|receipt| {
+                !agent
+                    .close_process_request()
+                    .is_ok_and(|request| request.operation_id == receipt.operation_id)
+            })
         {
+            return self.invalid_cleanup(agent, now).await;
+        }
+        if previous_close.is_some() || !open_exists {
             return self
                 .progress(
                     agent,
@@ -222,7 +258,10 @@ impl AgentWorker {
                 .await;
         }
 
-        let request = close_request(&agent);
+        let request = match agent.close_process_request() {
+            Ok(request) => request,
+            Err(_) => return self.invalid_cleanup(agent, now).await,
+        };
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
         match self
             .dependencies
@@ -259,9 +298,6 @@ impl AgentWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
-        if self.complete_retired_cleanup(&agent, now).await? {
-            return Ok(());
-        }
         let context = match self.cleanup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => {
@@ -326,9 +362,6 @@ impl AgentWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
-        if self.complete_retired_cleanup(&agent, now).await? {
-            return Ok(());
-        }
         let context = match self.cleanup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => {
@@ -411,19 +444,4 @@ impl AgentWorker {
         )
         .await
     }
-}
-
-fn close_request(agent: &Agent) -> AgentCloseRequest {
-    AgentCloseRequest::new(
-        format!("agent:{}:close:v1", agent.id),
-        AgentSlot::new(agent.id.to_string()),
-    )
-}
-
-fn has_receipt(agent: &Agent, step: AgentWorkStep) -> bool {
-    agent
-        .work
-        .receipts
-        .iter()
-        .any(|receipt| receipt.step == step)
 }

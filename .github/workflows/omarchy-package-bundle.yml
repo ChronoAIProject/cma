@@ -1,0 +1,141 @@
+name: "Omarchy package bundle"
+
+# Builds the bundle of every Arch and Omarchy package the Omarchy runtime image
+# installs, from .github/scripts/omarchy-packages.lock.json, and publishes it
+# once as a public FROM scratch image. The runtime Dockerfile pins the digest
+# this run prints, so cold Omarchy builds need no live package server.
+#
+# The tag is the snapshot plus the lock's hash, so one lock has one tag. A tag
+# that already exists is never overwritten: the run refuses before building
+# and again immediately before pushing.
+#
+# Image builds pin a version by digest, so the package stays public and no
+# version is ever deleted; a snapshot bump only adds one. CI / Repo enforces
+# this with .github/scripts/omarchy-package-retention.rb.
+
+on:
+  workflow_dispatch:
+    inputs:
+      snapshot:
+        description: "ARCH_SNAPSHOT the committed lock was generated for (YYYY/MM/DD)"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: omarchy-package-bundle
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    name: "Build and publish the Omarchy package bundle"
+    if: github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REPOSITORY: chronoaiproject/cma-omarchy-packages
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Builder regressions
+        run: python3 -B .github/scripts/omarchy-package-bundle-tests.py
+
+      - name: Resolve the bundle tag from the committed lock
+        id: tag
+        env:
+          SNAPSHOT: ${{ inputs.snapshot }}
+        run: |
+          set -euo pipefail
+          tag=$(python3 -B .github/scripts/omarchy-package-bundle.py tag --snapshot "$SNAPSHOT")
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse an existing tag before building
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: python3 -B .github/scripts/omarchy-package-bundle.py absent --repository "$REPOSITORY" --tag "$TAG"
+
+      - name: Download, verify and lay out the bundle
+        id: build
+        env:
+          SNAPSHOT: ${{ inputs.snapshot }}
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/omarchy-packages"
+          files="$RUNNER_TEMP/omarchy-package-files"
+          mkdir -m 0700 "$output"
+          python3 -B .github/scripts/omarchy-package-bundle.py build --snapshot "$SNAPSHOT" \
+            --work "$files" --output "$output/layout" --summary "$output/summary.json"
+          rm -rf "$files"
+          {
+            echo "output_dir=$output"
+            echo "digest=$(jq -er .digest "$output/summary.json")"
+            echo "bytes=$(jq -er .layers_bytes "$output/summary.json")"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the exact verified layout
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OUTPUT_DIR: ${{ steps.build.outputs.output_dir }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          auth_file="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+          if [ ! -f "$auth_file" ]; then
+            echo "::error::docker login did not create its authentication file"
+            exit 1
+          fi
+          skopeo() {
+            docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp \
+              --volume "$auth_file:/auth/config.json:ro" --volume "$OUTPUT_DIR:/output:ro" \
+              quay.io/skopeo/stable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810 "$@"
+          }
+          version=$(skopeo --version)
+          if ! printf '%s\n' "$version" | grep -Eq '^skopeo version 1\.22\.2( commit: [0-9a-f]{7,40})?$'; then
+            echo "::error::unexpected pinned Skopeo version: $version"
+            exit 1
+          fi
+          python3 -B .github/scripts/omarchy-package-bundle.py absent --repository "$REPOSITORY" --tag "$TAG"
+          skopeo copy --preserve-digests --dest-authfile /auth/config.json \
+            "oci:/output/layout:$TAG" "docker://ghcr.io/$REPOSITORY:$TAG"
+          pushed=$(skopeo inspect --raw --authfile /auth/config.json "docker://ghcr.io/$REPOSITORY:$TAG" | sha256sum)
+          if [ "sha256:${pushed%% *}" != "$DIGEST" ]; then
+            echo "::error::registry manifest differs from the verified layout"
+            exit 1
+          fi
+
+      - name: Record the published digest
+        env:
+          SNAPSHOT: ${{ inputs.snapshot }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          BYTES: ${{ steps.build.outputs.bytes }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Omarchy package bundle"
+            echo ""
+            echo "- Snapshot: \`$SNAPSHOT\`"
+            echo "- Tag: \`ghcr.io/$REPOSITORY:$TAG\`"
+            echo "- Digest: \`$DIGEST\`"
+            echo "- Layer bytes: $BYTES"
+            echo ""
+            echo "Pin it in api/crates/layer4-runtime/Dockerfile:"
+            echo ""
+            echo "\`ARG OMARCHY_PACKAGES_IMAGE=ghcr.io/$REPOSITORY@$DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,11 +1,17 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useQueuedInputs } from './queuedInputsStatus';
-import { deferred, entry, reconciliationHarness, status } from './queuedReconciliation.fixture';
+import {
+  deferred,
+  entry,
+  reconciliationHarness,
+  status,
+  unavailable,
+} from './queuedReconciliation.fixture';
 import { json, accepted } from './controller.fixture';
 import { queuedReceipt } from './queued.fixture';
 import { commandStatus } from './controls.fixture';
-import { queuePresentation } from '../queuePresentation';
+import type { ConversationMessage } from '../model';
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -110,10 +116,10 @@ it('preserves a confirmed edit revision through both late and stale discovery', 
   expect(hook.result.current.items[0]).toMatchObject({ revision: 8, input: 'Revised instruction' });
   hook.unmount();
 });
-it('keeps uncertain cancellation recovery ahead of a terminal read and reuses its original key after reload', async () => {
+it('reuses the original cancellation key and body after an inconclusive read and reload', async () => {
   const h = mutationHarness();
   h.loseReply();
-  h.command.mockImplementation(async () => json(status(1, 'cancelled')));
+  h.command.mockImplementation(async () => json(status(1, 'starting')));
   const first = renderHook(() => useQueuedInputs(h.session, true, false, '0', identity));
   await advance();
   await act(async () => {
@@ -127,21 +133,6 @@ it('keeps uncertain cancellation recovery ahead of a terminal read and reuses it
   await advance();
   const queue = second.result.current;
   expect(queue.items[0]?.needsRecovery).toBe(true);
-  const presented = queuePresentation(
-    {
-      messages: [],
-      toolCalls: [],
-      reasoning: [],
-      approvals: [],
-      plans: [],
-      recovery: [],
-      cursor: 0,
-    },
-    [],
-    queue,
-  );
-  expect(presented.items).toHaveLength(1);
-  expect(presented.outcomes).toEqual([]);
   await act(() => second.result.current.recover(queue.items[0]!));
   expect(h.journal.queuedInputs.read()).toEqual([]);
   const writes = h.fetch.mock.calls.filter(([, init]) => init?.method === 'POST');
@@ -151,6 +142,132 @@ it('keeps uncertain cancellation recovery ahead of a terminal read and reuses it
   expect(second.result.current.items).toEqual([]);
   expect(second.result.current.outcomes[0]?.kind).toBe('cancelled');
   second.unmount();
+});
+
+function removal(id: number, key = `key_${id}`) {
+  return {
+    key,
+    responseId: `resp_${id}`,
+    commandId: `cmd_${id}`,
+    revision: 7,
+    original: 'Same message',
+    action: 'remove' as const,
+  };
+}
+
+it.each(['cancelled', 'completed', 'expired'] as const)(
+  'clears uncertain cancellation after a verified %s read on reload',
+  async (outcome) => {
+    const h = mutationHarness();
+    h.loseReply();
+    const first = renderHook(() => useQueuedInputs(h.session, true, false, '0', identity));
+    await advance();
+    await act(async () => {
+      await expect(first.result.current.remove(first.result.current.items[0]!)).rejects.toThrow(
+        'Lost reply',
+      );
+    });
+    expect(h.journal.queuedInputs.read()).toHaveLength(1);
+    first.unmount();
+    h.command.mockImplementation(async () => json(status(1, outcome)));
+    const second = renderHook(() => useQueuedInputs(h.session, true, false, '0', identity));
+    await advance();
+    expect(h.journal.queuedInputs.read()).toEqual([]);
+    expect(second.result.current.items).toEqual([]);
+    expect(second.result.current.outcomes[0]).toMatchObject({ kind: outcome, terminal: true });
+    expect(h.fetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+    second.unmount();
+  },
+);
+
+it('observes and resolves an older legacy cancellation even when another input is current', async () => {
+  const h = reconciliationHarness();
+  h.journal.queuedCancellation.retain({
+    key: 'legacy_key',
+    responseId: 'resp_1',
+    commandId: null,
+    body: { source_command_id: 'cmd_1', expected_command_revision: 7 },
+  });
+  h.setRows([2]);
+  h.command.mockImplementation(async (id) => json(status(id, 'cancelled')));
+  const hook = renderHook(() => useQueuedInputs(h.session, true, false, '0', identity));
+  await advance();
+  expect(h.journal.queuedCancellation.read()).toBeNull();
+  expect(hook.result.current.items.map((item) => item.commandId)).toEqual(['cmd_2']);
+  expect(hook.result.current.outcomes[0]).toMatchObject({ commandId: 'cmd_1', kind: 'cancelled' });
+  expect(h.fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+  hook.unmount();
+});
+
+it('reads a pending cancellation through discovery failure and keeps it until the exact source confirms', async () => {
+  const h = mutationHarness();
+  h.loseReply();
+  const hook = renderHook(() => useQueuedInputs(h.session, true, true, '0', identity));
+  await advance();
+  h.list.mockImplementation(async () => unavailable(503));
+  h.command.mockImplementation(async () => unavailable(503));
+  await act(async () => {
+    await expect(hook.result.current.remove(hook.result.current.items[0]!)).rejects.toThrow(
+      'Lost reply',
+    );
+  });
+  const original = h.journal.queuedInputs.read()[0]!;
+  await advance(2000);
+  expect(h.command).toHaveBeenCalledWith(1);
+  expect(h.journal.queuedInputs.read()).toEqual([original]);
+  expect(hook.result.current.items[0]?.needsRecovery).toBe(true);
+
+  h.command.mockImplementation(async () => json(status(1, 'cancelled')));
+  await advance(10000);
+  expect(h.journal.queuedInputs.read()).toEqual([]);
+  expect(hook.result.current.items).toEqual([]);
+  expect(hook.result.current.outcomes[0]).toMatchObject({ kind: 'cancelled', terminal: true });
+  expect(h.fetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+  hook.unmount();
+});
+
+it('uses exact durable user-message identity and keeps a second cancellation with identical text', async () => {
+  const h = reconciliationHarness();
+  h.journal.queuedInputs.retain(removal(1));
+  h.journal.queuedInputs.retain(removal(2));
+  h.setRows([1, 2]);
+  const message: ConversationMessage = {
+    id: 'event:3',
+    role: 'user',
+    content: 'Same message',
+    status: 'complete',
+    commandId: 'cmd_1',
+    responseId: 'resp_2',
+  };
+  const hook = renderHook(
+    ({ item }: { item: ConversationMessage }) =>
+      useQueuedInputs(h.session, true, false, item.responseId!, identity, 0, [item]),
+    { initialProps: { item: message } },
+  );
+  await advance();
+  expect(h.journal.queuedInputs.read()).toEqual([removal(1), removal(2)]);
+  hook.rerender({ item: { ...message, responseId: 'resp_1' } });
+  await advance(2000);
+  expect(h.journal.queuedInputs.read()).toEqual([removal(2)]);
+  expect(hook.result.current.items.map((item) => item.commandId)).toEqual(['cmd_2']);
+  expect(h.fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+  hook.unmount();
+});
+
+it('a late terminal read does not clear a replacement intent for the same source', async () => {
+  const h = reconciliationHarness();
+  const original = h.journal.queuedInputs.retain(removal(1));
+  const late = deferred<Response>();
+  h.command.mockReturnValueOnce(late.promise);
+  const hook = renderHook(() => useQueuedInputs(h.session, true, false, '0', identity));
+  await advance();
+  expect(h.command).toHaveBeenCalledTimes(1);
+  h.journal.queuedInputs.settle(original);
+  const replacement = h.journal.queuedInputs.retain(removal(1, 'replacement'));
+  await act(async () => late.resolve(json(status(1, 'completed'))));
+  expect(h.journal.queuedInputs.read()).toEqual([replacement]);
+  expect(hook.result.current.items[0]?.needsRecovery).toBe(true);
+  hook.unmount();
 });
 it('retains discovered commands in memory when status persistence is refused', async () => {
   const h = reconciliationHarness();

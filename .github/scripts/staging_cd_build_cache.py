@@ -16,11 +16,17 @@ from staging_cd_cache_context import context
 from staging_cd_cargo_artifact import MAX_BUNDLE_BYTES, MAX_EXPANDED_BYTES
 from staging_cd_reservations import validate_reservation
 
-SCOPES = {"am": "cma-am", "eg": "cma-eg", "web": "cma-web",
+SCOPES = {"am": "cma-cd-am", "eg": "cma-cd-eg", "web": "cma-cd-web",
           "runtime": "cma-runtime", "runtime-omarchy": "cma-runtime-omarchy"}
-# CI's runtime index and the CD runtime index share content-addressed build
-# stages with Omarchy. Keep each publisher's export in its own scope.
-EXTRA_IMPORTS = {"runtime": ("runtime",), "runtime-omarchy": ("cma-runtime", "runtime")}
+# The CI image builds export cma-am, cma-eg, cma-web, runtime and
+# runtime-omarchy (ci-images.yml, ci-omarchy.yml). Keep each publisher's
+# export in its own scope and only read the other's. CD builds from a
+# git-archive snapshot whose file modes differ from CI's checkout, so a shared
+# scope made each writer replace the other's index and cost the next build its
+# dependency stages (cargo-chef install and cook, 5-10 min for AM).
+CI_SCOPES = frozenset({"cma-am", "cma-eg", "cma-web", "runtime", "runtime-omarchy"})
+EXTRA_IMPORTS = {"am": ("cma-am",), "eg": ("cma-eg",), "web": ("cma-web",),
+                 "runtime": ("runtime",), "runtime-omarchy": ("cma-runtime", "runtime")}
 RUNTIME_KEYS = ("ACTIONS_RUNTIME_TOKEN", "ACTIONS_RESULTS_URL")
 
 
@@ -42,8 +48,8 @@ def layer_options(env, component):
     args = []
     for scope in (SCOPES[component], *EXTRA_IMPORTS.get(component, ())):
         args.extend(("--cache-from", cache(scope)))
-    if env.get("GITHUB_EVENT_NAME") == "push" and env.get("GITHUB_REF") == "refs/heads/develop":
-        args += ["--cache-to", cache(SCOPES[component]) + ",mode=max,ignore-error=true"]
+    # The GHA exporter cannot cap or reserve its bytes before uploading. Keep
+    # the existing scopes readable throughout the migration to sealed archives.
     return args
 
 
@@ -61,6 +67,9 @@ class BuildCache:
         self.restore_result = "miss"
         self.export_reason = None
         self.export_headroom = None
+        self.export_retained_groups = None
+        self.layer_root = Path(env["RUNNER_TEMP"]) / "cma-layer-cache"
+        self.layer_export_requested = False
 
     def restore(self):
         self.restore_result = "miss"
@@ -85,15 +94,48 @@ class BuildCache:
         return True
 
     def build_options(self):
+        self.layer_export_requested = False
         args = layer_options(self.env, self.component) if self.build_environment() else []
+        if self.env.get("CD_LAYER_ARCHIVE_CACHE") == "enabled":
+            restored = self.layer_root / "restored"
+            pending = self.layer_root / "pending"
+            require(not self.layer_root.is_symlink() and not pending.is_symlink(), "Layer cache path is invalid")
+            if (self.env.get("CD_LAYER_ARCHIVE_RESTORED") == "true"
+                    and restored.is_dir() and not restored.is_symlink()):
+                args += ["--cache-from", "type=local,src=" + str(restored)]
+            if self.env.get("CD_LAYER_CACHE_WRITER_FLOOR") == "verified":
+                try:
+                    (self.layer_root / "replay.json").unlink(missing_ok=True)
+                    if pending.exists():
+                        shutil.rmtree(pending)
+                    args += ["--cache-to", "type=local,mode=min,image-manifest=true,oci-mediatypes=true,ignore-error=true,dest=" + str(pending)]
+                    self.layer_export_requested = True
+                except OSError:
+                    # The ordinary build can continue with its available reads.
+                    pass
         if self.key is not None:
             args += ["--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace]
         return args
 
     def exports_layers(self):
-        # True exactly when build_options() asks BuildKit to write this scope's
-        # layers. Every other build only imports them, so no save is expected.
-        return bool(self.build_environment()) and "--cache-to" in layer_options(self.env, self.component)
+        # The legacy remote layer export is permanently read-only. Local
+        # archives are verified and admitted separately after publication.
+        return False
+
+    def record_layer_replay(self, reservation):
+        if not self.layer_export_requested or not (self.layer_root / "pending").is_dir():
+            return
+        # The exact successful build and its cache mount name are needed for
+        # a clean-builder replay. Failure only withholds the optional cache.
+        replay = self.layer_root / "replay.json"
+        try:
+            with tempfile.TemporaryDirectory(dir=self.layer_root) as directory:
+                candidate = Path(directory) / "replay.json"
+                candidate.write_text(json.dumps({"reservation": reservation,
+                                                 "mount_namespace": self.namespace if self.key else None}))
+                candidate.replace(replay)
+        except OSError:
+            pass
 
     def build_environment(self):
         # Buildx's cache client needs these; build steps, registry transport and
@@ -107,13 +149,21 @@ class BuildCache:
         # day long made each build recompile everything merged since that seed.
         self.export_reason = None
         self.export_headroom = None
+        self.export_retained_groups = None
         if self.key is None:
             return False
         require(not self.pending.exists(), "Cargo cache export must be fresh")
         try:
             tool = bridge()
             tool.transfer("extract", self.pending, namespace=self.namespace,
-                          timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES)
+                          timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES,
+                          compact_registry=True, max_archive=MAX_BUNDLE_BYTES)
+            compacted = self.pending / "compacted"
+            if compacted.exists():
+                groups = int(compacted.read_text())
+                require(0 < groups <= tool.MAX_MEMBERS, "invalid compacted cache group count")
+                self.export_retained_groups = groups
+                compacted.unlink()
             tool.seal(self.pending, self.key.prefix, family=self.key.family,
                       max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
             size = sum((self.pending / name).lstat().st_size for name in ("registry.tar.gz", "target.tar.gz"))

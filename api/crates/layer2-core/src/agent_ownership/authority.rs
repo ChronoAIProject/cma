@@ -1,13 +1,16 @@
 use std::future::Future;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::{atomic::AtomicBool, Arc};
 
 use tokio::sync::watch;
 use tokio::time::Instant;
 
 use super::{transport::RegisteredReceiver, OwnershipError, OwnershipStore, OwnershipToken};
+mod provenance;
+mod renewal;
+mod retirement;
+mod validity;
+pub(super) use retirement::CleanupState;
+use validity::Validity;
 
 tokio::task_local! {
     static EXECUTION_AUTHORITY: Arc<Authority>;
@@ -40,13 +43,17 @@ pub struct Authority {
     pub(super) retry_evidence:
         std::sync::OnceLock<Arc<layer3_adapter::owner_protocol::OwnershipEvidence>>,
     pub token: OwnershipToken,
+    pub(super) policy: super::MaintenancePolicy,
+    pub(super) settlement_watch: layer3_adapter::owner_protocol::ReceiverSettlementWatch,
+    // Diagnostic lineage only. Ownership fences use the token and receiver settlement.
+    pub(super) sandbox_sha256: std::sync::OnceLock<String>,
     pub(super) retiring: AtomicBool,
-    receiver_cancelled: AtomicBool,
     pub(super) receiver_failure:
         std::sync::OnceLock<layer3_adapter::owner_protocol::OwnershipFailure>,
     pub(super) receiver_failure_recording: std::sync::OnceLock<watch::Receiver<bool>>,
-    pub(super) handoff_complete: tokio::sync::Mutex<bool>,
-    deadline: watch::Sender<Option<Instant>>,
+    pub(super) cleanup: tokio::sync::Mutex<CleanupState>,
+    pub(super) renewal: std::sync::Mutex<Option<Arc<super::lease_operation::LeaseWrite>>>,
+    validity: watch::Sender<Validity>,
     active_work: watch::Sender<usize>,
     pub(super) store: Option<Arc<dyn OwnershipStore>>,
     pub(super) receivers: std::sync::Mutex<std::collections::BTreeMap<String, RegisteredReceiver>>,
@@ -55,16 +62,23 @@ pub struct Authority {
 
 impl Authority {
     pub fn new(token: OwnershipToken, deadline: Instant) -> Arc<Self> {
-        let (deadline, _) = watch::channel(Some(deadline));
+        let validity = watch::channel(Validity::Live {
+            until: deadline,
+            heartbeat_mark: None,
+        })
+        .0;
         Arc::new(Self {
             retry_evidence: Default::default(),
             token,
+            policy: super::MaintenancePolicy::Legacy,
+            settlement_watch: Default::default(),
+            sandbox_sha256: Default::default(),
             retiring: AtomicBool::new(false),
-            receiver_cancelled: AtomicBool::new(false),
             receiver_failure: Default::default(),
             receiver_failure_recording: Default::default(),
-            handoff_complete: tokio::sync::Mutex::new(false),
-            deadline,
+            cleanup: tokio::sync::Mutex::new(CleanupState::default()),
+            renewal: std::sync::Mutex::new(None),
+            validity,
             active_work: watch::channel(0).0,
             store: None,
             receivers: Default::default(),
@@ -72,21 +86,38 @@ impl Authority {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn with_store(
         token: OwnershipToken,
         deadline: Instant,
         store: Arc<dyn OwnershipStore>,
     ) -> Arc<Self> {
-        let (deadline, _) = watch::channel(Some(deadline));
+        Self::with_store_policy(token, deadline, store, super::MaintenancePolicy::Legacy)
+    }
+
+    pub(super) fn with_store_policy(
+        token: OwnershipToken,
+        deadline: Instant,
+        store: Arc<dyn OwnershipStore>,
+        policy: super::MaintenancePolicy,
+    ) -> Arc<Self> {
+        let validity = watch::channel(Validity::Live {
+            until: deadline,
+            heartbeat_mark: None,
+        })
+        .0;
         Arc::new(Self {
             retry_evidence: Default::default(),
             token,
+            policy,
+            settlement_watch: Default::default(),
+            sandbox_sha256: Default::default(),
             retiring: AtomicBool::new(false),
-            receiver_cancelled: AtomicBool::new(false),
             receiver_failure: Default::default(),
             receiver_failure_recording: Default::default(),
-            handoff_complete: tokio::sync::Mutex::new(false),
-            deadline,
+            cleanup: tokio::sync::Mutex::new(CleanupState::default()),
+            renewal: std::sync::Mutex::new(None),
+            validity,
             active_work: watch::channel(0).0,
             store: Some(store),
             receivers: Default::default(),
@@ -94,26 +125,57 @@ impl Authority {
         })
     }
 
+    pub(super) fn unpublished(
+        token: OwnershipToken,
+        store: Arc<dyn OwnershipStore>,
+        policy: super::MaintenancePolicy,
+    ) -> Arc<Self> {
+        let mut authority = Self::with_store_policy(token, Instant::now(), store, policy);
+        let inner = Arc::get_mut(&mut authority).unwrap();
+        inner.validity.send_replace(Validity::Unpublished);
+        inner.cleanup.get_mut().local_quiescent = true;
+        inner
+            .retiring
+            .store(true, std::sync::atomic::Ordering::Release);
+        authority
+    }
+
+    pub(super) fn is_unpublished(&self) -> bool {
+        self.observe_validity() == Validity::Unpublished
+    }
+
     pub fn is_current(&self) -> bool {
-        if self.receiver_cancelled() {
-            return false;
-        }
-        self.deadline
-            .borrow()
-            .is_some_and(|deadline| Instant::now() < deadline)
+        self.observe_validity().deadline().is_some()
+    }
+
+    fn observe_validity(&self) -> Validity {
+        let mut observed = Validity::Revoked;
+        self.validity.send_if_modified(|state| {
+            let previous = *state;
+            state.observe(Instant::now());
+            observed = *state;
+            *state != previous
+        });
+        observed
+    }
+
+    pub(super) fn established_deadline(&self) -> Option<Instant> {
+        self.observe_validity().deadline()
     }
 
     pub fn renew_until(&self, next: Instant) -> Result<(), OwnershipError> {
         let mut renewed = false;
-        self.deadline.send_modify(|deadline| {
-            if !self.receiver_cancelled()
-                && deadline.is_some_and(|current| Instant::now() < current)
-                && Instant::now() < next
-            {
-                *deadline = Some(next);
+        self.validity.send_modify(|state| {
+            let now = Instant::now();
+            state.observe(now);
+            if state.deadline().is_some() && now < next {
+                *state = Validity::Live {
+                    until: next,
+                    heartbeat_mark: None,
+                };
                 renewed = true;
             } else {
-                *deadline = None;
+                state.revoke(now);
             }
         });
         if renewed {
@@ -125,7 +187,7 @@ impl Authority {
 
     /// Receiver failure cancels one Agent, independently of process membership.
     pub fn receiver_cancelled(&self) -> bool {
-        self.receiver_cancelled.load(Ordering::Acquire)
+        matches!(*self.validity.borrow(), Validity::ReceiverCancelled { .. })
     }
 
     pub fn receiver_failure(&self) -> Option<layer3_adapter::owner_protocol::OwnershipFailure> {
@@ -151,36 +213,45 @@ impl Authority {
         // Publish the cause before revoking so concurrent maintenance can
         // distinguish receiver cancellation from genuine ownership loss.
         let mut outcome = ReceiverCancellation::NotLive;
-        self.deadline.send_modify(|deadline| {
+        self.validity.send_modify(|state| {
             // A receiver callback arriving after generic revocation/expiry
             // must not relabel genuine ownership loss as receiver cancellation.
-            if self.receiver_cancelled() {
-                outcome = ReceiverCancellation::AlreadySafelyCancelled;
-            } else if deadline.is_some_and(|until| Instant::now() < until) {
-                self.receiver_cancelled.store(true, Ordering::Release);
-                outcome = ReceiverCancellation::CancelledWhileLive;
+            state.observe(Instant::now());
+            match *state {
+                Validity::ReceiverCancelled { .. } => {
+                    outcome = ReceiverCancellation::AlreadySafelyCancelled;
+                }
+                Validity::Live { until, .. } => {
+                    *state = Validity::ReceiverCancelled {
+                        previous_until: until,
+                    };
+                    outcome = ReceiverCancellation::CancelledWhileLive;
+                }
+                _ => (),
             }
-            *deadline = None;
         });
         outcome
     }
 
     pub fn revoke(&self) {
-        self.deadline.send_replace(None);
+        self.validity
+            .send_modify(|state| state.revoke(Instant::now()));
     }
 
     pub async fn revoked(&self) {
-        let mut deadline = self.deadline.subscribe();
+        let mut validity = self.validity.subscribe();
         loop {
-            let Some(until) = *deadline.borrow_and_update() else {
+            let Some(until) = validity.borrow_and_update().deadline() else {
                 return;
             };
             if until <= Instant::now() {
-                self.revoke();
-                return;
+                if self.observe_validity().deadline().is_none() {
+                    return;
+                }
+                continue;
             }
             tokio::select! {
-                changed = deadline.changed() => if changed.is_err() { return },
+                changed = validity.changed() => if changed.is_err() { return },
                 _ = tokio::time::sleep_until(until) => (),
             }
         }
@@ -252,6 +323,76 @@ mod tests {
             },
             Instant::now() + Duration::from_secs(30),
         )
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn expiry_observers_and_late_renewal_preserve_the_original_deadline() {
+        for observer in 0..3 {
+            let authority = authority();
+            let until = authority.observe_validity().deadline().unwrap();
+            tokio::time::advance(Duration::from_secs(30)).await;
+            match observer {
+                0 => assert!(!authority.is_current()),
+                1 => authority.revoked().await,
+                _ => assert_eq!(
+                    authority.renew_until(Instant::now() + Duration::from_secs(30)),
+                    Err(OwnershipError::Stale)
+                ),
+            }
+            assert_eq!(
+                *authority.validity.borrow(),
+                Validity::Expired {
+                    previous_until: until,
+                    mark: None
+                }
+            );
+            authority.revoke();
+            assert_eq!(authority.cancel_receiver(), ReceiverCancellation::NotLive);
+            assert_eq!(
+                *authority.validity.borrow(),
+                Validity::Expired {
+                    previous_until: until,
+                    mark: None
+                }
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn generic_revocation_never_acquires_expiry_or_receiver_cancellation_cause() {
+        let authority = authority();
+        authority.revoke();
+        tokio::time::advance(Duration::from_secs(31)).await;
+        authority.revoked().await;
+        assert_eq!(authority.cancel_receiver(), ReceiverCancellation::NotLive);
+        assert_eq!(
+            authority.renew_until(Instant::now() + Duration::from_secs(30)),
+            Err(OwnershipError::Stale)
+        );
+        assert_eq!(*authority.validity.borrow(), Validity::Revoked);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn repeated_revocation_preserves_live_receiver_cancellation() {
+        let authority = authority();
+        let previous_until = authority.observe_validity().deadline().unwrap();
+        assert_eq!(
+            authority.cancel_receiver(),
+            ReceiverCancellation::CancelledWhileLive
+        );
+        authority.revoke();
+        tokio::time::advance(Duration::from_secs(31)).await;
+        authority.revoke();
+        assert_eq!(
+            authority.cancel_receiver(),
+            ReceiverCancellation::AlreadySafelyCancelled
+        );
+        assert!(authority.receiver_cancelled());
+        assert!(!authority.is_current());
+        assert_eq!(
+            *authority.validity.borrow(),
+            Validity::ReceiverCancelled { previous_until }
+        );
     }
 
     #[tokio::test(start_paused = true)]

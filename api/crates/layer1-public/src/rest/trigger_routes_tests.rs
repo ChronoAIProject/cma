@@ -6,10 +6,12 @@ mod anonymous_reads;
 mod archive;
 mod launch_association;
 mod launch_routes;
+mod receipt_fences;
 mod service_connection_routes;
 mod trigger_routes;
 
 mod launch_initiation;
+mod launch_subject;
 
 mod inline_image_routes;
 

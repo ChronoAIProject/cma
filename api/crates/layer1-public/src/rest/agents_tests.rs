@@ -11,8 +11,10 @@ mod lifecycle_templates;
 pub(super) mod message_feedback;
 mod models;
 mod pagination;
+mod profile_readability;
 mod settings;
 mod shared_settings;
+pub(super) mod skill_result_fixture;
 mod skills;
 mod task_titles;
 pub(super) mod worktree_recovery;
@@ -472,6 +474,7 @@ pub(crate) fn seeded_agent(
         capabilities: agent_capabilities(),
         status,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

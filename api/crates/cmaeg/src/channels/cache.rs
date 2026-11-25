@@ -1,6 +1,6 @@
 //! Bounded process-local channel records, with a limited stale window.
 use super::resolver::ResolvedChannel;
-use cmaeg_core::problem::Problem;
+use cmaeg_core::{ids::RecordId, problem::Problem};
 use dashmap::DashMap;
 use std::{
     sync::{Arc, Mutex},
@@ -97,6 +97,15 @@ impl ChannelCache {
         if self.entries.remove(id).is_some() {
             metrics::gauge!(crate::telemetry::names::CHANNELS_CACHED).decrement(1);
         }
+    }
+    pub(crate) fn invalidate_record(&self, record_id: &RecordId) {
+        let _guard = self.insertion.lock().unwrap();
+        let before = self.entries.len();
+        self.entries.retain(|_, entry| {
+            !matches!(entry, CacheEntry::Present(channel, _) if channel.pointer.record_id == *record_id)
+        });
+        metrics::gauge!(crate::telemetry::names::CHANNELS_CACHED)
+            .decrement((before - self.entries.len()) as f64);
     }
     pub fn len(&self) -> usize {
         self.entries.len()

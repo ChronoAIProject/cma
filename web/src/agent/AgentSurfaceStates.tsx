@@ -1,3 +1,4 @@
+import { PendingRequestPanel } from './PendingRequestPanel';
 import { RetryNotice } from './RetryNotice';
 import type { Ref } from 'react';
 import { SkeletonRows } from '../ui/Skeleton';
@@ -62,14 +63,17 @@ export function AgentConnectionSetup({
 export function AgentSurfaceIssue({
   issue,
   historyIncomplete,
+  unconfirmed = false,
   onRetry,
   onDismiss,
 }: {
   readonly issue?: string;
   readonly historyIncomplete: boolean;
+  readonly unconfirmed?: boolean;
   readonly onRetry?: () => void;
   readonly onDismiss: () => void;
 }) {
+  if (unconfirmed && issue === 'The Agent operation did not complete.') return null;
   return (
     <Presence>
       {issue === undefined ? null : historyIncomplete ? (
@@ -111,33 +115,16 @@ export function AgentCommandNotices({
   readonly unavailable: boolean;
   readonly starting: boolean;
 }) {
+  const pendingMessage = controller.initialSendPending ? undefined : controller.pendingMessage;
   return (
     <>
-      {controller.pendingMessage === undefined && !controller.pendingControl ? null : (
-        <Alert
-          tone="warning"
-          actions={
-            controller.checkingInputReceipt && !controller.pendingControl ? undefined : (
-              <Button
-                size="sm"
-                disabled={
-                  unavailable ||
-                  controller.pending !== undefined ||
-                  (starting && !controller.inputAvailability.allowed)
-                }
-                onClick={() => void controller.recoverPending?.()}
-              >
-                Recover pending request
-              </Button>
-            )
-          }
-        >
-          {controller.checkingInputReceipt
-            ? 'Checking the receipt for your previous message.'
-            : controller.pendingMessage !== undefined
-              ? 'Your message is awaiting confirmation. Recover it before sending another message.'
-              : 'Your response action is awaiting confirmation.'}
-        </Alert>
+      {pendingMessage === undefined && !controller.pendingControl ? null : (
+        <PendingRequestPanel
+          key={pendingMessage}
+          controller={{ ...controller, pendingMessage }}
+          unavailable={unavailable}
+          starting={starting}
+        />
       )}
       {controller.controlNotice === undefined ? null : (
         <Alert tone="info">{controller.controlNotice}</Alert>

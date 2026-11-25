@@ -76,6 +76,77 @@ impl KeyIssuer {
     ) -> Result<PreparedMint, KeyIssuerError> {
         validate_credential_id(credential_id)?;
         let allowed = self.resolve_exact(owner_token, services).await?;
+        self.prepare_allowed_mint(credential_id, owner, owner_token, allowed)
+            .await
+    }
+
+    pub(crate) async fn prepare_github_mint(
+        &self,
+        credential_id: &str,
+        owner: &layer2_core::SubjectId,
+        owner_token: &str,
+        services: &[ServiceId],
+        connection: &crate::trigger::VerifiedGitHubConnection,
+    ) -> Result<(PreparedMint, layer3_adapter::GithubCredentialRoute), KeyIssuerError> {
+        use crate::trigger::GITHUB_SERVICE;
+        if !services
+            .iter()
+            .any(|service| service.as_str() == GITHUB_SERVICE)
+        {
+            return Err(KeyIssuerError::UnexpectedAuthority);
+        }
+        let others = services
+            .iter()
+            .filter(|service| service.as_str() != GITHUB_SERVICE)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut route = layer3_adapter::GithubCredentialRoute {
+            service_id: connection.id().into(),
+            catalog_id: connection.catalog_id().into(),
+            repository_scope: None,
+            other_services: Vec::new(),
+        };
+        if !others.is_empty() {
+            let rows = self.service_rows(USER_SERVICES_PATH, owner_token).await?;
+            for row in Self::resolve_service_rows(&rows, &others)? {
+                if row.catalog_service_id.as_deref() == Some(connection.catalog_id()) {
+                    return Err(KeyIssuerError::UnexpectedAuthority);
+                }
+                route
+                    .other_services
+                    .push(layer3_adapter::PlatformServiceRoute {
+                        service_id: row.id.clone(),
+                        slug: row
+                            .slug
+                            .clone()
+                            .ok_or(KeyIssuerError::UnexpectedAuthority)?,
+                        catalog_id: row.catalog_service_id.clone(),
+                    });
+            }
+        }
+        if !route.is_valid() {
+            return Err(KeyIssuerError::UnexpectedAuthority);
+        }
+        let mut allowed = route
+            .other_services
+            .iter()
+            .map(|service| service.service_id.clone())
+            .collect::<Vec<_>>();
+        allowed.push(connection.id().to_owned());
+        let prepared = self
+            .prepare_allowed_mint(credential_id, owner, owner_token, allowed)
+            .await?;
+        Ok((prepared, route))
+    }
+
+    async fn prepare_allowed_mint(
+        &self,
+        credential_id: &str,
+        owner: &layer2_core::SubjectId,
+        owner_token: &str,
+        allowed: Vec<String>,
+    ) -> Result<PreparedMint, KeyIssuerError> {
+        validate_credential_id(credential_id)?;
         let plan = self
             .scope_plan(
                 owner_token,

@@ -34,6 +34,7 @@ export function PageHeader({
   actions,
   children,
   placement,
+  wrapIdentity = false,
 }: {
   readonly breadcrumb?: readonly Crumb[];
   readonly title: ReactNode;
@@ -49,9 +50,14 @@ export function PageHeader({
   readonly children?: ReactNode;
   /** Extra class for the owning surface's placement only. */
   readonly placement?: string;
+  /** Show the complete title and breadcrumb across multiple lines. */
+  readonly wrapIdentity?: boolean;
 }) {
   return (
-    <header className={['page-header', placement ?? ''].filter(Boolean).join(' ')}>
+    <header
+      className={['page-header', placement ?? ''].filter(Boolean).join(' ')}
+      data-wrap-identity={wrapIdentity || undefined}
+    >
       {breadcrumb.length === 0 ? null : (
         <nav className="page-header__crumbs" aria-label="Breadcrumb">
           <ol>

@@ -8,7 +8,6 @@ use layer2_core::sandbox::{
 };
 use mongodb::{
     bson::{self, doc, Document},
-    options::ReadConcern,
     ClientSession,
 };
 use serde::{Deserialize, Serialize};
@@ -109,21 +108,45 @@ pub(in crate::store) async fn read(
     head: &Head,
     session: &mut ClientSession,
 ) -> Result<AgentLogProjectionState, TransactionLogError> {
+    read_budgeted(store, agent, head, session, None).await
+}
+
+pub(in crate::store) async fn read_budgeted(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    head: &Head,
+    session: &mut ClientSession,
+    budget: Option<&mut super::capture::preview_budget::PreviewBudget>,
+) -> Result<AgentLogProjectionState, TransactionLogError> {
     let projections = collection(store, PROJECTIONS);
-    let find = projections.find_one(doc! {"_id":&head.agent_id});
-    // The head has already established this session's snapshot. Override the
-    // collection's majority default, which cannot carry atClusterTime. A
-    // transaction session has no snapshot_time and keeps its transaction concern.
-    let find = if session.snapshot_time().is_some() {
-        find.read_concern(ReadConcern::snapshot())
+    let row = if let Some(budget) = budget {
+        budget
+            .document(&projections, doc! {"_id":&head.agent_id}, None, session)
+            .await?
+            .ok_or_else(corrupt)?
     } else {
-        find
-    };
-    let row = find
-        .session(session)
+        // The head has already established this session's snapshot. Override the
+        // collection's majority default, which cannot carry atClusterTime. A
+        // transaction session has no snapshot_time and keeps its transaction concern.
+        let snapshot = session.snapshot_time().is_some();
+        crate::store::stale_turns::find_with_proof_budget(
+            &projections,
+            doc! {"_id":&head.agent_id},
+            session,
+            snapshot,
+        )
         .await
         .map_err(TransactionLogError::Driver)?
-        .ok_or_else(corrupt)?;
+        .ok_or_else(corrupt)?
+    };
+    validate_projection(row, agent, head)
+}
+
+pub(super) fn validate_projection(
+    row: Document,
+    agent: &Agent,
+    head: &Head,
+) -> Result<AgentLogProjectionState, TransactionLogError> {
     let projection: Projection = bson::deserialize_from_document(row).map_err(|_| corrupt())?;
     if projection.agent_id == head.agent_id && projection.incarnation == head.incarnation {
         super::telemetry::lag("projection", projection.through_seq, head.last_seq);
@@ -152,18 +175,33 @@ pub(in crate::store) async fn evidence(
     key: &str,
     session: &mut ClientSession,
 ) -> Result<Option<EvidenceRecord>, TransactionLogError> {
+    evidence_budgeted(store, head, kind, key, session, None).await
+}
+
+pub(in crate::store) async fn evidence_budgeted(
+    store: &MongoSandboxStore,
+    head: &Head,
+    kind: &str,
+    key: &str,
+    session: &mut ClientSession,
+    budget: Option<&mut super::capture::preview_budget::PreviewBudget>,
+) -> Result<Option<EvidenceRecord>, TransactionLogError> {
     let evidence = collection(store, EVIDENCE);
-    let find = evidence.find_one(doc! {"agent_id":&head.agent_id,"incarnation":&head.incarnation,"evidence_generation":&head.evidence_generation,"kind":kind,"entity_key":key});
-    let find = if session.snapshot_time().is_some() {
-        find.read_concern(ReadConcern::snapshot())
+    let row = if let Some(budget) = budget {
+        budget.document(&evidence, doc! {"agent_id":&head.agent_id,"incarnation":&head.incarnation,"evidence_generation":&head.evidence_generation,"kind":kind,"entity_key":key}, None, session).await?
     } else {
-        find
-    };
-    let Some(row) = find
-        .session(session)
+        let snapshot = session.snapshot_time().is_some();
+        crate::store::stale_turns::find_with_proof_budget(
+            &evidence,
+            doc! {"agent_id":&head.agent_id,"incarnation":&head.incarnation,
+            "evidence_generation":&head.evidence_generation,"kind":kind,"entity_key":key},
+            session,
+            snapshot,
+        )
         .await
         .map_err(TransactionLogError::Driver)?
-    else {
+    };
+    let Some(row) = row else {
         return Ok(None);
     };
     read_evidence(head, kind, key, row)

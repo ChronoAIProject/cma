@@ -2,7 +2,10 @@ import { Presence } from '../ui/Presence';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { LandingCharacter } from './LandingCharacter';
 import { Button } from '../ui/Button';
+import { LegalNotice } from '../auth/LegalNotice';
+import type { LegalTerms } from '../auth/types';
 import './SignInLanding.css';
+import { useImageManagerAvailability } from '../services/ImageManagerRetirement';
 
 /** Where each service card returns after sign-in; every path is a canonical CMA route. */
 const SERVICES = [
@@ -35,9 +38,13 @@ const STEPS = [
 
 export function SignInLanding({
   onSignIn,
+  legalTerms,
 }: {
   readonly onSignIn: (returnTo?: string) => Promise<void>;
+  /** Published terms the person accepts by continuing. */
+  readonly legalTerms?: LegalTerms;
 }) {
+  const imageManager = useImageManagerAvailability();
   const [entering, setEntering] = useState<{ readonly returnTo?: string }>();
   const [failed, setFailed] = useState(false);
   const pending = useRef(false);
@@ -96,6 +103,9 @@ export function SignInLanding({
             <p className="sign-in-landing__note" role="status">
               {busy ? 'Opening NyxID sign-in…' : 'Sign in with NyxID. You’ll come straight back.'}
             </p>
+            {legalTerms === undefined ? null : (
+              <LegalNotice terms={legalTerms} className="sign-in-landing__note" />
+            )}
             <Presence>
               {failed ? (
                 <div className="sign-in-landing__alert" role="alert">
@@ -154,12 +164,14 @@ export function SignInLanding({
                 </Button>
               </article>
             ))}
-            <article className="sign-in-landing__card sign-in-landing__card--soon">
-              <h3>
-                Image Manager <span className="sign-in-landing__soon">Coming soon</span>
-              </h3>
-              <p>Build runtime images and share them privately, with your team, or publicly.</p>
-            </article>
+            {imageManager !== 'retired' ? (
+              <article className="sign-in-landing__card sign-in-landing__card--soon">
+                <h3>
+                  Image Manager <span className="sign-in-landing__soon">Coming soon</span>
+                </h3>
+                <p>Build runtime images and share them privately, with your team, or publicly.</p>
+              </article>
+            ) : null}
           </div>
         </section>
       </div>

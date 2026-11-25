@@ -11,14 +11,17 @@ from version_label import deployables
 
 EXPECTED = {
     "repo": {"repo", "version-label"},
-    "am": {"rust-test-build", "am", "am-images", "runtime-images", "omarchy"},
+    "am": {"rust-test-build", "am", "am-images", "runtime-images", "omarchy", "approval-contract"},
     "eg": {"rust-test-build", "eg", "eg-images", "runtime-images", "omarchy"},
     "web": {"web", "web-images"},
 }
+RUNTIME = {"runtime-images", "omarchy"}
 
 
-def evaluate(track, needs, *, full=False):
+def evaluate(track, needs, *, full=False, split=False):
     expected = EXPECTED[track]
+    if split and track == "eg":
+        expected = expected - RUNTIME
     if set(needs) != expected | {"changes"}:
         raise ValueError("missing or unexpected gate dependency")
     changes = needs["changes"]
@@ -47,13 +50,41 @@ def evaluate(track, needs, *, full=False):
     selected = outputs.get(track)
     if selected not in {"true", "false"} or (track == "repo" and selected != "true"):
         raise ValueError("invalid track selection")
+    contract_required = False
+    if track == "am":
+        approval_contract = outputs.get("approval_contract")
+        if approval_contract not in {"true", "false"} or (tracks["am"] and approval_contract != "true"):
+            raise ValueError("invalid approval contract selection")
+        contract_required = approval_contract == "true"
+        if needs["approval-contract"].get("result") != ("success" if contract_required else "skipped"):
+            raise ValueError("approval contract did not reach its expected state")
+        if contract_required and needs["rust-test-build"].get("result") != "success":
+            raise ValueError("approval contract requires the Rust test archive")
+        expected = expected - {"approval-contract"}
+    if split:
+        # The Agent Manager workflow owns the runtime checks for either Rust
+        # product. An EG-only change still needs both runtime images to pass.
+        required = expected if selected == "true" else set()
+        if contract_required:
+            required = required | {"rust-test-build"}
+        if track == "am" and tracks["eg"]:
+            required = required | RUNTIME
+        failed = {
+            job: needs[job].get("result", "missing")
+            for job in expected
+            if needs[job].get("result") != ("success" if job in required else "skipped")
+        }
+        if failed:
+            raise ValueError("product children did not reach their expected state: " +
+                             json.dumps(failed, sort_keys=True))
+        return "passed" if required else "skipped-by-path"
     if selected == "false":
         # The archive can succeed for the other Rust product; this track's
         # own jobs must actually be skipped, rather than failing then hidden.
         own_jobs = expected - {"rust-test-build", "runtime-images", "omarchy"}
         if any(needs[job].get("result") != "skipped" for job in own_jobs):
             raise ValueError("unselected track has unexpected job results")
-        return "skipped-by-path"
+        return "passed" if contract_required else "skipped-by-path"
     failed = {job: needs[job].get("result", "missing") for job in expected
               if needs[job].get("result") != "success"}
     if failed:
@@ -65,7 +96,10 @@ def main():
     try:
         event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
         full = full_ci_required(event, os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REPOSITORY'])
-        result = evaluate(sys.argv[1], json.loads(os.environ["NEEDS"]), full=full)
+        if sys.argv[2:] not in ([], ["--split"]):
+            raise ValueError("invalid gate options")
+        result = evaluate(sys.argv[1], json.loads(os.environ["NEEDS"]), full=full,
+                          split=sys.argv[2:] == ["--split"])
     except (IndexError, KeyError, OSError, TypeError, ValueError) as error:
         print(f"::error::Track gate failed: {error}")
         return 1

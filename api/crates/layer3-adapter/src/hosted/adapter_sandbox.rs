@@ -1,21 +1,21 @@
 use super::*;
+use crate::{desktop_ownership::DesktopOwnedRuntime, stale_turn::StaleTurnProducer, Result};
 
 #[async_trait::async_trait]
 impl SandboxAdapter for HostedAdapter {
+    fn stale_turn_producer(&self, handle: &RuntimeHandle) -> Option<&dyn StaleTurnProducer> {
+        self.backend.stale_turn_producer(handle)
+    }
     fn startup_binding_headroom(&self, handles: &[RuntimeHandle]) -> Option<usize> {
         self.backend.startup_binding_headroom(handles)
     }
-
-    fn desktop_ownership(
-        &self,
-        handle: &RuntimeHandle,
-    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+    fn desktop_ownership(&self, handle: &RuntimeHandle) -> Option<&dyn DesktopOwnedRuntime> {
         self.backend.desktop_ownership(handle)
     }
     fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
         Some(self)
     }
-    async fn open_desktop(&self, handle: &RuntimeHandle) -> crate::Result<DesktopConnectionHandle> {
+    async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<DesktopConnectionHandle> {
         self.open_desktop(handle).await
     }
 
@@ -24,7 +24,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &crate::AgentAttachmentRequest,
         content: Vec<u8>,
-    ) -> crate::Result<crate::AgentAttachmentReceipt> {
+    ) -> Result<crate::AgentAttachmentReceipt> {
         self.upload_attachment(handle, request, content).await
     }
 
@@ -32,7 +32,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &crate::AgentFileListRequest,
-    ) -> crate::Result<crate::AgentFileListReceipt> {
+    ) -> Result<crate::AgentFileListReceipt> {
         self.list_files(handle, request).await
     }
 
@@ -40,7 +40,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &crate::AgentFileReadRequest,
-    ) -> crate::Result<crate::AgentFileReadReceipt> {
+    ) -> Result<crate::AgentFileReadReceipt> {
         self.read_file(handle, request).await
     }
 
@@ -48,7 +48,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &crate::AgentFileWriteRequest,
-    ) -> crate::Result<crate::AgentFileWriteReceipt> {
+    ) -> Result<crate::AgentFileWriteReceipt> {
         self.write_file(handle, request).await
     }
 
@@ -56,7 +56,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &crate::AgentFileDeleteRequest,
-    ) -> crate::Result<crate::AgentFileDeleteReceipt> {
+    ) -> Result<crate::AgentFileDeleteReceipt> {
         self.delete_file(handle, request).await
     }
 
@@ -64,17 +64,15 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         runtime: &RuntimeProvisionRequest,
         home: &crate::HomeVolumeRequest,
-    ) -> crate::Result<crate::HomeVolumeRequest> {
-        let rendered = self
-            .deployment
-            .render_runtime(&runtime.spec, runtime.generation)?;
+    ) -> Result<crate::HomeVolumeRequest> {
+        let rendered = self.deployment.render_request(runtime)?;
         self.backend.reserve_home_request(&rendered, home).await
     }
     fn verify_retained_home_route(
         &self,
         handle: &RuntimeHandle,
         home: &crate::HomeVolumeRequest,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         self.backend.verify_retained_home_route(handle, home)
     }
     fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
@@ -83,14 +81,14 @@ impl SandboxAdapter for HostedAdapter {
     fn native_pools_for_home(
         &self,
         home: &crate::HomeVolumeRequest,
-    ) -> crate::Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
+    ) -> Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
         self.backend.native_pools_for_home(home)
     }
     async fn select_native_pool(
         &self,
         request: &RuntimeProvisionRequest,
         home: &crate::HomeVolumeRequest,
-    ) -> crate::Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+    ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
         self.select_native_pool_request(request, home).await
     }
     fn capabilities(&self) -> AdapterCapabilities {
@@ -105,11 +103,11 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         request: &RuntimeAdoptionRequest,
         until: u64,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         self.deadline_exact(request, until).await
     }
 
-    async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
+    async fn provision(&self, spec: &SandboxSpec) -> Result<RuntimeHandle> {
         self.provision_exact(spec, 1, None).await
     }
 
@@ -117,7 +115,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         request: &RuntimeProvisionRequest,
         operation_id: &str,
-    ) -> crate::Result<crate::RuntimeProvisionReceipt> {
+    ) -> Result<crate::RuntimeProvisionReceipt> {
         self.provision_receipted_exact(request, operation_id).await
     }
 
@@ -125,81 +123,85 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         original: &crate::RuntimeProvisionReceipt,
         operation_id: &str,
-    ) -> crate::Result<crate::RuntimeFinalityReceipt> {
+    ) -> Result<crate::RuntimeFinalityReceipt> {
         self.finalize_runtime_exact(original, operation_id).await
     }
 
-    async fn teardown_retained_runtime(&self, handle: &RuntimeHandle) -> crate::Result<()> {
+    async fn teardown_retained_runtime(&self, handle: &RuntimeHandle) -> Result<()> {
         self.teardown_retained_exact(handle).await
     }
-    async fn suspend_runtime(&self, request: &RuntimeAdoptionRequest) -> crate::Result<()> {
+    fn runtime_retirement(&self) -> Option<&dyn crate::RuntimeRetirement> {
+        Some(self)
+    }
+    async fn suspend_runtime(&self, request: &RuntimeAdoptionRequest) -> Result<()> {
         self.suspend_exact(request, false).await
     }
-    async fn verify_suspended_runtime(
-        &self,
-        request: &RuntimeAdoptionRequest,
-    ) -> crate::Result<()> {
+    async fn verify_suspended_runtime(&self, request: &RuntimeAdoptionRequest) -> Result<()> {
         self.suspend_exact(request, true).await
+    }
+    fn retained_startup_policy(&self) -> Option<&dyn crate::RetainedStartupPolicyControl> {
+        Some(self)
     }
     async fn resume_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
         next: &RuntimeProvisionRequest,
-    ) -> crate::Result<RuntimeHandle> {
+    ) -> Result<RuntimeHandle> {
         self.resume_exact(request, next).await
     }
     async fn upgrade_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
         next: &RuntimeProvisionRequest,
-    ) -> crate::Result<RuntimeHandle> {
+    ) -> Result<RuntimeHandle> {
         self.upgrade_exact(request, next).await
     }
     async fn inspect_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
-    ) -> crate::Result<Option<crate::RuntimeInspection>> {
+    ) -> Result<Option<crate::RuntimeInspection>> {
         self.inspect_exact(request).await
     }
     async fn inspect_runtime_after(
         &self,
         request: &RuntimeAdoptionRequest,
         admission: &crate::InspectionAdmission,
-    ) -> crate::Result<Option<crate::RuntimeInspection>> {
+    ) -> Result<Option<crate::RuntimeInspection>> {
         self.inspect_exact_after(request, admission).await
     }
 
-    async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
+    async fn runtime_status(&self, handle: &RuntimeHandle) -> Result<crate::RuntimeStatus> {
         self.inspect_runtime_status(handle).await
     }
 
-    async fn provision_runtime(
-        &self,
-        request: &RuntimeProvisionRequest,
-    ) -> crate::Result<RuntimeHandle> {
-        self.provision_exact(&request.spec, request.generation, request.funded_until)
-            .await
+    async fn provision_runtime(&self, request: &RuntimeProvisionRequest) -> Result<RuntimeHandle> {
+        self.provision_exact(
+            &request.released_spec(),
+            request.generation,
+            request.funded_until,
+        )
+        .await
     }
 
     async fn runtime_termination(
         &self,
         handle: &RuntimeHandle,
-    ) -> crate::Result<Option<crate::RuntimeTermination>> {
+    ) -> Result<Option<crate::RuntimeTermination>> {
         self.backend.runtime_termination(handle).await
     }
 
-    async fn runtime_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
+    async fn runtime_inventory(&self) -> Result<Vec<RuntimeObservation>> {
         self.inventory_exact().await
     }
 
     async fn adopt_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
-    ) -> crate::Result<Option<RuntimeObservation>> {
+    ) -> Result<Option<RuntimeObservation>> {
         self.adopt_exact(request).await
     }
 
-    async fn reclaim_runtime(&self, observation: &RuntimeObservation) -> crate::Result<()> {
+    async fn reclaim_runtime(&self, observation: &RuntimeObservation) -> Result<()> {
         self.reclaim_exact(observation).await
     }
 
@@ -207,7 +209,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &InstallRequest,
-    ) -> crate::Result<InstallReceipt> {
+    ) -> Result<InstallReceipt> {
         self.run_install_request(handle, request).await
     }
 
@@ -215,7 +217,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &RestoreBootstrapRequest,
-    ) -> crate::Result<RestoreBootstrapReceipt> {
+    ) -> Result<RestoreBootstrapReceipt> {
         self.bootstrap_restore_exact(handle, request).await
     }
 
@@ -223,7 +225,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         frame: CredentialFrame,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         self.deliver_credential_exact(handle, frame).await
     }
 
@@ -231,7 +233,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &WorkspaceRequest,
-    ) -> crate::Result<WorkspaceReceipt> {
+    ) -> Result<WorkspaceReceipt> {
         workspace::prepare(self, handle, request).await
     }
 
@@ -239,7 +241,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         archive: &crate::SkillArchive,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         archive.validate()?;
         match self
             .exchange(handle, RequestFrame::CacheSkillArchive(archive.clone()))
@@ -256,7 +258,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &crate::WorkspacePrepareRecoveryRequest,
-    ) -> crate::Result<crate::WorkspacePrepareRecoveryReceipt> {
+    ) -> Result<crate::WorkspacePrepareRecoveryReceipt> {
         workspace::recover_prepare(self, handle, request).await
     }
 
@@ -264,7 +266,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &WorkspaceSetupRequest,
-    ) -> crate::Result<SetupReceipt> {
+    ) -> Result<SetupReceipt> {
         workspace::setup(self, handle, request).await
     }
 
@@ -272,14 +274,14 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &WorkspaceRemoveRequest,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         workspace::remove(self, handle, request).await
     }
 
     async fn workspace_removal_support(
         &self,
         handle: &RuntimeHandle,
-    ) -> crate::Result<crate::WorkspaceRemovalSupport> {
+    ) -> Result<crate::WorkspaceRemovalSupport> {
         workspace::removal_support(self, handle).await
     }
 
@@ -288,7 +290,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         expected_runtime: &crate::RuntimeStatus,
         request: &WorkspaceRemoveRequest,
-    ) -> crate::Result<crate::WorkspaceRemovalObservation> {
+    ) -> Result<crate::WorkspaceRemovalObservation> {
         workspace::reconcile_removal(self, handle, expected_runtime, request).await
     }
 
@@ -298,7 +300,7 @@ impl SandboxAdapter for HostedAdapter {
         authority_fence: u64,
         worktree: &WorktreeRequest,
         home: &AgentHomeRequest,
-    ) -> crate::Result<WorktreeReceipt> {
+    ) -> Result<WorktreeReceipt> {
         agent_resources::prepare(self, handle, authority_fence, worktree, home).await
     }
 
@@ -307,7 +309,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &WorktreeRequest,
-    ) -> crate::Result<WorktreeReceipt> {
+    ) -> Result<WorktreeReceipt> {
         agent::add_worktree(self, handle, authority_fence, request).await
     }
 
@@ -316,7 +318,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &WorktreeRef,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         agent::remove_worktree(self, handle, authority_fence, request).await
     }
 
@@ -325,7 +327,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &AgentHomeRequest,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         agent::materialize_home(self, handle, authority_fence, request).await
     }
 
@@ -334,7 +336,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &crate::AgentSkillInstallRequest,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         agent::install_skill(self, handle, authority_fence, request).await
     }
 
@@ -343,7 +345,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &AgentHomeRemoveRequest,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         agent::remove_home(self, handle, authority_fence, request).await
     }
 
@@ -353,7 +355,7 @@ impl SandboxAdapter for HostedAdapter {
         authority_fence: u64,
         request: &AgentOpenRequest,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<ConversationChannel> {
+    ) -> Result<ConversationChannel> {
         agent::open_agent(self, handle, authority_fence, request, None, updates).await
     }
 
@@ -364,7 +366,7 @@ impl SandboxAdapter for HostedAdapter {
         request: &AgentOpenRequest,
         conversation_id: &str,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<ConversationChannel> {
+    ) -> Result<ConversationChannel> {
         let recovery = (conversation_id, None, None);
         agent::reconnect_agent(self, handle, authority_fence, request, recovery, updates).await
     }
@@ -393,7 +395,7 @@ impl SandboxAdapter for HostedAdapter {
         conversation_id: &str,
         recovered_prompt: Option<crate::PromptIdentity>,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<ConversationChannel> {
+    ) -> Result<ConversationChannel> {
         agent::reconnect_agent(
             self,
             handle,
@@ -413,7 +415,7 @@ impl SandboxAdapter for HostedAdapter {
         conversation_id: &str,
         operation_sequence: u64,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<ConversationChannel> {
+    ) -> Result<ConversationChannel> {
         agent::reconnect_agent(
             self,
             handle,
@@ -430,7 +432,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &AgentCloseRequest,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         agent::close_agent(self, handle, authority_fence, request).await
     }
 
@@ -438,7 +440,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         agent: &AgentSlot,
-    ) -> crate::Result<ConversationSnapshot> {
+    ) -> Result<ConversationSnapshot> {
         self.capture_agent_exact(handle, agent).await
     }
 
@@ -446,7 +448,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         agent: &AgentSlot,
-    ) -> crate::Result<Vec<u8>> {
+    ) -> Result<Vec<u8>> {
         self.backend.export_agent_history(handle, agent).await
     }
 
@@ -454,7 +456,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &CheckpointRequest,
-    ) -> crate::Result<CheckpointReceipt> {
+    ) -> Result<CheckpointReceipt> {
         self.checkpoint_exact(handle, request).await
     }
 
@@ -462,7 +464,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &CheckpointHoldRequest,
-    ) -> crate::Result<CheckpointHoldReceipt> {
+    ) -> Result<CheckpointHoldReceipt> {
         self.checkpoint_hold(handle, request, checkpoint::HoldPurpose::Capture)
             .await
     }
@@ -471,7 +473,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &CheckpointHoldRequest,
-    ) -> crate::Result<CheckpointHoldReceipt> {
+    ) -> Result<CheckpointHoldReceipt> {
         self.checkpoint_hold(handle, request, checkpoint::HoldPurpose::VerifyPublished)
             .await
     }
@@ -480,19 +482,19 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &CheckpointWriterResumeRequest,
-    ) -> crate::Result<CheckpointWriterResumeReceipt> {
+    ) -> Result<CheckpointWriterResumeReceipt> {
         self.resume_checkpoint_writers_exact(handle, request).await
     }
 
-    async fn restore(&self, handle: &RuntimeHandle, request: &RestoreRequest) -> crate::Result<()> {
+    async fn restore(&self, handle: &RuntimeHandle, request: &RestoreRequest) -> Result<()> {
         self.restore_checkpoint(handle, request).await
     }
 
-    async fn resources(&self, handle: &RuntimeHandle) -> crate::Result<ResourceReading> {
+    async fn resources(&self, handle: &RuntimeHandle) -> Result<ResourceReading> {
         self.resources_exact(handle).await
     }
 
-    async fn teardown(&self, handle: &RuntimeHandle) -> crate::Result<()> {
+    async fn teardown(&self, handle: &RuntimeHandle) -> Result<()> {
         self.teardown_exact(handle).await
     }
 }

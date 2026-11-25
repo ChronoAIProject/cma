@@ -60,8 +60,21 @@ async fn receiver_check_cancellation_preserves_healthy_owners_and_unacknowledged
         0
     );
     // Containment must not turn real membership/store loss into availability.
+    // A transient partition only skips ticks; it extends nothing, so the
+    // established membership and healthy owner still end on schedule.
     fixture.store.inner.partition(true);
-    assert!(fixture.manager.maintain().await.is_err());
+    let mut ticks = 0;
+    let failure = loop {
+        tokio::time::advance(Duration::from_millis(HEARTBEAT_INTERVAL_MS)).await;
+        ticks += 1;
+        fixture.peer.maintain().await.unwrap();
+        match fixture.manager.maintain().await {
+            Ok(handoffs) => assert!(handoffs.is_empty()),
+            Err(error) => break error,
+        }
+        assert!(ticks <= DEFAULT_LEASE_MS / HEARTBEAT_INTERVAL_MS);
+    };
+    assert_eq!(failure, OwnershipError::Stale);
     assert!(!fixture.manager.is_ready());
     assert!(!fixture.healthy.is_current());
     fixture.peer.maintain().await.unwrap();
@@ -127,7 +140,16 @@ async fn cancellation_during_real_renewal_never_revives_or_releases_before_recei
 
 #[tokio::test(start_paused = true)]
 async fn expired_observation_before_late_commit_never_reacquires_the_cancelled_token() {
-    let fixture = Fixture::new(true).await;
+    expiry_before_late_commit(MaintenancePolicy::Legacy).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn contained_expiry_observation_preserves_floor_through_late_same_token_commit() {
+    expiry_before_late_commit(MaintenancePolicy::ContainFailures).await;
+}
+
+async fn expiry_before_late_commit(policy: MaintenancePolicy) {
+    let fixture = Fixture::with_policy(true, policy).await;
     let original = fixture
         .store
         .owner(&fixture.cancelled.token.agent_id)
@@ -167,6 +189,20 @@ async fn expired_observation_before_late_commit_never_reacquires_the_cancelled_t
             .unwrap(),
         "expiry observation must retain a cancelled-token floor across an unknown renewal outcome"
     );
+    if policy == MaintenancePolicy::ContainFailures {
+        // Exercise both the initial local join and the next attempt's actual
+        // absence observation while the same-token renewal is still withheld.
+        for _ in 0..2 {
+            assert_eq!(
+                fixture
+                    .manager
+                    .retirement_background(&fixture.cancelled)
+                    .await
+                    .unwrap(),
+                None
+            );
+        }
+    }
     fixture.store.resume.notify_one();
     assert!(maintaining.await.unwrap().is_ok());
     let committed = fixture

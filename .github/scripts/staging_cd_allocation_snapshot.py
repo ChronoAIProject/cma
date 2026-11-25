@@ -8,10 +8,14 @@ from staging_cd_allocation_io import SETTLE_WAITS, VERIFY_RESERVE_SECONDS, Trans
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical, parse_annotation
+from staging_cd_release_tags import LocalTags
 from staging_cd_reservations import Reservations, claim_ref, pending_name, validate_reservation
 from staging_cd_versions import DEPLOYABLES, version_tuple
 
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
+# Bound captured Git output even when the release inventory contains many tags.
+ANNOTATION_BATCH_SIZE = 256
+LOCAL_READ_SECONDS = 5
 # GitHub's own answer to a push, which a repeat meets again: a tag ruleset or
 # hook declined the refs (a porcelain rejection line), or a 403 alone whose
 # message names the missing write permission. A 403 also answers a secondary
@@ -80,8 +84,7 @@ class AllocationSnapshot(Reservations):
                         if kind == "pending":
                             self.pending_oids[name] = oid
 
-        for kind, value in parallel_read(self.annotation, selected):
-            (self.pending if kind == "pending" else self.finals).append(value)
+        self.read_annotations(selected)
         pending_by_version = {(item["component"], item["version"]): item for item in self.pending}
         for tag in self.finals:
             identity = tag["receipt"]["identity"]
@@ -120,9 +123,22 @@ class AllocationSnapshot(Reservations):
             refs[reference] = oid
         return refs
 
-    def annotation(self, row):
+    def read_annotations(self, selected):
+        # The checkout supplies only immutable objects named by the live refs.
+        # A ref newer than the checkout, or a tag GitHub decodes differently,
+        # still goes through the existing exact-object API path.
+        deadline = min(self.io.deadline, self.io.clock() + LOCAL_READ_SECONDS)
+        local = LocalTags(self.root, deadline=deadline, clock=self.io.clock)
+        for start in range(0, len(selected), ANNOTATION_BATCH_SIZE):
+            batch = selected[start:start + ANNOTATION_BATCH_SIZE]
+            tags, _ = local.read(row[-1] for row in batch)
+            for kind, value in parallel_read(lambda row: self.annotation(row, tags.get(row[-1])), batch):
+                (self.pending if kind == "pending" else self.finals).append(value)
+
+    def annotation(self, row, tag=None):
         component, kind, name, oid = row
-        tag = self.api.request("git/tags/" + oid)
+        if tag is None:
+            tag = self.api.request("git/tags/" + oid)
         require(isinstance(tag, dict) and tag.get("sha") == oid and tag.get("tag") == name
                 and isinstance(tag.get("object"), dict) and tag["object"].get("type") == "commit"
                 and matches(r"[0-9a-f]{40}", tag["object"].get("sha")),

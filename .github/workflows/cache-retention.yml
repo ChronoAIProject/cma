@@ -5,6 +5,11 @@ on:
     types: [completed]
     branches: [develop]
   workflow_dispatch:
+    inputs:
+      inspect_buildkit:
+        description: "Inventory cache layers referenced by BuildKit indexes"
+        type: boolean
+        default: false
 permissions: {}
 jobs:
   sweep:
@@ -38,6 +43,41 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 -B .github/scripts/actions_cache_sweep.py --preview-recovery
+  inspect_buildkit:
+    if: >-
+      github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
+      github.event_name == 'workflow_dispatch' && inputs.inspect_buildkit
+    runs-on: ubuntu-latest
+    cache-mode: read
+    timeout-minutes: 12
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Read the cache runtime environment
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            for (const name of ['ACTIONS_RUNTIME_TOKEN', 'ACTIONS_RESULTS_URL']) {
+              const value = process.env[name];
+              if (!value) throw new Error('Build cache runtime is unavailable');
+              core.setSecret(value);
+              core.exportVariable(name, value);
+            }
+      - name: Inventory referenced layers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/actions_cache_buildkit_inventory.py "$RUNNER_TEMP/buildkit-cache-inventory.json"
+      - name: Retain the read-only report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: buildkit-cache-inventory
+          path: ${{ runner.temp }}/buildkit-cache-inventory.json
+          if-no-files-found: error
+          retention-days: 3
   recover:
     outputs:
       status: ${{ steps.recovery.outputs.status }}
@@ -70,3 +110,203 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 -B .github/scripts/actions_cache_sweep.py --apply-recovery
+  retain_layers:
+    name: Retain bounded layer cache
+    if: >-
+      vars.CMA_BOUNDED_LAYER_CACHE == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && github.event_name == 'workflow_run' &&
+      github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma' &&
+      github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'develop' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.path == '.github/workflows/staging-cd.yml'
+    concurrency:
+      group: cma-develop-layer-cache-admission
+      queue: max
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [am, eg, web, runtime, runtime-omarchy]
+    cache-mode: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: true
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        timeout-minutes: 2
+        with:
+          persist-credentials: false
+      - name: Select candidate from successful protected publication
+        id: layer-candidate
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_COMPONENT: ${{ matrix.component }}
+          CD_LAYER_ARCHIVE_CACHE: enabled
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
+        run: python3 -B .github/scripts/actions_layer_admission.py select
+      - name: Download exact candidate
+        if: steps.layer-candidate.outputs.artifact != ''
+        id: layer-candidate-download
+        timeout-minutes: 5
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ steps.layer-candidate.outputs.artifact }}
+          run-id: ${{ steps.layer-candidate.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/cma-layer-cache
+          merge-multiple: true
+      - name: Retry exact candidate download
+        id: layer-candidate-retry
+        if: steps.layer-candidate.outputs.artifact != '' && steps.layer-candidate-download.outcome == 'failure'
+        timeout-minutes: 5
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ steps.layer-candidate.outputs.artifact }}
+          run-id: ${{ steps.layer-candidate.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/cma-layer-cache
+          merge-multiple: true
+      - name: Explain unavailable optional layer archive
+        if: failure() && steps.layer-candidate-retry.outcome == 'failure'
+        timeout-minutes: 1
+        run: |
+          echo '::error title=Layer archive unavailable::Candidate download was withheld because both attempts failed. Each attempt is limited to 5 minutes.'
+          exit 1
+      - name: Validate candidate before reservation
+        if: steps.layer-candidate.outputs.artifact != ''
+        timeout-minutes: 5
+        run: python3 -B .github/scripts/buildkit_cache_archive.py restore "$RUNNER_TEMP/cma-layer-cache/validated" "$RUNNER_TEMP/cma-layer-cache/archive.tar"
+      - name: Reserve full archive charge
+        if: steps.layer-candidate.outputs.artifact != ''
+        id: reserve-layer-archive
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_COMPONENT: ${{ matrix.component }}
+          CD_LAYER_ARCHIVE_CACHE: enabled
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
+        run: python3 -B .github/scripts/actions_layer_admission.py reserve
+      - name: Save admitted layer archive
+        if: steps.reserve-layer-archive.outputs.allowed == 'true'
+        timeout-minutes: 5
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ${{ runner.temp }}/cma-layer-cache/archive.tar
+            ${{ runner.temp }}/cma-layer-cache/replay.json
+          key: ${{ steps.reserve-layer-archive.outputs.key }}
+  verify_layers:
+    name: Verify bounded layer cache on a fresh runner
+    needs: retain_layers
+    if: >-
+      vars.CMA_BOUNDED_LAYER_CACHE == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && github.event_name == 'workflow_run' &&
+      github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma' &&
+      github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'develop' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.path == '.github/workflows/staging-cd.yml'
+    concurrency:
+      group: cma-develop-layer-cache-admission
+      queue: max
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [am, eg, web, runtime, runtime-omarchy]
+    cache-mode: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Restore exact immutable archive key
+        id: verify-restore
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ${{ runner.temp }}/cma-layer-cache/archive.tar
+            ${{ runner.temp }}/cma-layer-cache/replay.json
+          key: cma-layer-archive-v1-${{ matrix.component }}--${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          fail-on-cache-miss: false
+      - name: Verify restored archive bytes and graph
+        id: verify-archive
+        if: steps.verify-restore.outcome == 'success' && steps.verify-restore.outputs.cache-hit == 'true'
+        timeout-minutes: 5
+        run: python3 -B .github/scripts/buildkit_cache_archive.py restore "$RUNNER_TEMP/cma-layer-cache/verified" "$RUNNER_TEMP/cma-layer-cache/archive.tar"
+      - name: Set up the actual BuildKit importer
+        if: steps.verify-archive.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
+        timeout-minutes: 3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          cache-binary: false
+      - name: Prove reuse from the exact restored archive
+        id: verify-reuse
+        if: steps.verify-archive.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
+        timeout-minutes: 75
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_COMPONENT: ${{ matrix.component }}
+          CD_LAYER_ARCHIVE_CACHE: enabled
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
+        run: python3 -B .github/scripts/staging_cd_layer_reuse.py
+      - name: Retire verified compatible archive predecessors
+        if: steps.verify-reuse.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_COMPONENT: ${{ matrix.component }}
+          CD_LAYER_ARCHIVE_CACHE: enabled
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
+          LAYER_EXACT_CACHE_HIT: ${{ steps.verify-restore.outputs.cache-hit }}
+          LAYER_REUSE_ARCHIVE_DIGEST: ${{ steps.verify-reuse.outputs.archive_digest }}
+        run: python3 -B .github/scripts/actions_layer_admission.py verify
+  recover_native_buildkit:
+    if: >-
+      vars.CMA_LEGACY_BUILDKIT_GC == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' &&
+      github.event_name == 'workflow_run' && github.ref == 'refs/heads/develop' &&
+      github.repository == 'ChronoAIProject/cma' && github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'develop' && github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.path == '.github/workflows/staging-cd.yml'
+    concurrency:
+      group: cma-develop-layer-cache-admission
+      queue: max
+      cancel-in-progress: false
+    cache-mode: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Read the cache runtime environment
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            for (const name of ['ACTIONS_RUNTIME_TOKEN', 'ACTIONS_RESULTS_URL']) {
+              const value = process.env[name];
+              if (!value) throw new Error('Build cache runtime is unavailable');
+              core.setSecret(value);
+              core.exportVariable(name, value);
+            }
+      - name: Recover native cache with verified replacement and reachability evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_LEGACY_BUILDKIT_GC: ${{ vars.CMA_LEGACY_BUILDKIT_GC == 'true' && 'enabled' || '' }}
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
+          CD_LEGACY_BUILDKIT_INDEX_RETIREMENT: ${{ vars.CMA_LEGACY_BUILDKIT_INDEX_RETIREMENT == 'true' && 'enabled' || '' }}
+        run: python3 -B .github/scripts/actions_cache_buildkit_recovery.py

@@ -1,6 +1,6 @@
 //! Filter held IDs before the page limit; optional ownership hints join their parent.
 use super::*;
-use layer2_core::sandbox::store::StartupWorkFilter;
+use layer2_core::sandbox::store::{AgentWorkDiscovery, StartupWorkFilter};
 
 #[cfg(test)]
 pub(in crate::store) fn pipeline(
@@ -9,17 +9,21 @@ pub(in crate::store) fn pipeline(
     limit: u16,
     holds: &std::collections::BTreeSet<layer2_core::AgentId>,
 ) -> Vec<Document> {
-    filtered_pipeline(store, now, limit, holds, StartupWorkFilter::All)
+    filtered_pipeline(
+        store,
+        now,
+        limit,
+        AgentWorkDiscovery::new(holds, StartupWorkFilter::All),
+    )
 }
 
 pub(in crate::store) fn filtered_pipeline(
     store: &MongoSandboxStore,
     now: &str,
     limit: u16,
-    holds: &std::collections::BTreeSet<layer2_core::AgentId>,
-    startup: StartupWorkFilter<'_>,
+    filter: AgentWorkDiscovery<'_>,
 ) -> Vec<Document> {
-    build(store, now, limit, None, false, holds, startup)
+    build(store, now, limit, None, false, filter)
 }
 
 /// Ownership recovery may replace a previous epoch's live worker claim. Keep
@@ -32,7 +36,13 @@ pub(in crate::store) fn owned_pipeline(
     after: Option<&str>,
     holds: &std::collections::BTreeSet<layer2_core::AgentId>,
 ) -> Vec<Document> {
-    filtered_owned_pipeline(store, now, limit, after, holds, StartupWorkFilter::All)
+    filtered_owned_pipeline(
+        store,
+        now,
+        limit,
+        after,
+        AgentWorkDiscovery::new(holds, StartupWorkFilter::All),
+    )
 }
 
 pub(in crate::store) fn filtered_owned_pipeline(
@@ -40,10 +50,9 @@ pub(in crate::store) fn filtered_owned_pipeline(
     now: &str,
     limit: u16,
     after: Option<&str>,
-    holds: &std::collections::BTreeSet<layer2_core::AgentId>,
-    startup: StartupWorkFilter<'_>,
+    filter: AgentWorkDiscovery<'_>,
 ) -> Vec<Document> {
-    build(store, now, limit, after, true, holds, startup)
+    build(store, now, limit, after, true, filter)
 }
 
 fn build(
@@ -52,8 +61,7 @@ fn build(
     limit: u16,
     after: Option<&str>,
     include_claimed: bool,
-    holds: &std::collections::BTreeSet<layer2_core::AgentId>,
-    startup: StartupWorkFilter<'_>,
+    filter: AgentWorkDiscovery<'_>,
 ) -> Vec<Document> {
     let latest = layer2_core::seconds_from_rfc3339(now)
         .map(|seconds| {
@@ -79,16 +87,34 @@ fn build(
         "document_schema_version": {"$in": [1_i64, 2_i64]}, "work_pending": true,
     };
     let mut excluded = Vec::new();
-    if !holds.is_empty() {
+    if !filter.receiver_holds.is_empty() {
         // Both union arms inherit this predicate before their sort and limit.
         // An explicit control on a held ID remains eligible immediately.
-        let ids: Vec<_> = holds.iter().map(|id| id.as_str()).collect();
+        let ids: Vec<_> = filter.receiver_holds.iter().map(|id| id.as_str()).collect();
         let steps = layer2_core::sandbox::AgentWorkStep::RECEIVER_PACED
             .map(|step| step.operation_name())
             .to_vec();
         excluded.push(doc! {"_id": {"$in": ids}, "record.work.step": {"$in": steps}});
     }
-    match startup {
+    if let Some(cooldowns) = filter.acquisition_cooldowns {
+        // Both arms match the current task before their limits. A replacement
+        // task on the same ID, including a new Stop or Delete, is eligible.
+        excluded.extend(cooldowns.iter().filter_map(|(id, work)| {
+            let mut exact = doc! {
+                "_id": id.as_str(),
+                "record.status": work.status.name(),
+                "record.work.step": work.step.operation_name(),
+                "record.work.ready_at": &work.ready_at,
+                "record.work.attempts": i64::from(work.attempts),
+                "record.work.next_fence": i64::try_from(work.next_fence).ok()?,
+            };
+            if let Some(revision) = work.control_revision {
+                exact.insert("record.revision", i64::try_from(revision).ok()?);
+            }
+            Some(exact)
+        }));
+    }
+    match filter.startup {
         StartupWorkFilter::All => {}
         StartupWorkFilter::Exclude(sandboxes) => {
             let ids: Vec<_> = sandboxes.iter().map(|id| id.as_str()).collect();
@@ -120,6 +146,7 @@ fn build(
     ordinary.insert("work_ready_at", doc! {"$lte": now});
     ordinary.insert("$expr", doc! {"$not": [candidate.clone()]});
     let mut pipeline = vec![doc! {"$match": ordinary}];
+    pipeline.extend(crate::store::agent_inspection_park::filter(store, false));
     pipeline.extend(super::ownership::discovery::filter(store));
     pipeline.extend(page(limit));
 
@@ -139,7 +166,9 @@ fn build(
         doc! {"_id": 1, "revision": 1, FIELD: 1, "agent_command_admission_fence": 1,
         "record.sandbox_id": 1, "record.workspace_id": 1, "record.worktree_id": 1}
     };
-    let mut wake = vec![doc! {"$match": paced}, doc! {"$project": projection}];
+    let mut wake = vec![doc! {"$match": paced}];
+    wake.extend(crate::store::agent_inspection_park::filter(store, false));
+    wake.push(doc! {"$project": projection});
     let mut holds = vec![
         Bson::Document(doc! {
             "$eq": [format!("{hint}.agent_revision"), "$revision"]

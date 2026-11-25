@@ -6,7 +6,7 @@ use std::{
     path::Path,
 };
 
-pub(super) fn require_parent(path: &Path) -> Result<()> {
+pub(in crate::store) fn require_parent(path: &Path) -> Result<()> {
     if !path.is_absolute() || path.file_name().is_none() {
         return Err(OUTPUT);
     }
@@ -18,7 +18,7 @@ pub(super) fn require_parent(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn read(path: &Path) -> Result<Vec<u8>> {
+pub(in crate::store) fn read(path: &Path) -> Result<Vec<u8>> {
     require_parent(path)?;
     let before = fs::symlink_metadata(path).map_err(|_| OUTPUT)?;
     if !before.is_file()
@@ -43,7 +43,7 @@ pub(super) fn read(path: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-pub(super) fn publish(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(in crate::store) fn publish(path: &Path, bytes: &[u8]) -> Result<()> {
     require_parent(path)?;
     let mut file = OpenOptions::new()
         .write(true)

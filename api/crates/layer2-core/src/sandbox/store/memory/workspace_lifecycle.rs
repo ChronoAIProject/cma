@@ -77,7 +77,7 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
             let event = next_sandbox
                 .record_creation_admission_with_managed_runtime(
                     cause,
-                    self.managed_runtime_version(),
+                    self.managed_runtime_version().as_deref(),
                     admission.event_at.clone(),
                 )
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;

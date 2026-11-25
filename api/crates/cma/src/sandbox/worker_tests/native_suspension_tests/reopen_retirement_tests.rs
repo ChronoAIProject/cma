@@ -6,6 +6,7 @@ use axum::{
 };
 use layer2_core::{OperationClaim, OperationReservation, OperationStore};
 use layer3_adapter::agent_sandbox::NativePoolControl;
+use layer3_adapter::HomeVolumeStore;
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -116,7 +117,46 @@ async fn retire_and_prove(
         );
     }
     fixture.backend.hold_delete.store(false, Ordering::SeqCst);
+    let pools = fixture.backend.pools.as_ref().unwrap();
+    let original_home = before.lifecycle.home.as_ref().unwrap();
+    let attachment = original_home.attachment().unwrap();
+    let original_pool = original_home.native_pool.as_ref().unwrap();
+    let claim = original_pool.claim.as_ref().unwrap();
+    let before_loss = fixture.harness.stored(&before.id).await;
+    let attempts_before_loss = fixture.backend.calls.snapshot().len();
     fixture.backend.lose_delete.store(true, Ordering::SeqCst);
+    now = (now + Duration::from_secs(6)).max(stamp_time(&before_loss.work.ready_at));
+    fixture.step(&before.id, now, &runtime_image()).await;
+    assert!(!fixture.backend.lose_delete.load(Ordering::SeqCst));
+    let calls_after_loss = fixture.backend.calls.snapshot();
+    assert_eq!(
+        deletion_counts(&calls_after_loss[attempts_before_loss..]),
+        (1, 1),
+        "the lost acknowledgement followed one effective deletion"
+    );
+
+    let pending = fixture.harness.stored(&before.id).await;
+    assert_eq!(pending.status, SandboxStatus::Retiring);
+    assert_eq!(pending.owner, before.owner);
+    assert_eq!(pending.runtime, before_loss.runtime);
+    assert_eq!(
+        pending.lifecycle.suspended_runtime,
+        before_loss.lifecycle.suspended_runtime
+    );
+    assert_eq!(pending.lifecycle.home, before_loss.lifecycle.home);
+    assert!(fixture
+        .adapter(&runtime_image())
+        .runtime_inventory()
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(pools.inventory_claims().await.unwrap(), vec![claim.clone()]);
+    assert_eq!(
+        HomeVolumeStore::inventory(pools.as_ref()).await.unwrap(),
+        vec![attachment]
+    );
+
+    // Drive constructs fresh workers and adapters and reads the retained retirement state.
     let retired = fixture
         .drive(
             &before.id,
@@ -127,24 +167,18 @@ async fn retire_and_prove(
         .await;
     assert!(retired.runtime.is_none() && retired.lifecycle.suspended_runtime.is_none());
     assert!(retired.work.lease.is_none());
-    assert!(retired.lifecycle.home.as_ref().unwrap().released);
-    assert!(
-        retired
-            .lifecycle
-            .home
-            .as_ref()
-            .unwrap()
-            .native_pool
-            .as_ref()
-            .unwrap()
-            .cleaned
-    );
-    assert!(fixture
-        .backend
-        .pools
-        .as_ref()
-        .unwrap()
-        .inventory_claims()
+    assert_eq!(retired.id, before.id);
+    assert_eq!(retired.owner, before.owner);
+    let retired_home = retired.lifecycle.home.as_ref().unwrap();
+    assert!(retired_home.released);
+    assert_eq!(retired_home.request, original_home.request);
+    assert_eq!(retired_home.receipt, original_home.receipt);
+    let retired_pool = retired_home.native_pool.as_ref().unwrap();
+    assert!(retired_pool.cleaned);
+    assert_eq!(retired_pool.request, original_pool.request);
+    assert_eq!(retired_pool.claim, original_pool.claim);
+    assert!(pools.inventory_claims().await.unwrap().is_empty());
+    assert!(HomeVolumeStore::inventory(pools.as_ref())
         .await
         .unwrap()
         .is_empty());
@@ -176,16 +210,23 @@ async fn retire_and_prove(
             .unwrap(),
         retired
     );
-    assert_eq!(
-        fixture
-            .backend
-            .calls
-            .snapshot()
-            .iter()
-            .filter(|c| c.as_str() == "delete-effective")
-            .count(),
-        1
-    );
+    let calls = fixture.backend.calls.snapshot();
+    let (attempts, effects) = deletion_counts(&calls[calls_after_loss.len()..]);
+    assert_eq!(effects, 0, "the successor must not delete another runtime");
+    assert_eq!(deletion_counts(&calls).1, 1);
+    eprintln!("retirement attempts across worker lifetimes: first=1, successor={attempts}");
+}
+
+fn deletion_counts(calls: &[String]) -> (usize, usize) {
+    let attempts = calls
+        .iter()
+        .filter(|call| call.as_str() == "delete-retained")
+        .count();
+    let effects = calls
+        .iter()
+        .filter(|call| call.as_str() == "delete-effective")
+        .count();
+    (attempts, effects)
 }
 
 #[tokio::test]
@@ -306,3 +347,5 @@ async fn owner_delete_fences_a_silent_inflight_reopen_and_competing_worker() {
     );
     retire_and_prove(&fixture, &reopening, &agent, now).await;
 }
+
+mod local_lifecycle_tests;

@@ -44,8 +44,10 @@ function mount(client: ReturnType<typeof publicClient>) {
 }
 
 function retain(recovery: boolean) {
+  const original = createIntent(route);
   const intent = {
-    ...createIntent(route),
+    ...original,
+    wireBody: JSON.stringify(original.body),
     owner: PUBLIC_USER.id,
     submitted: true,
     ...(recovery ? { credentialRecovery: 'retry' as const } : {}),
@@ -108,7 +110,7 @@ describe.each([false, true])('credential recovery: %s', (recovery) => {
       vi.stubEnv(flag, value);
       const intent = retain(recovery);
       const client = publicClient();
-      vi.mocked(client.requests.createOrResume)
+      vi.mocked(client.requests.createOrResumeBound)
         .mockRejectedValueOnce(settled())
         .mockResolvedValue(PUBLIC_RECORD);
       const test = mount(client);
@@ -118,10 +120,10 @@ describe.each([false, true])('credential recovery: %s', (recovery) => {
       );
       expect(readIntent(path)).toEqual(value === 'true' ? undefined : intent);
       await act(async () => undefined);
-      expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+      expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
       await test.user.click(screen.getByRole('button', { name: 'Try again' }));
       await waitFor(() => expect(test.navigate).toHaveBeenCalledOnce());
-      const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+      const calls = vi.mocked(client.requests.createOrResumeBound).mock.calls;
       expect(calls).toHaveLength(2);
       expect(calls[0]?.[2].idempotencyKey).toBe(intent.key);
       expect(calls[1]?.[1]).toEqual(intent.body);
@@ -144,7 +146,7 @@ describe.each([false, true])('credential recovery: %s', (recovery) => {
   ])('keeps the exact uncertain command after same-owner reload: %s', async (error) => {
     const intent = retain(recovery);
     const client = publicClient();
-    vi.mocked(client.requests.createOrResume)
+    vi.mocked(client.requests.createOrResumeBound)
       .mockRejectedValueOnce(error)
       .mockResolvedValue(PUBLIC_RECORD);
     const first = mount(client);
@@ -155,7 +157,7 @@ describe.each([false, true])('credential recovery: %s', (recovery) => {
     const second = mount(client);
     if (recovery) await recover(second);
     await waitFor(() => expect(second.navigate).toHaveBeenCalledOnce());
-    const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+    const calls = vi.mocked(client.requests.createOrResumeBound).mock.calls;
     expect(calls).toHaveLength(2);
     expect(calls[1]).toEqual(calls[0]);
     expect(calls[1]?.[2].idempotencyKey).toBe(intent.key);
@@ -167,7 +169,7 @@ it('crosses the UTC reset and reloads without starting work until a new explicit
   vi.setSystemTime(new Date('2026-11-20T23:59:50Z'));
   const intent = retain(false);
   const client = publicClient();
-  vi.mocked(client.requests.createOrResume)
+  vi.mocked(client.requests.createOrResumeBound)
     .mockRejectedValueOnce(settled())
     .mockResolvedValue(PUBLIC_RECORD);
   const first = mount(client);
@@ -184,7 +186,7 @@ it('crosses the UTC reset and reloads without starting work until a new explicit
   await act(async () => {
     await vi.advanceTimersByTimeAsync(20_000);
   });
-  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
   expect(first.navigate).not.toHaveBeenCalled();
   first.unmount();
   vi.useRealTimers();
@@ -192,11 +194,11 @@ it('crosses the UTC reset and reloads without starting work until a new explicit
   vi.setSystemTime(new Date('2026-11-21T00:00:10Z'));
   const second = mount(client);
   const button = await screen.findByRole('button', { name: 'Open in CMA' });
-  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
   expect(readIntent(path)).toBeUndefined();
   await second.user.click(button);
   await waitFor(() => expect(second.navigate).toHaveBeenCalledOnce());
-  expect(vi.mocked(client.requests.createOrResume).mock.calls[1]?.[2].idempotencyKey).not.toBe(
+  expect(vi.mocked(client.requests.createOrResumeBound).mock.calls[1]?.[2].idempotencyKey).not.toBe(
     intent.key,
   );
 });
@@ -204,7 +206,7 @@ it('crosses the UTC reset and reloads without starting work until a new explicit
 it('does not send a replacement when saving the new explicit intent fails', async () => {
   retain(false);
   const client = publicClient();
-  vi.mocked(client.requests.createOrResume)
+  vi.mocked(client.requests.createOrResumeBound)
     .mockRejectedValueOnce(settled())
     .mockResolvedValue(PUBLIC_RECORD);
   const test = mount(client);
@@ -214,7 +216,7 @@ it('does not send a replacement when saving the new explicit intent fails', asyn
   });
   await test.user.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('could not save');
-  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
   expect(readIntent(path)).toBeUndefined();
   expect(test.navigate).not.toHaveBeenCalled();
 });

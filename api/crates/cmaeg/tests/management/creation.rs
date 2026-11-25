@@ -1,6 +1,9 @@
 use super::*;
 use serde_json::Value;
 
+#[path = "creation_pending.rs"]
+mod pending;
+
 fn reserved_body() -> Value {
     let mut body = create_body();
     body["record_id"] = uuid::Uuid::new_v4().to_string().into();
@@ -91,11 +94,30 @@ async fn reserved_creation_replays_across_replicas_and_restart_without_rebinding
 
 #[tokio::test]
 async fn failed_binding_retains_encrypted_cleanup_identity_and_blocks_events() {
-    let provider = FakeProvider::start(FakeProviderConfig {
-        reject_binding: true,
-        ..Default::default()
-    })
+    failed_binding_creation(
+        FakeProviderConfig {
+            reject_binding: true,
+            ..Default::default()
+        },
+        502,
+    )
     .await;
+}
+
+#[tokio::test]
+async fn invalid_binding_profile_is_refused_and_retains_only_cleanup_identity() {
+    failed_binding_creation(
+        FakeProviderConfig {
+            binding_failures: [(0, (400, json!({"code": "invalid_binding"})))].into(),
+            ..Default::default()
+        },
+        400,
+    )
+    .await;
+}
+
+async fn failed_binding_creation(config: FakeProviderConfig, status: u16) {
+    let provider = FakeProvider::start(config).await;
     let cma = FakeCma::start(false).await;
     let nyxid = FakeNyxid::start().await;
     let state = management_state(&provider, &cma, &nyxid, key_ring(1));
@@ -110,7 +132,11 @@ async fn failed_binding_retains_encrypted_cleanup_identity_and_blocks_events() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 502);
+    assert_eq!(response.status(), status);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["code"],
+        "provider_rejected"
+    );
     let recovered: Value = client
         .get(format!(
             "{base}/v1/channel-records/{}",

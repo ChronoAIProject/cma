@@ -34,6 +34,23 @@ export function safeFailure(error) {
     : { status: 'FAIL', code: 'adapter_or_transport_error' };
 }
 
+export async function withinDeadline(run, timeoutMs, code) {
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = globalThis.setTimeout(() => {
+      const error = new GateError(code);
+      reject(error);
+      controller.abort(error);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([run(controller.signal), deadline]);
+  } finally {
+    globalThis.clearTimeout(timer);
+  }
+}
+
 export async function waitFor(read, accept, { timeoutMs, intervalMs = 250, time = clock }) {
   finite(timeoutMs); finite(intervalMs);
   check(timeoutMs > 0 && intervalMs > 0, 'invalid_poll_budget');
@@ -47,10 +64,10 @@ export async function waitFor(read, accept, { timeoutMs, intervalMs = 250, time 
   throw new GateError('recovery_deadline_exceeded');
 }
 
-export function reconcile(value) {
-  check(value && Array.isArray(value.commands) && value.commands.length > 0, 'oracle_missing', true);
+export function reconcile(value, { missingIsBlocked = true } = {}) {
+  check(value && Array.isArray(value.commands) && value.commands.length > 0, 'oracle_missing', missingIsBlocked);
   check(isHash(value.evidenceHash) && value.independent === true && value.complete === true,
-    'oracle_not_independent_or_complete', true);
+    'oracle_not_independent_or_complete', missingIsBlocked);
   const admitted = new Set();
   for (const row of value.commands) {
     check(isHash(row.commandHash) && !admitted.has(row.commandHash), 'oracle_command_identity_invalid');

@@ -31,6 +31,21 @@ const DEFAULT_READY_POLL: Duration = Duration::from_millis(500);
 /// Runtime control-link implementation paired with the provider lifecycle.
 #[async_trait::async_trait]
 pub trait HostedControlTransport: Send + Sync {
+    fn stale_turn_producer(&self) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
+        None
+    }
+
+    async fn challenge_retirement_receiver(
+        &self,
+        _handle: &RuntimeHandle,
+        _binding: &crate::agent_sandbox::PodBinding,
+        _owner: &crate::owner_protocol::TransportOwner,
+    ) -> crate::Result<bool> {
+        Err(crate::AdapterError::Unsupported(
+            "native retirement challenge is unavailable".into(),
+        ))
+    }
+
     fn desktop_ownership(&self) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
         None
     }
@@ -50,6 +65,16 @@ pub trait HostedControlTransport: Send + Sync {
         _inspection: &super::NativeStatusInspection<'_>,
     ) -> crate::Result<Option<crate::RuntimeInspection>> {
         Ok(None)
+    }
+
+    async fn verify_retained_startup_policy(
+        &self,
+        _handle: &RuntimeHandle,
+        _readback: &crate::RetainedStartupPolicyReadback<'_>,
+    ) -> crate::Result<crate::RuntimeStartupPolicyObservation> {
+        Err(crate::AdapterError::Unsupported(
+            "retained startup policy readback is unavailable".into(),
+        ))
     }
 
     async fn bind_runtime(&self, _handle: &RuntimeHandle, _sandbox_id: &str) -> crate::Result<()> {

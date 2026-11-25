@@ -18,6 +18,12 @@ mod http;
 mod repositories;
 mod skills;
 
+pub(crate) async fn resolve_public_snapshot(
+    repository: &RepositoryRequest,
+) -> Result<RepositoryResolution, AuthoringSourceError> {
+    repositories::resolve_public_snapshot(repository).await
+}
+
 pub(crate) struct CmaProfileAuthoringSource {
     issuer: Option<Arc<KeyIssuer>>,
     tokens: Option<Arc<dyn OwnerTokenSource>>,
@@ -117,9 +123,19 @@ impl ProfileAuthoringSource for CmaProfileAuthoringSource {
                 .search(token.as_ref().map(SecretValue::expose), query)
                 .await
         };
-        tokio::time::timeout(Duration::from_secs(30), resolution)
+        let result = tokio::time::timeout(Duration::from_secs(30), resolution)
             .await
-            .map_err(|_| http::unavailable("skill catalogue deadline elapsed"))?
+            .map_err(|_| http::unavailable("skill catalogue deadline elapsed"))
+            .and_then(|result| result);
+        if let Err(error) = &result {
+            // Every cause becomes one public 503; name it here (#2270). Details
+            // are fixed stage labels and status codes, never upstream text.
+            if !matches!(error, AuthoringSourceError::InvalidQuery(_)) {
+                tracing::warn!(target: "cma_profile_authoring", error = %error,
+                    "Ornn skill catalogue read failed");
+            }
+        }
+        result
     }
 
     async fn resolve_repository(

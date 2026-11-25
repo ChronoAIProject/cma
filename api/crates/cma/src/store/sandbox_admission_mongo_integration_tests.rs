@@ -19,6 +19,11 @@ use super::sandboxes::admitted_sandbox_document;
 const NOW: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:01:00Z";
 
+#[path = "sandbox_admission/canary_tests.rs"]
+mod canary;
+#[path = "sandbox_admission/runtime_image_origin_mongo_tests.rs"]
+mod runtime_image_origin;
+
 mod visitor_limit;
 
 #[path = "sandbox_admission_always_on_service_mongo_tests.rs"]
@@ -360,6 +365,9 @@ mod pending_home_ceilings;
 
 #[path = "sandbox_owner_admission_mongo_tests.rs"]
 mod owner_replicas;
+
+#[path = "sandbox_admission/public_owner_mongo_tests.rs"]
+mod public_owner;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]

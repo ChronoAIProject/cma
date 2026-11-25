@@ -188,6 +188,100 @@ class InvokeTests(unittest.TestCase):
                 self.assertNotIn(marker, summary.read_text())
                 self.assertEqual(runner.call_count, int(stage.startswith("controller")))
 
+    def retry_main(self, root, env, token=None, *, budget=None, code=30):
+        """Run main() with a controller that refuses with token (or a precondition via budget)."""
+        reader = Mock(return_value=root / "deploy_set.py")
+        policy = Mock(return_value=["web"])
+        runner = Mock(return_value=code)
+        if token is not None:
+            def refuse(script, path, mode, started, child_env):
+                from staging_cd_receipts import sha256
+
+                packet = path.with_name("refusal-code")
+                packet.write_text(sha256(json.loads(path.read_text())) + " " + token + "\n")
+                packet.chmod(0o600)
+                return code
+            runner.side_effect = refuse
+        real_deploy = invoke.deploy
+
+        def operation(values, masker, on_disabled, on_private_refusal, on_unverified, on_rolled_back,
+                      on_overtaken=None):
+            return real_deploy(values, masker, reader, runner, policy_reader=policy, on_disabled=on_disabled,
+                               on_private_refusal=on_private_refusal, on_unverified=on_unverified)
+
+        output = io.StringIO()
+        clock = budget or Mock(return_value=20)
+        with patch.dict(os.environ, env, clear=True), patch.object(invoke, "remaining", clock), \
+                patch.object(invoke, "deploy", side_effect=operation), contextlib.redirect_stdout(output):
+            status = invoke.main()
+        written = Path(env["GITHUB_OUTPUT"])
+        outputs = dict(line.split("=", 1) for line in written.read_text().splitlines()) if written.exists() else {}
+        public = [line for line in output.getvalue().splitlines() if not line.startswith("::add-mask::")]
+        return status, outputs, public
+
+    def test_transient_refusal_before_any_change_hands_over_to_one_retry_only_when_allowed(self):
+        for token, family in (("clock", "deploy-private"), ("transport", "deploy-private"), ("budget", None)):
+            for allowed in ("true", "false", None):
+                with self.subTest(token=token, allowed=allowed), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    env = self.environment(root)
+                    env["GITHUB_STEP_SUMMARY"] = str(root / "summary")
+                    if allowed is not None:
+                        env["CD_RETRY_ALLOWED"] = allowed
+                    if family is None:
+                        status, outputs, public = self.retry_main(
+                            root, env, budget=Mock(side_effect=[20, Refusal("fixture")]))
+                        code = "deploy-precondition/budget"
+                    else:
+                        status, outputs, public = self.retry_main(root, env, token)
+                        code = f"{family}/{token}"
+                    if allowed == "true":
+                        self.assertEqual(status, 0)
+                        self.assertEqual(outputs.get("retryable"), "true")
+                        self.assertEqual(outputs.get("disposition"), invoke.RETRY_PENDING)
+                        # Fully explained, but as a warning while the retry follows.
+                        self.assertTrue(any(line.startswith("::warning ") for line in public), public)
+                        self.assertFalse(any(line.startswith("::error") for line in public), public)
+                        self.assertIn(f"RETRY deployment reason={code}: refused before any change; "
+                                      "one automatic re-admission and deployment follow", public)
+                        self.assertIn("Automatic retry:", (root / "summary").read_text())
+                    else:
+                        self.assertEqual(status, 30)
+                        self.assertNotIn("retryable", outputs)
+                        self.assertTrue(any(line.startswith("::error ") for line in public), public)
+                        self.assertFalse(any(line.startswith("RETRY ") for line in public), public)
+
+    def test_operator_unknown_mutating_and_dispatch_outcomes_never_retry(self):
+        cases = (("permit", 30, "push"), ("image-identity", 30, "push"), ("unreported-token", 30, "push"),
+                 (None, 30, "push"), ("clock", 20, "push"), ("clock", 10, "push"),
+                 ("clock", 30, "workflow_dispatch"))
+        for token, code, event in cases:
+            with self.subTest(token=token, code=code, event=event), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = self.environment(root)
+                env["CD_RETRY_ALLOWED"] = "true"
+                env["GITHUB_EVENT_NAME"] = event
+                self.assertIsNone(invoke.automatic_retry(code, token, None, env))
+        env = {"CD_RETRY_ALLOWED": "true", "GITHUB_EVENT_NAME": "push"}
+        self.assertEqual(invoke.automatic_retry(30, "clock", None, env), ("deploy-private", "clock"))
+        self.assertEqual(invoke.automatic_retry(30, None, "authority", env), ("deploy-precondition", "authority"))
+        self.assertIsNone(invoke.automatic_retry(30, None, "checkout", env))
+        self.assertIsNone(invoke.automatic_retry(30, "clock", None, dict(env, CD_TARGET="production")))
+        self.assertIsNone(invoke.automatic_retry(30, invoke.UNRECOGNIZED, None, env))
+        # An operator's cancel or a foreign rollout is never retried at once.
+        for token in ("interrupted", "fence"):
+            self.assertEqual(invoke.entry("deploy-private", token)["cause"], "transient")
+            self.assertIsNone(invoke.automatic_retry(30, token, None, env))
+        for token in ("transport", "inventory", "image-version", "readiness"):
+            self.assertEqual(invoke.automatic_retry(30, token, None, env), ("deploy-private", token))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            env["CD_RETRY_ALLOWED"] = "true"
+            status, outputs, public = self.retry_main(root, env, "permit")
+            self.assertEqual(status, 30)
+            self.assertNotIn("retryable", outputs)
+
     def test_private_reason_reader_refuses_wrong_binding_unsafe_files_and_unknown_bytes(self):
         from staging_cd_receipts import sha256
         from staging_cd_refusal import read
@@ -238,6 +332,10 @@ class InvokeTests(unittest.TestCase):
                  (digest + b" pod-restarts newer-controller-token\n", None, ("pod-restarts", "unrecognized")),
                  (b"0" * 64 + b" newer-controller-token\n", None, None),
                  (digest + b" newer-controller-token", None, None))
+        cases += tuple(
+            (digest + b" " + reason.encode() + b" unreported\n", None, (reason, "unreported"))
+            for reason in ("pod-restarts-membership", "pod-restarts-startup-gate", "pod-restarts-panic")
+        )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "packet"
             for value, refusal, verification in cases:

@@ -52,6 +52,28 @@ pub(super) fn binding() -> ProviderBinding {
     .unwrap()
 }
 
+pub(in crate::store) async fn insert_retained_binding_fixture(
+    database: &Database,
+) -> (ProviderBinding, BindingConversation) {
+    let mut value = binding();
+    value.state = BindingState::Ready;
+    value.work = BindingWork::Idle;
+    value.advance_revision(NOW.into()).unwrap();
+    let conversation =
+        BindingConversation::new(&value, "conversation_retained".into(), NOW.into()).unwrap();
+    database
+        .collection::<Document>(BINDINGS)
+        .insert_one(binding_document(&value).unwrap())
+        .await
+        .unwrap();
+    database
+        .collection::<Document>(CONVERSATIONS)
+        .insert_one(conversation_document(&conversation).unwrap())
+        .await
+        .unwrap();
+    (value, conversation)
+}
+
 async fn ready(store: &MongoSandboxStore) -> ProviderBinding {
     let mut value = binding();
     store.save_binding(None, value.clone()).await.unwrap();
@@ -328,3 +350,6 @@ async fn mongo_worker_classification_sees_other_clients_committed_key_history() 
         .unwrap());
     writer.database(&database).drop().await.unwrap();
 }
+
+#[path = "admission_contention_tests.rs"]
+mod admission_contention;

@@ -86,10 +86,11 @@ pub(super) async fn initial_task_environment(
     source_failure: Option<RepositoryRefusal>,
     desktop: bool,
 ) {
+    let retry_unavailable = store_retry::StoreRetry::new(desktop);
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let marker = source_failure
         .filter(|failure| failure.before_marker)
-        .map(|_| Arc::new(super::repository_marker::MarkerPause::default()));
+        .map(|failure| super::repository_marker::MarkerPause::new(failure.delay_initial_renewal));
     let database_client = match &marker {
         Some(marker) => marker.client(&uri).await,
         None => mongodb::Client::with_uri_str(&uri).await.unwrap(),
@@ -151,7 +152,7 @@ pub(super) async fn initial_task_environment(
         None
     };
     let connection = RepositoryConnection::new();
-    let service = router_with_support(
+    let (service, lifecycle) = fixture_with_support(
         harness.store.clone(),
         harness.registry.clone(),
         &database,
@@ -165,8 +166,9 @@ pub(super) async fn initial_task_environment(
             machine_image: None,
         },
     )
-    .await
-    .0;
+    .await;
+    let lifecycle_drain = lifecycle.drain_handle();
+    lifecycle.resume_pending();
     let (provider, provider_task) = identity_provider().await;
     let credentials = ManagedSandboxCredentials::new(
         Arc::new(KeyIssuer::new(
@@ -270,6 +272,7 @@ pub(super) async fn initial_task_environment(
                 &harness,
                 &sandbox_worker,
                 refusal.code,
+                &store_retry::StoreRetry::new(desktop),
             )
             .await;
         sandbox_config.holder = "task-cleanup-before-marker-restarted".into();
@@ -279,10 +282,11 @@ pub(super) async fn initial_task_environment(
             &sandbox,
             None,
             &resumed,
-            &store_retry::StoreRetry::default(),
+            &retry_unavailable,
         )
         .await;
         provider_task.abort();
+        lifecycle_drain.drain(Duration::from_secs(5)).await.unwrap();
         database.drop().await.unwrap();
         return;
     }
@@ -306,7 +310,6 @@ pub(super) async fn initial_task_environment(
     assert_eq!(admitted["first_message"]["purpose"], "task");
     let sandbox_id = SandboxId(admitted["sandbox"]["id"].as_str().unwrap().into());
     assert_ne!(sandbox_id, harness.workspace.sandbox_id);
-    let retry_unavailable = store_retry::StoreRetry::default();
     let transcript_path = format!("{agent_path}/transcript");
     if let Some(refusal) = source_failure {
         let code = refusal.code;
@@ -394,6 +397,7 @@ pub(super) async fn initial_task_environment(
             .await;
         }
         provider_task.abort();
+        lifecycle_drain.drain(Duration::from_secs(5)).await.unwrap();
         database.drop().await.unwrap();
         return;
     }
@@ -411,9 +415,7 @@ pub(super) async fn initial_task_environment(
         .await;
         phase = String::from("waiting for the first task to be delivered");
         loop {
-            if retry_unavailable
-                .should_retry(harness.worker.run_one(&agent_id, SystemTime::now()).await)
-            {
+            if retry_unavailable.agent(&harness, &agent_id).await.is_none() {
                 tokio::time::sleep(Duration::from_millis(20)).await;
                 continue;
             }
@@ -493,5 +495,6 @@ pub(super) async fn initial_task_environment(
         server.abort();
     }
     provider_task.abort();
+    lifecycle_drain.drain(Duration::from_secs(5)).await.unwrap();
     database.drop().await.unwrap();
 }

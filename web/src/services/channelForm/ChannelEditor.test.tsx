@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ChannelEditor, type Channel, type EditorSection } from '../ChannelEditor';
@@ -124,6 +124,34 @@ it('uses the registered CMA provider consistently for a new channel without chan
     provider: { slug: 'cma', target: { type: 'existing_agent', agent_id: 'agt_retained' } },
     profile: { metadata: { provider: 'cma' } },
   });
+});
+it('includes an environment by default only when creating a profile-managed CMA channel', () => {
+  const draft = channelDraft(undefined, 'owner');
+  const credentials = { agent_key: 'fixture-provider' };
+  const profile = object(draft.profile);
+  const provider = object(draft.provider);
+  const defaultEnvironment = {
+    size: { cpu_cores: 1, memory_gib: 2 },
+    workspace: { type: 'directory', name: 'workspace' },
+  };
+  expect(channelRequest(draft, credentials)).toHaveProperty(
+    'profile.environment',
+    defaultEnvironment,
+  );
+  const managed = { ...draft, provider: { ...provider, target: { type: 'profile' } } };
+  expect(channelRequest(managed, credentials)).toHaveProperty(
+    'profile.environment',
+    defaultEnvironment,
+  );
+  const environment = { ...defaultEnvironment, size: { cpu_cores: 2, memory_gib: 4 } };
+  expect(
+    channelRequest({ ...managed, profile: { ...profile, environment } }, credentials),
+  ).toHaveProperty('profile.environment', environment);
+  const existing = { ...draft, provider: { ...provider, target: { type: 'existing_agent' } } };
+  const external = { ...draft, provider: { ...provider, slug: 'external' } };
+  expect(channelRequest(existing, credentials)).not.toHaveProperty('profile.environment');
+  expect(channelRequest(external, credentials)).not.toHaveProperty('profile.environment');
+  expect(channelRequest(managed, {}, fixture())).not.toHaveProperty('profile.environment');
 });
 it('preserves unknown writable fields and exact existing bindings while excluding server-only fields and unchanged credentials', () => {
   const source = fixture();
@@ -319,11 +347,10 @@ it('saves a queue policy while preserving the existing Agent destination and pro
   expect(sent.profile.future_profile).toEqual({ retained: true });
   expect(sent.provider.target).toEqual({ type: 'existing_agent', agent_id: 'agt_retained' });
 });
-it('creates a typed custom event schema without a configuration JSON editor', async () => {
+it('offers neither a configuration JSON editor nor a Custom event schema the v1 gateway refuses', () => {
   const source = fixture();
   source.definition.sources = [{ type: 'custom', auth: { type: 'hmac', key_id: 'events' } }];
-  const fetcher = vi.fn().mockResolvedValue(reply({ ...source, version: 8 }));
-  vi.stubGlobal('fetch', fetcher);
+  vi.stubGlobal('fetch', vi.fn());
   render(
     <ChannelEditor
       channel={source}
@@ -333,19 +360,7 @@ it('creates a typed custom event schema without a configuration JSON editor', as
     />,
   );
   expect(screen.queryByLabelText(/configuration JSON/)).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: 'Add schema validation' }));
-  fireEvent.change(screen.getByLabelText('properties field name'), { target: { value: 'topic' } });
-  const field = screen.getByLabelText('properties field name');
-  await userEvent.click(
-    within(field.closest('fieldset')!).getByRole('button', { name: 'Add field' }),
-  );
-  fireEvent.change(screen.getByLabelText('topic'), { target: { value: 'math' } });
-  await userEvent.click(screen.getByRole('button', { name: 'Save producer' }));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
-  expect(JSON.parse(fetcher.mock.calls[0]![1].body).sources[0].schema).toEqual({
-    type: 'object',
-    properties: { topic: 'math' },
-  });
+  expect(screen.queryByRole('button', { name: 'Add schema validation' })).not.toBeInTheDocument();
 });
 it('retains unfamiliar routing settings while stripping immutable consumer identity', () => {
   const routing = object(fixture().definition.routing);
@@ -359,6 +374,8 @@ it('retains unfamiliar routing settings while stripping immutable consumer ident
 it('appends a producer through its own node without altering existing sources', async () => {
   const source = fixture(),
     fetcher = vi.fn().mockResolvedValue(reply({ ...source, version: 8 }));
+  // A Custom producer needs a grouping the gateway accepts for custom events.
+  source.definition.partition = { version: 1, key: 'fixed' };
   vi.stubGlobal('fetch', fetcher);
   render(
     <ChannelEditor

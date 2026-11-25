@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from staging_cd_component_report import main, summarize
 from staging_cd_compatibility import GROUP
+from staging_cd_set import ALREADY_VERIFIED
 from staging_cd_targets import TARGETS
 
 
@@ -133,6 +134,21 @@ class ComponentReportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             summarize(dict(self.env(), CD_DISPOSITION_AM="source_finalized"))
 
+    def test_locked_admission_can_reuse_a_prior_proof_without_a_deploy_job(self):
+        web = {"result": "success", "outputs": {"admit": "success", "admitted": '["web"]',
+               "failures": "{}", "admit_disposition": ALREADY_VERIFIED}}
+        env = dict(self.env(), CD_PROMOTE_WEB=json.dumps(web))
+        rows, passed = summarize(env)
+        self.assertTrue(passed)
+        self.assertRow(rows, "| web | success | admitted | skipped | already-verified |")
+        self.assertIn("web deployment skipped: a previous staging deployment verified this exact release.", rows)
+        self.assertFalse(summarize(dict(env, CD_PUBLISH_AM="failure"))[1])
+        for inconsistent in ({"deploy": "success"}, {"admitted": "[]"},
+                             {"component_result": '{"components":{}}'}, {"admit": "failure"}):
+            reported = dict(web, outputs=dict(web["outputs"], **inconsistent))
+            with self.subTest(outputs=inconsistent), self.assertRaises(ValueError):
+                summarize(dict(env, CD_PROMOTE_WEB=json.dumps(reported)))
+
     def test_successful_job_without_a_result_for_admitted_web_fails_the_report(self):
         for result in (None, "", '{"components":{}}'):
             with self.subTest(result=result), tempfile.TemporaryDirectory() as tmp:
@@ -178,6 +194,37 @@ class ComponentReportTests(unittest.TestCase):
         self.assertRow(rows, "| runtime | retained | admitted | success | withheld |",
                        "deployed-compatibility-unqualified", "change")
 
+    def test_a_retry_that_never_reported_fails_its_lane_with_its_own_reason(self):
+        env = self.env()
+        pending = promotion("am")
+        pending["outputs"].update(deploy_disposition="retry-pending", retried="false")
+        rows, passed = summarize(dict(env, CD_PROMOTE_AM=json.dumps(pending)))
+        self.assertIs(passed, False)
+        self.assertRow(rows, "| am | success | admitted | retry-pending | unreported |", "retry-not-run", "unknown")
+        self.assertRow(rows, "| web | success | admitted | success | controller-verified |")
+        # A retry's outputs never carry the first attempt's hand-over.
+        pending["outputs"]["retried"] = "true"
+        with self.assertRaises(ValueError):
+            summarize(dict(env, CD_PROMOTE_AM=json.dumps(pending)))
+        with patch.dict(os.environ, dict(env, CD_PROMOTE_AM=json.dumps(pending)), clear=True):
+            self.assertEqual(main(), 1)
+
+    def test_the_automatic_retry_outcome_is_the_lane_outcome(self):
+        env = self.env()
+        retried = promotion("am")
+        retried["outputs"]["retried"] = "true"
+        rows, passed = summarize(dict(env, CD_PROMOTE_AM=json.dumps(retried)))
+        self.assertIs(passed, True)
+        self.assertIn("am: the first deployment was refused for a transient reason before any change; "
+                      "the rows below are its automatic re-admission and retry.", rows)
+        self.assertRow(rows, "| am | success | admitted | success | controller-verified |")
+        # A retry that itself failed keeps the lane failed.
+        retried["result"] = "failure"
+        retried["outputs"].update(deploy="failure", component_result="")
+        rows, passed = summarize(dict(env, CD_PROMOTE_AM=json.dumps(retried)))
+        self.assertIs(passed, False)
+        self.assertRow(rows, "| am | success | admitted | failure | unreported |", "deploy-failure", "unknown")
+
     def test_skipped_or_failed_allocation_and_empty_queue(self):
         self.assertTrue(summarize({"CD_PLAN_CHANGED": "false", "CD_ALLOCATION_RESULT": "skipped"})[1])
         self.assertTrue(summarize(dict(self.env(), CD_LANES="{}"))[1])
@@ -202,7 +249,7 @@ class ComponentReportTests(unittest.TestCase):
         publishes = ("success", "failure", "skipped", "cancelled", "unknown", "retained", "reservation_superseded",
                      "source_already_final", "superseded-peer", "finalize-incomplete")
         admits = ("admitted", "skipped", "unknown", *sorted(REASONS))
-        deploys = ("success", "failure", "skipped", "cancelled", "unknown")
+        deploys = ("success", "failure", "skipped", "cancelled", "unknown", "retry-pending")
         states = ("controller-verified", "withheld", "unverified", "unreported", "superseded_by_newer_final")
         seen = set()
         for columns in itertools.product(publishes, admits, deploys, states):

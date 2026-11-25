@@ -44,6 +44,16 @@ export class LocalUsageMetrics {
     );
   }
   async route(page: Page) {
+    // The shared browser fixtures model a replica that predates the bounded
+    // initial-view routes. Use the typed route-absence response so the client
+    // exercises its explicit compatibility fallback instead of treating the
+    // LocalStartup catch-all 404 as a malformed refusal.
+    await page.route('**/api/v1/**usage/metrics/initial**', (route) =>
+      route.fulfill({
+        status: 501,
+        json: { status: 501, title: 'Disabled', code: 'report_view_disabled' },
+      }),
+    );
     await page.route('**/api/v1/**usage/metrics/view**', (route) =>
       route.fulfill({
         status: 501,

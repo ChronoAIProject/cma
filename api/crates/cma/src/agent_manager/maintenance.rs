@@ -9,11 +9,19 @@ impl AgentManager {
         match self.coordinator.handoff_background(authority).await {
             Ok(completed) => Ok(completed),
             Err(error) if authority.receiver_cancelled() => {
-                tracing::warn!(stage = "cancelled_receiver_cleanup", epoch = authority.token.epoch, error = %error, "Receiver cleanup pending; healthy ownership continues");
+                authority.log_receiver_handoff_failure(
+                    "cancelled_receiver_cleanup",
+                    &error,
+                    "Receiver cleanup pending; healthy ownership continues",
+                );
                 match self.coordinator.forget_cancelled(authority).await {
                     Ok(complete) => Ok(complete),
                     Err(error) => {
-                        tracing::warn!(stage = "cancelled_owner_observation", epoch = authority.token.epoch, error = %error, "Cancelled ownership retained until durable observation succeeds");
+                        authority.log_receiver_handoff_failure(
+                            "cancelled_owner_observation",
+                            &error,
+                            "Cancelled ownership retained until durable observation succeeds",
+                        );
                         Ok(false)
                     }
                 }
@@ -26,7 +34,21 @@ impl AgentManager {
         &self,
         candidates: Vec<Arc<Authority>>,
     ) -> Result<(), OwnershipError> {
+        if self.coordinator.contains_failures() {
+            return self.service_retirements(candidates).await;
+        }
+        self.coordinator.poll_acquisitions().await?;
         self.retire_inactive().await?;
+        let completed = self
+            .contained
+            .retry(&self.coordinator, |authority| async move {
+                self.handoff_receiver(&authority).await
+            })
+            .await?;
+        for id in completed {
+            self.handoffs.lock().unwrap().remove(&id);
+            self.retired_since.lock().unwrap().remove(&id);
+        }
         let cancelled = self.coordinator.cancelled_receivers().await;
         for authority in cancelled.into_iter().chain(candidates) {
             if authority.receiver_cancelled() {
@@ -69,8 +91,14 @@ impl AgentManager {
                 continue;
             }
             self.registry.detach_owner(&authority.token);
-            if !self.handoff_receiver(&authority).await? {
-                continue;
+            match self.handoff_receiver(&authority).await {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    self.contained
+                        .contain("current_handoff", &authority, error)?;
+                    continue;
+                }
             }
             self.handoffs
                 .lock()

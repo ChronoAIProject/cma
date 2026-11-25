@@ -101,6 +101,7 @@ fn credential() -> RequestFrame {
         operation_id: "credential-1".into(),
         value: RuntimeCredential::new("secret"),
         custody_generation: Some(1),
+        github_route: None,
     })
 }
 
@@ -438,6 +439,8 @@ async fn reliable_first_bridge_rejects_a_legacy_downgrade_before_websocket_upgra
 
 #[tokio::test]
 async fn reliable_websocket_replays_terminal_after_disconnect_and_releases_only_after_ack() {
+    use sha2::Digest as _;
+
     let (home, supervisor) = echo_supervisor("reliable-replay").await;
     let (address, server) = serve(Arc::clone(&supervisor)).await;
     let (mut first, stream) = reliable_socket(address).await;
@@ -478,6 +481,20 @@ async fn reliable_websocket_replays_terminal_after_disconnect_and_releases_only_
     assert_eq!(
         next_conversation_message(&mut replacement).await,
         ClientMessage::Binary(lanes::acknowledged_frame(stream, 2, b"next"))
+    );
+    let retained = supervisor.bridge("agent-1").await.unwrap();
+    let evidence = retained.retained_output.recovery_evidence().await.unwrap();
+    assert_eq!(
+        (
+            evidence.boundary.stream_id,
+            evidence.boundary.acknowledged_through,
+            evidence.acknowledged_payload_sha256,
+        ),
+        (
+            stream.to_string(),
+            1,
+            Some(sha2::Sha256::digest(terminal).into())
+        )
     );
     replacement.close(None).await.unwrap();
 
@@ -863,3 +880,6 @@ async fn checkpoint_heartbeat_disconnect_does_not_abort_validation_task() {
         .expect("validation remains owned after response body disconnect")
         .unwrap();
 }
+
+#[path = "link_native_stop_trace_tests.rs"]
+mod native_stop_trace;

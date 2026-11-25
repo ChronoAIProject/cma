@@ -134,7 +134,7 @@ async fn retained_sign_in_directory_and_owned_resources_are_never_public() {
         assert!(!is_public(
             &store.admissions,
             &subject,
-            &mut client.start_session().await.unwrap()
+            Some(&mut client.start_session().await.unwrap())
         )
         .await
         .unwrap());

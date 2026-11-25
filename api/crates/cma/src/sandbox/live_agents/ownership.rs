@@ -4,6 +4,26 @@ use layer2_core::agent_ownership::{
 };
 
 impl LiveAgentRegistry {
+    pub(crate) fn owned_target_is_recording(
+        &self,
+        target: &LiveAgentTarget,
+        token: &OwnershipToken,
+    ) -> bool {
+        self.lock()
+            .entries
+            .get(&target.agent_id)
+            .is_some_and(|entry| {
+                entry.published
+                    && !entry.task.is_finished()
+                    && entry.conversation_id == target.conversation_id
+                    && entry.runtime_generation == target.runtime_generation
+                    && entry
+                        .manager_authority
+                        .as_ref()
+                        .is_some_and(|owner| owner.token == *token && owner.is_current())
+            })
+    }
+
     pub(crate) fn install_ownership(&self, coordinator: Arc<OwnershipCoordinator>) {
         let _ = self.ownership.set(coordinator);
     }

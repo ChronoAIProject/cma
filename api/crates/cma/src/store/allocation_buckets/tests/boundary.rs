@@ -116,7 +116,7 @@ fn partial_day_inputs_reject_incomplete_coverage_foreign_scope_and_stale_tails()
     assert!(invalid.project_boundary(&s, historical).unwrap().is_none());
     // A foreign interval outside the total selection must not taint that total.
     assert_projection(
-        &invalid.total.projection,
+        &invalid.total().projection,
         &allocation::project(
             &s,
             &[first],
@@ -195,8 +195,8 @@ fn fully_queried_closed_incomplete_days_reuse_exact_unknown_values_across_heads(
         to: from + DAY,
     };
     let bucket = materialize::build(&s, &events, full).unwrap();
-    assert!(!bucket.total.projection.period.complete);
-    assert_eq!(bucket.total.projection.period.unknown_seconds, HOUR);
+    assert!(!bucket.total().projection.period.complete);
+    assert_eq!(bucket.total().projection.period.unknown_seconds, HOUR);
     let mut next = s.clone();
     next.revision += 1;
     next.source_seq += 1;
@@ -207,14 +207,14 @@ fn fully_queried_closed_incomplete_days_reuse_exact_unknown_values_across_heads(
     appended.push(event(&next, 3, s.last_observed_at, next.last_observed_at));
     assert!(bucket.validate_source(&next).unwrap());
     let summary = DayBucket::read_summary(&bucket.document().unwrap()).unwrap();
-    assert!(summary.boundary.is_none());
+    assert!(!summary.has_boundary());
     assert!(summary.validate_source(&next).unwrap());
     assert_projection(
-        &summary.total.projection,
+        &summary.total().projection,
         &allocation::project(&next, &appended, full),
     );
     assert_projection(
-        &bucket.total.projection,
+        &bucket.total().projection,
         &allocation::project(&next, &appended, full),
     );
     let edge = Range {

@@ -1,4 +1,5 @@
 use super::*;
+use tokio::io::AsyncRead;
 
 pub(super) async fn serve_runtime(
     mut stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -163,6 +164,7 @@ pub(super) async fn serve_runtime(
                 }
             }
         } else {
+            let mut content_type = "application/json";
             let body = if request.starts_with("POST /runtime/control ") {
                 if matches!(mode, Mode::WireError) {
                     serde_json::to_string(&ResponseFrame::Failure(crate::wire::WireFailure {
@@ -173,7 +175,31 @@ pub(super) async fn serve_runtime(
                     }))
                     .unwrap()
                 } else if matches!(mode, Mode::Persistent) {
-                    persistent_response(&request)
+                    let response = persistent_response(&request);
+                    let policy = *state.startup_policy.lock().unwrap();
+                    let policy_accept = format!(
+                        "accept: {}",
+                        crate::RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE
+                    );
+                    if let Some(enabled) = policy.filter(|_| {
+                        request
+                            .lines()
+                            .any(|line| line.eq_ignore_ascii_case(&policy_accept))
+                    }) {
+                        let ResponseFrame::RuntimeStatus(runtime) =
+                            serde_json::from_str(&response).unwrap()
+                        else {
+                            panic!("expected runtime status")
+                        };
+                        content_type = crate::RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE;
+                        serde_json::to_string(&crate::RuntimeStartupPolicyObservation {
+                            runtime,
+                            legacy_journal_recovery_enabled: enabled,
+                        })
+                        .unwrap()
+                    } else {
+                        response
+                    }
                 } else {
                     serde_json::to_string(&ResponseFrame::Resources(ResourceReading::default()))
                         .unwrap()
@@ -246,12 +272,40 @@ pub(super) async fn serve_runtime(
             } else {
                 "close"
             };
-            if stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: {connection}\r\n\r\n{body}", body.len()).as_bytes()).await.is_err() { return; }
+            if stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: {connection}\r\n\r\n{body}", body.len()).as_bytes()).await.is_err() { return; }
             if matches!(mode, Mode::Persistent) {
                 continue;
             }
         }
         return;
+    }
+}
+
+async fn read_request(stream: &mut (impl AsyncRead + Unpin)) -> Option<String> {
+    let mut request = Vec::new();
+    let mut buffer = [0; 4096];
+    loop {
+        let count = stream.read(&mut buffer).await.ok()?;
+        if count == 0 {
+            return None;
+        }
+        request.extend_from_slice(&buffer[..count]);
+        assert!(request.len() < 64 * 1024);
+        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&request[..end]);
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length: ")
+                        .map(str::to_owned)
+                })
+                .map(|s| s.parse::<usize>().unwrap())
+                .unwrap_or(0);
+            if request.len() >= end + 4 + length {
+                return String::from_utf8(request).ok();
+            }
+        }
     }
 }
 
@@ -269,6 +323,14 @@ fn persistent_response(request: &str) -> String {
                 conversation_id: None,
             }))
         },
+        RequestFrame::CloseAgent(request) => ResponseFrame::CloseAgent(FencedReceipt::new(
+            request.authority_fence,
+            crate::wire::AgentCloseReceipt {
+                operation_id: request.request.operation_id,
+                request_sha256: request.request.request_sha256,
+                agent_id: request.request.agent_id,
+            },
+        )),
         RequestFrame::Install(request) => ResponseFrame::Install(crate::InstallReceipt {
             operation_id: request.operation_id,
             request_sha256: request.request_sha256,

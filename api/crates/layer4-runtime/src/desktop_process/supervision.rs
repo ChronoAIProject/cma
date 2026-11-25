@@ -6,7 +6,7 @@ use tokio::time::Instant;
 
 use super::restart_budget::RestartBudget;
 use super::transport::authenticate;
-use super::{DesktopGeneration, DesktopProcess, DesktopUnavailable, STARTUP_LIMIT};
+use super::{DesktopGeneration, DesktopProcess, DesktopUnavailable};
 use crate::config::RuntimeConfig;
 
 enum State {
@@ -47,7 +47,7 @@ impl Supervision {
         }
     }
 
-    pub(crate) async fn ready(&self, initial_startup_limit: Duration) -> bool {
+    pub(crate) async fn ready(&self, startup_limit: Duration) -> bool {
         let mut owner = self.owner.lock().await;
         if !matches!(*owner, ProcessOwner::Starting(_)) {
             return self.generation().is_ok();
@@ -61,7 +61,7 @@ impl Supervision {
             state: self.state.clone(),
             shutdown: self.shutdown.subscribe(),
             budget: RestartBudget::new(),
-            initial_startup_limit,
+            startup_limit,
         };
         let (first_ready, confirmed) = oneshot::channel();
         *owner = ProcessOwner::Running(tokio::spawn(async move {
@@ -106,7 +106,7 @@ struct Recovery {
     state: watch::Sender<State>,
     shutdown: watch::Receiver<bool>,
     budget: RestartBudget,
-    initial_startup_limit: Duration,
+    startup_limit: Duration,
 }
 
 enum End {
@@ -217,12 +217,7 @@ impl Recovery {
         let directory = files.path.clone();
         let token_map = files.token_map.clone();
         let mut backend = None;
-        let deadline = start
-            + if attempt == 0 {
-                self.initial_startup_limit
-            } else {
-                STARTUP_LIMIT
-            };
+        let deadline = start + self.startup_limit;
         let readiness = async {
             loop {
                 if Instant::now() >= deadline {

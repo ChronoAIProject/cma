@@ -1,4 +1,6 @@
 import { readAgentProjection } from './agents/read-projection.js';
+import { readReplyPreview } from './agents/reply-preview.js';
+import { readOriginalRequest } from './agents/original-request.js';
 import { readRetainedOutput, type RetainedOutputOptions } from './agents/retained-output.js';
 import { CapacityRecovery } from './agents/capacity-recovery.js';
 import {
@@ -79,6 +81,7 @@ import {
 } from './agents/provenance.js';
 import { readAgentEvents } from './agents/events.js';
 import {
+  cancelAgentLifecycle,
   createAgentLifecycle,
   readAgentLifecycle,
   recoverAgentWorktree,
@@ -119,6 +122,14 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 }
 /** Public Agent REST commands and durable read projections. */
 export class Agents extends AgentDeliverables {
+  originalRequest(id: string, options: OperationOptions = {}) {
+    return readOriginalRequest(this.config, id, options);
+  }
+
+  replyPreview(id: string, options: OperationOptions = {}) {
+    return readReplyPreview(this.config, id, options);
+  }
+
   /** Discover and page retained partial text without changing the original failed outcome. */
   retainedOutput(id: string, options: RetainedOutputOptions = {}) {
     return readRetainedOutput(
@@ -238,6 +249,11 @@ export class Agents extends AgentDeliverables {
   /** Read owner-visible provisioning progress; succeeded means the Agent is ready. */
   readLifecycle(id: string, options: OperationOptions = {}) {
     return readAgentLifecycle(this.config, id, options);
+  }
+
+  /** Cancel an owner-scoped lifecycle operation before Sandbox allocation. */
+  cancelLifecycle(id: string, options: OperationOptions = {}) {
+    return cancelAgentLifecycle(this.config, id, options);
   }
 
   /** Legacy Bridge usage projection; provider admissions require providerAssociations(). */
@@ -393,11 +409,23 @@ export class Agents extends AgentDeliverables {
     return this.operate(id, '/stop', 'POST', options, input(stopAgentRequest, body));
   }
 
+  restart(id: string, options: CommandOptions) {
+    return read(
+      this.config,
+      `/api/v1/agents/${segment(id)}/restart`,
+      object({ agent_id: text, worktree_id: text, operation_id: text, accepted_at: text }),
+      { ...command(options), method: 'POST', expectedStatus: 202 },
+    );
+  }
+
   delete(id: string, options: CommandOptions) {
     return this.operate(id, '', 'DELETE', options);
   }
 
-  events(id: string, options: EventOptions & { readonly toolOutput?: boolean } = {}) {
+  events(
+    id: string,
+    options: EventOptions & { readonly toolOutput?: boolean; readonly cache?: 'no-store' } = {},
+  ) {
     return readAgentEvents(this.config, id, options);
   }
 

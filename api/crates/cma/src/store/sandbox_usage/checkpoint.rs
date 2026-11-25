@@ -4,6 +4,7 @@ use crate::store::sandbox_mongo::{
     commit_transaction, is_transient, start_transaction, unsigned, CommitOutcome,
     TRANSACTION_ATTEMPTS,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use std::sync::Arc;
 
@@ -84,7 +85,7 @@ impl MongoSandboxStore {
             match result {
                 Ok(()) => {}
                 Err(TransactionEventError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     continue;
                 }
                 Err(TransactionEventError::Driver(error)) => return Err(unavailable(error)),
@@ -104,7 +105,7 @@ impl MongoSandboxStore {
     }
 }
 
-async fn checkpoint(
+pub(in crate::store) async fn checkpoint(
     store: &MongoSandboxStore,
     session: &mut ClientSession,
     id: &str,
@@ -134,7 +135,9 @@ async fn checkpoint(
         seq,
         at,
         (seq, sandbox.revision),
-        if funded {
+        if store.usage_capture.is_some() {
+            UsageObservation::CaptureCheckpoint
+        } else if funded {
             UsageObservation::FundedCheckpoint
         } else {
             UsageObservation::Checkpoint

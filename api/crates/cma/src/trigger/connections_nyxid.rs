@@ -18,6 +18,7 @@ use crate::auth::{persistence::SecretValue, AuthState};
 mod catalog;
 mod composition;
 mod credentials;
+mod github;
 mod protocol;
 mod read_retry;
 mod response;
@@ -35,6 +36,10 @@ use response::decode;
     reason = "exported for the production Trigger composition introduced by #824"
 )]
 pub(crate) use composition::CmaServiceConnectionBroker;
+pub(crate) use github::{
+    GitHubConnections, GitHubRepositoryCheck, GitHubRepositoryNeed, GitHubScopeCheck,
+    VerifiedGitHubConnection, GITHUB_SERVICE,
+};
 
 const CONNECT_LINKS_PATH: &str = "/api/v1/connect-links";
 const USER_SERVICES_PATH: &str = "/api/v1/user-services";

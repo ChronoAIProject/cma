@@ -3,13 +3,23 @@ use super::*;
 use mongodb::bson::Document;
 
 impl LifecycleLease {
-    fn filter(&self) -> Document {
+    pub(super) fn filter(&self) -> Document {
         doc! { "_id": &self.id, "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "status": "running", "lease_token": &self.token,
         "$expr": { "$and": [
             { "$eq": [{ "$type": "$lease_expires_at" }, "date"] },
             { "$gt": ["$lease_expires_at", "$$NOW"] },
         ] } }
+    }
+}
+
+fn retry_fields(delay_ms: i64) -> Document {
+    doc! {
+        "status": "queued",
+        "retry_at": { "$add": ["$$NOW", delay_ms] },
+        "lease_token": Bson::Null,
+        "lease_expires_at": Bson::Null,
+        "updated_at": "$$NOW",
     }
 }
 
@@ -24,12 +34,33 @@ impl MongoAgentLifecycleStore {
         let delay = Duration::from_secs((5_u64 << attempts.saturating_sub(1).min(4)).min(60));
         self.write(
             lease,
-            vec![doc! { "$set": { "status": "queued",
-            "retry_at": { "$add": ["$$NOW", delay.as_millis() as i64] },
-            "lease_token": Bson::Null, "lease_expires_at": Bson::Null,
-            "updated_at": "$$NOW" } }],
+            vec![doc! { "$set": retry_fields(delay.as_millis() as i64) }],
         )
         .await
+    }
+
+    pub(crate) async fn retry_sandbox_quota(
+        &self,
+        lease: &LifecycleLease,
+        prior_refusals: Option<u32>,
+    ) -> Result<bool, StoreError> {
+        let (delay_ms, refusals) = match prior_refusals {
+            None => (5_000, 1_i64),
+            Some(1) => (10_000, 2_i64),
+            Some(_) => return Ok(false),
+        };
+        let mut filter = lease.filter();
+        filter.insert("sandbox_id", Bson::Null);
+        filter.insert("agent_id", Bson::Null);
+        filter.insert(
+            "sandbox_quota_refusals",
+            prior_refusals.map_or(Bson::Null, |count| Bson::Int64(i64::from(count))),
+        );
+        let mut fields = retry_fields(delay_ms);
+        fields.insert("sandbox_quota_refusals", refusals);
+        self.write_matching(filter, vec![doc! { "$set": fields }])
+            .await?;
+        Ok(true)
     }
 
     async fn write(
@@ -37,9 +68,17 @@ impl MongoAgentLifecycleStore {
         lease: &LifecycleLease,
         update: impl Into<mongodb::options::UpdateModifications>,
     ) -> Result<(), StoreError> {
+        self.write_matching(lease.filter(), update).await
+    }
+
+    async fn write_matching(
+        &self,
+        filter: Document,
+        update: impl Into<mongodb::options::UpdateModifications>,
+    ) -> Result<(), StoreError> {
         let result = self
             .operations
-            .update_one(lease.filter(), update)
+            .update_one(filter, update)
             .await
             .map_err(driver)?;
         if result.matched_count != 1 {
@@ -193,11 +232,60 @@ impl MongoAgentLifecycleStore {
         lease: &LifecycleLease,
         sandbox_id: &str,
     ) -> Result<(), StoreError> {
-        self.write(
-            lease,
+        // Ordinary operations can bind once. Canary admission has already
+        // bound its Sandbox, so either kind can only repeat an existing ID.
+        let mut filter = lease.filter();
+        filter.insert("sandbox_id", doc! { "$not": { "$type": "array" } });
+        filter.insert(
+            "$or",
+            [
+                doc! { "sandbox_id": sandbox_id },
+                doc! { "canary_admission": { "$exists": false }, "sandbox_id": Bson::Null },
+            ],
+        );
+        self.write_matching(
+            filter,
             doc! { "$set": { "sandbox_id": sandbox_id, "updated_at": DateTime::now() } },
         )
         .await
+    }
+
+    /// Record the immutable public source and its credential-free mode together.
+    pub(crate) async fn pin_public_repository(
+        &self,
+        lease: &LifecycleLease,
+        pin: &super::PublicRepositoryPin,
+    ) -> Result<(), StoreError> {
+        let mut filter = lease.filter();
+        filter.insert("sandbox_id", Bson::Null);
+        filter.insert("repository_commit", Bson::Null);
+        filter.insert(
+            "input.behavior",
+            doc! {"$in": ["repository_choice", "public_repository"]},
+        );
+        filter.insert("repository_access_pin", Bson::Null);
+        let pin = doc! {"url": &pin.url, "commit": &pin.commit};
+        filter.insert(
+            "public_repository",
+            doc! { "$in": [Bson::Null, Bson::Document(pin.clone())] },
+        );
+        let result = self
+            .operations
+            .update_one(
+                filter,
+                doc! {
+                    "$set": {"public_repository": pin, "updated_at": DateTime::now()}
+                },
+            )
+            .await
+            .map_err(driver)?;
+        if result.matched_count != 1 {
+            return Err(StoreError::RevisionConflict {
+                expected: 0,
+                actual: 1,
+            });
+        }
+        Ok(())
     }
 
     /// Pin the original probe result before allocating or building profiles.
@@ -231,6 +319,36 @@ impl MongoAgentLifecycleStore {
         Ok(())
     }
 
+    pub(crate) async fn pin_repository_access(
+        &self,
+        lease: &LifecycleLease,
+        pin: &super::RepositoryAccessPin,
+    ) -> Result<(), StoreError> {
+        let value = mongodb::bson::serialize_to_bson(pin)
+            .map_err(|error| StoreError::Malformed(error.to_string()))?;
+        let mut filter = lease.filter();
+        filter.insert("owner", &pin.owner);
+        filter.insert("sandbox_id", Bson::Null);
+        filter.insert("public_repository", Bson::Null);
+        filter.insert(
+            "repository_access_pin",
+            doc! { "$in": [Bson::Null, value.clone()] },
+        );
+        filter.insert(
+            "repository_commit",
+            doc! { "$in": [Bson::Null, Bson::String(pin.commit.clone())] },
+        );
+        self.write_matching(
+            filter,
+            doc! { "$set": {
+                "repository_access_pin": value,
+                "repository_commit": &pin.commit,
+                "updated_at": DateTime::now(),
+            } },
+        )
+        .await
+    }
+
     pub(crate) async fn mark_agent(
         &self,
         lease: &LifecycleLease,
@@ -262,8 +380,44 @@ impl MongoAgentLifecycleStore {
         lease: &LifecycleLease,
         services: Vec<String>,
         target: serde_json::Value,
+        repository_access: Option<layer1_public::rest::RepositoryAccessRefusal>,
     ) -> Result<(), StoreError> {
-        let connection = AgentLifecycleConnectionRequired { services, target };
+        self.write_connection_wait(
+            lease,
+            AgentLifecycleConnectionRequired {
+                services,
+                target,
+                repository_access,
+                repository_scope_repair: None,
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn wait_for_repository_access(
+        &self,
+        lease: &LifecycleLease,
+        target: serde_json::Value,
+        reason: layer1_public::rest::RepositoryAccessRefusal,
+        repair: Option<layer1_public::rest::RepositoryScopeRepair>,
+    ) -> Result<(), StoreError> {
+        self.write_connection_wait(
+            lease,
+            AgentLifecycleConnectionRequired {
+                services: vec![crate::trigger::GITHUB_SERVICE.into()],
+                target,
+                repository_access: Some(reason),
+                repository_scope_repair: repair,
+            },
+        )
+        .await
+    }
+
+    async fn write_connection_wait(
+        &self,
+        lease: &LifecycleLease,
+        connection: AgentLifecycleConnectionRequired,
+    ) -> Result<(), StoreError> {
         let value = mongodb::bson::serialize_to_bson(&connection)
             .map_err(|error| StoreError::Malformed(error.to_string()))?;
         self.write(lease, doc! { "$set": { "status": "waiting_for_connection", "connection": value,
@@ -295,15 +449,22 @@ impl MongoAgentLifecycleStore {
         error: &str,
         failure: Option<layer1_public::rest::AgentLifecycleFailure>,
     ) -> Result<(), StoreError> {
-        let mut fields = doc! { "status": "failed", "phase": "failed", "error": error,
-        "lease_token": Bson::Null, "lease_expires_at": Bson::Null, "updated_at": DateTime::now() };
-        if let Some(failure) = failure {
-            fields.insert(
-                "failure",
-                mongodb::bson::serialize_to_bson(&failure)
-                    .map_err(|error| StoreError::Malformed(error.to_string()))?,
-            );
-        }
-        self.write(lease, doc! {"$set": fields}).await
+        self.write(lease, failure_update(error, failure)?).await
     }
+}
+
+pub(super) fn failure_update(
+    error: &str,
+    failure: Option<layer1_public::rest::AgentLifecycleFailure>,
+) -> Result<Document, StoreError> {
+    let mut fields = doc! { "status": "failed", "phase": "failed", "error": error,
+    "lease_token": Bson::Null, "lease_expires_at": Bson::Null, "updated_at": DateTime::now() };
+    if let Some(failure) = failure {
+        fields.insert(
+            "failure",
+            mongodb::bson::serialize_to_bson(&failure)
+                .map_err(|error| StoreError::Malformed(error.to_string()))?,
+        );
+    }
+    Ok(doc! {"$set": fields})
 }

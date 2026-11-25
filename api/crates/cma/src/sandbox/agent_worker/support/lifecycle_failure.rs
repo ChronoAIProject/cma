@@ -1,4 +1,6 @@
 //! Prepare and publish the original outcome of one failed lifecycle step.
+use std::time::Duration;
+
 use super::*;
 
 fn can_rebuild(step: AgentWorkStep) -> bool {
@@ -50,6 +52,9 @@ impl AgentWorker {
         now: SystemTime,
         parents: Option<PublicationParents>,
     ) -> Result<(), SandboxStoreError> {
+        if failure.class == super::super::inspection_park::INSPECTION_HANDOFF {
+            return Err(SandboxStoreError::Conflict);
+        }
         super::super::ledger_telemetry::observe(&failure);
         if agent.work.step == AgentWorkStep::PublishConnection {
             self.retry_connection_failure(&agent, failure, now).await
@@ -134,11 +139,18 @@ impl AgentWorker {
         }
         if rebuild && failure.observation.is_none() {
             let typed = failure.typed();
+            // Failure retries must be due strictly after publication at whole-second precision.
+            let retry_delay = ready_at
+                .duration_since(now)
+                .unwrap_or_default()
+                .max(Duration::from_secs(1));
             return self
                 .publish_lifecycle_work(agent, parents, now, |agent, at, parents| {
                     let typed = typed.clone();
                     async move {
-                        let mutation = self.retry_proposal(agent, typed, at, ready_at)?;
+                        // Parent reads and known-abort retries advance publication time.
+                        // Keep the selected interval after that committed timestamp.
+                        let mutation = self.retry_proposal(agent, typed, at, at + retry_delay)?;
                         self.commit_lifecycle_publication(mutation, parents).await
                     }
                 })

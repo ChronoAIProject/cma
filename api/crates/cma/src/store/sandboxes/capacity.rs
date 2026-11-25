@@ -5,6 +5,10 @@ pub(super) async fn read(
     store: &MongoSandboxStore,
     owner: &SubjectId,
 ) -> Result<SandboxCapacitySnapshot, SandboxStoreError> {
+    let public_owner_limit = store
+        .public_owner_sandbox_limit(owner, None)
+        .await
+        .map_err(unavailable)?;
     // Group every record charged by admission, including unsupported envelopes.
     // Invalid quota facts fail the whole read instead of disappearing from it.
     let pipeline = vec![
@@ -13,7 +17,7 @@ pub(super) async fn read(
             "_id": {
                 "status": "$status",
                 "valid": {"$and": [
-                    {"$in": ["$document_schema_version", [1_i64, super::super::work_schema::RENEWED_VERSION, super::super::work_schema::PREPARED_VERSION]]},
+                    {"$in": ["$document_schema_version", super::super::work_schema::SANDBOX_VERSIONS.to_vec()]},
                     {"$eq": ["$status", "$record.status"]},
                     {"$eq": ["$owner", "$record.owner"]},
                     {"$eq": [{"$ifNull": ["$record.retired_at", Bson::Null]}, Bson::Null]},
@@ -57,6 +61,7 @@ pub(super) async fn read(
     }
     Ok(SandboxCapacitySnapshot {
         counts,
+        public_owner_limit,
         observed_at: layer2_core::now_rfc3339(),
     })
 }

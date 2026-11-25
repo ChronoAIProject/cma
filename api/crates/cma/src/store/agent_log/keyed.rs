@@ -46,11 +46,37 @@ pub(super) async fn append(
         let (current, entry, admission_kind) = source(store, id, &operation, &kind).await?;
         let (admission, bootstrap) =
             preparation::prepare(store, &current, &operation, admission_kind).await?;
-        let mut session = store.client.start_session().await.map_err(driver)?;
-        let mut scope = TransactionScope::start(&mut session)
-            .await
-            .map_err(driver)?;
+        let mut session = match store.client.start_session().await {
+            Ok(session) => session,
+            Err(error) if is_transient(&error) => continue,
+            Err(error) => return Err(driver(error)),
+        };
+        // Starting may fence work and establish the transaction snapshot. The
+        // independently durable marker must exist before that snapshot begins.
         let claim = claim::Claim::acquire(store, &current, &operation, &entry).await?;
+        let mut scope = match TransactionScope::start(&mut session).await {
+            Ok(scope) => scope,
+            Err(error) if is_transient(&error) => {
+                let _ = session.abort_guarded().await;
+                claim.release_known_abort(store).await?;
+                drop(session);
+                tokio::task::yield_now().await;
+                continue;
+            }
+            Err(error) => {
+                // A typed start refusal precedes consumption and publication;
+                // no commit or protected effect can have been sent. Unknown
+                // driver results still retain this exact durable claim.
+                if !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT) {
+                    if let Some(refusal) = error.get_custom::<SandboxStoreError>().cloned() {
+                        let _ = session.abort_guarded().await;
+                        claim.release_known_abort(store).await?;
+                        return Err(refusal);
+                    }
+                }
+                return Err(driver(error));
+            }
+        };
         let result = async {
             claim.consume(store, &mut scope).await?;
             publish(
@@ -68,7 +94,13 @@ pub(super) async fn append(
         let attempted = match result {
             Ok(attempted) => attempted,
             Err(error) => {
-                scope.release().abort_transaction().await.map_err(driver)?;
+                if matches!(&error, TransactionLogError::Driver(error)
+                    if error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT))
+                {
+                    let _ = scope.release().abort_guarded().await;
+                    return Err(domain(error));
+                }
+                scope.release().abort_guarded().await.map_err(driver)?;
                 claim.release_known_abort(store).await?;
                 if let Some(entry) = writer_reconcile::replay(store, id, &operation, &kind).await? {
                     return Ok(entry);
@@ -96,16 +128,36 @@ pub(super) async fn append(
             )
             .await
             {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
+                if matches!(&error, TransactionLogError::Driver(error)
+                    if error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT))
+                {
+                    return Err(domain(error));
+                }
                 claim.release_known_abort(store).await?;
+                if matches!(&error, TransactionLogError::Driver(error) if is_transient(error)) {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
                 return Err(domain(error));
             }
         }
-        match commit_transaction(session).await {
+        let outcome =
+            match crate::store::sandbox_mongo::commit_transaction_with_refusal(session).await {
+                Ok(outcome) => outcome,
+                Err(crate::store::sandbox_mongo::PrecommitRefusal::Aborted(refusal)) => {
+                    claim.release_known_abort(store).await?;
+                    return Err(refusal);
+                }
+                Err(crate::store::sandbox_mongo::PrecommitRefusal::AbortUnacknowledged(error)) => {
+                    return Err(driver(error));
+                }
+            };
+        match outcome {
             CommitOutcome::Committed => return Ok(entry),
             CommitOutcome::Retry(_) => {
                 // TransientTransactionError positively establishes KnownAbort.
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 claim.release_known_abort(store).await?;
             }
             CommitOutcome::Unknown(_) => {

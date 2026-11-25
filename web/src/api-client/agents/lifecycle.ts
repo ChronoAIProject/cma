@@ -1,6 +1,7 @@
 import { taskTemplate } from './task-template.js';
 import type { ResolvedConfig } from '../config.js';
 import type { OperationOptions } from '../http.js';
+import { ProtocolError } from '../errors.js';
 import { command, identity, input, read, segment, type CommandOptions } from '../resources.js';
 import { agent } from './types.js';
 import {
@@ -18,6 +19,11 @@ import {
   type Output,
 } from '../schema.js';
 
+export const githubRepositoryNeed = enumeration(
+  'public_repository_write',
+  'private_repository_read',
+);
+
 export const agentLifecycleCreateRequest = object({
   name: text,
   title_mode: optional(enumeration('automatic', 'named')),
@@ -28,7 +34,14 @@ export const agentLifecycleCreateRequest = object({
   workspace_id: optional(text),
   sandbox_id: optional(text),
   image: optional(object({ id: text, version: optional(text) })),
-  repository: optional(object({ url: text, ref: optional(text) })),
+  repository: optional(
+    object({
+      url: text,
+      ref: optional(text),
+      operation: optional(githubRepositoryNeed),
+      connection_id: optional(text),
+    }),
+  ),
   profile: optional(
     object({
       model: optional(text),
@@ -78,16 +91,46 @@ export const agentLifecycleFailure = object({
 });
 export type AgentLifecycleFailure = Output<typeof agentLifecycleFailure>;
 
+export const repositoryAccessRefusal = enumeration(
+  'verification_unavailable',
+  'insufficient_scope',
+  'missing_connection',
+  'repository_unavailable',
+  'reference_unavailable',
+  'runtime_unsupported',
+);
+export type RepositoryAccessRefusal = Output<typeof repositoryAccessRefusal>;
+
+const repositoryScopeRepair = object({
+  connection_id: text,
+  operation: githubRepositoryNeed,
+  required_scope: enumeration('public_repo', 'repo'),
+  manage_url: text,
+});
+export type RepositoryScopeRepair = Output<typeof repositoryScopeRepair>;
+
 export const agentLifecycleOperation = object({
   callback_url: optional(nullable(text)),
   id: text,
+  accepted_at: optional((value) => {
+    const time = text(value);
+    if (!Number.isFinite(Date.parse(time))) throw new ProtocolError('invalid acceptance time');
+    return time;
+  }),
   status: enumeration('queued', 'running', 'waiting_for_connection', 'succeeded', 'failed'),
   phase: text,
   agent_id: optional(text),
   error: optional(text),
   failure: optional(agentLifecycleFailure),
   events: array(agentLifecycleEvent),
-  connection: optional(object({ services: array(text), target: agentLifecycleConnectionTarget })),
+  connection: optional(
+    object({
+      services: array(text),
+      target: agentLifecycleConnectionTarget,
+      repository_access: optional(repositoryAccessRefusal),
+      repository_scope_repair: optional(repositoryScopeRepair),
+    }),
+  ),
 });
 /** Phase readiness is separate from the terminal operation status. */
 export type AgentLifecycleOperation = Output<typeof agentLifecycleOperation>;
@@ -111,6 +154,22 @@ export function readAgentLifecycle(config: ResolvedConfig, id: string, options: 
     `/api/v1/agent-lifecycle/${segment(id)}`,
     identity(agentLifecycleOperation, id),
     options,
+  );
+}
+
+export function cancelAgentLifecycle(
+  config: ResolvedConfig,
+  id: string,
+  options: OperationOptions,
+) {
+  return read(
+    config,
+    `/api/v1/agent-lifecycle/${segment(id)}/cancel`,
+    identity(agentLifecycleOperation, id),
+    {
+      ...options,
+      method: 'POST',
+    },
   );
 }
 

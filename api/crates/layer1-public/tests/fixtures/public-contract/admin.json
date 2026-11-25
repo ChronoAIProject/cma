@@ -611,6 +611,7 @@
           "owner_name": "Alex Chen",
           "runtime_update": {
             "current_version": "runtime-v1",
+            "image_origin": "managed_agent",
             "latest_version": "runtime-v2",
             "update_available": false,
             "state": "up_to_date",
@@ -927,6 +928,54 @@
       "captures": {}
     },
     {
+      "id": "admin-activity-actors-by-name",
+      "operation": "GET /api/v1/admin/activity/actors",
+      "scenario": "admin_actor_search",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/activity/actors?q=sam",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": [
+          {
+            "subject": "owner-b",
+            "display_name": "Sam Lee"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-activity-actors-by-id",
+      "operation": "GET /api/v1/admin/activity/actors",
+      "scenario": "admin_actor_search",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/activity/actors?q=owner-b",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": [
+          {
+            "subject": "owner-b",
+            "display_name": "Sam Lee"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "admin-activity-empty-filter",
       "operation": "GET /api/v1/admin/activity",
       "scenario": "admin_operator",
@@ -1156,6 +1205,7 @@
               "at": "2026-09-05T00:00:00Z",
               "actor": "operator-a",
               "actor_name": "Morgan Park",
+              "actor_reference": "actor-ab4a922790380f90",
               "target_name": null,
               "action": "configure",
               "target": {

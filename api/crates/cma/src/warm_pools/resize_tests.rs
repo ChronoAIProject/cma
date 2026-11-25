@@ -180,9 +180,11 @@ async fn machine_pool_survives_reconciliation_beside_a_different_agent_image() {
     original.document_schema_version = 2;
     let (mut service, store) = service(original.clone(), original.plan.clone());
     let service_mut = Arc::get_mut(&mut service).unwrap();
-    service_mut.machine = Some((service_mut.image.clone(), 2));
-    service_mut.image =
-        deployment_image(format!("registry.example/agent@sha256:{}", "b".repeat(64)));
+    let agent = service_mut.released_images().agent.uri;
+    service_mut.set_released(
+        format!("registry.example/agent@sha256:{}", "b".repeat(64)),
+        Some((agent, 2)),
+    );
     assert!(service.current_plan(&original).unwrap());
     service
         .resize(
@@ -204,7 +206,8 @@ async fn machine_pool_survives_reconciliation_beside_a_different_agent_image() {
     wrong_channel.machine = false;
     assert!(!service.current_plan(&wrong_channel).unwrap());
     let service_mut = Arc::get_mut(&mut service).unwrap();
-    service_mut.machine = None;
+    let agent = service_mut.released_images().agent.uri;
+    service_mut.set_released(agent, None);
     assert!(!service.current_plan(&original).unwrap());
 }
 
@@ -215,9 +218,11 @@ async fn warm_pool_list_names_the_machine_pool_and_its_configured_image() {
     original.document_schema_version = 2;
     let (mut service, _) = service(original.clone(), original.plan.clone());
     let service_mut = Arc::get_mut(&mut service).unwrap();
-    service_mut.machine = Some((service_mut.image.clone(), 2));
-    service_mut.image =
-        deployment_image(format!("registry.example/agent@sha256:{}", "b".repeat(64)));
+    let agent = service_mut.released_images().agent.uri;
+    service_mut.set_released(
+        format!("registry.example/agent@sha256:{}", "b".repeat(64)),
+        Some((agent, 2)),
+    );
     // Which pool is the desktop pool is durable target data, not inventory;
     // without a home policy the list skips both inventory and default planning.
     service_mut.home = None;
@@ -231,7 +236,8 @@ async fn warm_pool_list_names_the_machine_pool_and_its_configured_image() {
     );
     assert_ne!(list.default_image, original.plan.spec.image.uri);
     let service_mut = Arc::get_mut(&mut service).unwrap();
-    service_mut.machine = None;
+    let agent = service_mut.released_images().agent.uri;
+    service_mut.set_released(agent, None);
     let list = service.list(&operator()).await.unwrap();
     assert!(list.items[0].machine);
     assert_eq!(list.machine_image, None);
@@ -265,6 +271,7 @@ async fn enabled_target_fencing_never_falls_back_to_an_unversioned_provider() {
 pub(super) struct Targets {
     pub(super) rows: Mutex<Vec<PoolTarget>>,
     pub(super) claims: Mutex<Vec<String>>,
+    pub(super) find_error: AtomicBool,
     clock: std::sync::atomic::AtomicI64,
 }
 
@@ -299,7 +306,13 @@ impl PoolTargetStore for Targets {
         Ok(rows.iter().filter(|row| !row.retired).cloned().collect())
     }
     async fn find(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
-        let rows = self.rows.lock().unwrap();
+        let mut rows = self.rows.lock().unwrap();
+        if let (true, Some(row)) = (
+            self.find_error.swap(false, Ordering::SeqCst),
+            rows.iter_mut().find(|row| row.id == id),
+        ) {
+            row.error = Some("unavailable".into());
+        }
         Ok(rows.iter().find(|row| row.id == id).cloned())
     }
     async fn insert(&self, target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
@@ -375,9 +388,13 @@ impl PoolTargetStore for Targets {
 }
 
 /// Plans any image; its inventory reports only the pools it was given.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Planner {
-    pub(super) inventory: Mutex<Vec<NativePoolStatus>>,
+    pub(super) inventory: Arc<Mutex<Vec<NativePoolStatus>>>,
+    pub(super) retiring: Arc<AtomicBool>,
+    pub(super) inventory_drift: Arc<AtomicBool>,
+    pub(super) bound_drift: Arc<AtomicBool>,
+    pub(super) superseded_target: Arc<AtomicBool>,
 }
 
 impl Planner {
@@ -414,7 +431,37 @@ impl NativePoolControl for Planner {
         unreachable!("seeding and startup never configure an unawaited pool")
     }
     async fn inventory(&self) -> layer3_adapter::Result<Vec<NativePoolStatus>> {
+        if self.inventory_drift.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::NativePoolConfigurationDrift);
+        }
         Ok(self.inventory.lock().unwrap().clone())
+    }
+    async fn observe_admitting_pool(
+        &self,
+        binding: &NativePoolBinding,
+        _: &layer3_adapter::agent_sandbox::NativePoolTarget,
+        fenced: bool,
+    ) -> layer3_adapter::Result<NativePoolStatus> {
+        if fenced && self.superseded_target.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::Rejected(
+                "superseded target".into(),
+            ));
+        }
+        if self.retiring.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::Rejected(
+                "retiring pool".into(),
+            ));
+        }
+        if self.bound_drift.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::NativePoolConfigurationDrift);
+        }
+        self.inventory
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|status| &status.binding == binding)
+            .cloned()
+            .ok_or_else(|| layer3_adapter::AdapterError::Rejected("missing binding".into()))
     }
     async fn resize(
         &self,

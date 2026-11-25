@@ -2,11 +2,13 @@ import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { APIRequestContext } from '@playwright/test';
 import { identifier, object } from './environment';
+import { publicApiPath } from './public-api-path';
 
 // APIRequestContext bypasses browser routes; cleanup never follows redirects.
 const cleanupHttp = { maxRedirects: 0, timeout: 30_000 } as const;
 
 export type ResourceKind =
+  | 'agent-lifecycle'
   | 'launches'
   | 'sandboxes'
   | 'workspaces'
@@ -35,7 +37,7 @@ export class Journal {
   private readonly seen = new Set<string>();
   constructor(
     private readonly output: string,
-    private readonly run: string,
+    readonly run: string,
   ) {}
   record(row: Record<string, unknown>) {
     appendFileSync(
@@ -54,15 +56,33 @@ export class Journal {
   }
   observe(path: string, method: string, status: number, body: unknown, subject: string) {
     if (status < 200 || status >= 300 || body === null || typeof body !== 'object') return;
+    path = publicApiPath(path);
+    if (method === 'GET' && Array.isArray(body)) return;
     const row = object(body);
-    if (/^\/api\/v1\/triggers\/public\/[^/]+\/launches$/.test(path) && method === 'POST')
+    if (path === '/api/v1/agents' && method === 'POST' && status === 202)
+      this.own('agent-lifecycle', row.id, subject);
+    if (
+      path === `/api/v1/agent-lifecycle/${String(row.id)}` &&
+      method === 'GET' &&
+      this.resources.some(
+        (resource) =>
+          resource.kind === 'agent-lifecycle' &&
+          resource.id === row.id &&
+          resource.subject === subject,
+      ) &&
+      row.agent_id !== undefined
+    )
+      this.own('agents', row.agent_id, subject);
+    if (/^\/api\/v[12]\/triggers\/public\/[^/]+\/launches$/.test(path) && method === 'POST')
       this.own('launches', row.id, subject);
     const direct = path.match(
       /^\/api\/v1\/(sandboxes|agent-profiles|workspace-profiles|sandbox-profiles|triggers)$/,
     );
     if (method === 'POST' && status === 201 && direct)
       this.own(direct[1] as ResourceKind, row.id, subject);
-    const child = path.match(/^\/api\/v1\/(?:sandboxes|workspaces)\/[^/]+\/(workspaces|agents)$/);
+    const child =
+      path.match(/^\/api\/v1\/(?:sandboxes|workspaces)\/[^/]+\/(workspaces|agents)$/) ??
+      path.match(/^\/api\/v1\/sandboxes\/[^/]+\/(workspaces)\/inline$/);
     if (method === 'POST' && status === 201 && child)
       this.own(child[1] as ResourceKind, row.id, subject);
     const fork = path.match(
@@ -94,6 +114,39 @@ export class Journal {
     }
     const owned = this.resources.filter((row) => row.subject === subject);
     let failed = false;
+    // An accepted task can outlive a lost browser response. Settle its operation
+    // and discover its Agent before deleting any parent resources.
+    for (const resource of owned.filter((row) => row.kind === 'agent-lifecycle')) {
+      let settled = false;
+      const deadline = Date.now() + 90_000;
+      while (Date.now() < deadline) {
+        const path = `/api/v1/agent-lifecycle/${resource.id}`;
+        const response = await api.get(`${baseURL}${path}`, cleanupHttp);
+        if (response.ok()) {
+          const row = object(await response.json());
+          if (row.id !== resource.id) throw new Error('Creation operation identity mismatch');
+          this.observe(path, 'GET', 200, row, subject);
+          this.record({
+            action: 'lifecycle_observed',
+            ...resource,
+            state: row.status,
+            agent_id: row.agent_id,
+          });
+          if (
+            row.status === 'failed' ||
+            (row.status === 'succeeded' && typeof row.agent_id === 'string')
+          ) {
+            settled = true;
+            break;
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      if (!settled) {
+        this.record({ action: 'cleanup_blocked', ...resource, reason: 'creation_not_settled' });
+        throw new Error('Creation operation is unsettled; retain its parents for reconciliation');
+      }
+    }
     // A 409 can mean already ready or a racing worker. Keep harvesting before any child cleanup.
     for (const resource of owned.filter((row) => row.kind === 'launches')) {
       const response = await api.post(`${baseURL}/api/v1/launches/${resource.id}/cancel`, {

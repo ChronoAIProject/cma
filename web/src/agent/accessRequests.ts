@@ -20,6 +20,38 @@ export interface AgentAccessRequest {
     readonly target: Extract<ConnectionTarget, { type: 'agent_access_request' }>;
   };
   readonly error?: string;
+  readonly github_approval?: GithubApprovalContext;
+}
+
+export interface GithubConnectionApproval {
+  readonly sandbox_id: string;
+  readonly user_service_id: string;
+  readonly scope_revision: number;
+  readonly credential_generation: number;
+}
+
+interface GithubApprovalContext extends Omit<GithubConnectionApproval, 'user_service_id'> {
+  readonly sandbox_name: string;
+  readonly other_agents: readonly string[];
+  readonly current_user_service_id: string | null;
+}
+
+export function validGithubConnectionApproval(
+  value: GithubConnectionApproval | undefined,
+): value is GithubConnectionApproval {
+  return (
+    value !== undefined &&
+    typeof value === 'object' &&
+    value !== null &&
+    typeof value.sandbox_id === 'string' &&
+    value.sandbox_id.length > 0 &&
+    typeof value.user_service_id === 'string' &&
+    /^[a-zA-Z0-9_-]{1,128}$/.test(value.user_service_id) &&
+    Number.isSafeInteger(value.scope_revision) &&
+    value.scope_revision >= 0 &&
+    Number.isSafeInteger(value.credential_generation) &&
+    value.credential_generation >= 0
+  );
 }
 function accessRequest(value: unknown, agentId: string): AgentAccessRequest {
   const request = value as AgentAccessRequest | undefined;
@@ -34,6 +66,14 @@ function accessRequest(value: unknown, agentId: string): AgentAccessRequest {
     !validAccessServices(request.services) ||
     typeof request.reason !== 'string' ||
     (request.error !== undefined && typeof request.error !== 'string') ||
+    (request.github_approval !== undefined &&
+      (!request.github_approval ||
+        !validGithubConnectionApproval({ ...request.github_approval, user_service_id: 'probe' }) ||
+        typeof request.github_approval.sandbox_name !== 'string' ||
+        !Array.isArray(request.github_approval.other_agents) ||
+        !request.github_approval.other_agents.every((id) => typeof id === 'string') ||
+        (request.github_approval.current_user_service_id !== null &&
+          typeof request.github_approval.current_user_service_id !== 'string'))) ||
     (request.connection !== undefined &&
       (request.connection?.target?.type !== 'agent_access_request' ||
         request.connection?.target?.id !== request.id)) ||
@@ -43,19 +83,23 @@ function accessRequest(value: unknown, agentId: string): AgentAccessRequest {
   return request;
 }
 export class AgentAccessError extends ApiError {
-  constructor(status: number, message: string, retryAfterMs?: number) {
-    super(status, message, undefined, undefined, retryAfterMs);
+  constructor(status: number, message: string, retryAfterMs?: number, code?: string) {
+    super(status, message, code, undefined, retryAfterMs);
   }
 }
 async function readResponse(response: Response): Promise<unknown> {
   if (!response.ok) {
-    const problem = (await response.json().catch(() => ({}))) as { detail?: unknown };
+    const problem = (await response.json().catch(() => ({}))) as {
+      detail?: unknown;
+      code?: unknown;
+    };
     throw new AgentAccessError(
       response.status,
       typeof problem.detail === 'string'
         ? problem.detail
         : `Agent access could not be updated (${String(response.status)}).`,
       retryAfterMilliseconds(response),
+      typeof problem.code === 'string' ? problem.code : undefined,
     );
   }
   return response.json();
@@ -104,6 +148,7 @@ export const accessRequests = {
     key: string,
     services: readonly string[],
     signal: AbortSignal,
+    githubConnection?: GithubConnectionApproval,
   ): Promise<AgentAccessRequest> {
     if (action === 'approve' && !validAccessServices(services))
       throw new Error('Choose 1 to 32 services with valid service identifiers.');
@@ -115,7 +160,9 @@ export const accessRequests = {
           cache: 'no-store',
           signal,
           headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
-          body: JSON.stringify(action === 'approve' ? { services } : {}),
+          body: JSON.stringify(
+            action === 'approve' ? { services, github_connection: githubConnection } : {},
+          ),
         }),
       ),
       agentId,
