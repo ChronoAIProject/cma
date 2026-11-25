@@ -72,17 +72,30 @@ async fn definite_acquisition_refusal_frees_capacity_and_allows_retry_after_repa
             .unwrap();
         let repaired = coordinator.acquire(&bad).await.unwrap().unwrap();
         assert_eq!(repaired.token.epoch, 1);
-        let drained = coordinator.begin_drain().await;
+        let until = Instant::now() + Duration::from_secs(3);
+        coordinator.prepare_drain(until).await.unwrap();
+        let drained = coordinator.owned().await;
         assert_eq!(drained.len(), 1);
-        assert_eq!(drained[0].token, repaired.token);
-        coordinator
-            .handoff(&drained[0], drained[0].revoke_transports())
-            .await
-            .unwrap();
-        coordinator
-            .prepare_drain(Instant::now() + Duration::from_secs(2))
-            .await
-            .unwrap();
+        let authority = &drained[0];
+        assert_eq!(authority.token, repaired.token);
+        match policy {
+            MaintenancePolicy::Legacy => {
+                authority.revoke();
+                coordinator
+                    .handoff(authority, authority.revoke_transports_after_local_drain())
+                    .await
+                    .unwrap();
+            }
+            MaintenancePolicy::ContainFailures => {
+                assert_eq!(
+                    coordinator
+                        .drain_authority_until(authority, until)
+                        .await
+                        .unwrap(),
+                    Settlement::Released
+                );
+            }
+        }
         assert_eq!(store.membership().await.unwrap().members[0].owned_agents, 0);
         close(&store, &[coordinator]).await;
     }
