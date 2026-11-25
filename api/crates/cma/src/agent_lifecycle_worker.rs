@@ -156,8 +156,13 @@ impl InlineAgentLifecycle {
                 canary_profiles,
                 repository_access_pin: record.repository_access_pin,
             };
-            self.preflight_repository(&caller, &mut input, record.repository_commit.as_deref())
-                .await?;
+            self.preflight_repository(
+                &caller,
+                &mut input,
+                record.repository_commit.as_deref(),
+                record.public_repository.as_ref(),
+            )
+            .await?;
             self.provision(&caller, input).await
         };
         tokio::pin!(work);

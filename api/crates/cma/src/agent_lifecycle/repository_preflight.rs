@@ -1,6 +1,6 @@
 //! Verify a fresh, owner-scoped repository snapshot before paid allocation.
 
-use crate::store::RepositoryAccessPin;
+use crate::store::{PublicRepositoryPin, RepositoryAccessPin};
 use crate::trigger::{GitHubRepositoryCheck, GitHubScopeCheck, GITHUB_SERVICE};
 use layer1_public::rest::{
     AgentLifecycleRepository, GitHubRepositoryNeed, RepositoryAccessRefusal, RepositoryScopeRepair,
@@ -11,6 +11,10 @@ use layer2_core::sandbox::{
 };
 
 use super::*;
+
+mod public;
+#[cfg(test)]
+pub(super) use public::PublicRepositoryReadiness;
 
 #[async_trait]
 pub(super) trait RepositoryReadiness: Send + Sync {
@@ -63,6 +67,7 @@ impl InlineAgentLifecycle {
         caller: &Caller,
         input: &mut ProvisionInput,
         retained_commit: Option<&str>,
+        retained_public: Option<&PublicRepositoryPin>,
     ) -> Result<(), AgentLifecycleProvisioningError> {
         if !input.behavior.uses_repository_profile()
             || input.request.sandbox_id.is_some()
@@ -73,6 +78,25 @@ impl InlineAgentLifecycle {
         let Some(repository) = input.request.repository.as_ref() else {
             return Ok(());
         };
+        if input.behavior == LifecycleBehavior::PublicRepository {
+            if input.repository_access_pin.is_some()
+                || retained_commit.is_some()
+                || repository.operation.is_some()
+                || repository.connection_id.is_some()
+            {
+                return Err(AgentLifecycleProvisioningError::Conflict(
+                    "Public source preparation cannot carry selected connection authority.".into(),
+                ));
+            }
+            return self
+                .preflight_public_repository(caller, input, retained_public)
+                .await;
+        }
+        if retained_public.is_some() {
+            return Err(AgentLifecycleProvisioningError::Conflict(
+                "The retained public source does not match the operation mode.".into(),
+            ));
+        }
         let requires_managed = input.behavior == LifecycleBehavior::ManagedRepository
             || repository.operation.is_some()
             || repository.connection_id.is_some();

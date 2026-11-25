@@ -219,6 +219,41 @@ impl MongoAgentLifecycleStore {
         .await
     }
 
+    /// Record the immutable public source and its credential-free mode together.
+    pub(crate) async fn pin_public_repository(
+        &self,
+        lease: &LifecycleLease,
+        pin: &super::PublicRepositoryPin,
+    ) -> Result<(), StoreError> {
+        let mut filter = lease.filter();
+        filter.insert("sandbox_id", Bson::Null);
+        filter.insert("repository_commit", Bson::Null);
+        filter.insert("input.behavior", "public_repository");
+        filter.insert("repository_access_pin", Bson::Null);
+        let pin = doc! {"url": &pin.url, "commit": &pin.commit};
+        filter.insert(
+            "public_repository",
+            doc! { "$in": [Bson::Null, Bson::Document(pin.clone())] },
+        );
+        let result = self
+            .operations
+            .update_one(
+                filter,
+                doc! {
+                    "$set": {"public_repository": pin, "updated_at": DateTime::now()}
+                },
+            )
+            .await
+            .map_err(driver)?;
+        if result.matched_count != 1 {
+            return Err(StoreError::RevisionConflict {
+                expected: 0,
+                actual: 1,
+            });
+        }
+        Ok(())
+    }
+
     /// Pin the original probe result before allocating or building profiles.
     pub(crate) async fn pin_repository_commit(
         &self,
@@ -260,6 +295,7 @@ impl MongoAgentLifecycleStore {
         let mut filter = lease.filter();
         filter.insert("owner", &pin.owner);
         filter.insert("sandbox_id", Bson::Null);
+        filter.insert("public_repository", Bson::Null);
         filter.insert(
             "repository_access_pin",
             doc! { "$in": [Bson::Null, value.clone()] },

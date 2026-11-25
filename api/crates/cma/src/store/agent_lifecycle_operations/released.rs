@@ -4,11 +4,12 @@ use layer2_core::sandbox::{store::SandboxStoreError, Sandbox, SandboxOrigin};
 use layer3_adapter::ReleasedRuntime;
 use mongodb::{bson::Document, Database};
 
-use super::{doc, majority_collection, schema, LifecycleRecord, COLLECTION};
+use super::{doc, majority_collection, schema, LifecycleBehavior, LifecycleRecord, COLLECTION};
 use crate::store::released_runtimes::MongoReleasedRuntimes;
 
 pub(crate) fn managed_lifecycle_release_lane(
     request: &AgentLifecycleCreateRequest,
+    behavior: LifecycleBehavior,
 ) -> Option<ReleasedLane> {
     if request.image.is_some() || request.workspace_id.is_some() || request.sandbox_id.is_some() {
         return None;
@@ -16,7 +17,8 @@ pub(crate) fn managed_lifecycle_release_lane(
     if request.machine_included {
         Some(ReleasedLane::Machine)
     } else {
-        request.desktop.then_some(ReleasedLane::Agent)
+        (request.desktop || behavior == LifecycleBehavior::PublicRepository)
+            .then_some(ReleasedLane::Agent)
     }
 }
 
@@ -42,7 +44,7 @@ pub(in crate::store) async fn admitted_release(
     if operation.canary_admission.is_some() || super::canary_key::is_reserved(&operation.key) {
         return Ok(None);
     }
-    let lane = managed_lifecycle_release_lane(&operation.input.request)
+    let lane = managed_lifecycle_release_lane(&operation.input.request, operation.input.behavior)
         .filter(|_| operation.input.resolved_image.as_ref() == Some(image));
     let lane = match (operation.released_lane, lane) {
         (Some(recorded), Some(lane))
@@ -98,7 +100,13 @@ pub(in crate::store) async fn protects_pool(
         filter.insert("input.request.machine_included", true);
     } else {
         filter.insert("input.request.machine_included", doc! { "$ne": true });
-        filter.insert("input.request.desktop", true);
+        filter.insert(
+            "$or",
+            [
+                doc! {"input.request.desktop": true},
+                doc! {"input.behavior": "public_repository"},
+            ],
+        );
     }
     Ok(majority_collection::<Document>(database, COLLECTION)
         .find_one(filter)

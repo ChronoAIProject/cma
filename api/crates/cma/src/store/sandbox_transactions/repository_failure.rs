@@ -11,7 +11,7 @@ use mongodb::{
 };
 
 use super::*;
-use crate::store::agent_lifecycle_operations::{LifecycleRecord, COLLECTION};
+use crate::store::agent_lifecycle_operations::{LifecycleBehavior, LifecycleRecord, COLLECTION};
 
 pub(super) async fn settle(
     store: &MongoSandboxStore,
@@ -32,7 +32,11 @@ pub(super) async fn settle(
         || before.work.step != WorkspaceWorkStep::Prepare
         || before.ready_at.is_some()
         || before.origin != (WorkspaceOrigin::SandboxProfile { index: 0 })
-        || !matches!(before.source, WorkspaceSource::RepositorySnapshot { .. })
+        || !matches!(
+            before.source,
+            WorkspaceSource::RepositorySnapshot { .. }
+                | WorkspaceSource::PublicRepositorySnapshot { .. }
+        )
         || failed.status != WorkspaceStatus::Failed
     {
         return Ok(());
@@ -174,13 +178,34 @@ fn original_repository_task(operation: &LifecycleRecord, workspace: &Workspace) 
     if !operation.input.behavior.uses_repository_profile()
         || request.sandbox_id.is_some()
         || request.workspace_id.is_some()
-        || request.initial_message.is_none()
+        || request.repository.is_none()
     {
         return false;
     }
-    matches!((&request.repository, &workspace.source),
-        (Some(repository), WorkspaceSource::RepositorySnapshot { url, reference, .. })
-            if &repository.url == url && operation.repository_commit.as_ref().or(repository.reference.as_ref()) == reference.as_ref())
+    match (&operation.input.behavior, &workspace.source) {
+        (
+            LifecycleBehavior::PublicRepository,
+            WorkspaceSource::PublicRepositorySnapshot { url, commit, .. },
+        ) => operation
+            .public_repository
+            .as_ref()
+            .is_some_and(|pin| &pin.url == url && &pin.commit == commit),
+        (
+            LifecycleBehavior::PromptRepository | LifecycleBehavior::ManagedRepository,
+            WorkspaceSource::RepositorySnapshot { url, reference, .. },
+        ) => {
+            request.initial_message.is_some()
+                && request.repository.as_ref().is_some_and(|repository| {
+                    &repository.url == url
+                        && operation
+                            .repository_commit
+                            .as_ref()
+                            .or(repository.reference.as_ref())
+                            == reference.as_ref()
+                })
+        }
+        _ => false,
+    }
 }
 
 async fn has_other_authority(
@@ -325,9 +350,18 @@ fn never_dispatched(agent: &Agent, workspace: &Workspace, operation: &LifecycleR
             .as_ref()
             .is_some_and(|first| {
                 first.state == FirstMessageDelivery::Queued
-                    && first.purpose == Some(FirstMessagePurpose::Task)
-                    && Some(first.text.as_str())
-                        == operation.input.request.initial_message.as_deref()
+                    && match operation.input.request.initial_message.as_deref() {
+                        Some(message) => {
+                            first.purpose == Some(FirstMessagePurpose::Task)
+                                && first.text == message
+                        }
+                        None => {
+                            operation.input.behavior == LifecycleBehavior::PublicRepository
+                                && first.purpose == Some(FirstMessagePurpose::Setup)
+                                && operation.input.setup_message.as_deref()
+                                    == Some(first.text.as_str())
+                        }
+                    }
                     && first.attempt == 0
                     && first.dispatch_generation == 0
                     && first.dispatch_fenced_at.is_none()
