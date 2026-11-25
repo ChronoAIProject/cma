@@ -104,6 +104,7 @@ pub(super) async fn begin(f: &Fixture) -> (Arc<SandboxWorker>, Arc<ScanObserver>
 pub(super) fn native_custody_worker(
     f: &Fixture,
     enabled: bool,
+    pending_children: bool,
 ) -> (Arc<SandboxWorker>, Arc<dyn SandboxCredentialController>) {
     let store = Arc::new(f.store.clone());
     let registry = Arc::new(LiveAgentRegistry::default());
@@ -136,7 +137,11 @@ pub(super) fn native_custody_worker(
             adapter,
             credentials: credentials.clone(),
             workspaces: Arc::new(EmptyChildren),
-            agents: Arc::new(PendingChildren),
+            agents: if pending_children {
+                Arc::new(PendingChildren)
+            } else {
+                Arc::new(EmptyChildren)
+            },
             registry: registry.clone(),
             updates: DurableAgentUpdateRecorder::new(store.clone()),
             operations: AgentOperationService::new(store, registry),

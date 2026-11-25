@@ -23,19 +23,8 @@ impl SandboxWorker {
             .retirement_finalizer
             .as_ref()
             .filter(|_| NativeRetirementFinalizer::applies(&sandbox));
-        if finalizer.is_some_and(|finalizer| finalizer.admission_enabled())
-            && crate::sandbox::initial_retirement_issuance_candidate(&sandbox)
-        {
-            if let Err(error) = self
-                .dependencies
-                .credentials
-                .retain_retirement_issuance(&sandbox, now)
-                .await
-            {
-                return self
-                    .retry_failure(sandbox, credential_failure(error), now)
-                    .await;
-            }
+        if let Err(failure) = self.retain_initial_retirement_issuance(&sandbox, now).await {
+            return self.retry_failure(sandbox, failure, now).await;
         }
         if let Some(finalizer) = finalizer {
             if finalizer.holds_custody(&sandbox).await? {
@@ -133,6 +122,9 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if let Err(failure) = self.retain_initial_retirement_issuance(&sandbox, now).await {
+            return self.retry_failure(sandbox, failure, now).await;
+        }
         if let Err(failure) = self.settle_retirement_credentials(&mut sandbox, now).await {
             return self.retry_failure(sandbox, failure, now).await;
         }
