@@ -258,7 +258,19 @@ async fn completeness_pending_fragment_survives_progress_and_retry_after_restart
 async fn completeness_unproved_historical_scope_retains_held_outcome() {
     use futures_util::TryStreamExt;
     let mut fixture = Fixture::new(false).await;
-    let parent = fixture.parent("historical-owner").await;
+    // A retained Sandbox predates the usage ledger. Its first captured
+    // baseline establishes the runtime binding at a mid-minute boundary.
+    let mut parent = sandbox(layer2_core::SandboxId::generate().as_str());
+    parent.owner = layer2_core::SubjectId::new("historical-owner");
+    parent.runtime = Some(RuntimeBinding {
+        runtime_id: "runtime-fixture".into(),
+        runtime_version: "image-fixture".into(),
+        bound_at: NOW.into(),
+        boot_id: None,
+        provision_generation: Some(1),
+    });
+    parent.lifecycle.runtime_generation_high_water = 1;
+    fixture.store.create_sandbox(parent.clone()).await.unwrap();
     fixture.prepare().await;
     let mut enabled = config();
     enabled.completeness_enabled = true;
@@ -287,11 +299,12 @@ async fn completeness_unproved_historical_scope_retains_held_outcome() {
         .try_collect::<Vec<_>>()
         .await
         .unwrap();
+    assert_eq!(rows.len(), 2);
     for row in rows {
-        capture
+        assert!(capture
             .project_one(row.get_str("_id").unwrap(), now())
             .await
-            .unwrap();
+            .unwrap());
     }
     let stream = capture
         .completeness_source_page("")
