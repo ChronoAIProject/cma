@@ -434,7 +434,12 @@ pub(crate) async fn serve(
         .merge(http::whatsapp::router(ingress.clone()))
         .merge(http::telegram::router(ingress.clone()))
         .merge(http::callbacks::router(ingress))
-        .merge(http::tools::router(tools_state.clone()))
+        .merge(http::tools::router_with_side_messages(
+            tools_state.clone(),
+            config
+                .event_side_messages_enabled
+                .then(|| delivery_engine.side_messages()),
+        ))
         .merge(http::media::router(tools_state.clone()))
         .merge(mcp::router(tools_state))
         .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))

@@ -128,3 +128,78 @@ async fn pending_then_unknown_tool_delivery_prevents_terminal_completion_without
     ));
     assert!(rx.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn event_side_message_receipt_never_suppresses_the_restarted_executor_answer() {
+    use crate::tools::{reply_targets::receipts, side_messages::claim_side_message};
+
+    for outcome in [
+        None,
+        Some(DeliveryOutcome::Confirmed {
+            platform_message_id: Some("side-delivered".into()),
+        }),
+        Some(DeliveryOutcome::Rejected {
+            reason: "side_refused".into(),
+        }),
+        Some(DeliveryOutcome::Unknown {
+            reason: "side_unknown".into(),
+        }),
+    ] {
+        let setup = Setup::new(supported()).await;
+        let http = super::adapter_test_server::HttpServer::start().await;
+        http.memory.lock().unwrap().config.replay_frames = Some(frames());
+        let (mut first, mut rx, work) = executor(&setup, &http);
+        first.frame_limit = 2;
+        assert!(matches!(first.execute(&work).await, Disposition::Retry(_)));
+        assert!(rx.try_recv().is_err());
+
+        let journal = setup.journal();
+        let mut lease = journal
+            .claim(&setup.plan, setup.target(), "side-fixture")
+            .await
+            .unwrap();
+        let payload = event(&journal.body(&lease).await.unwrap());
+        journal.release(&mut lease).await.unwrap();
+        let store = receipts::Store::new(journal.records.clone(), journal.keys.clone());
+        let ReplayEffect::Reply(message) = super::delivery_tests::effect() else {
+            unreachable!();
+        };
+        let receipts::Admission::Claimed(claim) = claim_side_message(
+            &store,
+            &payload,
+            "side-message-1",
+            &message,
+            &setup.plan.identity.owner,
+        )
+        .await
+        .unwrap() else {
+            panic!("first side message must claim its own receipt");
+        };
+        if let Some(outcome) = outcome {
+            store.finish(claim, &receipt_for(outcome)).await.unwrap();
+        }
+        drop(first);
+
+        let (resumed, mut rx, work) = executor(&setup, &http);
+        let (result, ()) = tokio::join!(resumed.execute(&work), async {
+            let reply = command(&mut rx).await;
+            assert_eq!(reply.message.text.as_deref(), Some("hello world"));
+            reply
+                .receipt
+                .send(receipt_for(DeliveryOutcome::Confirmed {
+                    platform_message_id: Some("final-reply".into()),
+                }))
+                .unwrap();
+        });
+        assert!(matches!(result, Disposition::Settled));
+        assert!(matches!(
+            stored(&setup).await.phase,
+            Phase::Completed {
+                durable_cursor: Some(3),
+                ..
+            }
+        ));
+        assert!(matches!(resumed.execute(&work).await, Disposition::Settled));
+        assert!(rx.try_recv().is_err());
+    }
+}

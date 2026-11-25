@@ -298,6 +298,7 @@ fn config(media: MediaConfig) -> Config {
         native_discord_reactions_enabled: false,
         native_discord: Default::default(),
         outbound_messages_writes_enabled: false,
+        event_side_messages_enabled: false,
         listen: "127.0.0.1:0".parse().unwrap(),
         metrics_listen: "127.0.0.1:0".parse().unwrap(),
         providers: Default::default(),

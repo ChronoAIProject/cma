@@ -30,8 +30,16 @@ use tokio::time::Instant;
 use tower_http::limit::RequestBodyLimitLayer;
 
 pub fn router(state: ToolsState) -> Router {
+    router_with_side_messages(state, None)
+}
+
+pub(crate) fn router_with_side_messages(
+    state: ToolsState,
+    side_messages: Option<crate::delivery::side_messages::SideMessageDelivery>,
+) -> Router {
     crate::telemetry::http::instrument(
         Router::new()
+            .merge(super::side_messages::routes(side_messages))
             .merge(super::event_attestation::routes())
             .merge(super::form_preparation::routes())
             .merge(super::reply_targets::routes())

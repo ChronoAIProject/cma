@@ -2577,6 +2577,19 @@ shared-guard settlement, permitting reconciliation after a crash. No-key routed
 requests retain their earlier content-hash behavior. Legacy live replies retain
 their existing delivery/storage semantics even with a valid optional key.
 
+A provider can look up side-message support with
+`GET /v1/events/{event_ref}/side-messages` and the same agent bearer it uses
+for event replies. A 200 response with `available: true` confirms support for
+the event's original chat. Older and disabled gateways return 404.
+
+Send a side message with `POST /v1/events/{event_ref}/side-messages`, a body
+of `{"text":"I’m checking that now."}`, and one 1–128 visible ASCII byte
+`Idempotency-Key`. Use it for progress or other text that should leave the
+automatic answer and failure notice eligible for delivery. The Gateway keeps
+the original chat and thread and uses a separate delivery receipt. Retry with
+the exact key and body. A changed body under the same key returns 409. A
+pending or unknown delivery retains that key without retrying the platform send.
+
 Native MCP preserves the four original names above, and lists
 `readEventAttachment` only when media is enabled. NyxID's OpenAPI discovery
 normalizes operation IDs to lowercase, so its discovered tool names are
@@ -3876,6 +3889,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/events/{event_ref}/reply-target` | `createReplyTarget` |
 | `POST /v1/reply-targets/{reply_target_ref}/messages` | `replyToTarget` |
 | `POST /v1/events/{event_ref}/replies` | `replyToEvent` |
+| `GET /v1/events/{event_ref}/side-messages` | `getSideMessageCapability` |
+| `POST /v1/events/{event_ref}/side-messages` | `sendSideMessage` |
 | `POST /v1/events/{event_ref}/form-preparation` | `prepareFormReply` |
 | `GET /v1/events/{event_ref}/form-preparation` | `readFormPreparation` |
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |
