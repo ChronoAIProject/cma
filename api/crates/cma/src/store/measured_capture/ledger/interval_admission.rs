@@ -10,7 +10,7 @@ use crate::store::{
 };
 
 impl MeasuredLedger {
-    pub(super) async fn publish_interval(
+    pub(in crate::store::measured_capture) async fn publish_interval(
         &self,
         evidence: FrozenEvidence,
         history_limit: usize,
@@ -79,7 +79,7 @@ impl MeasuredLedger {
             .iter()
             .find(|entry| entry.revision() == evidence.revision())
         {
-            if same_admission(retained, evidence, &history) {
+            if retained == evidence {
                 return Ok(retained.clone());
             }
             return Err(CaptureError::Unavailable.into());
@@ -187,27 +187,8 @@ impl MeasuredLedger {
             .await?;
         history
             .iter()
-            .find(|entry| {
-                entry.revision() == evidence.revision() && same_admission(entry, evidence, &history)
-            })
+            .find(|entry| entry.revision() == evidence.revision() && *entry == evidence)
             .cloned()
             .ok_or(CaptureError::Unavailable)
     }
-}
-
-fn same_admission(
-    retained: &FrozenEvidence,
-    incoming: &FrozenEvidence,
-    history: &[FrozenEvidence],
-) -> bool {
-    let previous = history
-        .iter()
-        .find(|entry| entry.revision().checked_add(1) == Some(incoming.revision()));
-    // The original receipt is identified by scope, cutoff and predecessor.
-    retained.matches_request(
-        incoming.scope(),
-        incoming.source_cutoff_ms(),
-        previous.map(FrozenEvidence::reference).as_ref(),
-    ) && (incoming.revision() == 1
-        || previous.is_some_and(|entry| incoming.validate_successor(entry).is_ok()))
 }

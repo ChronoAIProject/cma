@@ -278,6 +278,14 @@ async fn indexed_custody_matches_exhaustive_and_refuses_missing_projection_befor
         Some(&expected),
     )
     .await;
+    let competing_initial = compare(&database, &indexed, &capture, &window, &event, None).await;
+    assert_ne!(competing_initial.reference(), expected.reference());
+    assert!(ledger
+        .publish_interval(competing_initial, usize::MAX)
+        .await
+        .is_err());
+    assert_eq!(ledger.freeze(initial.clone()).await.unwrap(), expected);
+
     assert_eq!(
         ledger
             .freeze(FreezeRequest {
@@ -297,6 +305,38 @@ async fn indexed_custody_matches_exhaustive_and_refuses_missing_projection_befor
             .await
             .unwrap(),
         expected
+    );
+
+    assert_eq!(
+        active
+            .capture(&observation(&a, 3_600_000, 25.0))
+            .await
+            .unwrap(),
+        Capture::Inserted
+    );
+    let competing_correction = compare(
+        &database,
+        &indexed,
+        &capture,
+        &window,
+        &event,
+        Some(&expected),
+    )
+    .await;
+    assert_ne!(competing_correction.reference(), correction.reference());
+    assert!(ledger
+        .publish_interval(competing_correction, usize::MAX)
+        .await
+        .is_err());
+    assert_eq!(
+        ledger
+            .freeze(FreezeRequest {
+                correction_of: Some(expected.reference()),
+                ..initial.clone()
+            })
+            .await
+            .unwrap(),
+        correction
     );
 
     let peer_ledger = MeasuredLedger::new(&right.database(&name)).with_indexed(peer_index.clone());
@@ -378,7 +418,11 @@ async fn indexed_custody_matches_exhaustive_and_refuses_missing_projection_befor
             .snapshot(true)
             .await
             .unwrap();
-        indexed.root(&mut session, true).await.unwrap()
+        indexed
+            .root(&mut session, true)
+            .await
+            .map_err(super::store_error)
+            .unwrap()
     };
     let hour = projected.hour();
     let id = hour_id(root.generation, hour);
