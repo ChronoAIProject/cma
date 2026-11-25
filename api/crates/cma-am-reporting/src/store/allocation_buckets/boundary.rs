@@ -144,20 +144,20 @@ impl Boundary {
 }
 
 impl DayBucket {
-    pub(super) fn read_boundary(document: &Document) -> Result<Self> {
+    pub fn read_boundary(document: &Document) -> Result<Self> {
         let mut bucket = Self::read_summary(document)?;
         bucket.boundary = Boundary::read(document, &bucket)?;
         Ok(bucket)
     }
 
-    pub(super) fn boundary_prepared(&self, state: &SandboxUsage) -> bool {
+    pub fn boundary_prepared(&self, state: &SandboxUsage) -> bool {
         self.boundary.as_ref().is_some_and(|input| {
             input.queried_to == self.day + DAY
                 && (self.revision == state.revision || self.last_observed_at >= self.day + DAY)
         })
     }
 
-    pub(super) fn project_boundary(
+    pub fn project_boundary(
         &self,
         state: &SandboxUsage,
         range: Range,

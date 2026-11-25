@@ -38,7 +38,7 @@ impl DayBucket {
         })
     }
 
-    pub(super) fn read_summary(document: &Document) -> Result<Self> {
+    pub fn read_summary(document: &Document) -> Result<Self> {
         if document.get_i64("document_schema_version").ok() != Some(1) {
             return Err(MetricsError::Unavailable);
         }

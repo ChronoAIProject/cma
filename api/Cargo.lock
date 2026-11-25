@@ -498,11 +498,14 @@ dependencies = [
 name = "cma-am-reporting"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "futures-util",
  "layer2-core",
  "mongodb",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tokio",
  "tracing",
 ]
 
