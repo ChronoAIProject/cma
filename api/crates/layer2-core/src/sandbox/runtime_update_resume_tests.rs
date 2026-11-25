@@ -164,9 +164,25 @@ fn cold_canary_keeps_its_exact_runtime_across_daily_updates_and_revive() {
             SandboxReviveCause::AgentCreation,
         ] {
             let mut resumed = paused.clone();
-            resumed
-                .begin_revive_with_managed_runtime(cause, Some(&newer), NOW.into())
-                .unwrap();
+            if cause == SandboxReviveCause::ExplicitRequest {
+                resumed
+                    .begin_revive_with_managed_runtime(cause, Some(&newer), NOW.into())
+                    .unwrap();
+            } else {
+                assert_eq!(
+                    resumed
+                        .record_creation_admission_with_managed_runtime(
+                            cause,
+                            Some(&newer),
+                            NOW.into(),
+                        )
+                        .unwrap(),
+                    Some(SandboxEventKind::StatusChanged {
+                        from: SandboxStatus::Paused,
+                        to: SandboxStatus::Reviving,
+                    }),
+                );
+            }
             assert!(resumed.runtime_update_request().is_none());
             assert_eq!(resumed.admitted_runtime_update_target(), None);
             assert_eq!(
