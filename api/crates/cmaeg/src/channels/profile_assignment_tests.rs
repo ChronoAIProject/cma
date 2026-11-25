@@ -126,6 +126,7 @@ async fn first_assignment_commits_only_with_the_accepted_event_and_channel_versi
 #[tokio::test]
 #[ignore = "requires authenticated disposable Mongo"]
 async fn profile_baseline_fences_legacy_roots_and_pins_prebaseline_admissions() {
+    use crate::ingress::routing_plan::{plan, OrdinaryPlan, RoutingOptions};
     use crate::ingress::{
         routing_plan::fixture as ingress,
         routing_store::{Candidate, PlanStore},
@@ -134,22 +135,22 @@ async fn profile_baseline_fences_legacy_roots_and_pins_prebaseline_admissions() 
         channel::{ProfilePublication, RetainedProfileRevision, Secret},
         ids::{BindingId, EventId},
     };
-    use std::sync::Arc;
+    use std::{collections::BTreeSet, sync::Arc};
 
     let fixture = Fixture::new().await;
     let left = fixture.records("https://fixture.example").await;
     let right = fixture.records("https://fixture.example").await;
     let keys = Arc::new(ingress::keys());
     let store = Store::new(right.clone(), keys.clone()).unwrap();
-    let left_plans =
-        PlanStore::new(left.clone(), keys.clone()).with_clock(Arc::new(|| ingress::NOW));
-    let right_plans =
-        PlanStore::new(right.clone(), keys.clone()).with_clock(Arc::new(|| ingress::NOW));
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let left_plans = PlanStore::new(left.clone(), keys.clone()).with_clock(Arc::new(move || now));
+    let right_plans = PlanStore::new(right.clone(), keys.clone()).with_clock(Arc::new(move || now));
     let record_id = uuid::Uuid::new_v4().to_string();
     let mut request = ingress::request(
         |value| value["record_id"] = record_id.clone().into(),
         ingress::message("old admission"),
     );
+    ingress::rewrite_ref(&mut request, |event| event.expires_at = now + 900);
     let mut current = (*request.channel).clone();
     assert!(requires_guard(&current.definition, true));
     assert!(current.definition.secrets.profile_revisions.is_none());
@@ -172,8 +173,7 @@ async fn profile_baseline_fences_legacy_roots_and_pins_prebaseline_admissions() 
         .await
         .unwrap();
     request.channel = Arc::new(current.clone());
-    let mut before =
-        Candidate::prepare_compatibility(&request, b"old", &keys, ingress::NOW).unwrap();
+    let mut before = Candidate::prepare_compatibility(&request, b"old", &keys, now).unwrap();
     before.profile_admission = Some(channel_guard(&current));
     let old = left_plans.admit(&before).await.unwrap();
     assert_eq!(old.targets[0].launch.provider, old_binding);
@@ -183,9 +183,22 @@ async fn profile_baseline_fences_legacy_roots_and_pins_prebaseline_admissions() 
         |value| value["record_id"] = record_id.clone().into(),
         next_activity,
     );
+    ingress::rewrite_ref(&mut delayed, |event| event.expires_at = now + 900);
     delayed.channel = Arc::new(current.clone());
-    let plan = ingress::routed(&delayed);
-    let mut stale = Candidate::prepare(&delayed, &plan, b"later", &keys, ingress::NOW).unwrap();
+    let OrdinaryPlan::Routed(plan) = plan(
+        &delayed,
+        &keys,
+        now,
+        RoutingOptions {
+            enabled: true,
+            attributes_signed: true,
+            non_human_providers: &BTreeSet::from(["cma_codex".into()]),
+        },
+    )
+    .unwrap() else {
+        panic!("expected routed admission");
+    };
+    let mut stale = Candidate::prepare(&delayed, &plan, b"later", &keys, now).unwrap();
     stale.profile_admission = Some(channel_guard(&current));
 
     // Baseline starts on the other replica. The original root has no provider
@@ -276,8 +289,7 @@ async fn profile_baseline_fences_legacy_roots_and_pins_prebaseline_admissions() 
     .unwrap();
     assert_eq!(assignment.revision, 1);
     delayed.channel = project(&current, &assignment).unwrap();
-    let mut fresh =
-        Candidate::prepare_compatibility(&delayed, b"later", &keys, ingress::NOW).unwrap();
+    let mut fresh = Candidate::prepare_compatibility(&delayed, b"later", &keys, now).unwrap();
     fresh.profile_admission = Some(Admission {
         channel_record_id: current.definition.record_id.to_string(),
         channel_version: current.version,
