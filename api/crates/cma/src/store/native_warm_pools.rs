@@ -93,6 +93,44 @@ fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
     Ok(target)
 }
 
+/// Read only the exact, previously activated pool retained by release authority.
+pub(super) async fn transition_target(
+    database: &Database,
+    deployment: &str,
+    machine: bool,
+    target_id: &str,
+    session: &mut mongodb::ClientSession,
+) -> Result<PoolTarget, WarmPoolError> {
+    let targets: Collection<PoolTarget> = majority_collection(database, COLLECTION);
+    let target = targets
+        .find_one(doc! {
+            "_id": target_id,
+            "plan.deployment": deployment,
+            "document_schema_version": if machine { 2_i64 } else { 1_i64 },
+            "activated_at": {"$type": "date"},
+            "durable_release_authority": true,
+            "retiring": {"$ne": true},
+            "retired": {"$ne": true},
+        })
+        .session(session)
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)?
+        .ok_or(WarmPoolError::Conflict)?;
+    let target = validate(target)?;
+    if target.machine != machine
+        || target.target_replicas == 0
+        || target.applied_revision != target.revision
+        || target.error.is_some()
+        || target
+            .binding
+            .as_ref()
+            .is_none_or(|binding| binding.uid.is_empty() || binding.template_uid.is_empty())
+    {
+        return Err(WarmPoolError::Conflict);
+    }
+    Ok(target)
+}
+
 #[async_trait]
 impl PoolTargetStore for MongoNativeWarmPools {
     async fn begin_candidate_effect(&self, target: &PoolTarget) -> Result<bool, WarmPoolError> {
