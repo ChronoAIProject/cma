@@ -23,7 +23,7 @@ async fn retirement_uses_the_sandbox_transition_and_never_stops_an_agent_directl
     let operator = caller([Capability::ControlAnySandbox]);
     let retired = fixture
         .service
-        .retire_sandbox(&operator, &sandbox.id)
+        .retire_sandbox(&operator, &sandbox.id, None)
         .await
         .unwrap();
     assert!(retired.changed);
@@ -55,7 +55,7 @@ async fn retirement_uses_the_sandbox_transition_and_never_stops_an_agent_directl
 
     let again = fixture
         .service
-        .retire_sandbox(&operator, &sandbox.id)
+        .retire_sandbox(&operator, &sandbox.id, None)
         .await
         .unwrap();
     assert!(!again.changed);
@@ -104,6 +104,7 @@ async fn any_nonterminal_sandbox_can_enter_retirement() {
             .retire_sandbox(
                 &caller([Capability::ControlAnySandbox]),
                 &SandboxId("sbx_any".into()),
+                None,
             )
             .await
             .unwrap();
@@ -175,7 +176,7 @@ async fn controls_require_only_control_any_sandbox_before_target_lookup() {
     assert_eq!(
         fixture
             .service
-            .retire_sandbox(&caller, &SandboxId("sbx_missing".into()))
+            .retire_sandbox(&caller, &SandboxId("sbx_missing".into()), None)
             .await,
         Err(OperatorError::Forbidden)
     );

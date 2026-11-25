@@ -1,17 +1,21 @@
 //! Process-local scheduling only. Holds add protection; they never grant authority.
-use layer2_core::{sandbox::Sandbox, SandboxId};
+use layer2_core::{sandbox::Sandbox, SandboxId, SubjectId};
 use layer3_adapter::RuntimeObservation;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Mutex,
-    time::Duration,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
+    time::{Duration, SystemTime},
 };
 use tokio::time::Instant;
 
 #[derive(Default)]
 pub(super) struct BindingHolds {
     holds: Mutex<BTreeMap<SandboxId, Hold>>,
-    metrics_enabled: bool,
+    metrics_enabled: AtomicBool,
+    diagnostics_enabled: AtomicBool,
 }
 
 struct Hold {
@@ -20,7 +24,18 @@ struct Hold {
     reason: &'static str,
     ids: BTreeSet<String>,
     handles: BTreeSet<String>,
+    diagnostic: Option<Diagnostic>,
 }
+
+struct Diagnostic {
+    owner: Option<SubjectId>,
+    first_held_at: Option<SystemTime>,
+    retrying: bool,
+    adapter_unavailable: bool,
+}
+
+#[path = "reconciliation_binding_observation.rs"]
+mod observation;
 
 impl Hold {
     fn protect(&mut self, sandbox: &Sandbox, inventory: &[RuntimeObservation]) {
@@ -46,9 +61,12 @@ impl Hold {
 }
 
 impl BindingHolds {
-    pub(super) fn with_metrics(mut self, enabled: bool) -> Self {
-        self.metrics_enabled = enabled;
-        self
+    pub(super) fn set_metrics(&self, enabled: bool) {
+        self.metrics_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    pub(super) fn enable_diagnostics(&self) {
+        self.diagnostics_enabled.store(true, Ordering::Relaxed);
     }
 
     /// Scheduling hint only: the same fresh authority checks still run on retry.
@@ -73,12 +91,27 @@ impl BindingHolds {
             reason: "cancelled",
             ids: BTreeSet::new(),
             handles: BTreeSet::new(),
+            diagnostic: self
+                .diagnostics_enabled
+                .load(Ordering::Relaxed)
+                .then(|| Diagnostic {
+                    owner: (!sandbox.owner.as_str().is_empty()
+                        && sandbox.owner.as_str().len() <= 512
+                        && !sandbox.owner.as_str().chars().any(char::is_control))
+                    .then(|| sandbox.owner.clone()),
+                    first_held_at: None,
+                    retrying: false,
+                    adapter_unavailable: false,
+                }),
         });
         hold.protect(sandbox, inventory);
         if Instant::now() < hold.ready_at {
             return None;
         }
         hold.attempts = hold.attempts.saturating_add(1);
+        if let Some(diagnostic) = &mut hold.diagnostic {
+            diagnostic.retrying = true;
+        }
         Some(BindingAttempt {
             holds: self,
             id: sandbox.id.clone(),
@@ -125,6 +158,10 @@ impl BindingHolds {
             .min(300);
         hold.ready_at = Instant::now() + Duration::from_secs(seconds);
         hold.reason = reason;
+        if let Some(diagnostic) = &mut hold.diagnostic {
+            diagnostic.first_held_at.get_or_insert_with(SystemTime::now);
+            diagnostic.retrying = false;
+        }
     }
 
     pub(super) fn report_on_drop(&self) -> ReportOnDrop<'_> {
@@ -148,7 +185,7 @@ impl BindingHolds {
             }
         }
         tracing::info!(parent: None, held_bindings = holds.len(), "sandbox binding hold summary");
-        if self.metrics_enabled {
+        if self.metrics_enabled.load(Ordering::Relaxed) {
             metrics::gauge!("cma_sandbox_binding_holds_local").set(holds.len() as f64);
         }
     }
@@ -182,10 +219,25 @@ impl BindingAttempt<'_> {
         self.complete = true;
     }
 
+    pub(super) fn refused(mut self) {
+        self.holds.failed(&self.id, "refused");
+        self.complete = true;
+    }
+
     /// Retain protection after a transient runtime failure at startup. The
     /// background sweep retries it with fresh reads under the same fences.
     pub(super) fn unavailable(mut self) {
         self.holds.failed(&self.id, "unavailable");
+        if let Some(diagnostic) = self
+            .holds
+            .holds
+            .lock()
+            .unwrap()
+            .get_mut(&self.id)
+            .and_then(|hold| hold.diagnostic.as_mut())
+        {
+            diagnostic.adapter_unavailable = true;
+        }
         self.complete = true;
     }
 }

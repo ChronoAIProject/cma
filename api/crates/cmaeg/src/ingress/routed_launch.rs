@@ -130,6 +130,13 @@ impl IngressState {
                 Err(error) => return LaunchOutcome::Refused(error),
             }
         }
+        if crate::ingress::telegram::member_joins::is_member_join(&request.activity) {
+            return LaunchOutcome::Refused(Problem::new(
+                ProblemCode::ProviderUnavailable,
+                503,
+                "telegram_member_join_durable_admission_unavailable",
+            ));
+        }
         if let Some(routing) = self.routed.as_ref().filter(|r| r.plans.replicas_enabled()) {
             let Some(source) = source else {
                 return LaunchOutcome::Refused(Problem::new(

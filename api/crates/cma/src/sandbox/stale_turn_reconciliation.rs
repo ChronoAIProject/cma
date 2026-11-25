@@ -6,7 +6,10 @@ use layer2_core::{
     agent_ownership::OwnershipCoordinator,
     sandbox::store::{SandboxStoreError, StaleTurnSettlement},
 };
-use layer3_adapter::{stale_turn::StaleTurnHold, SandboxAdapter};
+use layer3_adapter::{
+    stale_turn::{StaleTurnHold, StaleTurnProducer, MAX_SEAL_BYTES},
+    RuntimeHandle, SandboxAdapter,
+};
 use mongodb::bson::DateTime;
 use tokio::{
     sync::watch,
@@ -31,6 +34,11 @@ const INVESTIGATION_DEADLINE: Duration = Duration::from_secs(5);
 const MAX_INVESTIGATIONS: usize = 4;
 const HOLD_CAPACITY: usize = 512;
 const HOLD_INTERVAL: Duration = Duration::from_secs(60);
+
+#[cfg(test)]
+mod partial_tests;
+#[cfg(test)]
+pub(crate) use partial_tests::assert_partial_does_not_request_stop;
 
 pub(super) struct Worker {
     store: StaleTurnStore,
@@ -129,10 +137,15 @@ impl Worker {
             }
             investigations += 1;
             let mut budget = ProofBudget::default();
-            let observation = tokio::time::timeout_at(
-                stop_investigating,
-                self.store.observe(&candidate, lease.now, &mut budget),
-            )
+            let observation = tokio::time::timeout_at(stop_investigating, async {
+                if self.terminal_adapter.is_some() {
+                    self.store
+                        .observe_for_terminal(&candidate, lease.now, &mut budget)
+                        .await
+                } else {
+                    self.store.observe(&candidate, lease.now, &mut budget).await
+                }
+            })
             .await;
             let reason = match observation {
                 Ok(Ok(Observation::Progressing)) => {
@@ -149,7 +162,14 @@ impl Worker {
                     oldest = Some(oldest.map_or(age, |previous: u64| previous.max(age)));
                     let terminal = tokio::time::timeout_at(
                         stop_investigating,
-                        self.try_terminal(&candidate, lease.now, target, evidence, &mut budget),
+                        self.try_terminal(
+                            &candidate,
+                            lease.now,
+                            target,
+                            evidence,
+                            &mut budget,
+                            |runtime| self.terminal_adapter.as_ref()?.stale_turn_producer(runtime),
+                        ),
                     )
                     .await;
                     match terminal {
@@ -185,13 +205,14 @@ impl Worker {
         Ok(())
     }
 
-    async fn try_terminal(
+    async fn try_terminal<'producer>(
         &self,
         candidate: &Candidate,
         now: DateTime,
         target: super::LiveAgentTarget,
         evidence: Box<crate::store::stale_turns::QuietTurn>,
         budget: &mut ProofBudget,
+        producer_for: impl FnOnce(&RuntimeHandle) -> Option<&'producer dyn StaleTurnProducer>,
     ) -> Result<(), &'static str> {
         let authority = self
             .ownership
@@ -206,28 +227,78 @@ impl Worker {
                 {
                     return Err("recorder_unavailable");
                 }
-                let adapter = self
-                    .terminal_adapter
-                    .as_ref()
-                    .ok_or("producer_seal_unavailable")?;
-                let expected = StaleTurnSettlement::target(
+                let expected = StaleTurnSettlement::receipt_target(
                     &evidence.snapshot,
                     &evidence.parent,
                     &evidence.command,
                     &authority.token,
                 )
                 .map_err(|_| "terminal_evidence_unavailable")?;
-                let producer = adapter
-                    .stale_turn_producer(&expected.runtime)
-                    .ok_or("producer_seal_unavailable")?;
-                let producer_evidence = producer
-                    .observe_stale_turn_seal(&expected, budget.remaining() as usize)
+                let producer =
+                    producer_for(&expected.runtime).ok_or("producer_seal_unavailable")?;
+                // Reserve the response allowance even if decoding fails or the
+                // probe is cancelled after reading part of the body.
+                let allowance = budget.remaining().min(MAX_SEAL_BYTES as i64);
+                if allowance == 0 {
+                    return Err("proof_byte_budget");
+                }
+                budget.charge(allowance).map_err(|error| error.outcome())?;
+                let producer_evidence = match producer
+                    .observe_stale_turn_seal(&expected, allowance as usize)
                     .await
-                    .map_err(|hold| match hold {
-                        StaleTurnHold::Unsupported => "producer_seal_unavailable",
-                        StaleTurnHold::Unconfirmed => "producer_seal_unconfirmed",
-                        StaleTurnHold::CanonicalResult => "canonical_result",
-                    })?;
+                {
+                    Ok(evidence) => evidence,
+                    Err(StaleTurnHold::Unsupported) => return Err("producer_seal_unavailable"),
+                    Err(StaleTurnHold::CanonicalResult) => return Err("canonical_result"),
+                    Err(StaleTurnHold::Unconfirmed) => {
+                        // A partial candidate may only read a stop already
+                        // admitted while the assembly was empty.
+                        if evidence
+                            .snapshot
+                            .checkpoint
+                            .as_ref()
+                            .is_some_and(|checkpoint| !checkpoint.assembly.is_empty())
+                        {
+                            return Err("output_uncommitted");
+                        }
+                        let fresh = self
+                            .store
+                            .observe(candidate, now, budget)
+                            .await
+                            .map_err(|error| error.outcome())?;
+                        let Observation::Quiet {
+                            target: current,
+                            evidence,
+                            ..
+                        } = fresh
+                        else {
+                            return Err("identity_changed");
+                        };
+                        let confirmed = StaleTurnSettlement::target(
+                            &evidence.snapshot,
+                            &evidence.parent,
+                            &evidence.command,
+                            &authority.token,
+                        )
+                        .map_err(|_| "terminal_evidence_unavailable")?;
+                        if current != target || confirmed != expected {
+                            return Err("identity_changed");
+                        }
+                        if !self
+                            .registry
+                            .owned_target_is_recording(&target, &authority.token)
+                        {
+                            return Err("recorder_unavailable");
+                        }
+                        return match producer.request_stale_turn_stop(&confirmed).await {
+                            Ok(()) => Err("producer_stop_pending"),
+                            Err(StaleTurnHold::CanonicalResult) => Err("canonical_result"),
+                            Err(StaleTurnHold::Unsupported | StaleTurnHold::Unconfirmed) => {
+                                Err("producer_seal_unconfirmed")
+                            }
+                        };
+                    }
+                };
                 let seal = producer_evidence.seal;
                 if !seal.matches(&expected) {
                     return Err("producer_seal_unconfirmed");
@@ -235,14 +306,14 @@ impl Worker {
                 let seal_bytes = serde_json::to_vec(&seal)
                     .map_err(|_| "producer_seal_unconfirmed")?
                     .len();
-                let bytes_read = i64::try_from(producer_evidence.bytes_read.max(seal_bytes))
-                    .map_err(|_| "proof_byte_budget")?;
-                budget.charge(bytes_read).map_err(|error| error.outcome())?;
+                if producer_evidence.bytes_read.max(seal_bytes) > allowance as usize {
+                    return Err("proof_byte_budget");
+                }
                 // Read a new majority snapshot after the probe. Only the attached
                 // recorder can drain retained frames and advance this checkpoint.
                 let fresh = self
                     .store
-                    .observe(candidate, now, budget)
+                    .observe_for_terminal(candidate, now, budget)
                     .await
                     .map_err(|error| error.outcome())?;
                 let evidence = match fresh {

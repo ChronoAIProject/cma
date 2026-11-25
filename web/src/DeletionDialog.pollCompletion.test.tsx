@@ -41,10 +41,20 @@ function fixture() {
   const readSandbox = vi.fn().mockResolvedValue({ ...sandboxFixture(), owner: 'owner' });
   const readAgentEvents = vi.fn().mockResolvedValue({ items: [] });
   const deleteAgent = vi.fn();
+  const deleteSandbox = vi.fn();
   const stopAgent = vi.fn();
-  const source = agentClient({ readAgent, readSandbox, readAgentEvents, deleteAgent, stopAgent });
+  const source = agentClient({
+    readAgent,
+    readSandbox,
+    readAgentEvents,
+    deleteAgent,
+    deleteSandbox,
+    stopAgent,
+  });
+  let detailClient = source;
   function Actions() {
     const observed = useDeletionNoticeReconciliation(source, 'owner', 0, true);
+    detailClient = observed.client;
     const actions = useResourceActions(
       observed.client,
       () => {},
@@ -65,8 +75,62 @@ function fixture() {
       </>
     );
   }
-  return { readAgent, readSandbox, readAgentEvents, deleteAgent, stopAgent, Actions };
+  return {
+    readAgent,
+    readSandbox,
+    readAgentEvents,
+    deleteAgent,
+    deleteSandbox,
+    stopAgent,
+    Actions,
+    detailClient: () => detailClient,
+  };
 }
+
+it.each(['Agent', 'Sandbox'] as const)(
+  'shows %s deletion completion when the detail read settles before the dialog polls again',
+  async (target) => {
+    const f = fixture();
+    const sandbox = { ...sandboxFixture(), owner: 'owner', status: 'retiring' as const };
+    f.readSandbox.mockResolvedValue(sandbox);
+    persistDeletion(
+      'owner',
+      target === 'Agent'
+        ? { ...request, accepted: true }
+        : {
+            action: { kind: 'delete_sandbox', sandboxId: sandbox.id },
+            key: 'completed-sandbox-delete',
+            accepted: true,
+          },
+    );
+    render(<f.Actions />);
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen request' }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByRole('dialog')).toHaveAccessibleName(`Deleting ${target}`);
+    expect(screen.getByText('Last status read:')).toBeInTheDocument();
+
+    await act(async () => {
+      if (target === 'Agent') {
+        f.readAgent.mockResolvedValue(terminal);
+        await f.detailClient().readAgent(terminal.id);
+      } else {
+        f.readSandbox.mockResolvedValue({ ...sandbox, status: 'retired' });
+        await f.detailClient().readSandbox(sandbox.id);
+      }
+    });
+    expect(restoreDeletions('owner')).toEqual([]);
+    expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(1500));
+    expect(f.deleteAgent).not.toHaveBeenCalled();
+    expect(f.deleteSandbox).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toHaveAccessibleName(`${target} deleted`);
+    expect(screen.getByText('Cleanup confirmed in this view.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(restoreDeletions('owner')).toEqual([]);
+  },
+);
 
 it.each(['successful detail', 'parent refusal', 'history refusal'] as const)(
   'does not recreate a settled unknown receipt after polling returns %s',
@@ -112,9 +176,7 @@ it.each(['successful detail', 'parent refusal', 'history refusal'] as const)(
       readAgentEvents.mock.calls.length,
     ]).toEqual(readCounts);
     expect(writes).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByText(outcome === 'successful detail' ? 'Done' : 'Close', { selector: 'button' }),
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     await act(() => vi.advanceTimersByTimeAsync(1000));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reopen request' })).toBeDisabled();

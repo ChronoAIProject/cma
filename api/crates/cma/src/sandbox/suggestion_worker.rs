@@ -1,5 +1,6 @@
 use super::{
-    credential::SandboxCredentialController, suggestions::HttpSuggestionGenerator,
+    credential::{CredentialMaterial, SandboxCredentialController},
+    suggestions::HttpSuggestionGenerator,
     title_worker::TitleRuntimeEndpoint,
 };
 use layer2_core::profiles::ModelAccess;
@@ -85,10 +86,44 @@ impl SuggestionWorker {
             })
             || !sandbox.credential.validate()
             || !sandbox.credential.delivered
+            || sandbox.needs_service_access_credential()
         {
             return None;
         }
         Some((agent, sandbox))
+    }
+
+    async fn material(&self, work: &SuggestionWork) -> Option<(Sandbox, CredentialMaterial)> {
+        let (_, sandbox) = self.authority(work).await?;
+        let authority = sandbox.credential.current.as_ref()?;
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()?
+            .as_secs();
+        if seconds_from_rfc3339(&authority.expires_at)
+            .is_none_or(|expiry| expiry <= now + GENERATION_TIMEOUT_SECONDS)
+        {
+            return None;
+        }
+        let material = self
+            .credentials
+            .material(&sandbox.id, authority.generation)
+            .await
+            .ok()??;
+        if material.sandbox_id != sandbox.id
+            || material.owner != sandbox.owner
+            || material.authority != *authority
+        {
+            return None;
+        }
+        Some((sandbox, material))
+    }
+
+    async fn running(&self, work: &SuggestionWork) -> bool {
+        self.suggestions
+            .read_suggestions(&work.owner, &work.agent_id, work.scope)
+            .await
+            .is_ok_and(|current| current.status == SuggestionStatus::Running)
     }
 
     pub(super) fn spawn(
@@ -126,43 +161,16 @@ impl SuggestionGenerator for SuggestionWorker {
         work: &SuggestionWork,
     ) -> Result<SuggestionGeneration, SuggestionFailure> {
         let refused = || SuggestionFailure::Unavailable;
-        let (_, sandbox) = self.authority(work).await.ok_or_else(refused)?;
-        let authority = sandbox.credential.current.as_ref().ok_or_else(refused)?;
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_err(|_| refused())?
-            .as_secs();
-        if seconds_from_rfc3339(&authority.expires_at)
-            .is_none_or(|expiry| expiry <= now + GENERATION_TIMEOUT_SECONDS)
-        {
-            return Err(refused());
-        }
-        let material = self
-            .credentials
-            .material(&sandbox.id, authority.generation)
-            .await
-            .map_err(|_| refused())?
-            .ok_or_else(refused)?;
-        if material.sandbox_id != sandbox.id
-            || material.owner != sandbox.owner
-            || material.authority != *authority
-        {
-            return Err(refused());
-        }
+        let (sandbox, material) = self.material(work).await.ok_or_else(refused)?;
         let endpoint = self.runtime.endpoint(&sandbox).await.ok_or_else(refused)?;
         self.authority(work).await.ok_or_else(refused)?;
-        let current = self
-            .suggestions
-            .read_suggestions(&work.owner, &work.agent_id, work.scope)
-            .await
-            .map_err(|_| refused())?;
-        if current.status != SuggestionStatus::Running {
+        if !self.running(work).await {
             return Err(refused());
         }
         let mut generator = HttpSuggestionGenerator::new(
             &endpoint.endpoint.endpoint,
             &self.model,
-            material.value,
+            material.value.clone(),
             endpoint.authorization,
         )
         .ok_or_else(refused)?;
@@ -177,6 +185,16 @@ impl SuggestionGenerator for SuggestionWorker {
                     },
                 });
         }
-        generator.generate(work).await
+        let prepared = generator.prepare(work).await?;
+        let (_, current) = self.material(work).await.ok_or_else(refused)?;
+        if current.value != material.value || !self.running(work).await {
+            return Err(refused());
+        }
+        self.authority(work).await.ok_or_else(refused)?;
+        prepared.dispatch().await
     }
 }
+
+#[cfg(test)]
+#[path = "suggestion_worker_tests.rs"]
+mod tests;

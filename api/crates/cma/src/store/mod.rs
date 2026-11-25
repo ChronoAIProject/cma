@@ -25,6 +25,7 @@ mod agent_control_transaction;
 mod agent_conversation_store;
 mod agent_failure_pacing;
 mod agent_lifecycle_operations;
+pub(crate) use agent_lifecycle_operations::released::managed_lifecycle_release_lane;
 mod agent_log;
 mod agent_log_codec;
 mod agent_log_integrity;
@@ -55,6 +56,8 @@ mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
 pub(crate) mod stale_turns;
+pub(crate) mod transaction_barrier;
+pub(crate) mod turn_timeouts;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::adoption_probe;
 #[cfg(test)]
@@ -82,6 +85,7 @@ mod child_writer_claims;
 mod codex_subscriptions;
 mod contention;
 mod cooperative_budget;
+pub(crate) mod creation_outcomes;
 mod default_profiles;
 pub mod directory;
 mod durability;
@@ -92,8 +96,10 @@ pub(crate) mod legal_consents;
 mod media_uploads;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
+mod retained_consents;
 mod segment_response;
 mod transaction_scope;
+pub(crate) mod transaction_terminal;
 pub(crate) use segment_response::emit as emit_response_reads;
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
@@ -124,6 +130,7 @@ mod marketplace_mutations;
 mod marketplace_query;
 mod marketplace_support;
 mod marketplace_visibility;
+pub(crate) mod measured_capture;
 mod message_feedback;
 pub(crate) mod migrations;
 pub mod mongo;
@@ -200,6 +207,7 @@ mod settings_barrier;
 pub(crate) mod settings_defaults;
 mod shared_child_capacity;
 mod suggestions;
+pub(crate) mod task_audit;
 mod trigger_definitions;
 mod trigger_first_messages;
 mod warm_sandboxes;
@@ -225,11 +233,13 @@ pub use admission_control::MongoAdmissionControlStore;
 #[cfg(test)]
 pub(crate) use agent_access_tools::fixtures as agent_access_fixtures;
 pub(crate) use agent_access_tools::MongoAgentAccessToolSource;
+pub(crate) use agent_lifecycle_operations::canary_admission as runtime_canary;
+pub(crate) use agent_lifecycle_operations::canary_key;
 #[cfg(test)]
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
-    CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput, LifecycleLease,
-    MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
+    CanaryProfiles, CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput,
+    LifecycleLease, MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};
@@ -259,6 +269,7 @@ mod legacy_sandbox;
 pub(crate) mod runtime_routing;
 
 pub(crate) mod native_warm_pools;
+pub(crate) mod released_runtimes;
 
 // Measured reporting read models (#1332); independent of lifecycle writes.
 pub(crate) mod allocation_buckets;
@@ -266,3 +277,38 @@ pub(crate) mod sandbox_metric_bindings;
 pub(crate) mod sandbox_metric_rollups;
 pub(crate) mod sandbox_usage_rollups;
 pub(crate) mod usage_reports;
+
+#[cfg(test)]
+pub(crate) async fn open_pointer_fixture_sandbox_store(
+    database: &mongodb::Database,
+    pin: String,
+    released: std::sync::Arc<released_runtimes::StoreReleasedRuntime>,
+) -> Result<MongoSandboxStore, layer2_core::StoreError> {
+    let mut store = MongoSandboxStore::open(database.client(), database.name())
+        .await?
+        .with_managed_runtime_version(pin);
+    store.released_lanes = Some(released.lanes.clone());
+    Ok(store.with_released_runtime(released))
+}
+
+#[cfg(test)]
+pub(crate) async fn open_pointer_fixture_pool_store(
+    database: &mongodb::Database,
+    deployment: &str,
+) -> Result<native_warm_pools::MongoNativeWarmPools, layer2_core::StoreError> {
+    let mut store = native_warm_pools::MongoNativeWarmPools::open(database, deployment).await?;
+    store.released_lanes = Some(released_runtimes::MongoReleasedRuntimes::open(
+        database, deployment,
+    ));
+    Ok(store)
+}
+
+#[cfg(test)]
+pub(crate) async fn open_pointer_fixture_lifecycle_store(
+    database: &mongodb::Database,
+    released: &released_runtimes::StoreReleasedRuntime,
+) -> Result<MongoAgentLifecycleStore, layer2_core::StoreError> {
+    let mut store = MongoAgentLifecycleStore::open(database).await?;
+    store.released_lanes = Some(released.lanes.clone());
+    Ok(store)
+}

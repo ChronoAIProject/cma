@@ -5,11 +5,110 @@ use super::*;
 pub(crate) const GITHUB_SERVICE: &str = "api-github";
 const MAX_CHOICES: usize = 12;
 
+pub(crate) struct VerifiedGitHubConnection {
+    connection_id: String,
+    catalog_id: String,
+}
+
+impl VerifiedGitHubConnection {
+    pub(crate) fn id(&self) -> &str {
+        &self.connection_id
+    }
+
+    pub(crate) fn catalog_id(&self) -> &str {
+        &self.catalog_id
+    }
+}
+
 #[derive(Serialize)]
 pub(crate) struct GitHubConnections {
     manage_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     connections: Option<Vec<GitHubConnection>>,
+    #[serde(skip)]
+    binding: Binding,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GitHubRepositoryNeed {
+    PublicRepositoryWrite,
+    PrivateRepositoryRead,
+}
+
+impl GitHubRepositoryNeed {
+    fn required_scope(self) -> &'static str {
+        match self {
+            Self::PublicRepositoryWrite => "public_repo",
+            Self::PrivateRepositoryRead => "repo",
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum GitHubScopeCheck {
+    ScopeSatisfied {
+        connection_id: String,
+    },
+    InsufficientScope {
+        connection_id: String,
+        required_scope: &'static str,
+        manage_url: String,
+    },
+    MissingConnection,
+    VerificationUnavailable,
+}
+
+enum Binding {
+    Exact(String),
+    Missing,
+    Unverified,
+}
+
+impl GitHubConnections {
+    pub(crate) fn scope_check(&self, need: GitHubRepositoryNeed) -> GitHubScopeCheck {
+        let id = match &self.binding {
+            Binding::Exact(id) => id,
+            Binding::Missing => return GitHubScopeCheck::MissingConnection,
+            Binding::Unverified => return GitHubScopeCheck::VerificationUnavailable,
+        };
+        let Some(connection) = self
+            .connections
+            .as_ref()
+            .and_then(|connections| connections.iter().find(|connection| &connection.id == id))
+        else {
+            return GitHubScopeCheck::VerificationUnavailable;
+        };
+        let Some(scopes) = &connection.granted_scopes else {
+            return GitHubScopeCheck::VerificationUnavailable;
+        };
+        if !connection.active_oauth
+            || scopes.iter().any(|scope| {
+                scope.is_empty()
+                    || !scope.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'-')
+                    })
+            })
+        {
+            return GitHubScopeCheck::VerificationUnavailable;
+        }
+        let required = need.required_scope();
+        if scopes
+            .iter()
+            .any(|scope| scope == "repo" || scope == required)
+        {
+            GitHubScopeCheck::ScopeSatisfied {
+                connection_id: id.clone(),
+            }
+        } else {
+            GitHubScopeCheck::InsufficientScope {
+                connection_id: id.clone(),
+                required_scope: required,
+                manage_url: connection.manage_url.clone(),
+            }
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -18,6 +117,8 @@ struct GitHubConnection {
     label: String,
     granted_scopes: Option<Vec<String>>,
     manage_url: String,
+    #[serde(skip)]
+    active_oauth: bool,
 }
 
 #[derive(Deserialize)]
@@ -38,6 +139,10 @@ struct KeyDetail {
     catalog_service_id: Option<String>,
     label: String,
     granted_scopes: Option<Vec<String>>,
+    credential_type: Option<String>,
+    is_active: Option<bool>,
+    status: Option<String>,
+    connection_status: Option<String>,
 }
 
 impl NyxidServiceConnectionBroker {
@@ -56,16 +161,17 @@ impl NyxidServiceConnectionBroker {
             }
             _ => None,
         };
-        let connections = match connections {
-            Some(Ok(connections)) => Some(connections),
+        let (binding, connections) = match connections {
+            Some(Ok((binding, connections))) => (binding, Some(connections)),
             _ => {
                 tracing::debug!("Owner GitHub connection inventory could not be verified");
-                None
+                (Binding::Unverified, None)
             }
         };
         GitHubConnections {
             manage_url: manage_url.to_string(),
             connections,
+            binding,
         }
     }
 
@@ -73,29 +179,10 @@ impl NyxidServiceConnectionBroker {
         &self,
         credential: &SecretValue,
         deadline: Instant,
-    ) -> Result<Vec<GitHubConnection>, ServiceConnectionError> {
-        let catalog = async {
-            let response = self
-                .send(
-                    self.http
-                        .get(self.endpoint("/api/v1/services"))
-                        .bearer_auth(credential.expose()),
-                    false,
-                    Some(deadline),
-                )
-                .await?;
-            decode::<Catalog>(response).await
-        };
-        let (catalog, rows) =
-            tokio::try_join!(catalog, self.user_services(credential, Some(deadline)))?;
-        let mut github = catalog
-            .services
-            .iter()
-            .filter(|row| row.slug == GITHUB_SERVICE);
-        let catalog_id = &github.next().ok_or_else(malformed)?.id;
-        if !valid_provider_id(catalog_id) || github.next().is_some() {
-            return Err(malformed());
-        }
+    ) -> Result<(Binding, Vec<GitHubConnection>), ServiceConnectionError> {
+        let (catalog_id, rows) = self.github_source(credential, deadline).await?;
+        let catalog_id = &catalog_id;
+        let binding = default_binding(&rows, catalog_id);
         let choices = rows
             .iter()
             .filter(|row| row.is_allowed() && row.catalog_service_id.as_ref() == Some(catalog_id))
@@ -122,7 +209,103 @@ impl NyxidServiceConnectionBroker {
             .await;
         let mut connections = results.into_iter().collect::<Result<Vec<_>, _>>()?;
         connections.sort_by(|a, b| a.id.cmp(&b.id));
-        Ok(connections)
+        Ok((binding, connections))
+    }
+
+    async fn github_source(
+        &self,
+        credential: &SecretValue,
+        deadline: Instant,
+    ) -> Result<(String, Vec<UserServiceRow>), ServiceConnectionError> {
+        let catalog = async {
+            let response = self
+                .send(
+                    self.http
+                        .get(self.endpoint("/api/v1/services"))
+                        .bearer_auth(credential.expose()),
+                    false,
+                    Some(deadline),
+                )
+                .await?;
+            decode::<Catalog>(response).await
+        };
+        let (catalog, rows) =
+            tokio::try_join!(catalog, self.user_services(credential, Some(deadline)))?;
+        let mut github = catalog
+            .services
+            .into_iter()
+            .filter(|row| row.slug == GITHUB_SERVICE);
+        let catalog_id = github.next().ok_or_else(malformed)?.id;
+        if !valid_provider_id(&catalog_id) || github.next().is_some() {
+            return Err(malformed());
+        }
+        Ok((catalog_id, rows))
+    }
+
+    #[cfg(test)]
+    pub(in crate::trigger) async fn verify_github_repo_connection(
+        &self,
+        owner: &SubjectId,
+        connection_id: &str,
+    ) -> Result<VerifiedGitHubConnection, ServiceConnectionError> {
+        let deadline = Instant::now() + PROVIDER_HTTP_TIMEOUT;
+        timeout_at(deadline, async {
+            let credential = self.credential(owner).await?;
+            self.verify_github_repo_token(&credential, connection_id, deadline)
+                .await
+        })
+        .await
+        .map_err(|_| unavailable(PROVIDER_UNAVAILABLE))?
+    }
+
+    pub(super) async fn verify_github_repo_token(
+        &self,
+        credential: &SecretValue,
+        connection_id: &str,
+        deadline: Instant,
+    ) -> Result<VerifiedGitHubConnection, ServiceConnectionError> {
+        if !valid_browser_id(connection_id) {
+            return Err(ServiceConnectionError::Refused);
+        }
+        timeout_at(deadline, async {
+            let (catalog_id, rows) = self.github_source(credential, deadline).await?;
+            let row = exact_github_row(connection_id, &catalog_id, &rows)?;
+            let detail = self
+                .github_detail(connection_id, &row.slug, &catalog_id, credential, deadline)
+                .await?;
+            if !valid_browser_id(&catalog_id)
+                || !detail.active_oauth
+                || !detail
+                    .granted_scopes
+                    .is_some_and(|scopes| scopes.iter().any(|scope| scope == "repo"))
+            {
+                return Err(ServiceConnectionError::Refused);
+            }
+            let response = self
+                .send(
+                    self.http
+                        .get(self.endpoint(&format!("/api/v1/proxy/{catalog_id}/user")))
+                        .query(&[("_nyxid_via", connection_id)])
+                        .bearer_auth(credential.expose()),
+                    true,
+                    Some(deadline),
+                )
+                .await?;
+            let scopes = response
+                .headers()
+                .get("x-oauth-scopes")
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| unavailable("selected GitHub credential scope was not observed"))?;
+            if !scopes.split(',').any(|scope| scope.trim() == "repo") {
+                return Err(ServiceConnectionError::Refused);
+            }
+            Ok(VerifiedGitHubConnection {
+                connection_id: detail.id,
+                catalog_id,
+            })
+        })
+        .await
+        .map_err(|_| unavailable(PROVIDER_UNAVAILABLE))?
     }
 
     async fn github_detail(
@@ -164,7 +347,26 @@ impl NyxidServiceConnectionBroker {
             label: detail.label,
             granted_scopes: detail.granted_scopes,
             manage_url: manage_url.to_string(),
+            active_oauth: detail.is_active == Some(true)
+                && detail.credential_type.as_deref() == Some("oauth2")
+                && detail.status.as_deref() == Some("active")
+                && detail.connection_status.as_deref() == Some("active"),
         })
+    }
+}
+
+fn default_binding(rows: &[protocol::UserServiceRow], catalog_id: &str) -> Binding {
+    let matches = protocol::matching_services(&ServiceId::new(GITHUB_SERVICE), rows);
+    match matches.as_slice() {
+        [] => Binding::Missing,
+        [row] if row.is_allowed() && row.catalog_service_id.as_deref() == Some(catalog_id) => {
+            match row.is_active {
+                Some(true) => Binding::Exact(row.id.clone()),
+                Some(false) => Binding::Missing,
+                None => Binding::Unverified,
+            }
+        }
+        _ => Binding::Unverified,
     }
 }
 
@@ -174,4 +376,20 @@ fn valid_browser_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn exact_github_row<'a>(
+    connection_id: &str,
+    catalog_id: &str,
+    rows: &'a [UserServiceRow],
+) -> Result<&'a UserServiceRow, ServiceConnectionError> {
+    let mut exact = rows.iter().filter(|row| row.id == connection_id);
+    let row = exact.next().ok_or(ServiceConnectionError::Refused)?;
+    if exact.next().is_some()
+        || !row.is_usable()
+        || row.catalog_service_id.as_deref() != Some(catalog_id)
+    {
+        return Err(ServiceConnectionError::Refused);
+    }
+    Ok(row)
 }

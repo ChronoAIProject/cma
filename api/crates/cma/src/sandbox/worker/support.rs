@@ -197,6 +197,7 @@ async fn commit_advance(
     store
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision,
             sandbox: Box::new(sandbox),
             event_at,
@@ -237,6 +238,7 @@ pub(super) fn material_matches(
         && material.owner == sandbox.owner
         && material.source == sandbox.credential.source
         && material.matches_source()
+        && material.matches_connection(sandbox)
         && &material.authority == pending
 }
 

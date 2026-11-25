@@ -49,6 +49,8 @@ struct State {
     restarted: AtomicBool,
     missing_incarnation: AtomicBool,
     hold_response: AtomicBool,
+    retained_evidence: AtomicBool,
+    startup_policy: StdMutex<Option<bool>>,
     hold_next_pod_reply: AtomicBool,
     pod_reply_entered: tokio::sync::Notify,
     pod_reply_release: tokio::sync::Notify,
@@ -106,7 +108,7 @@ fn name_hash(name: &str) -> String {
     format!("{hash:08x}")
 }
 fn pods(state: &State, name: &str) -> Value {
-    json!({"apiVersion":"v1","kind":"PodList","metadata":{"resourceVersion":"8"},"items":[{
+    let mut pods = json!({"apiVersion":"v1","kind":"PodList","metadata":{"resourceVersion":"8"},"items":[{
         "metadata":{"name":format!("{name}-pod"),"namespace":"fixture","uid":if state.replaced.load(Ordering::SeqCst) {"replacement-pod"} else {"original-pod"},
             "labels":{"cma/control-plane":"fixture","agents.x-k8s.io/sandbox-name-hash":name_hash(name)},
             "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":name,
@@ -115,7 +117,15 @@ fn pods(state: &State, name: &str) -> Value {
         "containerStatuses":[{"name":"runtime","image":"runtime","imageID":"sha256:runtime","ready":true,
             "restartCount":if state.restarted.load(Ordering::SeqCst) {1} else {0},
             "containerID":if state.missing_incarnation.load(Ordering::SeqCst) {""} else if state.restarted.load(Ordering::SeqCst) {"containerd://replacement"} else {"containerd://original"},
-            "state":{"running":{}}}]}}]})
+            "state":{"running":{}}}]}}]});
+    if state.retained_evidence.load(Ordering::SeqCst) {
+        let pod = &mut pods["items"][0];
+        pod["spec"] = json!({"containers":[{"name":"runtime"}]});
+        let container = &mut pod["status"]["containerStatuses"][0];
+        container["imageID"] = json!(format!("containerd://sha256:{}", "c".repeat(64)));
+        container["state"]["running"]["startedAt"] = json!("2026-09-05T00:00:00Z");
+    }
+    pods
 }
 
 impl Fixture {
@@ -317,7 +327,11 @@ async fn api_request(
         let body = if let Some(name) =
             path.strip_prefix("/apis/agents.x-k8s.io/v1beta1/namespaces/fixture/sandboxes/")
         {
-            object(name)
+            let mut object = object(name);
+            if state.retained_evidence.load(Ordering::SeqCst) {
+                object["metadata"]["annotations"] = json!({"cma/runtime-generation":"1"});
+            }
+            object
         } else {
             assert!(path.starts_with("/api/v1/namespaces/fixture/pods?"));
             state.pod_reads.fetch_add(1, Ordering::SeqCst);
@@ -495,6 +509,9 @@ mod desktop_tests;
 
 #[path = "native_transport_cases.rs"]
 mod cases;
+
+#[path = "native_startup_policy_tests.rs"]
+mod startup_policy;
 
 #[path = "native_capacity_tests.rs"]
 mod capacity_tests;

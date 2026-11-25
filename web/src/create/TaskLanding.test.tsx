@@ -7,7 +7,6 @@ import { taskExperience } from '../test/taskExperience';
 import { TaskHome } from './TaskHome';
 import { taskDraftStorageKey } from './taskDraft';
 
-const preparing = 'Preparing a cloud computer for your Agent…';
 afterEach(() => {
   sessionStorage.clear();
   vi.restoreAllMocks();
@@ -133,10 +132,11 @@ it.each(['metaKey', 'ctrlKey'])(
     fireEvent.keyDown(input, { key: 'Enter', [modifier]: true });
     fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
-    expect(screen.getByText(preparing)).toHaveAttribute('role', 'status');
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('Checking the original request');
+    expect(screen.queryByRole('button', { name: 'Start task' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
     await act(async () => reject(new Error('Receipt uncertain')));
-    expect(screen.queryByText(preparing)).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Checking the original request');
     expect(screen.getByRole('button', { name: 'Recover original task' })).toBeEnabled();
   },
 );
@@ -151,19 +151,20 @@ it.each(['queued', 'running', 'failed', 'waiting_for_connection', 'succeeded'])(
     await ready();
     fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Prepare task' } });
     fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-    await screen.findByRole('region', { name: 'Agent provisioning progress' });
-    if (['queued', 'running'].includes(status)) {
-      expect(screen.getByText(preparing)).toBeVisible();
-      expect(screen.getAllByRole('status')).toHaveLength(1);
-    } else await waitFor(() => expect(screen.queryByText(preparing)).not.toBeInTheDocument());
-    if (status === 'failed')
-      expect(
-        screen.queryByText('Task progress and results appear in the conversation.'),
-      ).not.toBeInTheDocument();
-    else
-      expect(
-        screen.getByText('Task progress and results appear in the conversation.'),
-      ).toBeInTheDocument();
+    const expected =
+      status === 'failed'
+        ? 'Setup needs attention'
+        : status === 'waiting_for_connection'
+          ? 'Waiting for connection'
+          : status === 'succeeded'
+            ? 'Cloud computer ready'
+            : 'Preparing';
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(expected));
+    expect(screen.getByText('Request accepted')).toBeVisible();
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    fireEvent.click(screen.getByText('Setup details'));
+    expect(screen.getByRole('region', { name: 'Agent provisioning progress' })).toBeVisible();
   },
 );
 
@@ -322,8 +323,11 @@ it('keeps contextual task entry compact and describes the existing Sandbox truth
   fireEvent.keyDown(document, { key: 'Escape' });
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Use this workspace' } });
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  expect(await screen.findByText('Preparing your Agent…')).toHaveAttribute('role', 'status');
-  expect(screen.queryByText(preparing)).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Preparing'));
+  expect(screen.getByRole('region', { name: 'Original request' })).toHaveTextContent(
+    'Use this workspace',
+  );
+  expect(screen.getByText('Acceptance time unavailable')).toBeVisible();
 });
 
 it.each([

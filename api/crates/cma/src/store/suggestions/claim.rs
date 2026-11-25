@@ -1,6 +1,7 @@
 //! Claim a pending suggestion before model dispatch using known-aborted retries.
 use super::*;
 use crate::store::sandbox_mongo::TRANSACTION_ATTEMPTS;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use context::ContextError;
 
 pub(super) async fn acquire(
@@ -35,16 +36,16 @@ pub(super) async fn acquire(
         let (work, claimed) = match apply(store, &filter, now_ms, &mut selected, &mut session).await
         {
             Ok(None) => {
-                session.abort_transaction().await.map_err(unavailable)?;
+                session.abort_guarded().await.map_err(unavailable)?;
                 return Ok(None);
             }
             Ok(Some(updated)) => updated,
             Err(ContextError::Driver(error)) if confirmed_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 continue;
             }
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error.into_read_error());
             }
         };

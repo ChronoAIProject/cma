@@ -184,8 +184,9 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     with timings.stage("verify"):
         require(checksum(archive) == scanned, "Scanned archive changed during publication")
         diagnostics.mark("registry_verify")
-        remote = registry.manifest(repository, identity["version"])
-        require(remote is not None and remote[0] == digest and registry.exists(repository, digest),
+        # The copy just landed; read it back with the settle window, not the first edge answer.
+        remote = registry.manifest(repository, identity["version"], settle=True)
+        require(remote is not None and remote[0] == digest and registry.exists(repository, digest, settle=True),
                 "Registry digest differs from the scanned archive")
     # A started build ignores a successor's pending reservation, but it cannot
     # hand a receipt to finalization after a higher final has landed.

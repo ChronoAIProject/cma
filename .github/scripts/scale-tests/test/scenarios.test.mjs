@@ -46,6 +46,28 @@ test('fault recovery counts injection time and requires just-renewed authority p
   await assert.rejects(suddenLoss(unrelated, 'am_command', config, fakeTime()), /original_fault_command_missing/);
 });
 
+test('a hung injection or recovery read expires and aborts the driver before cleanup', async () => {
+  for (const operation of ['killOwner', 'observeRecovery']) {
+    const driver = fakeDriver();
+    let signal;
+    let reconciled = false;
+    driver[operation] = async (_work, options) => {
+      signal = options.signal;
+      return new Promise(() => {});
+    };
+    driver.cleanup = async () => {
+      assert.equal(signal?.aborted, true);
+      assert.equal(signal.reason.code, 'recovery_deadline_exceeded');
+      driver.cleaned++;
+    };
+    driver.reconcile = async () => { reconciled = true; };
+    await assert.rejects(suddenLoss(driver, 'am_command', { ...config, recoveryMs: 25 }, fakeTime()),
+      { code: 'recovery_deadline_exceeded' });
+    assert.equal(reconciled, false);
+    assert.equal(driver.cleaned, 1);
+  }
+});
+
 test('autoscale preserves canaries during stress removal and requires workload evidence', async () => {
   for (const users of [2, 100]) {
     const driver = fakeDriver();
@@ -64,6 +86,29 @@ test('autoscale preserves canaries during stress removal and requires workload e
     assert.throws(() => checkSnapshot({ ...snapshot(), ...patch }, 100));
   }
   assert.throws(() => checkSnapshot({ ...snapshot(), am: { ...snapshot().am, metricsAvailable: false } }, 100));
+});
+
+test('a hung autoscale observation aborts before stress and cohort cleanup', async () => {
+  for (const stalledSample of [1, 2, 3]) {
+    const driver = fakeDriver();
+    const original = driver.snapshot;
+    let sampled = 0;
+    let signal;
+    driver.snapshot = async (cohort, options) => {
+      if (++sampled !== stalledSample) return original(cohort, options);
+      signal = options.signal;
+      return new Promise(() => {});
+    };
+    driver.cleanup = async () => {
+      assert.equal(signal?.aborted, true);
+      assert.equal(signal.reason.code, 'scaling_observation_deadline_exceeded');
+      driver.cleaned++;
+    };
+    await assert.rejects(autoscale(driver, { ...config, scaleTimeoutMs: 25 }, { time: fakeTime() }),
+      { code: 'scaling_observation_deadline_exceeded' });
+    assert.equal(driver.cleaned, 1);
+    assert.equal(driver.stopped, stalledSample === 1 ? 0 : 1);
+  }
 });
 
 test('suite reports failures, aborts later gates and never turns missing fixtures into a GO', async () => {

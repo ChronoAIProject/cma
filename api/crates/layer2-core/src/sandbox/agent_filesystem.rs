@@ -27,6 +27,8 @@ mod read;
 mod read_check;
 mod scope;
 use scope::{public_path, require_home_mutation};
+mod write_target;
+pub use write_target::FileWriteTarget;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AgentFileError {
@@ -190,6 +192,7 @@ impl AgentFileService {
         expected_sha256: Option<String>,
         content_base64: String,
         directory: bool,
+        write_target: Option<&FileWriteTarget>,
     ) -> Result<AgentFileWriteReceipt, AgentFileError> {
         let authorized = self
             .authorize(
@@ -203,6 +206,9 @@ impl AgentFileService {
                 },
             )
             .await?;
+        if let Some(target) = write_target {
+            target.check(self, context, agent_id, &authorized).await?;
+        }
         let request = runtime_request(
             &authorized.snapshot.lineage.sandbox,
             agent_id,
@@ -301,7 +307,8 @@ impl AgentFileService {
         id: &AgentId,
         capability: ResourceCapability,
         purpose: AccessPurpose,
-    ) -> Result<(), AgentFileError> {
+        capture_write_target: bool,
+    ) -> Result<Option<FileWriteTarget>, AgentFileError> {
         let authorized = self
             .authorize(
                 &context.caller,
@@ -312,7 +319,8 @@ impl AgentFileService {
                 purpose,
             )
             .await?;
-        self.access
+        let current = self
+            .access
             .current_read_snapshot(
                 &authorized,
                 &ResourceTarget::Agent {
@@ -321,7 +329,9 @@ impl AgentFileService {
                 capability,
             )
             .await?;
-        Ok(())
+        Ok(capture_write_target
+            .then(|| FileWriteTarget::capture(context, authorized, &current.lineage.sandbox))
+            .flatten())
     }
 
     async fn authorize(

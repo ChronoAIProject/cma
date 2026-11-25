@@ -1,4 +1,5 @@
 //! Shared owner accounting; the immutable baseline is installed separately.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::document_artifacts::*;
 use mongodb::{
     bson::{doc, Document},
@@ -68,9 +69,12 @@ impl MongoDocumentQuotaStore {
                 .max_commit_time(IO)
                 .await
                 .map_err(unavailable)?;
-            let outcome = self.reserve_transaction(source, &mut session).await;
+            let outcome = match crate::store::transaction_barrier::open(&mut session).await {
+                Ok(()) => self.reserve_transaction(source, &mut session).await,
+                Err(error) => Err(QuotaError::Driver(error)),
+            };
             match outcome {
-                Ok(()) => match session.commit_transaction().await {
+                Ok(()) => match session.commit_guarded().await {
                     Ok(()) => return Ok(()),
                     Err(error)
                         if retryable(&error)
@@ -78,16 +82,16 @@ impl MongoDocumentQuotaStore {
                     Err(_) => return Err(DocumentError::Unavailable),
                 },
                 Err(QuotaError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(QuotaError::Driver(error)) if retryable(&error) => {}
                 Err(_) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(DocumentError::Unavailable);
                 }
             }
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             tokio::time::sleep(Duration::from_millis((attempt + 1).min(16))).await;
         }
         Err(DocumentError::Unavailable)

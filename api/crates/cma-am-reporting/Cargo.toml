@@ -1,0 +1,19 @@
+[package]
+name = "cma-am-reporting"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+layer2-core = { workspace = true }
+mongodb = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
