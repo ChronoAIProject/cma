@@ -247,19 +247,28 @@ impl InlineAgentLifecycle {
                     })
                     .flatten();
                 let message = error.to_string();
-                if let (Some(fence), AgentLifecycleProvisioningError::SandboxLimitReached { .. }) =
-                    (&creation_fence, &error)
-                {
-                    if self
-                        .operations
-                        .fail_fenced_creation(
-                            &caller.subject,
-                            &lease,
-                            fence,
-                            &message,
-                            failure.clone(),
-                        )
-                        .await?
+                if let Some(fence) = &creation_fence {
+                    use layer1_public::rest::creation_outcomes::RefusalCode;
+                    let quota = matches!(
+                        error,
+                        AgentLifecycleProvisioningError::SandboxLimitReached { .. }
+                    );
+                    if (quota || self.operations.creation_terminal_settlement_enabled())
+                        && self
+                            .operations
+                            .fail_fenced_creation(
+                                &caller.subject,
+                                &lease,
+                                fence,
+                                &message,
+                                failure.clone(),
+                                if quota {
+                                    RefusalCode::SandboxLimitReached
+                                } else {
+                                    RefusalCode::CreationFailed
+                                },
+                            )
+                            .await?
                     {
                         return Ok(());
                     }
