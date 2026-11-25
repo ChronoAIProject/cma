@@ -89,7 +89,7 @@ impl CaptureStore {
             self.retain_manifest(session, publication).await?;
         }
         if held {
-            let key = format!("hold/{}/{:016x}", stream.id, input.minute);
+            let key = keys::hold(&stream.id, input.minute);
             self.collection(INVENTORY).replace_one(doc! {"_id":keys::id(&key)}, doc! {
                 "_id":keys::id(&key),"document_schema_version":1_i64,"stream_id":&stream.id,
                 "minute":number(input.minute).map_err(Domain)?,"evidence_id":&publication.digest,"reason":&publication.manifest.hold,
@@ -205,9 +205,7 @@ impl CaptureStore {
         }
         if !held {
             self.collection(INVENTORY)
-                .delete_one(
-                    doc! {"_id":keys::id(&format!("hold/{}/{:016x}",stream.id,input.minute))},
-                )
+                .delete_one(doc! {"_id":keys::id(&keys::hold(&stream.id,input.minute))})
                 .session(&mut *session)
                 .await
                 .map_err(Driver)?;

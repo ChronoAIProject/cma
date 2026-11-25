@@ -45,7 +45,7 @@ pub(super) async fn assert_hold(f: &Fixture, reason: &str, before: &FactHead, ou
         .store
         .collection(INVENTORY)
         .find_one(doc! {
-            "_id":keys::id(&format!("hold/{}/{:016x}", stream(f).await.id, f.minute))
+            "_id":keys::id(&keys::hold(&stream(f).await.id, f.minute))
         })
         .await
         .unwrap()

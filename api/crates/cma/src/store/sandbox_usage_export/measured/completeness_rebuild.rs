@@ -120,6 +120,26 @@ impl CaptureStore {
         if head != queued && (head.fact_id != queued.fact_id || head.revision <= queued.revision) {
             return Err(Domain(corrupt()));
         }
+        // A retained fact survives an unsuccessful refresh. Its original
+        // manifest cannot clear a newer authoritative minute hold.
+        if self
+            .collection(INVENTORY)
+            .find_one(doc! {"_id":keys::id(&keys::hold(&stream.id, minute))})
+            .session(&mut *session)
+            .await
+            .map_err(Driver)?
+            .is_some()
+        {
+            return self
+                .record_measured_completeness(
+                    session,
+                    stream,
+                    minute,
+                    &head,
+                    MinuteOutcome::Retry("refresh_hold_pending"),
+                )
+                .await;
+        }
         let row = self
             .collection(EVIDENCE)
             .find_one(doc! {"_id":format!("measured:{}:{}",stream.id,head.evidence_id)})

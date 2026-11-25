@@ -1,9 +1,7 @@
 use super::*;
 use crate::sandbox_usage_export::completeness_contract::{Basis, Statement};
 
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
-async fn completeness_retained_repair_publishes_successor_outside_replay_horizon() {
+async fn completeness_fixture() -> Fixture {
     let mut f = Fixture::new().await;
     let mut config = f.store.config.clone();
     config.completeness_enabled = true;
@@ -36,10 +34,17 @@ async fn completeness_retained_repair_publishes_successor_outside_replay_horizon
         .project_one(source_row.get_str("_id").unwrap(), usage_reports::now())
         .await
         .unwrap();
+    f.bind().await;
+    f
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn completeness_retained_repair_publishes_successor_outside_replay_horizon() {
+    let f = completeness_fixture().await;
     assert!(f.store.backfill_completeness(&f.stream.id).await.unwrap());
     assert!(f.store.backfill_completeness(&f.stream.id).await.unwrap());
 
-    f.bind().await;
     let first = f.lease().await;
     let original = f.input(&first).await.freeze(f.samples(0.0), true).unwrap();
     f.store.publish_measured(&first, &original).await.unwrap();
@@ -131,5 +136,120 @@ async fn completeness_retained_repair_publishes_successor_outside_replay_horizon
     }
     observed.sort_unstable();
     assert_eq!(observed, vec![1, 2, 3]);
+    f.db.drop().await.unwrap();
+}
+
+async fn current_statement(f: &Fixture) -> Option<Statement> {
+    f.store
+        .retained_statement(
+            &mut f.store.client.start_session().await.unwrap(),
+            &f.stream.id,
+            f.minute,
+            Basis::Measured,
+        )
+        .await
+        .unwrap_or_else(|_| panic!("read measured completeness statement"))
+}
+
+async fn rebuild_due(f: &Fixture) {
+    let updated = f
+        .store
+        .collection(INVENTORY)
+        .update_one(
+            doc! {
+                "_id.usage_completeness_rebuild_v1": {"$exists":true},
+                "source": &f.stream.id,
+                "minute": f.minute as i64,
+            },
+            doc! {"$set":{"due_at":mongodb::bson::DateTime::from_millis(0)}},
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.matched_count, 1);
+    f.store.rebuild_measured_completeness().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn completeness_pending_rebuild_respects_current_refresh_hold() {
+    use super::refresh::{head, retry};
+    use super::refresh_source::{Response, Source};
+    use crate::store::sandbox_usage_export::completeness::MinuteOutcome;
+
+    let f = completeness_fixture().await;
+    let source = Source::new(&f).await;
+    assert!(source.run(&f).await);
+    let original = head(&f).await;
+    assert!(current_statement(&f).await.is_none());
+
+    retry(&f).await;
+    source.set(Response::TotalTimeout);
+    assert!(!source.run(&f).await);
+    assert_eq!(head(&f).await, original);
+
+    assert!(f.store.backfill_completeness(&f.stream.id).await.unwrap());
+    rebuild_due(&f).await;
+    assert!(current_statement(&f).await.is_none());
+    assert_eq!(head(&f).await, original);
+
+    // A fresh complete refresh can clear the authoritative hold without
+    // changing the retained fact head.
+    retry(&f).await;
+    source.set(Response::Values(60.0));
+    assert!(!source.run(&f).await);
+    let first = current_statement(&f).await.unwrap();
+    assert!(first.producer_hold.is_none());
+    assert_eq!(head(&f).await, original);
+
+    // Model a queued rebuild for a retained fact which already has a
+    // published statement. A same-mapping-revision refresh can still hold it.
+    let lease = f.lease().await;
+    f.store
+        .record_measured_completeness(
+            &mut f.store.client.start_session().await.unwrap(),
+            &lease.stream,
+            f.minute,
+            &original,
+            MinuteOutcome::Retry("allocated_statement_pending"),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("queue retained completeness rebuild"));
+    f.store.release_measured(&lease).await.unwrap();
+
+    retry(&f).await;
+    source.set(Response::MemoryTimeout);
+    assert!(!source.run(&f).await);
+    let held = current_statement(&f).await.unwrap();
+    assert_eq!(held.revision.0, first.revision.0 + 1);
+    assert_eq!(
+        held.measured_mapping_revision,
+        first.measured_mapping_revision
+    );
+    assert_eq!(
+        held.producer_hold.as_deref(),
+        Some("refresh_source_unavailable")
+    );
+
+    rebuild_due(&f).await;
+    let after_rebuild = current_statement(&f).await.unwrap();
+    assert_eq!(after_rebuild.revision, held.revision);
+    assert_eq!(after_rebuild.producer_hold, held.producer_hold);
+    assert_eq!(head(&f).await, original);
+
+    retry(&f).await;
+    source.set(Response::Values(60.0));
+    assert!(!source.run(&f).await);
+    let recovered = current_statement(&f).await.unwrap();
+    assert_eq!(recovered.revision.0, held.revision.0 + 1);
+    assert!(recovered.producer_hold.is_none());
+    assert_eq!(head(&f).await, original);
+    assert_eq!(
+        f.store
+            .collection(INVENTORY)
+            .count_documents(doc! {"_id.usage_completeness_rebuild_v1":{"$exists":true}})
+            .await
+            .unwrap(),
+        0,
+    );
     f.db.drop().await.unwrap();
 }
