@@ -97,3 +97,20 @@ async fn completed_and_panicking_tasks_release_capacity() {
     assert!(scope.spawn(async {}));
     scope.drain(Duration::from_secs(1)).await.unwrap();
 }
+
+#[tokio::test]
+async fn completing_drain_joins_work_after_closing_admission() {
+    let scope = TaskScope::completing(1);
+    let (release, waiting) = tokio::sync::oneshot::channel();
+    let (acknowledge, completed) = tokio::sync::oneshot::channel();
+    assert!(scope.spawn(async move {
+        waiting.await.unwrap();
+        acknowledge.send(()).unwrap();
+    }));
+
+    scope.close();
+    assert!(!scope.spawn(async {}));
+    release.send(()).unwrap();
+    scope.drain(Duration::from_secs(1)).await.unwrap();
+    completed.await.unwrap();
+}

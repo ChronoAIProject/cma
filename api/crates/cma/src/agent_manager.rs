@@ -34,6 +34,7 @@ pub(crate) struct AgentManager {
     handoffs: Mutex<BTreeMap<AgentId, Instant>>,
     contained: containment::ContainedHandoffs,
     lifecycle: OnceLock<crate::agent_lifecycle::LifecycleDrain>,
+    retirement_capture: OnceLock<crate::agent_lifecycle::LifecycleDrain>,
 }
 
 impl AgentManager {
@@ -79,6 +80,7 @@ impl AgentManager {
             handoffs: Mutex::new(BTreeMap::new()),
             contained: Default::default(),
             lifecycle: OnceLock::new(),
+            retirement_capture: OnceLock::new(),
         });
         Ok(manager)
     }

@@ -101,6 +101,7 @@ pub(super) fn lifecycle_config(
         ownership,
         runtime_loss_bounded_proof_enabled: config.features.runtime_loss_bounded_proof_enabled,
         native_retirement_finality_enabled: config.features.native_retirement_finality_enabled,
+        native_retirement_capture_enabled: config.features.native_retirement_capture_enabled,
         parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
         startup_sibling_hold_enabled: config.features.startup_sibling_hold_enabled,
         retry_single_marker_enabled: config.features.retry_single_marker_enabled,

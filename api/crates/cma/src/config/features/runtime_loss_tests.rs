@@ -68,3 +68,17 @@ fn repeat_reopen_admission_is_independent_and_defaults_off() {
     }
     assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "yes".into()))).is_err());
 }
+
+#[test]
+fn native_retirement_capture_is_independent_and_defaults_off() {
+    const KEY: &str = "CHRONO_NATIVE_RETIREMENT_CAPTURE_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.native_retirement_capture_enabled, expected);
+        assert!(!flags.native_retirement_finality_enabled);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "yes".into()))).is_err());
+}

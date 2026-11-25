@@ -16,7 +16,6 @@ pub(crate) struct CaptureDelivery {
 }
 
 impl CaptureDelivery {
-    #[allow(dead_code, reason = "capture configuration is wired separately")]
     pub(crate) fn new(store: Arc<MongoSandboxStore>, capacity: usize) -> Self {
         Self {
             store,

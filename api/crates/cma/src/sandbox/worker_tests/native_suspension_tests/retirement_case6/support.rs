@@ -101,7 +101,7 @@ pub(super) fn parent_worker_with_capture(
     )
     .with_clock(Arc::new(move || *clock.lock().unwrap()));
     if let Some(capture) = capture {
-        service = service.with_capture(capture);
+        service = service.with_capture(capture, None);
     }
     parent_worker_inner(f, Some(Arc::new(service)))
 }

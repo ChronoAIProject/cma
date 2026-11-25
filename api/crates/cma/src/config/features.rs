@@ -45,6 +45,7 @@ pub(crate) struct FeatureFlags {
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
+    pub native_retirement_capture_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub command_cancel_wake: bool,
     pub ownership_cleanup_pacing: bool,
@@ -200,6 +201,10 @@ impl FeatureFlags {
             native_retirement_finality_enabled: flag(
                 lookup,
                 "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
+            )?,
+            native_retirement_capture_enabled: flag(
+                lookup,
+                "CHRONO_NATIVE_RETIREMENT_CAPTURE_ENABLED",
             )?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
             command_cancel_wake: flag(lookup, "CHRONO_COMMAND_CANCEL_WAKE_ENABLED")?,
@@ -419,22 +424,17 @@ mod sandbox_batch_tests;
 mod response_tests;
 
 #[cfg(test)]
-mod paged_event_tests;
-
+mod live_buffer_tests;
 #[cfg(test)]
-mod transcript_tests;
-
+mod paged_event_tests;
 #[cfg(test)]
 mod permission_bound_tests;
-
 #[cfg(test)]
 mod read_frame_tests;
-
-#[cfg(test)]
-mod live_buffer_tests;
-
 #[cfg(test)]
 mod relay_tests;
+#[cfg(test)]
+mod transcript_tests;
 
 #[cfg(test)]
 mod rollout_tail_tests;

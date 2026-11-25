@@ -41,6 +41,7 @@ pub(crate) struct NativeRetirementFinalizer {
     records: Arc<dyn RetirementRecords>,
     admit: bool,
     capture: Option<Arc<dyn RetirementCaptureConsumer>>,
+    capture_admission: Option<crate::agent_lifecycle::LifecycleDrain>,
 }
 
 impl NativeRetirementFinalizer {
@@ -61,16 +62,18 @@ impl NativeRetirementFinalizer {
             records,
             admit,
             capture: None,
+            capture_admission: None,
             clock: Arc::new(SystemTime::now),
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "capture admission is wired by the rollout slice")
-    )]
-    pub(crate) fn with_capture(mut self, capture: Arc<dyn RetirementCaptureConsumer>) -> Self {
+    pub(crate) fn with_capture(
+        mut self,
+        capture: Arc<dyn RetirementCaptureConsumer>,
+        admission: Option<crate::agent_lifecycle::LifecycleDrain>,
+    ) -> Self {
         self.capture = Some(capture);
+        self.capture_admission = admission;
         self
     }
 
@@ -246,7 +249,11 @@ impl NativeRetirementFinalizer {
     }
 
     pub(super) async fn offer_capture(&self, parent: &Sandbox) -> Result<(), SandboxStoreError> {
-        let Some(capture) = self.capture.as_ref().filter(|_| self.admit) else {
+        let Some(capture) = self
+            .capture
+            .as_ref()
+            .filter(|_| self.capture_admission.is_some())
+        else {
             return Ok(());
         };
         let children = super::live_agent_stopper::retirement_agents(self.store.as_ref(), parent)
@@ -260,6 +267,13 @@ impl NativeRetirementFinalizer {
                     .runtime_generation
                     .is_some_and(|generation| generation > 0)
         }) {
+            if self
+                .capture_admission
+                .as_ref()
+                .is_some_and(|admission| admission.is_closed())
+            {
+                break;
+            }
             capture.offer(parent, child).await?;
         }
         Ok(())
@@ -347,36 +361,35 @@ impl NativeRetirementFinalizer {
         provider: &dyn RuntimeRetirement,
         request: &RuntimeAdoptionRequest,
     ) -> Result<Option<RetirementAction>, SandboxStoreError> {
-        let legacy = if self.capture.is_none() {
-            let Some(observed) = self
-                .records
+        let legacy = if self.capture_admission.is_none() {
+            self.records
                 .observation(&sandbox.id)
                 .await?
                 .filter(|(observation, _)| observation.matches(sandbox))
-            else {
-                return Ok(None);
-            };
-            Some(observed)
         } else {
             None
         };
+        let capture = self.capture.as_ref();
+        if capture.is_none() && legacy.is_none() {
+            return Ok(None);
+        }
         let children = super::live_agent_stopper::retirement_agents(self.store.as_ref(), sandbox)
             .await
             .map_err(|_| SandboxStoreError::Conflict)?;
-        let captured = match &self.capture {
-            Some(capture) => {
-                let Some(observed) = capture.observed(sandbox, &children).await? else {
-                    return Ok(None);
-                };
-                Some((capture, observed))
-            }
+        let captured = match capture {
+            Some(capture) => capture
+                .observed(sandbox, &children)
+                .await?
+                .map(|observed| (capture, observed)),
             None => None,
         };
-        let (observation, fences) = captured
+        let Some((observation, fences)) = captured
             .as_ref()
             .map(|(_, observed)| observed.observation())
             .or(legacy)
-            .ok_or(SandboxStoreError::Conflict)?;
+        else {
+            return Ok(None);
+        };
         let action = RetirementAction::new(sandbox, observation, &children, fences)?;
         if probe(provider, request, &action).await != Some(true) {
             return Ok(None);

@@ -44,7 +44,7 @@ impl TaskScope {
         }))
     }
 
-    pub(super) fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         self.0.tasks.lock().unwrap().is_none()
     }
 

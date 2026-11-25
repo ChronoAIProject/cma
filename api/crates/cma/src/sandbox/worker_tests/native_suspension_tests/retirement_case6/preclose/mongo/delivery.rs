@@ -58,3 +58,32 @@ async fn retirement_capture_delivery_is_bounded_and_survives_authority_cancellat
     server.abort();
     f.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn retirement_capture_survives_ordinary_parent_save_and_lease_renewal() {
+    let f = Fixture::new().await;
+    f.store
+        .offer_retirement_capture(&f.parent, &f.child.id)
+        .await
+        .unwrap();
+    let offer = f.parent_row().await.get_document(CAPTURE).unwrap().clone();
+    let now = SystemTime::now();
+    assert!(f
+        .store
+        .renew_sandbox_work(
+            &f.parent,
+            &rfc3339_at(now),
+            &rfc3339_at(now + Duration::from_secs(240)),
+        )
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(f.parent_row().await.get_document(CAPTURE).unwrap(), &offer);
+    let mut saved = f.store.get_sandbox(&f.parent.id).await.unwrap().unwrap();
+    let previous = saved.revision;
+    saved.revision += 1;
+    f.store.save_sandbox(previous, saved).await.unwrap();
+    assert_eq!(f.parent_row().await.get_document(CAPTURE).unwrap(), &offer);
+    f.cleanup().await;
+}
