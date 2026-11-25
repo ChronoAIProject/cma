@@ -16,7 +16,7 @@ tokio::task_local! {
 }
 
 pub(super) async fn observe<F: Future>(agent: &Agent, sandbox: &Sandbox, read: F) -> F::Output {
-    if let (Ok(Some(attempt)), Some(binding)) = (ATTEMPT.try_with(Arc::clone), &sandbox.runtime) {
+    if let (Ok(Some(attempt)), Some(binding)) = (ATTEMPT.try_with(Clone::clone), &sandbox.runtime) {
         let claimed = agent.clone();
         let binding = binding.clone();
         return layer3_adapter::owner_protocol::observe_inspection_failure(

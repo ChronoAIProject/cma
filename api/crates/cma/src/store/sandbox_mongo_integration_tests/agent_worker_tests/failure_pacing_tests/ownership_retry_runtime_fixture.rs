@@ -77,6 +77,7 @@ pub(super) struct Counts {
     revoke: AtomicUsize,
     pub(super) cleanup: AtomicBool,
     restarted: AtomicBool,
+    repaired: AtomicBool,
     pub(super) replace_after_revocation: AtomicBool,
 }
 
@@ -161,6 +162,17 @@ impl Runtime {
     pub(super) fn assert_counts(&self, probes: usize) {
         self.assert_counts_with_confirmation(probes, 0);
     }
+    pub(super) fn repair(&self) {
+        self.counts.repaired.store(true, Ordering::SeqCst);
+    }
+
+    pub(super) fn assert_repaired_probe(&self) {
+        assert_eq!(self.counts.challenge.load(Ordering::SeqCst), 2);
+        assert_eq!(self.counts.confirm.load(Ordering::SeqCst), 1);
+        assert_eq!(self.counts.control.load(Ordering::SeqCst), 1);
+        assert_eq!(self.counts.acp.load(Ordering::SeqCst), 0);
+    }
+
     pub(super) fn revocations(&self) -> usize {
         self.counts.revoke.load(Ordering::SeqCst)
     }
@@ -281,6 +293,10 @@ async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: 
                 200,
                 json!({"protocol":2, "nonce":"malformed", "valid_for_ms":10000}),
             ),
+            "auth" if counts.repaired.load(Ordering::SeqCst) => (
+                200,
+                json!({"protocol":1, "nonce":uuid::Uuid::new_v4(), "valid_for_ms":10000}),
+            ),
             "auth" => (403, json!({})),
             "confirm_ambiguous" | "receiverless_confirm_ambiguous" => (
                 200,
@@ -308,15 +324,28 @@ async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: 
             json!({"protocol":1, "owner":serde_json::from_slice::<Value>(&body).unwrap()}),
         )
     } else {
+        let repaired = counts.repaired.load(Ordering::SeqCst);
         if path.contains("/confirm ") {
             counts.confirm.fetch_add(1, Ordering::SeqCst);
-            return;
+            if !repaired {
+                return;
+            }
+            let request = serde_json::from_slice::<Value>(&body).unwrap();
+            (200, json!({"protocol": 1, "owner": request["owner"]}))
         } else if path.contains("/runtime/control ") {
             counts.control.fetch_add(1, Ordering::SeqCst);
+            if repaired {
+                (
+                    200,
+                    json!(l3::wire::ResponseFrame::Resources(Default::default())),
+                )
+            } else {
+                (500, json!({}))
+            }
         } else {
             counts.acp.fetch_add(1, Ordering::SeqCst);
+            (500, json!({}))
         }
-        (500, json!({}))
     };
     let mut response_bytes = vec![1];
     response_bytes.extend_from_slice(response(code, &reply.to_string()).as_bytes());

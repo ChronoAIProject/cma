@@ -11,7 +11,9 @@ use layer2_core::AgentId;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::ClientSession;
 
+mod claim;
 pub(super) mod recovery;
+pub(super) use claim::{for_claim, ClaimPark};
 pub(crate) use recovery::command;
 
 pub(super) const FIELD: &str = "runtime_inspection_park_v1";
@@ -42,6 +44,8 @@ pub(super) fn filter(store: &MongoSandboxStore, matching: bool) -> Vec<Document>
         {"$eq": [{"$type": format!("{marker}.id")}, "string"]},
         {"$eq": [format!("{marker}.step"), "$record.work.step"]},
         {"$eq": [format!("{marker}.fence"), "$record.work.next_fence"]},
+        {"$eq": [format!("{marker}.ready_at"), "$record.work.ready_at"]},
+        {"$eq": [format!("{marker}.attempts"), "$record.work.attempts"]},
         {"$ne": [format!("{marker}.retry"), true]},
         {"$or": [
             {"$ne": [{"$type": format!("{marker}.probe_at")}, "date"]},

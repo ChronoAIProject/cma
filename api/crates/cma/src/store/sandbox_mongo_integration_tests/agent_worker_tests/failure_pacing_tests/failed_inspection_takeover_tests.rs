@@ -5,9 +5,10 @@ use layer2_core::agent_ownership::OwnershipError;
 #[ignore = "requires a disposable MongoDB replica set"]
 async fn failed_inspection_parks_across_owner_takeover() {
     tokio::try_join!(
-        observe_takeover(AgentWorkStep::CloseProcess, "auth"),
-        observe_takeover(AgentWorkStep::PublishConnection, "auth"),
-        observe_takeover(AgentWorkStep::PublishConnection, "confirm_ambiguous"),
+        observe_takeover(AgentWorkStep::CloseProcess, "auth", false),
+        observe_takeover(AgentWorkStep::PublishConnection, "auth", false),
+        observe_takeover(AgentWorkStep::PublishConnection, "confirm_ambiguous", false),
+        observe_takeover(AgentWorkStep::CloseProcess, "auth", true),
     )
     .unwrap();
 }
@@ -15,6 +16,7 @@ async fn failed_inspection_parks_across_owner_takeover() {
 async fn observe_takeover(
     step: AgentWorkStep,
     refusal: &'static str,
+    interrupt_retry: bool,
 ) -> Result<(), OwnershipError> {
     let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
     let client = Client::with_uri_str(uri).await.unwrap();
@@ -160,6 +162,98 @@ async fn observe_takeover(
     );
     assert_eq!(second.get_agent(&agent.id).await.unwrap().unwrap(), parked);
 
+    if interrupt_retry {
+        use crate::store::child_writer_claims::{persist, ChildWriterClaim};
+        let second_authority = second_manager.acquire(&agent.id).await?.unwrap();
+        let now = SystemTime::now();
+        let ready = layer2_core::rfc3339_at(now);
+        let expires = layer2_core::rfc3339_at(now + Duration::from_secs(18 * 60));
+        let mut claim = parked.clone();
+        claim.work.lease = None;
+        claim
+            .work
+            .claim("queued".into(), &ready, expires.clone())
+            .unwrap();
+        claim.revision += 1;
+        assert!(
+            !second_authority
+                .run(persist(
+                    &second,
+                    parked.revision,
+                    ChildWriterClaim::Agent(Box::new(claim))
+                ))
+                .await?
+                .unwrap(),
+            "claim transaction itself refuses a parked step"
+        );
+        assert!(crate::store::agent_inspection_park::recovery::consume(
+            &second.agents,
+            agent.id.as_str(),
+            park_id
+        )
+        .await
+        .unwrap());
+        let claimed = second_authority
+            .run(second.claim_agent_work(&agent.id, "interrupted", ready, expires))
+            .await?
+            .unwrap()
+            .unwrap();
+        assert_eq!(claimed.work.step, step);
+        assert!(second.agent_inspection_parked(&agent.id).await.unwrap());
+        assert!(!crate::store::agent_inspection_park::recovery::consume(
+            &second.agents,
+            agent.id.as_str(),
+            park_id
+        )
+        .await
+        .unwrap());
+        let second_owners = second.agent_ownership.as_ref().unwrap();
+        second_owners.heartbeat("second", true).await?;
+        tokio::time::timeout(Duration::from_secs(18), async {
+            while second_owners.owner(&agent.id).await.unwrap().is_some() {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+        .await
+        .expect("the interrupted worker did not release its ownership");
+        let replacement = Arc::new(
+            MongoSandboxStore::open(&client, &name)
+                .await
+                .unwrap()
+                .enable_agent_ownership("first-restarted".into())
+                .await
+                .unwrap()
+                .with_agent_inspection_parking(true),
+        );
+        let replacement_manager = OwnershipCoordinator::register(
+            replacement.agent_ownership.as_ref().unwrap().clone(),
+            member("first-restarted"),
+        )
+        .await?;
+        assert!(replacement
+            .agent_inspection_parked(&agent.id)
+            .await
+            .unwrap());
+        assert!(!replacement
+            .due_agent_work(&layer2_core::rfc3339_at(SystemTime::now()), 10)
+            .await
+            .unwrap()
+            .contains(&agent.id));
+        assert!(replacement_manager.owned().await.is_empty());
+        let owner = raw_owner
+            .find_one(doc! {"_id": agent.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            owner.get_i64("epoch").unwrap(),
+            second_authority.token.epoch as i64
+        );
+        runtime.assert_counts(1);
+        client.database(&name).drop().await.unwrap();
+        return Ok(());
+    }
+
     use crate::store::agent_inspection_park::recovery::consume;
     assert!(
         !consume(&second.agents, agent.id.as_str(), "expired-review")
@@ -172,8 +266,26 @@ async fn observe_takeover(
     assert!(!consume(&second.agents, agent.id.as_str(), park_id)
         .await
         .unwrap());
-    assert!(!worker.run_one(&agent.id, SystemTime::now()).await.unwrap());
-    runtime.assert_counts_with_confirmation(2, 2 * confirmations);
+    if confirmations == 0 {
+        runtime.repair();
+        assert!(worker.run_one(&agent.id, SystemTime::now()).await.unwrap());
+        runtime.assert_repaired_probe();
+        assert!(!second.agent_inspection_parked(&agent.id).await.unwrap());
+        assert!(!worker.run_one(&agent.id, SystemTime::now()).await.unwrap());
+        runtime.assert_repaired_probe();
+    } else {
+        assert!(!worker.run_one(&agent.id, SystemTime::now()).await.unwrap());
+        runtime.assert_counts_with_confirmation(2, 2 * confirmations);
+        let next = second
+            .agents
+            .find_one(doc! {"_id": agent.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap();
+        let next = next.get_document(field).unwrap();
+        assert_ne!(next.get_str("id").unwrap(), park_id);
+        assert!(next.get_bool("probe_spent").unwrap());
+    }
     let next = second
         .agents
         .find_one(doc! {"_id": agent.id.as_str()})
@@ -183,10 +295,6 @@ async fn observe_takeover(
     assert_eq!(
         next.get_i64("agent_manager_work_epoch").unwrap(),
         original.token.epoch as i64 + 1
-    );
-    assert_ne!(
-        next.get_document(field).unwrap().get_str("id").unwrap(),
-        park_id
     );
     println!(
         "step={step:?} unchanged_epoch={} deferred_attempts=3 reviewed_retry=1",
