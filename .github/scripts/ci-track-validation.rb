@@ -410,9 +410,19 @@ def validate(documents, actions)
   require_check(rust['mongo-harness']['steps'].last['run'].include?('node --test .github/scripts/mongo-contract-tests.test.mjs') &&
     rust['mongo-harness']['steps'].last['run'].include?('python3 -B .github/scripts/mongo-contract-shards-tests.py'), 'Mongo regressions omitted')
   timing = rust.fetch('timing').fetch('steps')
-  ['Image normalization budgets', 'Gateway socket latency budget', 'Enforce the production budgets (one retry)'].each do |name|
+  ['Image normalization budgets', 'Gateway socket latency budget', 'Enforce Gateway latency budgets'].each do |name|
     require_check(timing.find { |s| s['name'] == name }&.fetch('if') == "inputs.track == 'eg'", 'Gateway timing ownership differs')
   end
+  budget = timing.select { |s| s['name'] == 'Enforce Gateway latency budgets' }
+  require_check(budget.size == 1 && budget[0]['run'] == 'python3 -B ../.github/scripts/eg-latency-check.py' &&
+    !budget[0].key?('continue-on-error'), 'Gateway latency must retain its first invocation result')
+  regressions = timing.select { |s| s['run'] == 'ruby ../.github/scripts/eg-latency-check-tests.rb' }
+  require_check(regressions.size == 1 && regressions[0]['if'] == "inputs.track == 'eg'" &&
+    !regressions[0].key?('continue-on-error'), 'Gateway latency runner regressions must execute')
+  reports = timing.select { |s| s.dig('with', 'name').to_s.start_with?('cmaeg-latency-') }
+  require_check(reports.size == 1 && reports[0]['if'] == "always() && inputs.track == 'eg'" &&
+    reports[0].dig('with', 'path') == 'api/target/cmaeg-latency-results/' && reports[0].dig('with', 'if-no-files-found') == 'error' &&
+    reports[0].dig('with', 'name') == 'cmaeg-latency-${{ github.run_id }}-${{ github.run_attempt }}', 'Gateway attempt reports must be retained')
   allocator_selector = 'package(=cma) and binary(=allocator_cli) and test(=actual_api_allocator_completes_without_configuration)'
   allocator = timing.select { |s| s.fetch('run', '').include?(allocator_selector) }
   require_check(allocator.length == 1 && allocator[0]['if'] == "inputs.track == 'am'" &&

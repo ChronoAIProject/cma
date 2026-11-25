@@ -103,6 +103,7 @@ const REFUSALS: &[&str] = &[
     "partition_reset_parents_unavailable",
     "partition_reset_mapping_missing",
     "partition_reset_mapping_changed",
+    "partition_reset_destination_exists",
     "partition_reset_capacity",
     "partition_reset_unsupported",
 ];
@@ -140,12 +141,6 @@ async fn perform(
     if (loaded.definition.owner.kind == NyxIdIdentityKind::Organization) != creator.organization {
         return Err(ManagementError::NotFound);
     }
-    if loaded.record.version != body.expected_version {
-        return Err(ManagementError::Conflict {
-            expected: body.expected_version,
-            actual: Some(loaded.record.version),
-        });
-    }
     let consumer = loaded
         .definition
         .consumer(consumer_id.as_ref())
@@ -176,6 +171,33 @@ async fn perform(
         key,
     );
     let fingerprint = request_digest(&body);
+    if loaded.definition.secrets.profile_revisions.is_some() && consumer.id.is_default() {
+        let result = crate::channels::profile_assignment::reset_partition(
+            state,
+            creator,
+            channel.as_str(),
+            crate::channels::profile_assignment::ResetInput {
+                consumer: consumer.id,
+                conversation: &conversation,
+                expected_version: body.expected_version,
+                expected_agent_id: &body.expected_agent_id,
+                operation_id: &operation,
+                request_digest: &fingerprint,
+            },
+        )
+        .await?;
+        return Ok(PartitionResetResponse {
+            consumer_id: consumer.id.to_string(),
+            transport_conversation_id: conversation.to_string(),
+            reset: result,
+        });
+    }
+    if loaded.record.version != body.expected_version {
+        return Err(ManagementError::Conflict {
+            expected: body.expected_version,
+            actual: Some(loaded.record.version),
+        });
+    }
     let scope = loaded
         .definition
         .consumer(None)

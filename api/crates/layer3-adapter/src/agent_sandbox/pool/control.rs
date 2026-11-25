@@ -1,6 +1,6 @@
 use super::{
     AgentSandboxPools, NativePoolBinding, NativePoolClaim, NativePoolClaimRequest,
-    NativePoolCleanup, NativePoolSpec, NativePoolStatus, Result,
+    NativePoolCleanup, NativePoolConfiguration, NativePoolSpec, NativePoolStatus, Result,
 };
 use crate::HomeVolumeAttachment;
 
@@ -60,10 +60,32 @@ pub trait NativePoolControl: Send + Sync {
         replicas: u32,
     ) -> Result<NativePoolStatus>;
     async fn inventory(&self) -> Result<Vec<NativePoolStatus>>;
+    /// Observe the one immutable plan without creating or resizing its provider resources.
+    async fn observe_planned_pool(
+        &self,
+        configuration: &NativePoolConfiguration,
+        _target: &super::NativePoolTarget,
+        _fenced: bool,
+    ) -> Result<Option<NativePoolStatus>> {
+        let mut matching = self.inventory().await?.into_iter().filter(|status| {
+            status.binding.spec == configuration.spec
+                && status.binding.pod_policy == configuration.pod_policy
+                && status.binding.config_sha256 == configuration.config_sha256
+        });
+        let found = matching.next();
+        if matching.next().is_some() {
+            return Err(crate::AdapterError::Rejected(
+                "native pool plan is ambiguous".into(),
+            ));
+        }
+        Ok(found)
+    }
     /// Read the exact pool and its admission barrier from the provider.
     async fn observe_admitting_pool(
         &self,
         _binding: &NativePoolBinding,
+        _target: &super::NativePoolTarget,
+        _fenced: bool,
     ) -> Result<NativePoolStatus> {
         Err(crate::AdapterError::Unsupported(
             "native pool admission observation is unavailable".into(),
@@ -132,11 +154,22 @@ impl NativePoolControl for AgentSandboxPools {
     async fn inventory(&self) -> Result<Vec<NativePoolStatus>> {
         self.inventory().await
     }
+    async fn observe_planned_pool(
+        &self,
+        configuration: &NativePoolConfiguration,
+        target: &super::NativePoolTarget,
+        fenced: bool,
+    ) -> Result<Option<NativePoolStatus>> {
+        self.observe_planned_pool(configuration, target, fenced)
+            .await
+    }
     async fn observe_admitting_pool(
         &self,
         binding: &NativePoolBinding,
+        target: &super::NativePoolTarget,
+        fenced: bool,
     ) -> Result<NativePoolStatus> {
-        self.observe_admitting_pool(binding).await
+        self.observe_admitting_pool(binding, target, fenced).await
     }
     async fn resize(&self, binding: &NativePoolBinding, replicas: u32) -> Result<NativePoolStatus> {
         self.resize(binding, replicas).await

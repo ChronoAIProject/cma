@@ -2,8 +2,8 @@ use super::*;
 use layer2_core::sandbox::{SandboxHome, SandboxNativePool};
 use layer3_adapter::{
     agent_sandbox::{
-        AgentSandboxClient, AgentSandboxConfig, NativeHomeVolumes, NativePoolClaimRequest,
-        NativePoolSpec,
+        AgentSandboxClient, AgentSandboxConfig, NativeFsGroupChangePolicy, NativeHomeVolumes,
+        NativePoolClaimRequest, NativePoolSpec,
     },
     hosted::{AgentSandboxBackend, HostedDeployment},
     HomeVolumeMode, HomeVolumePolicy, HomeVolumeRequest, HomeVolumeStore, RuntimeAdoptionRequest,
@@ -18,6 +18,13 @@ pub(super) struct NativeFixture {
 
 impl NativeFixture {
     pub async fn new(sandbox: &mut Sandbox) -> Self {
+        Self::with_fs_group_policy(sandbox, None).await
+    }
+
+    pub async fn with_fs_group_policy(
+        sandbox: &mut Sandbox,
+        policy: Option<NativeFsGroupChangePolicy>,
+    ) -> Self {
         let api = api::Api::new().await;
         let config = AgentSandboxConfig {
             namespace: "cma-test".into(),
@@ -26,7 +33,7 @@ impl NativeFixture {
             service_account: "cma-runtime".into(),
             image_pull_secrets: Vec::new(),
             template_network_policy: None,
-            template_fs_group_change_policy: None,
+            template_fs_group_change_policy: policy,
             native_claim_guard_enabled: false,
             runtime_startup_breaker_enabled: false,
             control_key: "fixture".repeat(8),

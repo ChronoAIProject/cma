@@ -17,10 +17,16 @@ pub trait TargetExecutor: Send + Sync {
 }
 
 pub trait RecoverySource: Send + Sync {
+    fn start_measurement(&self) -> Option<crate::telemetry::provider_start::Measurement> {
+        None
+    }
     fn page<'a>(&'a self, after: Option<&'a str>)
         -> BoxFuture<'a, Result<RecoveryPage, ScanError>>;
 }
 impl RecoverySource for PlanStore {
+    fn start_measurement(&self) -> Option<crate::telemetry::provider_start::Measurement> {
+        self.start_measurement.clone()
+    }
     fn page<'a>(
         &'a self,
         after: Option<&'a str>,
@@ -103,6 +109,13 @@ impl Scheduler {
         executor: Arc<dyn TargetExecutor>,
         config: ScheduleConfig,
     ) -> Result<(Self, ScheduleHandle), &'static str> {
+        let executor: Arc<dyn TargetExecutor> = match source.start_measurement() {
+            Some(measurement) => Arc::new(super::measured_executor::MeasuredExecutor {
+                executor,
+                measurement,
+            }),
+            None => executor,
+        };
         let execute = Arc::new(move |work: WorkItem| -> BoxFuture<'static, Disposition> {
             let executor = Arc::clone(&executor);
             Box::pin(async move { executor.execute(&work).await })

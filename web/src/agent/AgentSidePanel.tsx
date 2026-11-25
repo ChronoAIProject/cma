@@ -349,8 +349,9 @@ export function AgentSidePanel({
           {visited && mayRetain && client.files ? (
             <FileExplorer
               initialDirectory={homeFilePath(workingDirectory ?? '')}
+              navigationMemory={currentObservation?.fileNavigation}
               changes={changedFiles(operations?.toolCalls, workingDirectory)}
-              key={`${agentId}:${shared}:${subject}:${visitedScope?.generation}`}
+              key={`${agentId}:${shared}:${subject}:${currentObservation?.scope.authEpoch}:${visitedScope?.generation}`}
               panel
               embedded
               active={mayRead}
