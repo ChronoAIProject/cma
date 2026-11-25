@@ -245,7 +245,8 @@ async fn worker_quota_retry_resumes_original_agent_when_a_slot_returns() {
         operations.clone(),
         1,
         FixedSandboxCredentialPrerequisite::Ready,
-    );
+    )
+    .with_task_experience(fixture::task_policy());
     let _slots = service
         .worker_slots
         .clone()
@@ -305,7 +306,8 @@ async fn worker_quota_retry_resumes_original_agent_when_a_slot_returns() {
         restarted.clone(),
         1,
         FixedSandboxCredentialPrerequisite::Ready,
-    );
+    )
+    .with_task_experience(fixture::task_policy());
     let _next_slots = next
         .worker_slots
         .clone()
