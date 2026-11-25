@@ -15,6 +15,20 @@ fn native_retirement_finality_defaults_off_and_requires_explicit_selection() {
 }
 
 #[test]
+fn reviewed_retirement_admission_defaults_off_and_requires_explicit_selection() {
+    const KEY: &str = "CHRONO_REVIEWED_SANDBOX_RETIREMENT_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.reviewed_sandbox_retirement_enabled, expected);
+        assert!(!flags.native_retirement_finality_enabled);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "yes".into()))).is_err());
+}
+
+#[test]
 fn suspended_reopen_admission_is_independent_and_defaults_off() {
     const KEY: &str = "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED";
     for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
