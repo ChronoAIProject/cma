@@ -157,7 +157,7 @@ class BuildCache:
             tool = bridge()
             tool.transfer("extract", self.pending, namespace=self.namespace,
                           timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES,
-                          compact_registry=self.component == "am", max_archive=MAX_BUNDLE_BYTES)
+                          compact_registry=True, max_archive=MAX_BUNDLE_BYTES)
             compacted = self.pending / "compacted"
             if compacted.exists():
                 groups = int(compacted.read_text())
