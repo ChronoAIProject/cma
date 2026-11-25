@@ -300,6 +300,7 @@ export function ConsoleContent({
       <OperationsRoute
         operator={operator}
         capabilities={user.capabilities}
+        bindingDiagnostics={user.bindingDiagnostics === true}
         principal={usagePrincipal}
       />
     ) : route.kind === 'triggers' || route.kind === 'trigger' || route.kind === 'trigger_embed' ? (
