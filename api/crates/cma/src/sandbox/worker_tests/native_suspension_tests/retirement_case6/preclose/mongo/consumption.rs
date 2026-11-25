@@ -40,7 +40,25 @@ async fn retirement_capture_consumption_requires_current_parent_and_participants
     stale.revision -= 1;
     let mut replaced = f.parent.clone();
     replaced.runtime.as_mut().unwrap().boot_id = Some("00000000000000000000000000000002".into());
-    for candidate in [&unclaimed, &stale, &replaced] {
+    let mut replaced_image = f.parent.clone();
+    replaced_image.runtime.as_mut().unwrap().runtime_version = "replacement-image".into();
+    let mut replaced_home = f.parent.clone();
+    replaced_home
+        .lifecycle
+        .home
+        .as_mut()
+        .unwrap()
+        .receipt
+        .as_mut()
+        .unwrap()
+        .storage_generation = "replacement-home-generation".into();
+    for candidate in [
+        &unclaimed,
+        &stale,
+        &replaced,
+        &replaced_image,
+        &replaced_home,
+    ] {
         assert!(matches!(
             f.store.observed(candidate, &children).await,
             Err(SandboxStoreError::Conflict)

@@ -442,3 +442,5 @@ async fn retirement_capture_proves_lost_observation_acknowledgement() {
 mod consumption;
 
 mod delivery;
+
+mod composed;
