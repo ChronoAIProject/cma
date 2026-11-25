@@ -1,5 +1,6 @@
 mod bridge;
 mod cli;
+mod completeness;
 mod delivery;
 mod discovery;
 mod freeze;

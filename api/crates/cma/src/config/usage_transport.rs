@@ -113,6 +113,7 @@ mod tests {
                 match key {
                     "CHRONO_SANDBOX_USAGE_EXPORT_ENABLED"
                     | "CHRONO_SANDBOX_USAGE_CAPTURE_ENABLED" => "true",
+                    "CHRONO_SANDBOX_USAGE_COMPLETENESS_ENABLED" => "false",
                     "CHRONO_SANDBOX_USAGE_PRODUCER_NAMESPACE" => "fixture",
                     "CHRONO_SANDBOX_USAGE_OWNER_ISSUER" => "https://identity.example",
                     "CHRONO_SANDBOX_USAGE_EXPORT_BASE_URL" => base,

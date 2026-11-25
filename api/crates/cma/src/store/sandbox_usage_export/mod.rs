@@ -1,5 +1,7 @@
 //! Retained source custody and bounded projection, independent of transport.
 mod capture;
+mod completeness;
+pub(crate) use completeness::{CompletenessAttempt, CompletenessReceipt, CompletenessResult};
 mod delivery;
 mod producer;
 pub(crate) use delivery::{DeliveryAttempt, DeliveryOutcome};

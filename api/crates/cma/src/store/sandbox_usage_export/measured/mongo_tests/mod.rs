@@ -47,6 +47,7 @@ impl Fixture {
             .await
             .unwrap();
         let config = crate::config::UsageCaptureConfig {
+            completeness_enabled: false,
             namespace: "fixture".into(),
             owner_issuer: "https://identity.example".into(),
         };

@@ -4,7 +4,9 @@ mod nyxid;
 mod reconcile;
 mod worker;
 
-use crate::store::sandbox_usage_export::FrozenUsageEvent;
+use crate::store::sandbox_usage_export::{
+    CompletenessAttempt, CompletenessReceipt, FrozenUsageEvent,
+};
 #[cfg(test)]
 pub(crate) use contract::MissingRange;
 pub(crate) use contract::{Cursor, Receipt};
@@ -35,4 +37,20 @@ pub(crate) trait UsageTransport: Send + Sync {
     async fn submit(&self, event: &FrozenUsageEvent) -> Result<Receipt, TransportError>;
     async fn receipt(&self, event_id: &str) -> Result<Option<Receipt>, TransportError>;
     async fn cursor(&self, stream_id: &str) -> Result<Option<Cursor>, TransportError>;
+    async fn submit_completeness(
+        &self,
+        _attempt: &CompletenessAttempt,
+    ) -> Result<CompletenessReceipt, TransportError> {
+        Err(TransportError::Unavailable)
+    }
+    async fn completeness_receipt(
+        &self,
+        _id: &str,
+    ) -> Result<Option<CompletenessReceipt>, TransportError> {
+        Err(TransportError::Unavailable)
+    }
 }
+
+pub(crate) mod completeness_contract;
+#[cfg(test)]
+mod completeness_fixture_tests;

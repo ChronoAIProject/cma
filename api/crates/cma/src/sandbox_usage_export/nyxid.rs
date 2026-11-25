@@ -158,7 +158,10 @@ impl NyxIdUsageTransport {
             }
             return Err(
                 if code.is_some_and(|v| {
-                    matches!(v.error.as_str(), "stream_not_open" | "predecessor_missing")
+                    matches!(
+                        v.error.as_str(),
+                        "stream_not_open" | "predecessor_missing" | "statement_predecessor_missing"
+                    )
                 }) {
                     TransportError::Prerequisite
                 } else {
@@ -173,6 +176,23 @@ impl NyxIdUsageTransport {
     }
 }
 
+fn completeness_response(bytes: &[u8]) -> Result<CompletenessReceipt, TransportError> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Response {
+        receipt: CompletenessReceipt,
+        validation: serde_json::Value,
+    }
+    let response: Response = serde_json::from_slice(bytes).map_err(|_| TransportError::Invalid)?;
+    if !matches!(
+        response.validation["status"].as_str(),
+        Some("pending" | "validated" | "superseded" | "rejected")
+    ) {
+        return Err(TransportError::Invalid);
+    }
+    Ok(response.receipt)
+}
+
 fn token_error(error: ProducerTokenError) -> TransportError {
     match error {
         ProducerTokenError::Retryable(_) => TransportError::Unavailable,
@@ -182,6 +202,34 @@ fn token_error(error: ProducerTokenError) -> TransportError {
 
 #[async_trait::async_trait]
 impl UsageTransport for NyxIdUsageTransport {
+    async fn submit_completeness(
+        &self,
+        attempt: &CompletenessAttempt,
+    ) -> Result<CompletenessReceipt, TransportError> {
+        let bytes = self
+            .send(
+                reqwest::Method::POST,
+                &["usage-completeness"],
+                Some(&attempt.payload),
+                &[],
+            )
+            .await?
+            .ok_or(TransportError::Invalid)?;
+        let receipt = completeness_response(&bytes)?;
+        if !receipt.validates(attempt) {
+            return Err(TransportError::Conflict);
+        }
+        Ok(receipt)
+    }
+    async fn completeness_receipt(
+        &self,
+        id: &str,
+    ) -> Result<Option<CompletenessReceipt>, TransportError> {
+        self.send(reqwest::Method::GET, &["usage-completeness", id], None, &[])
+            .await?
+            .map(|bytes| completeness_response(&bytes))
+            .transpose()
+    }
     async fn submit(&self, event: &FrozenUsageEvent) -> Result<Receipt, TransportError> {
         let bytes = self
             .send(

@@ -85,6 +85,7 @@ impl CaptureStore {
                 return Err(Domain(corrupt()));
             }
         }
+        self.fence_completeness_source(session, &stream).await?;
         Ok(())
     }
 }

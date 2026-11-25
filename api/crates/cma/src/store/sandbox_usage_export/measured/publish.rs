@@ -169,6 +169,25 @@ impl CaptureStore {
                 .await
                 .map_err(Driver)?;
         }
+        if held && advance && self.completeness_enabled() {
+            self.stage_measured_hold(session, &stream, publication)
+                .await?;
+        }
+        if !held && advance && self.completeness_enabled() {
+            let current: FactHead = self
+                .collection(INVENTORY)
+                .find_one(doc! {"_id":keys::id(&key)})
+                .session(&mut *session)
+                .await
+                .map_err(Driver)?
+                .as_ref()
+                .map(decode)
+                .transpose()
+                .map_err(Domain)?
+                .ok_or_else(|| Domain(corrupt()))?;
+            self.stage_measured_completeness(session, &stream, publication, &current)
+                .await?;
+        }
         if !held {
             self.collection(INVENTORY)
                 .delete_one(

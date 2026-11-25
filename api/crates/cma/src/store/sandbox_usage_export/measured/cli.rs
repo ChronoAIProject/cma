@@ -25,6 +25,7 @@ pub(crate) async fn command(arguments: &[String]) -> Result<serde_json::Value, &
         return Err("invalid database name");
     }
     let config = crate::config::UsageCaptureConfig {
+        completeness_enabled: false,
         namespace: lookup("CHRONO_SANDBOX_USAGE_PRODUCER_NAMESPACE")?,
         owner_issuer: lookup("CHRONO_SANDBOX_USAGE_OWNER_ISSUER")?,
     };
