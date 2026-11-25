@@ -1,5 +1,5 @@
 // Adapt only the measured version-specific helper layout in a temporary copy.
-// The normal runtime probe and all default CI gates remain unchanged.
+// Every 0.165.0 runtime profile runs this adaptation and retains the strict checkpoint checks.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

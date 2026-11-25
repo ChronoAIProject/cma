@@ -161,6 +161,7 @@ export function campaign(imageRef, commit, output, command = docker, profile = p
   const scripts = resolve(root, '.github/scripts');
   const mount = (path, name) => ['--mount', `type=bind,source=${path},target=/opt/${name},readonly`];
   const omarchy = profile === 'omarchy';
+  const liveAliases = expected.CODEX_VERSION === '0.165.0';
   let prepared = null;
   try {
     const image = JSON.parse(command(['image', 'inspect', imageRef]))[0];
@@ -170,16 +171,16 @@ export function campaign(imageRef, commit, output, command = docker, profile = p
       assert.ok(image.RepoDigests.includes(sourceReference));
     }
     evidence.image = { Id: image.Id, RepoDigests: sourceReference ? [sourceReference] : [], Os: image.Os, Architecture: image.Architecture, Config: { User: image.Config.User, Labels: Object.fromEntries(['org.opencontainers.image.revision', 'org.opencontainers.image.source', 'dev.chrono.cma.runtime-contract', 'dev.chrono.cma.runtime-bootstrap', 'dev.chrono.cma.home-layout'].map((key) => [key, image.Config.Labels[key]])) } };
-    if (omarchy) {
-      // Same measured Codex helper adaptation as CI's Omarchy contract, in a private copy.
+    if (liveAliases) {
+      // Both 0.165.0 profiles need the measured live-process alias layout.
       stage = 'probe-preparation';
-      prepared = join(mkdtempSync(join(tmpdir(), 'cma-omarchy-probe-')), 'runtime-image-probe.mjs');
+      prepared = join(mkdtempSync(join(tmpdir(), 'cma-runtime-probe-')), 'runtime-image-probe.mjs');
       prepareProbe(prepared, scripts);
     }
     stage = 'volume-create';
     command(['volume', 'create', '--label', label, identity]);
     stage = 'container-create';
-    command(['create', '--name', identity, '--label', label, '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges=true', '--pids-limit', '128', '--memory', '1g', '--cpus', '2', '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777', '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700', '--mount', `type=volume,source=${identity},target=/home/cma`, ...mount(prepared ?? join(scripts, 'runtime-image-probe.mjs'), 'runtime-image-probe.mjs'), ...mount(join(scripts, 'runtime-github-probe.mjs'), 'runtime-github-probe.mjs'), ...mount(join(scripts, 'runtime-bootstrap-probe.mjs'), 'runtime-bootstrap-probe.mjs'), ...(omarchy ? ['omarchy-codex-aliases.mjs', 'omarchy-keyring-probe.py', 'omarchy-chromium-config-probe.py'].flatMap((name) => mount(join(scripts, name), name)) : []), '--env', `CHRONO_SANDBOX_ID=${identity}`, '--env', 'CHRONO_SANDBOX_REACHES=chrono-llm-public,ornn-api', '--env', 'CHRONO_PLATFORM_BASE_URL=http://127.0.0.1:9192', ...(hasCompanionPins(expected) ? ['--env', 'CMA_RUNTIME_NATIVE_PACKAGE_PROOF=1'] : []), image.Id]);
+    command(['create', '--name', identity, '--label', label, '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges=true', '--pids-limit', '128', '--memory', '1g', '--cpus', '2', '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777', '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700', '--mount', `type=volume,source=${identity},target=/home/cma`, ...mount(prepared ?? join(scripts, 'runtime-image-probe.mjs'), 'runtime-image-probe.mjs'), ...mount(join(scripts, 'runtime-github-probe.mjs'), 'runtime-github-probe.mjs'), ...mount(join(scripts, 'runtime-bootstrap-probe.mjs'), 'runtime-bootstrap-probe.mjs'), ...(liveAliases ? mount(join(scripts, 'omarchy-codex-aliases.mjs'), 'omarchy-codex-aliases.mjs') : []), ...(omarchy ? ['omarchy-keyring-probe.py', 'omarchy-chromium-config-probe.py'].flatMap((name) => mount(join(scripts, name), name)) : []), '--env', `CHRONO_SANDBOX_ID=${identity}`, '--env', 'CHRONO_SANDBOX_REACHES=chrono-llm-public,ornn-api', '--env', 'CHRONO_PLATFORM_BASE_URL=http://127.0.0.1:9192', ...(hasCompanionPins(expected) ? ['--env', 'CMA_RUNTIME_NATIVE_PACKAGE_PROOF=1'] : []), image.Id]);
     stage = 'container-start';
     command(['start', identity]);
     stage = 'probe';

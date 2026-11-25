@@ -485,7 +485,8 @@ test('Omarchy profile uses the same native producer and its distinct image probe
         created = args;
         const probe = args.find((value) => value.endsWith('target=/opt/runtime-image-probe.mjs,readonly'));
         prepared = probe.slice('type=bind,source='.length, probe.indexOf(',target='));
-        assert.equal(readFileSync(prepared, 'utf8').includes("from './omarchy-codex-aliases.mjs'"), omarchy);
+        assert.ok(readFileSync(prepared, 'utf8').includes("from './omarchy-codex-aliases.mjs'"));
+        assert.ok(readFileSync(prepared, 'utf8').includes("exclusions: ['.cma/agents/ci-agent/home/tmp/arg0-linux']"));
         return 'a'.repeat(64);
       }
       if (args[0] === 'start') return name;
@@ -510,7 +511,8 @@ test('Omarchy profile uses the same native producer and its distinct image probe
       const evidence = JSON.parse(readFileSync(output, 'utf8'));
       assert.equal(evidence.result, ['default', 'omarchy'].includes(profile) ? 'pass' : 'fail');
       assert.equal(evidence.schema, evidenceSchema);
-      const extras = ['omarchy-codex-aliases.mjs', 'omarchy-keyring-probe.py', 'omarchy-chromium-config-probe.py'];
+      assert.ok(created.some((value) => value.endsWith('target=/opt/omarchy-codex-aliases.mjs,readonly')));
+      const extras = ['omarchy-keyring-probe.py', 'omarchy-chromium-config-probe.py'];
       for (const file of extras) assert.equal(created.some((value) => value.endsWith(`target=/opt/${file},readonly`)), omarchy);
       const execs = calls.filter((args) => args[0] === 'exec').map((args) => args.at(-1));
       assert.deepEqual(execs, profile === 'default'
@@ -520,8 +522,7 @@ test('Omarchy profile uses the same native producer and its distinct image probe
           : profile === 'omarchy-wrong-pins'
             ? ['/opt/runtime-image-probe.mjs', '/opt/omarchy-keyring-probe.py', 'GPGDir']
             : ['/opt/runtime-image-probe.mjs', '/opt/omarchy-keyring-probe.py', 'GPGDir', '/opt/runtime-bootstrap-probe.mjs', '/opt/omarchy-chromium-config-probe.py']);
-      if (omarchy) assert.equal(existsSync(prepared), false);
-      else assert.equal(prepared, new URL('./runtime-image-probe.mjs', import.meta.url).pathname);
+      assert.equal(existsSync(prepared), false);
     } finally { rmSync(directory, { recursive: true }); }
   }
   assert.throws(() => campaign('runtime:test', commit, join(tmpdir(), 'unused.json'), () => { throw Error('no Docker'); }, 'desktop'));
