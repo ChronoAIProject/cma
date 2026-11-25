@@ -21,6 +21,27 @@ pub(super) fn find_by_id(
     read(config, operation_id, subject, None)
 }
 
+pub(super) fn find_for_proof(
+    config: &RuntimeConfig,
+    operation_id: &str,
+    subject: &Subject,
+) -> Result<Option<Record>> {
+    let mut count = 0;
+    for root in crate::mutation_scope::roots(config)? {
+        if io::has_replacements(
+            &root,
+            &mut count,
+            crate::mutation_recovery::journal_limit(config),
+        )? {
+            return Err(crate::failure::RuntimeError::unavailable(
+                "agent_process_close_journal_unsettled",
+                "Agent Close proof is unavailable while journal replacements are pending",
+            ));
+        }
+    }
+    read_keyed(config, operation_id, subject, None)
+}
+
 fn read(
     config: &RuntimeConfig,
     operation_id: &str,
@@ -46,6 +67,15 @@ fn read(
             return Ok(record);
         }
     }
+    read_keyed(config, operation_id, subject, exact)
+}
+
+fn read_keyed(
+    config: &RuntimeConfig,
+    operation_id: &str,
+    subject: &Subject,
+    exact: Option<&Operation>,
+) -> Result<Option<Record>> {
     let path = io::journal_path(&crate::mutation_scope::root(config, subject), operation_id);
     let Some(record) = io::read_record(&path)? else {
         return Ok(None);

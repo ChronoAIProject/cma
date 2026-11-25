@@ -19,8 +19,10 @@ mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
 mod account_deletion;
 mod control_admission;
+mod creation_outcomes;
 mod legal_terms;
 pub(crate) use control_admission::ControlAdmissionConfig;
+pub(crate) use creation_outcomes::CreationOutcomesConfig;
 mod admission_log;
 mod anonymous_public;
 mod auth_mode;
@@ -48,12 +50,14 @@ pub use rate_limits::RateLimitConfig;
 mod relay_capacity;
 mod runtime;
 mod runtime_capacity;
+mod runtime_migration;
 mod shell_settings;
 pub(crate) use relay_capacity::RelayCapacityConfig;
 pub(crate) use shell_settings::BackendFreeConfig;
 
 mod features;
 mod quiet_output;
+pub(crate) mod task_audit;
 mod task_experience;
 pub(crate) use features::home_backup::HomeBackupConfig;
 pub(crate) use features::FeatureFlags;
@@ -73,7 +77,7 @@ mod usage_transport;
 pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
-pub(crate) use runtime::RuntimeConfig;
+pub(crate) use runtime::{canary as runtime_canary, RuntimeConfig};
 pub(crate) use sandbox_billing::SandboxBillingConfig;
 pub(crate) use sandbox_metrics::MetricsConfig;
 pub(crate) use usage_billing::UsageBillingConfig;
@@ -150,6 +154,8 @@ impl TrustedProxyConfig {
 /// Complete process configuration for the temporary discovery boundary.
 #[derive(Clone)]
 pub struct Config {
+    pub(crate) creation_outcomes: Option<CreationOutcomesConfig>,
+    pub(crate) creation_writer_epoch: Option<String>,
     pub(crate) account_deletion_enabled: bool,
     /// Published terms and privacy notice; `None` records no consent.
     pub(crate) legal_terms: Option<layer2_core::legal_consent::LegalTerms>,
@@ -162,6 +168,7 @@ pub struct Config {
     pub bind: SocketAddr,
     pub(crate) http_connection_max_age: Option<std::time::Duration>,
     pub metrics_bind: SocketAddr,
+    pub(crate) task_audit: Option<task_audit::Selection>,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
     pub agent_access_retained_origins: Vec<String>,
@@ -295,6 +302,8 @@ impl Config {
             ServiceAuthorizationConfig::from_lookup(&mut lookup, features.service_authorization)?;
         let account_deletion_enabled = account_deletion::enabled(&mut lookup)?;
         let legal_terms = legal_terms::from_lookup(&mut lookup)?;
+        let creation_outcomes = CreationOutcomesConfig::from_lookup(&mut lookup)?;
+        let creation_writer_epoch = CreationOutcomesConfig::writer_epoch(&mut lookup)?;
         let retain_legal_consents = account_deletion::retain_legal_consents(&mut lookup)?;
         let account_erasure_transaction_drain_seconds =
             account_deletion::transaction_drain(&mut lookup)?;
@@ -353,11 +362,14 @@ impl Config {
             public_owner_sandbox_limit,
             account_deletion_enabled,
             legal_terms,
+            creation_outcomes,
+            creation_writer_epoch,
             retain_legal_consents,
             account_erasure_transaction_drain_seconds,
             bind,
             http_connection_max_age: http_connections::max_age(&mut lookup)?,
             metrics_bind,
+            task_audit: task_audit::Selection::from_lookup(&mut lookup)?,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
             relay_capacity: RelayCapacityConfig::from_lookup(&mut lookup)?,
             public_url,
@@ -425,6 +437,8 @@ use validation::{
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::{desktop_canary_config, retained_runtime_config};
 
 #[cfg(test)]
 mod graduation_tests;

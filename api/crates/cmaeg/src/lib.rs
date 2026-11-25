@@ -1,4 +1,7 @@
 //! CMA Event Gateway HTTP service.
+// Production commit and abort go through transaction_terminal (#3299); tests
+// may drive the raw driver as independent writers.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 pub mod activity;
 mod audit;
@@ -33,6 +36,7 @@ mod service_auth;
 pub mod telegram;
 pub mod telemetry;
 pub mod tools;
+mod transaction_terminal;
 pub mod turns;
 pub mod whatsapp;
 pub mod worker_credentials;

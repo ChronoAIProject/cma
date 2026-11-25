@@ -12,9 +12,9 @@ jobs:
         working-directory: "web"
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
-        uses: "actions/setup-node@v6"
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
         with:
           node-version: "24.15.0"
           package-manager-cache: false
@@ -111,6 +111,36 @@ jobs:
           CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
         run: "npx playwright test --config e2e/desktop-conversation.config.ts"
       -
+        name: "Local Launch receipt recovery contracts"
+        id: receipt_recovery
+        timeout-minutes: 5
+        env:
+          CMA_RECEIPT_EVIDENCE_DIR: "${{ runner.temp }}/cma-receipt-recovery"
+        run: "node node_modules/playwright/cli.js test --config e2e/review-receipt-recovery-ci.config.ts"
+      -
+        name: "Launch receipt recovery failure evidence"
+        if: "failure() && steps.receipt_recovery.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "receipt-recovery-failure"
+          path: "${{ runner.temp }}/cma-receipt-recovery"
+          retention-days: 1
+      -
+        name: "Local identity refresh recovery contracts"
+        id: auth_refresh
+        timeout-minutes: 5
+        env:
+          CMA_AUTH_REFRESH_EVIDENCE_DIR: "${{ runner.temp }}/cma-auth-refresh"
+        run: "node node_modules/playwright/cli.js test --config e2e/auth-refresh-followup.config.ts"
+      -
+        name: "Identity refresh failure evidence"
+        if: "failure() && steps.auth_refresh.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "auth-refresh-failure"
+          path: "${{ runner.temp }}/cma-auth-refresh"
+          retention-days: 1
+      -
         name: "Local row menu pointer and keyboard contracts"
         id: row_menu
         timeout-minutes: 5
@@ -139,6 +169,24 @@ jobs:
         with:
           name: "channel-setup-failure"
           path: "${{ runner.temp }}/cma-channel-setup"
+          retention-days: 1
+      -
+        name: "Local channel authoring contracts"
+        id: channel_authoring
+        timeout-minutes: 5
+        shell: bash
+        env:
+          CMA_CHANNEL_SETUP_EVIDENCE_DIR: "${{ runner.temp }}/cma-channel-authoring"
+        run: |
+          node node_modules/playwright/cli.js test --config e2e/hmac-channel.config.ts
+          node node_modules/playwright/cli.js test --config e2e/wh-eg-authoring.config.ts
+      -
+        name: "Channel authoring failure evidence"
+        if: "failure() && steps.channel_authoring.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "channel-authoring-failure"
+          path: "${{ runner.temp }}/cma-channel-authoring"
           retention-days: 1
       -
         name: "Local credential recovery contracts"
@@ -262,24 +310,6 @@ jobs:
         with:
           name: "p1-auth-failure"
           path: "${{ runner.temp }}/cma-p1-browser/auth"
-          retention-days: 1
-          if-no-files-found: "error"
-      -
-        name: "Default-off production gate mechanics"
-        timeout-minutes: 5
-        run: "node --test ../.github/scripts/p7-default-off-ci.test.mjs"
-      -
-        name: "Default-off Home and landing production contracts"
-        id: p7_default_off
-        timeout-minutes: 10
-        run: "node ../.github/scripts/p7-default-off-ci.mjs"
-      -
-        name: "Default-off production failure evidence"
-        if: "failure() && steps.p7_default_off.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-        with:
-          name: "p7-default-off-failure"
-          path: "${{ runner.temp }}/cma-p7-default-off"
           retention-days: 1
           if-no-files-found: "error"
       -

@@ -5,7 +5,9 @@ use axum::response::{
     IntoResponse, Response, Sse,
 };
 use futures_util::stream;
-use layer2_core::sandbox::{agent_io::CommandReceiptView, AgentEventStreamAuthorization};
+use layer2_core::sandbox::{
+    agent_io::CommandReceiptView, AgentEventStreamAuthorization, AgentResponseObservation,
+};
 use serde_json::{json, Value};
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
 
@@ -64,11 +66,14 @@ async fn snapshot_mode(
     }
     let origin = state.agent_page_origin.clone();
     let indexed_reading = reading.clone();
-    if let Some(result) = state
+    let observation = state
         .reads
-        .with_output_observation(
+        .with_response_observation(
             authorization,
-            reading.command.turn_sequence,
+            reading
+                .command
+                .turn_sequence
+                .expect("bound response has a turn"),
             move |source| {
                 Box::pin(async move {
                     if !indexed_allowed {
@@ -86,25 +91,18 @@ async fn snapshot_mode(
                 evidence.record(CloseReason::read(err));
             }
         })
-        .map_err(error::read)?
-    {
-        return result.map(|response| (response, bound)).ok_or_else(|| {
-            if let Some(evidence) = evidence {
-                evidence.record(CloseReason::PaginationRequired);
-            }
-            pagination_required()
-        });
-    }
-    let history = state
-        .reads
-        .response_event_stream_snapshot(authorization, reading.command.turn_sequence)
-        .await
-        .inspect_err(|err| {
-            if let Some(evidence) = evidence {
-                evidence.record(CloseReason::read(err));
-            }
-        })
         .map_err(error::read)?;
+    let history = match observation {
+        AgentResponseObservation::Indexed(result) => {
+            return result.map(|response| (response, bound)).ok_or_else(|| {
+                if let Some(evidence) = evidence {
+                    evidence.record(CloseReason::PaginationRequired);
+                }
+                pagination_required()
+            });
+        }
+        AgentResponseObservation::Legacy(history) => history,
+    };
     super::shared_projection::project(state, reading, &history)
         .map(|response| (response, bound))
         .ok_or_else(error::unavailable)

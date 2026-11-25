@@ -63,14 +63,23 @@ impl MongoCheckpointObjectStore {
         let tombstones = majority_collection(&database, TOMBSTONES);
         tombstones::ensure_indexes(&tombstones).await?;
 
-        Ok(Self {
-            manifests,
+        Ok(Self::handles(client, database_name, objects))
+    }
+
+    pub(in crate::store) fn handles(
+        client: &Client,
+        database_name: &str,
+        objects: Arc<dyn CheckpointBlobStore>,
+    ) -> Self {
+        let database = client.database(database_name);
+        Self {
+            manifests: majority_collection(&database, MANIFESTS),
             gates: majority_collection(&database, GATES),
-            tombstones,
+            tombstones: majority_collection(&database, TOMBSTONES),
             sandboxes: majority_collection(&database, super::sandbox_mongo::SANDBOXES),
             objects,
             client: client.clone(),
-        })
+        }
     }
 
     /// Return an archive authority whose every operation is bound to one sandbox.

@@ -230,6 +230,13 @@ export function useResourceActions(
     select,
     viewDeletion,
     deletingSandboxIds,
+    unknownDeletingSandboxIds: new Set(
+      deletionRequests.flatMap((request) =>
+        !request.accepted && request.action.kind === 'delete_sandbox'
+          ? [request.action.sandboxId]
+          : [],
+      ),
+    ),
     busySandboxIds: new Set(
       sandboxRequests
         .filter((request) => request.phase === 'accepted' || request.phase === 'submitting')
@@ -312,6 +319,7 @@ export function useResourceActions(
               viewerId={viewerId}
               agentPermissions={agentPermissions}
               enabled={enabled}
+              settlements={settlements}
               initial={deletion.request}
               restored={deletion.restored}
               backgroundOnAcceptance

@@ -44,6 +44,7 @@ pub struct ProviderHostedControlTransport {
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
     native_transport: NativeRuntimeTransport,
     legacy_receiver_image: Option<LegacyReceiverImage>,
+    stale_turn_image: Option<String>,
     runtime_capacity: Arc<RuntimeCapacityAuthority>,
     #[cfg(test)]
     native_http_budget: Arc<tokio::sync::Semaphore>,
@@ -481,3 +482,5 @@ mod binding;
 
 #[path = "provider_capacity_proof.rs"]
 mod capacity_proof;
+#[path = "provider_stale_turn.rs"]
+mod stale_turn;

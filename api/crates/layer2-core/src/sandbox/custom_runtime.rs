@@ -41,6 +41,8 @@ pub struct SandboxCustomRuntimeState {
     pub source_generation: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_basis: Option<Box<super::store::RuntimeMigrationAdmissionBasis>>,
 }
 
 impl SandboxCustomRuntimeOrigin {
@@ -122,6 +124,24 @@ impl Sandbox {
         {
             return Err(invalid());
         }
+        if let Some(transition) = self.admitted_retained_runtime_transition() {
+            let matching = self
+                .lifecycle
+                .retained_startup_policy
+                .as_ref()
+                .zip(self.runtime.as_ref())
+                .is_some_and(|(evidence, binding)| {
+                    evidence.observation.legacy_journal_recovery_enabled
+                        == transition.request.journal_recovery
+                        && evidence.observation.runtime.generation
+                            == transition.successor_generation
+                        && binding.boot_id.as_deref()
+                            == Some(evidence.observation.runtime.boot_id.as_str())
+                });
+            if !matching {
+                return Err(invalid());
+            }
+        }
         self.validate_custom_runtime()?;
         if let Some(state) = self
             .lifecycle
@@ -164,6 +184,6 @@ mod recovery_tests;
 #[cfg(test)]
 mod refusal_tests;
 #[cfg(test)]
-mod test_support;
+pub(in crate::sandbox) mod test_support;
 #[cfg(test)]
 mod tests;

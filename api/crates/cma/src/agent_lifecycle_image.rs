@@ -273,7 +273,7 @@ async fn bounded_body(
 #[path = "agent_lifecycle_image_tests.rs"]
 mod tests;
 
-fn valid_immutable_image(value: &str) -> bool {
+pub(crate) fn valid_immutable_image(value: &str) -> bool {
     let Some((name, digest)) = value.rsplit_once("@sha256:") else {
         return false;
     };

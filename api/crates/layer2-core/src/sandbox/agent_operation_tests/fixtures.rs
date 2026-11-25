@@ -82,6 +82,7 @@ pub(super) fn test_agent(status: AgentStatus, first_message: Option<&str>) -> Ag
         capabilities: full_capabilities(),
         status,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

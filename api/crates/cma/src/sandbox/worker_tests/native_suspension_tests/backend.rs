@@ -2,6 +2,7 @@
 use super::*;
 mod recovery;
 mod reopen_fixture;
+mod retained_policy;
 mod retirement;
 use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
 use layer3_adapter::provider::ProviderSandboxRequest;
@@ -31,6 +32,7 @@ pub(super) struct NativeBackend {
     pub lose_resume: Arc<AtomicBool>,
     pub lose_delete: Arc<AtomicBool>,
     pub reject_reopen: Arc<AtomicBool>,
+    pub fail_reopen_transiently: Arc<AtomicBool>,
     pub reopen_output: Arc<reopen_fixture::StartupOutput>,
     pub adoption_pause: Arc<Mutex<Option<Arc<RetirementProbePause>>>>,
     pub hold_reopen: Arc<AtomicBool>,
@@ -58,6 +60,7 @@ pub(super) struct NativeBackend {
     pub run_before_suspend: Arc<AtomicBool>,
     pub interrupted_workspace: Arc<AtomicBool>,
     pub calls: ActionLog,
+    pub adoptions: Arc<AtomicUsize>,
     pub inputs: Arc<Mutex<Vec<layer3_adapter::ConversationInput>>>,
     pub inspected_generations: Arc<Mutex<Vec<u64>>>,
 }
@@ -78,21 +81,6 @@ impl NativeBackend {
     }
     pub async fn request(&self) -> ProviderSandboxRequest {
         self.row.lock().await.as_ref().unwrap().request.clone()
-    }
-    pub async fn stage_reserved_request(&self, request: ProviderSandboxRequest) {
-        let mut rows = self.row.lock().await;
-        let row = rows.as_mut().unwrap();
-        assert_eq!(row.request.image, request.image);
-        assert_eq!(row.request.volumes, request.volumes);
-        row.observation.generation = request.metadata["cma/runtime-generation"].parse().unwrap();
-        row.request = request;
-        // The retained provider object and failed Pod have not been replaced.
-    }
-    pub async fn restart_process(&self) {
-        self.retirement_incarnation.fetch_add(1, Ordering::SeqCst);
-        let rows = self.row.lock().await;
-        let pod = rows.as_ref().unwrap().pod.as_ref().unwrap();
-        self.inner.restart_persistent_process(pod).await.unwrap();
     }
     pub async fn lose_object(&self) {
         self.row.lock().await.take();
@@ -120,6 +108,12 @@ fn absent() -> layer3_adapter::AdapterError {
 
 #[async_trait::async_trait]
 impl HostedBackend for NativeBackend {
+    fn retained_startup_policy(
+        &self,
+    ) -> Option<&dyn layer3_adapter::hosted::HostedRetainedStartupPolicy> {
+        Some(self)
+    }
+
     async fn run_recovery_command(
         &self,
         handle: &RuntimeHandle,
@@ -274,6 +268,7 @@ impl HostedBackend for NativeBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> layer3_adapter::Result<Option<RuntimeObservation>> {
+        self.adoptions.fetch_add(1, Ordering::SeqCst);
         let pause = self.adoption_pause.lock().unwrap().take();
         if let Some(pause) = pause {
             pause.entered.notify_one();

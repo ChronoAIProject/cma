@@ -96,6 +96,7 @@ pub(in crate::store) fn ready_agent(sandbox: &Sandbox, id: &str) -> Agent {
         ]),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),
@@ -184,3 +185,6 @@ mod integrity;
 mod retries;
 #[path = "maintenance_scheduling_tests.rs"]
 mod scheduling;
+
+#[path = "custom_runtime_mongo_tests.rs"]
+mod custom_runtime_mongo_tests;

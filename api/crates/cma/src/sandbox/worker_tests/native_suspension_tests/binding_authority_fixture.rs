@@ -53,6 +53,7 @@ impl NativeFixture {
             .warm_pools()
             .configure(
                 &NativePoolSpec {
+                    cold_canary: false,
                     image: deployment.image.clone(),
                     cpu_millis: spec.capacity.cpu_millis,
                     memory_mib: spec.capacity.memory_mib,

@@ -105,6 +105,7 @@ pub(super) fn sandbox_credentials(
     config: &Config,
     auth: Arc<crate::auth::AuthState>,
     stores: &crate::store::MongoStores,
+    broker: Arc<crate::trigger::CmaServiceConnectionBroker>,
 ) -> Arc<dyn crate::sandbox::SandboxCredentialController> {
     use crate::sandbox::{
         ManagedSandboxCredentials, SandboxCredentialController, UnavailableSandboxCredentials,
@@ -114,6 +115,7 @@ pub(super) fn sandbox_credentials(
             let tokens =
                 crate::sandbox::ServiceAccessOwnerTokens::new(auth, stores.sandbox_model.clone());
             ManagedSandboxCredentials::new(issuer, tokens, stores.sandbox_credentials.clone())
+                .with_exact_connections(broker)
         }
         None => Arc::new(UnavailableSandboxCredentials),
     };
@@ -152,6 +154,9 @@ pub(super) fn authentication(
         config.service_authorization.as_ref(),
     )
     .with_proxy_replay_principal(config.features.nyxid_proxy_replay_principal)
+    .with_account_deletion_enabled(config.account_deletion_enabled)
+    .with_privacy_export_enabled(config.features.privacy_export_enabled)
+    .with_binding_diagnostics(config.features.binding_diagnostics)
     .with_legal_terms(config.legal_terms.clone())
     .with_registration_capacity(stores.registration_capacity.clone())
     .with_bot_father_username(

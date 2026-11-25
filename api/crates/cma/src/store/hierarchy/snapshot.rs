@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::{
     store::SandboxStoreError, SandboxHierarchyRecord, WorkspaceHierarchyRecord,
 };
@@ -84,7 +85,7 @@ pub(super) async fn read(
         // Snapshot sessions pin one atClusterTime across all reads without a
         // transaction or an abort checkout. Keep the rollout fallback unchanged.
         if !snapshot_session {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
         }
         match result {
             Ok(value) => return Ok(value),

@@ -4,6 +4,7 @@ use super::super::sandbox_mongo::{
     TRANSACTION_ATTEMPTS,
 };
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::ClientSession;
 
 impl CaptureStore {
@@ -21,7 +22,7 @@ impl CaptureStore {
             let mut session = self.client.start_session().await.map_err(unavailable)?;
             start_transaction(&mut session).await.map_err(unavailable)?;
             if let Err(error) = self.baseline_in(store, &mut session, at, limit).await {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 match error {
                     TransactionEventError::Driver(error)
                         if is_transient(&error) || is_duplicate_key(&error) =>

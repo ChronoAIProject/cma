@@ -6,15 +6,16 @@ use super::{HostedAdapter, RuntimeState};
 use crate::hosted::deployment::{provider_request_identity, ProviderIdentity};
 use crate::{AdapterError, RuntimeAdoptionRequest, RuntimeHandle, RuntimeObservation, SandboxSpec};
 
+#[path = "adapter_runtime_transition.rs"]
+mod transition;
+
 impl HostedAdapter {
     pub(super) async fn provision_receipted_exact(
         &self,
         request: &crate::RuntimeProvisionRequest,
         operation_id: &str,
     ) -> crate::Result<crate::RuntimeProvisionReceipt> {
-        let mut rendered = self
-            .deployment
-            .render_runtime(&request.spec, request.generation)?;
+        let mut rendered = self.deployment.render_request(request)?;
         rendered.funded_until = request.funded_until;
         self.verify_spec_home(&request.spec).await?;
         if let Some(home) = &request.spec.home_volume {
@@ -101,96 +102,18 @@ impl HostedAdapter {
         self.verify_spec_home(&request.spec).await
     }
 
-    pub(super) async fn resume_exact(
+    pub(super) async fn inspect_retained_exact(
         &self,
         request: &RuntimeAdoptionRequest,
-        successor: &crate::RuntimeProvisionRequest,
-    ) -> crate::Result<RuntimeHandle> {
-        self.transition_exact(request, successor, false).await
-    }
-
-    pub(super) async fn upgrade_exact(
-        &self,
-        request: &RuntimeAdoptionRequest,
-        successor: &crate::RuntimeProvisionRequest,
-    ) -> crate::Result<RuntimeHandle> {
-        self.transition_exact(request, successor, true).await
-    }
-
-    async fn transition_exact(
-        &self,
-        request: &RuntimeAdoptionRequest,
-        successor: &crate::RuntimeProvisionRequest,
-        upgrade: bool,
-    ) -> crate::Result<RuntimeHandle> {
-        let mut allowed = request.spec.clone();
-        allowed.reaches.clone_from(&successor.spec.reaches);
-        if upgrade {
-            if successor.spec.runtime_image.is_none()
-                || request.expected_image.is_none()
-                || !request.spec.home_volume.as_ref().is_some_and(|home| {
-                    home.request.policy.is_native_vct() && home.receipt.native_authority.is_some()
-                })
-            {
-                return Err(AdapterError::Rejected(
-                    "runtime upgrade requires an explicit image and original native VCT home"
-                        .into(),
-                ));
-            }
-            allowed
-                .runtime_image
-                .clone_from(&successor.spec.runtime_image);
-        }
-        if successor.generation <= request.generation || successor.spec != allowed {
-            return Err(AdapterError::Rejected(
-                "runtime transition must advance generation and retain its admitted specification"
-                    .into(),
-            ));
-        }
-        let previous = self.retained_request(request, request.generation)?;
-        // Preserve the persisted image even when the deployment default changed.
-        let mut resumed = request.clone();
-        resumed.spec = successor.spec.clone();
-        resumed.generation = successor.generation;
-        if upgrade {
-            resumed
-                .expected_image
-                .clone_from(&successor.spec.runtime_image);
-        }
-        let mut next = self.retained_request(&resumed, successor.generation)?;
-        next.funded_until = successor.funded_until;
-        self.backend
-            .validate_funding(&next, Some(&request.handle))
-            .await?;
-        let previous_identity = provider_request_identity(&previous)?;
-        let next_identity = provider_request_identity(&next)?;
+    ) -> crate::Result<crate::RetainedStartupPolicyPredecessor> {
+        let rendered = self.retained_request(request, request.generation)?;
+        let home = request.spec.home_volume.as_deref().ok_or_else(|| {
+            crate::AdapterError::Rejected("retained policy inspection requires a home".into())
+        })?;
         self.verify_spec_home(&request.spec).await?;
         self.verify_adoption_home_route(request)?;
-        {
-            let mut states = self.states.lock().await;
-            if let Some(state) = states.get(&request.handle) {
-                if state.provision != previous_identity && state.provision != next_identity {
-                    return Err(AdapterError::Rejected(
-                        "resume conflicts with another runtime generation".into(),
-                    ));
-                }
-            }
-            states.remove(&request.handle);
-        }
-        let home = request.spec.home_volume.as_deref().ok_or_else(|| {
-            AdapterError::Rejected("runtime transition requires its persisted home".into())
-        })?;
-        if upgrade {
-            self.backend
-                .upgrade_with_home(&request.handle, &previous, &next, home)
-                .await?;
-        } else {
-            self.backend
-                .resume_with_home(&request.handle, &previous, &next, home)
-                .await?;
-        }
-        self.verify_spec_home(&request.spec).await?;
-        self.attach_state(request.handle.clone(), &successor.spec, next_identity)
+        crate::hosted::retained_startup_policy::require(self.backend.as_ref())?
+            .inspect_retained_startup_policy(&request.handle, &rendered, home)
             .await
     }
 

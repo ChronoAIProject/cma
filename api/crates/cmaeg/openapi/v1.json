@@ -2558,6 +2558,28 @@
         ],
         "type": "object"
       },
+      "ChannelRecordManagement": {
+        "properties": {
+          "record": {
+            "$ref": "#/components/schemas/ManagedRecord"
+          },
+          "record_id": {
+            "$ref": "#/components/schemas/RecordId"
+          },
+          "version": {
+            "description": "Storage version of this read; does not authorize a mutation or retry.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "record_id",
+          "version",
+          "record"
+        ],
+        "type": "object"
+      },
       "ChannelResponse": {
         "properties": {
           "channel_id": {
@@ -5007,6 +5029,83 @@
         ],
         "type": "object"
       },
+      "ManagedProvider": {
+        "properties": {
+          "level": {
+            "$ref": "#/components/schemas/ConformanceLevel"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "level"
+        ],
+        "type": "object"
+      },
+      "ManagedRecord": {
+        "oneOf": [
+          {
+            "properties": {
+              "address": {
+                "$ref": "#/components/schemas/RecordedAddress"
+              },
+              "creation": {
+                "$ref": "#/components/schemas/RecordedCreation"
+              },
+              "name": {
+                "type": "string"
+              },
+              "owner": {
+                "$ref": "#/components/schemas/NyxIdIdentity"
+              },
+              "pending_operation": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/RecordedOperation"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "provider": {
+                "$ref": "#/components/schemas/ManagedProvider"
+              },
+              "state": {
+                "enum": [
+                  "valid"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "owner",
+              "provider",
+              "creation",
+              "address",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "invalid"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "McpAuth": {
         "oneOf": [
           {
@@ -7172,6 +7271,78 @@
       "RecordId": {
         "type": "string"
       },
+      "RecordedAddress": {
+        "oneOf": [
+          {
+            "properties": {
+              "channel_id": {
+                "$ref": "#/components/schemas/ChannelId"
+              },
+              "endpoints": {
+                "$ref": "#/components/schemas/EndpointResponse"
+              },
+              "state": {
+                "enum": [
+                  "available"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "channel_id",
+              "endpoints",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "not_recorded"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "unverifiable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "RecordedCreation": {
+        "enum": [
+          "legacy",
+          "incomplete",
+          "complete"
+        ],
+        "type": "string"
+      },
+      "RecordedOperation": {
+        "enum": [
+          "create",
+          "update",
+          "delete",
+          "audit_routing",
+          "audit_attachments"
+        ],
+        "type": "string"
+      },
       "Refusal": {
         "enum": [
           "bot_sender",
@@ -8076,6 +8247,29 @@
       "Secret": {
         "description": "A secret that only appears in the encrypted channel blob.",
         "type": "string"
+      },
+      "SideMessageBody": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
+      "SideMessageCapability": {
+        "properties": {
+          "available": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "type": "object"
       },
       "Sink": {
         "oneOf": [
@@ -10923,6 +11117,63 @@
         ]
       }
     },
+    "/channel-records/{record_id}/management": {
+      "get": {
+        "operationId": "getChannelRecordManagement",
+        "parameters": [
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelRecordManagement"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
     "/channels": {
       "get": {
         "operationId": "listChannels",
@@ -13117,6 +13368,112 @@
         ],
         "tags": [
           "provider integration"
+        ]
+      }
+    },
+    "/events/{event_ref}/side-messages": {
+      "get": {
+        "operationId": "getSideMessageCapability",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SideMessageCapability"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      },
+      "post": {
+        "operationId": "sendSideMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SideMessageBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
         ]
       }
     },
