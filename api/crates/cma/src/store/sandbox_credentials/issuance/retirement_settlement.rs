@@ -187,6 +187,7 @@ pub(in crate::store::sandbox_credentials) async fn settle(
         let receipt = doc! {"version":1_i64, "parent":{"$literal":parent_identity},
         "runtime":{"$literal":mongodb::bson::serialize_to_bson(runtime).map_err(|_| corrupt())?},
         "parent_revision": i64::try_from(parent.revision).map_err(|_| corrupt())?,
+        "claim":{"$literal":claim},
         "evidence":{"$literal":evidence}, "recorded_at":"$$NOW"};
         let updated = store
             .intents

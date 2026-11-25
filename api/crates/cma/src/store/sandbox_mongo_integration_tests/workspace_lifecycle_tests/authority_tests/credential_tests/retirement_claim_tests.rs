@@ -1018,10 +1018,19 @@ async fn independent_retirement_settlement_reuses_exact_receipt_through_cleanup_
     f.clear_failpoint().await;
     assert!(unknown.is_err());
     let committed = records.find_one(filter.clone()).await.unwrap().unwrap();
-    assert!(committed
+    let authorizing_claim = committed
         .get_document("retirement_custody")
         .unwrap()
-        .contains_key("settlement"));
+        .get_document("settlement")
+        .unwrap()
+        .get_document("claim")
+        .unwrap();
+    let lease = claim.work.lease.as_ref().unwrap();
+    assert_eq!(authorizing_claim.get_str("holder").unwrap(), lease.holder);
+    assert_eq!(
+        authorizing_claim.get_i64("fence").unwrap(),
+        i64::try_from(lease.fence).unwrap()
+    );
     parent_rows
         .update_one(
             filter.clone(),
