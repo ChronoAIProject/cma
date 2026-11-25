@@ -116,6 +116,7 @@ impl CreationOutcomes {
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
+            let mut failed_after = None;
             let mut tick = tokio::time::interval(Duration::from_secs(60));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
@@ -128,7 +129,7 @@ impl CreationOutcomes {
                         if !matches!(tokio::time::timeout(Duration::from_secs(5), self.settle_expired_unlinked()).await, Ok(Ok(()))) {
                             tracing::warn!("Sandbox creation terminal settlement did not complete");
                         }
-                        if !matches!(tokio::time::timeout(Duration::from_secs(5), self.settle_failed_linked()).await, Ok(Ok(()))) {
+                        if !matches!(tokio::time::timeout(Duration::from_secs(5), self.settle_failed_linked(&mut failed_after)).await, Ok(Ok(()))) {
                             tracing::warn!("Sandbox creation failed-operation settlement did not complete");
                         }
                     }

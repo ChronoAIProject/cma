@@ -258,6 +258,19 @@ impl MongoAgentLifecycleStore {
             )
             .await
             .map_err(driver)?;
+        operations
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"status":1,"creation_fence.epoch":1,"_id":1})
+                    .options(
+                        IndexOptions::builder()
+                            .name("creation_terminal_recovery".to_owned())
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(driver)?;
         canary_admission::ensure_admission_indexes(&operations).await?;
         Ok(Self {
             creation_writer_epoch: None,

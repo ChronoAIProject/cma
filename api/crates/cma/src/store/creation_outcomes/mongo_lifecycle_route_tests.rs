@@ -399,6 +399,28 @@ async fn covered_terminal_failure_from_previous_writer_is_reconciled() {
     let receipt = submit(&app, &request).await;
     let id = receipt["id"].as_str().unwrap();
     let operation = operations.claim(id).await.unwrap().unwrap();
+    // Waiting operations are excluded by the Failed-state index before pagination.
+    for i in 0..40 {
+        let waiting = lifecycle_query(&store, &owner, today, &format!("{i:032x}"));
+        let waiting_receipt = submit(&app, &waiting).await;
+        let waiting_id = waiting_receipt["id"].as_str().unwrap();
+        let waiting_lease = operations
+            .claim(waiting_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .lease()
+            .unwrap();
+        operations
+            .wait_for_connection(
+                &waiting_lease,
+                vec!["fixture-service".into()],
+                serde_json::json!({}),
+                None,
+            )
+            .await
+            .unwrap();
+    }
     operations
         .fail(&operation.lease().unwrap(), "Previous writer failure")
         .await
@@ -410,7 +432,7 @@ async fn covered_terminal_failure_from_previous_writer_is_reconciled() {
             .unwrap(),
         Outcome::Unknown { .. }
     ));
-    store.settle_failed_linked().await.unwrap();
+    store.settle_failed_linked(&mut None).await.unwrap();
     assert!(
         matches!(reader.lookup(&identity(&store,&owner,&request),&request).await.unwrap(),Outcome::Refused { code:RefusalCode::CreationFailed, operation_id:Some(operation_id),.. } if operation_id==id)
     );

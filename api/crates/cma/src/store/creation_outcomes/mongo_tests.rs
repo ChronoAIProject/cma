@@ -554,6 +554,19 @@ async fn expired_covered_submission_publishes_stable_terminal_evidence() {
             .await
             .unwrap();
     }
+    for _ in 0..32 {
+        store
+            .records
+            .insert_one(doc! {
+                "_id":mongodb::bson::oid::ObjectId::new(), "document_schema_version":VERSION,
+                "deployment":&store.config.deployment,"epoch":&store.config.epoch,
+                "operation":"agent_bootstrap","owner":"fixture-owner","identity":"a".repeat(64),
+                "generation":"b".repeat(32),"state":{"kind":"pending"},
+                "lease_until":DateTime::from_millis(-2000)
+            })
+            .await
+            .unwrap();
+    }
     let (left, right) = tokio::join!(
         store.settle_expired_unlinked(),
         other.settle_expired_unlinked()

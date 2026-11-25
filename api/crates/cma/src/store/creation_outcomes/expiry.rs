@@ -6,57 +6,58 @@ const BATCH: i64 = 32;
 impl CreationOutcomes {
     /// Older covered writers could commit Failed without settling their proof.
     /// Only the original linked pending proof can authorize this recovery.
-    pub(super) async fn settle_failed_linked(&self) -> Result<(), StoreError> {
+    pub(super) async fn settle_failed_linked(
+        &self,
+        after: &mut Option<String>,
+    ) -> Result<(), StoreError> {
         if !self.config.terminal_settlement {
             return Ok(());
         }
-        let pipeline = vec![
-            doc! {"$match": {
-                "document_schema_version":VERSION,"deployment":&self.config.deployment,
-                "epoch":&self.config.epoch,"state.kind":"pending","operation":"agent_bootstrap",
-                "operation_id":{"$regex":"^[0-9a-f]{32}$"},"owner":{"$type":"string","$ne":""},
-                "generation":{"$regex":"^[0-9a-f]{32}$"},"identity":{"$regex":"^[0-9a-f]{64}$"},
-            }},
-            doc! {"$lookup":{
-                "from":super::super::agent_lifecycle_operations::COLLECTION,
-                "localField":"operation_id","foreignField":"_id","as":"operation_row",
-                "let":{"proof_id":"$_id","proof_owner":"$owner","proof_epoch":"$epoch","proof_generation":"$generation"},
-                "pipeline":[{"$match":{
-                    "document_schema_version":VERSION,"status":"failed","sandbox_id":null,"agent_id":null,
-                    "lease_token":null,"lease_expires_at":null,
-                    "$expr":{"$and":[
-                        {"$eq":["$owner","$$proof_owner"]},
-                        {"$eq":["$creation_fence.record_id","$$proof_id"]},
-                        {"$eq":["$creation_fence.epoch","$$proof_epoch"]},
-                        {"$eq":["$creation_fence.generation","$$proof_generation"]},
-                    ]}
-                }}]
-            }},
-            doc! {"$match":{"operation_row.0":{"$exists":true}}},
-            doc! {"$limit":BATCH},
-            doc! {"$project":{"_id":1,"owner":1,"operation_id":1,"generation":1}},
-        ];
-        let mut candidates = self
-            .records
-            .aggregate(pipeline)
-            .max_time(IO_BUDGET)
-            .await
-            .map_err(driver)?;
+        let mut id_filter = doc! {"$regex":"^[0-9a-f]{32}$"};
+        if let Some(id) = after.as_ref() {
+            id_filter.insert("$gt", id);
+        }
+        let mut candidates = majority_collection::<Document>(
+            &self.database,
+            super::super::agent_lifecycle_operations::COLLECTION,
+        )
+        .find(
+            doc! {"status":"failed", "creation_fence.epoch":&self.config.epoch,
+            "_id":id_filter, "document_schema_version":VERSION,
+            "sandbox_id":null,"agent_id":null,"lease_token":null,"lease_expires_at":null},
+        )
+        .projection(doc! {"_id":1,"owner":1,"creation_fence":1})
+        .sort(doc! {"_id":1})
+        .hint(mongodb::options::Hint::Name(
+            "creation_terminal_recovery".into(),
+        ))
+        .limit(BATCH)
+        .max_time(IO_BUDGET)
+        .await
+        .map_err(driver)?;
+        let mut count = 0;
         while let Some(row) = candidates.try_next().await.map_err(driver)? {
-            let (Ok(id), Ok(owner), Ok(operation), Ok(generation)) = (
-                row.get_str("_id"),
-                row.get_str("owner"),
-                row.get_str("operation_id"),
-                row.get_str("generation"),
-            ) else {
+            count += 1;
+            let Ok(operation) = row.get_str("_id") else {
                 continue;
             };
-            let fence = CreationFence {
-                record_id: id.to_owned(),
-                generation: generation.to_owned(),
-                epoch: self.config.epoch.clone(),
-                lifecycle_lease: None,
+            *after = Some(operation.to_owned());
+            let (Ok(owner), Ok(fence)) = (row.get_str("owner"), row.get_document("creation_fence"))
+            else {
+                continue;
             };
+            let Ok(fence) =
+                mongodb::bson::deserialize_from_document::<CreationFence>(fence.clone())
+            else {
+                continue;
+            };
+            if owner.is_empty()
+                || !contract::lower_hex(&fence.record_id, 64)
+                || !contract::lower_hex(&fence.generation, 32)
+                || fence.epoch != self.config.epoch
+            {
+                continue;
+            }
             publication::recover_failed_operation(
                 &self.database,
                 &SubjectId::new(owner),
@@ -64,6 +65,9 @@ impl CreationOutcomes {
                 operation,
             )
             .await?;
+        }
+        if count < BATCH {
+            *after = None;
         }
         Ok(())
     }
@@ -76,6 +80,7 @@ impl CreationOutcomes {
             return Ok(());
         }
         let filter = doc! {
+            "_id":{"$regex":"^[0-9a-f]{64}$"},
             "document_schema_version": VERSION,
             "deployment": &self.config.deployment,
             "epoch": &self.config.epoch,
