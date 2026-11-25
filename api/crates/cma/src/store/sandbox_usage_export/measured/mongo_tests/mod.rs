@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 
 mod authority;
 mod bridge;
+mod completeness;
 mod delivery;
 mod inventory;
 mod publication;

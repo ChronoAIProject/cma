@@ -173,7 +173,19 @@ impl CaptureStore {
             self.stage_measured_hold(session, &stream, publication)
                 .await?;
         }
-        if !held && advance && self.completeness_enabled() {
+        let repair_has_statement = !advance
+            && !held
+            && !unchanged
+            && self
+                .retained_statement(
+                    session,
+                    &stream.source_stream,
+                    input.minute,
+                    crate::sandbox_usage_export::completeness_contract::Basis::Measured,
+                )
+                .await?
+                .is_some();
+        if !held && (self.completeness_enabled() || repair_has_statement) {
             let current: FactHead = self
                 .collection(INVENTORY)
                 .find_one(doc! {"_id":keys::id(&key)})
@@ -185,7 +197,10 @@ impl CaptureStore {
                 .transpose()
                 .map_err(Domain)?
                 .ok_or_else(|| Domain(corrupt()))?;
-            self.stage_measured_completeness(session, &stream, publication, &current)
+            let outcome = self
+                .stage_measured_completeness(session, &stream, &publication.manifest, &current)
+                .await?;
+            self.record_measured_completeness(session, &stream, input.minute, &current, outcome)
                 .await?;
         }
         if !held {

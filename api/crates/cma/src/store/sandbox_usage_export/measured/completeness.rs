@@ -1,5 +1,9 @@
 //! Publish measured completeness only from an exact closed lifecycle timeline.
-use super::{freeze::MeasuredPublication, *};
+use super::{
+    freeze::{Manifest, MeasuredPublication},
+    *,
+};
+use crate::store::sandbox_usage_export::completeness::MinuteOutcome;
 use crate::{
     sandbox_usage_export::completeness_contract::{
         Basis, Contribution, ContributionKind, Coverage, Dimension, FactRef, Interval, Number,
@@ -100,22 +104,45 @@ impl CaptureStore {
             u64::try_from(input.mapping_revision)
                 .map_err(|_| TransactionEventError::Domain(corrupt()))?,
         ));
-        self.stage_statement(session, &stream.source_stream, input.minute, previous)
-            .await
+        let outcome = self
+            .stage_statement(session, &stream.source_stream, input.minute, previous)
+            .await?;
+        self.record_outcome(
+            session,
+            &stream.source_stream,
+            input.minute,
+            Basis::Measured,
+            outcome,
+        )
+        .await
     }
 
     pub(super) async fn stage_measured_completeness(
         &self,
         session: &mut ClientSession,
         stream: &MeasuredStream,
-        publication: &MeasuredPublication,
+        manifest: &Manifest,
         head: &FactHead,
-    ) -> Result<(), TransactionEventError> {
+    ) -> Result<MinuteOutcome, TransactionEventError> {
         use TransactionEventError::Domain;
-        if !self.completeness_enabled() {
-            return Ok(());
+        let input = &manifest.input;
+        if let Some(previous) = self
+            .retained_statement(
+                session,
+                &stream.source_stream,
+                input.minute,
+                Basis::Measured,
+            )
+            .await?
+        {
+            if previous.producer_hold.is_some()
+                && previous
+                    .measured_mapping_revision
+                    .is_some_and(|revision| revision.0 > input.mapping_revision as u64)
+            {
+                return Ok(MinuteOutcome::Retry("newer_mapping_hold"));
+            }
         }
-        let input = &publication.manifest.input;
         let Some(mut statement) = self
             .retained_statement(
                 session,
@@ -125,7 +152,7 @@ impl CaptureStore {
             )
             .await?
         else {
-            return Ok(());
+            return Ok(MinuteOutcome::Retry("allocated_statement_pending"));
         };
         if statement.source_epoch != stream.source_epoch
             || statement.owner.subject != stream.owner
@@ -133,24 +160,24 @@ impl CaptureStore {
             || statement.scope.start_ms.0 != input.minute * 1000
             || statement.scope.end_ms.0 != (input.minute + 60) * 1000
         {
-            return Ok(());
+            return Ok(MinuteOutcome::Held("source_scope_mismatch"));
         }
         // The immutable source captures in the measured snapshot must be exactly
         // the allocated statement's timeline. A later capture cannot insert into
         // the already closed monotonic source boundary.
         if statement.timeline.len() != input.captures.len() {
-            return Ok(());
+            return Ok(MinuteOutcome::Retry("timeline_count_changed"));
         }
         for (slice, capture) in statement.timeline.iter().zip(&input.captures) {
             if slice.source_revision.0 != capture.source.revision
                 || slice.source_digest
                     != hash(&serde_json::to_vec(capture).map_err(|_| Domain(corrupt()))?)
             {
-                return Ok(());
+                return Ok(MinuteOutcome::Retry("timeline_source_changed"));
             }
         }
-        let Some(frozen) = publication.manifest.frozen.as_ref() else {
-            return Ok(());
+        let Some(frozen) = manifest.frozen.as_ref() else {
+            return Ok(MinuteOutcome::Retry("measured_manifest_missing"));
         };
         let fact = frozen.fact();
         let mut contributions = std::mem::take(&mut statement.contributions);
@@ -183,7 +210,7 @@ impl CaptureStore {
                 .filter(|contribution| contribution.dimension == dimension)
             {
                 if resource.as_ref() != Some(&contribution.resource) {
-                    return Ok(());
+                    return Ok(MinuteOutcome::Held("mixed_resource_incarnation"));
                 }
                 existing.push(Range {
                     from: contribution.interval.start_ms.0 / 1000,
@@ -215,11 +242,11 @@ impl CaptureStore {
                 .checked_mul(1000)
                 .ok_or_else(|| Domain(corrupt()))?;
             if metric.expected_binding_ms != total.to_string() {
-                return Ok(());
+                return Ok(MinuteOutcome::Retry("measured_extent_mismatch"));
             }
             for range in residual {
                 let Some(resource) = resource.clone() else {
-                    return Ok(());
+                    return Ok(MinuteOutcome::Retry("residual_resource_missing"));
                 };
                 contributions.push(Contribution {
                     dimension,

@@ -168,3 +168,154 @@ async fn completeness_backfills_retained_minutes_and_serializes_with_new_capture
     assert_eq!(minutes.len(), 2);
     fixture.db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn completeness_pending_fragment_survives_progress_and_retry_after_restart() {
+    let mut fixture = Fixture::new(true).await;
+    let mut enabled = config();
+    enabled.completeness_enabled = true;
+    fixture.store = fixture
+        .store
+        .clone()
+        .with_usage_capture(Some(enabled.clone()))
+        .await
+        .unwrap();
+    let parent = fixture.parent("retained-fixture").await;
+    let capture = fixture.capture();
+    capture
+        .project_one(&source_id(&parent, 1), now())
+        .await
+        .unwrap();
+    fixture
+        .store
+        .checkpoint_usage_one(parent.id.as_str(), MINUTE)
+        .await
+        .unwrap();
+    capture
+        .project_one(&source_id(&parent, 2), now())
+        .await
+        .unwrap();
+    let stream = capture
+        .completeness_source_page("")
+        .await
+        .unwrap()
+        .remove(0);
+    // This synthetic database models a projected fragment temporarily absent
+    // from retained custody, then repaired with its original immutable bytes.
+    let events = fixture.db.collection::<Document>(OUTBOX);
+    let missing = events
+        .find_one_and_delete(doc! {"source_id":source_id(&parent,2),"part":0_i64})
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(capture.backfill_completeness(&stream).await.unwrap());
+    let outcomes = fixture.db.collection::<Document>(INVENTORY);
+    let pending = outcomes
+        .find_one(doc! {"_id.usage_completeness_outcome_v1":{"$exists":true}})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pending.get_str("status").unwrap(), "pending");
+    assert_eq!(
+        pending.get_str("reason").unwrap(),
+        "projected_event_missing"
+    );
+    assert!(capture
+        .completeness_delivery_page("")
+        .await
+        .unwrap()
+        .is_empty());
+    events.insert_one(missing).await.unwrap();
+    outcomes
+        .update_many(
+            doc! {"_id.usage_completeness_retry_v1":{"$exists":true}},
+            doc! {"$set":{"due_at":mongodb::bson::DateTime::from_millis(0)}},
+        )
+        .await
+        .unwrap();
+    let reopened = CaptureStore::open(&fixture.client, fixture.db.name(), enabled)
+        .await
+        .unwrap();
+    assert!(reopened.backfill_completeness(&stream).await.unwrap());
+    let outcome = outcomes
+        .find_one(doc! {"_id":pending.get_document("_id").unwrap()})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(outcome.get_str("status").unwrap(), "staged");
+    assert_eq!(outcome.get_i64("attempts").unwrap(), 2);
+    assert_eq!(
+        reopened.completeness_delivery_page("").await.unwrap().len(),
+        1
+    );
+    assert!(!reopened.backfill_completeness(&stream).await.unwrap());
+    fixture.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn completeness_unproved_historical_scope_retains_held_outcome() {
+    use futures_util::TryStreamExt;
+    let mut fixture = Fixture::new(false).await;
+    let parent = fixture.parent("historical-owner").await;
+    fixture.prepare().await;
+    let mut enabled = config();
+    enabled.completeness_enabled = true;
+    fixture.store = fixture
+        .store
+        .with_usage_capture(Some(enabled.clone()))
+        .await
+        .unwrap();
+    let capture = fixture.capture();
+    capture
+        .baseline(&fixture.store, "2026-09-05T00:00:30Z", 1)
+        .await
+        .unwrap();
+    fixture
+        .store
+        .checkpoint_usage_one(parent.id.as_str(), MINUTE)
+        .await
+        .unwrap();
+    let rows = fixture
+        .db
+        .collection::<Document>(CAPTURES)
+        .find(doc! {})
+        .sort(doc! {"revision":1})
+        .await
+        .unwrap()
+        .try_collect::<Vec<_>>()
+        .await
+        .unwrap();
+    for row in rows {
+        capture
+            .project_one(row.get_str("_id").unwrap(), now())
+            .await
+            .unwrap();
+    }
+    let stream = capture
+        .completeness_source_page("")
+        .await
+        .unwrap()
+        .remove(0);
+    assert!(capture.backfill_completeness(&stream).await.unwrap());
+    let reopened = CaptureStore::open(&fixture.client, fixture.db.name(), enabled)
+        .await
+        .unwrap();
+    let outcome = fixture
+        .db
+        .collection::<Document>(INVENTORY)
+        .find_one(doc! {"_id.usage_completeness_outcome_v1":{"$exists":true}})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(outcome.get_str("status").unwrap(), "held");
+    assert_eq!(outcome.get_str("reason").unwrap(), "unproved_scope_start");
+    assert!(!reopened.backfill_completeness(&stream).await.unwrap());
+    assert!(reopened
+        .completeness_delivery_page("")
+        .await
+        .unwrap()
+        .is_empty());
+    fixture.db.drop().await.unwrap();
+}

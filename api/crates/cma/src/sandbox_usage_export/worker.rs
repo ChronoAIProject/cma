@@ -73,6 +73,9 @@ impl UsageExporter {
                                     if let Err(error) = self.sweep_completeness_source(&mut source_after).await {
                                         tracing::warn!(%error, "usage completeness source remains pending");
                                     }
+                                    if let Err(error) = self.store.rebuild_measured_completeness().await {
+                                        tracing::warn!(%error, "usage completeness repair remains pending");
+                                    }
                                     if let Err(error) = self.sweep_completeness(&mut completeness_after).await {
                                         tracing::warn!(%error, "usage completeness delivery remains pending");
                                     }

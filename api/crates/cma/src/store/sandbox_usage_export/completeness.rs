@@ -18,6 +18,7 @@ use serde_json::Value;
 
 mod backfill;
 mod delivery;
+mod outcome;
 pub(crate) use delivery::{CompletenessAttempt, CompletenessReceipt, CompletenessResult};
 
 fn key(namespace: &str, stream: &str, minute: u64, basis: Basis) -> Document {
@@ -113,6 +114,19 @@ fn coverage(
     }
 }
 
+enum AllocatedBuild {
+    Ready(Box<Statement>),
+    Retry(&'static str),
+    Held(&'static str),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MinuteOutcome {
+    Staged,
+    Retry(&'static str),
+    Held(&'static str),
+}
+
 impl CaptureStore {
     pub(crate) fn completeness_enabled(&self) -> bool {
         self.config.completeness_enabled
@@ -125,12 +139,12 @@ impl CaptureStore {
         minute: u64,
         scope_start: u64,
         scope_end: u64,
-    ) -> Result<Option<Statement>, TransactionEventError> {
+    ) -> Result<AllocatedBuild, TransactionEventError> {
         use TransactionEventError::{Domain, Driver};
         let revision = stream.last_revision;
         let projected_through = stream.last_ended_at;
         if projected_through < scope_end {
-            return Ok(None);
+            return Ok(AllocatedBuild::Retry("projection_incomplete"));
         }
         let mut rows = self.collection(CAPTURES).find(doc! {"stream_id":&stream.id,
             "record.source.started_at":{"$lt":number(scope_end).map_err(Domain)?},"record.source.ended_at":{"$gt":number(scope_start).map_err(Domain)?},
@@ -141,7 +155,7 @@ impl CaptureStore {
         let mut cursor = scope_start;
         while let Some(row) = rows.next(&mut *session).await.transpose().map_err(Driver)? {
             if timeline.len() >= MAX_ITEMS {
-                return Ok(None);
+                return Ok(AllocatedBuild::Held("capture_item_bound"));
             }
             let capture = super::project::read_capture(&row).map_err(Domain)?;
             let source = &capture.source;
@@ -156,12 +170,16 @@ impl CaptureStore {
                 || row.get_i64("next_second").map_err(|_| Domain(corrupt()))?
                     < number(end).map_err(Domain)?
             {
-                return Ok(None);
+                return Ok(AllocatedBuild::Retry(
+                    "lifecycle_gap_or_projection_incomplete",
+                ));
             }
             let part = (minute / 60 - source.started_at / 60)
                 / layer2_core::sandbox_usage_evidence::MAX_FACTS as u64;
-            let event = self.collection(OUTBOX).find_one(doc! {"stream_id":&stream.id,"source_id":source.transaction_id(),"part":number(part).map_err(Domain)?})
-                .session(&mut *session).await.map_err(Driver)?.ok_or_else(||Domain(corrupt()))?;
+            let Some(event) = self.collection(OUTBOX).find_one(doc! {"stream_id":&stream.id,"source_id":source.transaction_id(),"part":number(part).map_err(Domain)?})
+                .session(&mut *session).await.map_err(Driver)? else {
+                    return Ok(AllocatedBuild::Retry("projected_event_missing"));
+                };
             let event = FrozenUsageEvent::read(&event).map_err(Domain)?;
             let value: Value =
                 serde_json::from_slice(&event.payload).map_err(|_| Domain(corrupt()))?;
@@ -173,7 +191,7 @@ impl CaptureStore {
             if field(fact, "start_ms").map_err(Domain)? != interval.start_ms.0.to_string()
                 || field(fact, "end_ms").map_err(Domain)? != interval.end_ms.0.to_string()
             {
-                return Ok(None);
+                return Ok(AllocatedBuild::Retry("lifecycle_fact_extent"));
             }
             let reference = fact_reference(&event, fact).map_err(Domain)?;
             let compute = resource(&capture, Dimension::Cpu);
@@ -181,7 +199,7 @@ impl CaptureStore {
             if (source.allocation.running && compute.is_none())
                 || (source.allocation.disk_gib > 0 && home.is_none())
             {
-                return Ok(None);
+                return Ok(AllocatedBuild::Retry("resource_identity_missing"));
             }
             for dimension in [Dimension::Cpu, Dimension::Memory, Dimension::Disk] {
                 if let Some(resource) = resource(&capture, dimension) {
@@ -211,7 +229,7 @@ impl CaptureStore {
             cursor = end;
         }
         if cursor != scope_end {
-            return Ok(None);
+            return Ok(AllocatedBuild::Retry("lifecycle_extent_incomplete"));
         }
         facts.sort_by(|a, b| a.fact_id.cmp(&b.fact_id));
         let statement = Statement {
@@ -262,7 +280,7 @@ impl CaptureStore {
             contributions,
         };
         statement.validate().map_err(|_| Domain(corrupt()))?;
-        Ok(Some(statement))
+        Ok(AllocatedBuild::Ready(Box::new(statement)))
     }
 
     pub(super) async fn retained_statement(
@@ -299,7 +317,7 @@ impl CaptureStore {
         source: &str,
         minute: u64,
         mut statement: Statement,
-    ) -> Result<(), TransactionEventError> {
+    ) -> Result<MinuteOutcome, TransactionEventError> {
         use TransactionEventError::{Domain, Driver};
         let head_id = key(
             &statement.producer_namespace,
@@ -331,7 +349,7 @@ impl CaptureStore {
         statement.previous_statement_digest = None;
         if let Some(previous) = &previous {
             if previous.get_str("semantic").ok() == Some(semantic.as_str()) {
-                return Ok(());
+                return Ok(MinuteOutcome::Staged);
             }
             let revision = previous
                 .get_i64("revision")
@@ -350,17 +368,17 @@ impl CaptureStore {
         statement.validate().map_err(|_| Domain(corrupt()))?;
         let bytes = serde_json_canonicalizer::to_vec(&statement).map_err(|_| Domain(corrupt()))?;
         if bytes.len() > 512 * 1024 {
-            return Ok(());
+            return Ok(MinuteOutcome::Held("statement_size_bound"));
         }
         let digest = hash(&bytes);
         let canonical = Binary {
             subtype: BinarySubtype::Generic,
             bytes,
         };
-        rows.insert_one(doc! {"_id":outbox_id(&statement.producer_namespace,&statement.statement_id),"canonical":&canonical,"digest":&digest,"status":"pending","generation":0_i64})
+        rows.insert_one(doc! {"_id":outbox_id(&statement.producer_namespace,&statement.statement_id),"document_schema_version":1_i64,"canonical":&canonical,"digest":&digest,"status":"pending","generation":0_i64})
             .session(&mut *session).await.map_err(Driver)?;
-        rows.replace_one(doc! {"_id":&head_id},doc! {"_id":head_id,"canonical":canonical,"digest":digest,"semantic":semantic,"revision":number(statement.revision.0).map_err(Domain)?})
+        rows.replace_one(doc! {"_id":&head_id},doc! {"_id":head_id,"document_schema_version":1_i64,"canonical":canonical,"digest":digest,"semantic":semantic,"revision":number(statement.revision.0).map_err(Domain)?})
             .upsert(previous.is_none()).session(&mut *session).await.map_err(Driver)?;
-        Ok(())
+        Ok(MinuteOutcome::Staged)
     }
 }

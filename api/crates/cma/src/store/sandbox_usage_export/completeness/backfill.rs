@@ -27,7 +27,7 @@ impl CaptureStore {
             return Ok(());
         }
         self.collection(INVENTORY).update_one(doc! {"_id":fence_key(&stream.namespace,&stream.id)},doc! {
-            "$inc":{"generation":1_i64},"$set":{"source_revision":number(stream.last_revision).map_err(Domain)?,
+            "$inc":{"generation":1_i64},"$set":{"document_schema_version":1_i64,"source_revision":number(stream.last_revision).map_err(Domain)?,
                 "projected_revision":stream.projected_revision.map(number).transpose().map_err(Domain)?,"sequence":number(stream.sequence).map_err(Domain)?}
         }).upsert(true).session(&mut *session).await.map_err(Driver)?;
         Ok(())
@@ -109,10 +109,22 @@ impl CaptureStore {
             .session(&mut *session)
             .await
             .map_err(Driver)?;
-        let minute = match progress.as_ref() {
+        let cursor = match progress.as_ref() {
             Some(row) => u64::try_from(row.get_i64("next_minute").map_err(|_| Domain(corrupt()))?)
                 .map_err(|_| Domain(corrupt()))?,
             None => stream.capture_start / 60 * 60,
+        };
+        let prefer_retry = progress
+            .as_ref()
+            .and_then(|row| row.get_bool("retry_turn").ok())
+            .unwrap_or(false);
+        let retry = self.due_allocated_retry(session, &stream.id).await?;
+        let retrying =
+            retry.is_some() && (prefer_retry || cursor.saturating_add(60) > stream.last_ended_at);
+        let minute = if retrying {
+            retry.ok_or_else(|| Domain(corrupt()))?
+        } else {
+            cursor
         };
         if !minute.is_multiple_of(60) || minute < stream.capture_start / 60 * 60 {
             return Err(Domain(corrupt()));
@@ -140,19 +152,29 @@ impl CaptureStore {
         // This write serializes with both source writers, including initial fence
         // installation on a stream captured before the flag was enabled.
         self.fence_completeness_source(session, &stream).await?;
-        if scope_start < scope_end && (scope_start == minute || stream.complete_lifecycle) {
-            if let Some(statement) = self
-                .allocated_statement(session, &stream, minute, scope_start, scope_end)
-                .await?
-            {
-                self.stage_statement(session, &stream.id, minute, statement)
-                    .await?;
-            }
-        }
+        let outcome =
+            if scope_start >= scope_end || (scope_start > minute && !stream.complete_lifecycle) {
+                MinuteOutcome::Held("unproved_scope_start")
+            } else {
+                match self
+                    .allocated_statement(session, &stream, minute, scope_start, scope_end)
+                    .await?
+                {
+                    AllocatedBuild::Ready(statement) => {
+                        self.stage_statement(session, &stream.id, minute, *statement)
+                            .await?
+                    }
+                    AllocatedBuild::Retry(reason) => MinuteOutcome::Retry(reason),
+                    AllocatedBuild::Held(reason) => MinuteOutcome::Held(reason),
+                }
+            };
+        self.record_outcome(session, &stream.id, minute, Basis::Allocated, outcome)
+            .await?;
+        let next = if retrying { cursor } else { minute_end };
         self.collection(INVENTORY)
             .replace_one(
                 doc! {"_id":&progress_id},
-                doc! {"_id":progress_id,"next_minute":number(minute_end).map_err(Domain)?},
+                doc! {"_id":progress_id,"document_schema_version":1_i64,"next_minute":number(next).map_err(Domain)?,"retry_turn":!retrying},
             )
             .upsert(progress.is_none())
             .session(&mut *session)
