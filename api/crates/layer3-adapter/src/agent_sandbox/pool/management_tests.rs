@@ -387,12 +387,13 @@ async fn pool_drift_observation_preserves_uid_retirement_and_healthy_plan_author
             .unwrap()
             .remove("cma/native-target-v1");
     });
-    let seed = seed_path();
-    let seed_name = seed.rsplit('/').next().unwrap();
-    let original_seed = fixture.row("volumesnapshots", seed_name);
-    fixture.edit("volumesnapshots", seed_name, |row| {
-        row["metadata"]["uid"] = json!("replaced-seed");
-    });
+    let original_seed = {
+        let mut state = fixture.state.lock().unwrap();
+        let seed = state.rows.get_mut(seed_path()).unwrap();
+        let original = seed.clone();
+        seed["metadata"]["uid"] = json!("replaced-seed");
+        original
+    };
     assert!(matches!(
         fixture.client.resize(&first, 2).await,
         Err(crate::AdapterError::Rejected(_))
@@ -401,7 +402,12 @@ async fn pool_drift_observation_preserves_uid_retirement_and_healthy_plan_author
         fixture.client.resize_fenced(&first, &resize).await,
         Err(crate::AdapterError::Rejected(_))
     ));
-    fixture.edit("volumesnapshots", seed_name, |row| *row = original_seed);
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .rows
+        .insert(seed_path().into(), original_seed);
     fixture.edit("sandboxwarmpools", &first.name, |row| {
         row["metadata"]["uid"] = json!("replacement");
     });
