@@ -133,6 +133,54 @@ jobs:
         if timeout 5m bash -ec 'bash .github/scripts/staging_cd_transport.sh && bash .github/scripts/install-image-gitleaks.sh'; then
           echo "ready=true" >> "$GITHUB_OUTPUT"
         fi
+    - name: Verify Omarchy runtime contract
+      run: node .github/scripts/omarchy-contract.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/runtime-contract.json"
+    - name: Verify Omarchy staging qualification profile
+      run: CMA_RUNTIME_EVIDENCE_PROFILE=omarchy node .github/scripts/runtime-image-evidence.mjs
+        run cma-runtime-omarchy:ci "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/staging-qualification.json"
+    - name: Qualify exact Omarchy ledger storage
+      run: node .github/scripts/runtime-ledger-evidence.mjs cma-runtime-omarchy:ci
+        "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/ledger-storage.json"
+    - name: Prepare native Chromium namespaces
+      run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+    - name: Verify device-free Omarchy desktop
+      run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/device-free"
+    - name: Verify Omarchy virtual graphics desktop
+      env:
+        CMA_OMARCHY_TEST_DRM: '1'
+      run: |
+        sudo modprobe vkms
+        node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/virtual-drm"
+    - name: Verify Omarchy production temporary directory
+      env:
+        CMA_OMARCHY_TEST_IMAGE_TMP: '1'
+      run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/image-tmp"
+    - name: Restore Trivy databases
+      id: trivy-cache-restore
+      if: github.event_name != 'push' || github.ref != 'refs/heads/develop'
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: "${{ github.workspace }}/.cache/trivy"
+        key: cache-trivy-readonly
+        restore-keys: cache-trivy-
+    - name: Scan tested Omarchy image
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+      with:
+        cache: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop'
+          }}"
+        image-ref: cma-runtime-omarchy:ci
+        format: json
+        output: "${{ runner.temp }}/omarchy-evidence/vulnerabilities.json"
+        severity: HIGH,CRITICAL
+        exit-code: '0'
+        ignore-unfixed: true
+    - name: Omarchy vulnerability gate
+      timeout-minutes: 5
+      env:
+        BASE_SHA: "${{ steps.qualification-base.outputs.sha }}"
+        GH_TOKEN: "${{ github.token }}"
+      run: python3 -B .github/scripts/image_vulnerability_gate.py --component runtime-omarchy
+        --report "$RUNNER_TEMP/omarchy-evidence/vulnerabilities.json" --base "$BASE_SHA"
     - name: Scan the shared archive before uploading it
       timeout-minutes: 32
       env:
