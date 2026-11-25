@@ -4,8 +4,7 @@ import os
 import re
 import subprocess
 
-from .common import ScanError, digest_bytes, digest_file
-from .detector_report import report_rows
+from .common import ScanError, digest_bytes, digest_file, json_bytes
 
 
 class Gitleaks:
@@ -104,11 +103,16 @@ class Gitleaks:
         )
         if result.returncode not in (0, 1) or not raw.is_file() or unexpected_warning:
             raise ScanError("gitleaks-incomplete")
+        if raw.stat().st_size > 64 * 1024 * 1024:
+            raise ScanError("gitleaks-report-too-large")
+        rows = json_bytes(raw.read_bytes())
+        if not isinstance(rows, list) or (bool(rows) != (result.returncode == 1)):
+            raise ScanError("gitleaks-result-inconsistent")
         index = self.index(stage, locations)
         digests = {} if digests is None else digests
         cacheable = True
         mapped = []
-        for row in report_rows(raw):
+        for row in rows:
             if not isinstance(row, dict):
                 raise ScanError("invalid-gitleaks-finding")
             name, rule, secret = row.get("File"), row.get("RuleID"), row.get("Secret")
@@ -126,12 +130,9 @@ class Gitleaks:
             if physical not in digests:
                 digests[physical] = digest_file(physical)
             mapped.append((physical.name, "gitleaks." + rule, digest_bytes(secret.encode()), line, location, physical))
-        if bool(mapped) != (result.returncode == 1):
-            raise ScanError("gitleaks-result-inconsistent")
         # Gitleaks workers may return rows in different orders. Canonical mapping
         # makes cold and reused evidence identical without dropping occurrences.
-        mapped.sort(key=lambda value: value[:4])
-        for _, rule, candidate, line, location, physical in mapped:
+        for _, rule, candidate, line, location, physical in sorted(mapped, key=lambda value: value[:4]):
             if observed is not None:
                 if location != locations[physical]:
                     cacheable = False
