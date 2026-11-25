@@ -171,6 +171,50 @@ async fn startup_native_pool_drift_or_absence_preserves_retained_binding() {
             }
             hidden
         };
+        if template_absent && !pool_absent {
+            let provider = AgentSandboxClient::new(
+                fixture.native.api.client.clone(),
+                AgentSandboxConfig {
+                    namespace: "cma-test".into(),
+                    deployment: "test".into(),
+                    runtime_class: None,
+                    service_account: "cma-runtime".into(),
+                    image_pull_secrets: Vec::new(),
+                    template_network_policy: None,
+                    template_fs_group_change_policy: Some(
+                        NativeFsGroupChangePolicy::OnRootMismatch,
+                    ),
+                    native_claim_guard_enabled: false,
+                    runtime_startup_breaker_enabled: false,
+                    control_key: "fixture".repeat(8),
+                },
+                "fixture",
+            )
+            .unwrap();
+            let pools = provider.warm_pools();
+            let mut spec = binding.spec.clone();
+            spec.cpu_millis += 100;
+            let healthy = pools.configure(&spec, 2).await.unwrap();
+            {
+                let mut state = fixture.native.api.state.lock().unwrap();
+                let path = format!("{}/sandboxwarmpools/{}", api::PREFIX, healthy.binding.name);
+                let row = state.rows.get_mut(&path).unwrap();
+                row["status"] = json!({
+                    "observedGeneration": row["metadata"]["generation"],
+                    "readyReplicas": 2
+                });
+            }
+            assert_eq!(
+                pools.inventory().await.unwrap_err(),
+                layer3_adapter::AdapterError::NativePoolDefinitionAbsent {
+                    pool: false,
+                    template: true,
+                }
+            );
+            crate::warm_pools::tests::startup_tests::assert_startup_pool_with_historical_template_absent(
+                pools, pools.plan(&spec).unwrap(), healthy,
+            ).await;
+        }
         fixture.control.other_gate.add_permits(64);
         fixture.control.status_gate.add_permits(16);
         tokio::time::timeout(

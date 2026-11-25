@@ -300,7 +300,10 @@ async fn step(
         };
         let inventory = match provider.inventory().await {
             Ok(inventory) => inventory,
-            Err(AdapterError::NativePoolConfigurationDrift) => {
+            Err(
+                AdapterError::NativePoolConfigurationDrift
+                | AdapterError::NativePoolDefinitionAbsent { .. },
+            ) => {
                 let binding = target.binding.as_ref().ok_or(WarmPoolError::Conflict)?;
                 let observation = provider
                     .observe_admitting_pool(binding, &provider_target, policy.target_fencing)

@@ -316,9 +316,25 @@ impl AgentSandboxPools {
         let desired = model::template(&config, &definition.spec)?;
         let template = self
             .templates
-            .get(&desired.name_any())
+            .get_opt(&desired.name_any())
             .await
             .map_err(api_error)?;
+        let Some(template) = template else {
+            let uid = pool
+                .annotations()
+                .get("cma/pool-template-uid")
+                .filter(|uid| !uid.is_empty())
+                .ok_or_else(|| rejected("native pool template identity is missing"))?;
+            let mut expected = desired;
+            expected.metadata.uid = Some(uid.clone());
+            let desired_pool = model::pool(&config, &definition.spec, &expected, target(pool)?)?;
+            model::verify_identity(pool, &desired_pool)?;
+            model::verify_spec(pool, &desired_pool)?;
+            return Err(crate::AdapterError::NativePoolDefinitionAbsent {
+                pool: false,
+                template: true,
+            });
+        };
         model::verify_identity(&template, &desired)?;
         let desired_pool = model::pool(&config, &definition.spec, &template, target(pool)?)?;
         model::verify_identity(pool, &desired_pool)?;

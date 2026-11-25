@@ -415,3 +415,40 @@ async fn startup_pool_drift_requires_exact_target_and_preserves_healthy_capacity
         assert_eq!(await_pool().await, Err(WarmPoolError::Conflict));
     }
 }
+
+pub(crate) async fn assert_startup_pool_with_historical_template_absent(
+    provider: &dyn NativePoolControl,
+    plan: NativePoolConfiguration,
+    active: NativePoolStatus,
+) {
+    let store = resize::Targets::default();
+    let mut target = default_target(
+        plan.clone(),
+        ConfigureWarmPoolBody {
+            cpu_millis: plan.spec.cpu_millis,
+            memory_mib: plan.spec.memory_mib,
+            target_replicas: active.desired_replicas,
+        },
+    );
+    target.binding = Some(active.binding);
+    target.applied_revision = target.revision;
+    store.rows.lock().unwrap().push(target);
+    for allow_empty in [false, true] {
+        assert_eq!(
+            await_ready_with_fencing(
+                &store,
+                provider,
+                &plan,
+                Duration::from_secs(3),
+                StartupPoolPolicy {
+                    allow_empty,
+                    target_fencing: true
+                },
+                None,
+                None,
+            )
+            .await,
+            Ok(())
+        );
+    }
+}
