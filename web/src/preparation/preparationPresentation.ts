@@ -6,6 +6,7 @@ export interface PreparationFacts {
   readonly requestAccepted?: boolean;
   readonly operation?: AgentLifecycleOperationView;
   readonly readError?: string;
+  readonly setupFailure?: string;
   readonly canonicalTitle?: string;
   readonly initialTask?: 'not-started' | 'started' | 'unknown';
   readonly environmentReady?: boolean;
@@ -19,14 +20,15 @@ export function derivePreparationView(facts: PreparationFacts) {
   const accepted = Boolean(facts.receipt) || facts.requestAccepted === true;
   const started = facts.initialTask === 'started';
   const ready = facts.environmentReady === true || operation?.status === 'succeeded';
+  const failed = facts.setupFailure !== undefined || operation?.status === 'failed';
   const stage: PreparationStage = started
     ? 'started'
     : !accepted
       ? 'checking'
-      : facts.readError
-        ? 'interrupted'
-        : operation?.status === 'failed'
-          ? 'failed'
+      : failed
+        ? 'failed'
+        : facts.readError
+          ? 'interrupted'
           : operation?.status === 'waiting_for_connection'
             ? 'waiting'
             : operation?.phase === 'recoverable_pending'
@@ -62,8 +64,11 @@ export function derivePreparationView(facts: PreparationFacts) {
     ready,
     started,
     animate: stage === 'preparing',
-    notStarted: accepted && facts.initialTask === 'not-started',
-    error: facts.readError ?? (stage === 'failed' ? operation?.error : undefined),
+    notStarted: accepted && stage !== 'failed' && facts.initialTask === 'not-started',
+    error:
+      stage === 'failed'
+        ? (facts.setupFailure ?? operation?.error ?? 'Review the environment before trying again.')
+        : facts.readError,
   };
 }
 export type PreparationPresentation = ReturnType<typeof derivePreparationView>;
