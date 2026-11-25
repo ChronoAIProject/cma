@@ -299,7 +299,10 @@ async fn worker_quota_retry_resumes_original_agent_when_a_slot_returns() {
     store.save_sandbox(revision, sandbox).await.unwrap();
     make_retry_due(&collection, &receipt.id).await;
     let restarted = Arc::new(MongoAgentLifecycleStore::open(&db).await.unwrap());
-    assert_eq!(restarted.pending().await.unwrap(), [receipt.id.clone()]);
+    assert_eq!(
+        restarted.pending().await.unwrap().as_slice(),
+        std::slice::from_ref(&receipt.id)
+    );
     let next = fixture::facade_with_limit(
         store.clone(),
         profiles,
