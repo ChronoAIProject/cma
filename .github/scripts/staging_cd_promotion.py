@@ -46,6 +46,9 @@ def proven_components(evidence, latest, history):
         if row["writer"] not in history.positions or any(history.position(r["source"]) > history.position(row["writer"])
                                                         for r in receipts.values()):
             continue
+        # A previous mixed-component stamp cannot prove a standalone two-phase Web release.
+        if len(receipts) > 1 and "asset_continuity" in receipts.get("web", {}):
+            continue
         request = private_document(release_set(receipts))
         if proof(request["components"]) == stamp:
             result.add(component)

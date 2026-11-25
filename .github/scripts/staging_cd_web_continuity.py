@@ -1,5 +1,6 @@
 """Validate the Web asset continuity proof carried by an immutable release."""
 
+from staging_cd_clock import elapsed
 from staging_cd_common import matches, require
 from staging_cd_receipts import sha256, validate_receipt
 from staging_cd_versions import version_tuple
@@ -7,10 +8,24 @@ from staging_cd_versions import version_tuple
 
 SCHEMA = "cma-web-asset-continuity-v1"
 PROOF_SCHEMA = "cma-web-asset-publication-proof-v1"
+PREIMAGE_SCHEMA = "cma-web-continuity-preimage-v1"
 REPOSITORY = "ghcr.io/chronoaiproject/cma-web"
 IMAGE = r"ghcr\.io/chronoaiproject/cma-web@sha256:[0-9a-f]{64}"
 HASH = r"[0-9a-f]{64}"
 ASSET = r"/assets/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,239}"
+
+
+def immutable_image(image):
+    return matches(IMAGE, image) and not image.endswith("0" * 64)
+
+
+def validate_incumbent(value):
+    require(isinstance(value, dict) and set(value) == {"image", "base_image", "source_sha", "version"}
+            and immutable_image(value["image"]) and immutable_image(value["base_image"])
+            and matches(r"[0-9a-f]{40}", value["source_sha"]),
+            "Web continuity incumbent is malformed")
+    version_tuple(value["version"])
+    return value
 
 
 def validate(value, identity, promote_image):
@@ -18,16 +33,12 @@ def validate(value, identity, promote_image):
         "schema", "incumbent", "candidate_base_image", "prepare_image", "asset_manifest_sha256",
         "proof_sha256", "sentinels",
     } and value["schema"] == SCHEMA, "Web continuity receipt is malformed")
-    incumbent = value["incumbent"]
-    require(isinstance(incumbent, dict) and set(incumbent) == {
-        "image", "base_image", "source_sha", "version",
-    } and matches(r"[0-9a-f]{40}", incumbent["source_sha"])
-        and incumbent["source_sha"] != identity["source"], "Web continuity incumbent is malformed")
-    version_tuple(incumbent["version"])
-    require(incumbent["version"] != identity["version"], "Web continuity incumbent version differs")
+    incumbent = validate_incumbent(value["incumbent"])
+    require(incumbent["source_sha"] != identity["source"] and incumbent["version"] != identity["version"],
+            "Web continuity incumbent and candidate identities overlap")
     images = (incumbent["image"], incumbent["base_image"], value["candidate_base_image"],
               value["prepare_image"], promote_image)
-    require(all(matches(IMAGE, image) and not image.endswith("0" * 64) for image in images)
+    require(all(immutable_image(image) for image in images[2:])
             and len(set(images[2:])) == 3 and not set(images[:2]).intersection(images[2:]),
             "Web continuity image identities overlap or are malformed")
     require(all(matches(HASH, value[key]) for key in ("asset_manifest_sha256", "proof_sha256")),
@@ -73,7 +84,7 @@ def validate_proof(proof, continuity, identity, promote_image, promote_archive):
     images = {}
     for row in inputs:
         require(isinstance(row, dict) and set(row) == {"image", "source_sha", "version", "catalog_sha256"}
-                and matches(IMAGE, row["image"]) and not row["image"].endswith("0" * 64)
+                and immutable_image(row["image"])
                 and matches(r"[0-9a-f]{40}", row["source_sha"])
                 and matches(HASH, row["catalog_sha256"]) and row["image"] not in images,
                 "Web continuity publication input is malformed")
@@ -103,8 +114,14 @@ def validate_proof(proof, continuity, identity, promote_image, promote_archive):
             "Web continuity publication archive or shared layer differs")
 
 
-def retained_inputs(incumbent, finalized, *, allow_bootstrap=False):
-    """Resolve raw lineage for a settled serving image against verified final Web tags."""
+def retention_scope(preimage, started_at, finalized, *, allow_bootstrap=False):
+    """Bind a scoped controller preimage to the lineage of its finalized serving image."""
+    require(isinstance(preimage, dict) and set(preimage) == {"schema", "observed_at", "incumbent", "asset_manifest_sha256"}
+            and preimage["schema"] == PREIMAGE_SCHEMA and preimage["observed_at"] == started_at,
+            "Web controller preimage differs from its admission")
+    elapsed(started_at)
+    incumbent = validate_incumbent(preimage["incumbent"])
+    observed_manifest = preimage["asset_manifest_sha256"]
     matches_serving = []
     for receipt in finalized:
         validate_receipt(receipt)
@@ -120,10 +137,12 @@ def retained_inputs(incumbent, finalized, *, allow_bootstrap=False):
         else:
             continue
         require(expected == incumbent, "Serving Web identity differs from its finalized lineage")
+        require(observed_manifest == (continuity["asset_manifest_sha256"] if continuity else None),
+                "Serving Web manifest differs from its finalized lineage")
         matches_serving.append(receipt.get("asset_proof"))
     require(len(matches_serving) == 1, "Serving Web image has no unique finalized lineage")
     [proof] = matches_serving
     if proof is None:
         require(allow_bootstrap is True, "An unprotected Web image cannot supply retained lineage")
-        return []
-    return [dict(row) for row in proof["inputs"] if row["image"] != incumbent["base_image"]]
+    return {"incumbent": dict(incumbent), "preimage_sha256": sha256(preimage),
+            "inputs": [dict(row) for row in proof["inputs"]] if proof is not None else []}

@@ -10,15 +10,16 @@ from cd_target import PRODUCTION
 from staging_cd_common import Refusal
 from staging_cd_deploy_result import SCHEMA as RESULT_SCHEMA, emit, report
 from staging_cd_history import DevelopHistory
-from staging_cd_promotion import proven_components
+from staging_cd_promotion import proof as promotion_proof, proven_components
 from staging_cd_receipts import annotation, canonical, parse_annotation, published_receipt, sha256, validate_receipt
 from staging_cd_receipts_tests import fixture_receipt, fixture_tag
 from staging_cd_resolve import verify
 from staging_cd_set import private_document, release_set, verify_set
-from staging_cd_web_continuity import PROOF_SCHEMA, binding, retained_inputs
+from staging_cd_web_continuity import PREIMAGE_SCHEMA, PROOF_SCHEMA, binding, retention_scope
 
 
 REPOSITORY = "ghcr.io/chronoaiproject/cma-web"
+STARTED = "2026-01-01T00:00:00Z"
 
 
 def image(digit):
@@ -58,6 +59,10 @@ def fixture_proof(continuity, release):
         "overlays": {"prepare": overlay(image("4"), image("2"), "c" * 64),
                      "promote": overlay(REPOSITORY + "@" + release["digest"], image("3"), release["archive"])},
     }
+
+
+def fixture_preimage(incumbent, manifest=None):
+    return {"schema": PREIMAGE_SCHEMA, "observed_at": STARTED, "incumbent": incumbent, "asset_manifest_sha256": manifest}
 
 
 class WebContinuityTests(unittest.TestCase):
@@ -152,6 +157,14 @@ class WebContinuityTests(unittest.TestCase):
         receipt = self.publish(self.original, asset_continuity=changed, asset_proof=changed_proof)
         self.assertEqual(proven_components(evidence, {"web": receipt}, self.history), set())
 
+    def test_legacy_mixed_promotion_stamp_cannot_stop_protected_web_allocation(self):
+        eg = fixture_receipt(component="eg")
+        legacy = {"web": self.original, "eg": eg}
+        stamp = promotion_proof(private_document(release_set(legacy))["components"])
+        evidence = {component: {"writer": self.receipt["source"], "stamp": stamp} for component in legacy}
+        self.assertEqual(proven_components(evidence, legacy, self.history), {"web", "eg"})
+        self.assertEqual(proven_components(evidence, dict(legacy, web=self.receipt), self.history), set())
+
     def test_registry_must_still_have_all_release_images(self):
         tags = [fixture_tag(self.receipt)]
         self.assertEqual(verify(self.receipt, tags, self.registry, self.history, automatic=True), self.receipt)
@@ -224,18 +237,27 @@ class WebContinuityTests(unittest.TestCase):
                     "base_image": self.continuity["candidate_base_image"], "source_sha": self.receipt["source"],
                     "version": self.receipt["identity"]["version"]}
         after_rollback = dict(self.continuity["incumbent"], image=self.continuity["prepare_image"])
-        retained_first = self.proof["inputs"][2]
-        self.assertEqual(retained_inputs(promoted, [self.receipt]), [self.proof["inputs"][0], retained_first])
-        self.assertEqual(retained_inputs(after_rollback, [self.receipt]), [self.proof["inputs"][1], retained_first])
+        manifest = self.continuity["asset_manifest_sha256"]
+        for incumbent in (promoted, after_rollback):
+            preimage = fixture_preimage(incumbent, manifest)
+            self.assertEqual(retention_scope(preimage, STARTED, [self.receipt]),
+                             {"incumbent": incumbent, "preimage_sha256": sha256(preimage),
+                              "inputs": self.proof["inputs"]})
         with self.assertRaisesRegex(Refusal, "differs from its finalized lineage"):
-            retained_inputs(dict(after_rollback, base_image=self.continuity["candidate_base_image"]), [self.receipt])
+            incorrect = dict(after_rollback, base_image=self.continuity["candidate_base_image"])
+            retention_scope(fixture_preimage(incorrect, manifest), STARTED, [self.receipt])
+        with self.assertRaisesRegex(Refusal, "manifest differs"):
+            retention_scope(fixture_preimage(after_rollback, "b" * 64), STARTED, [self.receipt])
+        with self.assertRaisesRegex(Refusal, "differs from its admission"):
+            retention_scope(fixture_preimage(after_rollback, manifest), "2026-01-01T00:01:00Z", [self.receipt])
 
     def test_legacy_raw_preimage_requires_bootstrap_and_full_identity(self):
         legacy = {"image": REPOSITORY + "@" + self.original["digest"],
                   "base_image": REPOSITORY + "@" + self.original["digest"], "source_sha": self.original["source"],
                   "version": self.original["identity"]["version"]}
-        self.assertEqual(retained_inputs(legacy, [self.original], allow_bootstrap=True), [])
+        preimage = fixture_preimage(legacy)
+        self.assertEqual(retention_scope(preimage, STARTED, [self.original], allow_bootstrap=True)["inputs"], [])
         with self.assertRaisesRegex(Refusal, "unprotected Web image"):
-            retained_inputs(legacy, [self.original])
+            retention_scope(preimage, STARTED, [self.original])
         with self.assertRaisesRegex(Refusal, "no unique finalized lineage"):
-            retained_inputs(legacy, [self.original, self.original], allow_bootstrap=True)
+            retention_scope(preimage, STARTED, [self.original, self.original], allow_bootstrap=True)
