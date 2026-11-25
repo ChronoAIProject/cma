@@ -11,6 +11,20 @@ from staging_cd_targets import RUNTIME_TARGETS
 READINESS_LANES = {"runtime": "agent", "runtime-omarchy": "machine"}
 
 
+def promote(receipts, publications, history, registry, read_ready, *, environment, fence,
+            deadline, clock=time.monotonic, sleep=time.sleep):
+    """Publish the admitted candidates and verify promotion within one budget."""
+    require(bool(receipts) and receipts.keys() <= RUNTIME_TARGETS, "Runtime pointer release set is invalid")
+    release_set(receipts)
+    if environment == "production":
+        require("runtime-omarchy" not in receipts, "Omarchy pointer is restricted to staging")
+    for component, selected in sorted(receipts.items()):
+        require(clock() < deadline, "Runtime pointer publication budget expired")
+        advance(component, selected, publications[component], history, registry,
+                environment=environment, fence=fence)
+    await_active(receipts, read_ready, deadline=deadline, clock=clock, sleep=sleep)
+
+
 def advance(component, selected, publications, history, registry, *, environment, fence):
     """Copy the verified manifest, preserving its digest, then read back the exact tag."""
     require(component in RUNTIME_TARGETS and environment in RUNTIME_POINTER_TAGS,
@@ -55,10 +69,10 @@ def advance(component, selected, publications, history, registry, *, environment
 
 def await_active(receipts, read_ready, *, deadline, clock=time.monotonic, sleep=time.sleep):
     """Verify durable runtime selection on a ready Agent Manager within the deployment budget."""
-    require(bool(receipts) and receipts.keys() <= RUNTIME_TARGETS, "Runtime pointer release set is invalid")
-    while clock() < deadline:
-        status = read_ready(deadline - clock())
-        if status is not None and status.get("status") == "ready":
+    remaining = deadline - clock()
+    while remaining > 0:
+        status = read_ready(remaining)
+        if isinstance(status, dict) and status.get("status") == "ready":
             lanes = status.get("runtime_release")
             if isinstance(lanes, dict) and all(
                 qualified_lane(lanes.get(READINESS_LANES[component]), receipt["digest"])
@@ -66,6 +80,7 @@ def await_active(receipts, read_ready, *, deadline, clock=time.monotonic, sleep=
             ) and clock() < deadline:
                 return
         sleep(min(5, max(0, deadline - clock())))
+        remaining = deadline - clock()
     raise Refusal("Agent Manager did not promote the qualified runtime within the deployment budget")
 
 

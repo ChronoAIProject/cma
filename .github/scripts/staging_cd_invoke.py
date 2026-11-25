@@ -29,6 +29,7 @@ from staging_cd_compatibility import ContractPolicy, GROUP
 from staging_cd_history import DevelopHistory
 from staging_cd_watermark import (SUPERSEDED, eligible_receipts, later_final_sources, record_withheld,
                                   require_current_versions, require_released_versions)
+from staging_cd_pointer_deploy import run as run_release
 from staging_cd_deploy_result import read as read_component_result, retain as retain_component_result
 
 IDENTITY_KEYS = ("GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_NAME",
@@ -282,7 +283,7 @@ def deploy(env, masker, script_reader=private_script, runner=None,
         with precondition("budget"):
             remaining(started, mode=mode)
         try:
-            code = runner(script, path, mode, started, child_env)
+            code = run_release(runner, script, path, request, receipts, started, mode, target, env, child_env, limit, masker)
             if code == 20 and on_unverified is not None:
                 verification = read_verification(path.with_name("verification-code"), request)
             if code == 10 and on_rolled_back is not None:
@@ -487,7 +488,6 @@ def main():
         # The artifact was reconstructed from validated request-bound fields;
         # only fixed component/reason tokens are reflected into the public log.
         value = document((Path(os.environ["RUNNER_TEMP"]) / "public-deployment/deployment.json").read_text())
-        from staging_cd_contract import GROUP
         for component in sorted(GROUP):
             if value.get("components", {}).get(component, {}).get("state") == "withheld":
                 report("deploy-component", "deployed-compatibility-unqualified", subject="deploy", component=component)

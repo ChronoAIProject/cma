@@ -155,6 +155,10 @@ jobs:
           CD_INFRA_REF: ${{ steps.private.outputs.revision }}
           CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
           CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+          CD_RUNTIME_POINTER_PUBLICATION_ENABLED: ${{ vars.CMA_STAGING_RUNTIME_POINTER_PUBLICATION_ENABLED }}
+          CD_RUNTIME_POINTER_READINESS: ${{ vars.CMA_STAGING_AM_READINESS }}
+          CD_RUNTIME_POINTER_READ_TOKEN: ${{ github.token }}
+          CD_RUNTIME_POINTER_TOKEN: ${{ secrets.CD_RUNTIME_POINTER_TOKEN }}
           CD_RETRY_ALLOWED: ${{ inputs.retry_allowed }}
         run: '"$RUNNER_TEMP/cma-deploy-tools/venv/bin/python" -B .github/scripts/staging_cd_invoke.py'
       - name: Verified staging receipts ${{ steps.coordinate.outputs.controller_proof }}

@@ -303,6 +303,34 @@ class PlanTests(unittest.TestCase):
                 select.plan(dict(env, CD_TARGET="staging"), Mock(), Mock(), off, root=Path(directory),
                             download=Mock(), deployables={}, runner=runner)
 
+    def test_production_pointer_selects_only_staging_verified_agent_runtime_within_release(self):
+        from staging_cd_receipts_tests import fixture_runtime_receipt, fixture_tag
+
+        candidate = fixture_runtime_receipt(source=RELEASED)
+        newer = fixture_runtime_receipt(source=MERGE, version="0.10.2", previous="0.10.1")
+        api = Mock(tags=lambda component: [fixture_tag(candidate), fixture_tag(newer)],
+                   history=Mock(return_value=History([MERGE, RELEASED])))
+        registry = Mock()
+        registry.exists.return_value = True
+        registry.manifest.return_value = (candidate["digest"], {})
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            env["CD_RUNTIME_POINTER_PUBLICATION_ENABLED"] = "true"
+            policy = {"am": False, "eg": False, "web": False}
+            args = (env, api, registry, policy)
+            kwargs = dict(root=Path(directory), download=Mock(), deployables=DEPLOYABLES,
+                          runner=git_runner([MERGE, PREVIOUS, RELEASED]))
+            with patch.object(select, "staging_verified", return_value={"runtime"}) as evidence:
+                value, source = select.plan(*args, **kwargs)
+                self.assertEqual(source, RELEASED)
+                self.assertEqual(value["receipts"], {"runtime": candidate})
+                self.assertEqual(evidence.call_args.args[0], {
+                    "runtime": candidate["repository"] + "@" + candidate["digest"],
+                })
+            with patch.object(select, "staging_verified", return_value=set()), \
+                    self.assertRaisesRegex(Refusal, "never verified"):
+                select.plan(*args, **kwargs)
+
     def test_a_dispatch_retry_requires_maintainer_actors(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))

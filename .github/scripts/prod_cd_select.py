@@ -253,7 +253,8 @@ def plan(env, api, registry, policy, *, root, download, deployables, runner=subp
     """Return (release_set or None, release commit) for the production event in env."""
     from staging_cd_admission import event_identity, maintainer_dispatch
     from staging_cd_receipts import canonical
-    from staging_cd_set import dispatch_set
+    from staging_cd_resolve import resolve
+    from staging_cd_set import dispatch_set, release_set
     from staging_cd_targets import RUNTIME_TARGETS, TARGETS
 
     require(env.get("CD_TARGET") == "production", "Production selection requires the production target")
@@ -264,11 +265,21 @@ def plan(env, api, registry, policy, *, root, download, deployables, runner=subp
         event_identity(env)
     released = release_commit(env["GITHUB_SHA"], root, runner=runner)
     components = enabled_components(policy, TARGETS, RUNTIME_TARGETS)
-    if not components:
+    pointers = env.get("CD_RUNTIME_POINTER_PUBLICATION_ENABLED") == "true"
+    if not components and not pointers:
         return None, released
-    versions = select_versions(released, {c: deployables[c] for c in components}, api.tags, api.history())
-    inputs = {"deployables": ",".join(components), "versions": canonical(versions), "mode": "release"}
-    _, value = dispatch_set(inputs, api, registry)
+    history = api.history()
+    if components:
+        versions = select_versions(released, {c: deployables[c] for c in components}, api.tags, history)
+        inputs = {"deployables": ",".join(components), "versions": canonical(versions), "mode": "release"}
+        _, value = dispatch_set(inputs, api, registry)
+    if pointers:
+        # Only finals on the approved production release are eligible, even
+        # while newer runtimes continue publishing on develop.
+        limit = history.position(released)
+        tags = [tag for tag in api.tags("runtime") if history.position(tag["target"]) <= limit]
+        runtime = resolve("runtime", "latest", tags, registry, history)
+        value = release_set((value["receipts"] if components else {}) | {"runtime": runtime})
     # The same image string staging_cd_set gives the controller and its evidence records.
     images = {c: r["repository"] + "@" + r["digest"] for c, r in value["receipts"].items()}
     missing = sorted(set(images) - staging_verified(images, api.request, download))
@@ -286,8 +297,8 @@ def main():
     re-selection reproduces the identical set, not when the run was created.
     The re-selection covers exactly the approved components; the controller
     invocation then applies production's deploy switches as the final word.
-    Selection never yields a runtime image, so an approved set holding one is
-    refused before anything is re-selected, never silently narrowed.
+    Runtime pointer publication must remain enabled across approval. Omarchy
+    publications may be qualified in staging and are excluded from production.
     """
     from staging_cd_clock import timestamp
     from staging_cd_github import GitHub
@@ -309,7 +320,9 @@ def main():
             policy = switches(Path(env["CD_PRIVATE_CONTROLLER"]) / "scripts" / "deploy_set.py")
         else:
             components = set(document(approved)["receipts"])
-            require(not components & RUNTIME_TARGETS,
+            runtime = components & RUNTIME_TARGETS
+            require(not runtime or (runtime == {"runtime"}
+                                    and env.get("CD_RUNTIME_POINTER_PUBLICATION_ENABLED") == "true"),
                     "An approved production release set must not hold a runtime image")
             policy = {key: key in components for key in sorted(APP_TARGETS)}
         api, registry = GitHub(env.get("GH_TOKEN")), Registry()

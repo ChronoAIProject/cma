@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import Mock
 
-from runtime_pointer_publication import advance, await_active
+from runtime_pointer_publication import advance, await_active, promote
 from staging_cd_common import Refusal
 from staging_cd_history import DevelopHistory
 from staging_cd_receipts_tests import fixture_runtime_receipt, fixture_tag
@@ -138,3 +138,30 @@ class ActiveRuntimeTests(unittest.TestCase):
             await_active({"runtime": agent}, read, deadline=8, clock=lambda: current[0],
                          sleep=lambda delay: current.__setitem__(0, current[0] + delay))
         self.assertEqual([call.args for call in read.call_args_list], [(8,), (3,)])
+
+    def test_pointer_write_only_completes_after_agent_manager_activates_candidate(self):
+        agent = release("runtime", CANDIDATE, "2")
+        old = release("runtime", OLDER, "1")
+        registry = Mock()
+        registry.manifest.return_value = (agent["digest"], {})
+        registry.runtime_pointer.side_effect = [old["digest"], old["digest"], agent["digest"]]
+        read = Mock(side_effect=[
+            {"status": "ready", "runtime_release": {"agent": {"digest": old["digest"], "revision": 1}}},
+            {"status": "ready", "runtime_release": {"agent": {"digest": agent["digest"], "revision": 2}}},
+        ])
+        current = [0]
+        promote({"runtime": agent}, {"runtime": [fixture_tag(old), fixture_tag(agent)]},
+                DevelopHistory(CANDIDATE, [CANDIDATE, OLDER]), registry, read,
+                environment="staging", fence=Mock(), deadline=8, clock=lambda: current[0],
+                sleep=lambda delay: current.__setitem__(0, current[0] + delay))
+        registry.write_runtime_pointer.assert_called_once_with(agent["repository"], "staging", agent["digest"])
+        self.assertEqual([call.args for call in read.call_args_list], [(8,), (3,)])
+
+    def test_omarchy_is_refused_before_any_production_pointer_write(self):
+        machine = release("runtime-omarchy", CANDIDATE, "3")
+        registry, read = Mock(), Mock()
+        with self.assertRaisesRegex(Refusal, "restricted to staging"):
+            promote({"runtime-omarchy": machine}, {}, DevelopHistory(CANDIDATE, [CANDIDATE]),
+                    registry, read, environment="production", fence=Mock(), deadline=8)
+        self.assertEqual(registry.mock_calls, [])
+        read.assert_not_called()

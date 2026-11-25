@@ -2,8 +2,8 @@ name: prod-cd
 
 # A merge into main releases to production by promoting the exact images staging
 # already verified for the merged develop commit. Nothing is rebuilt here.
-# Only the applications (am, eg, web) are promoted; runtime images stay pinned
-# in Agent Manager's private configuration until runtime promotion is designed.
+# Agent runtime promotion uses the production pointer after its scope is enabled.
+# The Machine runtime is excluded from production promotion.
 # production-plan (no reviewers) only reads the private deploy switches;
 # production (required reviewers) holds the deploy credential and gates the write.
 
@@ -104,6 +104,7 @@ jobs:
         id: select
         env:
           GH_TOKEN: ${{ github.token }}
+          CD_RUNTIME_POINTER_PUBLICATION_ENABLED: ${{ vars.CMA_PRODUCTION_RUNTIME_POINTER_PUBLICATION_ENABLED }}
           CD_PRIVATE_CONTROLLER: ${{ github.workspace }}/.github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}/prod/chrono-cd
         run: '"$RUNNER_TEMP/prod-cd-select/bin/python" -B .github/scripts/prod_cd_select.py'
       - name: Remove private checkout
