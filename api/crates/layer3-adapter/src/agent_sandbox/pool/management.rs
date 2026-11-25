@@ -281,15 +281,14 @@ impl AgentSandboxPools {
                 super::target_fence::allow_unversioned(pool, replicas)
             })
             .await;
-        if replicas > 0 {
-            if resources.is_ok()
+        if replicas > 0
+            && (resources.is_ok()
                 || matches!(
                     &resources,
                     Err(crate::AdapterError::NativePoolConfigurationDrift)
-                )
-            {
-                self.verify_seed(&binding.spec.home).await?;
-            }
+                ))
+        {
+            self.verify_seed(&binding.spec.home).await?;
         }
         let (template, actual) = resources?;
         let config = model::binding_config(&self.config, binding);
