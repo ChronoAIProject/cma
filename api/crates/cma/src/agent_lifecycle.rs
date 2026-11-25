@@ -98,7 +98,7 @@ pub(crate) struct InlineAgentLifecycle {
     desktop: Option<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>>,
     self_ref: OnceLock<Weak<Self>>,
     task_experience: OnceLock<Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>>,
-    session_guidance_v4: OnceLock<bool>,
+    session_guidance: OnceLock<&'static str>,
     failure_metadata_enabled: OnceLock<bool>,
     repository_preflight: OnceLock<Arc<dyn repository_preflight::RepositoryReadiness>>,
     managed_repository_preflight: OnceLock<bool>,
@@ -158,7 +158,7 @@ impl InlineAgentLifecycle {
             desktop,
             self_ref: OnceLock::new(),
             task_experience: OnceLock::new(),
-            session_guidance_v4: OnceLock::new(),
+            session_guidance: OnceLock::new(),
             failure_metadata_enabled: OnceLock::new(),
             repository_preflight: OnceLock::new(),
             managed_repository_preflight: OnceLock::new(),
@@ -169,9 +169,9 @@ impl InlineAgentLifecycle {
         instance
     }
 
-    pub(crate) fn with_session_guidance_v4(self: Arc<Self>, enabled: bool) -> Arc<Self> {
-        self.session_guidance_v4
-            .set(enabled)
+    pub(crate) fn with_session_guidance(self: Arc<Self>, v4: bool, v5: bool) -> Arc<Self> {
+        self.session_guidance
+            .set(guidance::admission_instructions(v4, v5))
             .expect("session guidance writer is configured once before use");
         self
     }

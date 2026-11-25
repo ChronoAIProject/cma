@@ -231,6 +231,90 @@ async fn runtime_update_detail_projection_is_optional_without_feature_and_hides_
     assert_eq!(result.0, StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn failed_sandbox_reports_new_runtime_without_suggesting_pending_work() {
+    let mut original = native_runtime_update_sandbox(
+        stored_sandbox("sbx_update", "owner", SandboxStatus::Active, 4),
+        false,
+    );
+    let f = runtime_update_fixture(original.clone(), true).await;
+    let active_revision = original.revision;
+    original
+        .transition(
+            SandboxStatus::Failed,
+            NOW.into(),
+            Some(TypedFailure {
+                class: "terminal_validation".into(),
+                detail: "Synthetic retained Sandbox failure".into(),
+            }),
+        )
+        .unwrap();
+    original.validate().unwrap();
+    assert!(original.lifecycle.operation.is_none());
+    assert!(original.runtime_update_request().is_none());
+    f.store
+        .save_sandbox(active_revision, original.clone())
+        .await
+        .unwrap();
+    let (status, body) = json_response(
+        &f.router,
+        authenticated(Method::GET, "/api/v1/sandboxes/sbx_update", None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "failed");
+    let update = &body["runtime_update"];
+    assert_eq!(update["state"], "available");
+    assert_eq!(update["update_available"], true);
+    assert_eq!(update["can_update"], false);
+    assert_eq!(update["preserves_home"], true);
+    assert_eq!(update["latest_version"], "runtime-v2");
+    assert_eq!(
+        update["current_version"],
+        original.runtime.as_ref().unwrap().runtime_version
+    );
+    assert_eq!(update["blocked_reason"], "Runtime updates are blocked by the Sandbox failure. Open Technical details for the reported failure.");
+    let (status, body) = json_response(
+        &f.router,
+        authenticated(
+            Method::POST,
+            PATH,
+            Some(json!({"target_version":"runtime-v2"})),
+            Some("failed-sandbox-update"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "runtime_update_not_available");
+    assert_eq!(
+        f.store.get_sandbox(&original.id).await.unwrap(),
+        Some(original)
+    );
+}
+
+#[test]
+fn runtime_update_blocked_reasons_describe_each_lifecycle_status() {
+    use crate::rest::sandbox_runtime_update::runtime_update_lifecycle_reason;
+    for (status, description) in [
+        (SandboxStatus::Provisioning, "provisioning"),
+        (SandboxStatus::Installing, "installing software"),
+        (SandboxStatus::Pausing, "pausing"),
+        (SandboxStatus::Reviving, "resuming"),
+        (SandboxStatus::CredentialRotating, "credential rotation"),
+        (SandboxStatus::Rotating, "runtime rotation"),
+        (SandboxStatus::Failed, "Sandbox failure"),
+        (SandboxStatus::Retiring, "retiring"),
+        (SandboxStatus::Retired, "retired"),
+    ] {
+        let reason = runtime_update_lifecycle_reason(status).unwrap();
+        assert!(reason.contains(description), "{reason}");
+        assert!(!reason.contains("Wait for the current Sandbox operation"));
+    }
+    for status in [SandboxStatus::Active, SandboxStatus::Paused] {
+        assert_eq!(runtime_update_lifecycle_reason(status), None);
+    }
+}
+
 struct NeverVerify;
 
 #[async_trait::async_trait]

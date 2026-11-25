@@ -69,12 +69,13 @@ impl ProviderHostedControlTransport {
         self.receiver_lease_with_budget(endpoint, None).await
     }
 
-    pub(super) async fn receiver_lease_for_read(
+    pub(super) async fn receiver_lease_for_control(
         &self,
         endpoint: &RuntimeEndpoint,
+        request: &crate::wire::RequestFrame,
     ) -> crate::Result<Option<ReceiverLease>> {
-        let deadline =
-            crate::file_read_retry::deadline().filter(|_| endpoint.retirement_receiver().is_some());
+        let deadline = crate::file_receiver_retry::deadline(request)
+            .filter(|_| endpoint.retirement_receiver().is_some());
         self.receiver_lease_with_budget(endpoint, deadline).await
     }
 
@@ -188,7 +189,7 @@ impl ProviderHostedControlTransport {
         };
         let retry_deadline = deadline
             .filter(|_| {
-                failed.retryable && authority.is_current() && crate::file_read_retry::take()
+                failed.retryable && authority.is_current() && crate::file_receiver_retry::take()
             })
             .and_then(|deadline| attempt_deadline(Some(deadline)).ok());
         if let Some(retry_deadline) = retry_deadline {

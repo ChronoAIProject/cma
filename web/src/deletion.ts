@@ -6,6 +6,7 @@ export type { AgentDeletionPermissions } from './agent/deletionEligibility';
 import type { TreeAction } from './shell/Tree';
 import type { ProvisioningStep } from './sandbox/progress';
 import { readSandboxHistory } from './sandbox/eventHistory';
+import { sandboxRetirementWaitExceeded } from './sandbox/lifecycle';
 import {
   sandboxDeletionReason,
   sandboxHasParkedRuntimeUpdate,
@@ -33,6 +34,7 @@ export interface DeletionObservation {
   readonly sandboxId?: string;
   readonly complete: boolean;
   readonly inProgress?: boolean;
+  readonly retirementDelayed?: boolean;
   readonly stopsRuntimeUpdate?: boolean;
   readonly agent?: {
     readonly status: AgentStatus;
@@ -121,6 +123,7 @@ export async function observeDeletion(
       observedAt: new Date().toISOString(),
       complete,
       inProgress,
+      retirementDelayed: sandboxRetirementWaitExceeded(sandbox),
       stopsRuntimeUpdate: sandboxHasParkedRuntimeUpdate(sandbox),
       events,
       failure,

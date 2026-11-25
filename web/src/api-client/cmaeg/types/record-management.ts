@@ -66,6 +66,7 @@ export const ManagedRecordSchema = tagged(
       address: RecordedAddressSchema,
       pending_operation: optional(nullable(RecordedOperationSchema)),
       retirement: optional(nullable(LegacyRetirementSchema)),
+      retirement_expected_version: optional(nullable(integer)),
     }),
     invalid: object({ state: enumeration('invalid') }),
   },

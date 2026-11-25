@@ -145,17 +145,7 @@ impl ProviderHostedControlTransport {
         endpoint: &RuntimeEndpoint,
         request: &RequestFrame,
     ) -> crate::Result<ResponseFrame> {
-        let file_read = matches!(
-            request,
-            RequestFrame::RuntimeStatus(_)
-                | RequestFrame::ListAgentFiles(_)
-                | RequestFrame::ReadAgentFile(_)
-        );
-        let _ownership = if file_read {
-            self.receiver_lease_for_read(endpoint).await?
-        } else {
-            self.receiver_lease(endpoint).await?
-        };
+        let _ownership = self.receiver_lease_for_control(endpoint, request).await?;
         self.control_exchange(endpoint, request).await
     }
 

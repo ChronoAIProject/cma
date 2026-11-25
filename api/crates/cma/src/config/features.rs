@@ -32,6 +32,7 @@ mod strict_inactivity_tests;
 pub(crate) struct FeatureFlags {
     pub image_manager_retirement: bool,
     pub session_guidance_v4: bool,
+    pub session_guidance_v5: bool,
     pub am_startup_health_serving: bool,
     pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
@@ -114,6 +115,7 @@ pub(crate) struct FeatureFlags {
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
     pub github_repository_preflight: bool,
+    pub github_connection_approval: bool,
     pub github_connection_recovery: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
@@ -155,6 +157,7 @@ impl FeatureFlags {
         let flags = Self {
             binding_diagnostics: flag(lookup, "CHRONO_BINDING_DIAGNOSTICS_ENABLED")?,
             session_guidance_v4: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED")?,
+            session_guidance_v5: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V5_ENABLED")?,
             image_manager_retirement: flag(lookup, "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED")?,
             am_startup_health_serving: flag(lookup, "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED")?,
             pending_home_reconciliation: flag(
@@ -361,6 +364,7 @@ impl FeatureFlags {
             v2_ui_transport: tail.v2_ui_transport,
             trigger_command_admission: tail.trigger_command_admission,
             github_repository_preflight: tail.github_repository_preflight,
+            github_connection_approval: tail.github_connection_approval,
             github_connection_recovery: tail.github_connection_recovery,
             nyxid_resource_request: tail.nyxid_resource_request,
             nyxid_proxy: tail.nyxid_proxy,
