@@ -271,6 +271,7 @@ async fn enabled_target_fencing_never_falls_back_to_an_unversioned_provider() {
 pub(super) struct Targets {
     pub(super) rows: Mutex<Vec<PoolTarget>>,
     pub(super) claims: Mutex<Vec<String>>,
+    pub(super) find_error: AtomicBool,
     clock: std::sync::atomic::AtomicI64,
 }
 
@@ -305,7 +306,13 @@ impl PoolTargetStore for Targets {
         Ok(rows.iter().filter(|row| !row.retired).cloned().collect())
     }
     async fn find(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
-        let rows = self.rows.lock().unwrap();
+        let mut rows = self.rows.lock().unwrap();
+        if let (true, Some(row)) = (
+            self.find_error.swap(false, Ordering::SeqCst),
+            rows.iter_mut().find(|row| row.id == id),
+        ) {
+            row.error = Some("unavailable".into());
+        }
         Ok(rows.iter().find(|row| row.id == id).cloned())
     }
     async fn insert(&self, target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
@@ -381,9 +388,10 @@ impl PoolTargetStore for Targets {
 }
 
 /// Plans any image; its inventory reports only the pools it was given.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Planner {
-    pub(super) inventory: Mutex<Vec<NativePoolStatus>>,
+    pub(super) inventory: Arc<Mutex<Vec<NativePoolStatus>>>,
+    pub(super) retiring: Arc<AtomicBool>,
 }
 
 impl Planner {
@@ -421,6 +429,23 @@ impl NativePoolControl for Planner {
     }
     async fn inventory(&self) -> layer3_adapter::Result<Vec<NativePoolStatus>> {
         Ok(self.inventory.lock().unwrap().clone())
+    }
+    async fn observe_admitting_pool(
+        &self,
+        binding: &NativePoolBinding,
+    ) -> layer3_adapter::Result<NativePoolStatus> {
+        if self.retiring.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::Rejected(
+                "retiring pool".into(),
+            ));
+        }
+        self.inventory
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|status| &status.binding == binding)
+            .cloned()
+            .ok_or_else(|| layer3_adapter::AdapterError::Rejected("missing binding".into()))
     }
     async fn resize(
         &self,

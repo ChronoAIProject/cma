@@ -4,6 +4,7 @@ use super::{
     PoolTarget, PoolTargetStore, WarmPoolError,
 };
 use layer3_adapter::agent_sandbox::NativePoolControl;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -42,6 +43,11 @@ pub(crate) async fn boot_effect<T>(
 const STARTUP_WARMUP_LIMIT: Duration = Duration::from_secs(super::RELEASE_SETTLE.as_secs() + 120);
 
 impl NativeWarmPools {
+    pub(crate) fn with_empty_pool_startup(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::make_mut(&mut self).allow_empty_startup = enabled;
+        self
+    }
+
     /// Release preparation should prewarm this plan before the Recreate rollout.
     /// This bounded guard never serves allocations before readiness and does not
     /// imply that the old API remains available during a Recreate deployment.
@@ -179,12 +185,21 @@ impl NativeWarmPools {
             provider,
             &plan,
             STARTUP_WARMUP_LIMIT,
-            self.target_fencing,
+            StartupPoolPolicy {
+                target_fencing: self.target_fencing,
+                allow_empty: self.allow_empty_startup,
+            },
             admission,
             writer,
         )
         .await
     }
+}
+
+#[derive(Clone, Copy, Default)]
+pub(super) struct StartupPoolPolicy {
+    pub(super) target_fencing: bool,
+    pub(super) allow_empty: bool,
 }
 
 #[cfg(test)]
@@ -194,15 +209,24 @@ pub(super) async fn await_ready(
     plan: &NativePoolConfiguration,
     limit: Duration,
 ) -> Result<(), WarmPoolError> {
-    await_ready_with_fencing(store, provider, plan, limit, false, None, None).await
+    await_ready_with_fencing(
+        store,
+        provider,
+        plan,
+        limit,
+        StartupPoolPolicy::default(),
+        None,
+        None,
+    )
+    .await
 }
 
-async fn await_ready_with_fencing(
+pub(super) async fn await_ready_with_fencing(
     store: &dyn PoolTargetStore,
     provider: &dyn NativePoolControl,
     plan: &NativePoolConfiguration,
     limit: Duration,
-    target_fencing: bool,
+    policy: StartupPoolPolicy,
     admission: Option<&Admission>,
     writer: Option<StartupWriter<'_>>,
 ) -> Result<(), WarmPoolError> {
@@ -215,7 +239,7 @@ async fn await_ready_with_fencing(
             if tokio::time::Instant::now() >= deadline {
                 return Err(WarmPoolError::Unavailable);
             }
-            match boot_effect(writer, step(store, provider, plan, target_fencing)).await {
+            match boot_effect(writer, step(store, provider, plan, policy)).await {
                 Ok(true) => return Ok(()),
                 Ok(false) => {}
                 Err(WarmPoolError::Conflict) => return Err(WarmPoolError::Conflict),
@@ -247,7 +271,7 @@ async fn step(
     store: &dyn PoolTargetStore,
     provider: &dyn NativePoolControl,
     plan: &NativePoolConfiguration,
-    target_fencing: bool,
+    policy: StartupPoolPolicy,
 ) -> Result<bool, WarmPoolError> {
     let target = store
         .list()
@@ -267,7 +291,22 @@ async fn step(
             .inventory()
             .await
             .map_err(|_| WarmPoolError::Unavailable)?;
-        if observed_ready(&target, &inventory) {
+        let capacity = observed_capacity(&target, &inventory);
+        let ready = capacity.is_some_and(|ready| ready > 0);
+        let empty = policy.allow_empty && capacity == Some(0);
+        if ready || empty {
+            if empty {
+                let binding = target.binding.as_ref().ok_or(WarmPoolError::Conflict)?;
+                let confirmed = provider.observe_admitting_pool(binding).await.map_err(
+                    |error| match error {
+                        layer3_adapter::AdapterError::Rejected(_) => WarmPoolError::Conflict,
+                        _ => WarmPoolError::Unavailable,
+                    },
+                )?;
+                if observed_capacity(&target, &[confirmed]) != Some(0) {
+                    return Ok(false);
+                }
+            }
             // An operator may resize while the provider observation is in flight.
             let current = store
                 .find(&target.id)
@@ -276,9 +315,17 @@ async fn step(
             if current.revision == target.revision
                 && current.plan == target.plan
                 && current.binding == target.binding
+                && current.applied_revision == current.revision
+                && current.target_replicas == target.target_replicas
+                && current.error.is_none()
                 && !current.retiring
                 && !current.retired
             {
+                if empty {
+                    tracing::warn!(target: "cma_warm_pool_startup", parent: None,
+                        reason = "provider_reports_zero_ready", desired = current.target_replicas,
+                        "Agent Manager will serve while the default native pool fills");
+                }
                 return Ok(true);
             }
             return Ok(false);
@@ -309,18 +356,29 @@ async fn step(
                 claimed.binding = Some(existing.binding);
             }
         }
-        reconcile_claimed(store, provider, claimed, target_fencing).await?;
+        reconcile_claimed(store, provider, claimed, policy.target_fencing).await?;
     }
     Ok(false)
 }
 
+#[cfg(test)]
 pub(super) fn observed_ready(target: &PoolTarget, inventory: &[NativePoolStatus]) -> bool {
-    target.error.is_none()
-        && target.applied_revision == target.revision
-        && inventory.iter().any(|status| {
-            target.binding.as_ref() == Some(&status.binding)
-                && status.observed
-                && status.desired_replicas == target.target_replicas
-                && status.ready_replicas > 0
-        })
+    observed_capacity(target, inventory).is_some_and(|ready| ready > 0)
+}
+
+pub(super) fn observed_capacity(
+    target: &PoolTarget,
+    inventory: &[NativePoolStatus],
+) -> Option<u32> {
+    if target.error.is_some() || target.applied_revision != target.revision {
+        return None;
+    }
+    let mut matching = inventory
+        .iter()
+        .filter(|status| target.binding.as_ref() == Some(&status.binding));
+    let status = matching.next()?;
+    (matching.next().is_none()
+        && status.observed
+        && status.desired_replicas == target.target_replicas)
+        .then_some(status.ready_replicas)
 }
