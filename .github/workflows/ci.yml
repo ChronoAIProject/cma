@@ -33,6 +33,7 @@ jobs:
       am: "${{ steps.select.outputs.am }}"
       eg: "${{ steps.select.outputs.eg }}"
       web: "${{ steps.select.outputs.web }}"
+      approval_contract: "${{ steps.select.outputs.approval_contract }}"
       am_packages: "${{ steps.select.outputs.am_packages }}"
       eg_packages: "${{ steps.select.outputs.eg_packages }}"
       test_tracks: "${{ steps.select.outputs.test_tracks }}"
@@ -92,8 +93,18 @@ jobs:
     name: "Rust test build"
     needs:
       - "changes"
-    if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
+    if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true' || needs.changes.outputs.approval_contract == 'true'"
     uses: "./.github/workflows/ci-rust-archive.yml"
+  approval-contract:
+    name: "External approval contract"
+    permissions:
+      contents: "read"
+      actions: "read"
+    needs:
+      - "changes"
+      - "rust-test-build"
+    if: "needs.changes.outputs.approval_contract == 'true'"
+    uses: "./.github/workflows/ci-approval-contract.yml"
   am:
     name: "Agent Manager checks"
     # A called workflow cannot hold more than this: its Rust jobs restore the
@@ -190,6 +201,7 @@ jobs:
     needs:
       - "changes"
       - "rust-test-build"
+      - "approval-contract"
       - "am"
       - "am-images"
       - "runtime-images"

@@ -261,7 +261,7 @@ def validate(documents, actions)
   require_check(jobs.keys.none? { |key| key.start_with?('trigger-') }, 'Trigger job retained')
   required = {
     'gate-repo' => ['CI / Repo', %w[changes repo version-label]],
-    'gate-am' => ['CI / Agent Manager', %w[changes rust-test-build am am-images runtime-images omarchy]],
+    'gate-am' => ['CI / Agent Manager', %w[changes rust-test-build approval-contract am am-images runtime-images omarchy]],
     'gate-eg' => ['CI / Event Gateway', %w[changes rust-test-build eg eg-images runtime-images omarchy]],
     'gate-web' => ['CI / Web', %w[changes web web-images]]
   }
@@ -294,7 +294,9 @@ def validate(documents, actions)
       gate.fetch('steps').last.fetch('run') == "python3 -B .github/scripts/ci_tracks/gate.py #{track} --split",
       'product result must use its original required context and check every prerequisite')
     if %w[am eg].include?(track)
-      require_check(track_jobs.fetch('rust-test-build')['if'] == "needs.changes.outputs.#{track} == 'true'",
+      archive_condition = "needs.changes.outputs.#{track} == 'true'"
+      archive_condition += " || needs.changes.outputs.approval_contract == 'true'" if track == 'am'
+      require_check(track_jobs.fetch('rust-test-build')['if'] == archive_condition,
         'each Rust product archive must be built in its own selected workflow')
     end
     if track == 'am'
@@ -320,10 +322,34 @@ def validate(documents, actions)
     require_check(jobs.fetch(track)['with'] == {'track' => track, 'packages' => "${{ needs.changes.outputs.#{track}_packages }}"},
       'selected Rust packages must reach the test workflow')
   end
-  %w[deployables test_tracks].each { |key| require_check(jobs.fetch('changes').fetch('outputs').key?(key), 'shared selector output absent') }
-  %w[runtime-images omarchy rust-test-build].each do |key|
+  %w[deployables test_tracks approval_contract].each do |key|
+    require_check(jobs.fetch('changes').fetch('outputs').key?(key), 'shared selector output absent')
+    if key == 'approval_contract'
+      require_check(select_workflow.dig('on', 'workflow_call', 'outputs', key, 'value') == '${{ jobs.changes.outputs.approval_contract }}' ||
+        select_workflow.dig(true, 'workflow_call', 'outputs', key, 'value') == '${{ jobs.changes.outputs.approval_contract }}',
+        'PR selection must expose the approval contract decision')
+    end
+  end
+  %w[runtime-images omarchy].each do |key|
     require_check(jobs.fetch(key).fetch('if') == "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'", 'shared Rust prerequisite selection differs')
   end
+  require_check(jobs.fetch('rust-test-build').fetch('if') ==
+    "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true' || needs.changes.outputs.approval_contract == 'true'",
+    'approval contract must select the shared Rust test archive')
+  [jobs, documents.fetch('ci-pr-am').fetch('jobs')].each do |workflow_jobs|
+    contract = workflow_jobs.fetch('approval-contract')
+    require_check(contract.fetch('needs') == %w[changes rust-test-build] &&
+      contract['uses'] == './.github/workflows/ci-approval-contract.yml' &&
+      contract['if'] == "needs.changes.outputs.approval_contract == 'true'" &&
+      contract['permissions'] == {'contents' => 'read', 'actions' => 'read'} &&
+      !contract.key?('continue-on-error'), 'approval contract must run once against the selected archive')
+  end
+  contract = documents.fetch('ci-approval-contract').fetch('jobs').fetch('contract')
+  step = contract.fetch('steps').last
+  require_check(contract.fetch('env')['CMA_NEXTEST_REUSE'] == '1' &&
+    contract.fetch('steps').any? { |s| s['uses'] == './.github/actions/rust-archive' } &&
+    step['working-directory'] == 'web' && step['run'] == "npm ci\nnpm run test:approval-contract\n" &&
+    !step.key?('if') && !step.key?('continue-on-error'), 'archived producer-to-Web test required')
   rust = documents.fetch('ci-rust').fetch('jobs')
   require_check(rust.fetch('tests').fetch('strategy') == {'fail-fast' => false, 'matrix' => {'shard' => [1, 2, 3]}}, 'three test shards required')
   require_check(rust.fetch('result').fetch('if') == 'always()', 'reusable failure propagation missing')
