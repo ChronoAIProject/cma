@@ -52,6 +52,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
+      id-token: write
       contents: read
       actions: read
     outputs:
@@ -156,6 +157,7 @@ jobs:
           CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
           CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
           CD_RUNTIME_POINTER_PUBLICATION_ENABLED: ${{ vars.CMA_STAGING_RUNTIME_POINTER_PUBLICATION_ENABLED }}
+          CD_RUNTIME_POINTER_PROOF_PUBLIC_KEY: ${{ vars.CMA_STAGING_RUNTIME_POINTER_PROOF_PUBLIC_KEY }}
           CD_RUNTIME_POINTER_READ_TOKEN: ${{ github.token }}
           CD_RUNTIME_POINTER_TOKEN: ${{ secrets.CD_RUNTIME_POINTER_TOKEN }}
           CD_RETRY_ALLOWED: ${{ inputs.retry_allowed }}

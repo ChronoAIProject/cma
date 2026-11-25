@@ -87,6 +87,7 @@ jobs:
   deploy:
     needs: resolve
     permissions:
+      id-token: write
       contents: read
       actions: read
     concurrency:

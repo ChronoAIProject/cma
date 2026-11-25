@@ -8,18 +8,22 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use ring::hmac;
+use ring::signature::Ed25519KeyPair;
 use serde::Serialize;
 use uuid::Uuid;
 
 use crate::store::{released_runtimes::StoreReleasedRuntime, MongoStores};
 
 pub(super) const CHALLENGE: &str = "x-cma-runtime-proof";
+const IDENTITY: &str = "x-cma-runtime-proof-identity";
 const SIGNATURE: &str = "x-cma-runtime-proof-signature";
 const RESPONSE_CONTEXT: &[u8] = b"cma-runtime-proof-response-v1\n";
 
+mod oidc;
+
 pub(crate) struct Proof {
-    key: hmac::Key,
+    key: Ed25519KeyPair,
+    identity: oidc::Identity,
     source: Arc<StoreReleasedRuntime>,
     environment: String,
     build_digest: String,
@@ -30,7 +34,7 @@ pub(crate) struct Proof {
 
 impl Proof {
     pub(super) fn configured(stores: &MongoStores) -> Result<Option<Self>, String> {
-        let Ok(key) = std::env::var("CHRONO_RUNTIME_POINTER_PROOF_KEY") else {
+        let Ok(key) = std::env::var("CHRONO_RUNTIME_POINTER_PROOF_SIGNING_KEY") else {
             return Ok(None);
         };
         let key = URL_SAFE_NO_PAD
@@ -38,6 +42,12 @@ impl Proof {
             .ok()
             .filter(|key| key.len() == 32)
             .ok_or("invalid runtime pointer proof key")?;
+        let key = Ed25519KeyPair::from_seed_unchecked(&key)
+            .map_err(|_| "invalid runtime pointer proof key")?;
+        let identity = oidc::Identity::new(
+            std::env::var("CHRONO_RUNTIME_POINTER_GITHUB_REPOSITORY_ID")
+                .map_err(|_| "runtime pointer proof requires the GitHub repository ID")?,
+        )?;
         let environment = std::env::var("CHRONO_ENVIRONMENT")
             .ok()
             .filter(|value| matches!(value.as_str(), "staging" | "production"))
@@ -63,7 +73,8 @@ impl Proof {
             .clone()
             .ok_or("runtime pointer proof requires durable release authority")?;
         Ok(Some(Self {
-            key: hmac::Key::new(hmac::HMAC_SHA256, &key),
+            key,
+            identity,
             source,
             environment,
             build_digest,
@@ -74,19 +85,28 @@ impl Proof {
     }
 
     pub(super) async fn observe(&self, headers: &HeaderMap, ready: bool) -> Response {
-        let Some(challenge) = authenticate(headers, &self.key, &self.environment) else {
+        let Some((challenge, identity, now)) = request(headers, &self.environment) else {
             return StatusCode::UNAUTHORIZED.into_response();
         };
         if !ready {
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
+        match tokio::time::timeout(
+            Duration::from_secs(3),
+            self.identity
+                .permits(identity, challenge, &self.environment, now),
+        )
+        .await
+        {
+            Ok(Some(())) => {}
+            Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
+            Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        }
         match tokio::time::timeout(Duration::from_secs(2), self.read(challenge)).await {
             Ok(Some(observation)) => {
                 let body = serde_json::to_vec(&observation).expect("serialize runtime proof");
-                let mut mac = hmac::Context::with_key(&self.key);
-                mac.update(RESPONSE_CONTEXT);
-                mac.update(&body);
-                let tag = URL_SAFE_NO_PAD.encode(mac.sign().as_ref());
+                let payload = [RESPONSE_CONTEXT, &body].concat();
+                let tag = URL_SAFE_NO_PAD.encode(self.key.sign(&payload).as_ref());
                 (
                     [
                         (header::CACHE_CONTROL.as_str(), "no-store"),
@@ -132,7 +152,7 @@ fn single<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     values.next().is_none().then_some(first)
 }
 
-fn authenticate<'a>(headers: &'a HeaderMap, key: &hmac::Key, environment: &str) -> Option<&'a str> {
+fn request<'a>(headers: &'a HeaderMap, environment: &str) -> Option<(&'a str, &'a str, u64)> {
     let challenge = single(headers, CHALLENGE)?;
     if challenge.len() > 224 {
         return None;
@@ -153,13 +173,7 @@ fn authenticate<'a>(headers: &'a HeaderMap, key: &hmac::Key, environment: &str) 
     if expires <= now || expires - now > 30 || fields.next().is_some() {
         return None;
     }
-    let tag = single(headers, SIGNATURE)?;
-    if tag.len() != 43 {
-        return None;
-    }
-    let tag = URL_SAFE_NO_PAD.decode(tag).ok()?;
-    hmac::verify(key, challenge.as_bytes(), &tag).ok()?;
-    Some(challenge)
+    Some((challenge, single(headers, IDENTITY)?, now))
 }
 
 #[derive(Serialize)]
@@ -201,8 +215,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn request_signature_binds_environment_receipt_and_fresh_nonce() {
-        let key = hmac::Key::new(hmac::HMAC_SHA256, &[7; 32]);
+    fn challenge_requires_the_scoped_environment_and_an_unambiguous_identity() {
         let expires = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -213,22 +226,19 @@ mod tests {
             "a".repeat(64),
             "b".repeat(64)
         );
-        let tag = URL_SAFE_NO_PAD.encode(hmac::sign(&key, challenge.as_bytes()).as_ref());
         let mut headers = HeaderMap::new();
         headers.insert(CHALLENGE, challenge.parse().unwrap());
-        headers.insert(SIGNATURE, tag.parse().unwrap());
+        headers.insert(IDENTITY, "fixture-jwt".parse().unwrap());
         assert_eq!(
-            authenticate(&headers, &key, "staging"),
-            Some(challenge.as_str())
+            request(&headers, "staging").map(|(input, token, _)| (input, token)),
+            Some((challenge.as_str(), "fixture-jwt"))
         );
-        assert_eq!(authenticate(&headers, &key, "production"), None);
-        headers.insert(
-            CHALLENGE,
-            challenge.replace(".4.9.", ".4.10.").parse().unwrap(),
-        );
-        assert_eq!(authenticate(&headers, &key, "staging"), None);
-        headers.insert(CHALLENGE, challenge.parse().unwrap());
+        assert_eq!(request(&headers, "production"), None);
+        headers.append(IDENTITY, "other-jwt".parse().unwrap());
+        assert_eq!(request(&headers, "staging"), None);
+        headers.remove(IDENTITY);
+        headers.insert(IDENTITY, "fixture-jwt".parse().unwrap());
         headers.append(CHALLENGE, challenge.parse().unwrap());
-        assert_eq!(authenticate(&headers, &key, "staging"), None);
+        assert_eq!(request(&headers, "staging"), None);
     }
 }

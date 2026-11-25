@@ -33,6 +33,7 @@ jobs:
     environment: production-plan
     outputs:
       release_set: ${{ steps.select.outputs.release_set }}
+      pointer_evidence: ${{ steps.select.outputs.pointer_evidence }}
       released: ${{ steps.select.outputs.released }}
       infra_ref: ${{ steps.private.outputs.revision }}
     env:
@@ -115,6 +116,7 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.release_set != ''
     permissions:
+      id-token: write
       contents: read
       actions: read
     # Held for the whole call, including the deploy job's full production
@@ -130,4 +132,5 @@ jobs:
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     with:
       release_set: ${{ needs.resolve.outputs.release_set }}
+      pointer_evidence: ${{ needs.resolve.outputs.pointer_evidence }}
       infra_ref: ${{ needs.resolve.outputs.infra_ref }}

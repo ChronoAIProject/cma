@@ -35,6 +35,8 @@ from staging_cd_deploy_result import read as read_component_result, retain as re
 IDENTITY_KEYS = ("GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_NAME",
                  "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")
 PROCESS_KEYS = ("PATH", "LANG", "LC_ALL", "RUNNER_TEMP")
+RUNTIME_PROOF_KEYS = ("ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+                      "CD_RUNTIME_POINTER_PROOF_PUBLIC_KEY")
 DISABLED = 100
 SUPERSEDED_BY_NEWER_FINAL = 60
 UNVERIFIED_COHORT = 51
@@ -192,6 +194,10 @@ def controller_receipts(receipts, transition, script, directory, started, env, c
     if not transition or not GROUP & current.keys():
         return current, 0
     require(GROUP <= current.keys(), "Deployment policy split the contract group")
+    if env.get("CD_RUNTIME_POINTER_PUBLICATION_ENABLED") == "true":
+        # The pointer path qualifies the currently active peers against the
+        # serving build. Bootstrap defaults do not establish that preimage.
+        return current, 0
 
     try:
         configured = configured_group(script, directory, current, started, child_env)
@@ -254,6 +260,7 @@ def deploy(env, masker, script_reader=private_script, runner=None,
     child_env = {key: env[key] for key in (*IDENTITY_KEYS, *PROCESS_KEYS) if key in env}
     child_env.update(tool_reader(env))
     child_env.update(credentials)
+    child_env.update({key: env[key] for key in RUNTIME_PROOF_KEYS if key in env})
     if on_private_refusal is not None or on_unverified is not None or on_rolled_back is not None:
         child_env["CD_REPORT_REFUSAL"] = "1"
     # A set has independent source SHAs; the file is the sole source authority.

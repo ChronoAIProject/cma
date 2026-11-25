@@ -371,6 +371,36 @@ class PlanTests(unittest.TestCase):
                     self.assertRaisesRegex(Refusal, "never verified"):
                 select.plan(*args, **kwargs)
 
+    def test_production_reproduces_the_exact_approved_promotion_evidence(self):
+        from staging_cd_receipts_tests import fixture_runtime_receipt, fixture_tag
+
+        candidate = fixture_runtime_receipt(source=RELEASED)
+        api = Mock(tags=lambda _component: [fixture_tag(candidate)],
+                   history=Mock(return_value=History([RELEASED])))
+        registry = Mock()
+        registry.exists.return_value = True
+        registry.manifest.return_value = (candidate["digest"], {})
+        image = candidate["repository"] + "@" + candidate["digest"]
+        active = {"state": select.VERIFIED, "image": image, "source_sha": RELEASED,
+                  "pointer": {"schema": POINTER_SCHEMA, "environment": "staging", "revision": 2,
+                              "build": MERGE, "build_digest": "sha256:" + "9" * 64}}
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            env.update(CD_RELEASE_SET="fixture", CD_RUNTIME_POINTER_PUBLICATION_ENABLED="true",
+                       CD_RUNTIME_POINTER_STAGING_QUALIFICATION="initial", CD_APPROVED_POINTER_EVIDENCE="initial/agent")
+            policy = {"am": False, "eg": False, "web": False}
+            args = (env, api, registry, policy)
+            kwargs = dict(root=Path(directory), download=Mock(), deployables=DEPLOYABLES,
+                          runner=git_runner([MERGE, PREVIOUS, RELEASED]))
+            with patch.object(select, "initial_pointer_qualification"), \
+                    patch.object(select, "pointer_artifact", return_value=({}, {"runtime": active})) as proof:
+                selected, _ = select.plan(*args, **kwargs)
+                self.assertEqual(selected["receipts"], {"runtime": candidate})
+                self.assertEqual(proof.call_args.args[0], "agent")
+                proof.return_value = ({}, {"runtime": dict(active, source_sha=PREVIOUS)})
+                with self.assertRaisesRegex(Refusal, "differs from the release"):
+                    select.plan(*args, **kwargs)
+
     def test_a_dispatch_retry_requires_maintainer_actors(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))

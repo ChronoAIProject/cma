@@ -88,8 +88,10 @@ def cohort(script, path, request, output, child_env, timeout, target, *, phase="
     require(isinstance(value, dict) and set(value) == {"schema", "request", "configuration", "pods", "build", "lanes"}
             and value["schema"] == "cma-runtime-pointer-cohort-v2" and value["request"] == sha256(request)
             and matches(r"[0-9a-f]{64}", value["configuration"]) and isinstance(value["pods"], dict)
-            and bool(value["pods"]) and all(matches(r"[0-9a-f]{64}", key) and type(count) is int and count >= 0
-                                           for key, count in value["pods"].items()),
+            and bool(value["pods"]) and all(matches(r"[0-9a-f]{64}", key) and isinstance(counts, list)
+                                           and len(counts) == 2
+                                           and all(type(count) is int and count >= 0 for count in counts)
+                                           for key, counts in value["pods"].items()),
             "Runtime pointer cohort result is unbound")
     build, lanes = value["build"], value["lanes"]
     require(isinstance(build, dict) and set(build) == {"digest", "source"}
