@@ -194,6 +194,8 @@ use self::schemas::*;
     components(schemas(
         super::desktop::DesktopDescriptor,
         super::agent_access_requests::AgentAccessRequestView,
+        super::agent_access_requests::GithubApprovalContextView,
+        super::agent_access_requests::GithubConnectionApprovalBody,
         super::agent_access_requests::AgentAccessRequestList,
         super::agent_access_requests::AgentAccessStatusView,
         super::agent_access_requests::AgentAccessConnection,
