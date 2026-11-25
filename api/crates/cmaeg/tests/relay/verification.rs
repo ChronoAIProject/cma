@@ -269,10 +269,15 @@ impl std::io::Write for Capture {
     }
 }
 
-/// The server task runs on this current-thread runtime, so a thread-scoped
-/// subscriber captures its logs without touching any global state.
+#[test]
+fn rejected_envelopes_are_counted_and_log_only_the_field_name() {
+    run_isolated("verification::rejected_envelopes_are_counted_and_log_only_the_field_name_child");
+}
+
+/// A thread-scoped subscriber captures logs from the server on this runtime.
 #[tokio::test(flavor = "current_thread")]
-async fn rejected_envelopes_are_counted_and_log_only_the_field_name() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn rejected_envelopes_are_counted_and_log_only_the_field_name_child() {
     use super::nyxid_shapes::counter;
     let metrics = cmaeg::telemetry::install().unwrap();
     let capture = Capture::default();
