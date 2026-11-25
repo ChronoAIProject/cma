@@ -283,9 +283,19 @@ fn output_cannot_be_reused_by_another_capture_or_accept_corrupted_bytes() {
 #[test]
 fn disposable_aliases_are_excluded_but_foreign_agent_paths_are_refused() {
     let fixture = Fixture::new();
-    let aliases = fixture.source.config.agent_home("agt_one").join("tmp/arg0");
-    std::fs::create_dir_all(&aliases).unwrap();
-    std::os::unix::fs::symlink("/usr/local/bin/tool", aliases.join("tool")).unwrap();
+    let alias_roots = [
+        ".codex/tmp/arg0",
+        ".codex/tmp/arg0-linux",
+        ".cma/agents/agt_one/home/tmp/arg0",
+        ".cma/agents/agt_one/home/tmp/arg0-linux",
+    ];
+    for path in alias_roots {
+        let aliases = fixture.source.config.home.join(path);
+        std::fs::create_dir_all(&aliases).unwrap();
+        for name in ["apply_patch", "applypatch", "codex-linux-sandbox"] {
+            std::os::unix::fs::symlink("/usr/local/bin/tool", aliases.join(name)).unwrap();
+        }
+    }
     let receipt = fixture.run().unwrap();
     let inspected = crate::checkpoint_archive::inspect(
         &fixture.output.join(receipt.checkpoint.object_reference),

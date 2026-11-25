@@ -402,6 +402,7 @@ export async function probe(onStage = () => {}) {
     ['/home/cma/.cma/provider/codex/auth.json', '{"fixture":"retained-auth-fixture"}'],
     [`${agentHome}/tmp/retained`, 'retained-other-temporary-content'],
     [`${agentHome}/tmp/arg0-sibling/retained`, 'retained-adjacent-content'],
+    [`${agentHome}/tmp/arg0-linux-sibling/retained`, 'retained-new-adjacent-content'],
   ];
   for (const [path, bytes] of retained) {
     mkdirSync(join(path, '..'), { recursive: true });
@@ -431,7 +432,7 @@ export async function probe(onStage = () => {}) {
   assert.equal((await control(rejectedHold)).code, 'checkpoint_symlink_escape');
   await waitForWriterProgress(counter);
   complete('escaping-helper-refused');
-  const hold = { t: 'checkpoint_for_teardown', checkpoint: { epoch: 1, exclusions: ['.cma/agents/ci-agent/home/tmp/arg0'] }, writer_resume_token: 'a'.repeat(64) };
+  const hold = { t: 'checkpoint_for_teardown', checkpoint: { epoch: 1, exclusions: ['.cma/agents/ci-agent/home/tmp/arg0', '.codex/tmp/arg0'] }, writer_resume_token: 'a'.repeat(64) };
   onStage('checkpoint-request');
   const receipt = await control(hold);
   assertCheckpointHoldReceipt(receipt, hold, onStage);

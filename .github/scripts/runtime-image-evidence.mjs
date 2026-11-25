@@ -175,7 +175,7 @@ export function campaign(imageRef, commit, output, command = docker, profile = p
       // Both 0.165.0 profiles need the measured live-process alias layout.
       stage = 'probe-preparation';
       prepared = join(mkdtempSync(join(tmpdir(), 'cma-runtime-probe-')), 'runtime-image-probe.mjs');
-      prepareProbe(prepared, scripts);
+      prepareProbe(prepared, scripts, hasCompanionPins(expected));
     }
     stage = 'volume-create';
     command(['volume', 'create', '--label', label, identity]);

@@ -19,7 +19,7 @@ const docker = args => execFileSync('docker', args, { encoding: 'utf8', timeout:
 const name = 'cma-omarchy-contract-' + randomUUID();
 const result = { revision, result: 'fail', cleanup: false };
 const probe = resolve('/tmp', name + '.mjs');
-prepareProbe(probe);
+prepareProbe(probe, '.github/scripts', Boolean(expected.CODEX_FORK_CODE_MODE_SHA256_AMD64));
 mkdirSync(resolve(destination, '..'), { recursive: true });
 try {
   const image = JSON.parse(docker(['image', 'inspect', 'cma-runtime-omarchy:ci']))[0];

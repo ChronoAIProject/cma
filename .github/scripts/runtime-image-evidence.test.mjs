@@ -486,7 +486,7 @@ test('Omarchy profile uses the same native producer and its distinct image probe
         const probe = args.find((value) => value.endsWith('target=/opt/runtime-image-probe.mjs,readonly'));
         prepared = probe.slice('type=bind,source='.length, probe.indexOf(',target='));
         assert.ok(readFileSync(prepared, 'utf8').includes("from './omarchy-codex-aliases.mjs'"));
-        assert.ok(readFileSync(prepared, 'utf8').includes("exclusions: ['.cma/agents/ci-agent/home/tmp/arg0-linux']"));
+        assert.ok(readFileSync(prepared, 'utf8').includes("exclusions: ['.cma/agents/ci-agent/home/tmp/arg0', '.codex/tmp/arg0']"));
         return 'a'.repeat(64);
       }
       if (args[0] === 'start') return name;

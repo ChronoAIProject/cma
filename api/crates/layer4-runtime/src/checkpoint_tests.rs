@@ -151,6 +151,77 @@ async fn excluded_executable_aliases_do_not_discard_agent_history_or_allow_other
     std::fs::remove_dir_all(config.checkpoint_root).unwrap();
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn codex_checkpoint_preserves_retained_home_across_generated_alias_layouts() {
+    let config = config("codex-versioned-aliases");
+    let wire_exclusions =
+        layer3_adapter::codex::checkpoint_exclusions(&[layer3_adapter::AgentSlot::new("a")])
+            .unwrap();
+    assert_eq!(
+        wire_exclusions,
+        [".cma/agents/a/home/tmp/arg0", ".codex/tmp/arg0"]
+    );
+    let alias_roots = [
+        ".codex/tmp/arg0",
+        ".codex/tmp/arg0-linux",
+        ".cma/agents/a/home/tmp/arg0",
+        ".cma/agents/a/home/tmp/arg0-linux",
+    ];
+    for root in alias_roots {
+        let directory = config.home.join(root);
+        std::fs::create_dir_all(&directory).unwrap();
+        for name in ["apply_patch", "applypatch", "codex-linux-sandbox"] {
+            std::os::unix::fs::symlink("/usr/local/bin/provider", directory.join(name)).unwrap();
+        }
+    }
+    let retained = [
+        ".cma/agents/a/home/transcript.jsonl",
+        ".cma/agents/a/home/tmp/arg0-linux-sibling/other",
+        ".codex/tmp/arg0-sibling/other",
+        "project/tmp/arg0-linux/other",
+    ];
+    for path in retained {
+        let path = config.home.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "preserved fixture").unwrap();
+    }
+    let store = CheckpointStore::new(&config);
+    let request = CheckpointRequest {
+        epoch: 1,
+        exclusions: wire_exclusions,
+    };
+    let receipt = store.capture(&request).await.unwrap();
+    assert_eq!(store.capture(&request).await.unwrap(), receipt);
+    store
+        .restore(&RestoreRequest {
+            object_reference: receipt.object_reference,
+            sha256: receipt.sha256,
+        })
+        .await
+        .unwrap();
+    for path in alias_roots {
+        assert!(!config.home.join(path).exists());
+    }
+    for path in retained {
+        assert_eq!(
+            std::fs::read_to_string(config.home.join(path)).unwrap(),
+            "preserved fixture"
+        );
+    }
+    std::os::unix::fs::symlink(
+        "/usr/local/bin/provider",
+        config.home.join("project/tmp/arg0-linux/escape"),
+    )
+    .unwrap();
+    assert_eq!(
+        store.capture(&request).await.unwrap_err().code,
+        "checkpoint_symlink_escape"
+    );
+    std::fs::remove_dir_all(config.home).unwrap();
+    std::fs::remove_dir_all(config.checkpoint_root).unwrap();
+}
+
 #[tokio::test]
 async fn whole_home_round_trips_files_modes_links_and_worktree_dependencies() {
     let config = config("round-trip");

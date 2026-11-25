@@ -234,7 +234,8 @@ fn validate_entry(
 }
 
 fn validate_exclusions(exclusions: &[String]) -> Result<Vec<PathBuf>> {
-    let mut paths = exclusions
+    let effective = layer3_adapter::codex::checkpoint_archive_exclusions(exclusions);
+    let mut paths = effective
         .iter()
         .map(|path| safe_relative(path, "checkpoint exclusion"))
         .collect::<Result<Vec<_>>>()?;
