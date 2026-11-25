@@ -1,4 +1,5 @@
 use super::*;
+use crate::sandbox::binding_lifecycle_test_support::ConnectionSweep;
 use futures_util::future::join_all;
 use layer2_core::agent_ownership::{
     MaintenancePolicy, Member, OwnershipCoordinator, PROTOCOL_VERSION,
@@ -193,11 +194,26 @@ async fn measure_window(
                 } else {
                     &manager.baseline
                 };
-                worker.reconcile_connections(SystemTime::now())
+                async move {
+                    let mut sweep = ConnectionSweep::default();
+                    let mut slices = 0;
+                    loop {
+                        slices += 1;
+                        assert!(slices <= 50, "reconciliation must complete the cohort");
+                        if worker
+                            .reconcile_connection_slice(SystemTime::now(), &mut sweep)
+                            .await
+                            .unwrap()
+                        {
+                            break;
+                        }
+                    }
+                    slices
+                }
             }))
             .await
             {
-                assert_eq!(result.unwrap(), 0);
+                assert!(result >= 2, "the live population must span pages");
             }
         }
     };
