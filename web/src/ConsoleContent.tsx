@@ -300,7 +300,6 @@ export function ConsoleContent({
       <OperationsRoute
         operator={operator}
         capabilities={user.capabilities}
-        bindingDiagnostics={user.bindingDiagnostics === true}
         principal={usagePrincipal}
         bindingDiagnostics={user.bindingDiagnostics === true}
       />
