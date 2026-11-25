@@ -31,6 +31,8 @@ pub struct Fixture {
     pub readiness: Readiness,
     pub outcomes: mpsc::Receiver<DeliveryCommand>,
     pub channel: Arc<ResolvedChannel>,
+    // This fixture also compiles in turn_metrics, which exercises live streams only.
+    #[allow(dead_code)]
     pub recovery_channel: Arc<TestRecoveryChannel>,
     pub keys: Arc<MasterKeyRing>,
 }
@@ -121,6 +123,7 @@ impl Fixture {
     pub fn request(&self, event: &str) -> LaunchRequest {
         self.request_with_kind(event, None)
     }
+    #[allow(dead_code)]
     pub fn custom_recovery_request(&self, event: &str) -> LaunchRequest {
         self.request_from(event, None, Some(SourceKind::Custom))
     }
