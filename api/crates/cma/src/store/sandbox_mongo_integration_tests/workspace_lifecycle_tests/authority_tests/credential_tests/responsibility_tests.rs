@@ -94,6 +94,41 @@ async fn known_abort_opening_result_custody_reuses_the_original_mint() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a replica set"]
+async fn lost_opening_response_does_not_retry_result_custody() {
+    let mut f = Fixture::new("issuance_acceptance_start_reply_lost").await;
+    let app = format!("acceptance-start-reply-lost-{}", uuid::Uuid::new_v4());
+    f.use_custody_app(&app).await;
+    let issuing = f.issue(1);
+    let mint = f.prepare().await;
+    let intent = f.custody.issuance(&f.claim).await.unwrap().unwrap();
+    let admin = f.client.database("admin");
+    let before = admin
+        .run_command(doc! {
+            "configureFailPoint":"failCommand", "mode":{"times":2_i32},
+            "data":{"failCommands":["update"], "appName":&app, "closeConnection":true}
+        })
+        .await
+        .unwrap()
+        .get_i32("count")
+        .unwrap();
+    accepted(mint);
+    let result = issuing.await.unwrap().unwrap();
+    let after = admin
+        .run_command(doc! {"configureFailPoint":"failCommand", "mode":"off"})
+        .await
+        .unwrap()
+        .get_i32("count")
+        .unwrap();
+    assert_eq!(after - before, 1, "one acceptance-opening update");
+    assert!(matches!(result, Err(CredentialError::Uncertain)));
+    assert_eq!(f.custody.issuance(&f.claim).await.unwrap(), Some(intent));
+    assert!(f.custody.list(&f.claim.id).await.unwrap().is_empty());
+    assert_eq!(f.peer.count_route("POST", "/api/v1/api-keys"), 1);
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a replica set"]
 async fn rejected_result_write_keeps_discoverable_responsibility_after_return() {
     let mut f = Fixture::new("issuance_result_rejected").await;
     let app = format!("result-rejected-{}", uuid::Uuid::new_v4());

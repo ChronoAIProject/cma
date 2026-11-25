@@ -1,11 +1,13 @@
 use super::*;
 use crate::store::sandbox_mongo::is_transient;
 use crate::store::transaction_terminal::GuardedTerminal as _;
+use mongodb::error::{Error, ErrorKind, WriteFailure};
 
 const ACCEPTANCE_START_ATTEMPTS: usize = 3;
+const WRITE_CONFLICT: i32 = 112;
 
 enum StartError {
-    Driver(mongodb::error::Error),
+    Driver(Error),
     Custody(CredentialCustodyError),
 }
 
@@ -35,11 +37,22 @@ pub(super) async fn start_acceptance(
     // acquiring the Mongo fence permits another snapshot under the same claim.
     for _ in 1..ACCEPTANCE_START_ATTEMPTS {
         match start_once(store, sandbox).await {
-            Err(StartError::Driver(error)) if is_transient(&error) => continue,
+            Err(StartError::Driver(error)) if server_aborted_opening(&error) => continue,
             result => return result.map_err(StartError::into_custody),
         }
     }
     start(store, sandbox).await
+}
+
+fn server_aborted_opening(error: &Error) -> bool {
+    // The driver also labels transport errors as transient. Require the
+    // server's write-conflict response before acquiring a fresh fence.
+    is_transient(error)
+        && match error.kind.as_ref() {
+            ErrorKind::Command(command) => command.code == WRITE_CONFLICT,
+            ErrorKind::Write(WriteFailure::WriteError(write)) => write.code == WRITE_CONFLICT,
+            _ => false,
+        }
 }
 
 async fn start_once(
