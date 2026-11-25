@@ -12,7 +12,8 @@ use axum::{
     Json,
 };
 use layer2_core::sandbox::{
-    Sandbox, SandboxRuntimeUpdateError, SandboxRuntimeUpdateService, SandboxStatus,
+    Sandbox, SandboxRuntimeImageOrigin, SandboxRuntimeUpdateError, SandboxRuntimeUpdateService,
+    SandboxStatus,
 };
 use layer2_core::{Capability, SandboxId};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,9 @@ pub struct UpdateSandboxRuntimeRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct SandboxRuntimeUpdateView {
     pub current_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_version_confirmed: Option<bool>,
+    pub image_origin: RuntimeUpdateImageOrigin,
     pub latest_version: String,
     pub update_available: bool,
     pub state: SandboxRuntimeUpdateStatus,
@@ -69,6 +73,15 @@ pub struct RuntimeUpdateFailureView {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeUpdateImageOrigin {
+    ManagedAgent,
+    ManagedDesktop,
+    UserSelected,
+    Unknown,
+}
+
 impl SandboxRuntimeUpdateView {
     pub(super) fn new(sandbox: &Sandbox, service: &SandboxRuntimeUpdateService) -> Self {
         // One release for the whole view, so its fields always agree.
@@ -78,7 +91,19 @@ impl SandboxRuntimeUpdateView {
             .map(|runtime| runtime.runtime_version.clone());
         let same_home = sandbox.supports_retained_runtime_update();
         let can_update = service.can_update_to(sandbox, &latest_version);
+        let qualified = service.target_is_qualified(sandbox, &latest_version);
+        let current_confirmed = sandbox.managed_desktop_runtime_confirmed();
+        let image_origin = match sandbox.lifecycle.runtime_image_origin {
+            Some(SandboxRuntimeImageOrigin::ManagedDesktop) => {
+                RuntimeUpdateImageOrigin::ManagedDesktop
+            }
+            Some(SandboxRuntimeImageOrigin::UserSelected) => RuntimeUpdateImageOrigin::UserSelected,
+            None if sandbox.has_managed_runtime_image() => RuntimeUpdateImageOrigin::ManagedAgent,
+            None => RuntimeUpdateImageOrigin::Unknown,
+        };
         let update_available = same_home
+            && qualified
+            && current_confirmed
             && current_version
                 .as_deref()
                 .is_some_and(|version| version != latest_version);
@@ -91,8 +116,10 @@ impl SandboxRuntimeUpdateView {
             None if update_available => SandboxRuntimeUpdateStatus::Available,
             None => SandboxRuntimeUpdateStatus::UpToDate,
         };
-        let blocked_reason = if sandbox.profile.content.runtime_image.is_some() {
+        let blocked_reason = if image_origin == RuntimeUpdateImageOrigin::UserSelected {
             Some("This Sandbox uses a custom image. Automatic CMA runtime updates do not replace custom images.".into())
+        } else if image_origin == RuntimeUpdateImageOrigin::Unknown {
+            Some("The original source of this Sandbox image is unknown. Managed runtime updates require a confirmed origin.".into())
         } else if !same_home {
             Some("Runtime updates require a retained managed home and its original runtime identity.".into())
         } else if pending.is_some_and(|request| request.failure.is_none()) {
@@ -104,6 +131,10 @@ impl SandboxRuntimeUpdateView {
                 }
                 .into(),
             )
+        } else if !current_confirmed && pending.is_none() {
+            Some("The current Desktop runtime could not be confirmed.".into())
+        } else if !qualified && pending.is_none() {
+            Some("The latest Agent runtime has not been verified for Desktop.".into())
         } else if !matches!(
             sandbox.status,
             SandboxStatus::Active | SandboxStatus::Paused
@@ -136,6 +167,10 @@ impl SandboxRuntimeUpdateView {
         Self {
             can_update,
             current_version,
+            current_version_confirmed: sandbox
+                .has_managed_desktop_image()
+                .then_some(current_confirmed),
+            image_origin,
             latest_version,
             update_available,
             state,
