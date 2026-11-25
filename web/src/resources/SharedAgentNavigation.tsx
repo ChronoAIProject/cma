@@ -1,4 +1,4 @@
-import type { AgentTaskStatus } from '@cma/client';
+import { ApiError, type AgentTaskStatus } from '@cma/client';
 import { scopeValue } from './scope';
 import { useAccessSummaries } from './useAccessSummaries';
 import { ResourceAccessSummary } from './ResourceAccessSummary';
@@ -38,6 +38,8 @@ export function SharedAgentNavigation({
   const cursor = cursors.at(-1);
   const read = useMemo(
     () => async (signal: AbortSignal) => {
+      // Leave time to commit the authorized inventory before its 15-second read deadline.
+      const deadline = performance.now() + 12_000;
       const page = await client.agents.provenanceInventory({
         shared,
         organization,
@@ -60,7 +62,7 @@ export function SharedAgentNavigation({
       // The provenance projection can retain the creation placeholder while
       // the authorized point read contains the current title.
       const titles = new Map<string, string>();
-      const deadline = performance.now() + 12_000;
+      const refused = new Set<string>();
       let next = 0;
       const worker = async () => {
         while (next < page.items.length) {
@@ -75,13 +77,17 @@ export function SharedAgentNavigation({
             });
             signal.throwIfAborted();
             titles.set(row.agent_id, taskTitle({ id: detail.id, title: detail.title }));
-          } catch {
+          } catch (error) {
             signal.throwIfAborted();
+            if (error instanceof ApiError && [401, 403, 404, 410].includes(error.status))
+              refused.add(row.agent_id);
           }
         }
       };
       await Promise.all(Array.from({ length: Math.min(4, page.items.length) }, worker));
-      return { value: { ...page, titles } };
+      return {
+        value: { ...page, items: page.items.filter((row) => !refused.has(row.agent_id)), titles },
+      };
     },
     [client, cursor, organization, shared, statusFilter],
   );
