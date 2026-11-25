@@ -64,6 +64,28 @@ class CacheTests(unittest.TestCase):
                 self.assertFalse((cache.accepted / "compacted").exists())
                 tool.validate_bundle(cache.accepted, cache.key.prefix, family=cache.key.family)
 
+    def test_compacted_workspace_bundle_keeps_a_qualified_incremental_seed(self):
+        tool = bridge()
+        cache = BuildCache(ROOT, self.env, ROOT, "eg", revision=self.env["GITHUB_SHA"])
+        self.assertEqual(cache.key.source, self.env["GITHUB_SHA"])
+
+        def transfer(operation, directory, **kwargs):
+            self.assertEqual(operation, "extract")
+            self.populate(directory)
+            (directory / "compacted").write_text("1\n")
+
+        with patch("staging_cd_build_cache.bridge", return_value=tool), patch.object(tool, "transfer", side_effect=transfer):
+            self.assertTrue(cache.export_mounts())
+        self.assertEqual(cache.export_retained_groups, 1)
+        manifest = tool.validate_bundle(cache.accepted, cache.key.prefix, family=cache.key.family)
+        self.assertEqual(manifest["format"], tool.FORMAT)
+        self.assertEqual(manifest["prefix"], cache.key.family + cache.key.graph + "-")
+        with patch("staging_cd_build_cache.bridge", return_value=tool), patch.object(tool, "transfer") as inject:
+            self.assertTrue(cache.restore())
+        self.assertEqual(cache.restore_result, "partial")
+        inject.assert_called_once_with("inject", cache.accepted, namespace=cache.namespace,
+                                       timeout=360, max_content=6 * 1024 ** 3)
+
     def test_legacy_layer_cache_is_read_only(self):
         for event, ref in [('push', 'refs/heads/develop'),
                            ('push', 'refs/heads/main'),

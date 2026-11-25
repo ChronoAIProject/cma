@@ -181,14 +181,18 @@ class BuildCache:
             tool.transfer("extract", self.pending, namespace=self.namespace,
                           timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES,
                           compact_registry=True, max_archive=MAX_BUNDLE_BYTES)
+            export_key = self.key
             compacted = self.pending / "compacted"
             if compacted.exists():
                 groups = int(compacted.read_text())
                 require(0 < groups <= tool.MAX_MEMBERS, "invalid compacted cache group count")
                 self.export_retained_groups = groups
                 compacted.unlink()
-            tool.seal(self.pending, self.key.prefix, family=self.key.family,
-                      source=self.key.source or None, graph=self.key.graph,
+                # The compactor kept only incremental groups. The workspace
+                # output inventory and its source-bound proof are absent.
+                export_key = replace(export_key, source="")
+            tool.seal(self.pending, export_key.prefix, family=export_key.family,
+                      source=export_key.source or None, graph=export_key.graph,
                       max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
             size = sum((self.pending / name).lstat().st_size for name in ("registry.tar.gz", "target.tar.gz"))
             self.export_headroom = "low" if size > HEADROOM_WARNING * MAX_BUNDLE_BYTES else "ok"

@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import random
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -33,6 +34,52 @@ class CargoCompactionTests(unittest.TestCase):
             with tarfile.open(output / "target.tar.gz") as archive:
                 selected = {Path(member.name).parts[2] for member in archive}
             self.assertEqual(selected, set(groups) - {"cma-111"})
+
+
+    def test_oversized_attempts_stop_streaming_before_compressing_every_group(self):
+        with tempfile.TemporaryDirectory(prefix="cma-cargo-budget-") as directory:
+            root = Path(directory)
+            registry, target, output = (root / name for name in ("registry", "target", "export"))
+            registry.mkdir()
+            (registry / "package.crate").write_bytes(b"package")
+            random_source = random.Random(3873)
+            mib = 1024 * 1024
+            for group in range(6):
+                state = target / "release" / "incremental" / f"crate{group}-seed" / "s-final"
+                state.mkdir(parents=True)
+                (state / "work-products.bin").write_bytes(random_source.randbytes(mib))
+
+            gzip = root / "gzip"
+            gzip.write_text('''#!/bin/bash
+set -eu -o pipefail
+if [ "$1" != "-1" ]; then exec "$REAL_GZIP" "$@"; fi
+work=$(mktemp -d "$PROBE_TMP/gzip.XXXXXX")
+trap 'rm -f "$work/input" "$work/count"; rmdir "$work"' EXIT
+mkfifo "$work/input"
+wc -c < "$work/input" > "$work/count" &
+counter=$!
+status=0
+tee "$work/input" | "$REAL_GZIP" "$@" || status=$?
+wait "$counter"
+cat "$work/count" >> "$PROBE_TMP/bytes"
+exit "$status"
+''')
+            gzip.chmod(0o755)
+            real_gzip = shutil.which("gzip")
+            self.assertIsNotNone(real_gzip)
+            environment = {**os.environ, "COPYFILE_DISABLE": "1", "PATH": f"{root}:{os.environ['PATH']}",
+                           "REAL_GZIP": real_gzip, "PROBE_TMP": directory}
+            script = export_script(12 * mib, 5 * mib // 2, 100)
+            process = subprocess.run(["bash", "-c", script, "export", str(registry), str(target), str(output)],
+                                     env=environment, capture_output=True, text=True, timeout=30)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            input_sizes = [int(size) for size in (root / "bytes").read_text().splitlines()]
+            self.assertLess(max(input_sizes), 3 * mib)
+            self.assertLess(sum(input_sizes), 8 * mib)
+            self.assertEqual((output / "compacted").read_text().strip(), "2")
+            with tarfile.open(output / "target.tar.gz") as archive:
+                selected = {Path(member.name).parts[2] for member in archive}
+            self.assertEqual(selected, {"crate0-seed", "crate1-seed"})
 
 
 if __name__ == "__main__":
