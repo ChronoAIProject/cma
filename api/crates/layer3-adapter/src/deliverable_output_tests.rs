@@ -11,29 +11,45 @@ fn fields(output: Value, status: &str) -> ToolCallUpdateFields {
 }
 
 #[test]
-fn native_deliverable_refusals_retain_the_safe_business_result() {
+fn native_deliverable_refusals_project_the_typed_result_with_local_guidance() {
     for (code, retryable, guidance) in [
-        ("invalid_resource", false, "Check the exact resource."),
+        (
+            "invalid_resource",
+            false,
+            "Check the resource kind and exact path or artifact ID.",
+        ),
         (
             "not_accessible",
             false,
-            "Check the current Agent authority.",
+            "Check the exact resource and the current Agent authority.",
         ),
         (
             "runtime_not_ready",
             true,
-            "Wait until the runtime is ready.",
+            "Wait until this Agent's runtime is ready before retrying.",
         ),
-        ("too_large", false, "Produce a smaller file."),
-        ("verification_unavailable", true, "Wait before retrying."),
-        ("resource_changed", false, "Verify the stable file again."),
+        (
+            "too_large",
+            false,
+            "Produce a smaller file and verify its exact path.",
+        ),
+        (
+            "verification_unavailable",
+            true,
+            "Wait before retrying the same resource with current authority.",
+        ),
+        (
+            "resource_changed",
+            false,
+            "Wait until the resource is stable, then verify it again.",
+        ),
     ] {
         let summary = format!(
             "This deliverable could not be verified ({code}). Retryable: {retryable}. {guidance}"
         );
         let fields = fields(
             json!({"result":{
-                "content":[{"type":"text","text":summary}],
+                "content":[{"type":"text","text":format!("{summary} Synthetic diagnostic text.")}],
                 "structuredContent":{"error":{"code":code,"retryable":retryable}},
                 "_meta":null
             },"error":null}),
@@ -58,6 +74,7 @@ fn native_deliverable_transport_and_missing_projection_have_distinct_safe_summar
         Value::Null,
         json!({"result":{"content":[]},"error":null}),
         json!({"result":{"structuredContent":{"error":{"code":"unknown","retryable":true}}},"error":null}),
+        json!({"result":{"structuredContent":{"error":{"code":"too_large","retryable":true}}},"error":null}),
     ] {
         let missing = fields(output, "failed");
         let summary = reported_tool_text(&missing).join("\n");
@@ -109,7 +126,7 @@ fn valid_structured_error_survives_missing_or_inconsistent_text() {
         );
         let summary = reported_tool_text(&output).join("\n");
         assert!(summary.contains("(runtime_not_ready). Retryable: true."));
-        assert!(summary.contains("Wait before retrying"));
+        assert!(summary.contains("Wait until this Agent's runtime is ready"));
         assert!(!summary.contains("Private diagnostic"));
     }
 }

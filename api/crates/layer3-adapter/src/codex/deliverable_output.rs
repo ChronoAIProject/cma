@@ -16,11 +16,11 @@ pub(crate) fn is_failed_deliverable(
         })
 }
 
-pub(crate) fn failure_summary<'a>(
+pub(crate) fn failure_summary(
     status: Option<&ToolCallStatus>,
     input: Option<&Value>,
-    output: Option<&'a Value>,
-) -> Option<Cow<'a, str>> {
+    output: Option<&Value>,
+) -> Option<Cow<'static, str>> {
     if !is_failed_deliverable(status, input) {
         return None;
     }
@@ -31,45 +31,34 @@ pub(crate) fn failure_summary<'a>(
         // Native transport diagnostics can contain credentials, URLs or response bodies.
         return Some(Cow::Borrowed(TRANSPORT_ERROR));
     }
-    Some(business_failure(output).unwrap_or(Cow::Borrowed(PROJECTION_UNAVAILABLE)))
+    Some(business_failure(output).map_or(Cow::Borrowed(PROJECTION_UNAVAILABLE), Cow::Owned))
 }
 
-fn business_failure(output: &Value) -> Option<Cow<'_, str>> {
-    let result = output.get("result")?;
-    let error = result.pointer("/structuredContent/error")?;
+fn business_failure(output: &Value) -> Option<String> {
+    let error = output.pointer("/result/structuredContent/error")?;
     let code = error.get("code")?.as_str()?;
-    if !matches!(
-        code,
-        "invalid_resource"
-            | "not_accessible"
-            | "verification_unavailable"
-            | "verification_failed"
-            | "too_large"
-            | "resource_changed"
-            | "runtime_not_ready"
-            | "runtime_unavailable"
-            | "runtime_busy"
-            | "runtime_unsupported"
-    ) {
-        return None;
-    }
     let retryable = error.get("retryable")?.as_bool()?;
-    let prefix =
-        format!("This deliverable could not be verified ({code}). Retryable: {retryable}.");
-    // The CMA tool supplies the public, actionable text alongside the typed error.
-    if result.pointer("/content/0/type").and_then(Value::as_str) == Some("text") {
-        if let Some(text) = result
-            .pointer("/content/0/text")
-            .and_then(Value::as_str)
-            .filter(|text| text.starts_with(&prefix))
-        {
-            return Some(Cow::Borrowed(text));
+    // The bridge supplies the result envelope. Only retain known error codes
+    // and local guidance so arbitrary result text cannot enter the Agent log.
+    let guidance = match (code, retryable) {
+        ("invalid_resource", false) => "Check the resource kind and exact path or artifact ID.",
+        ("not_accessible", false) => "Check the exact resource and the current Agent authority.",
+        ("too_large", false) => "Produce a smaller file and verify its exact path.",
+        ("resource_changed", false) => "Wait until the resource is stable, then verify it again.",
+        ("runtime_not_ready", true) => "Wait until this Agent's runtime is ready before retrying.",
+        ("runtime_unavailable" | "runtime_busy" | "verification_unavailable", true) => {
+            "Wait before retrying the same resource with current authority."
         }
-    }
-    let guidance = if retryable {
-        "Wait before retrying the same resource with current authority."
-    } else {
-        "Check the resource, runtime and current authority before trying again."
+        ("runtime_unsupported", false) => {
+            "Use a runtime that supports the required file operation."
+        }
+        ("verification_unavailable", false) => {
+            "Check service availability and configuration before trying again."
+        }
+        ("verification_failed", false) => "Use the error code when contacting support.",
+        _ => return None,
     };
-    Some(Cow::Owned(format!("{prefix} {guidance}")))
+    Some(format!(
+        "This deliverable could not be verified ({code}). Retryable: {retryable}. {guidance}"
+    ))
 }

@@ -14,9 +14,9 @@ async fn deliverable_failure_summary_obeys_output_writer_policy_and_survives_rep
         ),
     );
     let mut assembly = AgentMessageAssembly::default();
-    let text = "This deliverable could not be verified (too_large). Retryable: false. Produce a smaller file.";
+    let text = "This deliverable could not be verified (too_large). Retryable: false. Produce a smaller file and verify its exact path.";
     let result = serde_json::json!({"result":{
-        "content":[{"type":"text","text":text}],
+        "content":[{"type":"text","text":format!("{text} Synthetic private diagnostic.")}],
         "structuredContent":{"error":{"code":"too_large","retryable":false}}
     },"error":null});
     let input = serde_json::json!({"server":"cma_access","tool":"describe_deliverable"});
