@@ -48,6 +48,18 @@ async fn legacy_retirement_fences_owner_and_version_and_accepts_missing_binding(
     ] {
         headers(&retire(&base, record, version, token).await, status);
     }
+    let before = fixture.cma.records()[legacy.record_id.as_str()].clone();
+    let refused = Client::new()
+        .delete(url(&base, &legacy.record_id))
+        .query(&[("expected_version", "1"), ("retire_unready", "true")])
+        .bearer_auth("token-alice")
+        .send()
+        .await
+        .unwrap();
+    headers(&refused, 400);
+    let after = &fixture.cma.records()[legacy.record_id.as_str()];
+    assert_eq!(after.version, before.version);
+    assert_eq!(after.blob, before.blob);
     assert!(fixture.provider.requests().is_empty());
     headers(
         &retire(&base, &legacy.record_id, 1, "token-alice").await,
