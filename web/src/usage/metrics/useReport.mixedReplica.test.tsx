@@ -1,8 +1,8 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { Cma, type UsageMetricReport } from '@cma/client';
+import { ApiError, Cma, type UsageMetricReport } from '@cma/client';
 import { defaultSelection, metricQuery } from './model';
-import { asOf, reportFixture } from './testFixtures';
+import { asOf, metricsClient, reportFixture } from './testFixtures';
 import { useUsageReport } from './useReport';
 
 afterEach(() => {
@@ -225,3 +225,35 @@ it.each(['denied', 'missing', 'expired', 'wrong identity', 'wrong principal'])(
     expect(admissions()).toHaveLength(1);
   },
 );
+
+it('commits the exact completed ordinary refresh when a subsequent view is disabled', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(asOf * 1000);
+  vi.spyOn(Math, 'random').mockReturnValue(0);
+  const retained = reportFixture(true, 'umr_00000000000000000000000000000001');
+  const completed = { ...retained, report_id: 'umr_00000000000000000000000000000002' };
+  const api = Object.assign(metricsClient(true), {
+    latest: vi
+      .fn()
+      .mockResolvedValueOnce({
+        report: retained,
+        generated_at: asOf,
+        stale: true,
+        refresh: { state: 'pending', report_id: completed.report_id, retry_after_seconds: 2 },
+      })
+      .mockRejectedValue(new ApiError(501, 'Disabled', 'report_view_disabled')),
+  });
+  api.report.mockResolvedValue(completed);
+  const hook = renderHook(() => useUsageReport(api, defaultSelection, true, true, owner));
+  await flush();
+  expect(hook.result.current.report?.report_id).toBe(retained.report_id);
+  await advance(2000);
+  expect(hook.result.current.report?.report_id).toBe(completed.report_id);
+  expect(api.report).toHaveBeenCalledExactlyOnceWith(
+    completed.report_id,
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+  expect(api.latest).toHaveBeenCalledTimes(2);
+  expect(api.create).not.toHaveBeenCalled();
+  expect(hook.result.current.error).toBeUndefined();
+});
