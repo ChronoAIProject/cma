@@ -1,10 +1,56 @@
 use super::*;
 
 fn checkout(id: u32) -> CmapEvent {
+    CmapEvent::ConnectionCheckedOut(checkout_event(id))
+}
+
+fn checkout_event(id: u32) -> mongodb::event::cmap::ConnectionCheckedOutEvent {
     let mut event: mongodb::event::cmap::ConnectionCheckedOutEvent =
         serde_json::from_value(serde_json::json!({ "connectionId": id })).unwrap();
     event.duration = Duration::from_millis(125);
+    event
+}
+
+fn checkout_at(address: &str, id: u32) -> CmapEvent {
+    let mut event = checkout_event(id);
+    event.address = mongodb::options::ServerAddress::parse(address).unwrap();
     CmapEvent::ConnectionCheckedOut(event)
+}
+
+#[test]
+fn checkout_classification_uses_the_server_limit_across_summary_windows() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    let first = "first.example:27017";
+    let second = "second.example:27017";
+    metrics::with_local_recorder(&recorder, || {
+        let observer = Observer(
+            Arc::new(Mutex::new(Window::new(Instant::now()))),
+            "application",
+            2,
+        );
+        record_event(&observer, checkout_at(first, 1));
+        record_event(&observer, checkout_at(second, 1));
+        observer.0.lock().unwrap().started = Instant::now() - WINDOW;
+        observer.record(2, Duration::ZERO, false);
+        record_event(&observer, checkout_at(first, 2));
+        let mut returned: mongodb::event::cmap::ConnectionCheckedInEvent =
+            serde_json::from_value(serde_json::json!({ "connectionId": 1 })).unwrap();
+        returned.address = mongodb::options::ServerAddress::parse(second).unwrap();
+        record_event(&observer, CmapEvent::ConnectionCheckedIn(returned));
+        record_event(&observer, checkout_at(second, 2));
+        let mut closed: mongodb::event::cmap::ConnectionClosedEvent =
+            serde_json::from_value(serde_json::json!({ "connectionId": 2, "reason": "error" }))
+                .unwrap();
+        closed.address = mongodb::options::ServerAddress::parse(first).unwrap();
+        record_event(&observer, CmapEvent::ConnectionClosed(closed));
+        record_event(&observer, checkout_at(first, 3));
+    });
+    let text = handle.render();
+    count(&text, "below_limit", 3);
+    count(&text, "at_limit", 2);
+    assert!(text.contains("cma_mongo_connections_tracked{pool=\"application\"} 3"));
+    assert!(!text.contains(first) && !text.contains(second), "{text}");
 }
 
 fn count(text: &str, state: &str, expected: u64) {
@@ -70,6 +116,7 @@ fn overflow_is_unknown_even_after_window_rotation_and_unmatched_returns() {
             let mut window = observer.0.lock().unwrap();
             window.started = Instant::now() - WINDOW;
             window.checked_out.clear();
+            window.server_in_use.clear();
         }
         observer.record(1, Duration::ZERO, false);
         assert_eq!(observer.0.lock().unwrap().untracked, 0);

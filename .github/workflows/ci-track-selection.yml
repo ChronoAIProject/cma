@@ -10,6 +10,8 @@ on:
         value: "${{ jobs.changes.outputs.eg }}"
       web:
         value: "${{ jobs.changes.outputs.web }}"
+      approval_contract:
+        value: "${{ jobs.changes.outputs.approval_contract }}"
       am_packages:
         value: "${{ jobs.changes.outputs.am_packages }}"
       eg_packages:
@@ -30,6 +32,7 @@ jobs:
       am: "${{ steps.select.outputs.am }}"
       eg: "${{ steps.select.outputs.eg }}"
       web: "${{ steps.select.outputs.web }}"
+      approval_contract: "${{ steps.select.outputs.approval_contract }}"
       am_packages: "${{ steps.select.outputs.am_packages }}"
       eg_packages: "${{ steps.select.outputs.eg_packages }}"
       test_tracks: "${{ steps.select.outputs.test_tracks }}"

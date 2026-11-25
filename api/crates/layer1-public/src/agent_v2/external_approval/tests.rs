@@ -173,14 +173,13 @@ async fn external_wait_snapshot_and_sse_require_acknowledged_capability() {
             let expected: Value =
                 serde_json::from_str(include_str!("capability_fixtures.json")).unwrap();
             let expected = &expected["http_refusal"];
-            assert_eq!(
-                u64::from(refused.status().as_u16()),
-                expected["status"].as_u64().unwrap()
-            );
-            assert_eq!(
-                refused.headers()["content-type"],
-                expected["content_type"].as_str().unwrap()
-            );
+            let status = u64::from(refused.status().as_u16());
+            let content_type = refused.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .to_owned();
+            assert_eq!(status, expected["status"].as_u64().unwrap());
+            assert_eq!(content_type, expected["content_type"].as_str().unwrap());
             for header in [
                 "preference-applied",
                 "cma-approval-review-origin",
@@ -189,9 +188,17 @@ async fn external_wait_snapshot_and_sse_require_acknowledged_capability() {
                 assert!(!refused.headers().contains_key(header));
             }
             let body = to_bytes(refused.into_body(), 1024 * 1024).await.unwrap();
-            assert_eq!(
-                serde_json::from_slice::<Value>(&body).unwrap(),
-                expected["body"]
+            let body: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(body, expected["body"]);
+            println!(
+                "EXTERNAL_APPROVAL_HTTP_REFUSAL {}",
+                serde_json::json!({
+                    "buffered": buffered,
+                    "snapshot": path == SNAPSHOT,
+                    "status": status,
+                    "content_type": content_type,
+                    "body": body
+                })
             );
             let mut qualified = request(Method::GET, &path, "owner-a", None, None);
             qualified
@@ -300,6 +307,13 @@ async fn an_open_unnegotiated_stream_refuses_the_first_external_row_without_issu
         .last()
         .unwrap()
         .contains("id:"));
+    println!(
+        "EXTERNAL_APPROVAL_STREAM_REFUSAL {}",
+        serde_json::json!({
+            "body": text,
+            "accepted_cursors": ids
+        })
+    );
 }
 
 #[tokio::test]
