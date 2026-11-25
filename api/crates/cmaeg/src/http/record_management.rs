@@ -60,6 +60,7 @@ struct LegacyRetirement {
 #[serde(rename_all = "snake_case")]
 enum LegacyRetirementState {
     Available,
+    BlockedMissingCredential,
     Pending,
     CleanupUnconfirmed,
 }
@@ -162,6 +163,8 @@ fn project(
                             expected_version: mutation.original_version,
                             state: if mutation.effect.is_some() {
                                 LegacyRetirementState::CleanupUnconfirmed
+                            } else if definition.secrets.provider_credential.is_none() {
+                                LegacyRetirementState::BlockedMissingCredential
                             } else {
                                 LegacyRetirementState::Pending
                             },
@@ -169,7 +172,11 @@ fn project(
                     }
                     None if state.records.channel_mutation_custody() => Some(LegacyRetirement {
                         expected_version: current.version,
-                        state: LegacyRetirementState::Available,
+                        state: if definition.secrets.provider_credential.is_some() {
+                            LegacyRetirementState::Available
+                        } else {
+                            LegacyRetirementState::BlockedMissingCredential
+                        },
                     }),
                     _ => None,
                 }

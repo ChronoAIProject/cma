@@ -175,3 +175,43 @@ async fn mongo_legacy_retirement_cleans_a_pre_creation_record() {
     fixture.provider.close().await;
     fixture.nyxid.close().await;
 }
+
+#[tokio::test]
+async fn missing_provider_credential_is_blocked_without_reserving_deletion() {
+    let fixture = Fixture::new().await;
+    let mut legacy = definition();
+    legacy.secrets.provider_credential = None;
+    fixture.seed(&legacy);
+    let before = fixture.cma.records();
+    let mut state = fixture.state();
+    state.records = Arc::new(
+        cmaeg::records::RecordClient::new(&fixture.cma.base_url, "cma-service")
+            .unwrap()
+            .with_channel_mutation_custody(true),
+    );
+    let (base, stop, server) = serve_app(state).await;
+    for _ in 0..3 {
+        let record = read(get(&base, &legacy.record_id).await).await;
+        assert_eq!(
+            record["record"]["retirement"],
+            json!({
+                "expected_version":1,
+                "state":"blocked_missing_credential"
+            })
+        );
+        assert!(record["record"]["pending_operation"].is_null());
+        let refusal = retire(&base, &legacy.record_id, 1, "token-alice").await;
+        headers(&refusal, 400);
+        let problem: Value = refusal.json().await.unwrap();
+        assert!(problem.to_string().contains("original channel credential"));
+    }
+    let after = fixture.cma.records();
+    assert_eq!(after[legacy.record_id.as_str()].version, 1);
+    assert_eq!(
+        after[legacy.record_id.as_str()].blob,
+        before[legacy.record_id.as_str()].blob
+    );
+    stop.send(()).unwrap();
+    server.await.unwrap();
+    fixture.close().await;
+}

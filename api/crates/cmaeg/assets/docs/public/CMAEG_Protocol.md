@@ -846,7 +846,9 @@ A valid legacy record can include `retirement` when the service can retire it.
 Send `DELETE /v1/channel-records/{record_id}/management?expected_version=<version>`
 with the version from `retirement.expected_version`. This requires
 `cma-eg:channels:delete` and the same owner authorization as the management read.
-`available` permits a new retirement. `pending` identifies a retained retirement
+`available` permits a new retirement. `blocked_missing_credential` means the
+original provider credential is absent and the deployment operator must
+establish cleanup authority. `pending` identifies a retained retirement
 that accepts the original expected version. `cleanup_unconfirmed` means a provider
 effect needs reconciliation and a repeat request receives 409. A confirmed
 absent binding satisfies cleanup. Success returns 204 and removes the record

@@ -354,14 +354,14 @@ pub(crate) async fn disconnect_owned(
     let (mut record, version) = match store(state).connection(id).await {
         Ok(value) => value,
         Err(Error::NotFound) if channel_id.is_none() => return Ok(()),
-        Err(value) => return Err(error(value).into()),
+        Err(value) => return Err(CustodyError::before_send(error(value))),
     };
     if (record.organization
         != (definition.owner.kind == cmaeg_core::profile::NyxIdIdentityKind::Organization))
         || record.owner != definition.owner.subject
         || record.channel_record.as_deref() != Some(definition.record_id.as_str())
     {
-        return Err(ManagementError::NotFound.into());
+        return Err(CustodyError::before_send(ManagementError::NotFound));
     }
     if let Some(channel_id) = channel_id {
         if record
@@ -369,25 +369,26 @@ pub(crate) async fn disconnect_owned(
             .as_deref()
             .is_some_and(|id| id != channel_id.as_str())
         {
-            return Err(ManagementError::NotFound.into());
+            return Err(CustodyError::before_send(ManagementError::NotFound));
         }
         // Keep the exact pointer even when deletion wins before activation started.
         record.channel_id = Some(channel_id.to_string());
     } else if let Some(retained) = &record.channel_id {
-        let retained = ChannelId::new(retained.as_str()).map_err(|_| ManagementError::NotFound)?;
+        let retained = ChannelId::new(retained.as_str())
+            .map_err(|_| CustodyError::before_send(ManagementError::NotFound))?;
         crate::console::channel_ids::opens_to(
             &retained,
             &definition.record_id,
             &state.master_keys,
             &state.records,
         )
-        .map_err(|_| ManagementError::NotFound)?;
+        .map_err(|_| CustodyError::before_send(ManagementError::NotFound))?;
     }
     record.webhook_retiring = true;
     store(state)
         .save_connection(&record, Some(version))
         .await
-        .map_err(error)?;
+        .map_err(|value| CustodyError::before_send(error(value)))?;
     match webhook::cleanup_custodied(state, id, false).await {
         // A live activation is not a reason to lose the delete intent. It or the
         // durable worker will clean up after the platform operation settles.
@@ -445,6 +446,15 @@ pub(crate) struct CustodyError {
     pub(crate) error: ManagementError,
     pub(crate) unconfirmed: bool,
 }
+impl CustodyError {
+    fn before_send(error: ManagementError) -> Self {
+        Self {
+            error,
+            unconfirmed: false,
+        }
+    }
+}
+
 impl From<ManagementError> for CustodyError {
     fn from(error: ManagementError) -> Self {
         Self {

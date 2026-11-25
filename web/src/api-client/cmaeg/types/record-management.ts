@@ -54,7 +54,12 @@ export const ManagedRecordSchema = tagged(
       retirement: optional(
         object({
           expected_version: integer,
-          state: enumeration('available', 'pending', 'cleanup_unconfirmed'),
+          state: enumeration(
+            'available',
+            'blocked_missing_credential',
+            'pending',
+            'cleanup_unconfirmed',
+          ),
         }),
       ),
     }),

@@ -70,19 +70,17 @@ async fn delete_owned(
             actual: Some(version),
         });
     }
+    let credential = definition.secrets.provider_credential.as_ref().ok_or_else(|| {
+        if channel_id.is_none() {
+            ManagementError::Invalid(ValidationError::new(
+                "/record_id",
+                "Provider cleanup needs the original channel credential. Contact the deployment operator.",
+            ))
+        } else {
+            ManagementError::Internal("channel provider credential is unavailable".into())
+        }
+    })?;
     invalidate(state, definition, channel_id);
-    let credential = || {
-        definition
-            .secrets
-            .provider_credential
-            .as_ref()
-            .ok_or_else(|| {
-                ManagementError::Internal("channel provider credential is unavailable".into())
-            })
-    };
-    if channel_id.is_some() {
-        credential()?;
-    }
     let mut reservation = super::mutation::Reservation::acquire(
         &state.records,
         &state.master_keys,
@@ -103,7 +101,6 @@ async fn delete_owned(
             "Legacy channel retirement admitted"
         );
     }
-    let credential = credential()?;
     if definition.connection_ref.is_some() && !reservation.done("disconnect_connection") {
         reservation
             .effect(
