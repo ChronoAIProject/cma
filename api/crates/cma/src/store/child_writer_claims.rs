@@ -391,8 +391,22 @@ async fn apply(
         filter = super::work_schema::query(doc! {"$and":[filter, acquisition]});
     }
     let mut fields = claim.fields().map_err(ClaimError::domain)?;
-    if let Some(marker) = consumed_park {
-        fields.insert(agent_inspection_park::FIELD, marker);
+    if store.agent_inspection_parking && matches!(claim, ChildWriterClaim::Agent(_)) {
+        let proof = if let Some(marker) = consumed_park {
+            let get = |field| {
+                marker.get(field).cloned().ok_or_else(|| {
+                    ClaimError::domain(SandboxStoreError::Corrupt(
+                        "inspection claim proof missing".into(),
+                    ))
+                })
+            };
+            let proof = doc! {"id": get("id")?, "binding": get("binding")?};
+            fields.insert(agent_inspection_park::FIELD, marker);
+            mongodb::bson::Bson::Document(proof)
+        } else {
+            mongodb::bson::Bson::Null
+        };
+        fields.insert(agent_inspection_park::CLAIM_PROOF, proof);
     }
     if let ChildWriterClaim::Agent(agent) = claim {
         store

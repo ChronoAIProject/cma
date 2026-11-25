@@ -213,6 +213,46 @@ async fn observe_takeover(
             .unwrap()
             .unwrap();
         assert_eq!(claimed.work.step, step);
+        let parent = second
+            .get_sandbox(&agent.sandbox_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let binding = parent.runtime.as_ref().unwrap();
+        let mut changed_binding = binding.clone();
+        changed_binding.boot_id = Some("b".repeat(32));
+        assert_eq!(
+            second_authority
+                .run(second.confirm_agent_inspection(&claimed, &changed_binding))
+                .await
+                .unwrap(),
+            Err(SandboxStoreError::Conflict)
+        );
+        let removed = second
+            .agents
+            .find_one_and_update(
+                doc! {"_id": agent.id.as_str()},
+                doc! {"$unset": {field: ""}},
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            second_authority
+                .run(second.confirm_agent_inspection(&claimed, binding))
+                .await
+                .unwrap(),
+            Err(SandboxStoreError::Conflict)
+        );
+        second
+            .agents
+            .update_one(
+                doc! {"_id": agent.id.as_str()},
+                doc! {"$set": {field: removed.get_document(field).unwrap().clone()}},
+            )
+            .await
+            .unwrap();
+
         assert!(second.agent_inspection_parked(&agent.id).await.unwrap());
         assert!(!crate::store::agent_inspection_park::recovery::consume(
             &second.agents,

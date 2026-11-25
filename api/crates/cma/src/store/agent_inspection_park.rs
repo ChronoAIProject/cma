@@ -19,6 +19,7 @@ pub(super) use claim::{for_claim, ClaimPark};
 pub(crate) use recovery::command;
 
 pub(super) const FIELD: &str = "runtime_inspection_park_v1";
+pub(super) const CLAIM_PROOF: &str = "runtime_inspection_claim_v1";
 const PARENT: &str = "__inspection_park_parent";
 
 impl MongoSandboxStore {
