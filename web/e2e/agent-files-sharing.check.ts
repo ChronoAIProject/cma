@@ -353,3 +353,130 @@ test('LOCAL share URL redemption opens an attributed reader with read-only files
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.errors).toEqual([]);
 });
+
+for (const { access, unavailable } of [
+  { access: 'owner', unavailable: false },
+  { access: 'reader', unavailable: false },
+  { access: 'writer', unavailable: false },
+  { access: 'writer', unavailable: true },
+]) {
+  test(`LOCAL ${access} Computer retains the Files selection during ${unavailable ? 'failed' : 'delayed'} initialization`, async ({
+    page,
+    baseURL,
+  }) => {
+    const boundary = new LocalStartup();
+    await boundary.route(page, baseURL!);
+    const filesystem = await files(page, access !== 'reader');
+    if (access !== 'owner') {
+      await page.route('**/api/v1/agents/agt_contract', (route) =>
+        route.fulfill({
+          json: {
+            access: 'shared',
+            id: 'agt_contract',
+            title: 'Shared Agent',
+            status: 'ready',
+            created_at: localTime,
+            updated_at: localTime,
+          },
+        }),
+      );
+      await page.route('**/api/v1/resource-access/agent/agt_contract', (route) =>
+        route.fulfill({
+          json: {
+            capabilities: [
+              'view_details',
+              'view_history',
+              'view_files',
+              ...(access === 'writer' ? ['operate_agent'] : []),
+            ],
+            policy_revision: 1,
+            revalidate_at: null,
+            owner: { kind: 'person', is_current_person: false },
+          },
+        }),
+      );
+    }
+    let started!: () => void;
+    let complete!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const completion = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    await page.route('**/api/v1/agents/agt_contract/environment', async (route) => {
+      started();
+      await completion;
+      if (unavailable) {
+        return route.fulfill({ status: 503, json: { code: 'temporarily_unavailable' } });
+      }
+      await route.fulfill({
+        json: {
+          agent_id: 'agt_contract',
+          policy_revision: 1,
+          runtime_incarnation: null,
+          revalidate_at: null,
+          files: {
+            state: 'available',
+            reason: 'authorized_mounted_home',
+            scope: 'mounted_home',
+            writable: access !== 'reader',
+          },
+          operation_output: {
+            state: 'available',
+            reason: 'recorded_output_only',
+            scope: 'agent_turn_history',
+            writable: false,
+          },
+          browser: {
+            state: 'not_enabled',
+            reason: 'browser_disabled',
+            scope: 'agent_runtime',
+            writable: false,
+          },
+          replay: {
+            state: 'unsupported',
+            reason: 'not_supported_by_contract',
+            scope: 'none',
+            writable: false,
+          },
+          control: {
+            state: 'unsupported',
+            reason: 'not_supported_by_contract',
+            scope: 'none',
+            writable: false,
+          },
+        },
+      });
+    });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    try {
+      await page.goto('/agents/agt_contract');
+      await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
+      await pending;
+      const computer = page.getByRole('complementary', { name: 'Agent computer' });
+      const filesTab = computer.getByRole('tab', { name: 'Files' });
+      await filesTab.click();
+      await expect(filesTab).toHaveAttribute('aria-selected', 'true');
+      await expect(computer.getByText('Checking file access…')).toBeVisible();
+      complete();
+      if (unavailable) {
+        await expect(computer.getByText('We couldn’t check file availability.')).toBeVisible();
+      } else {
+        await expect(computer.getByRole('button', { name: 'README.md' })).toBeVisible();
+        const newFile = computer.getByRole('button', { name: 'New file', exact: true });
+        if (access === 'reader') await expect(newFile).toHaveCount(0);
+        else await expect(newFile).toBeEnabled();
+      }
+      await expect(filesTab).toHaveAttribute('aria-selected', 'true');
+      await expect(computer.getByRole('tab', { name: 'Screen' })).toHaveAttribute(
+        'aria-selected',
+        'false',
+      );
+      expect(filesystem.writes).toEqual([]);
+      expect(boundary.writes).toEqual([]);
+    } finally {
+      complete();
+    }
+  });
+}
