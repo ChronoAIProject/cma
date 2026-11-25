@@ -104,6 +104,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ inputs.component }}
+          CD_CARGO_CACHE_FAMILY: ${{ steps.build-cache.outputs.family }}
         run: python3 -B .github/scripts/staging_cd_cargo_artifact.py
       - name: Restore authenticated layer detector evidence
         if: steps.ownership.outputs.superseded != 'true'
@@ -198,7 +199,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: cma-cd-cargo-${{ inputs.component }}
+          name: ${{ steps.publication.outputs.build-cache-artifact }}
           path: ${{ steps.build-cache.outputs.directory }}
           if-no-files-found: error
           retention-days: 2

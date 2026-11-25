@@ -13,6 +13,7 @@ from staging_cd_admission import event_identity
 from staging_cd_artifacts import try_reuse
 from staging_cd_build import build, command, identity, inspect, snapshot
 from staging_cd_common import Refusal, matches, require
+from staging_cd_cargo_artifact import artifact_name as cargo_artifact_name
 from staging_cd_github import GitHub
 from staging_cd_release_archive import load as load_prepared_archive, path_for
 from staging_cd_release_tags import local_tag_reader
@@ -331,6 +332,8 @@ def main():
                 with Path(env["GITHUB_OUTPUT"]).open("a") as status:
                     if accepted:
                         status.write("build-cache-key=" + cache.key.archive_key(env) + "\n")
+                        artifact_name = cargo_artifact_name(env["CD_COMPONENT"], cache.key.family)
+                        status.write("build-cache-artifact=" + artifact_name + "\n")
                     status.write("build-cache-ready=" + ("true" if accepted else "false") + "\n")
         return True
     def superseded():
