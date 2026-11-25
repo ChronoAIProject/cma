@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { capabilitiesFrom, createNyxidAuthProvider, handleFor, legalTermsFrom } from './nyxid';
+import { SIGN_OUT_NOTICE_KEY } from './signOutNotice';
 
 /**
  * The identity adapter decides what the whole app believes about who is
@@ -9,6 +10,7 @@ import { capabilitiesFrom, createNyxidAuthProvider, handleFor, legalTermsFrom } 
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  localStorage.removeItem(SIGN_OUT_NOTICE_KEY);
 });
 
 function stubFetch(impl: (url?: unknown, init?: RequestInit) => Promise<Response> | Response) {
@@ -297,12 +299,30 @@ describe('silent sign-in', () => {
     expect(replace).toHaveBeenCalledTimes(1);
   });
 
-  it('navigates to server-owned logout and suppresses another tab attempt locally', async () => {
+  it('publishes confirmed server logout before navigating and suppresses silent sign-in', async () => {
     const { assign } = stubLocation('/agent-manager');
     const provider = await anonymous();
+    stubFetch(() => {
+      expect(localStorage.getItem(SIGN_OUT_NOTICE_KEY)).toBeNull();
+      return jsonResponse(200, {});
+    });
     await provider.signOut();
-    expect(assign).toHaveBeenCalledWith('/auth/logout');
+    expect(fetch).toHaveBeenCalledWith(
+      '/auth/logout',
+      expect.objectContaining({ mode: 'same-origin' }),
+    );
+    expect(localStorage.getItem(SIGN_OUT_NOTICE_KEY)).toMatch(/^[0-9a-f-]{36}$/);
+    expect(assign).toHaveBeenCalledWith('/');
     expect(provider.signInSilently?.()).toBe(false);
+  });
+
+  it('keeps a failed logout local', async () => {
+    const { assign } = stubLocation('/agent-manager');
+    const provider = await anonymous();
+    stubFetch(() => jsonResponse(503, {}));
+    await expect(provider.signOut()).rejects.toThrow('Sign-out did not complete');
+    expect(localStorage.getItem(SIGN_OUT_NOTICE_KEY)).toBeNull();
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it('leaves visitor journeys, share links and pages it cannot return to', async () => {

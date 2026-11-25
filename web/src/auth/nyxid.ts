@@ -17,6 +17,7 @@ import { canonicalReturnRoute, classifyReturnTarget } from './returnTarget';
 import { authHttpRetry, authTransportRetry } from './retryMetadata';
 import { MAX_LOGIN_URL_BYTES, retryAfterMilliseconds } from '@cma/client';
 import { retainFatherDraftForSignIn } from '../bots/fatherDraft';
+import { publishSignOutNotice } from './signOutNotice';
 
 /** Where the control plane answers questions about the current browser identity. */
 const IDENTITY_ENDPOINT = '/auth/session';
@@ -203,6 +204,7 @@ export function createNyxidAuthProvider(): AuthProvider {
       try {
         response = await fetch(IDENTITY_ENDPOINT, {
           credentials: 'include',
+          cache: 'no-store',
           signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
         });
       } catch (error) {
@@ -310,14 +312,19 @@ export function createNyxidAuthProvider(): AuthProvider {
     },
 
     async signOut(): Promise<void> {
-      // Also a navigation. The control plane clears the cookie and redirects
-      // back, so the app reloads already signed out rather than holding stale
-      // state it would have to reconcile.
+      const response = await fetch(LOGOUT_ENDPOINT, {
+        credentials: 'same-origin',
+        mode: 'same-origin',
+        cache: 'no-store',
+        signal: AbortSignal.timeout(IDENTITY_TIMEOUT_MS),
+      });
+      if (!response.ok) throw new Error('Sign-out did not complete. Please try again.');
       remember(() => {
         sessionStorage.setItem(SILENT_ATTEMPT_KEY, '1');
         return true;
       });
-      window.location.assign(LOGOUT_ENDPOINT);
+      publishSignOutNotice();
+      window.location.assign('/');
     },
 
     signInSilently(): boolean {
