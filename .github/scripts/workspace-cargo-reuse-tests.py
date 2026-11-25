@@ -7,6 +7,7 @@ from io import StringIO
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -84,6 +85,23 @@ class CargoReuseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Chef directory conflicts"):
             cache.hydrate_dependencies(chef, self.target)
         self.assertEqual(obstruction.read_text(), "occupied")
+
+    def test_trim_keeps_the_latest_finalized_session_with_its_rustc_lock(self):
+        relative = "target/release/incremental/cma-abc"
+        directory = self.root / relative
+        self.write(relative + "/s-1-abc-old/work-products.bin", "old")
+        self.write(relative + "/s-1-abc.lock", "")
+        current = self.write(relative + "/s-2-def-final/work-products.bin", "ready")
+        os.utime(current, (200, 200))
+        lock = self.write(relative + "/s-2-def.lock", "")
+        missing = self.write(relative + "/s-3-ghi-final/work-products.bin", "lock missing")
+        os.utime(missing, (250, 250))
+        partial = self.write(relative + "/s-4-jkl-working/work-products.bin", "partial")
+        os.utime(partial, (300, 300))
+        self.write(relative + "/s-4-jkl.lock", "")
+        self.write(relative + "/s-5-mno.lock", "")
+        cache.trim(self.target, {"cma"}, "cma")
+        self.assertEqual(set(directory.iterdir()), {current.parent, lock})
 
     def test_archive_timestamp_does_not_hide_transitive_input_change(self):
         _, _, seeded = self.build("first")
@@ -284,11 +302,14 @@ pub fn snapshot(_: proc_macro::TokenStream) -> proc_macro::TokenStream {
             original(*args, **kwargs)
             self.assertEqual(set(incremental.rglob("work-products.bin")), retained)
 
-        with patch.object(cache, "invalidate_service", inspect_invalidation):
+        with patch.object(cache, "invalidate_service", inspect_invalidation), redirect_stdout(StringIO()) as reuse:
             notes, rust, output = self.build("second", chef)
         self.assertIn("Invalidated: cma", notes)
         self.assertIn("crates/cma/src/lib.rs --error-format", rust)
         self.assertEqual(output, "second:41:42")
+        objects = re.search(r"incremental objects: restored=(\d+) reused=(\d+)", reuse.getvalue())
+        self.assertIsNotNone(objects, reuse.getvalue())
+        self.assertGreater(int(objects[2]), 0)
 
         notes, rust, output = self.build("third", chef)
         self.assertIn("retained cma library under its release audit", notes)

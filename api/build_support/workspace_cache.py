@@ -17,6 +17,7 @@ FINGERPRINT = Path("release/.fingerprint")
 LIBRARY = re.compile(r"(?:lib)?([A-Za-z0-9_]+)-[0-9a-f]+\.(?:rlib|rmeta|d)")
 PACKAGE_DIR = re.compile(r"([A-Za-z0-9_-]+)-[0-9a-f]+")
 INCREMENTAL_DIR = re.compile(r"([A-Za-z0-9_]+)-[0-9a-z]+")
+SESSION_DIR = re.compile(r"(s-[0-9a-z]+-[0-9a-z]+)-([0-9a-z]+)")
 RELEASE_VARIABLES = ("CHRONO_BUILD", "CHRONO_BUILD_SHA")
 UNCHANGED_MTIME = 946684800  # A fixed epoch for source files verified byte for byte.
 # Linux/amd64 musl release audits bind the locked registry and host build
@@ -343,12 +344,21 @@ def invalidate_service(target, binary, *, keep_incremental):
 
 
 def retain_session(path):
-    sessions = [item for item in path.glob("s-*")
-                if not item.name.endswith("-working") and (item / "work-products.bin").is_file()]
-    newest = max(sessions, key=lambda session: (session / "work-products.bin").stat().st_mtime_ns,
-                 default=None)
-    for item in path.glob("s-*"):
-        if item != newest:
+    entries = list(path.glob("s-*"))
+    sessions = []
+    for item in entries:
+        match = SESSION_DIR.fullmatch(item.name)
+        if not match or match[2] == "working" or item.is_symlink() or not item.is_dir():
+            continue
+        products = item / "work-products.bin"
+        lock = path / (match[1] + ".lock")
+        # rustc opens the finalized session's sibling lock without creating it.
+        if products.is_file() and lock.is_file() and not (products.is_symlink() or lock.is_symlink()):
+            sessions.append((item, lock))
+    newest = max(sessions, key=lambda pair: (pair[0] / "work-products.bin").stat().st_mtime_ns,
+                 default=())
+    for item in entries:
+        if item not in newest:
             discard(item)
 
 

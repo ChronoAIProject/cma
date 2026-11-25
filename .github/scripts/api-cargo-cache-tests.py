@@ -395,18 +395,19 @@ class CacheTests(unittest.TestCase):
                 for crate in crates:
                     parent = incremental / (crate.replace("-", "_") + "-0")
                     # File time, rather than session name, selects the newest completed work.
-                    for stamp, session in ((1000, "s-z-preceding"), (2000, "s-a-newest")):
+                    for stamp, session in ((1000, "s-z-aaa-preceding"), (2000, "s-a-bbb-newest")):
                         products = parent / session / "work-products.bin"
                         products.parent.mkdir(parents=True)
                         products.write_bytes(b"synthetic compiler session")
                         os.utime(products, (stamp, stamp))
+                        (parent / (session.rsplit("-", 1)[0] + ".lock")).touch()
                     (parent / "s-m-interrupted-working").mkdir()
                 workspace.trim(target, {service, "layer2-core"}, service)
                 self.assertTrue(all((release / name).is_file() for name in retained))
                 self.assertTrue(all(not (release / name).exists() for name in dropped))
                 self.assertEqual([path.name for path in incremental.iterdir()], [service + "-0"])
-                self.assertEqual([path.name for path in (incremental / (service + "-0")).iterdir()],
-                                 ["s-a-newest"])
+                self.assertEqual({path.name for path in (incremental / (service + "-0")).iterdir()},
+                                 {"s-a-bbb-newest", "s-a-bbb.lock"})
 
     def test_transfer_always_executes_and_uses_only_expected_mount_ids(self):
         nonces = []
