@@ -81,6 +81,7 @@ import {
 } from './agents/provenance.js';
 import { readAgentEvents } from './agents/events.js';
 import {
+  cancelAgentLifecycle,
   createAgentLifecycle,
   readAgentLifecycle,
   recoverAgentWorktree,
@@ -248,6 +249,11 @@ export class Agents extends AgentDeliverables {
   /** Read owner-visible provisioning progress; succeeded means the Agent is ready. */
   readLifecycle(id: string, options: OperationOptions = {}) {
     return readAgentLifecycle(this.config, id, options);
+  }
+
+  /** Cancel an owner-scoped lifecycle operation before Sandbox allocation. */
+  cancelLifecycle(id: string, options: OperationOptions = {}) {
+    return cancelAgentLifecycle(this.config, id, options);
   }
 
   /** Legacy Bridge usage projection; provider admissions require providerAssociations(). */

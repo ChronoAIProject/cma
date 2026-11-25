@@ -98,6 +98,10 @@ impl MongoAgentLifecycleStore {
             .await
     }
 
+    pub(crate) fn creation_terminal_settlement_enabled(&self) -> bool {
+        self.creation_terminal_settlement_enabled
+    }
+
     pub(crate) fn supports_creation(
         &self,
         fence: &layer2_core::sandbox::store::CreationFence,
@@ -303,6 +307,7 @@ impl MongoAgentLifecycleStore {
         fence: &layer2_core::sandbox::store::CreationFence,
         message: &str,
         failure: Option<layer1_public::rest::AgentLifecycleFailure>,
+        code: layer1_public::rest::creation_outcomes::RefusalCode,
     ) -> Result<bool, StoreError> {
         if !self.supports_creation(fence) {
             return Err(StoreError::Unavailable(
@@ -320,7 +325,46 @@ impl MongoAgentLifecycleStore {
             &lease.id,
             &lease.token,
             super::writes::failure_update(message, failure)?,
+            code,
         )
         .await
+    }
+
+    pub(crate) async fn cancel_fenced_creation(
+        &self,
+        owner: &SubjectId,
+        record: &LifecycleRecord,
+    ) -> Result<bool, StoreError> {
+        let Some(fence) = record.creation_fence.as_ref() else {
+            return Ok(false);
+        };
+        if !self.creation_terminal_settlement_enabled
+            || !self.supports_creation(fence)
+            || record.owner != owner.as_str()
+        {
+            return Ok(false);
+        }
+        let database = self
+            .operations
+            .client()
+            .database(&self.operations.namespace().db);
+        let mut failure =
+            super::writes::failure_update("Creation cancelled before Sandbox allocation", None)?;
+        failure
+            .get_document_mut("$set")
+            .expect("failure update is a set")
+            .insert("connection", Bson::Null);
+        let result = super::super::creation_outcomes::cancel_with_operation(
+            &database, owner, fence, &record.id, failure,
+        )
+        .await;
+        if super::super::creation_outcomes::cancellation_committed(
+            &database, owner, fence, &record.id,
+        )
+        .await?
+        {
+            return Ok(true);
+        }
+        result.map(|_| false)
     }
 }
