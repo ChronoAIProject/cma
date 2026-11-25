@@ -14,6 +14,7 @@ mod ledger;
 mod reconcile;
 mod schema;
 mod startup;
+mod transaction;
 pub use effects::{command, effect};
 pub use schema::{
     absent, collection, collection_with_predecessors, describe, describing, exact_indexes, indexes,

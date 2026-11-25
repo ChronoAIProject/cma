@@ -14,7 +14,7 @@ const SECOND: Manifest = Manifest {
     definition: "second step",
 };
 const MANIFESTS: &[Manifest] = &[FIRST, SECOND];
-const LEDGER: &str = "migration_fixture_ledger";
+pub(super) const LEDGER: &str = "migration_fixture_ledger";
 const SOURCE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const IMAGE: &str = "example.invalid/fixture@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 fn release() -> Release<'static> {
@@ -52,7 +52,7 @@ fn manifest_checksum_covers_order_and_definition_and_release_requires_digest() {
     .is_err());
 }
 
-async fn fixture() -> Database {
+pub(super) async fn fixture() -> Database {
     let client = Client::with_uri_str(std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();

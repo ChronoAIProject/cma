@@ -129,18 +129,7 @@ impl Runner {
                 return Err("migration prerequisite is incomplete");
             }
         }
-        let mut session = self
-            .db
-            .client()
-            .start_session()
-            .await
-            .map_err(database_error)?;
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
-            .await
-            .map_err(database_error)?;
+        let mut session = transaction::start(&self.db).await?;
         let result=async {
             if self.rows.find_one(self.unknown_history()).session(&mut session).await.map_err(database_error)?.is_some() {return Err("unknown migration history or checksum; older migrator refused");}
             if !legacy && self.rows.find_one(doc!{"_id":format!("completed:{}",manifest.id)}).session(&mut session).await.map_err(database_error)?.is_some() {return Err("migration already completed; rerun status");}
@@ -158,13 +147,13 @@ impl Runner {
         }.await;
         match result {
             Ok(lease) => {
-                commit(&mut session)
+                transaction::commit(session)
                     .await
                     .map_err(|_| "migration claim commit unavailable")?;
                 Ok(lease)
             }
             Err(reason) => {
-                let _ = session.abort_transaction().await;
+                transaction::abort(session).await;
                 Err(reason)
             }
         }
@@ -207,18 +196,7 @@ impl Runner {
         digest: &str,
         outcome: &str,
     ) -> Result<()> {
-        let mut session = self
-            .db
-            .client()
-            .start_session()
-            .await
-            .map_err(database_error)?;
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
-            .await
-            .map_err(database_error)?;
+        let mut session = transaction::start(&self.db).await?;
         let result=async {
             let mut filter=self.lease_filter(lease);filter.insert("pending_checksum",digest);filter.insert("pending",true);
             let modified=self.rows.update_one(filter,doc!{"$set":{"pending":false,"pending_checksum":Bson::Null,"pending_label":Bson::Null,"pending_command":Bson::Null}}).session(&mut session).await.map_err(database_error)?;
@@ -227,26 +205,15 @@ impl Runner {
             if modified.matched_count!=1{return Err("migration attempt changed");}Ok(())
         }.await;
         match result {
-            Ok(()) => commit(&mut session).await,
+            Ok(()) => transaction::commit(session).await,
             Err(reason) => {
-                let _ = session.abort_transaction().await;
+                transaction::abort(session).await;
                 Err(reason)
             }
         }
     }
     pub(super) async fn finish(&self, lease: &Lease, success: bool, legacy: bool) -> Result<()> {
-        let mut session = self
-            .db
-            .client()
-            .start_session()
-            .await
-            .map_err(database_error)?;
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
-            .await
-            .map_err(database_error)?;
+        let mut session = transaction::start(&self.db).await?;
         let result=async {
             let outcome=if success{"completed"}else{"failed"};
             let mut set=doc!{"expires_at":DateTime::from_millis(0)};
@@ -259,9 +226,9 @@ impl Runner {
             Ok(())
         }.await;
         match result {
-            Ok(()) => commit(&mut session).await,
+            Ok(()) => transaction::commit(session).await,
             Err(reason) => {
-                let _ = session.abort_transaction().await;
+                transaction::abort(session).await;
                 Err(reason)
             }
         }
@@ -272,15 +239,4 @@ impl Runner {
     pub async fn pending_effect(&self) -> Result<Option<Document>> {
         self.rows.find_one(doc!{"_id":"runner","pending":true}).projection(doc!{"_id":0,"active":1,"checksum":1,"fence":1,"holder":1,"dispatched_at":1,"pending_checksum":1,"pending_label":1,"pending_command":1}).max_time(IO).await.map_err(database_error)
     }
-}
-
-pub(super) async fn commit(session: &mut mongodb::ClientSession) -> Result<()> {
-    for _ in 0..3 {
-        match session.commit_transaction().await {
-            Ok(()) => return Ok(()),
-            Err(error) if error.contains_label("UnknownTransactionCommitResult") => {}
-            Err(error) => return Err(database_error(error)),
-        }
-    }
-    Err("migration commit outcome unknown; read status before retry")
 }

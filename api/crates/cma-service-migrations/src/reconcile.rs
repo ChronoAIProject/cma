@@ -1,6 +1,5 @@
 //! Explicit operator receipts for activation and uncertain dispatched effects.
 use super::*;
-use crate::ledger::commit;
 
 impl Runner {
     async fn operator(&self) -> Result<Document> {
@@ -41,27 +40,16 @@ impl Runner {
         validate_evidence(evidence)?;
         let operator = self.operator().await?;
         self.initialize().await?;
-        let mut session = self
-            .db
-            .client()
-            .start_session()
-            .await
-            .map_err(database_error)?;
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
-            .await
-            .map_err(database_error)?;
+        let mut session = transaction::start(&self.db).await?;
         let result = async {
             let row = self.rows.find_one_and_update(doc! {"_id":"runner","strict":false,"pending":false,"holder":"","active":Bson::Null}, doc! {"$set":{"strict":true},"$inc":{"fence":1_i64}}).session(&mut session).await.map_err(database_error)?.ok_or("an unfinished legacy migration or prior activation exists")?;
             self.rows.insert_one(doc! {"_id":"activation","kind":"activation","schema":SCHEMA,"database":self.db.name(),"service":self.service,"operator":operator,"evidence":evidence,"legacy_fence":row.get_i64("fence").map_err(|_| "invalid migration fence")?}).session(&mut session).await.map_err(database_error)?;
             Ok(())
         }.await;
         match result {
-            Ok(()) => commit(&mut session).await,
+            Ok(()) => transaction::commit(session).await,
             Err(reason) => {
-                let _ = session.abort_transaction().await;
+                transaction::abort(session).await;
                 Err(reason)
             }
         }
@@ -80,18 +68,7 @@ impl Runner {
         validate_evidence(evidence)?;
         let operator = self.operator().await?;
         self.preflight().await?;
-        let mut session = self
-            .db
-            .client()
-            .start_session()
-            .await
-            .map_err(database_error)?;
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
-            .await
-            .map_err(database_error)?;
+        let mut session = transaction::start(&self.db).await?;
         let result = async {
             let row = self.rows.find_one_and_update(doc! {"_id":"runner","service":self.service,"active":manifest.id,"checksum":manifest.checksum(),"holder":attempt,"fence":fence,"pending":true,"pending_checksum":command,"$expr":{"$lte":["$expires_at","$$NOW"]}}, doc! {"$set":{"pending":false,"pending_checksum":Bson::Null,"pending_label":Bson::Null,"pending_command":Bson::Null,"holder":""},"$inc":{"fence":1_i64}}).session(&mut session).await.map_err(database_error)?.ok_or("pending command or expired fence changed")?;
             let label = row.get_str("pending_label").map_err(|_| "pending command label missing")?;
@@ -100,9 +77,9 @@ impl Runner {
             Ok(())
         }.await;
         match result {
-            Ok(()) => commit(&mut session).await,
+            Ok(()) => transaction::commit(session).await,
             Err(reason) => {
-                let _ = session.abort_transaction().await;
+                transaction::abort(session).await;
                 Err(reason)
             }
         }
