@@ -43,7 +43,6 @@ async fn legacy_retirement_fences_owner_and_version_and_accepts_missing_binding(
     );
     for (record, version, token, status) in [
         (&legacy.record_id, 1, "token-bob", 404),
-        (&legacy.record_id, 1, "token-alice-manager", 403),
         (&legacy.record_id, 2, "token-alice", 409),
         (&active.record_id, 1, "token-alice", 400),
     ] {
@@ -149,6 +148,10 @@ async fn mongo_legacy_retirement_cleans_a_pre_creation_record() {
     let mut child = spawn_ready(command, &address, &log).await;
     fixture.cma.close().await;
     headers(&retire(&base, &record.record_id, 1, "token-bob").await, 404);
+    headers(
+        &retire(&base, &record.record_id, 1, "token-alice-manager").await,
+        403,
+    );
     headers(
         &retire(&base, &record.record_id, 2, "token-alice").await,
         409,
