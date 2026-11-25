@@ -49,12 +49,28 @@ pub(crate) enum LifecycleBehavior {
     PromptRepository,
     /// This admission cannot allocate before verifying the GitHub connection.
     ManagedRepository,
+    /// Generic URL-only source admission. The durable pin chooses the source mode.
+    RepositoryChoice,
+    PublicRepository,
 }
 
 impl LifecycleBehavior {
     pub(crate) fn uses_repository_profile(self) -> bool {
-        matches!(self, Self::PromptRepository | Self::ManagedRepository)
+        matches!(
+            self,
+            Self::PromptRepository
+                | Self::ManagedRepository
+                | Self::RepositoryChoice
+                | Self::PublicRepository
+        )
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PublicRepositoryPin {
+    pub url: String,
+    pub commit: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +162,8 @@ pub(crate) struct LifecycleRecord {
     pub repository_commit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository_access_pin: Option<RepositoryAccessPin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_repository: Option<PublicRepositoryPin>,
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<layer1_public::rest::AgentLifecycleFailure>,

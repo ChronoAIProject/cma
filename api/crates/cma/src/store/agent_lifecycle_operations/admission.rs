@@ -50,6 +50,7 @@ impl LifecycleRecord {
             agent_id: None,
             repository_commit: None,
             repository_access_pin: None,
+            public_repository: None,
             error: None,
             failure: None,
             connection: None,
@@ -199,7 +200,10 @@ impl MongoAgentLifecycleStore {
                 layer2_core::released_runtime::ReleasedLane::Agent => Some(snapshot.agent.as_str()),
                 layer2_core::released_runtime::ReleasedLane::Machine => snapshot.machine.as_deref(),
             };
-            if released::managed_lifecycle_release_lane(&record.input.request) != Some(lane)
+            if released::managed_lifecycle_release_lane(
+                &record.input.request,
+                record.input.behavior,
+            ) != Some(lane)
                 || image.is_none()
                 || record.input.resolved_image.as_deref() != image
             {

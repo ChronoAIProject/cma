@@ -35,6 +35,9 @@ pub(super) fn valid_prepare_receipt(
                     && (request.repository_connection_id.is_none()
                         || &receipt.source_commit == reference)
             }
+            layer3_adapter::WorkspaceSource::PublicRepositorySnapshot { commit, .. } => {
+                receipt.source_commit.as_ref() == Some(commit)
+            }
             _ => receipt.source_commit.is_none(),
         }
 }

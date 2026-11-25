@@ -83,6 +83,7 @@ impl Fixture {
             record.input.captured_limits(),
             record.input.behavior,
             record.input.sandbox_availability,
+            "",
         )
         .await
         .unwrap();

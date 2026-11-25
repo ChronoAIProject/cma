@@ -120,6 +120,14 @@ impl From<layer2_core::profiles::WorkspaceLocation> for WorkspaceLocationBody {
             layer2_core::profiles::WorkspaceLocation::RepositorySnapshot {
                 url, reference, ..
             } => Self::RepositorySnapshot { url, reference },
+            layer2_core::profiles::WorkspaceLocation::PublicRepositorySnapshot {
+                url,
+                commit,
+                ..
+            } => Self::RepositorySnapshot {
+                url,
+                reference: Some(commit),
+            },
             layer2_core::profiles::WorkspaceLocation::GitRepository { url, reference } => {
                 Self::GitRepository { url, reference }
             }
