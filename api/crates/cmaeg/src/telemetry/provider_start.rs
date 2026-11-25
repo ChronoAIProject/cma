@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MAX_SAMPLES: usize = 8192;
+pub(crate) const MAX_SAMPLES: usize = 8192;
 const WINDOW: Duration = Duration::from_secs(2 * 60 * 60);
 
 #[derive(Clone, Debug)]
@@ -66,8 +66,6 @@ pub struct Snapshot {
     pub samples: Vec<Sample>,
 }
 impl Measurement {
-    /// No production constructor enables this. A local qualification explicitly
-    /// attaches the same bounded observer to its PlanStore before creating services.
     pub fn new(capacity: usize) -> Result<Self, &'static str> {
         if !(1..=MAX_SAMPLES).contains(&capacity) {
             return Err("invalid measurement capacity");
@@ -96,7 +94,10 @@ impl Measurement {
         }
         if !state.rows.contains_key(id) {
             if state.rows.len() == self.0.capacity {
-                state.overflow = true;
+                if !state.overflow {
+                    state.overflow = true;
+                    count("measurement_overflow");
+                }
                 return;
             }
             let sample = state.rows.len() as u64;
@@ -266,6 +267,14 @@ impl Attempt {
             if row.first_post_ns.is_none() {
                 row.first_post_ns = Some(at);
                 count("first_started");
+                if let Some((lower, upper)) = start_lag(row, at) {
+                    for (bound, elapsed) in [("lower", lower), ("upper", upper)] {
+                        metrics::histogram!(super::names::PROVIDER_START_LAG, "bound" => bound)
+                            .record(Duration::from_nanos(elapsed).as_secs_f64());
+                    }
+                } else {
+                    count("first_start_lag_unknown");
+                }
             }
         });
     }
@@ -307,6 +316,19 @@ impl Drop for ExecutorGuard {
         metrics::gauge!(super::names::PROVIDER_START_ACTIVE).decrement(1.0);
     }
 }
+fn start_lag(row: &Sample, written_ns: u64) -> Option<(u64, u64)> {
+    if row.target_count != 1 || row.unknown.is_some() {
+        return None;
+    }
+    let commit_lower = row.commit_lower_ns?;
+    let confirmed = row.admission_confirmed_ns?;
+    if confirmed < commit_lower {
+        return None;
+    }
+    let upper = written_ns.checked_sub(commit_lower)?;
+    Some((written_ns.saturating_sub(confirmed), upper))
+}
+
 fn count(outcome: &'static str) {
     metrics::counter!(super::names::PROVIDER_START_OBSERVATIONS, super::names::OUTCOME => outcome)
         .increment(1);

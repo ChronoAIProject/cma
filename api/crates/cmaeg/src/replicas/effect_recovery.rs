@@ -28,6 +28,10 @@ impl Recovery {
 }
 
 impl RecoverySource for Recovery {
+    fn start_measurement(&self) -> Option<crate::telemetry::provider_start::Measurement> {
+        self.frontier.start_measurement()
+    }
+
     fn page<'a>(
         &'a self,
         after: Option<&'a str>,

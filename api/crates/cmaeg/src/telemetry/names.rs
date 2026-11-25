@@ -11,6 +11,7 @@ pub const PROVIDER_ERRORS: &str = "cmaeg_provider_errors_total";
 pub const TURNS_INFLIGHT: &str = "cmaeg_turns_inflight";
 pub const PROVIDER_START_OBSERVATIONS: &str = "cmaeg_provider_start_observations_total";
 pub const PROVIDER_START_ACTIVE: &str = "cmaeg_provider_start_active_executors";
+pub const PROVIDER_START_LAG: &str = "cmaeg_provider_start_lag_seconds";
 pub const CHANNELS_CACHED: &str = "cmaeg_channels_cached";
 pub const RELAY_ENVELOPE_REPAIRS: &str = "cmaeg_relay_envelope_repairs_total";
 pub const CALLBACK_INVALID: &str = "cmaeg_callback_invalid_total";
@@ -64,8 +65,9 @@ pub const VIEW: &str = "view";
 pub const STATUS: &str = "status";
 pub const MEDIA: &str = "media";
 pub const PAGE: &str = "page";
-pub const HISTOGRAMS: [&str; 6] = [
+pub const HISTOGRAMS: [&str; 7] = [
     INGRESS_TO_PROVIDER,
+    PROVIDER_START_LAG,
     RESTORE_DURATION,
     PROVIDER_ACCEPT,
     TURN_DURATION,

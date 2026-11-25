@@ -69,6 +69,10 @@ pub(crate) async fn compose(
         );
     }
     let mut plans = PlanStore::new((*state.records).clone(), state.master_keys.clone());
+    if config.routing.provider_start_measurement_enabled {
+        use crate::telemetry::provider_start::{Measurement, MAX_SAMPLES};
+        plans = plans.with_start_measurement(Measurement::new(MAX_SAMPLES)?);
+    }
     let mut journal = Journal::new((*state.records).clone(), state.master_keys.clone())
         .with_activity(state.activity.clone())
         .with_execution_verifiers(state.providers.execution_verifiers.clone());

@@ -87,3 +87,25 @@ fn executor_start_and_cancel_are_neither_provider_start_nor_completion() {
     assert_eq!(s.samples[0].cancellations, 1);
     assert!(s.samples[0].first_post_ns.is_none());
 }
+
+#[test]
+fn provider_start_lag_reports_only_proven_single_target_bounds() {
+    let measurement = Measurement::new(3).unwrap();
+    measurement.admitted("single", 123, 1, Some(measurement.now()));
+    measurement.admitted("retained", 123, 1, None);
+    measurement.admitted("multiple", 123, 2, Some(measurement.now()));
+    let snapshot = measurement.snapshot();
+    let single = &snapshot.samples[0];
+    let commit = single.commit_lower_ns.unwrap();
+    let confirmed = single.admission_confirmed_ns.unwrap();
+    let written = confirmed + 10;
+    assert_eq!(start_lag(single, written), Some((10, written - commit)));
+    assert_eq!(start_lag(single, commit), Some((0, 0)));
+    for row in &snapshot.samples[1..] {
+        assert_eq!(start_lag(row, written), None);
+    }
+    let mut conflicting = single.clone();
+    conflicting.admission_confirmed_ns = Some(commit.saturating_sub(1));
+    conflicting.commit_lower_ns = Some(commit + 1);
+    assert_eq!(start_lag(&conflicting, written), None);
+}
