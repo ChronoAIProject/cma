@@ -424,8 +424,11 @@ test('LOCAL shared task navigation uses the detail title and keeps long metadata
   );
   for (const width of [1440, 375]) {
     await page.setViewportSize({ width, height: 812 });
-    const show = page.getByRole('button', { name: 'Show navigation', exact: true });
-    if (await show.isVisible()) await show.click();
+    if (width === 375) {
+      const show = page.getByRole('button', { name: 'Show navigation', exact: true });
+      await expect(show).toBeVisible();
+      await show.click();
+    }
     await expect(item).toBeVisible();
     const facts = item.locator('.tree-row__meta > :not(.sr-only)');
     expect(
