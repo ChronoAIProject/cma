@@ -22,7 +22,7 @@ pub(super) fn eligible(path: &str, method: &Method) -> bool {
 pub(super) async fn run(next: Next, request: Request, retry: bool) -> Response {
     let response = next.run(request);
     if retry {
-        layer3_adapter::file_read_retry::scope(response).await
+        layer3_adapter::file_receiver_retry::scope_read(response).await
     } else {
         response.await
     }
