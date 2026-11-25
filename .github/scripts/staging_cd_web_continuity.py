@@ -1,10 +1,12 @@
 """Validate the Web asset continuity proof carried by an immutable release."""
 
 from staging_cd_common import matches, require
+from staging_cd_receipts import sha256
 from staging_cd_versions import version_tuple
 
 
 SCHEMA = "cma-web-asset-continuity-v1"
+PROOF_SCHEMA = "cma-web-asset-publication-proof-v1"
 REPOSITORY = "ghcr.io/chronoaiproject/cma-web"
 IMAGE = r"ghcr\.io/chronoaiproject/cma-web@sha256:[0-9a-f]{64}"
 HASH = r"[0-9a-f]{64}"
@@ -43,9 +45,59 @@ def validate(value, identity, promote_image):
     return value
 
 
-def require_images(value, registry):
+def require_images(value, proof, registry):
     incumbent = value["incumbent"]
-    for image in dict.fromkeys((incumbent["image"], incumbent["base_image"],
-                                value["candidate_base_image"], value["prepare_image"])):
+    images = [incumbent["image"], value["prepare_image"], *(item["image"] for item in proof["inputs"])]
+    for image in dict.fromkeys(images):
         require(registry.exists(REPOSITORY, image.split("@")[1]) is True,
                 "Web continuity image is not publicly available")
+
+
+def binding(value):
+    return sha256({key: field for key, field in value.items() if key != "proof_sha256"})
+
+
+def validate_proof(proof, continuity, identity, promote_image, promote_archive):
+    """Bind the exact detached evidence from the immutable Web release annotation."""
+    require(isinstance(proof, dict) and set(proof) == {
+        "schema", "continuity_sha256", "retention_preimage_sha256", "asset_count", "asset_bytes",
+        "inputs", "overlays",
+    } and proof["schema"] == PROOF_SCHEMA and sha256(proof) == continuity["proof_sha256"],
+            "Web continuity publication proof hash differs")
+    require(proof["continuity_sha256"] == binding(continuity)
+            and matches(HASH, proof["retention_preimage_sha256"])
+            and all(type(proof[key]) is int and proof[key] > 0 for key in ("asset_count", "asset_bytes")),
+            "Web continuity publication proof scope differs")
+    inputs = proof["inputs"]
+    require(isinstance(inputs, list) and len(inputs) >= 2, "Web continuity publication inputs are incomplete")
+    images = {}
+    for row in inputs:
+        require(isinstance(row, dict) and set(row) == {"image", "source_sha", "version", "catalog_sha256"}
+                and matches(IMAGE, row["image"]) and not row["image"].endswith("0" * 64)
+                and matches(r"[0-9a-f]{40}", row["source_sha"])
+                and matches(HASH, row["catalog_sha256"]) and row["image"] not in images,
+                "Web continuity publication input is malformed")
+        version_tuple(row["version"])
+        images[row["image"]] = (row["source_sha"], row["version"])
+    require(list(images) == sorted(images) and len(set(images.values())) == len(images),
+            "Web continuity publication inputs are ambiguous")
+    incumbent = continuity["incumbent"]
+    candidate = continuity["candidate_base_image"]
+    require(images.get(incumbent["base_image"]) == (incumbent["source_sha"], incumbent["version"])
+            and images.get(candidate) == (identity["source"], identity["version"]),
+            "Web continuity publication bases differ")
+    overlays = proof["overlays"]
+    require(isinstance(overlays, dict) and set(overlays) == {"prepare", "promote"},
+            "Web continuity publication overlay proofs are incomplete")
+    expected = {"prepare": (continuity["prepare_image"], incumbent["base_image"]), "promote": (promote_image, candidate)}
+    for role, (image, base) in expected.items():
+        row = overlays[role]
+        require(isinstance(row, dict) and set(row) == {
+            "image", "base_image", "layer_digest", "archive_sha256", "credential_report_sha256",
+        } and row["image"] == image and row["base_image"] == base
+            and matches("sha256:" + HASH, row["layer_digest"])
+            and all(matches(HASH, row[key]) for key in ("archive_sha256", "credential_report_sha256")),
+                "Web continuity publication overlay proof differs")
+    require(overlays["prepare"]["layer_digest"] == overlays["promote"]["layer_digest"]
+            and overlays["promote"]["archive_sha256"] == promote_archive,
+            "Web continuity publication archive or shared layer differs")

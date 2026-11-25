@@ -71,7 +71,7 @@ def verify(receipt, tags, registry, history, *, automatic):
             raise ObsoleteSource("Obsolete automatic deployment cannot replace a newer published source")
     if "asset_continuity" in receipt:
         from staging_cd_web_continuity import require_images
-        require_images(receipt["asset_continuity"], registry)
+        require_images(receipt["asset_continuity"], receipt["asset_proof"], registry)
     return receipt
 
 

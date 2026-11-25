@@ -15,6 +15,7 @@ from staging_cd_receipts import annotation, canonical, parse_annotation, publish
 from staging_cd_receipts_tests import fixture_receipt, fixture_tag
 from staging_cd_resolve import verify
 from staging_cd_set import private_document, release_set, verify_set
+from staging_cd_web_continuity import PROOF_SCHEMA, binding
 
 
 REPOSITORY = "ghcr.io/chronoaiproject/cma-web"
@@ -40,11 +41,32 @@ def fixture_continuity():
     }
 
 
+def fixture_proof(continuity, release):
+    def overlay(image, base, archive):
+        return {"image": image, "base_image": base, "layer_digest": "sha256:" + "b" * 64,
+                "archive_sha256": archive, "credential_report_sha256": "e" * 64}
+
+    return {
+        "schema": PROOF_SCHEMA, "continuity_sha256": binding(continuity),
+        "retention_preimage_sha256": "d" * 64, "asset_count": 201, "asset_bytes": 10001,
+        "inputs": [
+            {"image": image("2"), "source_sha": "b" * 40, "version": "0.10.0", "catalog_sha256": "2" * 64},
+            {"image": image("3"), "source_sha": release["source"], "version": release["identity"]["version"],
+             "catalog_sha256": "3" * 64},
+            {"image": image("5"), "source_sha": "c" * 40, "version": "0.9.0", "catalog_sha256": "1" * 64},
+        ],
+        "overlays": {"prepare": overlay(image("4"), image("2"), "c" * 64),
+                     "promote": overlay(REPOSITORY + "@" + release["digest"], image("3"), release["archive"])},
+    }
+
+
 class WebContinuityTests(unittest.TestCase):
     def setUp(self):
         self.original = fixture_receipt()
         self.continuity = fixture_continuity()
-        self.receipt = self.publish(self.original, asset_continuity=self.continuity)
+        self.proof = fixture_proof(self.continuity, self.original)
+        self.continuity["proof_sha256"] = sha256(self.proof)
+        self.receipt = self.publish(self.original, asset_continuity=self.continuity, asset_proof=self.proof)
         self.history = DevelopHistory("a" * 40, ["a" * 40, "b" * 40])
         self.registry = Mock()
         self.registry.exists.return_value = True
@@ -59,6 +81,7 @@ class WebContinuityTests(unittest.TestCase):
         self.assertEqual(self.receipt["schema"], "cma-published-image-v3")
         self.assertEqual(self.receipt["digest"], self.original["digest"])
         self.assertEqual(self.receipt["asset_continuity"], self.continuity)
+        self.assertEqual(self.receipt["asset_proof"], self.proof)
         self.assertEqual(parse_annotation(annotation(self.receipt)), self.receipt)
         self.assertEqual(self.publish(self.original), self.original)
 
@@ -124,14 +147,15 @@ class WebContinuityTests(unittest.TestCase):
             stamped = dict(line.split("=", 1) for line in output.read_text().splitlines())
         evidence = {"web": {"writer": self.receipt["source"], "stamp": stamped["controller_proof"]}}
         self.assertEqual(proven_components(evidence, {"web": self.receipt}, self.history), {"web"})
-        changed = dict(self.continuity, proof_sha256="e" * 64)
-        receipt = self.publish(self.original, asset_continuity=changed)
+        changed_proof = dict(self.proof, retention_preimage_sha256="e" * 64)
+        changed = dict(self.continuity, proof_sha256=sha256(changed_proof))
+        receipt = self.publish(self.original, asset_continuity=changed, asset_proof=changed_proof)
         self.assertEqual(proven_components(evidence, {"web": receipt}, self.history), set())
 
     def test_registry_must_still_have_all_release_images(self):
         tags = [fixture_tag(self.receipt)]
         self.assertEqual(verify(self.receipt, tags, self.registry, self.history, automatic=True), self.receipt)
-        for digit in "1234":
+        for digit in "12345":
             with self.subTest(digest=digit):
                 missing = "sha256:" + digit * 64
                 self.registry.exists.side_effect = lambda repository, value: value != missing
@@ -141,7 +165,8 @@ class WebContinuityTests(unittest.TestCase):
     def test_web_only_receipt_and_schema_are_explicit(self):
         for component in ("am", "eg"):
             with self.subTest(component=component), self.assertRaises(Refusal):
-                self.publish(fixture_receipt(component=component), asset_continuity=self.continuity)
+                self.publish(fixture_receipt(component=component), asset_continuity=self.continuity,
+                             asset_proof=self.proof)
         for corrupt in (dict(self.receipt, schema="cma-published-image-v1"),
                         dict(self.original, schema="cma-published-image-v3"),
                         dict(self.receipt, compatibility={})):
@@ -168,4 +193,28 @@ class WebContinuityTests(unittest.TestCase):
                 continuity = copy.deepcopy(self.continuity)
                 mutate(continuity)
                 with self.assertRaises(Refusal):
-                    self.publish(self.original, asset_continuity=continuity)
+                    self.publish(self.original, asset_continuity=continuity, asset_proof=self.proof)
+
+    def test_detached_proof_is_required_and_mutating_only_its_hash_refuses(self):
+        with self.assertRaises(Refusal):
+            self.publish(self.original, asset_continuity=self.continuity)
+        with self.assertRaisesRegex(Refusal, "publication proof hash differs"):
+            self.publish(self.original, asset_continuity=dict(self.continuity, proof_sha256="f" * 64),
+                         asset_proof=self.proof)
+
+    def test_new_hash_cannot_override_the_exact_verified_release_shape(self):
+        mutations = (
+            lambda proof: proof.update(continuity_sha256="f" * 64),
+            lambda proof: proof["inputs"].reverse(),
+            lambda proof: proof["inputs"].pop(0),
+            lambda proof: proof["overlays"]["prepare"].update(base_image=image("3")),
+            lambda proof: proof["overlays"]["prepare"].update(layer_digest="sha256:" + "a" * 64),
+            lambda proof: proof["overlays"]["promote"].update(archive_sha256="f" * 64),
+        )
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                proof = copy.deepcopy(self.proof)
+                mutate(proof)
+                continuity = dict(self.continuity, proof_sha256=sha256(proof))
+                with self.assertRaises(Refusal):
+                    self.publish(self.original, asset_continuity=continuity, asset_proof=proof)

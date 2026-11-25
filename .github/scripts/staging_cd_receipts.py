@@ -33,7 +33,8 @@ IDENTITY_FIELDS = {"schema", "component", "version", "previous", "source", "tree
                    "run_id", "run_attempt", "build"}
 RECEIPT_FIELDS = {"schema", "identity", "tag", "repository", "source", "digest", "archive", "scan"}
 RECEIPT_EXTENSIONS = {"cma-published-image-v1": set(), "cma-published-image-v2": {"compatibility"},
-                      "cma-published-image-v3": {"asset_continuity"}}
+                      "cma-published-image-v3": {"asset_continuity", "asset_proof"}}
+ANNOTATION_BYTES = 16384
 
 
 def canonical(value):
@@ -77,9 +78,12 @@ def validate_receipt(receipt):
     require(matches(r"sha256:[0-9a-f]{64}", receipt["digest"])
             and matches(r"[0-9a-f]{64}", receipt["archive"]), "Published image digest is malformed")
     if "asset_continuity" in receipt:
-        from staging_cd_web_continuity import validate
+        from staging_cd_web_continuity import validate, validate_proof
         require(identity["component"] == "web", "Unexpected Web asset continuity receipt")
-        validate(receipt["asset_continuity"], identity, receipt["repository"] + "@" + receipt["digest"])
+        image = receipt["repository"] + "@" + receipt["digest"]
+        continuity = validate(receipt["asset_continuity"], identity, image)
+        validate_proof(receipt["asset_proof"], continuity, identity, image, receipt["archive"])
+        require(len(canonical(receipt)) < ANNOTATION_BYTES, "Web continuity publication annotation exceeds its limit")
     scan = receipt["scan"]
     require(isinstance(scan, dict) and set(scan) == {"version", "bundle", "mode", "complete", "counts"}
             and isinstance(scan["version"], str) and isinstance(scan["bundle"], str)
@@ -102,7 +106,7 @@ def validate_receipt(receipt):
 
 
 def published_receipt(identity, digest, archive, counts, *, scanner_identity, compatibility=None,
-                      asset_continuity=None):
+                      asset_continuity=None, asset_proof=None):
     require(isinstance(scanner_identity, tuple) and len(scanner_identity) == 2
             and all(isinstance(value, str) for value in scanner_identity)
             and scanner_identity in SUPPORTED_SCANS and scanner_identity[1] == MANIFEST_SHA256,
@@ -115,9 +119,10 @@ def published_receipt(identity, digest, archive, counts, *, scanner_identity, co
     extension = {}
     if compatibility is not None:
         schema, extension = "cma-published-image-v2", {"compatibility": compatibility}
-    if asset_continuity is not None:
+    if asset_continuity is not None or asset_proof is not None:
         require(compatibility is None, "Web asset continuity cannot carry runtime compatibility")
-        schema, extension = "cma-published-image-v3", {"asset_continuity": asset_continuity}
+        schema = "cma-published-image-v3"
+        extension = {"asset_continuity": asset_continuity, "asset_proof": asset_proof}
     return validate_receipt({"schema": schema, "identity": identity, **extension,
                              "tag": name + "/v" + identity["version"],
                              "repository": "ghcr.io/chronoaiproject/" + name,
@@ -147,7 +152,7 @@ def final_tag_oid(receipt):
 
 
 def parse_annotation(message):
-    require(isinstance(message, str) and len(message) <= 16384, "Version tag annotation is invalid")
+    require(isinstance(message, str) and len(message) <= ANNOTATION_BYTES, "Version tag annotation is invalid")
     def unique(pairs):
         result = {}
         for key, value in pairs:
