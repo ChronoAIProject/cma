@@ -293,6 +293,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: web
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['web']) }}
@@ -313,6 +314,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: am
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['am']) }}
@@ -333,6 +335,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: eg
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['eg']) }}
@@ -353,6 +356,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: runtime
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['runtime']) }}
@@ -373,6 +377,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: runtime-omarchy
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['runtime-omarchy']) }}
@@ -401,6 +406,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: contract
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['contract']) }}
