@@ -36,7 +36,15 @@ impl SandboxCredentialCustody for MongoSandboxCredentialStore {
         sandbox: &layer2_core::sandbox::Sandbox,
         intent: &crate::sandbox::CredentialIssuance,
     ) -> Result<bool, CredentialCustodyError> {
-        issuance::begin(self, sandbox, intent).await
+        issuance::begin(self, sandbox, intent, None).await
+    }
+    async fn begin_issuance_with_owner_authority(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        intent: &crate::sandbox::CredentialIssuance,
+        authority: Option<&crate::sandbox::RetirementOwnerAuthority>,
+    ) -> Result<bool, CredentialCustodyError> {
+        issuance::begin(self, sandbox, intent, authority).await
     }
     async fn accept_issuance(
         &self,

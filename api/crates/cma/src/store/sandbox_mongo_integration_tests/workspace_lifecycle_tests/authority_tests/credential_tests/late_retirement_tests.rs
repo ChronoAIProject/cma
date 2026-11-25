@@ -50,6 +50,13 @@ async fn committed_retirement_marker_retains_late_authority_without_delivery() {
     );
     assert!(!format!("{after:?}").contains(&secret));
     assert!(f.custody.list(&f.claim.id).await.unwrap().is_empty());
+    // A legacy marker lacks the original login revision and remains held.
+    assert!(f
+        .custody
+        .claim_retirement_revocation("independent")
+        .await
+        .unwrap()
+        .is_none());
 
     let mut duplicate = retained(&f);
     duplicate.authority = mongodb::bson::deserialize_from_document(authority.clone()).unwrap();

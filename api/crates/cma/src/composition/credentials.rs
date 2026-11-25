@@ -115,7 +115,10 @@ pub(super) fn sandbox_credentials(
     let ordinary: Arc<dyn SandboxCredentialController> = match key_issuer(config) {
         Some(issuer) => {
             let tokens =
-                crate::sandbox::ServiceAccessOwnerTokens::new(auth, stores.sandbox_model.clone());
+                crate::sandbox::ServiceAccessOwnerTokens::new(auth, stores.sandbox_model.clone())
+                    .with_retirement_authority_capture(
+                        config.features.native_retirement_finality_enabled,
+                    );
             ManagedSandboxCredentials::new(issuer, tokens, stores.sandbox_credentials.clone())
                 .with_exact_connections(broker)
         }

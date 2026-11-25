@@ -36,6 +36,39 @@ pub(crate) struct CredentialIssuance {
     pub state: IssuanceState,
 }
 
+/// Retained owner authorization for the independently discoverable retirement
+/// obligation. The selector contains no bearer material.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum RetirementOwnerAuthority {
+    Personal {
+        owner: SubjectId,
+        authorization: layer2_core::sandbox::agent_io::AgentAuthorizationRevision,
+    },
+    OwnerApi {
+        owner: SubjectId,
+        authorization: layer2_core::sandbox::agent_io::AgentAuthorizationRevision,
+    },
+}
+
+impl RetirementOwnerAuthority {
+    pub(crate) fn owner(&self) -> &SubjectId {
+        match self {
+            Self::Personal { owner, .. } | Self::OwnerApi { owner, .. } => owner,
+        }
+    }
+
+    pub(crate) fn authorization(
+        &self,
+    ) -> &layer2_core::sandbox::agent_io::AgentAuthorizationRevision {
+        match self {
+            Self::Personal { authorization, .. } | Self::OwnerApi { authorization, .. } => {
+                authorization
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum IssuanceObservation {
     MetadataOnly { matches: usize },
@@ -122,7 +155,14 @@ impl ManagedSandboxCredentials {
             ));
         }
         let operation_id = format!("mint_{}", uuid::Uuid::new_v4().simple());
-        let token = self.owner_token(sandbox).await?;
+        let (token, owner_authority) = self
+            .tokens
+            .token_for_issuance(sandbox)
+            .await
+            .map_err(CredentialError::Unavailable)?
+            .ok_or_else(|| {
+                CredentialError::Security("the owner has no renewable NyxID authority".into())
+            })?;
         // All safe preparation failures occur before any durable intent. A
         // successor may repeat preparation, but cannot repeat a possible POST.
         let services = sandbox.credential.effective_reaches();
@@ -189,7 +229,7 @@ impl ManagedSandboxCredentials {
         };
         if !self
             .custody
-            .begin_issuance(sandbox, &intent)
+            .begin_issuance_with_owner_authority(sandbox, &intent, owner_authority.as_ref())
             .await
             .map_err(custody_error)?
         {

@@ -67,6 +67,7 @@ pub(crate) struct MongoSandboxCredentialStore {
     client: Client,
     sandboxes: Collection<mongodb::bson::Document>,
     intents: Collection<mongodb::bson::Document>,
+    agent_access_requests: Collection<mongodb::bson::Document>,
     collection: Collection<CredentialDocument>,
     revocations: Collection<RevocationDocument>,
     cipher: AuthCipher,
@@ -138,10 +139,33 @@ impl MongoSandboxCredentialStore {
             .map_err(|error| {
                 StoreError::Unavailable(format!("sandbox credential revocation index: {error}"))
             })?;
+        let intents = majority_collection(&database, issuance::COLLECTION);
+        intents
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"retirement_custody.retry_at":1,"_id":1})
+                    .options(
+                        IndexOptions::builder()
+                            .name("retirement_credential_claim".to_string())
+                            .partial_filter_expression(doc! {"retirement_custody.state":"pending",
+                            "retirement_custody.owner_authority":{"$exists":true},
+                            "retirement_custody.late_provider_authority":{"$exists":true}})
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(|_| {
+                StoreError::Unavailable("retirement custody discovery index unavailable".into())
+            })?;
         Ok(Self {
             client: client.clone(),
             sandboxes: majority_collection(&database, "sandboxes"),
-            intents: majority_collection(&database, issuance::COLLECTION),
+            intents,
+            agent_access_requests: majority_collection(
+                &database,
+                super::agent_access_requests::COLLECTION,
+            ),
             collection,
             revocations,
             cipher: AuthCipher::new(deployment, key)?,

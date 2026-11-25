@@ -3,6 +3,70 @@ use super::*;
 use layer2_core::rfc3339_at;
 use std::time::SystemTime;
 
+pub(super) fn valid_owner_authority(authority: &RetirementOwnerAuthority) -> bool {
+    let revision = authority.authorization();
+    if !crate::store::agent_access_requests::valid_owner_authorization(revision) {
+        return false;
+    }
+    match authority {
+        RetirementOwnerAuthority::Personal { .. } => revision
+            .authority_id
+            .strip_prefix("personal:")
+            .is_some_and(|hash| {
+                hash.len() == 64
+                    && hash
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            }),
+        RetirementOwnerAuthority::OwnerApi { .. } => {
+            revision.authority_id.starts_with("owner-api:")
+        }
+    }
+}
+
+pub(super) async fn owner_authority_matches(
+    store: &MongoSandboxCredentialStore,
+    sandbox: &Sandbox,
+    authority: &RetirementOwnerAuthority,
+    session: &mut ClientSession,
+) -> Result<bool, CredentialCustodyError> {
+    if authority.owner() != &sandbox.owner || !valid_owner_authority(authority) {
+        return Ok(false);
+    }
+    let consent = crate::store::agent_access_requests::credential_scope_authorization_in_session(
+        &store.agent_access_requests,
+        sandbox,
+        session,
+    )
+    .await
+    .map_err(|_| CredentialCustodyError::Unavailable("owner scope consent unavailable".into()))?;
+    Ok(match consent {
+        Some(consent) => &consent == authority.authorization(),
+        None => {
+            sandbox.credential.service_access_generation_floor() == 0
+                && matches!(authority, RetirementOwnerAuthority::Personal { .. })
+        }
+    })
+}
+
+async fn captured_owner_authority(
+    store: &MongoSandboxCredentialStore,
+    sandbox: &Sandbox,
+    row: &Document,
+    session: &mut ClientSession,
+) -> Result<Option<Bson>, CredentialCustodyError> {
+    let Some(value) = row.get("issuance_owner_authority") else {
+        // Historical issuance rows have no original consent selector. Their
+        // existing Unknown barrier remains authoritative.
+        return Ok(None);
+    };
+    let authority: RetirementOwnerAuthority =
+        mongodb::bson::deserialize_from_bson(value.clone()).map_err(|_| corrupt())?;
+    Ok(owner_authority_matches(store, sandbox, &authority, session)
+        .await?
+        .then(|| value.clone()))
+}
+
 /// Freeze the exact unresolved issuance under the retirement claim. The
 /// original Unknown state continues to guard revocation, home release and purge.
 pub(in crate::store::sandbox_credentials) async fn retain_retirement(
@@ -50,6 +114,22 @@ pub(in crate::store::sandbox_credentials) async fn retain_retirement(
             {
                 return Err(corrupt());
             }
+            if let Some(selector) = retirement.get("owner_authority") {
+                let authority: RetirementOwnerAuthority = mongodb::bson::deserialize_from_bson(selector.clone()).map_err(|_| corrupt())?;
+                if authority.owner() != &intent.owner || !valid_owner_authority(&authority)
+                    || row.get("issuance_owner_authority") != Some(selector) {
+                    return Err(corrupt());
+                }
+            } else if let Some(selector) = captured_owner_authority(store, sandbox, &row, &mut session).await? {
+                // Upgrade an existing v1 marker without replacing any late
+                // result or independently claimed work already attached to it.
+                let updated = store.intents.update_one(doc! {"_id":sandbox.id.as_str(),
+                    "retirement_custody.issuance": &frozen,
+                    "retirement_custody.state":"pending", "retirement_custody.owner_authority":{"$exists":false}},
+                    doc! {"$set":{"retirement_custody.owner_authority":selector}})
+                    .session(&mut session).await.map_err(unavailable)?;
+                if updated.matched_count != 1 { return Err(corrupt()); }
+            }
             return Ok(());
         }
         let custody_filter = doc! {"sandbox_id": sandbox.id.as_str()};
@@ -70,15 +150,19 @@ pub(in crate::store::sandbox_credentials) async fn retain_retirement(
         {
             return Ok(());
         }
+        let mut marker = doc! {
+            "version":1_i64, "state":"pending", "reason":"initial_issuance_unresolved",
+            "issuance":frozen, "recorded_at":rfc3339_at(now),
+        };
+        if let Some(selector) = captured_owner_authority(store, sandbox, &row, &mut session).await? {
+            marker.insert("owner_authority", selector);
+        }
         let updated = store
             .intents
             .update_one(
                 doc! {"_id": sandbox.id.as_str(), "record":exact.clone(),
                 "retirement_custody":{"$exists":false}},
-                doc! {"$set":{"retirement_custody":{
-                    "version":1_i64, "state":"pending", "reason":"initial_issuance_unresolved",
-                    "issuance":frozen, "recorded_at":rfc3339_at(now),
-                }}},
+                doc! {"$set":{"retirement_custody":marker}},
             )
             .session(&mut session)
             .await

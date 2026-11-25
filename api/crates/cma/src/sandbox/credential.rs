@@ -11,7 +11,7 @@ mod contracts;
 mod issuance;
 pub(crate) use issuance::{
     initial_retirement_issuance_candidate, CredentialIssuance, IssuanceIdentity,
-    IssuanceObservation, IssuanceState,
+    IssuanceObservation, IssuanceState, RetirementOwnerAuthority,
 };
 pub(crate) mod owner_tokens;
 mod provided;

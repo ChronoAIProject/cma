@@ -107,6 +107,14 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
             "issuance custody is not supported".into(),
         ))
     }
+    async fn begin_issuance_with_owner_authority(
+        &self,
+        sandbox: &Sandbox,
+        intent: &super::CredentialIssuance,
+        _authority: Option<&super::RetirementOwnerAuthority>,
+    ) -> Result<bool, CredentialCustodyError> {
+        self.begin_issuance(sandbox, intent).await
+    }
     async fn accept_issuance(
         &self,
         _sandbox: &Sandbox,
@@ -204,6 +212,16 @@ pub(crate) trait OwnerTokenSource: Send + Sync {
     async fn token_for(&self, owner: &SubjectId) -> Result<Option<SecretValue>, String>;
     async fn token_for_sandbox(&self, sandbox: &Sandbox) -> Result<Option<SecretValue>, String> {
         self.token_for(&sandbox.owner).await
+    }
+
+    async fn token_for_issuance(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<Option<(SecretValue, Option<super::RetirementOwnerAuthority>)>, String> {
+        Ok(self
+            .token_for_sandbox(sandbox)
+            .await?
+            .map(|token| (token, None)))
     }
 }
 

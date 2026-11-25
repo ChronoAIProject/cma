@@ -59,7 +59,7 @@ pub(crate) use credential::{
     initial_retirement_issuance_candidate, CredentialCustodyError, CredentialError,
     CredentialIssuance, CredentialMaterial, CredentialRevocation, IssuanceIdentity,
     IssuanceObservation, IssuanceState, ManagedSandboxCredentials, OwnerTokenSource,
-    SandboxCredentialController, SandboxCredentialCustody,
+    RetirementOwnerAuthority, SandboxCredentialController, SandboxCredentialCustody,
 };
 #[cfg(test)]
 pub(crate) use live_agents::record_update_for_test;
