@@ -346,7 +346,7 @@ impl RuntimePointerSource for RegistryRuntimePointers {
     }
 }
 
-pub(super) fn valid_digest(value: &str) -> bool {
+pub(crate) fn valid_digest(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(|value| {
         value.len() == 64
             && value

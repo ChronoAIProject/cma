@@ -72,6 +72,38 @@ class RegistryTests(unittest.TestCase):
         self.assertIsNone(registry.runtime_pointer(repository, "staging"))
         self.assertTrue(opener.open.call_args.args[0].full_url.endswith("/manifests/staging-current"))
 
+    def test_runtime_pointer_write_copies_the_exact_manifest_to_the_environment_tag(self):
+        repository = "ghcr.io/chronoaiproject/cma-runtime"
+        manifest = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "config": {"digest": "sha256:" + "a" * 64}, "layers": []}
+        raw = json.dumps(manifest, indent=2).encode()
+        digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+        opener = Mock()
+        registry = Registry(opener, credential="fixture", actor="writer")
+        confirmed = Mock(status=201, headers={"Docker-Content-Digest": digest})
+        opener.open.side_effect = [self.response({"token": "pull-fixture"}),
+                                   self.response(raw, {"Docker-Content-Digest": digest}),
+                                   self.response({"token": "push-fixture"}),
+                                   contextlib.nullcontext(confirmed)]
+        registry.write_runtime_pointer(repository, "production", digest)
+        push_token = opener.open.call_args_list[2].args[0]
+        self.assertIn("%3Apull%2Cpush", push_token.full_url)
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.get_method(), "PUT")
+        self.assertEqual(request.data, raw)
+        self.assertEqual(request.get_header("Authorization"), "Bearer push-fixture")
+        self.assertEqual(request.get_header("Content-type"), manifest["mediaType"])
+        self.assertTrue(request.full_url.endswith("/manifests/production-current"))
+
+    def test_runtime_pointer_write_refuses_other_tags_and_requires_a_credential(self):
+        opener = Mock()
+        repository = "ghcr.io/chronoaiproject/cma-runtime"
+        digest = "sha256:" + "a" * 64
+        for environment, reference in (("staging", digest), ("production", "latest"), ("other", digest)):
+            with self.subTest(environment=environment, reference=reference), self.assertRaises(Refusal):
+                Registry(opener).write_runtime_pointer(repository, environment, reference)
+        opener.open.assert_not_called()
+
     def test_settle_read_waits_for_a_just_written_tag_and_names_a_lasting_absence(self):
         manifest = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
                     "config": {"digest": "sha256:" + "a" * 64}, "layers": []}

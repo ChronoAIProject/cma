@@ -1,14 +1,17 @@
 """Move a runtime pointer under the environment's serialized release writer."""
 
 import subprocess
+import time
 
 from staging_cd_common import Refusal, require
 from staging_cd_registry import RUNTIME_POINTER_TAGS
 from staging_cd_set import release_set
 from staging_cd_targets import RUNTIME_TARGETS
 
+READINESS_LANES = {"runtime": "agent", "runtime-omarchy": "machine"}
 
-def advance(component, selected, publications, history, registry, copy, *, environment, fence):
+
+def advance(component, selected, publications, history, registry, *, environment, fence):
     """Copy the verified manifest, preserving its digest, then read back the exact tag."""
     require(component in RUNTIME_TARGETS and environment in RUNTIME_POINTER_TAGS,
             "Runtime pointer lane or environment is invalid")
@@ -40,7 +43,7 @@ def advance(component, selected, publications, history, registry, copy, *, envir
     require(registry.runtime_pointer(repository, environment) == current,
             "Runtime pointer changed before publication")
     try:
-        copy(repository, digest, RUNTIME_POINTER_TAGS[environment])
+        registry.write_runtime_pointer(repository, environment, digest)
     except (Refusal, OSError, subprocess.SubprocessError):
         if registry.runtime_pointer(repository, environment, settle=True) == digest:
             return True
@@ -48,3 +51,24 @@ def advance(component, selected, publications, history, registry, copy, *, envir
     require(registry.runtime_pointer(repository, environment, settle=True) == digest,
             "Runtime pointer does not resolve to the selected digest")
     return True
+
+
+def await_active(receipts, read_ready, *, deadline, clock=time.monotonic, sleep=time.sleep):
+    """Verify durable runtime selection on a ready Agent Manager within the deployment budget."""
+    require(bool(receipts) and receipts.keys() <= RUNTIME_TARGETS, "Runtime pointer release set is invalid")
+    while clock() < deadline:
+        status = read_ready(deadline - clock())
+        if status is not None and status.get("status") == "ready":
+            lanes = status.get("runtime_release")
+            if isinstance(lanes, dict) and all(
+                qualified_lane(lanes.get(READINESS_LANES[component]), receipt["digest"])
+                for component, receipt in receipts.items()
+            ) and clock() < deadline:
+                return
+        sleep(min(5, max(0, deadline - clock())))
+    raise Refusal("Agent Manager did not promote the qualified runtime within the deployment budget")
+
+
+def qualified_lane(lane, digest):
+    return (isinstance(lane, dict) and lane.get("digest") == digest
+            and type(lane.get("revision")) is int and lane["revision"] > 0)

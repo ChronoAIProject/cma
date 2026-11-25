@@ -63,9 +63,12 @@ class Registry:
         return ci_retry.call(once, name="registry-read", classify=ci_retry.classify, **policy)
 
     def token(self, repository):
+        return self._token(repository, "pull")
+
+    def _token(self, repository, actions):
         require(repository in {"ghcr.io/chronoaiproject/" + name for name in DEPLOYABLES.values()},
                 "Registry repository is not a canonical deployable")
-        scope = "repository:" + repository[len("ghcr.io/"):] + ":pull"
+        scope = "repository:" + repository[len("ghcr.io/"):] + ":" + actions
         headers = {}
         if self.credential:
             headers["Authorization"] = "Basic " + base64.b64encode((self.actor + ":" + self.credential).encode()).decode()
@@ -88,7 +91,24 @@ class Registry:
         result = self._manifest(repository, RUNTIME_POINTER_TAGS[environment], absent=not settle, settle=settle)
         return result[0] if result else None
 
-    def _manifest(self, repository, reference, *, absent, settle):
+    def write_runtime_pointer(self, repository, environment, digest):
+        require(repository in RUNTIME_REPOSITORIES and environment in RUNTIME_POINTER_TAGS
+                and matches(r"sha256:[0-9a-f]{64}", digest), "Runtime pointer write is invalid")
+        require(self.credential is not None, "Runtime pointer writer needs a registry credential")
+        manifest = self._manifest(repository, digest, absent=False, settle=False, raw=True)
+        _, body, data = manifest
+        token = self._token(repository, "pull,push")
+        timeout = ci_retry.attempt_timeout(30, self.deadline, self.retry.get("clock", time.monotonic))
+        require(timeout is not None, "Registry write budget expired")
+        url = "https://ghcr.io/v2/" + repository[len("ghcr.io/"):] + "/manifests/" + RUNTIME_POINTER_TAGS[environment]
+        request = urllib.request.Request(url, data=data, method="PUT", headers={
+            "Authorization": "Bearer " + token, "Content-Type": body["mediaType"],
+        })
+        with self.opener.open(request, timeout=timeout) as response:
+            require(response.status == 201 and response.headers.get("Docker-Content-Digest", digest) == digest,
+                    "Registry did not confirm the runtime pointer manifest")
+
+    def _manifest(self, repository, reference, *, absent, settle, raw=False):
         token = self.token(repository)
         result = self.read("https://ghcr.io/v2/" + repository[len("ghcr.io/"):] + "/manifests/" + reference,
                            {"Authorization": "Bearer " + token, "Accept": MEDIA}, absent=absent, settle=settle)
@@ -104,7 +124,7 @@ class Registry:
                 and body.get("mediaType") in MEDIA.split(", ")
                 and isinstance(body.get("config"), dict) and isinstance(body.get("layers"), list),
                 "Staging registry manifest must be a single platform image")
-        return digest, body
+        return (digest, body, data) if raw else (digest, body)
 
     def exists(self, repository, digest, *, settle=False):
         return self.manifest(repository, digest, settle=settle) is not None

@@ -147,6 +147,7 @@ async fn stale_success_fails_closed_even_if_the_monitor_stops() {
             workers: None,
             diagnostics: None,
             backend_free: true,
+            runtime_release: None,
         }),
     ];
     for app in &apps {
@@ -160,6 +161,78 @@ async fn stale_success_fails_closed_even_if_the_monitor_stops() {
         assert_eq!(body["dependency"]["age_ms"], 5000);
         assert_eq!(response(app, "/livez").await.0, StatusCode::OK);
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn readiness_reports_only_durable_public_release_digests() {
+    use layer3_adapter::{
+        ReleasedLaneRevisions, ReleasedRuntime, ReleasedRuntimeSource, StaleReleasedRuntime,
+    };
+
+    #[derive(Debug)]
+    struct Released(ReleasedRuntime);
+
+    impl ReleasedRuntimeSource for Released {
+        fn snapshot(&self) -> ReleasedRuntime {
+            self.0.clone()
+        }
+
+        fn require_current(&self, release: &ReleasedRuntime) -> Result<(), StaleReleasedRuntime> {
+            if *release == self.0 {
+                Ok(())
+            } else {
+                Err(StaleReleasedRuntime)
+            }
+        }
+    }
+
+    let (_sender, state) = watch::channel(Some(CompletedCheck {
+        completed: Instant::now(),
+        checked_at: "2026-11-05T00:00:00Z".into(),
+        duration_ms: 5,
+        failure: None,
+        diagnostic_check: 0,
+    }));
+    let digest = format!("sha256:{}", "d".repeat(64));
+    let public_agent = format!("ghcr.io/chronoaiproject/cma-runtime@{digest}");
+    let custom_machine = format!("ghcr.io/example/fixture@{digest}");
+    let released = ReleasedRuntime {
+        revision: 3,
+        agent: public_agent,
+        machine: Some(custom_machine),
+        lane_revisions: Some(ReleasedLaneRevisions {
+            agent: 2,
+            machine: Some(1),
+        }),
+    };
+    let app = |released| {
+        health_routes(HealthState {
+            store: state.clone(),
+            workers: None,
+            diagnostics: None,
+            backend_free: false,
+            runtime_release: Some(Arc::new(Released(released))),
+        })
+    };
+    let (status, body) = response(&app(released.clone()), "/ready").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["runtime_release"],
+        serde_json::json!({"agent": {"digest": digest, "revision": 2}, "machine": null})
+    );
+    let static_release = ReleasedRuntime {
+        lane_revisions: None,
+        ..released.clone()
+    };
+    assert!(response(&app(static_release), "/ready")
+        .await
+        .1
+        .get("runtime_release")
+        .is_none());
+    tick(MAX_CHECK_AGE).await;
+    let (status, body) = response(&app(released), "/ready").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(body.get("runtime_release").is_none());
 }
 
 #[tokio::test(start_paused = true)]
@@ -180,7 +253,7 @@ async fn dropping_the_router_cancels_the_inflight_check_and_stops_retries() {
 async fn execution_capability_is_separate_from_store_and_optional_warm_capacity() {
     let probe = Arc::new(Probe::default());
     let workers = crate::worker_supervision::Workers::new();
-    let app = router_with_workers(probe.clone(), workers.clone());
+    let app = router_with_workers(probe.clone(), workers.clone(), None);
     tokio::task::yield_now().await;
     let (status, body) = response(&app, "/ready").await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);

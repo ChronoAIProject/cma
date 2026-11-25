@@ -53,6 +53,7 @@ struct HealthState {
     workers: Option<crate::worker_supervision::Workers>,
     diagnostics: Option<Arc<Recorder>>,
     backend_free: bool,
+    runtime_release: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
 }
 
 #[cfg(test)]
@@ -63,17 +64,19 @@ pub fn router(probe: Arc<dyn ReadinessProbe>) -> Router {
 pub(crate) fn router_with_workers(
     probe: Arc<dyn ReadinessProbe>,
     workers: crate::worker_supervision::Workers,
+    runtime_release: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
 ) -> Router {
     monitored(
         probe,
         Some(workers),
         false,
         readiness_diagnostics::configured(),
+        runtime_release,
     )
 }
 
 pub(crate) fn backend_free_router(probe: Arc<dyn ReadinessProbe>) -> Router {
-    monitored(probe, None, true, readiness_diagnostics::configured())
+    monitored(probe, None, true, readiness_diagnostics::configured(), None)
 }
 
 #[cfg(test)]
@@ -81,7 +84,7 @@ fn router_with_diagnostics(
     probe: Arc<dyn ReadinessProbe>,
     diagnostics: Option<Arc<Recorder>>,
 ) -> Router {
-    monitored(probe, None, false, diagnostics)
+    monitored(probe, None, false, diagnostics, None)
 }
 
 fn monitored(
@@ -89,6 +92,7 @@ fn monitored(
     workers: Option<crate::worker_supervision::Workers>,
     backend_free: bool,
     diagnostics: Option<Arc<Recorder>>,
+    runtime_release: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
 ) -> Router {
     let (result, state) = watch::channel(None);
     // The sender owns no receiver. Dropping the last router cancels the check
@@ -105,6 +109,7 @@ fn monitored(
         workers,
         diagnostics,
         backend_free,
+        runtime_release,
     })
 }
 
@@ -115,6 +120,7 @@ fn routes(state: CheckState, diagnostics: Option<Arc<Recorder>>) -> Router {
         workers: None,
         diagnostics,
         backend_free: false,
+        runtime_release: None,
     })
 }
 
@@ -124,6 +130,18 @@ fn health_routes(state: HealthState) -> Router {
         .route("/ready", get(readiness))
         .with_state(state)
         .merge(build_info::router())
+}
+
+pub(crate) fn pointer_release_source(
+    stores: &MongoStores,
+    config: &crate::config::Config,
+) -> Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>> {
+    config
+        .runtime
+        .runtime_pointer
+        .as_ref()
+        .filter(|pointer| pointer.can_follow())
+        .map(|_| stores.released_runtime.clone())
 }
 
 async fn monitor(
@@ -236,6 +254,18 @@ async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
     if state.backend_free {
         body["sandbox"] = serde_json::json!({ "available": false });
     }
+    if let Some(release) = state.runtime_release.filter(|_| ready) {
+        let snapshot = release.snapshot();
+        if let Some(revisions) = snapshot.lane_revisions {
+            // Expose only durable defaults for the two public runtime
+            // repositories. This reads the same cache as new admissions.
+            let machine = snapshot.machine.as_deref().zip(revisions.machine);
+            body["runtime_release"] = serde_json::json!({
+                "agent": releases::lane(&snapshot.agent, revisions.agent, false),
+                "machine": machine.and_then(|(image, revision)| releases::lane(image, revision, true)),
+            });
+        }
+    }
     (
         if ready {
             StatusCode::OK
@@ -245,6 +275,8 @@ async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
         Json(body),
     )
 }
+
+mod releases;
 
 #[cfg(test)]
 mod discovery_tests;
