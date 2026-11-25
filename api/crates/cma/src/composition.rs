@@ -442,7 +442,6 @@ impl ControlPlaneComposition {
         let tool_routes = routes::tools(tool_routes, &auth, config)?;
         let resource_routes =
             creation_outcomes::routes(resource_routes, creation_outcomes.as_deref());
-        let worker_observations = runtime::worker_observations(config, &stores);
         let workers = crate::worker_supervision::Workers::new();
         let relay = agent_manager::relay(
             config,
@@ -476,7 +475,7 @@ impl ControlPlaneComposition {
             activity_worker,
             workers,
             document_blob_maintenance,
-            worker_observations,
+            worker_observations: runtime::worker_observations(config, &stores),
             router: agent_manager::internal_router(&relay, &agent_manager, router),
             agent_manager,
             agent_relay: relay,
