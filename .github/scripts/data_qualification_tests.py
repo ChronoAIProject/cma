@@ -28,14 +28,15 @@ def no_items(classes):
 
 
 class Campaign:
-    def __init__(self, root, recheck=False):
+    def __init__(self, root, recheck=False, source="a" * 40, deletion_delay=0, recheck_day_offset=0):
         self.root = root
-        self.offset = 8 * 1440 if recheck else 0
+        self.offset = 0
+        self.deletion_delay = deletion_delay
         self.root.mkdir(exist_ok=True)
         self.evidence = root / "evidence"
         self.evidence.mkdir()
         self.candidate = {
-            "source": "a" * 40, "images": {key: "sha256:" + sha256(key) for key in TARGETS},
+            "source": source, "images": {key: "sha256:" + sha256(key) for key in TARGETS},
             "configuration_sha256": sha256("config"), "flags_sha256": sha256("flags"),
             "environment_sha256": sha256("environment"),
         }
@@ -80,19 +81,30 @@ class Campaign:
         self.scope = {"schema": "cma-data-scope-v1", "mode": "synthetic", "candidate": self.candidate,
                       "policy": self.policy, "inventory": self.inventory,
                       "phase": "frozen_recheck" if recheck else "initial",
-                      "windows": {case: {"start": self.stamp(0), "end": self.stamp(60), "inputs": {}}
-                                  for case in (RECHECK_CUTOFFS if recheck else CASES)},
-                      "frozen_at": self.stamp(0) if recheck else None, "initial_report_sha256": None}
+                      "windows": {case: {"start": stamp(0), "end": stamp(60), "inputs": {}} for case in CASES},
+                      "frozen_at": stamp(8 * 1440) if recheck else None, "initial_report_sha256": None}
         self.index = {"schema": "cma-data-observations-v1", "scope_sha256": "",
                       "cases": {case: {} for case in CASES}, "initial_report": None}
-        self.seed_quota()
-        self.seed_keys()
-        self.seed_deletion()
-        self.seed_exports()
-        self.seed_consent()
         if recheck:
-            self.index["cases"] = {key: value for key, value in self.index["cases"].items()
-                                   if key in RECHECK_CUTOFFS}
+            self.scope["windows"] = {
+                case: {"start": stamp((day - 15 + recheck_day_offset) * 1440),
+                       "end": stamp((day - 15 + recheck_day_offset) * 1440 + 60), "inputs": {}}
+                for case, day in RECHECK_CUTOFFS.items()
+            }
+            self.index["cases"] = {case: {} for case in RECHECK_CUTOFFS}
+            self.offset = (RECHECK_CUTOFFS["TC-064"] - 15 + recheck_day_offset) * 1440
+            self.seed_keys()
+            self.seed_deletion()
+            self.offset = (RECHECK_CUTOFFS["TC-119"] - 15 + recheck_day_offset) * 1440
+            self.seed_exports()
+        else:
+            for case in ("TC-065", "TC-136"):
+                self.scope["windows"][case]["end"] = stamp(60 + deletion_delay)
+            self.seed_quota()
+            self.seed_keys()
+            self.seed_deletion()
+            self.seed_exports()
+            self.seed_consent()
 
     def stamp(self, minutes):
         return stamp(minutes + self.offset)
@@ -150,7 +162,7 @@ class Campaign:
             for stage in KEY_STAGES:
                 independent = stage == "independent_restore"
                 self.add("TC-064", kind + "-" + stage, {"record_class": kind, "stage": stage,
-                    "records": {key: {"valid_read": True, "invalid_key_refused": True} for key in records},
+                    "records": {key: {"valid_read": True, "invalid_key_refused": True, "wrong_deployment_refused": True} for key in records},
                     "custody_sha256": self.policy["key_custody_sha256"], "independent_restore": independent,
                     "restore_environment_sha256": sha256("isolated-restore") if independent else None,
                     "scan_files": 4, "scan_matches": 0}, len(records))
@@ -161,7 +173,7 @@ class Campaign:
             resources = [expected["sandbox_ids"], expected["classes"]["home"], expected["classes"]["mongo"],
                          expected["classes"]["document_objects"], expected["classes"]["credentials"]]
             for i, (stage, ids) in enumerate(zip(STAGES, resources)):
-                stage_start, stage_end = self.stamp(2 + i), self.stamp(3 + i)
+                stage_start, stage_end = self.stamp(2 + i + self.deletion_delay), self.stamp(3 + i + self.deletion_delay)
                 audit = self.ref("audits/" + owner + "-" + stage + ".json", {"owner_sha256": owner,
                     "stage": stage, "started_at": stage_start, "finished_at": stage_end,
                     "resources": ids, "remaining": [], "settled": True})
@@ -169,7 +181,7 @@ class Campaign:
                                "attempts": 2 if i == 1 else 1, "audit": audit, "settled": True})
             independent = self.ref("inventories/" + owner + ".json", {"owner_sha256": owner,
                 "sandbox_ids": expected["sandbox_ids"], "sandbox_after": [], "inventory_before": expected["classes"],
-                "live_after": no_items(LIVE_CLASSES), "observed_at": self.stamp(8)})
+                "live_after": no_items(LIVE_CLASSES), "observed_at": self.stamp(8 + self.deletion_delay)})
             backup = {key: {"retention_seconds": self.policy["data_classes"]["backups"]["retention_seconds"],
                            "policy_sha256": sha256("backup-policy"), "exception_approval_sha256": None,
                            "observed_real_policy": True} for key in expected["classes"]["backups"]}
@@ -179,13 +191,13 @@ class Campaign:
                 "old_access": {actor: {name: True for name in LIVE_CLASSES}
                                for actor in ("old_identity", "share_link", "scoped_key")},
                 "duplicate_request_effects": 0, "stages": stages, "live_after": no_items(LIVE_CLASSES),
-                "independent_inventory": independent, "other_owner_changes": 0, "backup_policy": backup})
+                "independent_inventory": independent, "other_owner_changes": 0, "backup_policy": backup}, finish=15 + self.deletion_delay)
             self.add("TC-065", owner, {"owner_sha256": owner, "backups": expected["classes"]["backups"],
                 "independent_restore": True, "restore_execution": "physical",
                 "restore_environment_sha256": sha256("isolated-restore"), "clock_mode": "accelerated_fixture",
                 "tombstone_before_serving": True, "restored_after": no_items(DATA_CLASSES), "residual_access_count": 0,
                 "backup_policy": backup, "deletion_receipt_sha256": deletion["sha256"]},
-                len(expected["classes"]["backups"]), start=20, finish=30)
+                len(expected["classes"]["backups"]), start=20 + self.deletion_delay, finish=30 + self.deletion_delay)
 
     def entries(self, version):
         return {name: {actor: {"terms_version": version, "privacy_version": version,
@@ -356,6 +368,41 @@ class QualificationTests(unittest.TestCase):
                         lambda row: row.update(run_id=old_run))
         with self.assertRaises(Refusal):
             recheck.verify()
+
+    def test_frozen_recheck_rejects_another_candidate(self):
+        other = Campaign(self.campaign.root / "other-candidate", source="b" * 40)
+        initial = other.verify()
+        recheck = Campaign(self.campaign.root / "recheck", recheck=True)
+        reference = recheck.ref("initial.json", initial)
+        recheck.index["initial_report"] = reference
+        recheck.scope["initial_report_sha256"] = reference["sha256"]
+        with self.assertRaises(Refusal):
+            recheck.verify()
+
+    def test_frozen_recheck_rejects_early_date(self):
+        initial = self.campaign.verify()
+        early = Campaign(self.campaign.root / "early-recheck", recheck=True, recheck_day_offset=-1)
+        reference = early.ref("initial.json", initial)
+        early.index["initial_report"] = reference
+        early.scope["initial_report_sha256"] = reference["sha256"]
+        with self.assertRaises(Refusal):
+            early.verify()
+
+    def test_wrong_deployment_must_be_refused(self):
+        record = self.campaign.inventory["keys"]["oauth_token"][0]
+        self.mutate("TC-064", "oauth_token-independent_restore", lambda row:
+                    row["data"]["records"][record].update(wrong_deployment_refused=False))
+
+    def test_live_class_clearance_must_meet_approved_retention(self):
+        slow = Campaign(self.campaign.root / "slow-deletion", deletion_delay=2 * 1440)
+        slow.verify()
+        slow.policy["data_classes"]["home"]["retention_seconds"] = 86400
+        with self.assertRaises(Refusal):
+            slow.verify()
+        slow.policy["data_classes"]["home"]["retention_seconds"] = 7 * 86400
+        slow.policy["data_classes"]["logs"]["retention_seconds"] = 86400
+        with self.assertRaises(Refusal):
+            slow.verify()
 
     def test_receipt_with_changed_input_seed_refuses(self):
         self.mutate("TC-063", "legacy", lambda row: row.update(seed_sha256=sha256("unreviewed-seed")))

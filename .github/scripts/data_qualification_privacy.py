@@ -61,6 +61,8 @@ def check_deletion(cases, inventory, policy):
         require(isinstance(data["stages"], list) and len(data["stages"]) == len(STAGES),
                 "Deletion cascade is incomplete")
         last = admission
+        clearances = {}
+        stage_classes = dict(zip(STAGES[1:], ("home", "mongo", "document_objects", "credentials")))
         expected_stages = [before["sandbox_ids"], before["classes"]["home"], before["classes"]["mongo"],
                            before["classes"]["document_objects"], before["classes"]["credentials"]]
         for stage, observation, resources in zip(STAGES, data["stages"], expected_stages):
@@ -80,7 +82,13 @@ def check_deletion(cases, inventory, policy):
             all_audits.add(observation["audit"]["sha256"])
             retried = retried or observation["attempts"] > 1
             last = stage_end
+            if stage in stage_classes:
+                clearances[stage_classes[stage]] = stage_end
         require(between(independent["observed_at"], last, end), "Independent deletion inventory predates settlement")
+        clearances["logs"] = timestamp(independent["observed_at"])
+        for data_class, cleared in clearances.items():
+            retention = policy["data_classes"][data_class]["retention_seconds"]
+            require(cleared - request <= timedelta(seconds=retention), "Live data clearance exceeded approved retention")
         no_residue(data["live_after"], LIVE_CLASSES)
         backup = policy["data_classes"]["backups"]
         fields(data["backup_policy"], before["classes"]["backups"], "Backup copy inventory differs")

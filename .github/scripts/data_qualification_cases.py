@@ -228,6 +228,7 @@ def check_key_recovery(cases, inventory, policy):
                     and row["samples"] == len(identities), "Key recovery scope or scan differs")
             fields(data["records"], identities, "Key recovery omitted a retained record")
             for record in data["records"].values():
-                fields(record, {"valid_read", "invalid_key_refused"}, "Key recovery observation is malformed")
-                require(record["valid_read"] is True and record["invalid_key_refused"] is True,
+                fields(record, {"valid_read", "invalid_key_refused", "wrong_deployment_refused"}, "Key recovery observation is malformed")
+                require(record["valid_read"] is True and record["invalid_key_refused"] is True
+                        and record["wrong_deployment_refused"] is True,
                         "Key recovery readability or refusal failed")

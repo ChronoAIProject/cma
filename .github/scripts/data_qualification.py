@@ -54,10 +54,9 @@ def reviewed_windows(scope):
         start, end = timestamp(window["start"]), timestamp(window["end"])
         require(start < end <= deadline(cutoffs[case]), "Reviewed case window is late or invalid")
         if phase == "frozen_recheck":
-            require(start >= deadline(CUTOFFS[case]) and start >= timestamp(scope["frozen_at"]),
-                    "Frozen recheck predates the initial deadline or freeze")
+            require(start >= deadline(cutoffs[case] - 1) and start >= timestamp(scope["frozen_at"]),
+                    "Frozen recheck precedes its scheduled day or freeze")
     return cutoffs
-
 
 
 class Observations:
@@ -137,7 +136,11 @@ def verify(scope_bytes, expected_scope_hash, index, files):
                 and initial.get("status") == "CONSISTENT" and initial.get("phase") == "initial"
                 and initial.get("mode") == scope["mode"] and isinstance(initial.get("cases"), dict)
                 and set(initial["cases"]) == CASES and hash_value(initial.get("scope_sha256"))
-                and hash_value(initial.get("candidate_sha256")), "Initial qualification report is incomplete")
+                and initial.get("candidate_sha256") == sha256(scope["candidate"]),
+                "Initial qualification report is incomplete or belongs to another candidate")
+        require(initial.get("policy_sha256") == sha256(policy)
+                and initial.get("inherited_inventory_sha256") == sha256({key: inventory[key] for key in ("quota", "consents")}),
+                "Inherited qualification policy or inventory differs")
         require(isinstance(initial.get("run_ids"), list) and all(hash_value(run) for run in initial["run_ids"])
                 and all(type(count) is int and count > 0 for count in initial["cases"].values())
                 and len(initial["run_ids"]) == len(set(initial["run_ids"])) == sum(initial["cases"].values()),
@@ -151,7 +154,8 @@ def verify(scope_bytes, expected_scope_hash, index, files):
     return {"schema": "cma-data-qualification-report-v1", "status": "CONSISTENT",
             "scope": "reviewed_inventory_and_evidence_consistency", "mode": scope["mode"],
             "phase": scope["phase"], "initial_report_sha256": scope["initial_report_sha256"],
-            "run_ids": sorted(cases.seen_runs),
+            "run_ids": sorted(cases.seen_runs), "policy_sha256": sha256(policy),
+            "inherited_inventory_sha256": sha256({key: inventory[key] for key in ("quota", "consents")}),
             "scope_sha256": expected_scope_hash, "candidate_sha256": sha256(scope["candidate"]),
             "source": scope["candidate"]["source"], "cases": cases.results,
             "raw_receipt_count": len(cases.seen_hashes), "observation_sha256": sha256(index)}
