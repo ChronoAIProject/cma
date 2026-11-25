@@ -33,6 +33,8 @@ pub(crate) mod runtime_attachment;
 mod runtime_mapping;
 mod scheduler;
 mod stale_turn_reconciliation;
+#[cfg(test)]
+pub(crate) use stale_turn_reconciliation::assert_partial_does_not_request_stop;
 mod suggestion_worker;
 pub(crate) mod suggestions;
 mod title_budget;

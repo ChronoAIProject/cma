@@ -95,6 +95,37 @@ pub(crate) struct Supervisor {
 }
 
 impl Supervisor {
+    pub(crate) async fn stale_turn_bridge(
+        &self,
+        target: &layer3_adapter::stale_turn::StaleTurnTarget,
+    ) -> std::result::Result<Arc<Bridge>, layer3_adapter::stale_turn::StaleTurnHold> {
+        use layer3_adapter::stale_turn::StaleTurnHold;
+        if self
+            .config
+            .process_env
+            .get(crate::bridge::STALE_TURN_SEAL_FLAG)
+            .map(String::as_str)
+            != Some("1")
+        {
+            return Err(StaleTurnHold::Unsupported);
+        }
+        if !target.is_valid()
+            || target.sandbox_id != self.config.sandbox_id
+            || target.runtime_boot != self.boot_id
+            || target.runtime_generation != self.config.generation
+        {
+            return Err(StaleTurnHold::Unconfirmed);
+        }
+        self.require_credentialed()
+            .await
+            .map_err(|_| StaleTurnHold::Unconfirmed)?;
+        self.bridge(&target.slot.0)
+            .await
+            .ok_or(StaleTurnHold::Unconfirmed)
+    }
+}
+
+impl Supervisor {
     pub(crate) fn desktop_generation(
         &self,
     ) -> Option<

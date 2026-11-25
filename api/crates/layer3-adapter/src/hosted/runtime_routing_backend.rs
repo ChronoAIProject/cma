@@ -57,6 +57,13 @@ impl HostedBackend for RuntimeBackends {
             .capacity_recovery_transport(handle)
     }
 
+    fn stale_turn_producer(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
+        self.for_handle(handle).ok()?.stale_turn_producer(handle)
+    }
+
     async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
         self.for_handle(handle)?.open_desktop(handle).await
     }

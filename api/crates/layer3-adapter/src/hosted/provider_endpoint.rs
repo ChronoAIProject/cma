@@ -190,6 +190,13 @@ impl RuntimeEndpoint {
         self.with_path(&["runtime", "agents", agent_id, "capacity-recovery"], false)
     }
 
+    pub(super) fn stale_turn(&self, agent_id: &str, action: &str) -> crate::Result<Url> {
+        self.with_path(
+            &["runtime", "agents", agent_id, "stale-turn", action],
+            false,
+        )
+    }
+
     pub(super) fn history(&self, agent_id: &str) -> crate::Result<Url> {
         self.with_path(&["runtime", "agents", agent_id, "history"], false)
     }
