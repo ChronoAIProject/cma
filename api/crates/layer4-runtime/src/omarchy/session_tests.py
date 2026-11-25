@@ -84,7 +84,8 @@ esac
         executable(tools / "wayvnc", """#!/bin/sh
 while [ "$#" -gt 1 ]; do
   if [ "$1" = --unix-socket ]; then
-    echo "$2" > "$CMA_FIXTURE_TMP/rfb-listener"
+    echo "$2" > "$CMA_FIXTURE_TMP/rfb-listener.pending"
+    mv "$CMA_FIXTURE_TMP/rfb-listener.pending" "$CMA_FIXTURE_TMP/rfb-listener"
     exec sleep 300
   fi
   shift
@@ -93,14 +94,17 @@ exit 1
 """)
         executable(tools / "vncviewer", """#!/bin/sh
 for destination do :; done
-echo "$destination" > "$CMA_FIXTURE_TMP/viewer-target"
+echo "$destination" > "$CMA_FIXTURE_TMP/viewer-target.pending"
+mv "$CMA_FIXTURE_TMP/viewer-target.pending" "$CMA_FIXTURE_TMP/viewer-target"
 exec sleep 300
 """)
         executable(tools / "websockify", """#!/bin/sh
 test "$2" = --token-plugin=ReadOnlyTokenFile || exit 1
 for arg do
   case "$arg" in
-    --unix-listen=*) echo "${arg#*=}" > "$CMA_FIXTURE_TMP/proxy-started";;
+    --unix-listen=*)
+      echo "${arg#*=}" > "$CMA_FIXTURE_TMP/proxy-started.pending"
+      mv "$CMA_FIXTURE_TMP/proxy-started.pending" "$CMA_FIXTURE_TMP/proxy-started";;
   esac
 done
 exec sleep 300
