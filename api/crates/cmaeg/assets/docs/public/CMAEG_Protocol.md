@@ -842,6 +842,18 @@ level, and these independent states:
 - Optional `pending_operation`: one of `create`, `update`, `delete`,
   `audit_routing`, or `audit_attachments`. Other operation details are withheld.
 
+A valid legacy record can include `retirement` when the service can retire it.
+Send `DELETE /v1/channel-records/{record_id}/management?expected_version=<version>`
+with the version from `retirement.expected_version`. This requires
+`cma-eg:channels:delete` and the same owner authorization as the management read.
+`available` permits a new retirement. `pending` identifies a retained retirement
+that accepts the original expected version. `cleanup_unconfirmed` means a provider
+effect needs reconciliation and a repeat request receives 409. A confirmed
+absent binding satisfies cleanup. Success returns 204 and removes the record
+from inventory. Another attempt against the removed record returns 404 without
+repeating the provider operation. Records with a saved address use ordinary
+channel deletion.
+
 An owned, decoded definition that fails validation returns only
 `{"record_id":"<record>","version":1,"record":{"state":"invalid"}}`.
 Missing records and decoded owner or embedded record-ID mismatches return opaque
@@ -876,6 +888,7 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `POST /v1/channels` | Complete create body; optional idempotency header and reserved record UUID | 201 channel response | 409 reused key with different content; 503 cache capacity |
 | `GET /v1/channel-records/{record_id}` | No body | 200 recovered channel response | 404 absent, unreserved, or other owner |
 | `GET /v1/channel-records/{record_id}/management` | No body | 200 tagged retained-record summary | 400 malformed UUID; 404 absent or other owner; 500 unreadable record; 503 store unavailable |
+| `DELETE /v1/channel-records/{record_id}/management` | Query `expected_version` | 204 legacy channel retired | 400 invalid record or missing version; 404 absent or other owner; 409 stale version or cleanup unconfirmed; 503 store unavailable |
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
 | `GET /v1/channels/{channel_id}/activity` | No body | 200 bounded recent activity snapshot with cursor, retention and truncation | 404 absent or other owner; 503 store unavailable |
 | `GET /v1/channels/{channel_id}/activity/stream` | Optional `Last-Event-ID` or `cursor` | SSE `activity`/`reset` full snapshots; initial snapshot on every connection | 400 invalid cursor; 404 absent or other owner |
@@ -3857,6 +3870,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/channels` | `createChannel` |
 | `GET /v1/channel-records/{record_id}` | `recoverChannel` |
 | `GET /v1/channel-records/{record_id}/management` | `getChannelRecordManagement` |
+| `DELETE /v1/channel-records/{record_id}/management` | `retireLegacyChannelRecord` |
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `GET /v1/channels/{channel_id}/partition` | `inspectChannelPartition` |
