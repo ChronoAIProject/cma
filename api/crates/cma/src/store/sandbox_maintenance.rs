@@ -29,6 +29,7 @@ mod policy_fence;
 mod retained_availability;
 pub(crate) mod retained_transition;
 mod retry;
+mod reviewed_retirement;
 pub(super) mod runtime_activity;
 mod transaction;
 
