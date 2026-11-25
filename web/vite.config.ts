@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { buildIdentity, buildIdentityEvidence } from './build/identity';
 import { replicaRecoveryEnabled, recoveryEvidence } from './build/recovery';
@@ -39,6 +39,10 @@ export default defineConfig(({ command, mode }) => {
       __CHRONO_WEB_REPLICA_RECOVERY_ENABLED__: JSON.stringify(recovery),
     },
     test: {
+      include:
+        mode === 'approval-contract'
+          ? ['src/api-client/tests/external-approval-wire.contract.ts']
+          : configDefaults.include,
       globals: true,
       // Components under test render real DOM and use browser focus behavior.
       environment: 'jsdom',

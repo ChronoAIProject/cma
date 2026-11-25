@@ -56,6 +56,7 @@ use utoipa::OpenApi;
         http::management::permission_catalog,
         http::creation::recover_channel,
         http::record_management::read,
+        http::record_management::retire,
         http::management::get_channel,
         http::partitions::inspect,
         http::partition_resets::reset,

@@ -24,6 +24,7 @@ mod agent_control_store;
 mod agent_control_transaction;
 mod agent_conversation_store;
 mod agent_failure_pacing;
+pub(crate) mod agent_inspection_park;
 mod agent_lifecycle_operations;
 pub(crate) use agent_lifecycle_operations::released::managed_lifecycle_release_lane;
 mod agent_log;

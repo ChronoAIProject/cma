@@ -100,6 +100,38 @@ impl<T: TransportAuthority + ?Sized> Drop for RevokeOnDrop<'_, T> {
 
 tokio::task_local! {
     static AUTHORITY: Arc<dyn TransportAuthority>;
+    static INSPECTION_FAILURE: Box<dyn Fn(InspectionRefusal) + Send + Sync>;
+}
+
+/// Retain the receiver failure from this read even when it cancels the caller.
+pub async fn observe_inspection_failure<F: Future>(
+    observed: impl Fn(InspectionRefusal) + Send + Sync + 'static,
+    read: F,
+) -> F::Output {
+    INSPECTION_FAILURE.scope(Box::new(observed), read).await
+}
+
+/// Evidence from this exact receiver exchange, retained before scope cancellation.
+pub struct InspectionRefusal {
+    pub owner: TransportOwner,
+    pub receiver: OwnershipReceiver,
+    pub failure: OwnershipFailure,
+}
+
+pub(crate) fn record_inspection_refusal(
+    owner: TransportOwner,
+    receiver: OwnershipReceiver,
+    failure: OwnershipFailure,
+) {
+    if failure.reason != OwnershipFailureReason::AuthorityLost {
+        let _ = INSPECTION_FAILURE.try_with(|observed| {
+            observed(InspectionRefusal {
+                owner,
+                receiver,
+                failure,
+            });
+        });
+    }
 }
 
 pub fn current_authority() -> Option<Arc<dyn TransportAuthority>> {

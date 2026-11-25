@@ -49,8 +49,11 @@ jobs:
         name: "Type check"
         run: "npm run typecheck"
       -
-        name: "Tests"
-        run: "npm run test"
+        name: "Tests and critical Agent browser coverage"
+        run: >-
+          npm run test -- --coverage.enabled --coverage.reporter=text-summary
+          --coverage.include=src/auth/context.tsx
+          --coverage.include=src/agent/transport/projection.ts
       -
         name: "Anonymous readiness proxy regressions"
         timeout-minutes: 5
