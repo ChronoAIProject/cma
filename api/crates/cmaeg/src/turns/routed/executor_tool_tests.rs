@@ -10,6 +10,7 @@ use crate::{
     auth::AgentCaller,
     delivery::{durable::receipt_for, intents::DeliveryOutcome},
 };
+use cmaeg_core::channel::ChannelDefinition;
 use std::sync::Arc;
 
 #[tokio::test]
@@ -359,7 +360,8 @@ async fn event_side_message_routed_authority_refuses_waiting_send_after_quaranti
             let mut current = setup.current.channel.lock().unwrap();
             let current = Arc::make_mut(&mut current);
             if change == "provider rebind" {
-                current.definition.provider.binding_id = "replacement-binding".parse().unwrap();
+                let ChannelDefinition { provider, .. } = &mut current.definition;
+                provider.binding_id = "replacement-binding".parse().unwrap();
             } else {
                 current.version += 1;
                 current.definition.secrets.telegram_bot_token =
