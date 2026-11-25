@@ -98,13 +98,14 @@ if [ -z "$skip_src" ] && [ -d "$registry/src" ]; then
     archive_registry
 fi
 
-# Work within the existing artifact budgets. Select complete crate groups in
-# stable priority order. The normal Cargo build handles any omitted group.
+# Work within the existing artifact budgets. The normal Cargo build handles
+# any omitted group, and rustc still decides whether compiler state is usable.
 visited_names=""
 remaining_expanded=$((max_expanded - registry_expanded))
 remaining_compressed=$((max_compressed - registry_compressed))
 remaining_members=$((max_members - registry_members))
 : > "$tmp/candidates"
+mkdir "$tmp/preferred"
 for group in "$target"/release/incremental/cma-* \
     "$target"/release/incremental/cmaeg-* \
     "$target"/release/incremental/cmaeg_*-* \
@@ -125,7 +126,8 @@ for group in "$target"/release/incremental/cma-* \
     for state in "$group"/s-*; do
         [ -d "$state" ] || continue
         case "$state" in *-working) completed=-1; break ;; esac
-        if [ ! -f "$state/work-products.bin" ]; then
+        work_products="$state/work-products.bin"
+        if [ ! -f "$work_products" ]; then
             completed=-1
             break
         fi
@@ -138,7 +140,29 @@ for group in "$target"/release/incremental/cma-* \
     # each member. Exact archive checks remain authoritative for sparse files.
     expanded=$((kib * 1024 + members * 1024 + 10240))
     printf '%s %s %s\n' "release/incremental/$name" "$expanded" "$members" >> "$tmp/candidates"
+    # A dependency graph change gives the same crate a new incremental group.
+    # Prefer its latest completed work products by mtime, for ranking only.
+    preferred="$tmp/preferred/${name%-*}"
+    if [ ! -f "$preferred" ] || [ "$work_products" -nt "$target/$(cat "$preferred")" ]; then
+        printf '%s\n' "${work_products#"$target/"}" > "$preferred"
+    fi
 done
+
+# Give each distinct crate a chance before spending the budget on duplicate
+# generations. Preserve the component priorities and allow older units if
+# there is room left (some packages have more than one valid compiler unit).
+: > "$tmp/primary"
+: > "$tmp/secondary"
+while read -r relative expanded members; do
+    name=${relative##*/}
+    preferred=$(cat "$tmp/preferred/${name%-*}")
+    case "$preferred" in
+        "$relative"/*) candidates="$tmp/primary" ;;
+        *) candidates="$tmp/secondary" ;;
+    esac
+    printf '%s %s %s\n' "$relative" "$expanded" "$members" >> "$candidates"
+done < "$tmp/candidates"
+cat "$tmp/primary" "$tmp/secondary" > "$tmp/candidates"
 
 # Estimate compressed contribution using the previous observed roughly 2:1
 # ratio. Every accepted artifact must still pass the exact compressed bound.
