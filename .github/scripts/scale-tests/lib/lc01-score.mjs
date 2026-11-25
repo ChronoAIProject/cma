@@ -24,10 +24,11 @@ export function distribution(samples) {
 
 function groupSamples(samples, name, values) {
   if (!samples.has(name)) samples.set(name, []);
-  samples.get(name).push(...values);
+  const group = samples.get(name);
+  for (const value of values) group.push(value);
 }
 
-function workload(rows, header, samples, failed) {
+function workload(rows, header, samples, failed, seenAdmissions) {
   const turns = new Map();
   const readSamples = new Map();
   for (const row of rows) {
@@ -61,6 +62,10 @@ function workload(rows, header, samples, failed) {
     if (receipt) {
       check(isHash(receipt.commandHash) && isHash(receipt.responseHash) && isHash(receipt.keyHash),
         'invalid_admission_identity');
+      for (const [field, seen] of Object.entries(seenAdmissions)) {
+        check(!seen.has(receipt[field]), 'admission_identity_reused');
+        seen.add(receipt[field]);
+      }
       admitted.push(receipt);
       counts.admitted += 1;
       if (steady) providerCounts[stratum].admitted += 1;
@@ -149,7 +154,14 @@ function streams(rows, samples, failed) {
   return { churn: states.reduce((total, row) => total + row.churn, 0), eventHashes };
 }
 
-function checkInfrastructure(evidence, failed, blocked) {
+function inventoryMatches(expected, observed) {
+  if (!Array.isArray(expected) || expected.length === 0 || !expected.every(isHash)) return false;
+  const members = new Set(expected);
+  return members.size === expected.length && observed.length === members.size
+    && observed.every((identity) => members.delete(identity));
+}
+
+function checkInfrastructure(evidence, samples, failed) {
   const bounded = (samples, limit, percentile = 1, inclusive = true) => {
     check(positiveSamples(samples), 'infrastructure_samples_missing');
     const sorted = [...samples].sort((a, b) => a - b);
@@ -158,8 +170,14 @@ function checkInfrastructure(evidence, failed, blocked) {
   };
   check(Array.isArray(evidence.am) && evidence.am.length > 0 && isHash(evidence.resourcesHash),
     'resource_evidence_missing');
+  const inventory = evidence.memberInventory;
+  check(inventory?.independent === true && inventory.run === evidence.run && inventory.startUtc === evidence.startUtc
+    && inventory.endUtc === evidence.endUtc && inventory.sourceSha === evidence.sourceSha
+    && inventory.imageDigest === evidence.imageDigest && isHash(inventory.evidenceHash),
+  'resource_inventory_window_mismatch');
+  check(inventoryMatches(inventory.amReplicaHashes, evidence.am.map((row) => row.replicaHash)),
+    'am_replica_inventory_mismatch');
   for (const replica of evidence.am) {
-    check(isHash(replica.replicaHash), 'replica_identity_missing');
     bounded(replica.idleCpu, 0.40);
     bounded(replica.steadyCpu, 0.60, 0.95);
     bounded(replica.burstCpu, 0.75, 0.95);
@@ -169,22 +187,24 @@ function checkInfrastructure(evidence, failed, blocked) {
   const mongo = evidence.mongo;
   check(mongo && Array.isArray(mongo.servers) && mongo.servers.length > 0 && positiveSamples(mongo.atlasHeadroom),
     'mongo_evidence_missing');
+  check(inventoryMatches(inventory.mongoServerHashes, mongo.servers.map((row) => row.serverHash)),
+    'mongo_server_inventory_mismatch');
   failure(Math.min(...mongo.atlasHeadroom) >= 0.30, failed, 'atlas_headroom_below_floor');
   for (const server of mongo.servers) {
-    check(isHash(server.serverHash) && positiveSamples(server.checkoutMs), 'mongo_checkout_evidence_missing');
+    check(positiveSamples(server.checkoutMs), 'mongo_checkout_evidence_missing');
     bounded(server.checkoutMs, 1000, 1, false);
     bounded(server.checkoutMs, 25, 0.95, false);
-    if (server.checkoutMs.length < 1000) {
-      blocked.push(`mongo/checkout/${server.serverHash}`);
-    } else {
+    if (server.checkoutMs.length >= 1000) {
       bounded(server.checkoutMs, 100, 0.99, false);
     }
+    groupSamples(samples, `mongo/checkout/${server.serverHash}`, server.checkoutMs);
     bounded(server.occupancy, 0.70, 0.95);
   }
   check(Array.isArray(evidence.egressPools) && evidence.egressPools.length > 0
     && isHash(evidence.nPlusOneHash), 'placement_evidence_missing');
+  check(inventoryMatches(inventory.egressPoolHashes, evidence.egressPools.map((row) => row.poolHash)),
+    'egress_pool_inventory_mismatch');
   for (const pool of evidence.egressPools) {
-    check(isHash(pool.poolHash), 'egress_pool_identity_missing');
     bounded(pool.cpuWithPending, 0.70);
     bounded(pool.memoryWithPending, 0.70);
     failure(pool.largestNodeLossPlaceable === true, failed, 'n_plus_one_not_placeable');
@@ -198,6 +218,7 @@ export function scoreCapacity(captures) {
   const blocked = [];
   const runs = [];
   const runIds = new Set();
+  const seenAdmissions = { commandHash: new Set(), responseHash: new Set(), keyHash: new Set() };
   let shape;
   for (const { rows, evidence } of captures) {
     const [header] = rows;
@@ -221,14 +242,12 @@ export function scoreCapacity(captures) {
       header.reservation.verifiedK, header.users.map((user) => user.subjectHash)]));
     shape ??= qualifiedShape;
     check(shape === qualifiedShape, 'sample_shape_changed', true);
-    const work = workload(rows, header, samples, failed);
+    const work = workload(rows, header, samples, failed, seenAdmissions);
     const live = streams(rows, samples, failed);
     const oracle = evidence.oracle;
     reconcile(oracle, { missingIsBlocked: false });
     const commandHashes = new Map(work.admitted.map((row) => [row.commandHash, row]));
-    failure(commandHashes.size === work.admitted.length && oracle.commands.length === commandHashes.size
-      && new Set(work.admitted.map((row) => row.responseHash)).size === work.admitted.length,
-    failed, 'duplicate_or_missing_identity');
+    failure(oracle.commands.length === commandHashes.size, failed, 'accepted_identity_count_mismatch');
     for (const row of oracle.commands) {
       const client = commandHashes.get(row.commandHash);
       failure(client?.responseHash === row.responseHash && finite(row.nativeToPublicMs)
@@ -255,7 +274,7 @@ export function scoreCapacity(captures) {
     check(isHash(evidence.cleanupEvidenceHash) && evidence.cleanupComplete === true,
       'fixture_cleanup_evidence_missing');
     failure(complete.unresolvedOwners === 0, failed, 'unresolved_owners');
-    checkInfrastructure(evidence, failed, blocked);
+    checkInfrastructure(evidence, samples, failed);
     runs.push({ run: header.run, startUtc: start.utc, endUtc: complete.utc, candidate: header.candidate,
       users: header.users.length, peakStreams: header.users.length, ...work.counts,
       requests: work.requests, providers: work.providerCounts, streamChurn: live.churn,
@@ -271,6 +290,8 @@ export function scoreCapacity(captures) {
       failure(group.p95 <= 500 && group.p99 <= 2000, failed, 'management_read_latency_exceeded');
     } else if (name.startsWith('terminal/')) {
       failure(group.p99 <= 5000, failed, 'terminal_latency_exceeded');
+    } else if (name.startsWith('mongo/checkout/')) {
+      failure(group.p99 < 100, failed, 'infrastructure_threshold_exceeded');
     } else {
       failure(group.p99 <= 2000, failed, 'ack_or_stream_latency_exceeded');
     }

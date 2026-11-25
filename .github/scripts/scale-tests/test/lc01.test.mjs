@@ -197,11 +197,11 @@ function capture(run = 'example') {
     } else if (kind === 'disconnect') {
       rows.push({ type: 'stream_close', user, cursor: 2, ms: at, reason: 'scheduled' });
     } else if (kind === 'turn') {
-      const commandHash = hash(`command/${user}/${at}`);
-      const responseHash = hash(`response/${user}/${at}`);
+      const commandHash = hash(`${run}/command/${user}/${at}`);
+      const responseHash = hash(`${run}/response/${user}/${at}`);
       const position = { user, at, protocol };
       rows.push({ type: 'offered', ...position }, { type: 'admitted', ...position, headersMs: 10,
-        commandHash, responseHash, keyHash: hash(`key/${user}/${at}`) },
+        commandHash, responseHash, keyHash: hash(`${run}/key/${user}/${at}`) },
       { type: 'terminal', ...position, state: 'completed', responseHash, elapsedMs: 15_000 },
       { type: 'file_verified', ...position, ok: true });
       oracle.push({ commandHash, responseHash, nativeToPublicMs: 100, accepted: true, executions: 1,
@@ -224,6 +224,8 @@ function capture(run = 'example') {
       provider: { quotaEvidenceHash: proof, creditEvidenceHash: proof, latencyEvidenceHash: proof,
         healthyQuota: true, fundedAdmitted },
       faults: [], faultEvidenceHash: proof, cleanupComplete: true, cleanupEvidenceHash: proof, resourcesHash: proof,
+      memberInventory: { run, startUtc: 'start', endUtc: 'end', sourceSha, imageDigest, independent: true,
+        evidenceHash: proof, amReplicaHashes: [proof], mongoServerHashes: [proof], egressPoolHashes: [proof] },
       am: [{ replicaHash: proof, idleCpu: [0.2], steadyCpu: [0.4], burstCpu: [0.5], memory: [0.5], throttle: [0] }],
       mongo: { atlasHeadroom: [0.5, 0.5, 0.5], servers: [{ serverHash: proof, occupancy: [0.3],
         checkoutMs: Array(1000).fill(10) }] },
@@ -288,6 +290,41 @@ test('insufficient Mongo checkout samples do not hide missing measurements or ob
   assert.throws(() => scoreCapacity([sample]), { code: 'infrastructure_samples_missing', blocked: false });
 });
 
+test('rejects an admission already counted under a different run ID', () => {
+  const first = capture('first');
+  const supplemental = capture('supplemental');
+  const original = first.evidence.oracle.commands[0];
+  const repeat = supplemental.evidence.oracle.commands[0];
+  const row = supplemental.rows.find((entry) => entry.type === 'admitted' && entry.commandHash === repeat.commandHash);
+  supplemental.evidence.oracle.acceptedHashes[0] = original.commandHash;
+  repeat.commandHash = original.commandHash;
+  row.commandHash = original.commandHash;
+  assert.equal(scoreCapacity([supplemental]).status, 'BLOCKED');
+  assert.throws(() => scoreCapacity([first, supplemental]), { code: 'admission_identity_reused', blocked: false });
+});
+
+test('pools Mongo checkout latency by server across comparable captures', () => {
+  const first = capture('first');
+  const second = capture('second');
+  first.evidence.mongo.servers[0].checkoutMs = Array(600).fill(10);
+  second.evidence.mongo.servers[0].checkoutMs = Array(600).fill(12);
+  const stratum = `mongo/checkout/${proof}`;
+  const combined = scoreCapacity([first, second]);
+  assert.equal(combined.insufficientSamples.includes(stratum), false);
+  assert.equal(combined.strata[stratum].n, 1200);
+  assert.equal(combined.strata[stratum].max, 12);
+  assert.equal(combined.strata[stratum].p99, 12);
+
+  const other = hash('other server');
+  second.evidence.mongo.servers[0].serverHash = other;
+  second.evidence.memberInventory.mongoServerHashes = [other];
+  const separate = scoreCapacity([first, second]);
+  assert.deepEqual(separate.strata[stratum], { n: 600, max: 10 });
+  assert.deepEqual(separate.strata[`mongo/checkout/${other}`], { n: 600, max: 12 });
+  assert.ok(separate.insufficientSamples.includes(stratum));
+  assert.ok(separate.insufficientSamples.includes(`mongo/checkout/${other}`));
+});
+
 test('exports failed JSON and JUnit for completed runs with unknown telemetry or provider credit', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'cma-lc01-score-'));
   t.after(() => rm(directory, { recursive: true }));
@@ -302,6 +339,12 @@ test('exports failed JSON and JUnit for completed runs with unknown telemetry or
   const fixtures = [
     ['resource_evidence_missing', withoutAM],
     ['funded_provider_evidence_missing', { ...sample.evidence, provider: withoutCredit }],
+    ['am_replica_inventory_mismatch', { ...sample.evidence,
+      memberInventory: { ...sample.evidence.memberInventory, amReplicaHashes: [proof, hash('missing replica')] } }],
+    ['mongo_server_inventory_mismatch', { ...sample.evidence,
+      memberInventory: { ...sample.evidence.memberInventory, mongoServerHashes: [proof, hash('missing server')] } }],
+    ['egress_pool_inventory_mismatch', { ...sample.evidence,
+      memberInventory: { ...sample.evidence.memberInventory, egressPoolHashes: [proof, hash('missing pool')] } }],
   ];
   for (const [code, evidence] of fixtures) {
     const proofFile = join(directory, `${code}.observations.json`);
