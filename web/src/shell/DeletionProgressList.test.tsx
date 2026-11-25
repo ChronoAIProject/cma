@@ -18,7 +18,7 @@ it('keeps accepted and retiring status truthful and each identifier action separ
   const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
   const onViewStatus = vi.fn();
   const view = render(<DeletionProgressList sandboxes={sandboxes} onViewStatus={onViewStatus} />);
-  await user.click(screen.getByText('Deletion progress (2)'));
+  await user.click(screen.getByText('Cleaning up 2 sandboxes'));
   const rows = screen.getAllByRole('listitem');
   expect(within(rows[0]!).getByText('Deletion requested')).toBeVisible();
   expect(within(rows[1]!).getByText('Deleting')).toBeVisible();
@@ -54,7 +54,7 @@ it.each(['denied', 'missing'] as const)(
     });
     const onViewStatus = vi.fn();
     const view = render(<DeletionProgressList sandboxes={sandboxes} onViewStatus={onViewStatus} />);
-    fireEvent.click(screen.getByText('Deletion progress (2)'));
+    fireEvent.click(screen.getByText('Cleaning up 2 sandboxes'));
     fireEvent.click(
       screen.getByRole('button', { name: 'Copy identifier for Readable environment name' }),
     );
@@ -71,4 +71,21 @@ it.each(['denied', 'missing'] as const)(
 it('does not render an empty disclosure', () => {
   const { container } = render(<DeletionProgressList sandboxes={[]} onViewStatus={vi.fn()} />);
   expect(container).toBeEmptyDOMElement();
+});
+
+it('keeps UNKNOWN requests distinct in a mixed footer', async () => {
+  const user = userEvent.setup();
+  render(
+    <DeletionProgressList
+      sandboxes={[
+        sandboxes[0]!,
+        { id: 'sbx_unknown', name: 'Unconfirmed environment', unknown: true },
+      ]}
+      onViewStatus={vi.fn()}
+    />,
+  );
+  await user.click(screen.getByText('2 deletions need checking'));
+  expect(screen.getByText('Deletion not confirmed')).toBeVisible();
+  expect(screen.getByText('Deletion requested')).toBeVisible();
+  expect(screen.queryByText('Deleting')).not.toBeInTheDocument();
 });

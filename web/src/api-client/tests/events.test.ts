@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
+import { proof, receipt } from '../../test/runtimeRecovery';
 import { ProtocolError, type AgentEventKind, type SandboxEventKind } from '../index.js';
 import { agentEventKind } from '../agents/events.js';
 import { sandboxEventKind, sandboxWorkStep } from '../instances/events.js';
@@ -179,10 +180,11 @@ const sandboxEvents = {
   checkpoint_sealed: { type: 'checkpoint_sealed', object_reference: 'checkpoint-1' },
   runtime_recovery_admitted: {
     type: 'runtime_recovery_admitted',
-    previous_status: 'rotating',
-    target_runtime_version: 'runtime-2',
+    previous_status: 'failed',
+    target_runtime_version: 'runtime-next',
+    proof,
   },
-  runtime_recovery_quiesced: { type: 'runtime_recovery_quiesced' },
+  runtime_recovery_quiesced: { type: 'runtime_recovery_quiesced', receipt },
   revived: { type: 'revived' },
   home_restored: {
     type: 'home_restored',
@@ -214,16 +216,7 @@ describe('closed public event projections', () => {
     ).toEqual(agentEvents.approval_requested);
   });
 
-  it('projects recovery milestones without retaining provider evidence', () => {
-    for (const type of ['runtime_recovery_admitted', 'runtime_recovery_quiesced'] as const) {
-      expect(
-        sandboxEventKind({
-          ...sandboxEvents[type],
-          proof: { private_canary: 'synthetic-private-recovery' },
-          receipt: { private_canary: 'synthetic-private-recovery' },
-        }),
-      ).toEqual(sandboxEvents[type]);
-    }
+  it('rejects unknown prior status and incomplete home restoration', () => {
     expect(() =>
       sandboxEventKind({ ...sandboxEvents.runtime_recovery_admitted, previous_status: 'unknown' }),
     ).toThrow(ProtocolError);

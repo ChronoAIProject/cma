@@ -135,6 +135,7 @@ export interface AgentLifecycleOperationEvent {
 
 export interface AgentLifecycleOperationView {
   readonly id: string;
+  readonly accepted_at?: string;
   readonly status: string;
   readonly phase: string;
   readonly agent_id?: string;
@@ -294,12 +295,20 @@ export interface CmaWebClient {
   readAgent(id: string, options?: ReadOptions): Promise<AgentDetail>;
   readAgentEvents(
     id: string,
-    options?: PageOptions<number>,
+    options?: PageOptions<number> & { readonly cache?: 'no-store' },
   ): Promise<ResourcePage<AgentEvent, number>>;
   readonly readRetainedOutput?: (
     id: string,
     options?: import('@cma/client').RetainedOutputOptions,
   ) => Promise<import('@cma/client').RetainedOutputPage>;
+  readonly readAgentReplyPreview?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<import('./replyPreview').ReplyPreview>;
+  readonly readAgentOriginalRequest?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<import('./originalRequest').OriginalRequestRead>;
   readAgentTranscript(
     id: string,
     options?: ReadOptions & {
@@ -352,6 +361,7 @@ export interface CmaWebClient {
   removeWorkspace(id: string, options: CommandOptions): Promise<void>;
   interruptAgent(id: string, options: CommandOptions): Promise<void>;
   stopAgent(id: string, options: CommandOptions): Promise<void>;
+  restartAgent?(id: string, options: CommandOptions): Promise<void>;
   deleteAgent(id: string, options: CommandOptions): Promise<void>;
 }
 

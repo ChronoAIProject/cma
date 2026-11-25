@@ -138,6 +138,7 @@ export const agent = object({
   first_message: optional(firstMessageState),
   failure: optional(failure),
   stop_reason: optional(text),
+  restart_available: optional(boolean),
   created_at: text,
   updated_at: text,
   ready_at: optional(text),

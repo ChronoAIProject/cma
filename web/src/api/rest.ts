@@ -31,6 +31,8 @@ import { agentFilesClient } from './rest/agentFiles';
 import { documentsClient } from './rest/documents';
 import { computerClient } from './rest/computer';
 import { exportRawHistory } from './rest/history';
+import { readReplyPreview } from './rest/replyPreview';
+import { readOriginalRequest } from './rest/originalRequest';
 import { BusinessReadError, readBusinessProblem } from './rest/businessReadProblem';
 
 /** The write succeeded; a failed detail read must not release its command key. */
@@ -231,6 +233,9 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         !value ||
         typeof value !== 'object' ||
         value.id !== operationId ||
+        (value.accepted_at !== undefined &&
+          (typeof value.accepted_at !== 'string' ||
+            !Number.isFinite(Date.parse(value.accepted_at)))) ||
         !['queued', 'running', 'waiting_for_connection', 'succeeded', 'failed'].includes(
           value.status,
         ) ||
@@ -290,6 +295,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       const page = await sdk.agents.events(id, {
         after: options?.cursor,
         signal: options?.signal,
+        ...(options?.cache === undefined ? {} : { cache: options.cache }),
         toolOutput: true,
       });
       return {
@@ -303,6 +309,8 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       };
     },
     readRetainedOutput: (id, options) => sdk.agents.retainedOutput(id, options),
+    readAgentReplyPreview: (id, options) => readReplyPreview(sdk, id, options),
+    readAgentOriginalRequest: (id, options) => readOriginalRequest(sdk, id, options),
     readAgentTranscript: async (id, options) => {
       const value = await sdk.agents.transcript(id, options);
       return {
@@ -433,6 +441,9 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     },
     interruptAgent: (id, options) => sdk.agents.interrupt(id, options),
     stopAgent: (id, options) => sdk.agents.stop(id, {}, options),
+    restartAgent: async (id, options) => {
+      await sdk.agents.restart(id, options);
+    },
     deleteAgent: (id, options) => sdk.agents.delete(id, options),
   };
 }

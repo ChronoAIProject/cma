@@ -5,6 +5,7 @@ import { Button } from '../ui/Button';
 import { IconCloseOutline16 } from '../ui/icons';
 import { StateDot } from '../ui/StateDot';
 import { DesktopFeedback, useDesktopNotice } from './DesktopFeedback';
+import { DesktopLocalTime } from './DesktopLocalTime';
 import { useDesktopConnection } from './useDesktopConnection';
 import type { DesktopPreparationScope } from './desktopPreparation';
 import './DesktopPanel.css';
@@ -157,7 +158,9 @@ export function DesktopPanel({
                         : 'Unavailable'
                       : phase === 'waiting'
                         ? 'Waiting'
-                        : 'Connecting'}
+                        : phase === 'recovering'
+                          ? 'Reconnecting…'
+                          : 'Connecting'}
                 </span>
               </div>
               <p role="status">
@@ -166,7 +169,7 @@ export function DesktopPanel({
                   : phase === 'connecting'
                     ? 'Connecting to your machine…'
                     : phase === 'recovering'
-                      ? error || 'Restoring the desktop display…'
+                      ? `Reconnecting…${error ? ` ${error}` : ''}`
                       : phase === 'loading'
                         ? 'Loading the desktop screen…'
                         : phase === 'error'
@@ -181,6 +184,7 @@ export function DesktopPanel({
               </p>
             </>
           )}
+          {!hidden ? <DesktopLocalTime /> : null}
           {fullScreenError ? <p role="status">{fullScreenError}</p> : null}
         </div>
         <div className="agent-desktop__actions">

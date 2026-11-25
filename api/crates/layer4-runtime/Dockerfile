@@ -245,7 +245,7 @@ ARG DESKTOP_CODEX_NATIVE_SHA256_ARM64=b32ece31af06440da980b733fb8fefdd1f19343959
 ARG DESKTOP_CODEX_LAUNCHER_SHA256=61b0194f3bb6534439c8d26a3ed57d0805f84b884588b761795323eeb92fcf70
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
-ARG CODEX_ACP_SHA256=ddb625f66a5a14d94df3512a525c4a674a359e564602c09085769c8b61e2bca1
+ARG CODEX_ACP_SHA256=11c84d6c37f3b2e15020405a2301df3ed8c16ed2d9b05c3a3a43620bba78a7d4
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.
 ARG NODE_VERSION=24.19.0
@@ -386,6 +386,7 @@ RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma
     && node /tmp/cma-codex-source/deferred_session_metadata.cjs \
     && node /tmp/cma-codex-source/session_open_overlap.cjs \
     && node /tmp/cma-codex-source/prompt_output_identity.cjs \
+    && node /tmp/cma-codex-source/native_bound_dispatch.cjs \
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
     && test -x /usr/local/bin/codex-acp
 
@@ -408,7 +409,7 @@ RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma
     && export CMA_CODEX_TEST_NATIVE_SHA256="${CODEX_NATIVE_SHA256_AMD64}" \
     && if [ "${RUNTIME_DESKTOP}" = "1" ]; then export CMA_CODEX_TEST_NATIVE_SHA256="${DESKTOP_CODEX_NATIVE_SHA256_AMD64}"; fi \
     && node --test /tmp/cma-codex-source/session_open_overlap.test.cjs /tmp/cma-codex-source/native_process_identity.test.cjs /tmp/cma-codex-source/deferred_metadata_runtime.test.cjs /tmp/cma-codex-source/deferred_session_metadata.test.cjs \
-    && node --test /tmp/cma-codex-source/prompt_output_buffer.test.cjs /tmp/cma-codex-source/prompt_output_identity.test.cjs \
+    && node --test /tmp/cma-codex-source/prompt_output_buffer.test.cjs /tmp/cma-codex-source/prompt_output_identity.test.cjs /tmp/cma-codex-source/native_bound_dispatch.test.cjs \
     && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs /tmp/cma-codex-source/endpoint_migration.test.cjs /tmp/cma-codex-source/turn_steering.test.cjs /tmp/cma-codex-source/open_completion.test.cjs /tmp/cma-codex-source/open_completion_native.test.cjs /tmp/cma-codex-source/recovery_rejoin_native.test.cjs \
     && python3 /tmp/cma-codex-source/recovery_test.py \
     && python3 /tmp/cma-codex-source/recovery_desktop_test.py \

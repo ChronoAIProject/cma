@@ -1,4 +1,5 @@
 import { agentStatus, failure, sandboxStatus } from './types.js';
+import { runtimeRecoveryProof, runtimeRecoveryReceipt } from './runtime-recovery.js';
 import {
   array,
   enumeration,
@@ -79,13 +80,14 @@ export const sandboxEventKind = tagged({
     }),
   }),
   checkpoint_sealed: variant('checkpoint_sealed', { object_reference: text }),
-  // Activity is a read projection. Provider proof and quiescence receipts are
-  // intentionally omitted; they must never become client recovery authority.
   runtime_recovery_admitted: variant('runtime_recovery_admitted', {
     previous_status: sandboxStatus,
     target_runtime_version: text,
+    proof: runtimeRecoveryProof,
   }),
-  runtime_recovery_quiesced: variant('runtime_recovery_quiesced', {}),
+  runtime_recovery_quiesced: variant('runtime_recovery_quiesced', {
+    receipt: runtimeRecoveryReceipt,
+  }),
   revived: variant('revived', {}),
   home_restored: variant('home_restored', {
     restore_id: text,

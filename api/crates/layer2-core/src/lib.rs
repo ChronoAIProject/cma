@@ -13,6 +13,7 @@ pub mod admission;
 pub mod agent_ownership;
 pub mod authz;
 pub mod billing_authority;
+pub mod binding_diagnostics;
 pub mod bot_setups;
 pub mod bots;
 pub mod budget;
@@ -40,6 +41,9 @@ pub mod platform_service;
 pub mod pressure;
 pub mod pressure_service;
 pub mod profiles;
+#[cfg(feature = "qualification-hooks")]
+pub mod qualification;
+pub mod released_runtime;
 pub mod resource_access;
 mod retry_schedule;
 pub mod sandbox;

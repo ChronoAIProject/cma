@@ -43,6 +43,7 @@ async fn real_browser_enablement_survives_cancelled_http_observation_without_res
             operation_id: "browser-credential".into(),
             value: RuntimeCredential::new("local-test"),
             custody_generation: Some(1),
+            github_route: None,
         }))
         .unwrap(),
     )

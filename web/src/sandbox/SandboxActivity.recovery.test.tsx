@@ -1,64 +1,108 @@
-import { render, screen, waitFor } from '@testing-library/react';
-import { expect, it } from 'vitest';
+import { act, render, screen } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import { ProtocolError } from '@cma/client';
 import { createRestWebClient } from '../api/rest';
-import { NOW, restTransport } from '../test/rest';
+import { restTransport } from '../test/rest';
+import { conversation, proof, receipt } from '../test/runtimeRecovery';
 import { SandboxActivity } from './SandboxActivity';
 
-const event = (seq: number, kind: Record<string, unknown>) => ({
-  sandbox_id: 'sandbox-1',
-  seq,
-  appended_at: NOW,
+const at = '2026-11-01T00:00:00Z';
+const recovery = [
+  {
+    type: 'runtime_recovery_admitted',
+    previous_status: 'failed',
+    target_runtime_version: 'runtime-next',
+    proof,
+  },
+  { type: 'runtime_recovery_quiesced', receipt },
+  {
+    type: 'work_step_failed',
+    step: { kind: 'run_lifecycle_operation' },
+    failure: { class: 'temporary', detail: 'private failure' },
+  },
+  { type: 'work_step_completed', step: { kind: 'run_lifecycle_operation' } },
+  { type: 'status_changed', from: 'rotating', to: 'active' },
+  { type: 'rotated', runtime_version: 'runtime-next' },
+  {
+    type: 'home_restored',
+    restore_id: 'restore-fixture',
+    backup_id: 'backup-fixture',
+    restored_to: at,
+  },
+];
+const page = recovery.map((kind, index) => ({
+  sandbox_id: 'sbx_1',
+  seq: index + 1,
+  appended_at: at,
   kind,
+}));
+
+afterEach(() => vi.useRealTimers());
+
+it('reads retained recovery evidence without newer reservation fields or a boot identity', async () => {
+  const older = Object.fromEntries(
+    Object.entries(proof).filter(
+      ([key]) => key !== 'reserved_provision' && key !== 'observed_provision_generation',
+    ),
+  );
+  const retained = [
+    { ...page[0], kind: { ...recovery[0], proof: { ...older, boot_id: null, conversations: [] } } },
+    {
+      ...page[1],
+      kind: { ...recovery[1], receipt: { ...receipt, boot_id: null, conversations: [] } },
+    },
+  ];
+  const transport = restTransport();
+  transport.reply(retained);
+  expect(await transport.sdk.sandboxes.events('sbx_1')).toEqual(retained);
 });
 
-it('reads recovered runtime history through the public client after remounting', async () => {
+it('reads the complete recovery history through the real decoder after every remount', async () => {
   const transport = restTransport();
   const client = createRestWebClient(transport.sdk);
-  const history = [
-    event(1, { type: 'status_changed', from: 'active', to: 'rotating' }),
-    event(2, {
-      type: 'runtime_recovery_admitted',
-      previous_status: 'rotating',
-      target_runtime_version: 'runtime-v2',
-      proof: { provider_plan: { private_canary: 'synthetic-private-recovery' } },
-    }),
-    event(3, {
-      type: 'runtime_recovery_quiesced',
-      receipt: { provider_receipt: { private_canary: 'synthetic-private-recovery' } },
-    }),
-    event(4, { type: 'rotated', runtime_version: 'runtime-v2' }),
-    event(5, { type: 'status_changed', from: 'rotating', to: 'active' }),
-  ];
-  for (let mount = 0; mount < 2; mount += 1) {
-    transport.reply(history);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    transport.reply(page);
     transport.reply([]);
-    const view = render(<SandboxActivity client={client} sandboxId="sandbox-1" settled />);
-    await screen.findByText('Sandbox updated');
-    expect(screen.getByText('Sandbox runtime recovery requested')).toBeInTheDocument();
-    expect(screen.getByText('Sandbox runtime recovery ready')).toBeInTheDocument();
-    expect(screen.getByText('Sandbox: Live')).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText('Syncing recorded activity.')).toBeNull());
-    expect(screen.queryByText('No activity recorded yet.')).toBeNull();
-    expect(view.container.textContent).not.toContain('synthetic-private-recovery');
-    expect(transport.fetch.mock.calls.at(-1)?.[0]).toContain('after=5');
+    const view = render(<SandboxActivity client={client} sandboxId="sbx_1" settled />);
+    expect(await screen.findByText('Runtime recovery requested')).toBeVisible();
+    expect(screen.getByText('Runtime recovery prepared')).toBeVisible();
+    expect(screen.getByText('Sandbox operation stage: needs attention')).toBeVisible();
+    expect(screen.getByText('Sandbox updated')).toBeVisible();
+    expect(screen.getByText('Sandbox home restored')).toBeVisible();
+    expect(screen.getAllByRole('listitem')).toHaveLength(7);
+    expect(screen.queryByText('No activity recorded yet.')).not.toBeInTheDocument();
+    expect(view.container).not.toHaveTextContent(
+      /private|runtime-fixture|home-fixture|conversation-fixture/,
+    );
     view.unmount();
   }
-  expect(transport.fetch).toHaveBeenCalledTimes(4);
 });
 
-it('keeps a malformed recovery page unconfirmed without advancing its cursor', async () => {
+it.each([
+  { ...recovery[0], proof: null },
+  { ...recovery[0], proof: { ...proof, runtime_generation: -1 } },
+  { ...recovery[0], proof: { ...proof, provider_plan: 'invalid' } },
+  { ...recovery[0], proof: { ...proof, conversations: [{ ...conversation, history_sha256: 1 }] } },
+  { ...recovery[1], receipt: { ...receipt, runtime_process_absent: 'true' } },
+  { type: 'unknown_recovery_event' },
+])('rejects malformed recovery evidence without accepting a partial history', async (kind) => {
   const transport = restTransport();
+  transport.reply([page[0], { ...page[1], kind }]);
+  await expect(transport.sdk.sandboxes.events('sbx_1')).rejects.toBeInstanceOf(ProtocolError);
+});
+
+it('keeps valid activity visible when a later recovery page is malformed', async () => {
+  vi.useFakeTimers();
+  const transport = restTransport();
+  transport.reply(page);
+  transport.reply([]);
   transport.reply([
-    event(1, {
-      type: 'runtime_recovery_admitted',
-      previous_status: 'rotating',
-      target_runtime_version: 42,
-    }),
+    { ...page[0], seq: 8, kind: { type: 'runtime_recovery_quiesced', receipt: null } },
   ]);
-  render(
-    <SandboxActivity client={createRestWebClient(transport.sdk)} sandboxId="sandbox-1" settled />,
-  );
-  await screen.findByText('Activity updates interrupted. Reconnecting.');
-  expect(screen.queryByText('Sandbox runtime recovery requested')).toBeNull();
-  expect(transport.fetch).toHaveBeenCalledTimes(1);
+  render(<SandboxActivity client={createRestWebClient(transport.sdk)} sandboxId="sbx_1" />);
+  await act(async () => {});
+  expect(screen.getByText('Sandbox updated')).toBeVisible();
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(screen.getByText('Activity updates interrupted. Reconnecting.')).toBeVisible();
+  expect(screen.getAllByRole('listitem')).toHaveLength(7);
 });

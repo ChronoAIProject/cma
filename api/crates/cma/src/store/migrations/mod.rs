@@ -16,9 +16,11 @@ pub(in crate::store) mod home_backup_catalog;
 mod index_inventory;
 mod index_plan;
 mod index_toolkit;
+pub(in crate::store) mod measured_custody;
 pub(in crate::store) mod opening_index;
 mod sandbox_usage_capture;
 mod steps;
+mod turn_policy_index;
 use steps::Step;
 mod authority;
 mod ledger;
@@ -28,6 +30,10 @@ mod tests;
 type Result<T> = std::result::Result<T, &'static str>;
 const DEADLINE: Duration = Duration::from_secs(45);
 const IO: Duration = Duration::from_secs(5);
+
+pub(in crate::store) async fn measured_custody_ready(database: &mongodb::Database) -> Result<bool> {
+    Ok(measured_custody::inspect(database).await?.is_empty())
+}
 
 pub(crate) fn is_command(arguments: &[String]) -> bool {
     if index_toolkit::is_command(arguments) {
@@ -154,7 +160,7 @@ async fn apply_indexes(
     super::sandbox_mongo::require_transaction_topology(database)
         .await
         .map_err(|_| "migration requires a supported replica set or mongos")?;
-    if step == Step::BindingIndexes {
+    if matches!(step, Step::BindingIndexes | Step::MeasuredCustody) {
         step.inspect(database).await?;
     }
     ledger.initialize().await?;

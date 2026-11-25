@@ -107,6 +107,13 @@ async fn apply<F>(
 where
     F: Fn() -> String + Sync,
 {
+    if let Some(fence) = &admission.creation_fence {
+        if store.creation_writer_epoch.as_deref() != Some(fence.epoch.as_str()) {
+            return Err(AdmissionError::Domain(SandboxStoreError::Unavailable(
+                "Sandbox creation epoch is unsupported".into(),
+            )));
+        }
+    }
     let resource_policy = store
         .bindings
         .admit_sandbox(admission, session)
@@ -289,6 +296,19 @@ where
                 AdmissionError::Driver(error)
             }
         })?;
+    if !super::creation_outcomes::publish_sandbox(
+        &database,
+        admission,
+        sandbox.id.as_str(),
+        session,
+    )
+    .await
+    .map_err(AdmissionError::Driver)?
+    {
+        return Err(AdmissionError::Domain(SandboxStoreError::Unavailable(
+            "Sandbox creation evidence fence is no longer held".into(),
+        )));
+    }
     Ok(AdmissionReceipt::Created {
         sandbox,
         event,

@@ -27,13 +27,18 @@ class VersionTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             versions.bump("1.2.3", "other")
 
-    def test_only_one_exact_merged_pr_and_upgrade_label_are_accepted(self):
+    def test_exact_merged_pr_and_unambiguous_upgrade_level(self):
         pr = self.pr("minor")
         request = Mock(side_effect=[[pr], pr])
         self.assertEqual(versions.merged_pr_level(REVISION, request), (42, "minor"))
         self.assertEqual(request.call_args_list[-1].args, ("pulls/42",))
-        for labels in ([], [{"name": "version-upgrade:patch"}, {"name": "version-upgrade:major"}],
-                       [{"name": "version-upgrade:other"}], [None], [{"name": False}]):
+        for labels in ([], [{"name": "train"}]):
+            with self.subTest(labels=labels):
+                self.assertEqual(versions.merged_pr_level(REVISION, Mock(side_effect=[[pr], dict(pr, labels=labels)])),
+                                 (42, "patch"))
+        for labels in ([{"name": "version-upgrade:patch"}, {"name": "version-upgrade:major"}],
+                       [{"name": "version-upgrade:patch"}] * 2,
+                       [{"name": "version-upgrade:other"}], None, [None], [{"name": False}]):
             with self.subTest(labels=labels), self.assertRaises(Refusal):
                 versions.merged_pr_level(REVISION, Mock(side_effect=[[pr], dict(pr, labels=labels)]))
         for changes in ({"merged": False}, {"merge_commit_sha": "b" * 40}, {"base": {"ref": "main"}}, {"number": 41}):

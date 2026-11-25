@@ -826,6 +826,41 @@ Deletion releases the reservation; callers must never reuse a retired record UUI
 or race cleanup against an outstanding create attempt.
 
 
+`GET /v1/channel-records/{record_id}/management` inspects a retained record,
+including a legacy record without creation metadata. It requires the creator
+bearer permission `cma-eg:channels:read` and applies the existing `X-CMAEG-Owner`
+organization authorization. After authorization, `record_id` must be a canonical
+lowercase UUID v4. GET and HEAD return `Cache-Control: no-store` and the protocol
+version header, including errors.
+
+The response contains `record_id`, the current storage `version`, and a tagged
+`record`. A valid definition exposes its name, owner, provider slug and conformance
+level, and these independent states:
+
+- `creation`: `legacy` when creation metadata is absent, otherwise `incomplete`
+  or `complete` according to the retained flag.
+- `address`: `not_recorded` without creation metadata, `unverifiable` when the
+  saved channel ID cannot be verified, or `available` with the original
+  `channel_id` and ordinary `endpoints`. Verification checks the retained key,
+  record identity and configured current or retained record origin. No new ID is
+  issued, and an unverifiable ID is withheld.
+- Optional `pending_operation`: one of `create`, `update`, `delete`,
+  `audit_routing`, or `audit_attachments`. Other operation details are withheld.
+
+An owned, decoded definition that fails validation returns only
+`{"record_id":"<record>","version":1,"record":{"state":"invalid"}}`.
+Missing records and decoded owner or embedded record-ID mismatches return opaque
+404 responses. An unopenable blob or undecodable definition, including a saved
+channel ID rejected during type decoding, returns a sanitized 500. Store failure
+returns 503; malformed path IDs return 400 before a record lookup.
+
+This read does not write channel records, publish index entries, repair bindings,
+contact channel providers or perform cleanup. Existing identity and service-token
+authentication still applies. An available address or complete creation flag does
+not establish current provider readiness or permission to retry or retire a
+channel. The storage version is an observation, not mutation authorization.
+The existing recovery response remains unchanged.
+
 A channel response has this shape (ellipsis denotes the previously supplied
 profile/policy objects, not a literal JSON value):
 
@@ -845,6 +880,7 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels` | Optional `after` opaque cursor; no body | 200 `{items:[...],next_cursor}` with up to 50 owner-scoped channel responses | 401 unauthenticated; 503 record store unavailable |
 | `POST /v1/channels` | Complete create body; optional idempotency header and reserved record UUID | 201 channel response | 409 reused key with different content; 503 cache capacity |
 | `GET /v1/channel-records/{record_id}` | No body | 200 recovered channel response | 404 absent, unreserved, or other owner |
+| `GET /v1/channel-records/{record_id}/management` | No body | 200 tagged retained-record summary | 400 malformed UUID; 404 absent or other owner; 500 unreadable record; 503 store unavailable |
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
 | `GET /v1/channels/{channel_id}/activity` | No body | 200 bounded recent activity snapshot with cursor, retention and truncation | 404 absent or other owner; 503 store unavailable |
 | `GET /v1/channels/{channel_id}/activity/stream` | Optional `Last-Event-ID` or `cursor` | SSE `activity`/`reset` full snapshots; initial snapshot on every connection | 400 invalid cursor; 404 absent or other owner |
@@ -3812,6 +3848,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/channels` | `listChannels` |
 | `POST /v1/channels` | `createChannel` |
 | `GET /v1/channel-records/{record_id}` | `recoverChannel` |
+| `GET /v1/channel-records/{record_id}/management` | `getChannelRecordManagement` |
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `GET /v1/channels/{channel_id}/partition` | `inspectChannelPartition` |

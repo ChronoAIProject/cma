@@ -101,6 +101,7 @@ fn credential() -> RequestFrame {
         operation_id: "credential-1".into(),
         value: RuntimeCredential::new("secret"),
         custody_generation: Some(1),
+        github_route: None,
     })
 }
 
@@ -879,3 +880,6 @@ async fn checkpoint_heartbeat_disconnect_does_not_abort_validation_task() {
         .expect("validation remains owned after response body disconnect")
         .unwrap();
 }
+
+#[path = "link_native_stop_trace_tests.rs"]
+mod native_stop_trace;

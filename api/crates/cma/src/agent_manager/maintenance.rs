@@ -34,6 +34,9 @@ impl AgentManager {
         &self,
         candidates: Vec<Arc<Authority>>,
     ) -> Result<(), OwnershipError> {
+        if self.coordinator.contains_failures() {
+            return self.service_retirements(candidates).await;
+        }
         self.retire_inactive().await?;
         let completed = self
             .contained

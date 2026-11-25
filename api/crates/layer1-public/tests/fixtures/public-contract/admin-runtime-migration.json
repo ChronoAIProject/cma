@@ -1,0 +1,508 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "admin-runtime-migration-accepted-replay",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-migration",
+      "scenario": "admin_runtime_migration_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-migration",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "migration": {
+            "request_key": "contract-migration",
+            "expected_revision": 1,
+            "expected_image": "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "target_image": "registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "origin": {
+              "sandbox_id": "sbx_route",
+              "owner": "foreign-owner",
+              "profile_id": "sbp_test",
+              "profile_revision": 1,
+              "profile_digest": "7a69daed2565c344abbb7dcfe1f2cb0f461f6da482758cf593b0387de9725280",
+              "profile_image": "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "home": {
+                "request": {
+                  "volume_id": "home_contract",
+                  "sandbox_id": "sbx_route",
+                  "policy": {
+                    "mode": "native_vct_full_home_v2",
+                    "storage_class": "standard-rwo",
+                    "capacity_gib": 8
+                  },
+                  "scope": "4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"
+                },
+                "receipt": {
+                  "volume_id": "home_contract",
+                  "request_sha256": "2aefbe7228abade4346a70a540d872411e12a4ee0a9df595e488299e7c773ba6",
+                  "storage_reference": "home-member",
+                  "storage_generation": "pvc-uid",
+                  "native_authority": {
+                    "claim": {
+                      "request": {
+                        "pool": {
+                          "spec": {
+                            "image": {
+                              "uri": "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                              "labels": {
+                                "dev.chrono.cma.runtime-contract": "3",
+                                "dev.chrono.cma.runtime-bootstrap": "1",
+                                "dev.chrono.cma.home-layout": "2"
+                              }
+                            },
+                            "cpu_millis": 1000,
+                            "memory_mib": 2048,
+                            "home": {
+                              "mode": "native_vct_full_home_v2",
+                              "storage_class": "standard-rwo",
+                              "capacity_gib": 8
+                            }
+                          },
+                          "pod_policy": {
+                            "runtime_class": null,
+                            "service_account": "runtime",
+                            "image_pull_secrets": []
+                          },
+                          "name": "pool",
+                          "uid": "pool-uid",
+                          "template_name": "template",
+                          "template_uid": "template-uid",
+                          "config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        },
+                        "home": {
+                          "volume_id": "home_contract",
+                          "sandbox_id": "sbx_route",
+                          "policy": {
+                            "mode": "native_vct_full_home_v2",
+                            "storage_class": "standard-rwo",
+                            "capacity_gib": 8
+                          },
+                          "scope": "4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"
+                        },
+                        "runtime_generation": 1
+                      },
+                      "name": "claim",
+                      "uid": "claim-uid",
+                      "resource_version": "1",
+                      "sandbox_name": "member"
+                    },
+                    "sandbox_uid": "sandbox-uid",
+                    "pvc_uid": "pvc-uid"
+                  }
+                }
+              }
+            }
+          },
+          "authority_id": "contract-authority",
+          "expected_current_revision": 1
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_route",
+          "owner": "foreign-owner",
+          "owner_name": null,
+          "name": "Sandbox sbx_route",
+          "status": "rotating",
+          "profile": {
+            "id": "sbp_test",
+            "revision": 1
+          },
+          "nyxid_services": [],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "result": {
+              "state": "in_progress",
+              "operation_id": "sandbox-lifecycle-v1:sbx_route:2",
+              "started_at": "2026-09-05T00:01:00Z",
+              "result_due_at": "2026-09-05T00:02:30Z",
+              "continuing": true,
+              "actions": ["observe"],
+              "retry_after_seconds": 5
+            },
+            "pause": {
+              "allowed": false,
+              "reason": "not_active"
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            },
+            "operation": {
+              "purpose": "image_rotation",
+              "phase": "checkpoint_verification",
+              "started_at": "2026-09-05T00:01:00Z"
+            }
+          },
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:01:00Z",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "migration_admitted_at": "/updated_at",
+        "migration_result_due_at": "/lifecycle/result/result_due_at"
+      }
+    },
+    {
+      "id": "admin-runtime-migration-repeated-replay",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-migration",
+      "scenario": "admin_runtime_migration_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-migration",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {"migration":{"request_key":"contract-migration","expected_revision":1,"expected_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","target_image":"registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","origin":{"sandbox_id":"sbx_route","owner":"foreign-owner","profile_id":"sbp_test","profile_revision":1,"profile_digest":"7a69daed2565c344abbb7dcfe1f2cb0f461f6da482758cf593b0387de9725280","profile_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","home":{"request":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"receipt":{"volume_id":"home_contract","request_sha256":"2aefbe7228abade4346a70a540d872411e12a4ee0a9df595e488299e7c773ba6","storage_reference":"home-member","storage_generation":"pvc-uid","native_authority":{"claim":{"request":{"pool":{"spec":{"image":{"uri":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labels":{"dev.chrono.cma.runtime-contract":"3","dev.chrono.cma.runtime-bootstrap":"1","dev.chrono.cma.home-layout":"2"}},"cpu_millis":1000,"memory_mib":2048,"home":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8}},"pod_policy":{"runtime_class":null,"service_account":"runtime","image_pull_secrets":[]},"name":"pool","uid":"pool-uid","template_name":"template","template_uid":"template-uid","config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"home":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"runtime_generation":1},"name":"claim","uid":"claim-uid","resource_version":"1","sandbox_name":"member"},"sandbox_uid":"sandbox-uid","pvc_uid":"pvc-uid"}}}}},"authority_id":"contract-authority","expected_current_revision":1}
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_route",
+          "owner": "foreign-owner",
+          "owner_name": null,
+          "name": "Sandbox sbx_route",
+          "status": "rotating",
+          "profile": {
+            "id": "sbp_test",
+            "revision": 1
+          },
+          "nyxid_services": [],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "result": {
+              "state": "in_progress",
+              "operation_id": "sandbox-lifecycle-v1:sbx_route:2",
+              "started_at": "2026-09-05T00:01:00Z",
+              "result_due_at": "2026-09-05T00:02:30Z",
+              "continuing": true,
+              "actions": ["observe"],
+              "retry_after_seconds": 5
+            },
+            "pause": {
+              "allowed": false,
+              "reason": "not_active"
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            },
+            "operation": {
+              "purpose": "image_rotation",
+              "phase": "checkpoint_verification",
+              "started_at": "2026-09-05T00:01:00Z"
+            }
+          },
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:01:00Z",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "migration_admitted_at": "/updated_at",
+        "migration_result_due_at": "/lifecycle/result/result_due_at"
+      }
+    },
+    {
+      "id": "admin-runtime-migration-anonymous",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-migration",
+      "scenario": "admin_runtime_migration_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-migration",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {"migration":{"request_key":"contract-migration","expected_revision":1,"expected_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","target_image":"registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","origin":{"sandbox_id":"sbx_route","owner":"foreign-owner","profile_id":"sbp_test","profile_revision":1,"profile_digest":"7a69daed2565c344abbb7dcfe1f2cb0f461f6da482758cf593b0387de9725280","profile_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","home":{"request":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"receipt":{"volume_id":"home_contract","request_sha256":"2aefbe7228abade4346a70a540d872411e12a4ee0a9df595e488299e7c773ba6","storage_reference":"home-member","storage_generation":"pvc-uid","native_authority":{"claim":{"request":{"pool":{"spec":{"image":{"uri":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labels":{"dev.chrono.cma.runtime-contract":"3","dev.chrono.cma.runtime-bootstrap":"1","dev.chrono.cma.home-layout":"2"}},"cpu_millis":1000,"memory_mib":2048,"home":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8}},"pod_policy":{"runtime_class":null,"service_account":"runtime","image_pull_secrets":[]},"name":"pool","uid":"pool-uid","template_name":"template","template_uid":"template-uid","config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"home":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"runtime_generation":1},"name":"claim","uid":"claim-uid","resource_version":"1","sandbox_name":"member"},"sandbox_uid":"sandbox-uid","pvc_uid":"pvc-uid"}}}}},"authority_id":"contract-authority","expected_current_revision":1}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-migration-ordinary",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-migration",
+      "scenario": "admin_runtime_migration_ordinary",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-migration",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {"migration":{"request_key":"contract-migration","expected_revision":1,"expected_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","target_image":"registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","origin":{"sandbox_id":"sbx_route","owner":"foreign-owner","profile_id":"sbp_test","profile_revision":1,"profile_digest":"7a69daed2565c344abbb7dcfe1f2cb0f461f6da482758cf593b0387de9725280","profile_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","home":{"request":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"receipt":{"volume_id":"home_contract","request_sha256":"2aefbe7228abade4346a70a540d872411e12a4ee0a9df595e488299e7c773ba6","storage_reference":"home-member","storage_generation":"pvc-uid","native_authority":{"claim":{"request":{"pool":{"spec":{"image":{"uri":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labels":{"dev.chrono.cma.runtime-contract":"3","dev.chrono.cma.runtime-bootstrap":"1","dev.chrono.cma.home-layout":"2"}},"cpu_millis":1000,"memory_mib":2048,"home":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8}},"pod_policy":{"runtime_class":null,"service_account":"runtime","image_pull_secrets":[]},"name":"pool","uid":"pool-uid","template_name":"template","template_uid":"template-uid","config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"home":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"runtime_generation":1},"name":"claim","uid":"claim-uid","resource_version":"1","sandbox_name":"member"},"sandbox_uid":"sandbox-uid","pvc_uid":"pvc-uid"}}}}},"authority_id":"contract-authority","expected_current_revision":1}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-migration-wrong-capability",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-migration",
+      "scenario": "admin_runtime_migration_wrong_capability",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-migration",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {"migration":{"request_key":"contract-migration","expected_revision":1,"expected_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","target_image":"registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","origin":{"sandbox_id":"sbx_route","owner":"foreign-owner","profile_id":"sbp_test","profile_revision":1,"profile_digest":"7a69daed2565c344abbb7dcfe1f2cb0f461f6da482758cf593b0387de9725280","profile_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","home":{"request":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"receipt":{"volume_id":"home_contract","request_sha256":"2aefbe7228abade4346a70a540d872411e12a4ee0a9df595e488299e7c773ba6","storage_reference":"home-member","storage_generation":"pvc-uid","native_authority":{"claim":{"request":{"pool":{"spec":{"image":{"uri":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labels":{"dev.chrono.cma.runtime-contract":"3","dev.chrono.cma.runtime-bootstrap":"1","dev.chrono.cma.home-layout":"2"}},"cpu_millis":1000,"memory_mib":2048,"home":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8}},"pod_policy":{"runtime_class":null,"service_account":"runtime","image_pull_secrets":[]},"name":"pool","uid":"pool-uid","template_name":"template","template_uid":"template-uid","config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"home":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"runtime_generation":1},"name":"claim","uid":"claim-uid","resource_version":"1","sandbox_name":"member"},"sandbox_uid":"sandbox-uid","pvc_uid":"pvc-uid"}}}}},"authority_id":"contract-authority","expected_current_revision":1}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-migration-missing",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-migration",
+      "scenario": "admin_runtime_migration_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-migration",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {"migration":{"request_key":"contract-migration","expected_revision":1,"expected_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","target_image":"registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","origin":{"sandbox_id":"sbx_route","owner":"foreign-owner","profile_id":"sbp_test","profile_revision":1,"profile_digest":"7a69daed2565c344abbb7dcfe1f2cb0f461f6da482758cf593b0387de9725280","profile_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","home":{"request":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"receipt":{"volume_id":"home_contract","request_sha256":"2aefbe7228abade4346a70a540d872411e12a4ee0a9df595e488299e7c773ba6","storage_reference":"home-member","storage_generation":"pvc-uid","native_authority":{"claim":{"request":{"pool":{"spec":{"image":{"uri":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labels":{"dev.chrono.cma.runtime-contract":"3","dev.chrono.cma.runtime-bootstrap":"1","dev.chrono.cma.home-layout":"2"}},"cpu_millis":1000,"memory_mib":2048,"home":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8}},"pod_policy":{"runtime_class":null,"service_account":"runtime","image_pull_secrets":[]},"name":"pool","uid":"pool-uid","template_name":"template","template_uid":"template-uid","config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"home":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"runtime_generation":1},"name":"claim","uid":"claim-uid","resource_version":"1","sandbox_name":"member"},"sandbox_uid":"sandbox-uid","pvc_uid":"pvc-uid"}}}}},"authority_id":"contract-authority","expected_current_revision":1}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-migration-unavailable",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-migration",
+      "scenario": "admin_runtime_migration_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-migration",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {"migration":{"request_key":"contract-migration","expected_revision":1,"expected_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","target_image":"registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","origin":{"sandbox_id":"sbx_route","owner":"foreign-owner","profile_id":"sbp_test","profile_revision":1,"profile_digest":"7a69daed2565c344abbb7dcfe1f2cb0f461f6da482758cf593b0387de9725280","profile_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","home":{"request":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"receipt":{"volume_id":"home_contract","request_sha256":"2aefbe7228abade4346a70a540d872411e12a4ee0a9df595e488299e7c773ba6","storage_reference":"home-member","storage_generation":"pvc-uid","native_authority":{"claim":{"request":{"pool":{"spec":{"image":{"uri":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labels":{"dev.chrono.cma.runtime-contract":"3","dev.chrono.cma.runtime-bootstrap":"1","dev.chrono.cma.home-layout":"2"}},"cpu_millis":1000,"memory_mib":2048,"home":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8}},"pod_policy":{"runtime_class":null,"service_account":"runtime","image_pull_secrets":[]},"name":"pool","uid":"pool-uid","template_name":"template","template_uid":"template-uid","config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"home":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"runtime_generation":1},"name":"claim","uid":"claim-uid","resource_version":"1","sandbox_name":"member"},"sandbox_uid":"sandbox-uid","pvc_uid":"pvc-uid"}}}}},"authority_id":"contract-authority","expected_current_revision":1}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-migration-malformed",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-migration",
+      "scenario": "admin_runtime_migration_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-migration",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-resource-request",
+          "title": "invalid resource request",
+          "status": 422,
+          "detail": "The request does not satisfy the resource contract.",
+          "code": "invalid_runtime_migration"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-migration-self-attestation",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-migration",
+      "scenario": "admin_runtime_migration_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-migration",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {"migration":{"request_key":"contract-migration","expected_revision":1,"expected_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","target_image":"registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","origin":{"sandbox_id":"sbx_route","owner":"foreign-owner","profile_id":"sbp_test","profile_revision":1,"profile_digest":"7a69daed2565c344abbb7dcfe1f2cb0f461f6da482758cf593b0387de9725280","profile_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","home":{"request":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"receipt":{"volume_id":"home_contract","request_sha256":"2aefbe7228abade4346a70a540d872411e12a4ee0a9df595e488299e7c773ba6","storage_reference":"home-member","storage_generation":"pvc-uid","native_authority":{"claim":{"request":{"pool":{"spec":{"image":{"uri":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labels":{"dev.chrono.cma.runtime-contract":"3","dev.chrono.cma.runtime-bootstrap":"1","dev.chrono.cma.home-layout":"2"}},"cpu_millis":1000,"memory_mib":2048,"home":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8}},"pod_policy":{"runtime_class":null,"service_account":"runtime","image_pull_secrets":[]},"name":"pool","uid":"pool-uid","template_name":"template","template_uid":"template-uid","config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"home":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"runtime_generation":1},"name":"claim","uid":"claim-uid","resource_version":"1","sandbox_name":"member"},"sandbox_uid":"sandbox-uid","pvc_uid":"pvc-uid"}}}}},"authority_id":"contract-authority","expected_current_revision":1,"clear":true}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-resource-request",
+          "title": "invalid resource request",
+          "status": 422,
+          "detail": "The request does not satisfy the resource contract.",
+          "code": "invalid_runtime_migration"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-migration-stale",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-migration",
+      "scenario": "admin_runtime_migration_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-migration",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {"migration":{"request_key":"contract-migration","expected_revision":1,"expected_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","target_image":"registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","origin":{"sandbox_id":"sbx_route","owner":"foreign-owner","profile_id":"sbp_test","profile_revision":1,"profile_digest":"7a69daed2565c344abbb7dcfe1f2cb0f461f6da482758cf593b0387de9725280","profile_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","home":{"request":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"receipt":{"volume_id":"home_contract","request_sha256":"2aefbe7228abade4346a70a540d872411e12a4ee0a9df595e488299e7c773ba6","storage_reference":"home-member","storage_generation":"pvc-uid","native_authority":{"claim":{"request":{"pool":{"spec":{"image":{"uri":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labels":{"dev.chrono.cma.runtime-contract":"3","dev.chrono.cma.runtime-bootstrap":"1","dev.chrono.cma.home-layout":"2"}},"cpu_millis":1000,"memory_mib":2048,"home":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8}},"pod_policy":{"runtime_class":null,"service_account":"runtime","image_pull_secrets":[]},"name":"pool","uid":"pool-uid","template_name":"template","template_uid":"template-uid","config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"home":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"runtime_generation":1},"name":"claim","uid":"claim-uid","resource_version":"1","sandbox_name":"member"},"sandbox_uid":"sandbox-uid","pvc_uid":"pvc-uid"}}}}},"authority_id":"contract-authority","expected_current_revision":2}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
+          "title": "resource conflict",
+          "status": 409,
+          "detail": "The operation conflicts with current resource state.",
+          "code": "runtime_migration_not_admitted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-migration-default-closed",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-migration",
+      "scenario": "admin_runtime_migration_closed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-migration",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {"migration":{"request_key":"contract-migration","expected_revision":1,"expected_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","target_image":"registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","origin":{"sandbox_id":"sbx_route","owner":"foreign-owner","profile_id":"sbp_test","profile_revision":1,"profile_digest":"7a69daed2565c344abbb7dcfe1f2cb0f461f6da482758cf593b0387de9725280","profile_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","home":{"request":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"receipt":{"volume_id":"home_contract","request_sha256":"2aefbe7228abade4346a70a540d872411e12a4ee0a9df595e488299e7c773ba6","storage_reference":"home-member","storage_generation":"pvc-uid","native_authority":{"claim":{"request":{"pool":{"spec":{"image":{"uri":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labels":{"dev.chrono.cma.runtime-contract":"3","dev.chrono.cma.runtime-bootstrap":"1","dev.chrono.cma.home-layout":"2"}},"cpu_millis":1000,"memory_mib":2048,"home":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8}},"pod_policy":{"runtime_class":null,"service_account":"runtime","image_pull_secrets":[]},"name":"pool","uid":"pool-uid","template_name":"template","template_uid":"template-uid","config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"home":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"runtime_generation":1},"name":"claim","uid":"claim-uid","resource_version":"1","sandbox_name":"member"},"sandbox_uid":"sandbox-uid","pvc_uid":"pvc-uid"}}}}},"authority_id":"contract-authority","expected_current_revision":1}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
+          "title": "resource conflict",
+          "status": 409,
+          "detail": "The operation conflicts with current resource state.",
+          "code": "runtime_migration_not_admitted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-migration-wrong-authority",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-migration",
+      "scenario": "admin_runtime_migration_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-migration",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {"migration":{"request_key":"contract-migration","expected_revision":1,"expected_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","target_image":"registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","origin":{"sandbox_id":"sbx_route","owner":"foreign-owner","profile_id":"sbp_test","profile_revision":1,"profile_digest":"7a69daed2565c344abbb7dcfe1f2cb0f461f6da482758cf593b0387de9725280","profile_image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","home":{"request":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"receipt":{"volume_id":"home_contract","request_sha256":"2aefbe7228abade4346a70a540d872411e12a4ee0a9df595e488299e7c773ba6","storage_reference":"home-member","storage_generation":"pvc-uid","native_authority":{"claim":{"request":{"pool":{"spec":{"image":{"uri":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labels":{"dev.chrono.cma.runtime-contract":"3","dev.chrono.cma.runtime-bootstrap":"1","dev.chrono.cma.home-layout":"2"}},"cpu_millis":1000,"memory_mib":2048,"home":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8}},"pod_policy":{"runtime_class":null,"service_account":"runtime","image_pull_secrets":[]},"name":"pool","uid":"pool-uid","template_name":"template","template_uid":"template-uid","config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"home":{"volume_id":"home_contract","sandbox_id":"sbx_route","policy":{"mode":"native_vct_full_home_v2","storage_class":"standard-rwo","capacity_gib":8},"scope":"4aec8a8687157dc14e4ea343ce2d9febefc40b1498abb04170f231fb401fd47e"},"runtime_generation":1},"name":"claim","uid":"claim-uid","resource_version":"1","sandbox_name":"member"},"sandbox_uid":"sandbox-uid","pvc_uid":"pvc-uid"}}}}},"authority_id":"wrong-authority","expected_current_revision":1}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
+          "title": "resource conflict",
+          "status": 409,
+          "detail": "The operation conflicts with current resource state.",
+          "code": "runtime_migration_not_admitted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

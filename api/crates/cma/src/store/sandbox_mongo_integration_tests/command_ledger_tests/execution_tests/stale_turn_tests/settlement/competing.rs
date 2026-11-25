@@ -5,6 +5,7 @@ use layer3_adapter::{PromptResponse, TurnStopReason};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Race {
     Canonical,
+    Checkpoint,
     Interrupt,
     Successor,
     Oversize,
@@ -21,8 +22,22 @@ pub(super) fn history_rows(race: Option<Race>) -> u64 {
 
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
+async fn stale_turn_partial_seal_loses_to_canonical_and_checkpoint_writers() {
+    for race in [Race::Canonical, Race::Checkpoint] {
+        Box::pin(exercise_settlement(true, None, Some(race), true)).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
 async fn stale_turn_seal_refuses_predecessor_before_fetching_its_payload() {
-    Box::pin(exercise_settlement(true, None, Some(Race::Predecessor))).await;
+    Box::pin(exercise_settlement(
+        true,
+        None,
+        Some(Race::Predecessor),
+        false,
+    ))
+    .await;
 }
 
 #[derive(Clone, Default)]
@@ -132,6 +147,38 @@ impl Competition<'_> {
         if race == Race::Canonical {
             self.complete(&store, &owner, TurnStopReason::EndTurn).await;
         }
+        if race == Race::Checkpoint {
+            let before = self.peer.get_agent(&agent.id).await.unwrap().unwrap();
+            let (ack, _receiver) = tokio::sync::mpsc::channel(1);
+            owner
+                .run(
+                    DurableAgentUpdateRecorder::new(store.clone()).record_update(
+                        &agent.id,
+                        self.proof.checkpoint().runtime_generation,
+                        &mut AgentMessageAssembly::default(),
+                        ConversationUpdate::RuntimeOutput {
+                            receipt: RuntimeOutputReceipt::new(self.source.clone(), ack),
+                            update: None,
+                        },
+                        layer2_core::now_rfc3339(),
+                    ),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            let checkpoint = self
+                .peer
+                .agent_message_checkpoint(&agent.id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(checkpoint.output.as_ref(), Some(&self.source));
+            assert!(checkpoint.matches(&before));
+            assert_eq!(
+                self.peer.get_agent(&agent.id).await.unwrap().unwrap(),
+                before
+            );
+        }
         if race == Race::Interrupt {
             let parent = self.proof.parent();
             let mut command_request = live_request(agent, parent, "stale-turn-interrupt");
@@ -209,6 +256,13 @@ impl Competition<'_> {
             .unwrap()
             .unwrap();
         assert!(!row.contains_key("stale_turn_publication"));
+        if race == Race::Checkpoint {
+            assert_eq!(
+                self.peer.get_command(id).await.unwrap().unwrap().status,
+                AgentResponseStatus::InProgress
+            );
+            return;
+        }
         let after_refusal = self
             .peer
             .agent_log(&agent.id, agent.conversation.last_seq, 100)
@@ -233,7 +287,7 @@ impl Competition<'_> {
                 AgentResponseStatus::Completed,
                 Some(TurnStopReason::EndTurn),
             ),
-            Race::Oversize | Race::Predecessor => unreachable!(),
+            Race::Checkpoint | Race::Oversize | Race::Predecessor => unreachable!(),
         };
         if let Some(stop_reason) = stop_reason {
             assert!(after_refusal.is_empty());
@@ -303,4 +357,51 @@ impl Competition<'_> {
             .await
             .unwrap();
     }
+}
+
+pub(super) async fn settle_with_unknown_commit(
+    client: &Client,
+    application: &str,
+    scan: &StaleTurnStore,
+    proof: &StaleTurnSettlement,
+) {
+    let admin = client.database("admin");
+    let entries = |reply: mongodb::bson::Document| {
+        reply
+            .get_i64("count")
+            .or_else(|_| reply.get_i32("count").map(i64::from))
+            .unwrap()
+    };
+    let before = admin
+        .run_command(doc! {
+            "configureFailPoint":"failCommand", "mode":{"times":5_i32},
+            "data":{"failCommands":["commitTransaction"],"appName":application,
+            "writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired",
+            "errmsg":"injected stale-turn commit ambiguity"}}
+        })
+        .await
+        .unwrap();
+    let result = scan.settle(proof, &mut ProofBudget::default()).await;
+    let after = admin
+        .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
+        .await
+        .unwrap();
+    assert_eq!(entries(after) - entries(before), 5);
+    result.unwrap();
+}
+
+pub(super) async fn budget_turn(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+) -> mongodb::bson::Document {
+    let key = crate::store::budget::turn_key(agent, agent.conversation.active_turn.unwrap());
+    store
+        .model_budget
+        .find_one(doc! {"_id": key})
+        .await
+        .unwrap()
+        .unwrap()
+        .get_document("record")
+        .unwrap()
+        .clone()
 }

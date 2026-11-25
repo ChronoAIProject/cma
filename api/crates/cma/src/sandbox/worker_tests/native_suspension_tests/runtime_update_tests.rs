@@ -52,6 +52,77 @@ async fn update(f: &Fixture, sandbox: &Sandbox, target: &str, now: SystemTime) {
 }
 
 #[tokio::test]
+async fn retained_transition_worker_never_suspends_a_restarted_predecessor() {
+    use layer3_adapter::hosted::HostedBackend;
+
+    let (f, active, mut now) = active().await;
+    let paused = f.pause(&active, &mut now).await;
+    let binding = paused.lifecycle.suspended_runtime.as_deref().unwrap();
+    let request =
+        crate::sandbox::runtime_attachment::retained_runtime_request(&paused, binding, "test")
+            .unwrap();
+    let predecessor = f
+        .adapter(&runtime_image())
+        .retained_startup_policy()
+        .unwrap()
+        .inspect_retained_startup_policy(&request)
+        .await
+        .unwrap();
+    let mut admitted = paused.clone();
+    let receipt = admitted
+        .begin_retained_runtime_transition(
+            layer2_core::sandbox::RetainedRuntimeTransitionRequest {
+                sandbox_id: paused.id.clone(),
+                owner: paused.owner.clone(),
+                expected_revision: paused.revision,
+                grant_id: "retained-restarted-predecessor".into(),
+                policy_revision: 1,
+                target_image: predecessor.image.clone(),
+                target_config_digest: format!("sha256:{}", "c".repeat(64)),
+                journal_recovery: true,
+                predecessor,
+            },
+            &[],
+            rfc3339_at(now),
+        )
+        .unwrap();
+    f.harness
+        .store
+        .save_sandbox(paused.revision, admitted)
+        .await
+        .unwrap();
+
+    let previous = f.backend.request().await;
+    f.backend
+        .resume(&request.handle, &previous, &previous)
+        .await
+        .unwrap();
+    let before = f.backend.calls.snapshot().len();
+    now += Duration::from_secs(6);
+    f.step(&paused.id, now, &runtime_image()).await;
+
+    let calls = f.backend.calls.snapshot();
+    assert!(calls[before..]
+        .iter()
+        .any(|call| call == "inspect-retained-predecessor"));
+    assert!(!calls[before..]
+        .iter()
+        .any(|call| matches!(call.as_str(), "suspend" | "upgrade" | "resume")));
+    assert_eq!(f.backend.snapshot().await.request, previous);
+    let pending = f.harness.stored(&paused.id).await;
+    assert_eq!(
+        pending.admitted_retained_runtime_transition(),
+        Some(&receipt)
+    );
+    assert!(pending.lifecycle.runtime_provision.is_none());
+    assert_eq!(pending.lifecycle.home, paused.lifecycle.home);
+    assert_eq!(
+        pending.lifecycle.suspended_runtime,
+        paused.lifecycle.suspended_runtime
+    );
+}
+
+#[tokio::test]
 async fn runtime_update_worker_reopens_original_conversation_on_same_pvc_after_lost_ack() {
     let (f, active, mut now) = active().await;
     let agent = lifecycle_recovery_tests::prepare_agent(&f.harness, &active, now, 1).await;
