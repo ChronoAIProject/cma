@@ -114,7 +114,7 @@ impl ControlPlaneComposition {
         .with_task_experience(config.task_experience.clone())
         .with_session_guidance(config.features.session_guidance_v4, config.features.session_guidance_v5)
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
-        .with_managed_repository_preflight(config.features.github_repository_preflight);
+        .with_repository_preflight_config(config, broker.clone());
         let lifecycle_drain = inline_lifecycle.drain_handle();
         if let Some(manager) = &agent_manager {
             manager.register_lifecycle(lifecycle_drain.clone())?;

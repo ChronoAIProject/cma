@@ -96,6 +96,7 @@ async fn prepare_recovery_preserves_repository_snapshot_request_and_refuses_chan
     let url = "https://github.com/example/original".to_string();
     let reference = Some("release".to_string());
     original.profile.content.location = crate::profiles::WorkspaceLocation::RepositorySnapshot {
+        connection_id: None,
         url: url.clone(),
         reference: reference.clone(),
     };

@@ -76,13 +76,20 @@ impl Workspace {
             },
             WorkspaceSource::Empty => RuntimeSource::Init,
         };
+        let connection = match &self.profile.content.location {
+            crate::profiles::WorkspaceLocation::RepositorySnapshot { connection_id, .. } => {
+                connection_id.clone()
+            }
+            _ => None,
+        };
         Ok(WorkspaceRequest::with_clone_depth(
             self.operation_id(WorkspaceWorkStep::Prepare),
             self.id.as_str(),
             self.name.clone(),
             source,
             execution.clone_depth,
-        ))
+        )
+        .with_repository_connection(connection))
     }
 
     pub fn validate_prepare_recovery_binding(&self) -> Result<(), SandboxStoreError> {
@@ -183,7 +190,7 @@ impl Workspace {
             return Err(SandboxStoreError::WorkspaceRecoveryConflict);
         }
         let profile_source = match &self.profile.content.location {
-            crate::profiles::WorkspaceLocation::RepositorySnapshot { url, reference } => {
+            crate::profiles::WorkspaceLocation::RepositorySnapshot { url, reference, .. } => {
                 WorkspaceSource::RepositorySnapshot {
                     url: url.clone(),
                     reference: reference.clone(),

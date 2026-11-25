@@ -107,11 +107,9 @@ impl ManagedSandboxCredentials {
         // All safe preparation failures occur before any durable intent. A
         // successor may repeat preparation, but cannot repeat a possible POST.
         let services = sandbox.credential.effective_reaches();
-        let selection = sandbox
-            .credential
-            .service_scope
-            .as_ref()
-            .and_then(|scope| scope.connection.as_ref());
+        let selection = sandbox.credential.selected_connection();
+        let initial = sandbox.credential.selected_repository_connection();
+        let requirement = initial.map(|connection| connection.requirement);
         let (prepared, github_route) = if let Some(selection) = selection {
             if selection.service.as_str() != crate::trigger::GITHUB_SERVICE {
                 return Err(CredentialError::Security(
@@ -121,19 +119,38 @@ impl ManagedSandboxCredentials {
             let broker = self.exact_connections.as_ref().ok_or_else(|| {
                 CredentialError::Unavailable("selected connection issuance is unavailable".into())
             })?;
-            let proof = broker
-                .verify_github_repo_token(&token, &selection.connection_id)
-                .await
-                .map_err(|error| match error {
-                    layer2_core::trigger_domain::ServiceConnectionError::Refused
-                    | layer2_core::trigger_domain::ServiceConnectionError::NotFound => {
-                        CredentialError::ServiceNotGranted(selection.service.clone())
-                    }
-                    _ => CredentialError::Unavailable(
-                        "selected GitHub connection could not be verified".into(),
-                    ),
-                })?;
-            let (prepared, route) = self
+            use crate::trigger::GitHubRepositoryNeed;
+            use layer2_core::sandbox::RepositoryCredentialRequirement;
+            let proof = match requirement {
+                Some(requirement) => {
+                    let need = match requirement {
+                        RepositoryCredentialRequirement::PublicRepositoryWrite => {
+                            GitHubRepositoryNeed::PublicRepositoryWrite
+                        }
+                        RepositoryCredentialRequirement::PrivateRepositoryRead => {
+                            GitHubRepositoryNeed::PrivateRepositoryRead
+                        }
+                    };
+                    broker
+                        .verify_github_token_for(&token, &selection.connection_id, need)
+                        .await
+                }
+                None => {
+                    broker
+                        .verify_github_repo_token(&token, &selection.connection_id)
+                        .await
+                }
+            }
+            .map_err(|error| match error {
+                layer2_core::trigger_domain::ServiceConnectionError::Refused
+                | layer2_core::trigger_domain::ServiceConnectionError::NotFound => {
+                    CredentialError::ServiceNotGranted(selection.service.clone())
+                }
+                _ => CredentialError::Unavailable(
+                    "selected GitHub connection could not be verified".into(),
+                ),
+            })?;
+            let (prepared, mut route) = self
                 .issuer
                 .prepare_github_mint(
                     &operation_id,
@@ -144,6 +161,27 @@ impl ManagedSandboxCredentials {
                 )
                 .await
                 .map_err(classify_issuer)?;
+            if let (Some(requirement), Some(initial)) =
+                (requirement, sandbox.credential.source.initial_connection())
+            {
+                route.repository_scope = Some(layer3_adapter::GithubRepositoryScope {
+                    repository: initial.repository.clone(),
+                    required_scope: match requirement {
+                        RepositoryCredentialRequirement::PublicRepositoryWrite => {
+                            layer3_adapter::GithubRepositoryScopeNeed::PublicRepo
+                        }
+                        RepositoryCredentialRequirement::PrivateRepositoryRead => {
+                            layer3_adapter::GithubRepositoryScopeNeed::Repo
+                        }
+                    },
+                    manage_url: proof.manage_url,
+                });
+                if !route.is_valid() {
+                    return Err(CredentialError::Security(
+                        "GitHub repository scope authority is invalid".into(),
+                    ));
+                }
+            }
             (prepared, Some(route))
         } else {
             let prepared = self
@@ -184,7 +222,7 @@ impl ManagedSandboxCredentials {
             CredentialError::Uncertain
         })?;
         let material = CredentialMaterial {
-            source: Default::default(),
+            source: sandbox.credential.source.clone(),
             github_route,
             sandbox_id: sandbox.id.clone(),
             owner: sandbox.owner.clone(),

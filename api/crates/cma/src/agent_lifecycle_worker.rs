@@ -154,6 +154,7 @@ impl InlineAgentLifecycle {
                 existing_agent_id: record.agent_id,
                 actor: record.input.actor,
                 canary_profiles,
+                repository_access_pin: record.repository_access_pin,
             };
             self.preflight_repository(&caller, &mut input, record.repository_commit.as_deref())
                 .await?;
@@ -191,13 +192,14 @@ impl InlineAgentLifecycle {
             Err(AgentLifecycleProvisioningError::RepositoryAccessRequired {
                 connection_target,
                 reason,
+                repair,
             }) => {
                 self.operations
-                    .wait_for_connection(
+                    .wait_for_repository_access(
                         &lease,
-                        vec![crate::trigger::GITHUB_SERVICE.into()],
                         connection_target,
-                        Some(reason),
+                        reason,
+                        repair.map(|detail| *detail),
                     )
                     .await
             }

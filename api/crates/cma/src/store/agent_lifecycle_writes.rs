@@ -250,6 +250,35 @@ impl MongoAgentLifecycleStore {
         Ok(())
     }
 
+    pub(crate) async fn pin_repository_access(
+        &self,
+        lease: &LifecycleLease,
+        pin: &super::RepositoryAccessPin,
+    ) -> Result<(), StoreError> {
+        let value = mongodb::bson::serialize_to_bson(pin)
+            .map_err(|error| StoreError::Malformed(error.to_string()))?;
+        let mut filter = lease.filter();
+        filter.insert("owner", &pin.owner);
+        filter.insert("sandbox_id", Bson::Null);
+        filter.insert(
+            "repository_access_pin",
+            doc! { "$in": [Bson::Null, value.clone()] },
+        );
+        filter.insert(
+            "repository_commit",
+            doc! { "$in": [Bson::Null, Bson::String(pin.commit.clone())] },
+        );
+        self.write_matching(
+            filter,
+            doc! { "$set": {
+                "repository_access_pin": value,
+                "repository_commit": &pin.commit,
+                "updated_at": DateTime::now(),
+            } },
+        )
+        .await
+    }
+
     pub(crate) async fn mark_agent(
         &self,
         lease: &LifecycleLease,
@@ -283,11 +312,42 @@ impl MongoAgentLifecycleStore {
         target: serde_json::Value,
         repository_access: Option<layer1_public::rest::RepositoryAccessRefusal>,
     ) -> Result<(), StoreError> {
-        let connection = AgentLifecycleConnectionRequired {
-            services,
-            target,
-            repository_access,
-        };
+        self.write_connection_wait(
+            lease,
+            AgentLifecycleConnectionRequired {
+                services,
+                target,
+                repository_access,
+                repository_scope_repair: None,
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn wait_for_repository_access(
+        &self,
+        lease: &LifecycleLease,
+        target: serde_json::Value,
+        reason: layer1_public::rest::RepositoryAccessRefusal,
+        repair: Option<layer1_public::rest::RepositoryScopeRepair>,
+    ) -> Result<(), StoreError> {
+        self.write_connection_wait(
+            lease,
+            AgentLifecycleConnectionRequired {
+                services: vec![crate::trigger::GITHUB_SERVICE.into()],
+                target,
+                repository_access: Some(reason),
+                repository_scope_repair: repair,
+            },
+        )
+        .await
+    }
+
+    async fn write_connection_wait(
+        &self,
+        lease: &LifecycleLease,
+        connection: AgentLifecycleConnectionRequired,
+    ) -> Result<(), StoreError> {
         let value = mongodb::bson::serialize_to_bson(&connection)
             .map_err(|error| StoreError::Malformed(error.to_string()))?;
         self.write(lease, doc! { "$set": { "status": "waiting_for_connection", "connection": value,

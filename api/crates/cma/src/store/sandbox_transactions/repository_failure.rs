@@ -11,7 +11,7 @@ use mongodb::{
 };
 
 use super::*;
-use crate::store::agent_lifecycle_operations::{LifecycleBehavior, LifecycleRecord, COLLECTION};
+use crate::store::agent_lifecycle_operations::{LifecycleRecord, COLLECTION};
 
 pub(super) async fn settle(
     store: &MongoSandboxStore,
@@ -171,7 +171,7 @@ fn same_allocation(
 
 fn original_repository_task(operation: &LifecycleRecord, workspace: &Workspace) -> bool {
     let request = &operation.input.request;
-    if operation.input.behavior != LifecycleBehavior::PromptRepository
+    if !operation.input.behavior.uses_repository_profile()
         || request.sandbox_id.is_some()
         || request.workspace_id.is_some()
         || request.initial_message.is_none()

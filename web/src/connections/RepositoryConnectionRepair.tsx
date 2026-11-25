@@ -1,4 +1,8 @@
 import { useEffect, useState } from 'react';
+import type {
+  RepositoryAccessRefusal,
+  RepositoryScopeRepair,
+} from '../api-client/agents/lifecycle';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import {
@@ -94,27 +98,58 @@ function inventory(value: unknown, owner: string): Inventory | undefined {
 interface Props {
   readonly target: ConnectionTarget;
   readonly owner: string;
+  readonly repository_access?: RepositoryAccessRefusal;
+  readonly repository_scope_repair?: RepositoryScopeRepair;
   readonly pending: boolean;
   readonly onRecheck: () => void;
 }
 
-export function RepositoryConnectionRepair({ target, owner, pending, onRecheck }: Props) {
+const refusalText: Record<RepositoryAccessRefusal, string> = {
+  verification_unavailable: 'GitHub repository access could not be verified',
+  insufficient_scope: 'The selected GitHub connection needs additional permissions',
+  missing_connection: 'Connect GitHub before preparing this repository',
+  repository_unavailable:
+    'The selected GitHub connection cannot access this repository for the requested operation',
+  reference_unavailable: 'The selected GitHub connection cannot read this ref',
+  runtime_unsupported: 'This runtime does not support verified GitHub repository access',
+};
+
+export function RepositoryConnectionRepair({
+  target,
+  owner,
+  repository_access: reason,
+  repository_scope_repair: repair,
+  pending,
+  onRecheck,
+}: Props) {
+  const candidate = repair && connectionUrl(repair.manage_url);
+  const exact =
+    candidate &&
+    /^[a-zA-Z0-9_-]{1,128}$/.test(repair.connection_id) &&
+    candidate === new URL(`/keys/${repair.connection_id}`, candidate).href;
   return (
     <Alert
       tone="warning"
-      title="GitHub repository access could not be verified"
+      title={refusalText[reason ?? 'verification_unavailable']}
       actions={
         <Button size="sm" disabled={pending} onClick={onRecheck}>
           Recheck repository access
         </Button>
       }
     >
-      <p>
-        Your request is saved. The current runtime pauses setup for public and private repositories
-        until CMA can verify the connection the Sandbox will use. A scope change in NyxID alone
-        cannot verify that connection.
-      </p>
-      <GitHubConnectionDetails owner={owner} target={target} />
+      <p>Your request is saved.</p>
+      {reason === 'insufficient_scope' && exact ? (
+        <p>
+          Grant <code>{repair.required_scope}</code> under{' '}
+          <a href={candidate} target="_blank" rel="noreferrer">
+            Manage permissions in NyxID
+          </a>
+          .
+        </p>
+      ) : null}
+      {reason !== 'runtime_unsupported' && !exact ? (
+        <GitHubConnectionDetails owner={owner} target={target} />
+      ) : null}
     </Alert>
   );
 }

@@ -19,6 +19,8 @@ pub enum WorkspaceLocation {
         url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reference: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        connection_id: Option<String>,
     },
     GitRepository {
         url: String,
@@ -35,7 +37,7 @@ impl WorkspaceLocation {
         match self {
             Self::Directory { name } => validate_workspace_name(name),
             Self::GitRepository { url, reference }
-            | Self::RepositorySnapshot { url, reference } => {
+            | Self::RepositorySnapshot { url, reference, .. } => {
                 let parsed = url::Url::parse(url)
                     .map_err(|_| ProfileError::new("invalid_repository", "location.url"))?;
                 if parsed.scheme() != "https"

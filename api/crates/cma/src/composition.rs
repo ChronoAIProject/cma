@@ -164,7 +164,7 @@ impl ControlPlaneComposition {
             config.features.session_guidance_v5,
         )
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
-        .with_managed_repository_preflight(config.features.github_repository_preflight);
+        .with_repository_preflight_config(config, broker.clone());
         let runtime_canary_routes =
             routes::runtime_canaries(config, inline_lifecycle.clone())?.merge(
                 routes::retained_runtime_transitions(config, &stores, adapter.clone())?,
@@ -174,9 +174,8 @@ impl ControlPlaneComposition {
             manager.register_lifecycle(lifecycle_drain.clone())?;
         }
         inline_lifecycle.resume_pending();
-        let projections = projections
-            .with_lifecycle(inline_lifecycle.clone())
-            .with_lifecycle_operations(inline_lifecycle);
+        let projections = projections.with_lifecycle(inline_lifecycle.clone());
+        let projections = projections.with_lifecycle_operations(inline_lifecycle);
         let bindings = bindings::BindingComposition::new(
             &stores,
             layer2_core::sandbox::binding::BindingResources {
