@@ -5,6 +5,16 @@ use super::*;
 async fn ownership_retry_discovery_matches_desktop_and_excludes_scoped_migration() {
     let (client, name, store, agent, _, observed) = fixture("retry_desktop_parent").await;
     assert_eq!(observed.write().await, HintWriteResult::Recorded);
+    // The fixture captured the hint under a live claim. Both discovery
+    // entry points must be able to see the same otherwise eligible Agent.
+    store
+        .agents
+        .update_one(
+            doc! {"_id": agent.id.as_str()},
+            doc! {"$unset": {"record.work.lease": ""}, "$set": {"work_lease_expires_at": Bson::Null}},
+        )
+        .await
+        .unwrap();
     let key = doc! {"_id": agent.sandbox_id.as_str()};
     let now = layer2_core::rfc3339_at(SystemTime::now());
     let runtime = store
