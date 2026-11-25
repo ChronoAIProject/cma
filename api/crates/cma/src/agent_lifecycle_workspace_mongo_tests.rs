@@ -158,7 +158,7 @@ async fn admitted_session_guidance_survives_retry_after_selection_is_disabled() 
                 .unwrap(),
         );
         let service = fixture::facade(store.clone(), profiles, operations.clone())
-            .with_session_guidance_v4(enabled);
+            .with_session_guidance(false, enabled);
         let _slots = service
             .worker_slots
             .clone()
@@ -184,7 +184,7 @@ async fn admitted_session_guidance_survives_retry_after_selection_is_disabled() 
             .unwrap();
         assert_eq!(
             saved.input.managed_agent_instructions.as_deref(),
-            Some(guidance::admission_instructions(true))
+            Some(guidance::admission_instructions(false, true))
         );
         assert_eq!(
             serde_json::to_vec(&saved.input.request).unwrap(),
