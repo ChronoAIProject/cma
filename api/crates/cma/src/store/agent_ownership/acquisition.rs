@@ -34,6 +34,12 @@ impl MongoAgentOwnership {
         instance: &str,
     ) -> Result<Option<OwnershipLease>, OwnershipError> {
         let membership = self.membership().await?;
+        self.ensure_owner_row(id).await?;
+        self.change(Change::Acquire(id, instance, &membership))
+            .await
+    }
+
+    async fn ensure_owner_row(&self, id: &AgentId) -> Result<(), OwnershipError> {
         // Seed once, outside the transaction. Duplicate concurrent inserts do
         // not grant authority. This row and its epoch are never TTL-deleted.
         if let Err(error) = self.owners.update_one(doc! {"_id": id.as_str()}, doc! {
@@ -47,8 +53,33 @@ impl MongoAgentOwnership {
                 return Err(unavailable(error));
             }
         }
-        self.change(Change::Acquire(id, instance, &membership))
+        Ok(())
+    }
+
+    pub(super) async fn reconcile_owner_acquisition(
+        &self,
+        id: &AgentId,
+        instance: &str,
+    ) -> Result<Option<OwnershipToken>, OwnershipError> {
+        self.ensure_owner_row(id).await?;
+        // This majority write conflicts with an outstanding acquisition on
+        // the same row. A read alone may precede that transaction's commit.
+        let row = self
+            .owners
+            .find_one_and_update(
+                doc! {"_id": id.as_str(), "protocol": i64::from(PROTOCOL_VERSION)},
+                doc! {"$inc": {"effect_revision": 1_i64}},
+            )
+            .return_document(ReturnDocument::After)
             .await
+            .map_err(unavailable)?
+            .ok_or(OwnershipError::IncompatibleProtocol)?;
+        super::super::sandbox_mongo::require_version(&row).map_err(invalid)?;
+        if row.get_str("instance_id").ok() == Some(instance) {
+            Ok(Some(owner_from(&row)?.token))
+        } else {
+            Ok(None)
+        }
     }
 
     pub(super) async fn renew_owner(

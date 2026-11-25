@@ -82,9 +82,9 @@ impl Authority {
             WriteOutcome::RenewalRefused(error)
             | WriteOutcome::Uncertain(error)
             | WriteOutcome::NotIssued(error) => Err(error),
-            WriteOutcome::Acquired { .. } => Err(OwnershipError::Invalid(
-                "renewal returned another operation".into(),
-            )),
+            WriteOutcome::Acquired { .. } | WriteOutcome::ReconciledAcquisition(_) => Err(
+                OwnershipError::Invalid("renewal returned another operation".into()),
+            ),
         }
     }
 
@@ -104,9 +104,9 @@ impl Authority {
                 Ok(())
             }
             WriteOutcome::RenewalRefused(error) | WriteOutcome::Uncertain(error) => Err(error),
-            WriteOutcome::Acquired { .. } => Err(OwnershipError::Invalid(
-                "renewal returned another operation".into(),
-            )),
+            WriteOutcome::Acquired { .. } | WriteOutcome::ReconciledAcquisition(_) => Err(
+                OwnershipError::Invalid("renewal returned another operation".into()),
+            ),
         }
     }
 

@@ -11,6 +11,9 @@ use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
 use crate::{fs_durability, git::GitRunner, paths, workspace_source};
 
+mod error_diagnostics;
+use error_diagnostics::{read_hint, ResponseHint};
+
 const MAX_ARCHIVE: usize = 64 * 1024 * 1024;
 const MAX_EXPANDED: u64 = 256 * 1024 * 1024;
 
@@ -35,6 +38,7 @@ fn observe_failure(
     stage: ReadStage,
     http_status: Option<u16>,
     failure: ReadFailure,
+    response_hint: ResponseHint,
 ) {
     let proxy_present = !matches!(failure, ReadFailure::ProxyMissing);
     let stage = match stage {
@@ -56,6 +60,7 @@ fn observe_failure(
         proxy_present,
         error_class,
         operation_ref,
+        response_hint = response_hint.as_str(),
         "Repository preparation read failed"
     );
 }
@@ -71,7 +76,7 @@ fn transport_failure(
     } else {
         ReadFailure::Transport
     };
-    observe_failure(operation_ref, stage, status, failure);
+    observe_failure(operation_ref, stage, status, failure, ResponseHint::Unknown);
     unavailable()
 }
 
@@ -120,6 +125,7 @@ async fn prepare_source(
             ReadStage::ProxySetup,
             None,
             ReadFailure::ProxyMissing,
+            ResponseHint::Unknown,
         );
         RuntimeError::rejected(
             "repository_connection_required",
@@ -268,31 +274,34 @@ async fn fetch(
         .await
         .map_err(|error| transport_failure(operation_ref, stage, None, &error))?;
     let status = response.status().as_u16();
-    if status == 401 || status == 403 {
-        observe_failure(operation_ref, stage, Some(status), ReadFailure::HttpRefused);
-        return Err(RuntimeError::rejected(
-            "repository_connection_required",
-            "GitHub authorization is missing or does not allow this repository",
-        ));
-    }
-    if status == 404 || status == 409 || status == 422 {
-        observe_failure(operation_ref, stage, Some(status), ReadFailure::HttpRefused);
-        return Err(RuntimeError::rejected(
-            missing,
-            match missing {
-                "repository_ref_not_found" => "The requested repository ref could not be found",
-                _ => "The repository is unavailable or inaccessible to the connected account",
-            },
-        ));
-    }
     if !response.status().is_success() {
-        observe_failure(
-            operation_ref,
-            stage,
-            Some(status),
-            ReadFailure::HttpUnavailable,
-        );
-        return Err(unavailable());
+        let (failure, error) = match status {
+            401 | 403 => (
+                ReadFailure::HttpRefused,
+                RuntimeError::rejected(
+                    "repository_connection_required",
+                    "GitHub authorization is missing or does not allow this repository",
+                ),
+            ),
+            404 | 409 | 422 => (
+                ReadFailure::HttpRefused,
+                RuntimeError::rejected(
+                    missing,
+                    match missing {
+                        "repository_ref_not_found" => {
+                            "The requested repository ref could not be found"
+                        }
+                        _ => {
+                            "The repository is unavailable or inaccessible to the connected account"
+                        }
+                    },
+                ),
+            ),
+            _ => (ReadFailure::HttpUnavailable, unavailable()),
+        };
+        let hint = read_hint(response).await;
+        observe_failure(operation_ref, stage, Some(status), failure, hint);
+        return Err(error);
     }
     let mut stream = response.bytes_stream();
     let mut bytes = Vec::new();
