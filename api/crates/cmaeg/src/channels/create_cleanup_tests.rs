@@ -314,6 +314,7 @@ async fn check_maximum_record_retirement(native: bool) {
         "attachments": {"origins": ["https://media.example"]}
     }]);
     value["secrets"]["hmac_secrets"] = json!([["route-key", "attachment-fixture"]]);
+    value["partition"]["key"] = json!("per_event");
     value["profile"]["environment"] = json!({"padding": ""});
     let mut definition: cmaeg_core::channel::ChannelDefinition =
         serde_json::from_value(value).unwrap();

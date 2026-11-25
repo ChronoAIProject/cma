@@ -14,7 +14,7 @@ pub use super::test_turn::{test_consumer, test_turn, TestResult};
 use crate::{
     auth::Creator,
     providers::{BindingRequest, ProviderError, ToolsAdvertisement},
-    records::{RecordError, RecordValue},
+    records::RecordValue,
 };
 use cmaeg_core::{
     channel::{ChannelDefinition, ConformanceLevel},
