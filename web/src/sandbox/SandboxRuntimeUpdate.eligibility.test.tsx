@@ -81,3 +81,37 @@ it.each([
   expect(screen.getByText(title)).toBeVisible();
   expect(screen.queryByText('Managed runtime updates unavailable')).not.toBeInTheDocument();
 });
+
+it('uses the observed older version for the managed Desktop update', () => {
+  view({
+    ...update,
+    imageOrigin: 'managed_desktop',
+    currentVersion: 'registry.example/runtime:older',
+    currentVersionConfirmed: true,
+    state: 'available',
+    updateAvailable: true,
+    canUpdate: true,
+    preservesHome: true,
+    blockedReason: undefined,
+  });
+  expect(screen.getByText('Runtime update available')).toBeVisible();
+  expect(screen.getByText('registry.example/runtime:older')).toBeVisible();
+  expect(screen.getByText('Managed Agent')).toBeVisible();
+});
+
+it.each([null, 'registry.example/runtime:last-seen'])(
+  'keeps missing or stale Desktop observations (%s) distinct from an available update',
+  (currentVersion) => {
+    view({
+      ...update,
+      imageOrigin: 'managed_desktop',
+      currentVersion,
+      currentVersionConfirmed: false,
+      preservesHome: true,
+      blockedReason: undefined,
+    });
+    expect(screen.getByText('Runtime version unconfirmed')).toBeVisible();
+    expect(screen.getByText(currentVersion ?? 'Not reported')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Update runtime' })).not.toBeInTheDocument();
+  },
+);

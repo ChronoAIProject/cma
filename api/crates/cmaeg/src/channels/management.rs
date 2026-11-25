@@ -3,7 +3,7 @@ use super::definition::{
     build_definition, build_update, channel_pointer, validate_create_request,
     validate_update_request, ChannelCreateRequest, ChannelUpdateRequest, SourceRequest,
 };
-pub use super::lifecycle::{delete, rekey};
+pub use super::lifecycle::{delete, delete_legacy, rekey};
 pub use super::state::{
     CreatedChannel, LoadedChannel, ManagementError, ManagementState, RecordedChannel,
 };
