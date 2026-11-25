@@ -5,6 +5,7 @@ import os
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,6 +25,23 @@ BLOB = re.compile("buildkit-blob-1-(" + DIGEST + ")")
 RESULTS_LOOKUP = "/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL"
 MAX_INDEXES = 1000
 MAX_INDEX_BYTES = 1024 * 1024
+
+
+class ProofError(ValueError):
+    """Identify the failed observation without printing remote response content."""
+
+    def __init__(self, phase, cause):
+        self.phase = phase
+        self.cause_type = type(cause).__name__
+        super().__init__(str(cause))
+
+
+@contextmanager
+def observing(phase):
+    try:
+        yield
+    except Exception as error:
+        raise ProofError(phase, error) from error
 
 
 class RejectRedirect(HTTPRedirectHandler):
@@ -142,38 +160,54 @@ def develop_blobs(api):
     return entries
 
 
-def snapshot(api, reader, revision, now):
-    api.require_live_policy(revision)
+def observe(api, reader, revision, now):
+    with observing("develop-before"):
+        api.require_live_policy(revision)
     # The exact index key/version must be unique across all refs. Only blob
     # candidates are scoped to develop.
-    pinned = indexes(entries_with_prefix(api, INDEX_PREFIX))
-    before = develop_blobs(api)
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        reachable = set().union(*pool.map(lambda row: reader(row.key, row.size), pinned.values()))
-    after = develop_blobs(api)
-    if indexes(entries_with_prefix(api, INDEX_PREFIX)) != pinned:
-        raise ValueError("BuildKit indexes changed during inventory")
-    api.require_live_policy(revision)
+    with observing("indexes-before"):
+        pinned = indexes(entries_with_prefix(api, INDEX_PREFIX))
+    with observing("blobs-before"):
+        before = develop_blobs(api)
+    with observing("index-content"):
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            reachable = set().union(*pool.map(lambda row: reader(row.key, row.size), pinned.values()))
+    with observing("blobs-after"):
+        after = develop_blobs(api)
+    with observing("indexes-after"):
+        if indexes(entries_with_prefix(api, INDEX_PREFIX)) != pinned:
+            raise ValueError("BuildKit indexes changed during inventory")
+    with observing("develop-after"):
+        api.require_live_policy(revision)
     cutoff = now - timedelta(hours=24)
-    candidates = [entry for entry in after.values() if entry.version == CACHE_VERSION
-                  and entry.key not in reachable and entry.accessed <= cutoff
-                  and before.get(entry.id) == entry]
+    candidates = sorted((entry for entry in after.values() if entry.version == CACHE_VERSION
+                         and entry.key not in reachable and entry.accessed <= cutoff and entry.created <= cutoff
+                         and before.get(entry.id) == entry), key=lambda entry: (-entry.size, entry.id))
+    return pinned, candidates, sum(entry.size for entry in after.values()), len(reachable)
+
+
+def snapshot(api, reader, revision, now):
+    pinned, candidates, observed_bytes, reachable_count = observe(api, reader, revision, now)
     return {"develop": revision, "observed_at": now.isoformat(), "index_count": len(pinned),
-            "reachable_layer_count": len(reachable),
-            "observed_develop_blob_bytes": sum(entry.size for entry in after.values()),
+            "reachable_layer_count": reachable_count,
+            "observed_develop_blob_bytes": observed_bytes,
             "candidate_bytes": sum(entry.size for entry in candidates),
-            "candidates": [asdict(entry) for entry in sorted(candidates, key=lambda entry: (-entry.size, entry.id))]}
+            "candidates": [asdict(entry) for entry in candidates]}
 
 
-def main(path, env):
+def client(env):
     results_url = env["ACTIONS_RESULTS_URL"].rstrip("/")
     url = urlsplit(results_url)
     if (url.scheme != "https" or url.hostname != "results-receiver.actions.githubusercontent.com"
             or url.username or url.password or url.path or url.query or url.fragment or url.port not in (None, 443)):
         raise ValueError("unexpected Actions Results endpoint")
     api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
-    result = snapshot(api, lambda key, size: read_index(results_url, env["ACTIONS_RUNTIME_TOKEN"], key, size),
-                      env["GITHUB_SHA"], datetime.now(timezone.utc))
+    return api, lambda key, size: read_index(results_url, env["ACTIONS_RUNTIME_TOKEN"], key, size)
+
+
+def main(path, env):
+    api, reader = client(env)
+    result = snapshot(api, reader, env["GITHUB_SHA"], datetime.now(timezone.utc))
     Path(path).write_text(json.dumps(result, default=str) + "\n")
     print(f"BuildKit indexes={result['index_count']} candidate_bytes={result['candidate_bytes']}")
 
@@ -181,6 +215,9 @@ def main(path, env):
 if __name__ == "__main__":
     try:
         main(sys.argv[1], os.environ)
+    except ProofError as error:
+        print(f"BuildKit cache inventory failed at {error.phase} ({error.cause_type})", file=sys.stderr)
+        sys.exit(1)
     except Exception as error:
         print(f"BuildKit cache inventory failed ({type(error).__name__})", file=sys.stderr)
         sys.exit(1)
