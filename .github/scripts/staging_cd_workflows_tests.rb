@@ -12,15 +12,12 @@ class StagingWorkflowTest < Minitest::Test
     YAML.load_file(File.join(ROOT, 'workflows', name + '.yml'))
   end
 
-  def test_planner_reads_controller_outcomes_and_only_the_controller_can_emit_the_proof
+  def test_allocator_reads_controller_outcomes_and_only_the_controller_can_emit_the_proof
     jobs = workflow('staging-cd')['jobs']
-    plan = jobs.fetch('plan')
-    assert_equal 'read', plan.dig('permissions', 'deployments')
-    evidence = plan['steps'].find { |step| step['id'] == 'promotions' }
-    assert_equal 'python3 -B .github/scripts/staging_cd_promotion.py', evidence['run']
-    assert_equal '${{ steps.promotions.outputs.verified }}', plan.dig('outputs', 'controller_proofs')
+    refute jobs.fetch('plan').fetch('permissions').key?('deployments')
+    assert_equal 'read', jobs.fetch('allocate').dig('permissions', 'deployments')
     allocate = jobs['allocate']['steps'].find { |step| step['id'] == 'allocate' }
-    assert_equal '${{ needs.plan.outputs.controller_proofs }}', allocate.dig('env', 'CD_CONTROLLER_PROOFS')
+    assert_equal 'chrono-ai-staging', allocate.dig('env', 'CD_STAGING_ENVIRONMENT')
     steps = workflow('staging-deploy')['jobs']['deploy']['steps']
     writer = steps.index { |step| step['id'] == 'coordinate' }
     proof = steps.index { |step| step['name'] == 'Verified staging receipts ${{ steps.coordinate.outputs.controller_proof }}' }
@@ -788,10 +785,10 @@ class StagingWorkflowTest < Minitest::Test
     end
     assert_equal false, job['steps'].first.dig('with', 'persist-credentials')
     assert_equal ['python3 -B .github/scripts/staging_cd_catch_up.py'], job['steps'].map { |step| step['run'] }.compact
-    # The check judges finals by the same controller outcomes the planner reads.
-    planner = staging.dig('jobs', 'plan', 'steps').find { |step| step['id'] == 'promotions' }
+    # The check judges finals by the same controller outcomes the allocator reads.
+    allocate = staging.dig('jobs', 'allocate', 'steps').find { |step| step['id'] == 'allocate' }
     assert_equal({ 'GH_TOKEN' => '${{ github.token }}',
-                   'CD_STAGING_ENVIRONMENT' => planner.dig('env', 'CD_STAGING_ENVIRONMENT') }, job['steps'].last['env'])
+                   'CD_STAGING_ENVIRONMENT' => allocate.dig('env', 'CD_STAGING_ENVIRONMENT') }, job['steps'].last['env'])
   end
 
   def test_catch_up_reads_the_plan_job_and_its_transient_gate_by_their_exact_names
@@ -880,7 +877,6 @@ class StagingWorkflowTest < Minitest::Test
     select = steps.index { |step| step['id'] == 'plan' }
     gate = steps.index { |step| step['name'] == 'Require a complete release plan' }
     proof = steps.index { |step| step['name'] == 'Require a provable release plan' }
-    promotions = steps.index { |step| step['id'] == 'promotions' }
     assert_operator prepare, :<, restore
     assert_operator restore, :<, select
     assert_operator select, :<, save
@@ -889,7 +885,6 @@ class StagingWorkflowTest < Minitest::Test
     # and a later step's failure cannot discard them.
     assert_operator save, :<, gate
     assert_operator gate, :<, proof
-    assert_operator proof, :<, promotions
     # Exactly one gate fails a stopped plan: the first only for a transient
     # stop, which catch-up may re-run; each names its reason.
     assert_equal "steps.plan.outputs.complete != 'true' && steps.plan.outputs.transient == 'true'", steps[gate]['if']

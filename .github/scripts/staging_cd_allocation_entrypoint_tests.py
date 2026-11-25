@@ -390,19 +390,25 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertEqual((allocation.ALLOCATION_ATTEMPTS, worst), (2, 260))
         self.assertLessEqual(2 * worst, timeout)
 
-    def test_replan_keeps_controller_proof_for_current_final(self):
+    def test_replan_reloads_controller_proof_for_current_final(self):
         head = "a" * 40
         queue = {"head": head, "event_source": head, "changes": []}
         proofs = {"web": {"writer": head, "stamp": "web " + "a" * 64}}
         env = {"GH_TOKEN": "fixture", "GITHUB_RUN_ID": "999", "GITHUB_RUN_ATTEMPT": "1",
-               "CD_CONTROLLER_PROOFS": json.dumps(proofs)}
+               "CD_STAGING_ENVIRONMENT": "staging"}
         first, second = Mock(), Mock()
         first.commit.side_effect = AllocationConflict()
+        seen = []
+
+        def allocate_queue(*args, read_proofs, **kwargs):
+            seen.append(read_proofs())
+            return {"include": []}
+
         with patch.object(allocation, "Reservations", side_effect=[first, second]), \
-                patch.object(allocation, "GitHub"), patch.object(allocation, "allocate_queue",
-                        return_value={"include": []}) as plan:
+                patch.object(allocation, "GitHub"), patch.object(allocation, "allocate_queue", side_effect=allocate_queue), \
+                patch.object(allocation, "available_proofs", side_effect=[{}, proofs]):
             self.assertEqual(allocation.allocate_current(queue, env, Mock(), Mock()), {"include": []})
-        self.assertEqual([call.kwargs["proofs"] for call in plan.call_args_list], [proofs, proofs])
+        self.assertEqual(seen, [{}, proofs])
         for snapshot in (first, second):
             snapshot.load.assert_called_once_with(event_source=head)
             snapshot.commit.assert_called_once_with()

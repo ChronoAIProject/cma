@@ -1,7 +1,5 @@
 """Recover outstanding promotions from the latest serialized staging writers."""
 import collections
-import json
-import os
 import re
 import subprocess
 
@@ -94,7 +92,7 @@ def observation(deployment, request):
 
 def push_scope(name):
     """The components a develop push run's deploy job writes, or None for any other job."""
-    lane = re.fullmatch(r"Promote ([a-z-]+) / Deploy admitted components / Deploy set", name or "")
+    lane = re.fullmatch(r"Promote ([a-z-]+) / Deploy admitted components(?: again)? / Deploy set", name or "")
     if not lane or lane[1] not in TARGETS | {"contract"}:
         return None
     return GROUP if lane[1] == "contract" else {lane[1]}
@@ -162,20 +160,12 @@ def read_snapshot(token, environment, *, seconds=10):
     return snapshot(GitHub(token, runner=io.read_once, retry=io.retry).request, environment)
 
 
-def main():
+def available_proofs(token, environment):
     try:
-        # The evidence read runs before allocation.
-        value = read_snapshot(os.environ["GH_TOKEN"], os.environ["CD_STAGING_ENVIRONMENT"])
+        value = read_snapshot(token, environment)
     except UNAVAILABLE:
         # Missing evidence can add a promotion for an independently qualified
         # final. It never grants a reservation, a version or admission.
-        value = None
         print("Staging controller verification unavailable; final receipts require promotion")
-    evidence = {} if value is None else value.proofs
-    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-        output.write("verified=" + json.dumps(evidence, sort_keys=True) + "\n")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+        return {}
+    return {} if value is None else value.proofs

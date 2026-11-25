@@ -1,15 +1,12 @@
 """An unrelated develop push can promote a final until the controller verifies it."""
 import copy
 import json
-import os
-from pathlib import Path
-import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
 from staging_cd_allocate import allocate_queue
 from staging_cd_common import Refusal
-from staging_cd_promotion import LIMIT, PREFIX, inventory, main, proof, snapshot
+from staging_cd_promotion import LIMIT, PREFIX, available_proofs, inventory, proof, snapshot
 from staging_cd_queue_tests import FIRST, SECOND, THIRD
 from staging_cd_history import DevelopHistory
 from staging_cd_receipts_tests import fixture_receipt, fixture_tag
@@ -46,7 +43,7 @@ class PromotionTests(unittest.TestCase):
         self.api_rows[f"actions/runs/{run_id}/attempts/1"] = run
         return job, run
 
-    def plan(self, *, source=SECOND, event=THIRD, receipt=None, entries=None, pending=()):
+    def plan(self, *, source=SECOND, event=THIRD, receipt=None, entries=None, pending=(), read_tags=None):
         def read(path):
             if path.startswith("deployments?"):
                 return self.rows
@@ -54,13 +51,14 @@ class PromotionTests(unittest.TestCase):
         api, store = Mock(), Mock()
         api.history.return_value = DevelopHistory(THIRD, [THIRD, SECOND, FIRST])
         api.tags.return_value = [fixture_tag(receipt or self.receipt)]
+        api.tags.side_effect = read_tags
         store.list.return_value = list(pending)
         api.request.return_value = {"id": 88, "run_attempt": 1, "event": "push", "head_branch": "develop",
                                     "repository": {"full_name": REPOSITORY}, "status": "in_progress"}
         queue = {"head": THIRD, "event_source": event, "changes": [
             {"source": source, "tree": self.receipt["identity"]["tree"], "deployables": ["cma-web"]}]
             if entries is None else entries}
-        matrix = allocate_queue(queue, api, store, 99, 1, proofs=inventory(read, ENVIRONMENT))
+        matrix = allocate_queue(queue, api, store, 99, 1, read_proofs=lambda: inventory(read, ENVIRONMENT))
         store.insert.assert_not_called()
         if not pending:
             api.request.assert_not_called()
@@ -96,19 +94,28 @@ class PromotionTests(unittest.TestCase):
         del owner["build"]
         self.assertEqual(self.plan(pending=[owner]), [])
 
+    def test_controller_can_finish_while_allocation_reads_publication_inventory(self):
+        job, _ = self.writer(1, stamp=self.stamp, status="in_progress")
+        self.assertEqual(inventory(self.read, ENVIRONMENT), {})
+
+        def read_tags():
+            job["status"] = "completed"
+            return [fixture_tag(self.receipt)]
+
+        self.assertEqual(self.plan(read_tags=read_tags), [])
+
+    def test_automatic_retry_is_scoped_and_can_supply_controller_proof(self):
+        self.writer(1, stamp=self.stamp)
+        self.writer(2, name="Promote eg / Deploy admitted components again / Deploy set", conclusion="failure")
+        self.assertEqual(self.plan(), [])
+        self.writer(3, name="Promote web / Deploy admitted components again / Deploy set", stamp=self.stamp)
+        self.assertEqual(self.plan(), [])
+
     def test_observation_failures_schedule_existing_finals_without_conveying_authority(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "output"
-            env = {"GITHUB_OUTPUT": str(path), "CD_STAGING_ENVIRONMENT": ENVIRONMENT, "GH_TOKEN": "fixture"}
-            for rows in ([], OSError("unavailable")):
-                api = Mock()
-                if isinstance(rows, Exception):
-                    api.request.side_effect = rows
-                else:
-                    api.request.return_value = rows
-                with patch.dict(os.environ, env), patch("staging_cd_promotion.GitHub", return_value=api):
-                    self.assertEqual(main(), 0)
-                self.assertEqual(path.read_text().splitlines()[-1], "verified={}")
+        for result in (None, OSError("unavailable")):
+            with patch("staging_cd_promotion.read_snapshot", return_value=result,
+                       side_effect=result if isinstance(result, Exception) else None):
+                self.assertEqual(available_proofs("fixture", ENVIRONMENT), {})
         self.assertEqual(self.plan()[0]["receipt"], self.receipt)
 
     def test_writer_must_belong_to_current_first_parent_history(self):

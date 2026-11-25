@@ -179,7 +179,7 @@ class Develop:
             proofs = inventory(self.server.request, ENVIRONMENT)
         else:
             proofs = {key: {"writer": self.head, "stamp": self.stamp({key})} for key in verified}
-        matrix = allocate_queue(queue, SnapshotAPI(self.server, store), store, run_id, attempt, proofs=proofs)
+        matrix = allocate_queue(queue, SnapshotAPI(self.server, store), store, run_id, attempt, read_proofs=lambda: proofs or {})
         store.commit()
         self.runs[run_id]["attempts"][-1]["allocate"] = "success"
         tasks = {}
