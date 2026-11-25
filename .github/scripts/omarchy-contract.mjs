@@ -35,6 +35,7 @@ try {
     '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777',
     '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700',
     '--mount', `type=volume,source=${name},target=/home/cma`,
+    ...(expected.CODEX_FORK_CODE_MODE_SHA256_AMD64 ? ['--env', 'CMA_RUNTIME_NATIVE_PACKAGE_PROOF=1'] : []),
     '--env', `CHRONO_SANDBOX_ID=${name}`,
     '--env', 'CHRONO_SANDBOX_REACHES=chrono-llm-public,ornn-api',
     '--env', 'CHRONO_PLATFORM_BASE_URL=http://127.0.0.1:9192', ...mounts, image.Id]);

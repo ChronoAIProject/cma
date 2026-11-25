@@ -12,14 +12,17 @@ import { prepareProbe } from './omarchy-contract-source.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const source = 'https://github.com/ChronoAIProject/cma';
 export const checks = [...legacyChecks, ...bootstrapChecks];
-export const evidenceSchema = 'cma-runtime-image-v2';
+export const evidenceSchema = 'cma-runtime-image-v3';
+const companionPins = { codeModeHost: 'CODEX_FORK_CODE_MODE_SHA256_AMD64', bwrap: 'CODEX_FORK_BWRAP_SHA256_AMD64', rg: 'CODEX_FORK_RG_SHA256_AMD64' };
 const digest = /^sha256:[0-9a-f]{64}$/;
 const revision = /^[0-9a-f]{40}$/;
 const fields = (value, keys) => assert.deepEqual(Object.keys(value).sort(), [...keys].sort());
 
 export function pins(dockerfile) {
   const result = {};
-  for (const name of ['CODEX_VERSION', 'CODEX_ACP_VERSION', 'CODEX_NATIVE_SHA256_AMD64', 'CODEX_LAUNCHER_SHA256', 'CODEX_ACP_SHA256', 'GH_VERSION']) {
+  const names = ['CODEX_VERSION', 'CODEX_ACP_VERSION', 'CODEX_NATIVE_SHA256_AMD64', 'CODEX_LAUNCHER_SHA256', 'CODEX_ACP_SHA256', 'GH_VERSION'];
+  if (/^ARG CODEX_FORK_RELEASE=/m.test(dockerfile)) names.push(...Object.values(companionPins));
+  for (const name of names) {
     const matches = [...dockerfile.matchAll(new RegExp(`^ARG ${name}=([^\\s]+)$`, 'gm'))];
     assert.equal(matches.length, 1);
     result[name] = matches[0][1];
@@ -57,14 +60,25 @@ export function validateImage(image, commit, expectedId) {
   assert.equal(image.Config.Labels['dev.chrono.cma.home-layout'], '2');
 }
 
+function hasCompanionPins(expected) {
+  return Object.values(companionPins).every(pin => Object.hasOwn(expected, pin));
+}
+
 function validateProbeChecks(proof, expected, requiredChecks, requireToolVersions = true) {
   fields(proof, ['checks', 'artifacts']);
   assert.deepEqual(proof.checks, requiredChecks);
   fields(proof.artifacts, ['runtime', 'launcher', 'native', 'acp', 'codexVersion', 'acpVersion', 'gh', 'ghVersion',
-    ...(requireToolVersions ? ['psVersion', 'jqVersion'] : [])]);
+    ...(requireToolVersions ? ['psVersion', 'jqVersion'] : []),
+    ...(hasCompanionPins(expected) ? Object.keys(companionPins) : [])]);
   assert.match(proof.artifacts.runtime, /^[0-9a-f]{64}$/);
   assert.equal(proof.artifacts.launcher, expected.CODEX_LAUNCHER_SHA256);
   assert.equal(proof.artifacts.native, expected.CODEX_NATIVE_SHA256_AMD64);
+  if (hasCompanionPins(expected)) {
+    for (const [name, pin] of Object.entries(companionPins)) {
+      assert.match(expected[pin], /^[a-f0-9]{64}$/);
+      assert.equal(proof.artifacts[name], expected[pin]);
+    }
+  }
   assert.equal(proof.artifacts.acp, expected.CODEX_ACP_SHA256);
   assert.equal(proof.artifacts.codexVersion, `codex-cli ${expected.CODEX_VERSION}`);
   assert.equal(proof.artifacts.acpVersion, expected.CODEX_ACP_VERSION);
@@ -102,9 +116,15 @@ export function validateEvidence(value, commit, expectedId, expected, sourceRefe
   // emit v2 and still require both tools; unknown profiles never fall back.
   switch (value.schema) {
     case 'cma-runtime-image-v1':
+      assert.equal(hasCompanionPins(expected), false);
       validateProbeChecks(value.proof, expected, checks, false);
       break;
+    case 'cma-runtime-image-v2':
+      assert.equal(hasCompanionPins(expected), false);
+      validateProbe(value.proof, expected);
+      break;
     case evidenceSchema:
+      assert.equal(hasCompanionPins(expected), true, "unsupported runtime image evidence schema for this source");
       validateProbe(value.proof, expected);
       break;
     default:
@@ -132,7 +152,7 @@ export function campaign(imageRef, commit, output, command = docker, profile = p
   assert.ok(resolve(output) === output && !lstatSync(dirname(output)).isSymbolicLink());
   const expected = profilePins(readFileSync(process.env.CMA_RUNTIME_EVIDENCE_DOCKERFILE || resolve(root, 'api/crates/layer4-runtime/Dockerfile'), 'utf8'), profile);
   const sourceReference = imageRef.includes('@') ? imageRef : null;
-  const evidence = { schema: evidenceSchema, scope: 'local-contract-3-no-provider-or-model', commit, image: null, sourceReference, result: 'inconclusive', cleanup: null, proof: null };
+  const evidence = { schema: hasCompanionPins(expected) ? evidenceSchema : 'cma-runtime-image-v2', scope: 'local-contract-3-no-provider-or-model', commit, image: null, sourceReference, result: 'inconclusive', cleanup: null, proof: null };
   writeFileSync(output, `${JSON.stringify(evidence)}\n`, { mode: 0o600, flag: 'wx' });
   const identity = process.env.CMA_RUNTIME_EVIDENCE_ID || `cma-runtime-ci-${randomUUID()}`;
   assert.match(identity, /^cma-runtime-ci-[0-9a-f-]{36}$/);
@@ -159,7 +179,7 @@ export function campaign(imageRef, commit, output, command = docker, profile = p
     stage = 'volume-create';
     command(['volume', 'create', '--label', label, identity]);
     stage = 'container-create';
-    command(['create', '--name', identity, '--label', label, '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges=true', '--pids-limit', '128', '--memory', '1g', '--cpus', '2', '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777', '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700', '--mount', `type=volume,source=${identity},target=/home/cma`, ...mount(prepared ?? join(scripts, 'runtime-image-probe.mjs'), 'runtime-image-probe.mjs'), ...mount(join(scripts, 'runtime-github-probe.mjs'), 'runtime-github-probe.mjs'), ...mount(join(scripts, 'runtime-bootstrap-probe.mjs'), 'runtime-bootstrap-probe.mjs'), ...(omarchy ? ['omarchy-codex-aliases.mjs', 'omarchy-keyring-probe.py', 'omarchy-chromium-config-probe.py'].flatMap((name) => mount(join(scripts, name), name)) : []), '--env', `CHRONO_SANDBOX_ID=${identity}`, '--env', 'CHRONO_SANDBOX_REACHES=chrono-llm-public,ornn-api', '--env', 'CHRONO_PLATFORM_BASE_URL=http://127.0.0.1:9192', image.Id]);
+    command(['create', '--name', identity, '--label', label, '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges=true', '--pids-limit', '128', '--memory', '1g', '--cpus', '2', '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777', '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700', '--mount', `type=volume,source=${identity},target=/home/cma`, ...mount(prepared ?? join(scripts, 'runtime-image-probe.mjs'), 'runtime-image-probe.mjs'), ...mount(join(scripts, 'runtime-github-probe.mjs'), 'runtime-github-probe.mjs'), ...mount(join(scripts, 'runtime-bootstrap-probe.mjs'), 'runtime-bootstrap-probe.mjs'), ...(omarchy ? ['omarchy-codex-aliases.mjs', 'omarchy-keyring-probe.py', 'omarchy-chromium-config-probe.py'].flatMap((name) => mount(join(scripts, name), name)) : []), '--env', `CHRONO_SANDBOX_ID=${identity}`, '--env', 'CHRONO_SANDBOX_REACHES=chrono-llm-public,ornn-api', '--env', 'CHRONO_PLATFORM_BASE_URL=http://127.0.0.1:9192', ...(hasCompanionPins(expected) ? ['--env', 'CMA_RUNTIME_NATIVE_PACKAGE_PROOF=1'] : []), image.Id]);
     stage = 'container-start';
     command(['start', identity]);
     stage = 'probe';

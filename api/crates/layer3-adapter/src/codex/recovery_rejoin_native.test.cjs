@@ -11,7 +11,7 @@ const { bridgePath } = require("./persist_conversations.cjs");
 const { stop } = require("./native_tools_fixture.cjs");
 const { withoutOpenCompletion, sourceSha256 } = require("./open_completion.cjs");
 
-function rpc(program, binary, directory, home) {
+function rpc(program, binary, directory, home, observe = () => {}) {
   const child = spawn(process.execPath, [program], {
     cwd: directory, detached: true, stdio: ["pipe", "pipe", "pipe"],
     env: { PATH: process.env.PATH, CODEX_HOME: home, CODEX_PATH: binary },
@@ -21,6 +21,7 @@ function rpc(program, binary, directory, home) {
   child.stderr.resume();
   lines.on("line", line => {
     const value = JSON.parse(line);
+    observe(value);
     pending.get(value.id)?.(value);
   });
   let id = 0;
@@ -41,7 +42,7 @@ function rpc(program, binary, directory, home) {
 }
 
 async function fixture() {
-  const state = { gate: null, entered: null, deny: false, modelCalls: 0, error: null };
+  const state = { gate: null, entered: null, deny: false, modelCalls: 0, error: null, message: "Retained thread ready." };
   const server = createServer(async (request, response) => {
     try {
       if (request.method !== "POST") { response.writeHead(405).end(); return; }
@@ -66,13 +67,17 @@ async function fixture() {
       assert.equal(request.url, "/v1/responses");
       const id = "resp_rejoin_" + ++state.modelCalls;
       const item = { id: "msg_rejoin_" + state.modelCalls, type: "message", role: "assistant",
-        status: "completed", content: [{ type: "output_text", text: "Retained thread ready.",
+        status: "completed", content: [{ type: "output_text", text: state.message,
           annotations: [] }] };
       response.writeHead(200, { "content-type": "text/event-stream" });
       const send = event => response.write("data: " + JSON.stringify(event) + "\n\n");
       send({ type: "response.created", response: { id, status: "in_progress", output: [] } });
       send({ type: "response.output_item.added", output_index: 0,
-        item: { ...item, status: "in_progress" } });
+        item: { ...item, status: "in_progress", content: [] } });
+      send({ type: "response.content_part.added", output_index: 0, content_index: 0,
+        part: { type: "output_text", text: "", annotations: [] } });
+      send({ type: "response.output_text.delta", output_index: 0, content_index: 0,
+        item_id: item.id, delta: state.message });
       send({ type: "response.output_item.done", output_index: 0, item });
       send({ type: "response.completed", response: { id, status: "completed", output: [item],
         usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } });
@@ -155,6 +160,77 @@ test("retained load permits concurrent initialize and rejects prompts until inst
     assert.equal(f.state.modelCalls, 2, "explicit reload recovers the same retained thread");
   } finally {
     release(); await bridge?.close(); await f.close();
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("the upgraded producer reopens 0.147.0 history and the older producer can reopen it again", {
+  timeout: 90000,
+  skip: !process.env.CMA_CODEX_TEST_LEGACY_BINARY,
+}, async () => {
+  const previous = process.env.CMA_CODEX_TEST_LEGACY_BINARY;
+  const candidate = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
+  const program = process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath;
+  assert.equal(execFileSync(previous, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
+  assert.equal(execFileSync(candidate, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.165.0");
+  const directory = mkdtempSync(join(tmpdir(), "cma-provider-history-"));
+  const agentHome = join(directory, "agent-home");
+  mkdirSync(agentHome);
+  const f = await fixture();
+  const observed = [];
+  let bridge;
+  try {
+    writeFileSync(join(agentHome, "config.toml"), [
+      'model="gpt-6"', 'model_provider="rejoin"', 'approval_policy="never"',
+      '[model_providers.rejoin]', 'name="Offline upgrade fixture"',
+      'base_url="' + f.origin + '/v1"', 'wire_api="responses"', 'requires_openai_auth=false',
+    ].join("\n"));
+    const params = { cwd: directory, mcpServers: [] };
+    const call = async (method, request) => {
+      const frame = await bridge.frame(method, request);
+      assert.equal(frame.error, undefined, method + " refused");
+      return frame.result;
+    };
+    const start = async binary => {
+      if (bridge) await bridge.close();
+      observed.length = 0;
+      bridge = rpc(program, binary, directory, agentHome, value => observed.push(value));
+      await call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+    };
+    const hasMessage = text => observed.some(value =>
+      value.method === "session/update" && value.params.update?.content?.text === text);
+    const prompt = (sessionId, text) => call("session/prompt", {
+      sessionId, prompt: [{ type: "text", text }],
+    });
+    await start(previous);
+    const { sessionId } = await call("session/new", params);
+    f.state.message = "Legacy response.";
+    assert.equal((await prompt(sessionId, "First answer.")).stopReason, "end_turn");
+    assert(hasMessage(f.state.message));
+    await call("session/close", { sessionId });
+
+    await start(candidate);
+    await call("session/load", { ...params, sessionId });
+    assert(hasMessage("Legacy response."));
+    assert.equal(f.state.modelCalls, 1);
+    f.state.message = "Upgraded response.";
+    assert.equal((await prompt(sessionId, "Second answer.")).stopReason, "end_turn");
+    assert(hasMessage(f.state.message));
+    await call("session/close", { sessionId });
+
+    await start(previous);
+    await call("session/load", { ...params, sessionId });
+    assert(hasMessage("Legacy response."));
+    assert(hasMessage("Upgraded response."));
+    assert.equal(f.state.modelCalls, 2);
+    f.state.message = "Rollback response.";
+    assert.equal((await prompt(sessionId, "Third answer.")).stopReason, "end_turn");
+    assert(hasMessage(f.state.message));
+    assert.equal(f.state.modelCalls, 3);
+    await call("session/close", { sessionId });
+  } finally {
+    if (bridge) await bridge.close();
+    await f.close();
     rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

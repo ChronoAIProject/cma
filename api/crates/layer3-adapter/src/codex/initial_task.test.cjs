@@ -65,8 +65,8 @@ test('pinned native provider receives exact first task and recovers its unique r
 }, async () => {
   const binary = process.env.CMA_CODEX_TEST_BINARY;
   const program = process.env.CMA_ACP_TEST_BRIDGE;
-  assert.equal(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 0.147.0');
-  assert.equal(createHash('sha256').update(readFileSync(program)).digest('hex'), '84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c');
+  assert.match(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), /^codex-cli 0\.(147|165)\.0$/);
+  assert(['84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c', '11c84d6c37f3b2e15020405a2301df3ed8c16ed2d9b05c3a3a43620bba78a7d4'].includes(createHash('sha256').update(readFileSync(program)).digest('hex')));
   const directory = mkdtempSync(join(tmpdir(), 'cma-initial-task-'));
   const home = join(directory, 'agent-home');
   mkdirSync(home);

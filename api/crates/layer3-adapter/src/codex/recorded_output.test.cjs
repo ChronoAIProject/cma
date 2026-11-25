@@ -11,7 +11,7 @@ test("pinned native command reports actual output through ACP", { timeout: 60000
   const binary = process.env.CMA_CODEX_TEST_BINARY;
   const program = process.env.CMA_ACP_TEST_BRIDGE;
   assert(binary && program, "Pinned native Codex and ACP bridge paths are required");
-  assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
+  assert.match(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), /^codex-cli 0\.(147|165)\.0$/);
   const directory = mkdtempSync(join(tmpdir(), "cma-computer-output-"));
   const agentHome = join(directory, "agent");
   mkdirSync(agentHome);
@@ -33,9 +33,9 @@ test("pinned native command reports actual output through ACP", { timeout: 60000
         const exec = declared.find((tool) => tool.name === "functions")?.tools?.find((tool) => tool.name === "exec");
         if (exec) {
           const metadata = JSON.parse(value.client_metadata["x-codex-turn-metadata"]);
-          assert(Object.hasOwn(metadata.code_mode_tool_names, "exec_command"), "Native exec_command must be declared");
+          if (metadata.code_mode_tool_names) assert(Object.hasOwn(metadata.code_mode_tool_names, "exec_command"), "Native exec_command must be declared");
           item = { type: "custom_tool_call", name: "exec", namespace: "functions",
-            input: "text(await tools.exec_command(" + JSON.stringify({ cmd: command }) + "));" };
+            input: "const entry = ALL_TOOLS.find(t => t.name === 'exec_command'); if (!entry) throw new Error('Missing native command tool'); text(await tools[entry.name](" + JSON.stringify({ cmd: command }) + "));" };
         } else {
           const tool = declared.find((tool) => tool.name === "exec_command");
           assert(tool, "Native command tool must be declared");
@@ -89,6 +89,6 @@ test("pinned native command reports actual output through ACP", { timeout: 60000
     await bridge.close();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

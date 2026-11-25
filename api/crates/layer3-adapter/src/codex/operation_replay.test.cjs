@@ -13,7 +13,7 @@ test("four pinned native operations remain four after public replay and browser 
   const capture = process.env.CMA_REPLAY_NATIVE_FILE;
   const release = process.env.CMA_REPLAY_RELEASE_FILE;
   assert(binary && program && capture && release);
-  assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
+  assert.match(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), /^codex-cli 0\.(147|165)\.0$/);
   const directory = mkdtempSync(join(tmpdir(), "cma-operation-replay-"));
   const agentHome = join(directory, "agent");
   mkdirSync(agentHome);

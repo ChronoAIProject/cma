@@ -37,8 +37,8 @@ test('candidate runtime pins repository ref and native first task reads that che
   timeout: 120000,
   skip: !process.env.CMA_RUNTIME_TEST_BINARY || !process.env.CMA_CODEX_TEST_BINARY || !process.env.CMA_ACP_TEST_BRIDGE,
 }, async () => {
-  assert.equal(execFileSync(process.env.CMA_CODEX_TEST_BINARY, ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 0.147.0');
-  assert.equal(createHash('sha256').update(readFileSync(process.env.CMA_ACP_TEST_BRIDGE)).digest('hex'), '84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c');
+  assert.match(execFileSync(process.env.CMA_CODEX_TEST_BINARY, ['--version'], { encoding: 'utf8' }).trim(), /^codex-cli 0\.(147|165)\.0$/);
+  assert(['84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c', '11c84d6c37f3b2e15020405a2301df3ed8c16ed2d9b05c3a3a43620bba78a7d4'].includes(createHash('sha256').update(readFileSync(process.env.CMA_ACP_TEST_BRIDGE)).digest('hex')));
   const directory = mkdtempSync(join(tmpdir(), 'cma-repository-task-'));
   const source = join(directory, 'source');
   const home = join(directory, 'home');

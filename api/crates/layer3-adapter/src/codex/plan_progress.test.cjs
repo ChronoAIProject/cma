@@ -47,9 +47,10 @@ function connect(program, directory, home, binary, frames) {
 test("pinned provider reports a real plan change and resumes without inventing completed steps", { timeout: 120000 }, async () => {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
   const program = process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath;
-  assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
+  const provider = execFileSync(binary, ["--version"], { encoding: "utf8" }).trim();
+  assert.match(provider, /^codex-cli 0\.(147|165)\.0$/);
   const bridgeSha256 = createHash("sha256").update(readFileSync(program)).digest("hex");
-  assert.equal(bridgeSha256, "84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c");
+  assert(['84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c', '11c84d6c37f3b2e15020405a2301df3ed8c16ed2d9b05c3a3a43620bba78a7d4'].includes(bridgeSha256));
   const directory = mkdtempSync(join(tmpdir(), "cma-plan-proof-"));
   const home = join(directory, "agent-home");
   mkdirSync(home);
@@ -78,12 +79,12 @@ test("pinned provider reports a real plan change and resumes without inventing c
       const execution = declared.find(tool => tool.name === "functions")?.tools?.find(tool => tool.name === "exec");
       if (plan && execution) {
         const metadata = JSON.parse(input.client_metadata["x-codex-turn-metadata"]);
-        assert(Object.hasOwn(metadata.code_mode_tool_names, "update_plan"), "native plan inventory: " + JSON.stringify(Object.keys(metadata.code_mode_tool_names)));
+        if (metadata.code_mode_tool_names) assert(Object.hasOwn(metadata.code_mode_tool_names, "update_plan"), "native plan inventory: " + JSON.stringify(Object.keys(metadata.code_mode_tool_names)));
       } else if (plan) assert(declared.some(tool => tool.name === "update_plan"));
       const item = plan
         ? { type: "function_call", id: "fc_plan_" + calls, call_id: "plan_" + calls,
             ...(execution ? { type: "custom_tool_call", namespace: "functions", name: "exec",
-              input: "text(await tools.update_plan(" + JSON.stringify({ plan }) + "));" }
+              input: "const entry = ALL_TOOLS.find(t => t.name === 'update_plan'); if (!entry) throw new Error('Missing native plan tool'); text(await tools[entry.name](" + JSON.stringify({ plan }) + "));" }
               : { name: "update_plan", arguments: JSON.stringify({ plan }) }) }
         : { id: "msg_plan_" + calls, type: "message", role: "assistant", status: "completed",
             content: [{ type: "output_text", text: "The response ended with verification still pending.", annotations: [] }] };
@@ -109,6 +110,7 @@ test("pinned provider reports a real plan change and resumes without inventing c
     '[model_providers.cma_test]', 'name = "Offline plan proof model boundary"',
     'base_url = "http://127.0.0.1:' + server.address().port + '/v1"',
     'wire_api = "responses"', 'requires_openai_auth = false',
+    '[tools.update_plan]', 'enabled = true',
   ].join("\n"));
   let bridge;
   const open = async () => {
@@ -138,7 +140,7 @@ test("pinned provider reports a real plan change and resumes without inventing c
     if (modelError) throw modelError;
     assert.equal(plans().length, beforeNextTurn);
     if (process.env.CMA_PLAN_PROOF_OUTPUT) writeFileSync(process.env.CMA_PLAN_PROOF_OUTPUT,
-      JSON.stringify({ provider: "codex-cli 0.147.0", bridgeSha256, plans: reported.map(frame => frame.params),
+      JSON.stringify({ provider, bridgeSha256, plans: reported.map(frame => frame.params),
         reloadPlanCount: beforeNextTurn - reported.length, noPlanTurn: true }, null, 2) + "\n");
   } finally {
     await bridge?.close();

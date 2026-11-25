@@ -341,6 +341,14 @@ export async function probe(onStage = () => {}) {
     native: '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex',
     acp: '/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js',
   })) artifacts[name] = sha256(readFileSync(path));
+  if (process.env.CMA_RUNTIME_NATIVE_PACKAGE_PROOF === '1') {
+    const vendor = '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl';
+    for (const [name, relative] of Object.entries({
+      codeModeHost: 'bin/codex-code-mode-host',
+      bwrap: 'codex-resources/bwrap',
+      rg: 'codex-path/rg',
+    })) artifacts[name] = sha256(readFileSync(vendor + '/' + relative));
+  }
   artifacts.codexVersion = installedCodexVersion('/home/cma');
   artifacts.acpVersion = JSON.parse(readFileSync('/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/package.json')).version;
   const ghVersion = execFileSync('/usr/local/bin/gh', ['--version'], { encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] });

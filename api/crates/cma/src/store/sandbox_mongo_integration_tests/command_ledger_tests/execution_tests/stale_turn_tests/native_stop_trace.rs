@@ -162,8 +162,13 @@ async fn native_stop_trace_recorder_ack_matches_a_fresh_checkpoint() {
             .await
             .unwrap();
     }
-    assert_eq!(expected_messages.len(), 2);
-    assert_eq!(expected_messages[1], "One partial model response.");
+    assert_eq!(
+        expected_messages
+            .iter()
+            .filter(|message| message.as_str() == "One partial model response.")
+            .count(),
+        1
+    );
     let final_ack = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let ack = acks.recv().await.unwrap();

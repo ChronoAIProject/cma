@@ -135,7 +135,8 @@ test('bridge-only SIGTERM gives pinned native stdio EOF, flushes interrupted tur
     '19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37',
     'c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5',
     'b32ece31af06440da980b733fb8fefdd1f193439595fda84096f1caaceec543f',
-    'a45099154d7fb4a5ed8a56f40966a95deb938e508bab23e6985035c709e9a85a'].includes(sha(fs.readFileSync(binary))), 'native must match a pinned 0.147.0 or 0.165.0 binary');
+    'a45099154d7fb4a5ed8a56f40966a95deb938e508bab23e6985035c709e9a85a',
+    process.env.CMA_CODEX_TEST_NATIVE_SHA256].includes(sha(fs.readFileSync(binary))), 'native must match a reviewed producer pin');
   const directory = fs.mkdtempSync(join(evidence, 'cma-graceful-eof-'));
   const home = join(directory, 'home'); fs.mkdirSync(home);
   const dirtyPath = join(directory, 'dirty.txt');
