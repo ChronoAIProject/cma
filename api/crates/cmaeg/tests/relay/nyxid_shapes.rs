@@ -1,13 +1,6 @@
-//! Callback envelopes exactly as NyxID `f3dc2be` serializes them, so ingress is
-//! proven against the shapes production actually receives:
-//! - `backend/src/services/channel_relay_service.rs:105-122`: every attachment
-//!   carries `download_url`, `content_type` and `url`; `None` facts are omitted.
-//! - `channel_relay_service.rs:686-701`: `download_url` names the attachment's
-//!   original list position.
-//! - `channel_adapters/telegram.rs:78-252`: `content.type` precedence, the caption
-//!   as text, and a bare Telegram `file_id` as `url`.
-//! - `channel_adapters/lark.rs:401-470` and `:561-569`: Lark resource URLs with
-//!   `platform_message_id` and an image or file key, and the Lark content types.
+//! Callback envelopes as serialized by NyxID `f3dc2be`.
+//! The relay supplies attachment ordinals and Telegram captions and file IDs.
+//! Lark resources carry their message and file keys in provider URLs.
 use super::support::*;
 use cmaeg_core::activity::ActivityKind;
 use serde_json::{json, Value};
