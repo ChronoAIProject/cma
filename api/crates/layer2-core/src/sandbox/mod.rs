@@ -1,5 +1,4 @@
 //! The Sandbox -> Workspace -> Worktree -> Agent domain hierarchy.
-
 mod desktop;
 mod runtime_migration_guard;
 pub use desktop::{

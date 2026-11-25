@@ -132,10 +132,14 @@ impl AgentWorker {
         }
         let inspection = self.inspection_correlation(agent);
         let inspection_started = tokio::time::Instant::now();
-        let attached = crate::sandbox::runtime_attachment::inspect_bound_runtime(
-            self.dependencies.adapter.as_ref(),
+        let attached = super::super::inspection_park::observe(
+            agent,
             &sandbox,
-            &self.config.deployment_id,
+            crate::sandbox::runtime_attachment::inspect_bound_runtime(
+                self.dependencies.adapter.as_ref(),
+                &sandbox,
+                &self.config.deployment_id,
+            ),
         )
         .await;
         self.observe_runtime_startup(&sandbox, inspection_started, &attached);
@@ -163,6 +167,7 @@ impl AgentWorker {
             }
             failure
         })?;
+        self.confirm_inspection(agent, &sandbox).await?;
         Ok(AgentContext {
             sandbox,
             workspace,

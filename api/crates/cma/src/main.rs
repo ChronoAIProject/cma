@@ -149,6 +149,16 @@ async fn run() {
         }
         return;
     }
+    if let Some(result) = store::agent_inspection_park::command(&arguments).await {
+        match result {
+            Ok(receipt) => println!("{receipt}"),
+            Err(reason) => {
+                eprintln!("{reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if arguments.len() == 3 && arguments[0] == "--ledger-collection-observation" {
         if let Err(error) = store::ledger_collection::command(
             std::path::Path::new(&arguments[1]),
