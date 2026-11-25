@@ -148,6 +148,8 @@
   {"operation":"POST /api/v1/agui/run/receipt","positive":"agui-input-receipt-unknown","negative":"agui-input-receipt-foreign","proof":"contract"},
   {"operation":"POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment","positive":"binding-media-upload","negative":"binding-media-upload-forbidden","proof":"binding-contract"},
   {"operation":"POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement","positive":"binding-media-supplement","negative":"binding-media-supplement-forbidden","proof":"binding-contract"},
+  {"operation":"POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-drift","positive":"binding-drift-provisioning","negative":"binding-drift-forbidden","proof":"binding-contract"},
+  {"operation":"POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-transfers","positive":"binding-profile-transfer-reserved","negative":"binding-profile-transfer-forbidden","proof":"binding-contract"},
   {"operation":"POST /api/v1/conversations","positive":"responses-create-conversation","negative":"conversations-create-workspace-missing","proof":"context-creation"},
   {"operation":"POST /api/v1/documents","positive":"document-create-success","negative":"document-create-forbidden","proof":"own-creation"},
   {"operation":"POST /api/v1/documents/{id}/comments","positive":"document-comment-success","negative":"document-comment-foreign","proof":"probe"},
