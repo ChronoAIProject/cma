@@ -1,5 +1,5 @@
 use super::chart_projections::{MAX_TOP, POINTS_PER_CHUNK};
-use super::charts::{fold_sandbox_series, read_series};
+use super::charts::{fold_sandbox_series, merge_buckets, read_series};
 use super::projection_codec::decode_points;
 use super::*;
 use futures_util::TryStreamExt;
@@ -14,6 +14,7 @@ pub async fn read_chart_projection(
     report: &Report,
     query: SeriesQuery,
     generation: i64,
+    cached_owners: bool,
     db_deadline: Duration,
 ) -> Result<Series> {
     let top = query.validate(report.scope.admin)?;
@@ -65,7 +66,11 @@ pub async fn read_chart_projection(
                 .filter(|id| id != "other")
                 .collect();
             let selected = if group == GroupBy::Owner {
-                read_selected_owners(projections, &base, &ids, db_deadline).await?
+                if cached_owners {
+                    read_selected_owners(projections, &base, &ids, db_deadline).await?
+                } else {
+                    read_ranked_owner_sources(&charts, report, &query, &ids, db_deadline).await?
+                }
             } else {
                 read_selected_sandboxes(&charts, report, &query, &ids, db_deadline).await?
             };
@@ -232,6 +237,50 @@ async fn read_selected_owners(
             Ok(line(&id, points))
         })
         .collect()
+}
+
+async fn read_ranked_owner_sources(
+    charts: &Collection<Document>,
+    report: &Report,
+    query: &SeriesQuery,
+    ids: &[String],
+    db_deadline: Duration,
+) -> Result<Vec<Line>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let cursor = charts
+        .find(
+            doc! {"report_id":&report.report_id,"metric":query.metric.index() as i64,
+            "owner":{"$in":ids}},
+        )
+        .sort(doc! {"owner":1,"sandbox_id":1,"chunk":1})
+        .max_time(db_deadline)
+        .await
+        .map_err(unavailable)?;
+    let mut grouped = BTreeMap::<String, Vec<Bucket>>::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    fold_sandbox_series(
+        cursor,
+        report,
+        query.metric,
+        deadline,
+        |_, owner, points| {
+            if !ids.iter().any(|id| id == owner) {
+                return Err(MetricsError::Unavailable);
+            }
+            merge_buckets(grouped.entry(owner.into()).or_default(), &points);
+            Ok(())
+        },
+    )
+    .await?;
+    if grouped.len() != ids.len() {
+        return Err(MetricsError::Unavailable);
+    }
+    Ok(grouped
+        .into_iter()
+        .map(|(id, buckets)| line(&id, buckets.into_iter().map(Bucket::point).collect()))
+        .collect())
 }
 
 async fn read_selected_sandboxes(

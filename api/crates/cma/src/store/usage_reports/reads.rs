@@ -142,8 +142,24 @@ impl MetricsStore for ReportingStore {
     }
     async fn series(&self, report: &Report, query: SeriesQuery) -> Result<Series> {
         let charts = self.collection(CHARTS);
-        let Some(generation) = self.projected_generation(report).await? else {
+        let family = match (&query.group_by, query.series_id.is_some()) {
+            (layer2_core::sandbox_metrics::GroupBy::Total, _) => "chart_total",
+            (layer2_core::sandbox_metrics::GroupBy::Owner, true) => "chart_explicit_owner",
+            (layer2_core::sandbox_metrics::GroupBy::Owner, false) => "chart_owner",
+            (layer2_core::sandbox_metrics::GroupBy::Sandbox, false) => "chart_sandbox",
+            (layer2_core::sandbox_metrics::GroupBy::Sandbox, true) => {
+                return cma_am_reporting::read_series(charts, report, query, DB_DEADLINE).await;
+            }
+        };
+        let Some(generation) = self.projected_family(report, family).await? else {
             return cma_am_reporting::read_series(charts, report, query, DB_DEADLINE).await;
+        };
+        let cached_owners = if family == "chart_owner" {
+            self.projected_family(report, "chart_explicit_owner")
+                .await?
+                == Some(generation)
+        } else {
+            true
         };
         cma_am_reporting::read_chart_projection(
             &self.collection(aggregate_projections::COLLECTION),
@@ -151,6 +167,7 @@ impl MetricsStore for ReportingStore {
             report,
             query,
             generation,
+            cached_owners,
             DB_DEADLINE,
         )
         .await

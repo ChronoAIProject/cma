@@ -1,6 +1,9 @@
 use super::*;
 use crate::store::{migrations::usage_projections, transaction_scope as tx};
-use cma_am_reporting::{build_chart_projections, ProjectionBatch};
+use cma_am_reporting::{
+    build_chart_totals, build_owner_chart_projections, build_ranked_projections, ProjectionBatch,
+    TotalProjection,
+};
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::Report;
 use mongodb::bson::RawDocumentBuf;
@@ -14,7 +17,7 @@ pub(in crate::store) const INVALIDATED_FIELD: &str = "projection_invalidated";
 const MAX_PROJECTION_BYTES: usize = 32 * 1024 * 1024;
 
 impl ReportingStore {
-    fn projections_allowed(&self, report: &Report) -> bool {
+    pub(crate) fn projections_allowed(&self, report: &Report) -> bool {
         self.view_policy.aggregate_projections_enabled
             && self.view_policy.view_scopes.iter().any(|allowed| {
                 allowed.allows(&report.scope, report.query.filters.sandbox_id.as_deref())
@@ -33,7 +36,16 @@ impl ReportingStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) async fn projected_generation(&self, report: &Report) -> Result<Option<i64>> {
+        self.projected_family(report, "chart_total").await
+    }
+
+    pub(super) async fn projected_family(
+        &self,
+        report: &Report,
+        family: &str,
+    ) -> Result<Option<i64>> {
         if !self.projections_allowed(report) {
             return Ok(None);
         }
@@ -53,7 +65,41 @@ impl ReportingStore {
                     // independently persisted aggregates can outlive a row.
                     self.retained_counts(report, &job).await?;
                 }
-                Ok(Some(generation))
+                let manifest = job.get_document(MANIFEST_FIELD).map_err(unavailable)?;
+                if manifest.get_i64("version").ok() != Some(2)
+                    || manifest.get_i64("generation").ok() != Some(generation)
+                {
+                    return Err(MetricsError::Unavailable);
+                }
+                let families = manifest.get_array("families").map_err(unavailable)?;
+                let mut seen = std::collections::BTreeSet::new();
+                let mut chunks = 0_i64;
+                for entry in families {
+                    let entry = entry.as_document().ok_or(MetricsError::Unavailable)?;
+                    let name = entry.get_str("kind").map_err(unavailable)?;
+                    let count = entry.get_i64("chunks").map_err(unavailable)?;
+                    let digest = entry.get_str("sha256").map_err(unavailable)?;
+                    if !matches!(
+                        name,
+                        "chart_total"
+                            | "chart_sandbox"
+                            | "chart_owner"
+                            | "chart_explicit_owner"
+                            | "owner_allocation"
+                            | "contributor"
+                    ) || !seen.insert(name)
+                        || count <= 0
+                        || digest.len() != 64
+                        || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    {
+                        return Err(MetricsError::Unavailable);
+                    }
+                    chunks = chunks.checked_add(count).ok_or(MetricsError::Unavailable)?;
+                }
+                if manifest.get_i64("chunks").ok() != Some(chunks) {
+                    return Err(MetricsError::Unavailable);
+                }
+                Ok(seen.contains(family).then_some(generation))
             }
         }
     }
@@ -62,25 +108,25 @@ impl ReportingStore {
         &self,
         lease: &ReportLease,
         report: &Report,
+        totals: Option<TotalProjection>,
+        overall_deadline: Instant,
     ) -> Result<()> {
         if !self.projections_allowed(report) {
             return Ok(());
         }
         let started = Instant::now();
-        let result = tokio::time::timeout(
-            Duration::from_secs(10),
-            self.build_projections(lease, report),
-        )
-        .await;
-        let (batch, row_count, chart_count) = match result {
-            Ok(Ok(batch)) => batch,
-            Err(_) | Ok(Err(MetricsError::Busy)) => {
+        let (batch, row_count, chart_count) = match self
+            .build_projections_with_totals(lease, report, totals, overall_deadline)
+            .await
+        {
+            Ok(batch) => batch,
+            Err(MetricsError::Busy) => {
                 tracing::info!(target: "cma::store::usage_reports::budget",
                     stage = "aggregate_projection", result = "generation_budget",
                     elapsed_ms = started.elapsed().as_millis() as u64);
                 return Ok(());
             }
-            Ok(Err(error)) => return Err(error),
+            Err(error) => return Err(error),
         };
         let documents = batch.into_documents();
         let bytes = documents.iter().try_fold(0_i64, |total, document| {
@@ -97,10 +143,27 @@ impl ReportingStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) async fn build_projections(
         &self,
         lease: &ReportLease,
         report: &Report,
+    ) -> Result<(ProjectionBatch, i64, i64)> {
+        self.build_projections_with_totals(
+            lease,
+            report,
+            None,
+            Instant::now() + Duration::from_secs(30),
+        )
+        .await
+    }
+
+    async fn build_projections_with_totals(
+        &self,
+        lease: &ReportLease,
+        report: &Report,
+        totals: Option<TotalProjection>,
+        overall_deadline: Instant,
     ) -> Result<(ProjectionBatch, i64, i64)> {
         // The job counts are written together with every immutable source chunk.
         // Erasure fences this parent before removing any source document.
@@ -119,24 +182,122 @@ impl ReportingStore {
         self.retained_counts(report, &job).await?;
         let base = doc! {"report_id":&report.report_id,"generation":lease.generation,
         "document_schema_version":1_i64,"expires_at":expires(report.expires_at + 60)};
-        let mut batch = ProjectionBatch::new(MAX_PROJECTION_BYTES);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        self.build_contributors(report, &base, &mut batch, deadline)
-            .await?;
-        build_chart_projections(
-            &self.collection(CHARTS),
-            report,
-            &base,
-            &mut batch,
-            DB_DEADLINE,
+        // All completed families share the original report byte reservation.
+        // Each optional family is built in a scratch batch. Only complete
+        // families enter the immutable generation manifest.
+        let work_deadline = overall_deadline
+            .checked_sub(Duration::from_secs(3))
+            .ok_or(MetricsError::Busy)?;
+        let budget = self
+            .budgets
+            .report_bytes
+            .min(job.get_i64("reserved_bytes").map_err(unavailable)?)
+            .saturating_sub(job.get_i64("bytes").map_err(unavailable)?);
+        let budget = usize::try_from(budget)
+            .map_err(|_| MetricsError::Busy)?
+            .min(MAX_PROJECTION_BYTES);
+        let mut batch = ProjectionBatch::new(budget);
+        let deadline = work_deadline.min(Instant::now() + Duration::from_secs(10));
+        if Instant::now() >= deadline {
+            return Err(MetricsError::Busy);
+        }
+        Self::within_family_deadline(
             deadline,
+            self.build_contributors(report, &base, &mut batch, deadline),
         )
         .await?;
-        if report.scope.admin {
-            self.build_owner_allocation_projections(report, &base, &mut batch, deadline)
-                .await?;
+        let mut family = ProjectionBatch::new(batch.remaining_bytes());
+        if let Some(totals) = totals {
+            totals.append(&base, &mut family, row_count, &lease.holder)?;
+        } else {
+            Self::within_family_deadline(
+                deadline,
+                build_chart_totals(
+                    &self.collection(CHARTS),
+                    report,
+                    &base,
+                    &mut family,
+                    DB_DEADLINE,
+                    deadline,
+                ),
+            )
+            .await?;
+        }
+        batch.append(family)?;
+
+        // Optional construction can time out or refuse its remaining bytes.
+        // A scratch batch never contributes an incomplete family.
+        let charts = self.collection(CHARTS);
+        let mut family = ProjectionBatch::new(batch.remaining_bytes());
+        let deadline = work_deadline.min(Instant::now() + Duration::from_secs(10));
+        if Instant::now() < deadline {
+            let result = Self::within_family_deadline(
+                deadline,
+                build_ranked_projections(
+                    &charts,
+                    report,
+                    &base,
+                    &mut family,
+                    DB_DEADLINE,
+                    deadline,
+                ),
+            )
+            .await;
+            Self::finish_family(&mut batch, family, result, "chart_ranked")?;
+        }
+        let mut family = ProjectionBatch::new(batch.remaining_bytes());
+        let deadline = work_deadline.min(Instant::now() + Duration::from_secs(2));
+        if Instant::now() < deadline && report.scope.admin {
+            let result = Self::within_family_deadline(
+                deadline,
+                self.build_owner_allocation_projections(report, &base, &mut family, deadline),
+            )
+            .await;
+            Self::finish_family(&mut batch, family, result, "owner_allocation")?;
+        }
+        let mut family = ProjectionBatch::new(batch.remaining_bytes());
+        let deadline = work_deadline.min(Instant::now() + Duration::from_secs(10));
+        if Instant::now() < deadline && report.scope.admin {
+            let result = Self::within_family_deadline(
+                deadline,
+                build_owner_chart_projections(
+                    &charts,
+                    report,
+                    &base,
+                    &mut family,
+                    DB_DEADLINE,
+                    deadline,
+                ),
+            )
+            .await;
+            Self::finish_family(&mut batch, family, result, "chart_explicit_owner")?;
         }
         Ok((batch, row_count, chart_count))
+    }
+
+    async fn within_family_deadline<T>(
+        deadline: Instant,
+        work: impl std::future::Future<Output = Result<T>>,
+    ) -> Result<T> {
+        tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), work)
+            .await
+            .map_err(|_| MetricsError::Busy)?
+    }
+
+    fn finish_family(
+        batch: &mut ProjectionBatch,
+        family: ProjectionBatch,
+        result: Result<()>,
+        name: &'static str,
+    ) -> Result<()> {
+        match result {
+            Ok(()) => batch.append(family),
+            Err(MetricsError::Busy) => {
+                tracing::info!(target: "cma::store::usage_reports::budget", stage = "aggregate_projection", family = name, result = "family_budget");
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
     }
 
     async fn build_contributors(
@@ -177,13 +338,27 @@ impl ReportingStore {
         lease: &ReportLease,
         documents: &[RawDocumentBuf],
         bytes: i64,
-    ) -> Document {
+    ) -> Result<Document> {
         let mut digest = Sha256::new();
+        let mut families = std::collections::BTreeMap::<String, (i64, Sha256)>::new();
         for document in documents {
             digest.update(document.as_bytes());
+            let family = families
+                .entry(document.get_str("kind").map_err(unavailable)?.to_owned())
+                .or_default();
+            family.0 += 1;
+            family.1.update(document.as_bytes());
         }
-        doc! {"version":1_i64,"generation":lease.generation,"chunks":documents.len() as i64,
-        "bytes":bytes,"sha256":format!("{:x}",digest.finalize())}
+        let families: Vec<_> = families
+            .into_iter()
+            .map(|(kind, (chunks, digest))| {
+                doc! {"kind":kind,"chunks":chunks,"sha256":format!("{:x}",digest.finalize())}
+            })
+            .collect();
+        Ok(
+            doc! {"version":2_i64,"generation":lease.generation,"chunks":documents.len() as i64,
+            "bytes":bytes,"sha256":format!("{:x}",digest.finalize()),"families":families},
+        )
     }
 
     pub(super) async fn persist_projections(
@@ -193,7 +368,7 @@ impl ReportingStore {
         bytes: i64,
         source_counts: (i64, i64),
     ) -> Result<bool> {
-        let manifest = Self::projection_manifest(lease, documents, bytes);
+        let manifest = Self::projection_manifest(lease, documents, bytes)?;
         let result = tx::run(
             &self.client,
             (self, lease, documents, bytes, &manifest, source_counts),

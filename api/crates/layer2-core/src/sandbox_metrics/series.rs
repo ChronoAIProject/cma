@@ -137,7 +137,18 @@ pub fn complete(
     range: Range,
     step: u64,
 ) -> Vec<Bucket> {
-    let mut out = buckets(&[], metric, range, step);
+    // Completion has no minute inputs to group. Construct the ordered
+    // bucket boundaries directly instead of allocating a temporary map.
+    let mut out = Vec::new();
+    let mut at = range.from / step * step;
+    while at < range.to && range.seconds() > 0 {
+        out.push(Bucket {
+            from: at.max(range.from),
+            to: (at + step).min(range.to),
+            ..Default::default()
+        });
+        at += step;
+    }
     let mut first = 0;
     for b in &mut out {
         if let Some(value) = sparse.get(&b.from) {

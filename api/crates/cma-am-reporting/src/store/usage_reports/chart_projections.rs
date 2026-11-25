@@ -81,6 +81,24 @@ impl ProjectionBatch {
         Ok(())
     }
 
+    pub fn remaining_bytes(&self) -> usize {
+        self.remaining_bytes
+    }
+
+    pub fn append(&mut self, other: Self) -> Result<()> {
+        let used = other
+            .documents
+            .iter()
+            .map(|row| row.as_bytes().len())
+            .sum::<usize>();
+        self.remaining_bytes = self
+            .remaining_bytes
+            .checked_sub(used)
+            .ok_or(MetricsError::Busy)?;
+        self.documents.extend(other.documents);
+        Ok(())
+    }
+
     pub fn into_documents(mut self) -> Vec<RawDocumentBuf> {
         self.documents
             .sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
@@ -88,7 +106,36 @@ impl ProjectionBatch {
     }
 }
 
-pub async fn build_chart_projections(
+pub async fn build_chart_totals(
+    collection: &Collection<Document>,
+    report: &Report,
+    base: &Document,
+    batch: &mut ProjectionBatch,
+    db_deadline: Duration,
+    deadline: Instant,
+) -> Result<()> {
+    for metric in [Metric::Cpu, Metric::Memory, Metric::Disk] {
+        let cursor = collection
+            .find(doc! {"report_id":&report.report_id,"metric":metric.index() as i64})
+            .sort(doc! {"sandbox_id":1,"chunk":1})
+            .batch_size(100)
+            .max_time(db_deadline)
+            .await
+            .map_err(unavailable)?;
+        let mut total = None;
+        fold_sandbox_series(cursor, report, metric, deadline, |_, _, points| {
+            merge_buckets(total.get_or_insert_with(Vec::new), &points);
+            Ok(())
+        })
+        .await?;
+        let mut base = base.clone();
+        base.insert("metric", metric.index() as i64);
+        append_line(batch, &base, "chart_total", "", total)?;
+    }
+    Ok(())
+}
+
+pub async fn build_ranked_projections(
     collection: &Collection<Document>,
     report: &Report,
     base: &Document,
@@ -113,10 +160,8 @@ pub async fn build_chart_projections(
         };
         let mut sandbox_remaining = RankedBuckets::new(top_sandboxes.clone());
         let mut owner_remaining = RankedBuckets::new(top_owners.clone());
-        let mut total = None;
-        let filter = doc! {"report_id":&report.report_id,"metric":metric.index() as i64};
         let cursor = collection
-            .find(filter.clone())
+            .find(doc! {"report_id":&report.report_id,"metric":metric.index() as i64})
             .sort(doc! {"sandbox_id":1,"chunk":1})
             .batch_size(100)
             .max_time(db_deadline)
@@ -132,15 +177,12 @@ pub async fn build_chart_projections(
                 if report.scope.admin {
                     owner_remaining.add_sandbox(owner, &points);
                 }
-                merge_buckets(total.get_or_insert_with(Vec::new), &points);
                 Ok(())
             },
         )
         .await?;
-
         let mut base = base.clone();
         base.insert("metric", metric.index() as i64);
-        append_line(batch, &base, "chart_total", "", total)?;
         append_ranked(
             batch,
             &base,
@@ -150,35 +192,50 @@ pub async fn build_chart_projections(
         )?;
         if report.scope.admin {
             append_ranked(batch, &base, "chart_owner", &top_owners, owner_remaining)?;
-            let cursor = collection
-                .find(filter)
-                .sort(doc! {"owner":1,"sandbox_id":1,"chunk":1})
-                .batch_size(100)
-                .max_time(db_deadline)
-                .await
-                .map_err(unavailable)?;
-            let mut previous: Option<String> = None;
-            let mut points = Vec::new();
-            fold_sandbox_series(cursor, report, metric, deadline, |_, owner, buckets| {
-                if let Some(id) = previous.as_deref().filter(|id| *id != owner) {
-                    append_line(
-                        batch,
-                        &base,
-                        "chart_explicit_owner",
-                        id,
-                        Some(std::mem::take(&mut points)),
-                    )?;
-                }
-                if previous.as_deref() != Some(owner) {
-                    previous = Some(owner.to_owned());
-                }
-                merge_buckets(&mut points, &buckets);
-                Ok(())
-            })
-            .await?;
-            if let Some(id) = previous {
-                append_line(batch, &base, "chart_explicit_owner", &id, Some(points))?;
+        }
+    }
+    Ok(())
+}
+
+pub async fn build_owner_chart_projections(
+    collection: &Collection<Document>,
+    report: &Report,
+    base: &Document,
+    batch: &mut ProjectionBatch,
+    db_deadline: Duration,
+    deadline: Instant,
+) -> Result<()> {
+    for metric in [Metric::Cpu, Metric::Memory, Metric::Disk] {
+        let cursor = collection
+            .find(doc! {"report_id":&report.report_id,"metric":metric.index() as i64})
+            .sort(doc! {"owner":1,"sandbox_id":1,"chunk":1})
+            .batch_size(100)
+            .max_time(db_deadline)
+            .await
+            .map_err(unavailable)?;
+        let mut base = base.clone();
+        base.insert("metric", metric.index() as i64);
+        let mut previous: Option<String> = None;
+        let mut points = Vec::new();
+        fold_sandbox_series(cursor, report, metric, deadline, |_, owner, buckets| {
+            if let Some(id) = previous.as_deref().filter(|id| *id != owner) {
+                append_line(
+                    batch,
+                    &base,
+                    "chart_explicit_owner",
+                    id,
+                    Some(std::mem::take(&mut points)),
+                )?;
             }
+            if previous.as_deref() != Some(owner) {
+                previous = Some(owner.to_owned());
+            }
+            merge_buckets(&mut points, &buckets);
+            Ok(())
+        })
+        .await?;
+        if let Some(id) = previous {
+            append_line(batch, &base, "chart_explicit_owner", &id, Some(points))?;
         }
     }
     Ok(())
@@ -200,7 +257,7 @@ fn append_ranked(
     Ok(())
 }
 
-fn append_line(
+pub(super) fn append_line(
     batch: &mut ProjectionBatch,
     base: &Document,
     kind: &str,

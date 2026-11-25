@@ -10,14 +10,18 @@ mod projection_codec;
 mod projection_reads;
 mod reports;
 mod rows;
+mod total_projection;
 
-pub use chart_projections::{build_chart_projections, ProjectionBatch};
+pub use chart_projections::{
+    build_chart_totals, build_owner_chart_projections, build_ranked_projections, ProjectionBatch,
+};
 pub use charts::{chart_documents, read_series};
 pub use control::fence as control_fence;
 pub use owners::{read_owner_page, validate_owner_page};
 pub use projection_reads::read_chart_projection;
 pub use reports::report_membership_pipeline;
 pub use rows::{read_row, read_row_page};
+pub use total_projection::TotalProjection;
 
 use layer2_core::sandbox_metrics::{MetricsError, Result};
 use mongodb::{

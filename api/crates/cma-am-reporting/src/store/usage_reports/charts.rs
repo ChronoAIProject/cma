@@ -55,7 +55,10 @@ pub fn chart_documents(
     Ok(out)
 }
 
-fn metric_expectations(expectations: &[Expectation], metric: Metric) -> Vec<Expectation> {
+pub(super) fn metric_expectations(
+    expectations: &[Expectation],
+    metric: Metric,
+) -> Vec<Expectation> {
     let value = |e: &Expectation| {
         if metric == Metric::Disk {
             e.home

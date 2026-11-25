@@ -6,6 +6,7 @@ use crate::store::migrations::usage_projections::{self, COLLECTION};
 use layer2_core::sandbox_metrics::{allocation::Expectation, series::Bucket};
 use layer2_core::{Authorization, Caller, Capability};
 use mongodb::event::{command::CommandEvent, EventHandler};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
@@ -107,6 +108,11 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
                 .unwrap()
                 .unwrap();
             let report_id = &lease.report.report_id;
+            let mut totals = cma_am_reporting::TotalProjection::new(
+                &lease.report.report_id,
+                lease.generation,
+                &lease.holder,
+            );
             let seed_started = Instant::now();
             let mut accepted = 0;
             let mut refused_batch_bytes = None;
@@ -133,6 +139,18 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
                     home: Some(true),
                 }];
                 for (index, row) in rows.iter().enumerate() {
+                    let buckets =
+                        chart_buckets(lease.report.effective_range, step, offset + index, dense);
+                    let sparse: BTreeMap<_, _> =
+                        buckets.iter().map(|b| (b.from, b.clone())).collect();
+                    totals
+                        .add_member(
+                            &lease.report,
+                            &row.sandbox_id,
+                            &[sparse.clone(), sparse.clone(), sparse],
+                            &expectations,
+                        )
+                        .unwrap();
                     for metric in [Metric::Cpu, Metric::Memory, Metric::Disk] {
                         charts.extend(
                             chart_documents(
@@ -140,12 +158,7 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
                                 &row.sandbox_id,
                                 &row.owner.subject,
                                 metric,
-                                chart_buckets(
-                                    lease.report.effective_range,
-                                    step,
-                                    offset + index,
-                                    dense,
-                                ),
+                                buckets.clone(),
                                 &expectations,
                             )
                             .unwrap(),
@@ -181,6 +194,7 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
                 charged_bytes += chunk_bytes;
                 chart_count += batch_charts;
                 accepted += rows.len();
+                totals.acknowledge_source(rows.len()).unwrap();
             }
             let before = store
                 .collection(JOBS)
@@ -226,7 +240,14 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
             });
             let started = Instant::now();
             commands.store(0, Ordering::Relaxed);
-            let projection = store.prepare_aggregate_projections(&lease, &report).await;
+            let projection = store
+                .prepare_aggregate_projections(
+                    &lease,
+                    &report,
+                    Some(totals),
+                    seed_started + Duration::from_secs(60),
+                )
+                .await;
             let generation_commands = commands.load(Ordering::Relaxed);
             let generation_ms = started.elapsed().as_millis();
             let after = store

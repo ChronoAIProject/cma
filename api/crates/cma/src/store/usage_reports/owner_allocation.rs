@@ -57,7 +57,7 @@ impl ReportingStore {
             doc! {"$sort":{"allocated_hours":-1,"_id":1}},
             doc! {"$limit":i64::from(limit)+1},
         ]);
-        let projected = self.projected_generation(report).await?;
+        let projected = self.projected_family(report, "owner_allocation").await?;
         let (collection, mut pipeline) = if let Some(generation) = projected {
             (
                 aggregate_projections::COLLECTION,

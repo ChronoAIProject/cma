@@ -8,10 +8,10 @@ mod store {
 }
 
 pub use store::usage_reports::{
-    build_chart_projections, chart_documents, control_fence, decode, encode, expires, now,
-    read_chart_projection, read_owner_page, read_row, read_row_page, read_series,
-    report_membership_pipeline, unavailable, validate_owner_page, Admission, AdmissionBudget,
-    AdmissionRequest, ProjectionBatch, CONTROL, JOBS,
+    build_chart_totals, build_owner_chart_projections, build_ranked_projections, chart_documents,
+    control_fence, decode, encode, expires, now, read_chart_projection, read_owner_page, read_row,
+    read_row_page, read_series, report_membership_pipeline, unavailable, validate_owner_page,
+    Admission, AdmissionBudget, AdmissionRequest, ProjectionBatch, TotalProjection, CONTROL, JOBS,
 };
 
 pub mod metric_bindings;
