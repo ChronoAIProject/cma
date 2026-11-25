@@ -1,0 +1,634 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "binding-catalog-ready",
+      "operation": "GET /api/v1/cmaeg/bindings/{binding_id}/conversations",
+      "scenario": "binding_management_conversation",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/conversations",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "binding_id": "binding-contract",
+          "generation": 1,
+          "revision": 3,
+          "transport_conversations": [
+            "conversation-contract"
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-catalog-anonymous",
+      "operation": "GET /api/v1/cmaeg/bindings/{binding_id}/conversations",
+      "scenario": "binding_management_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/conversations",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-catalog-forbidden",
+      "operation": "GET /api/v1/cmaeg/bindings/{binding_id}/conversations",
+      "scenario": "binding_management_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/conversations",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "forbidden",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-catalog-missing",
+      "operation": "GET /api/v1/cmaeg/bindings/{binding_id}/conversations",
+      "scenario": "binding_management_ready",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cmaeg/bindings/binding-missing/conversations",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_not_found",
+          "title": "binding_not_found",
+          "status": 404,
+          "detail": "binding not found",
+          "code": "binding_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-drift-provisioning",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-drift",
+      "scenario": "binding_management_conversation",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/conversations/conversation-contract/profile-drift",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile": {
+            "schema_version": 1,
+            "metadata": {
+              "name": "route-test",
+              "owner": {
+                "kind": "human",
+                "subject": "owner"
+              },
+              "provider": "cma_codex"
+            },
+            "model": {
+              "access": "managed",
+              "service": "chrono-llm-public",
+              "api_type": "responses",
+              "model": "test",
+              "thinking_effort": "medium"
+            },
+            "permission": {
+              "action_mode": "guarded"
+            },
+            "context": {},
+            "environment": {
+              "size": {
+                "cpu_cores": 1,
+                "memory_gib": 2
+              },
+              "workspace": {
+                "type": "directory",
+                "name": "project"
+              }
+            }
+          },
+          "profile_digest": "sha256:7d6f775e7c71c43b4712c2f64a904d88f40f6aa712b80d6a9266a6970de9ab4a"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": null,
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-drift-anonymous",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-drift",
+      "scenario": "binding_management_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/conversations/conversation-contract/profile-drift",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile": {
+            "schema_version": 1,
+            "metadata": {
+              "name": "route-test",
+              "owner": {
+                "kind": "human",
+                "subject": "owner"
+              },
+              "provider": "cma_codex"
+            },
+            "model": {
+              "access": "managed",
+              "service": "chrono-llm-public",
+              "api_type": "responses",
+              "model": "test",
+              "thinking_effort": "medium"
+            },
+            "permission": {
+              "action_mode": "guarded"
+            },
+            "context": {},
+            "environment": {
+              "size": {
+                "cpu_cores": 1,
+                "memory_gib": 2
+              },
+              "workspace": {
+                "type": "directory",
+                "name": "project"
+              }
+            }
+          },
+          "profile_digest": "sha256:7d6f775e7c71c43b4712c2f64a904d88f40f6aa712b80d6a9266a6970de9ab4a"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-drift-forbidden",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-drift",
+      "scenario": "binding_management_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/conversations/conversation-contract/profile-drift",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile": {
+            "schema_version": 1,
+            "metadata": {
+              "name": "route-test",
+              "owner": {
+                "kind": "human",
+                "subject": "owner"
+              },
+              "provider": "cma_codex"
+            },
+            "model": {
+              "access": "managed",
+              "service": "chrono-llm-public",
+              "api_type": "responses",
+              "model": "test",
+              "thinking_effort": "medium"
+            },
+            "permission": {
+              "action_mode": "guarded"
+            },
+            "context": {},
+            "environment": {
+              "size": {
+                "cpu_cores": 1,
+                "memory_gib": 2
+              },
+              "workspace": {
+                "type": "directory",
+                "name": "project"
+              }
+            }
+          },
+          "profile_digest": "sha256:7d6f775e7c71c43b4712c2f64a904d88f40f6aa712b80d6a9266a6970de9ab4a"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "forbidden",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-drift-missing",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-drift",
+      "scenario": "binding_management_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/conversations/conversation-missing/profile-drift",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile": {
+            "schema_version": 1,
+            "metadata": {
+              "name": "route-test",
+              "owner": {
+                "kind": "human",
+                "subject": "owner"
+              },
+              "provider": "cma_codex"
+            },
+            "model": {
+              "access": "managed",
+              "service": "chrono-llm-public",
+              "api_type": "responses",
+              "model": "test",
+              "thinking_effort": "medium"
+            },
+            "permission": {
+              "action_mode": "guarded"
+            },
+            "context": {},
+            "environment": {
+              "size": {
+                "cpu_cores": 1,
+                "memory_gib": 2
+              },
+              "workspace": {
+                "type": "directory",
+                "name": "project"
+              }
+            }
+          },
+          "profile_digest": "sha256:7d6f775e7c71c43b4712c2f64a904d88f40f6aa712b80d6a9266a6970de9ab4a"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_not_found",
+          "title": "binding_not_found",
+          "status": 404,
+          "detail": "binding not found",
+          "code": "binding_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-profile-transfer-reserved",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-transfers",
+      "scenario": "binding_profile_transfer_reserved",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-source/conversations/conversation-contract/profile-transfers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "body": {
+          "destination_binding_id": "binding-successor",
+          "expected_agent_id": "agt_original",
+          "expected_generation": 1,
+          "expected_destination_generation": 2,
+          "expected_incarnation": 0,
+          "owner": "owner",
+          "organization": false,
+          "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "source_binding_id": "binding-source",
+          "source_generation": 1,
+          "source_incarnation": 0,
+          "source_agent_id": "agt_original",
+          "source_conversation_id": "conversation-contract",
+          "conversation_id": "conversation-contract",
+          "destination_binding_id": "binding-successor",
+          "destination_generation": 2,
+          "destination_agent_id": "agt_successor",
+          "destination_worktree_id": "wkt_successor",
+          "state": "reserved"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-profile-transfer-anonymous",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-transfers",
+      "scenario": "binding_profile_transfer_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-source/conversations/conversation-contract/profile-transfers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "body": {
+          "destination_binding_id": "binding-successor",
+          "expected_agent_id": "agt_original",
+          "expected_generation": 1,
+          "expected_destination_generation": 2,
+          "expected_incarnation": 0,
+          "owner": "owner",
+          "organization": false,
+          "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-profile-transfer-forbidden",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-transfers",
+      "scenario": "binding_profile_transfer_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-source/conversations/conversation-contract/profile-transfers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "body": {
+          "destination_binding_id": "binding-successor",
+          "expected_agent_id": "agt_original",
+          "expected_generation": 1,
+          "expected_destination_generation": 2,
+          "expected_incarnation": 0,
+          "owner": "owner",
+          "organization": false,
+          "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "forbidden",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-profile-transfer-invalid",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-transfers",
+      "scenario": "binding_profile_transfer_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-source/conversations/conversation-contract/profile-transfers",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "destination_binding_id": "binding-successor",
+          "expected_agent_id": "agt_original",
+          "expected_generation": 1,
+          "expected_destination_generation": 2,
+          "expected_incarnation": 0,
+          "owner": "owner",
+          "organization": false,
+          "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_binding",
+          "title": "invalid_binding",
+          "status": 400,
+          "detail": "invalid binding request: one Idempotency-Key is required",
+          "code": "invalid_binding"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-profile-transfer-missing",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-transfers",
+      "scenario": "binding_profile_transfer_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-source/conversations/conversation-contract/profile-transfers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "body": {
+          "destination_binding_id": "binding-successor",
+          "expected_agent_id": "agt_original",
+          "expected_generation": 1,
+          "expected_destination_generation": 2,
+          "expected_incarnation": 0,
+          "owner": "owner",
+          "organization": false,
+          "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_not_found",
+          "title": "binding_not_found",
+          "status": 404,
+          "detail": "binding not found",
+          "code": "binding_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-profile-transfer-conflict",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-transfers",
+      "scenario": "binding_profile_transfer_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-source/conversations/conversation-contract/profile-transfers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "body": {
+          "destination_binding_id": "binding-successor",
+          "expected_agent_id": "agt_original",
+          "expected_generation": 1,
+          "expected_destination_generation": 2,
+          "expected_incarnation": 0,
+          "owner": "owner",
+          "organization": false,
+          "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_not_ready",
+          "title": "binding_not_ready",
+          "status": 409,
+          "detail": "binding changed or is not ready",
+          "code": "binding_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-profile-transfer-unavailable",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-transfers",
+      "scenario": "binding_profile_transfer_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-source/conversations/conversation-contract/profile-transfers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "body": {
+          "destination_binding_id": "binding-successor",
+          "expected_agent_id": "agt_original",
+          "expected_generation": 1,
+          "expected_destination_generation": 2,
+          "expected_incarnation": 0,
+          "owner": "owner",
+          "organization": false,
+          "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_unavailable",
+          "title": "binding_unavailable",
+          "status": 503,
+          "detail": "Binding service is unavailable.",
+          "code": "binding_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

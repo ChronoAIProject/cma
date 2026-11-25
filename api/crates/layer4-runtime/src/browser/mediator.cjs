@@ -125,17 +125,18 @@ async function readFirstHeading(frame) {
   return value.heading;
 }
 
+const navigationHelp = 'Use an HTTP or HTTPS URL without credentials, at most 8192 characters. To preview a local file, serve it over HTTP on 127.0.0.1 and navigate to that URL.';
+
 async function navigate(value) {
-  control.requireAgent();
-  if (!browser || browser.closed) throw new Error('Browser is not enabled');
-  const url = new URL(value);
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || value.length > 8192)
-    throw new Error('Navigation requires an HTTP or HTTPS page without credentials');
+  const url = typeof value === 'string' && value.length <= 8192 ? URL.parse(value) : null;
+  if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+    throw refused('browser_navigation_invalid');
+  }
   state = 'loading';
   frame = undefined;
   const previous = await mainFrame();
   const result = await browser.call('Page.navigate', { url: url.href }, session);
-  if (result.errorText) throw new Error('Navigation failed');
+  if (result.errorText) throw refused('browser_navigation_failed');
   const committed = await mainFrame();
   if (result.isDownload) {
     location = safeLocation(committed.url);
@@ -206,20 +207,38 @@ const agent = createServer(async (request, response) => {
   try {
     if (request.method !== 'POST' || !['/navigate', '/input'].includes(request.url)) { response.writeHead(404).end(); return; }
     let body = '';
-    for await (const chunk of request) {
+    request.setEncoding('utf8');
+    for await (const chunk of request.iterator({ destroyOnReturn: false })) {
       body += chunk;
-      if (body.length > 16384) throw new Error('Navigation too large');
+      if (body.length > 16384) {
+        // Flush the refusal before closing, even if the caller is still sending.
+        response.setHeader('connection', 'close');
+        if (request.url === '/navigate') throw refused('browser_navigation_invalid');
+        throw new Error('Browser input too large');
+      }
     }
     const value = JSON.parse(body);
     const result = await serialized(() => {
-      if (!originatingContext || originatingContext !== context) throw refused('browser_identity');
+      if (originatingContext !== context) throw refused('browser_identity');
       control.requireAgent();
       if (!browser || browser.closed) throw refused('browser_disconnected');
       return request.url === '/navigate' ? navigate(value.url) : sendInput(browser, session, value.input);
     });
     response.setHeader('content-type', 'application/json');
     response.end(JSON.stringify(result));
-  } catch (error) { response.writeHead(409).end(JSON.stringify({ error: error.code ?? 'browser_disconnected' })); }
+  } catch (error) {
+    let code = error?.code;
+    if (typeof code !== 'string' || !code.startsWith('browser_')) {
+      if (browser?.closed) code = 'browser_disconnected';
+      else code = request.url === '/navigate' ? 'browser_navigation_failed' : 'browser_request_failed';
+    }
+    response.setHeader('content-type', 'application/json');
+    if (code === 'browser_navigation_invalid') {
+      response.writeHead(400).end(JSON.stringify({ error: code, message: navigationHelp }));
+    } else {
+      response.writeHead(409).end(JSON.stringify({ error: code }));
+    }
+  }
 });
 agent.requestTimeout = 15000;
 agent.maxConnections = 8;

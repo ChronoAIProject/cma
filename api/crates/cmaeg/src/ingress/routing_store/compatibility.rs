@@ -163,8 +163,9 @@ impl PlanStore {
         &self,
         request: &LaunchRequest,
         source_body: &[u8],
+        profile_guard: bool,
     ) -> Result<Option<AdmittedPlan>, AdmissionError> {
-        if !self.replicas_enabled() {
+        if !self.replicas_enabled() && !profile_guard {
             return Err(AdmissionError::Invalid);
         }
         let (identity, event) = verified(request, source_body, &self.keys, (self.clock)())?;
@@ -183,7 +184,8 @@ impl PlanStore {
         candidate: &Candidate,
         request: &LaunchRequest,
     ) -> Result<AdmittedPlan, AdmissionError> {
-        if !self.replicas_enabled() || matches!(request.activity.source, SourceKind::Github { .. })
+        if (!self.replicas_enabled() && candidate.profile_admission.is_none())
+            || matches!(request.activity.source, SourceKind::Github { .. })
         {
             return Err(AdmissionError::Invalid);
         }

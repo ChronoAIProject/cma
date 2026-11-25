@@ -34,6 +34,7 @@ const SEALED: i64 = 256;
 pub(super) struct Fixture {
     pub agent: Agent,
     pub target: Vec<AgentLogEntry>,
+    pub active: Vec<AgentLogEntry>,
     pub active_bytes: i64,
 }
 
@@ -120,6 +121,7 @@ pub(super) async fn install(store: &MongoSandboxStore, case: Case) -> Fixture {
     Fixture {
         agent,
         target: rows[..SEALED as usize].to_vec(),
+        active: rows[SEALED as usize..].to_vec(),
         active_bytes,
     }
 }

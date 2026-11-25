@@ -1,9 +1,9 @@
 //! The explicit manifest registry is also the migrator's reader floor.
 use super::{
-    activity_indexes, activity_page_index, agent_log_segments, agent_log_source_keys,
-    agent_owner_index, binding_indexes, collection_indexes, command_cohort_index, measured_batches,
-    measured_custody, measured_index, opening_index, sandbox_usage_capture, turn_policy_index,
-    Result,
+    activity_indexes, activity_page_index, agent_log_active_proofs, agent_log_segments,
+    agent_log_source_keys, agent_owner_index, binding_indexes, collection_indexes,
+    command_cohort_index, measured_batches, measured_custody, measured_index, opening_index,
+    sandbox_usage_capture, turn_policy_index, Result,
 };
 use mongodb::bson::{doc, Document};
 
@@ -17,6 +17,7 @@ pub(super) enum Step {
     TurnPolicyDue,
     AgentLogSegments,
     AgentLogSourceKeys,
+    AgentLogActiveProofs,
     BindingIndexes,
     CommandCohort,
     SandboxUsageCapture,
@@ -26,7 +27,8 @@ pub(super) enum Step {
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 14] = [
+    pub(super) const ALL: [Self; 15] = [
+        Self::AgentLogActiveProofs,
         Self::MeasuredIndex,
         Self::MeasuredBatches,
         Self::MeasuredCustody,
@@ -64,6 +66,7 @@ impl Step {
             Self::TurnPolicyDue => turn_policy_index::ID,
             Self::AgentLogSegments => agent_log_segments::ID,
             Self::AgentLogSourceKeys => agent_log_source_keys::ID,
+            Self::AgentLogActiveProofs => agent_log_active_proofs::ID,
         }
     }
     pub(super) fn checksum(self) -> String {
@@ -82,6 +85,7 @@ impl Step {
             Self::TurnPolicyDue => turn_policy_index::checksum(),
             Self::AgentLogSegments => agent_log_segments::checksum(),
             Self::AgentLogSourceKeys => agent_log_source_keys::checksum(),
+            Self::AgentLogActiveProofs => agent_log_active_proofs::checksum(),
         }
     }
     pub(super) fn manifest(self) -> String {
@@ -90,7 +94,7 @@ impl Step {
     pub(super) fn max_changes(self) -> i64 {
         match self {
             Self::CommandCohort => 1,
-            Self::MeasuredCustody | Self::MeasuredBatches => 1,
+            Self::MeasuredCustody | Self::MeasuredBatches | Self::AgentLogActiveProofs => 1,
             Self::MeasuredIndex => 5,
             Self::SandboxUsageCapture => crate::store::sandbox_usage_export::schema::MAX_STEPS,
             Self::BindingIndexes => 11,
@@ -113,6 +117,7 @@ impl Step {
                 measured_index::MANIFESTS,
                 measured_index::BATCHES,
             ],
+            Self::AgentLogActiveProofs => &[agent_log_active_proofs::COLLECTION],
             Self::SandboxUsageCapture => crate::store::sandbox_usage_export::COLLECTIONS,
             Self::BindingIndexes => crate::store::bindings::schema::COLLECTIONS,
             Self::Activity | Self::ActivityPage => &["activity"],
@@ -138,6 +143,7 @@ impl Step {
             | Self::MeasuredCustody
             | Self::MeasuredBatches
             | Self::MeasuredIndex
+            | Self::AgentLogActiveProofs
             | Self::BindingIndexes => "created_indexes",
         }
     }
@@ -154,6 +160,7 @@ impl Step {
             Self::MeasuredCustody => measured_custody::inspect(database).await,
             Self::MeasuredBatches => measured_batches::inspect(database).await,
             Self::MeasuredIndex => measured_index::inspect(database).await,
+            Self::AgentLogActiveProofs => agent_log_active_proofs::inspect(database).await,
             Self::SandboxUsageCapture => Err("usage migration requires schema-unit inspection"),
             Self::BindingIndexes => binding_indexes::inspect(database).await,
             Self::Activity => Ok(activity_indexes::inspect(database)
@@ -199,6 +206,9 @@ impl Step {
             Self::MeasuredIndex => measured_index::create(database, collection, index).await,
             Self::MeasuredBatches if collection == measured_batches::COLLECTION => {
                 measured_batches::create(database, index).await
+            }
+            Self::AgentLogActiveProofs if collection == agent_log_active_proofs::COLLECTION => {
+                agent_log_active_proofs::create(database, index).await
             }
             Self::MeasuredCustody if collection == measured_custody::COLLECTION => {
                 measured_custody::create(database, index).await

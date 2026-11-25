@@ -231,6 +231,7 @@ fn turn_targets_open_and_verify_the_sealed_event_ref() {
 
 fn config(media: MediaConfig) -> Config {
     Config {
+        profile_revisions_enabled: false,
         managed_telegram_setup_enabled: false,
         native_lark_writes_enabled: false,
         native_lark_intake_enabled: false,
