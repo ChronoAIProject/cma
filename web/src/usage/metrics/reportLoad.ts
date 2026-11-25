@@ -25,6 +25,7 @@ import {
   UsageObservationLimit,
 } from './retry';
 import { reportRequest } from './reportRequests';
+import { observeUsageView, viewUnavailable } from './viewCapability';
 import {
   abortWhenIdle,
   clearReportOwner,
@@ -33,7 +34,6 @@ import {
   notify,
   type ReportEntry,
 } from './reportCache';
-
 function retryAfterMilliseconds(report: UsageMetricReport): number {
   const seconds = Number(report.retry_after_seconds);
   return jitteredRetryDelay(Number.isFinite(seconds) ? seconds * 1000 : 1000);
@@ -71,7 +71,6 @@ function commitLatest(
   if (view.refresh.state !== 'pending') entry.observationStartedAt = 0;
   notify(entry);
 }
-
 function initialProjection(selection: Selection, measured: boolean): UsageInitialProjection {
   return {
     first_page: { limit: 50, sort: selection.sort, order: selection.order },
@@ -162,15 +161,18 @@ async function loadInitial(
   }
   const query = metricQuery(selection, admin);
   const latest = selection.range !== '1h' && api.latestInitial;
+  if (latest && viewUnavailable(api, entry.owner, admin, 'initial')) return false;
   const view = latest
-    ? await observeReport(api, entry, signal, (requestSignal) =>
-        latest.call(
-          api,
-          {
-            selection: latestQuery(selection, admin, forceRefresh) as UsageMetricViewQuery,
-            projection,
-          },
-          { signal: requestSignal },
+    ? await observeUsageView(api, entry.owner, signal, admin, 'initial', () =>
+        observeReport(api, entry, signal, (requestSignal) =>
+          latest.call(
+            api,
+            {
+              selection: latestQuery(selection, admin, forceRefresh) as UsageMetricViewQuery,
+              projection,
+            },
+            { signal: requestSignal },
+          ),
         ),
       )
     : undefined;
@@ -225,10 +227,13 @@ async function loadLatest(
   // create another job and hide generation failures behind an endless 202 loop.
   if (entry.latestPending && entry.refreshReportId && !once)
     await observePending(api, entry, signal, principal, admin);
-  let view = await observeReport(api, entry, signal, (requestSignal) =>
-    latest.call(api, latestQuery(selection, admin, forceRefresh && !entry.latestPending), {
-      signal: requestSignal,
-    }),
+  if (!entry.latestPending && viewUnavailable(api, entry.owner, admin, 'latest')) return false;
+  let view = await observeUsageView(api, entry.owner, signal, admin, 'latest', () =>
+    observeReport(api, entry, signal, (requestSignal) =>
+      latest.call(api, latestQuery(selection, admin, forceRefresh && !entry.latestPending), {
+        signal: requestSignal,
+      }),
+    ),
   );
   while (!signal.aborted) {
     if (view.report.status === 'ready' && view.report.summary) {
@@ -250,8 +255,10 @@ async function loadLatest(
       return true;
     }
     await observePending(api, entry, signal, principal, admin);
-    view = await observeReport(api, entry, signal, (requestSignal) =>
-      latest.call(api, latestQuery(selection, admin, false), { signal: requestSignal }),
+    view = await observeUsageView(api, entry.owner, signal, admin, 'latest', () =>
+      observeReport(api, entry, signal, (requestSignal) =>
+        latest.call(api, latestQuery(selection, admin, false), { signal: requestSignal }),
+      ),
     );
   }
   return true;
