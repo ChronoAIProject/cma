@@ -83,12 +83,17 @@ jobs:
       # A set every member of which a newer final overtook deploys nothing:
       # the newer finals' runs own the deployment, so the remaining steps skip.
       - name: Restore public tool download cache
+        id: public-tools-cache
         if: steps.release.outputs.disposition == ''
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        continue-on-error: true
         timeout-minutes: 1
         with:
           path: ${{ runner.temp }}/cma-public-tool-cache
           key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
+      - name: Discard an incomplete public tool cache restore
+        if: steps.release.outputs.disposition == '' && (steps.public-tools-cache.outcome != 'success' || steps.public-tools-cache.outputs.cache-hit != 'true')
+        run: rm -rf -- "${RUNNER_TEMP:?}/cma-public-tool-cache"
       - name: Prepare isolated deployment tools
         if: steps.release.outputs.disposition == ''
         run: python3 -B .github/scripts/staging_cd_tools.py install

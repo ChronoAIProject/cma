@@ -87,7 +87,7 @@ module CIContract
       "github.event_name == 'push' && github.ref == 'refs/heads/develop' && #{base} && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'")
     require!(extract["id"] == "api-cargo-cache-export", "API cache extraction output changed")
     require!([inject, extract].all? { |row| row["timeout-minutes"] == 3 }, "API cache transfers must be bounded")
-    revision = "0057852bfaa89a56745cba8c7296529d2fc39830"
+    revision = "caa296126883cff596d87d8935842f9db880ef25"
     shared = { "path" => "${{ runner.temp }}/cma-api-cargo-cache/data",
       "key" => "${{ steps.api-cargo-cache.outputs.key }}", "enableCrossOsArchive" => false }
     expected = [

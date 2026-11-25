@@ -722,6 +722,11 @@ class StagingWorkflowTest < Minitest::Test
               'Restore compatible Cargo mounts', 'Retain accepted Cargo mounts',
               'Restore bounded layer archive', 'Validate restored layer archive',
               'Seal accepted layer archive', 'Retain sealed layer archive for admission'].freeze
+  OPTIONAL_CACHES = {
+    ['staging-cd', 'plan'] => ['Restore previous trusted develop comparisons', 'Save trusted develop comparisons'],
+    ['staging-cd', 'infrastructure'] => ['Restore public tool download cache', 'Save verified public tool downloads'],
+    ['staging-deploy', 'deploy'] => ['Restore public tool download cache'],
+  }.freeze
 
   def test_safe_actions_repeat_once_and_only_the_repeat_can_fail_the_job
     optional = []
@@ -751,7 +756,9 @@ class StagingWorkflowTest < Minitest::Test
         refute job.key?('continue-on-error'), "#{name}/#{job_id}"
         refute job.key?('strategy'), "#{name}/#{job_id}"
         job.fetch('steps', []).select { |step| step['continue-on-error'] }.each do |step|
-          assert(optional.include?(step) || OPTIONAL.include?(step['name']), "#{name}/#{job_id}: #{step['name']}")
+          cache = OPTIONAL_CACHES.fetch([name, job_id], []).include?(step['name']) &&
+                  step['uses'].to_s.match?(%r{\Aactions/cache/(?:restore|save)@[0-9a-f]{40}\z})
+          assert(optional.include?(step) || OPTIONAL.include?(step['name']) || cache, "#{name}/#{job_id}: #{step['name']}")
         end
       end
     end
@@ -889,13 +896,18 @@ class StagingWorkflowTest < Minitest::Test
     prepare = steps.index { |step| step['id'] == 'selection-cache' }
     assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_selection_cache.py', steps[prepare]['run']
     restore = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/restore@') }
+    discard = steps.index { |step| step['name'] == 'Discard an incomplete comparison cache restore' }
     save = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
     select = steps.index { |step| step['id'] == 'plan' }
     gate = steps.index { |step| step['name'] == 'Require a complete release plan' }
     proof = steps.index { |step| step['name'] == 'Require a provable release plan' }
     assert_operator prepare, :<, restore
-    assert_operator restore, :<, select
+    assert_operator restore, :<, discard
+    assert_operator discard, :<, select
     assert_operator select, :<, save
+    assert_equal 'comparison-cache', steps[restore]['id']
+    assert_equal "steps.comparison-cache.outcome != 'success' || steps.comparison-cache.outputs.cache-matched-key == ''", steps[discard]['if']
+    assert_equal 'rm -rf -- "${RUNNER_TEMP:?}/cma-selection-cache"', steps[discard]['run']
     refute steps[save].key?('if'), 'the default success condition must guard cache writes'
     # A budget-stopped plan saves its analysed revisions before the job fails,
     # and a later step's failure cannot discard them.
@@ -916,10 +928,40 @@ class StagingWorkflowTest < Minitest::Test
     [steps[restore], steps[save]].each do |step|
       assert_equal '${{ steps.selection-cache.outputs.directory }}', step['with']['path']
       assert_equal '${{ steps.selection-cache.outputs.key }}', step['with']['key']
+      assert_equal true, step['continue-on-error']
+      assert_equal 2, step['timeout-minutes']
     end
     assert_equal '${{ steps.selection-cache.outputs.prefix }}', steps[restore]['with']['restore-keys']
     assert_equal 'ubuntu-24.04', plan['runs-on']
     refute plan.to_s.include?('secrets.')
+  end
+
+  def test_deploy_tools_start_cold_after_an_unconfirmed_cache_restore
+    workflows = [
+      ['staging-cd', 'infrastructure', 'Verify and warm public tool downloads before admission'],
+      ['staging-deploy', 'deploy', 'Prepare isolated deployment tools'],
+      ['prod-deploy', 'deploy', 'Prepare isolated deployment tools'],
+    ]
+    workflows.each do |name, job, consumer|
+      steps = workflow(name).fetch('jobs').fetch(job).fetch('steps')
+      restore = steps.index { |step| step['name'] == 'Restore public tool download cache' }
+      discard = steps.index { |step| step['name'] == 'Discard an incomplete public tool cache restore' }
+      required = steps.index { |step| step['name'] == consumer }
+      assert_operator restore, :<, discard
+      assert_operator discard, :<, required
+      assert_equal 'public-tools-cache', steps[restore]['id']
+      assert_equal true, steps[restore]['continue-on-error']
+      assert_equal 1, steps[restore]['timeout-minutes']
+      miss = "steps.public-tools-cache.outcome != 'success' || steps.public-tools-cache.outputs.cache-hit != 'true'"
+      condition = name == 'staging-deploy' ? "steps.release.outputs.disposition == '' && (#{miss})" : miss
+      assert_equal condition, steps[discard]['if']
+      assert_equal 'rm -rf -- "${RUNNER_TEMP:?}/cma-public-tool-cache"', steps[discard]['run']
+      refute steps[required].key?('continue-on-error'), 'pinned tool verification must remain required'
+    end
+    infrastructure = workflow('staging-cd').fetch('jobs').fetch('infrastructure').fetch('steps')
+    save = infrastructure.find { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
+    assert_equal true, save['continue-on-error']
+    assert_equal 2, save['timeout-minutes']
   end
 
   def test_planner_reads_final_release_tags_with_only_the_read_only_job_token

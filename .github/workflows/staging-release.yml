@@ -118,7 +118,7 @@ jobs:
         if: vars.CMA_BOUNDED_LAYER_CACHE == 'true' && steps.ownership.outputs.superseded != 'true'
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: |
             ${{ runner.temp }}/cma-layer-cache/archive.tar

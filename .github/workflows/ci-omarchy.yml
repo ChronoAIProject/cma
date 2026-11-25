@@ -120,7 +120,7 @@ jobs:
         name: "Restore complete Omarchy layer cache"
         if: "steps.staging-image.outputs.adopted != 'true'"
         id: "omarchy-cache-restore"
-        uses: "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830"
+        uses: "actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25"
         timeout-minutes: 5
         continue-on-error: true
         with:
@@ -141,7 +141,7 @@ jobs:
         if: steps.staging-image.outputs.adopted != 'true' && vars.CMA_BOUNDED_LAYER_CACHE == 'true'
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: |
             ${{ runner.temp }}/cma-layer-cache/archive.tar
@@ -249,7 +249,7 @@ jobs:
       -
         name: "Restore Trivy databases"
         if: "github.event_name != 'push' || github.ref != 'refs/heads/develop'"
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: ${{ github.workspace }}/.cache/trivy
           # Trivy uses daily keys. Restore the newest eligible database and let the scanner refresh it.
