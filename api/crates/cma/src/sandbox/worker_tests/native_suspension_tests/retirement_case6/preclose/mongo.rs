@@ -180,7 +180,10 @@ async fn retirement_capture_bind_checks_claim_owner_and_ambiguous_commit() {
         .await
         .unwrap();
     assert_eq!(
-        f.store.retirement_capture_offer(&f.child).await.unwrap(),
+        f.store
+            .retirement_capture_offer(&f.parent, &f.child)
+            .await
+            .unwrap(),
         offer
     );
     let attempt = Uuid::new_v4();
@@ -438,8 +441,4 @@ async fn retirement_capture_proves_lost_observation_acknowledgement() {
 
 mod consumption;
 
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
-async fn recovered_dispatch_resumes_graceful_stop_through_capture_outage() {
-    super::super::faults::recovered_dispatch_resumes_graceful_stop().await;
-}
+mod delivery;

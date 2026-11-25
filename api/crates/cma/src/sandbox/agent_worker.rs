@@ -78,6 +78,7 @@ pub(crate) struct AgentWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct AgentWorkerConfig {
+    pub capture_delivery: Option<super::native_retirement_delivery::CaptureDelivery>,
     pub ownership_retry_hints: Option<Arc<dyn super::ownership_retry_hint::OwnershipRetryHints>>,
     pub retirement_reporter:
         Option<Arc<dyn crate::store::native_retirement_action::RetirementRecords>>,
@@ -103,6 +104,7 @@ pub(crate) struct AgentWorkerConfig {
 impl AgentWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
+            capture_delivery: None,
             retirement_reporter: None,
             ownership: None,
             skip_ineligible_reconciliation: false,

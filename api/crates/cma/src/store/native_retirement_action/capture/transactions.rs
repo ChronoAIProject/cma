@@ -10,6 +10,7 @@ use crate::store::{
     },
     work_claim_authority::sandbox_claim,
 };
+use futures_util::future::BoxFuture;
 use layer2_core::agent_ownership::execution_authority;
 use layer2_core::sandbox::AgentWorkStep;
 use layer3_adapter::owner_protocol::TransportAuthority;
@@ -33,37 +34,44 @@ impl MongoSandboxStore {
             "revision",
             signed(parent.revision, "retirement parent revision").map_err(|_| CONFLICT)?,
         );
-        self.write_claimed_capture(async |session| {
-            let row = self.capture_row(filter.clone(), session).await?;
-            let current = read_sandbox(&row).map_err(Domain)?;
-            if ParentBinding::from_parent(&current).map_err(Domain)? != parent_binding {
-                return Err(Domain(CONFLICT));
-            }
-            let agent_row = self
-                .agents
-                .find_one(doc! {"_id":child.as_str()})
-                .session(&mut *session)
-                .await
-                .map_err(Driver)?
-                .ok_or(Domain(CONFLICT))?;
-            let agent = read_agent(&agent_row).map_err(Domain)?;
-            let next = prepare_offer(&row, &current, &agent).map_err(Domain)?;
-            let receipt = CaptureRecord::decode(&next)
-                .map_err(Domain)?
-                .slots
-                .into_iter()
-                .find(|slot| slot.child.agent == *child)
-                .ok_or(Domain(CONFLICT))?;
-            self.write_capture_row(&row, next, Some(session), Some(filter.clone()))
-                .await?;
-            Ok((parent_binding.clone(), receipt))
-        })
+        self.write_claimed_capture(
+            (self, child, parent_binding, filter),
+            |(store, child, parent_binding, filter), session| {
+                Box::pin(async move {
+                    let row = store.capture_row(filter.clone(), session).await?;
+                    let current = read_sandbox(&row).map_err(Domain)?;
+                    if ParentBinding::from_parent(&current).map_err(Domain)? != *parent_binding {
+                        return Err(Domain(CONFLICT));
+                    }
+                    let agent_row = store
+                        .agents
+                        .find_one(doc! {"_id":child.as_str()})
+                        .session(&mut *session)
+                        .await
+                        .map_err(Driver)?
+                        .ok_or(Domain(CONFLICT))?;
+                    let agent = read_agent(&agent_row).map_err(Domain)?;
+                    let next = prepare_offer(&row, &current, &agent).map_err(Domain)?;
+                    let receipt = CaptureRecord::decode(&next)
+                        .map_err(Domain)?
+                        .slots
+                        .into_iter()
+                        .find(|slot| &slot.child.agent == *child)
+                        .ok_or(Domain(CONFLICT))?;
+                    store
+                        .write_capture_row(&row, next, Some(session), Some(filter.clone()))
+                        .await?;
+                    Ok((parent_binding.clone(), receipt))
+                })
+            },
+        )
         .await
         .map(|(_, slot)| slot.offer_id)
     }
 
     pub(crate) async fn retirement_capture_offer(
         &self,
+        expected: &Sandbox,
         agent: &Agent,
     ) -> Result<Uuid, SandboxStoreError> {
         let row = self
@@ -74,6 +82,9 @@ impl MongoSandboxStore {
             .map_err(unavailable)?
             .ok_or(CONFLICT)?;
         let (parent, record) = current_record(&row)?;
+        if ParentBinding::from_parent(expected)? != record.parent {
+            return Err(CONFLICT);
+        }
         let lineage = ChildLineage::from_child(&parent, agent)?;
         record
             .slots
@@ -106,30 +117,41 @@ impl MongoSandboxStore {
             owner: authority.owner(),
         };
         let (parent, slot) = self
-            .write_claimed_capture(async |session| {
-                let row = self
-                    .capture_row(doc! {"_id":agent.sandbox_id.as_str()}, session)
-                    .await?;
-                let (parent, mut record) = current_record(&row).map_err(Domain)?;
-                let lineage = ChildLineage::from_child(&parent, agent).map_err(Domain)?;
-                let slot = record
-                    .slots
-                    .iter_mut()
-                    .find(|slot| slot.offer_id == offer_id && slot.child == lineage)
-                    .ok_or(Domain(CONFLICT))?;
-                let bound = CaptureState::Bound {
-                    attempt: attempt.clone(),
-                };
-                if slot.state != CaptureState::Offered && slot.state != bound {
-                    return Err(Domain(CONFLICT));
-                }
-                self.fence_capture_child(agent, &attempt, session).await?;
-                slot.state = bound;
-                let receipt = slot.clone();
-                self.write_capture_row(&row, record.encode().map_err(Domain)?, Some(session), None)
-                    .await?;
-                Ok((record.parent, receipt))
-            })
+            .write_claimed_capture(
+                (self, agent, offer_id, &attempt),
+                |(store, agent, offer_id, attempt), session| {
+                    Box::pin(async move {
+                        let row = store
+                            .capture_row(doc! {"_id":agent.sandbox_id.as_str()}, session)
+                            .await?;
+                        let (parent, mut record) = current_record(&row).map_err(Domain)?;
+                        let lineage = ChildLineage::from_child(&parent, agent).map_err(Domain)?;
+                        let slot = record
+                            .slots
+                            .iter_mut()
+                            .find(|slot| slot.offer_id == *offer_id && slot.child == lineage)
+                            .ok_or(Domain(CONFLICT))?;
+                        let bound = CaptureState::Bound {
+                            attempt: (*attempt).clone(),
+                        };
+                        if slot.state != CaptureState::Offered && slot.state != bound {
+                            return Err(Domain(CONFLICT));
+                        }
+                        store.fence_capture_child(agent, attempt, session).await?;
+                        slot.state = bound;
+                        let receipt = slot.clone();
+                        store
+                            .write_capture_row(
+                                &row,
+                                record.encode().map_err(Domain)?,
+                                Some(session),
+                                None,
+                            )
+                            .await?;
+                        Ok((record.parent, receipt))
+                    })
+                },
+            )
             .await?;
         if !authority.is_current() {
             return Err(CONFLICT);
@@ -294,14 +316,19 @@ impl MongoSandboxStore {
         Ok(())
     }
 
-    async fn write_claimed_capture(
+    async fn write_claimed_capture<C: Sync>(
         &self,
-        apply: impl AsyncFn(&mut ClientSession) -> Result<(ParentBinding, Slot), LifecycleLoadError>,
+        context: C,
+        apply: impl for<'a> Fn(
+            &'a C,
+            &'a mut ClientSession,
+        )
+            -> BoxFuture<'a, Result<(ParentBinding, Slot), LifecycleLoadError>>,
     ) -> Result<(ParentBinding, Slot), SandboxStoreError> {
         for _ in 0..TRANSACTION_ATTEMPTS {
             let mut session = self.client.start_session().await.map_err(unavailable)?;
             start_transaction(&mut session).await.map_err(unavailable)?;
-            let (parent, slot) = match apply(&mut session).await {
+            let (parent, slot) = match apply(&context, &mut session).await {
                 Ok(receipt) => receipt,
                 Err(error) => {
                     if let Err(abort) = session.abort_transaction().await {

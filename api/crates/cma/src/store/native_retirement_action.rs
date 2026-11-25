@@ -18,13 +18,6 @@ use super::sandbox_mongo::{
 use super::sandboxes::read_sandbox;
 
 pub(super) const FIELD: &str = "native_retirement_action_v1";
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "capture record is wired into transactions in the next slice"
-    )
-)]
 pub(crate) mod capture;
 mod child_write;
 mod parent_write;

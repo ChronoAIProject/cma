@@ -142,7 +142,7 @@ fn retirement_capture_bounds_record_count_and_bson_bytes() {
 
 #[test]
 fn retirement_capture_round_trips_bound_and_observed_slots_and_refuses_malformed_records() {
-    let (parent, child) = fixture();
+    let (parent, mut child) = fixture();
     let encoded = prepare_offer(&doc! {}, &parent, &child).unwrap();
     let mut record = CaptureRecord::decode(&encoded).unwrap();
     let attempt = BoundAttempt {
@@ -160,6 +160,8 @@ fn retirement_capture_round_trips_bound_and_observed_slots_and_refuses_malformed
             epoch: 2,
         },
     };
+    child.revision = attempt.child_revision;
+    child.work.lease = Some(attempt.claim.clone());
     record.slots[0].state = CaptureState::Bound {
         attempt: attempt.clone(),
     };
@@ -182,10 +184,14 @@ fn retirement_capture_round_trips_bound_and_observed_slots_and_refuses_malformed
     };
     let observed = record.encode().unwrap();
     assert_eq!(CaptureRecord::decode(&observed), Ok(record.clone()));
-    assert_eq!(
-        prepare_offer(&doc! {CAPTURE: observed.clone()}, &parent, &child),
-        Ok(observed)
-    );
+    let row = doc! {CAPTURE: observed.clone()};
+    assert_eq!(prepare_offer(&row, &parent, &child), Ok(observed));
+
+    child.revision += 1;
+    let replacement = prepare_offer(&row, &parent, &child).unwrap();
+    let replacement = CaptureRecord::decode(&replacement).unwrap();
+    assert_ne!(replacement.slots[0].offer_id, record.slots[0].offer_id);
+    assert_eq!(replacement.slots[0].state, CaptureState::Offered);
     let mut duplicate = record.clone();
     duplicate.slots.push(record.slots[0].clone());
     let CaptureState::Observed { receiver, .. } = &mut record.slots[0].state else {

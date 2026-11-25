@@ -11,6 +11,8 @@ use LifecycleLoadError::{Domain, Driver};
 
 #[async_trait::async_trait]
 pub(crate) trait RetirementCaptureConsumer: Send + Sync {
+    async fn offer(&self, parent: &Sandbox, child: &Agent) -> Result<(), SandboxStoreError>;
+
     async fn observed(
         &self,
         parent: &Sandbox,
@@ -88,6 +90,12 @@ impl CapturedRetirementObservation {
 
 #[async_trait::async_trait]
 impl RetirementCaptureConsumer for MongoSandboxStore {
+    async fn offer(&self, parent: &Sandbox, child: &Agent) -> Result<(), SandboxStoreError> {
+        self.offer_retirement_capture(parent, &child.id)
+            .await
+            .map(|_| ())
+    }
+
     async fn observed(
         &self,
         parent: &Sandbox,

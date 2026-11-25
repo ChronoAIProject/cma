@@ -5,7 +5,7 @@ use layer2_core::sandbox::store::{
     VersionedWorktree,
 };
 use layer2_core::sandbox::{
-    Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, WorktreeStatus,
+    Agent, AgentLogKind, AgentStatus, AgentWorkStep, Sandbox, SandboxEventKind, WorktreeStatus,
 };
 use layer3_adapter::{AgentCloseRequest, AgentHomeRemoveRequest, AgentSlot, WorktreeRef};
 
@@ -115,35 +115,87 @@ impl AgentWorker {
                 "The runtime binding is absent but process absence is not proved. Retire the Sandbox to reconcile its provider ownership and retained home; if retirement is already pending, restore provider access or repair the retained ownership evidence. No process has been reported stopped.",
             ), now).await;
         }
-        let context = match self.cleanup_context(&agent).await {
-            Ok(context) => context,
-            Err(failure) => {
-                return self
-                    .handle_failure(agent, failure, now + started.elapsed())
+        let fence = claimed_fence(&agent, &self.config.holder)?;
+        let result = if let Some(delivery) = &self.config.capture_delivery {
+            if super::super::native_retirement_finalizer::NativeRetirementFinalizer::applies(
+                &sandbox,
+            ) {
+                use crate::store::native_retirement_action::RetirementRecords;
+                match delivery.store.action(&sandbox.id).await? {
+                    Some(action) if action.matches(&sandbox) => {
+                        self.close_process_effect(&agent, fence, Some(sandbox), true)
+                            .await
+                    }
+                    Some(_) => return Err(SandboxStoreError::Conflict),
+                    None => {
+                        let (bound, mut pending) = delivery.bind(&sandbox, &agent).await?;
+                        let result = pending
+                            .scope(
+                                bound,
+                                self.close_process_effect(&agent, fence, Some(sandbox), false),
+                            )
+                            .await;
+                        if result.is_err() && pending.sealed() {
+                            // Preserve the recorded attempt for the current parent to consume.
+                            return Ok(());
+                        }
+                        result
+                    }
+                }
+            } else {
+                self.close_process_effect(&agent, fence, Some(sandbox), true)
                     .await
             }
+        } else {
+            self.close_process_effect(&agent, fence, None, true).await
         };
-        if !has_startup_evidence(&agent, AgentWorkStep::OpenConversation) {
-            return self
-                .progress(
+        match result {
+            Ok(request) => {
+                let evidence = request.map(|request| {
+                    request_evidence(
+                        AgentWorkStep::CloseProcess,
+                        &request.operation_id,
+                        &request.request_sha256,
+                    )
+                });
+                self.progress(
                     agent,
                     AgentWorkStep::PublishStopped,
                     now,
-                    None,
+                    evidence,
                     Vec::new(),
                     None,
                     None,
                 )
-                .await;
+                .await
+            }
+            Err(failure) => {
+                self.handle_failure(agent, failure, now + started.elapsed())
+                    .await
+            }
         }
-        let request = close_request(&agent);
-        let authority_fence = claimed_fence(&agent, &self.config.holder)?;
-        let (closed, failure) = layer3_adapter::receiver_failure::observe(
-            self.dependencies
-                .adapter
-                .close_agent(&context.runtime, authority_fence, &request),
-        )
-        .await;
+    }
+
+    async fn close_process_effect(
+        &self,
+        agent: &Agent,
+        fence: u64,
+        parent: Option<Sandbox>,
+        report_legacy: bool,
+    ) -> Result<Option<AgentCloseRequest>, WorkerFailure> {
+        let context = self.context_with_parent(agent, parent).await?;
+        if !has_startup_evidence(agent, AgentWorkStep::OpenConversation) {
+            return Ok(None);
+        }
+        let request = close_request(agent);
+        let close = self
+            .dependencies
+            .adapter
+            .close_agent(&context.runtime, fence, &request);
+        if !report_legacy {
+            return close.await.map(|()| Some(request)).map_err(cleanup_failure);
+        }
+        let (closed, failure) = layer3_adapter::receiver_failure::observe(close).await;
         if let (Some(store), Some(receiver), Some(binding)) = (
             &self.config.retirement_reporter,
             failure.and_then(|f| f.into_receiver()),
@@ -165,28 +217,7 @@ impl AgentWorker {
                 }
             }
         }
-        match closed {
-            Ok(()) => {
-                self.progress(
-                    agent,
-                    AgentWorkStep::PublishStopped,
-                    now,
-                    Some(request_evidence(
-                        AgentWorkStep::CloseProcess,
-                        &request.operation_id,
-                        &request.request_sha256,
-                    )),
-                    Vec::new(),
-                    None,
-                    None,
-                )
-                .await
-            }
-            Err(error) => {
-                self.handle_failure(agent, cleanup_failure(error), now + started.elapsed())
-                    .await
-            }
-        }
+        closed.map(|()| Some(request)).map_err(cleanup_failure)
     }
 
     pub(super) async fn ensure_process_closed(

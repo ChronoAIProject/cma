@@ -24,6 +24,7 @@ mod policy;
 mod provenance_backfill;
 pub(crate) use provenance_backfill::AgentProvenanceBackfill;
 mod model_request_budget;
+pub(crate) mod native_retirement_delivery;
 mod native_retirement_finalizer;
 mod reconciliation;
 pub(crate) mod retained_recovery;

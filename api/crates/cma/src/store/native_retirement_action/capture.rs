@@ -93,7 +93,7 @@ impl BoundCapture {
         future: F,
     ) -> (
         layer3_adapter::receiver_failure::ReceiverFailureCapture,
-        impl std::future::Future<Output = F::Output>,
+        impl std::future::Future<Output = F::Output> + use<F>,
     ) {
         layer3_adapter::receiver_failure::capture_attempt(self.attempt.id, future)
     }
@@ -160,6 +160,8 @@ pub(super) fn prepare_offer(
         return Err(CONFLICT);
     }
     let parent_identity = ParentBinding::from_parent(parent)?;
+    let revision = child.revision;
+    let work = &child.work;
     let child = ChildLineage::from_child(parent, child)?;
     let mut record = match row.get(CAPTURE) {
         None => CaptureRecord {
@@ -177,24 +179,37 @@ pub(super) fn prepare_offer(
     };
     if let Some(existing) = record
         .slots
-        .iter()
+        .iter_mut()
         .find(|slot| slot.child.agent == child.agent)
     {
-        return if existing.child == child {
-            record.encode()
-        } else {
-            Err(CONFLICT)
+        let same_claim = match &existing.state {
+            CaptureState::Offered => true,
+            CaptureState::Bound { attempt } | CaptureState::Observed { attempt, .. } => {
+                attempt.child_revision == revision
+                    && work.owns(&attempt.claim.holder, attempt.claim.fence)
+            }
         };
+        if existing.child != child {
+            return Err(CONFLICT);
+        }
+        if !same_claim {
+            *existing = new_offer(child);
+        }
+        return record.encode();
     }
     if record.slots.len() == MAX_SANDBOX_LIFECYCLE_AGENTS {
         return Err(CONFLICT);
     }
-    record.slots.push(Slot {
+    record.slots.push(new_offer(child));
+    record.encode()
+}
+
+fn new_offer(child: ChildLineage) -> Slot {
+    Slot {
         offer_id: Uuid::new_v4(),
         child,
         state: CaptureState::Offered,
-    });
-    record.encode()
+    }
 }
 
 impl CaptureRecord {

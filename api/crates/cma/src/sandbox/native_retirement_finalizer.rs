@@ -245,6 +245,26 @@ impl NativeRetirementFinalizer {
         Ok(Self::applies(sandbox) && self.records.action(&sandbox.id).await?.is_some())
     }
 
+    pub(super) async fn offer_capture(&self, parent: &Sandbox) -> Result<(), SandboxStoreError> {
+        let Some(capture) = self.capture.as_ref().filter(|_| self.admit) else {
+            return Ok(());
+        };
+        let children = super::live_agent_stopper::retirement_agents(self.store.as_ref(), parent)
+            .await
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        for child in children.iter().filter(|child| {
+            child.status.is_live()
+                && !child.has_no_runtime_effects()
+                && child
+                    .conversation
+                    .runtime_generation
+                    .is_some_and(|generation| generation > 0)
+        }) {
+            capture.offer(parent, child).await?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn admission_enabled(&self) -> bool {
         self.admit
     }
