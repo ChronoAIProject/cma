@@ -55,6 +55,7 @@ impl LifecycleRecord {
             lease_expires_at: None,
             lease_token: None,
             attempts: 0,
+            sandbox_quota_refusals: None,
             retry_at: None,
             created_at: now,
             updated_at: now,

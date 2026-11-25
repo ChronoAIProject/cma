@@ -161,7 +161,7 @@ async fn worker_quota_failure_metadata_is_gated_and_survives_restart() {
             .unwrap();
         fixture::seed(&store).await;
         let collection = db.collection::<Document>("agent_lifecycle_operations");
-        for delay in [5_000, 10_000] {
+        for (refusals, delay) in [(1, 5_000), (2, 10_000)] {
             service.run_worker(&receipt.id).await.unwrap();
             let retry = operations
                 .read_for_owner(&owner.caller.subject, &receipt.id)
@@ -169,6 +169,7 @@ async fn worker_quota_failure_metadata_is_gated_and_survives_restart() {
                 .unwrap()
                 .unwrap();
             assert_eq!(retry.status, "queued");
+            assert_eq!(retry.sandbox_quota_refusals, Some(refusals));
             assert!(retry.lease_token.is_none());
             assert!(retry.lease_expires_at.is_none());
             assert!(retry.agent_id.is_none());
@@ -190,6 +191,7 @@ async fn worker_quota_failure_metadata_is_gated_and_survives_restart() {
             .unwrap();
         assert_eq!(record.status, "failed");
         assert_eq!(record.attempts, 3);
+        assert_eq!(record.sandbox_quota_refusals, Some(2));
         assert!(record.sandbox_id.is_none());
         assert!(record
             .error
@@ -258,8 +260,32 @@ async fn worker_quota_retry_resumes_original_agent_when_a_slot_returns() {
         .create(&owner.caller, Some(&owner), None, input.clone(), "retry")
         .await
         .unwrap();
+    let collection = db.collection::<Document>("agent_lifecycle_operations");
+    // Transient dependency retries take claims before any Sandbox quota check.
+    for attempts in [1, 2] {
+        let record = operations.claim(&receipt.id).await.unwrap().unwrap();
+        assert_eq!(record.attempts, attempts);
+        assert_eq!(record.sandbox_quota_refusals, None);
+        operations
+            .retry(&record.lease().unwrap(), attempts)
+            .await
+            .unwrap();
+        make_retry_due(&collection, &receipt.id).await;
+    }
     let occupied = fixture::seed(&store).await;
     service.run_worker(&receipt.id).await.unwrap();
+    let retry = operations
+        .read_for_owner(&owner.caller.subject, &receipt.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retry.attempts, 3);
+    assert_eq!(retry.status, "queued");
+    assert_eq!(retry.sandbox_quota_refusals, Some(1));
+    assert_eq!(
+        retry.retry_at.unwrap().timestamp_millis() - retry.updated_at.timestamp_millis(),
+        5_000
+    );
     let mut sandbox = store
         .get_sandbox(&occupied.sandbox_id)
         .await
@@ -270,7 +296,6 @@ async fn worker_quota_retry_resumes_original_agent_when_a_slot_returns() {
     sandbox.retired_at = Some("2026-10-13T00:00:00Z".into());
     sandbox.revision += 1;
     store.save_sandbox(revision, sandbox).await.unwrap();
-    let collection = db.collection::<Document>("agent_lifecycle_operations");
     make_retry_due(&collection, &receipt.id).await;
     let restarted = Arc::new(MongoAgentLifecycleStore::open(&db).await.unwrap());
     assert_eq!(restarted.pending().await.unwrap(), [receipt.id.clone()]);
@@ -316,7 +341,8 @@ async fn worker_quota_retry_resumes_original_agent_when_a_slot_returns() {
             record = admission => record.unwrap(),
         };
         assert_eq!(record.status, "running");
-        assert_eq!(record.attempts, 2);
+        assert_eq!(record.attempts, 4);
+        assert_eq!(record.sandbox_quota_refusals, Some(1));
         let sandbox = store
             .get_sandbox(&SandboxId(record.sandbox_id.unwrap()))
             .await

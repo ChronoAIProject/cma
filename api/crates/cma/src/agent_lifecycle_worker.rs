@@ -3,7 +3,6 @@ use super::*;
 use crate::store::HEARTBEAT;
 
 pub(super) const PREPARATION_FAILED: &str = "Agent runtime preparation failed";
-const SANDBOX_QUOTA_ATTEMPTS: u32 = 3;
 
 // Warm creation should observe committed readiness promptly. Bound the faster
 // polling window; sequential reads and the worker-slot limit cap its load.
@@ -128,8 +127,8 @@ impl InlineAgentLifecycle {
                     .await;
             }
         };
-        let retry_sandbox_quota = attempts < SANDBOX_QUOTA_ATTEMPTS
-            && record.input.request.sandbox_id.is_none()
+        let quota_refusals = record.sandbox_quota_refusals;
+        let fresh_sandbox = record.input.request.sandbox_id.is_none()
             && record.input.request.workspace_id.is_none()
             && record.sandbox_id.is_none()
             && record.agent_id.is_none()
@@ -187,14 +186,6 @@ impl InlineAgentLifecycle {
             Err(AgentLifecycleProvisioningError::Unavailable) => {
                 self.operations.retry(&lease, attempts).await
             }
-            // A free slot at HTTP admission can disappear before the Sandbox
-            // transaction runs. Retry the same operation briefly. The Sandbox
-            // transaction checks quota and replays any matching admission.
-            Err(AgentLifecycleProvisioningError::SandboxLimitReached { .. })
-                if retry_sandbox_quota =>
-            {
-                self.operations.retry(&lease, attempts).await
-            }
             Err(AgentLifecycleProvisioningError::ConnectionRequired {
                 services,
                 connection_target,
@@ -217,6 +208,20 @@ impl InlineAgentLifecycle {
                     .await
             }
             Err(error) => {
+                // The serialized Sandbox admission can refuse a slot seen at
+                // HTTP preflight. Requeue only that confirmed quota refusal.
+                if fresh_sandbox
+                    && matches!(
+                        &error,
+                        AgentLifecycleProvisioningError::SandboxLimitReached { .. }
+                    )
+                    && self
+                        .operations
+                        .retry_sandbox_quota(&lease, quota_refusals)
+                        .await?
+                {
+                    return Ok(());
+                }
                 let failure = self
                     .failure_metadata_enabled
                     .get()

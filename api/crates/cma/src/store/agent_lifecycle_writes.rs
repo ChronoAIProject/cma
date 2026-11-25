@@ -13,6 +13,16 @@ impl LifecycleLease {
     }
 }
 
+fn retry_fields(delay_ms: i64) -> Document {
+    doc! {
+        "status": "queued",
+        "retry_at": { "$add": ["$$NOW", delay_ms] },
+        "lease_token": Bson::Null,
+        "lease_expires_at": Bson::Null,
+        "updated_at": "$$NOW",
+    }
+}
+
 impl MongoAgentLifecycleStore {
     /// Preserve all immutable input and admitted child IDs across transient
     /// dependency failures. Backoff is durable, bounded and claim-fenced.
@@ -24,12 +34,33 @@ impl MongoAgentLifecycleStore {
         let delay = Duration::from_secs((5_u64 << attempts.saturating_sub(1).min(4)).min(60));
         self.write(
             lease,
-            vec![doc! { "$set": { "status": "queued",
-            "retry_at": { "$add": ["$$NOW", delay.as_millis() as i64] },
-            "lease_token": Bson::Null, "lease_expires_at": Bson::Null,
-            "updated_at": "$$NOW" } }],
+            vec![doc! { "$set": retry_fields(delay.as_millis() as i64) }],
         )
         .await
+    }
+
+    pub(crate) async fn retry_sandbox_quota(
+        &self,
+        lease: &LifecycleLease,
+        prior_refusals: Option<u32>,
+    ) -> Result<bool, StoreError> {
+        let (delay_ms, refusals) = match prior_refusals {
+            None => (5_000, 1_i64),
+            Some(1) => (10_000, 2_i64),
+            Some(_) => return Ok(false),
+        };
+        let mut filter = lease.filter();
+        filter.insert("sandbox_id", Bson::Null);
+        filter.insert("agent_id", Bson::Null);
+        filter.insert(
+            "sandbox_quota_refusals",
+            prior_refusals.map_or(Bson::Null, |count| Bson::Int64(i64::from(count))),
+        );
+        let mut fields = retry_fields(delay_ms);
+        fields.insert("sandbox_quota_refusals", refusals);
+        self.write_matching(filter, vec![doc! { "$set": fields }])
+            .await?;
+        Ok(true)
     }
 
     async fn write(
