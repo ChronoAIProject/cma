@@ -117,8 +117,22 @@ struct GitHubConnection {
     label: String,
     granted_scopes: Option<Vec<String>>,
     manage_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account: Option<GitHubAccount>,
     #[serde(skip)]
     active_oauth: bool,
+}
+
+#[derive(Serialize)]
+struct GitHubAccount {
+    login: String,
+    observed_scopes: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+struct GitHubUser {
+    id: u64,
+    login: String,
 }
 
 #[derive(Deserialize)]
@@ -146,7 +160,11 @@ struct KeyDetail {
 }
 
 impl NyxidServiceConnectionBroker {
-    pub(crate) async fn github_connections(&self, owner: &SubjectId) -> GitHubConnections {
+    pub(crate) async fn github_connections(
+        &self,
+        owner: &SubjectId,
+        observe_accounts: bool,
+    ) -> GitHubConnections {
         let manage_url = self
             .browser_origin
             .join("/keys")
@@ -154,11 +172,12 @@ impl NyxidServiceConnectionBroker {
         let deadline = Instant::now() + PROVIDER_HTTP_TIMEOUT;
         let credential = self.credential(owner).await;
         let connections = match credential {
-            Ok(credential) if Instant::now() < deadline => {
-                timeout_at(deadline, self.github_inventory(&credential, deadline))
-                    .await
-                    .ok()
-            }
+            Ok(credential) if Instant::now() < deadline => timeout_at(
+                deadline,
+                self.github_inventory(&credential, deadline, observe_accounts),
+            )
+            .await
+            .ok(),
             _ => None,
         };
         let (binding, connections) = match connections {
@@ -179,6 +198,7 @@ impl NyxidServiceConnectionBroker {
         &self,
         credential: &SecretValue,
         deadline: Instant,
+        observe_accounts: bool,
     ) -> Result<(Binding, Vec<GitHubConnection>), ServiceConnectionError> {
         let (catalog_id, rows) = self.github_source(credential, deadline).await?;
         let catalog_id = &catalog_id;
@@ -197,12 +217,20 @@ impl NyxidServiceConnectionBroker {
         }
         let choices = choices
             .into_iter()
-            .map(|row| (row.id.clone(), row.slug.clone()))
+            .map(|row| (row.id.clone(), row.slug.clone(), row.is_usable()))
             .collect::<Vec<_>>();
+        let observe_accounts = observe_accounts && valid_browser_id(catalog_id);
         let results = futures_util::stream::iter(choices)
-            .map(|(id, slug)| async move {
-                self.github_detail(&id, &slug, catalog_id, credential, deadline)
-                    .await
+            .map(|(id, slug, usable)| async move {
+                let mut connection = self
+                    .github_detail(&id, &slug, catalog_id, credential, deadline)
+                    .await?;
+                if observe_accounts && usable && connection.active_oauth {
+                    connection.account = self
+                        .github_account(credential, catalog_id, &id, deadline)
+                        .await;
+                }
+                Ok::<_, ServiceConnectionError>(connection)
             })
             .buffered(4)
             .collect::<Vec<_>>()
@@ -282,14 +310,7 @@ impl NyxidServiceConnectionBroker {
                 return Err(ServiceConnectionError::Refused);
             }
             let response = self
-                .send(
-                    self.http
-                        .get(self.endpoint(&format!("/api/v1/proxy/{catalog_id}/user")))
-                        .query(&[("_nyxid_via", connection_id)])
-                        .bearer_auth(credential.expose()),
-                    true,
-                    Some(deadline),
-                )
+                .github_user(credential, &catalog_id, connection_id, deadline)
                 .await?;
             let scopes = response
                 .headers()
@@ -306,6 +327,70 @@ impl NyxidServiceConnectionBroker {
         })
         .await
         .map_err(|_| unavailable(PROVIDER_UNAVAILABLE))?
+    }
+
+    async fn github_user(
+        &self,
+        credential: &SecretValue,
+        catalog_id: &str,
+        connection_id: &str,
+        deadline: Instant,
+    ) -> Result<reqwest::Response, ServiceConnectionError> {
+        self.send(
+            self.http
+                .get(self.endpoint(&format!("/api/v1/proxy/{catalog_id}/user")))
+                .query(&[("_nyxid_via", connection_id)])
+                .bearer_auth(credential.expose()),
+            true,
+            Some(deadline),
+        )
+        .await
+    }
+
+    async fn github_account(
+        &self,
+        credential: &SecretValue,
+        catalog_id: &str,
+        connection_id: &str,
+        deadline: Instant,
+    ) -> Option<GitHubAccount> {
+        // The owner can still see the inventory when the optional GitHub read
+        // fails. A single provider deadline bounds the entire report.
+        let deadline = deadline.min(Instant::now() + Duration::from_secs(1));
+        timeout_at(deadline, async {
+            let response = self
+                .github_user(credential, catalog_id, connection_id, deadline)
+                .await
+                .ok()?;
+            let observed_scopes = response
+                .headers()
+                .get("x-oauth-scopes")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| {
+                    let values: Vec<_> = value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|scope| !scope.is_empty())
+                        .collect();
+                    (values.len() <= 100 && values.iter().all(|scope| valid_provider_id(scope)))
+                        .then(|| values.into_iter().map(str::to_owned).collect())
+                });
+            let user: GitHubUser = decode(response).await.ok()?;
+            (user.id > 0
+                && !user.login.is_empty()
+                && user.login.len() <= 100
+                && user
+                    .login
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')))
+            .then_some(GitHubAccount {
+                login: user.login,
+                observed_scopes,
+            })
+        })
+        .await
+        .ok()
+        .flatten()
     }
 
     async fn github_detail(
@@ -347,6 +432,7 @@ impl NyxidServiceConnectionBroker {
             label: detail.label,
             granted_scopes: detail.granted_scopes,
             manage_url: manage_url.to_string(),
+            account: None,
             active_oauth: detail.is_active == Some(true)
                 && detail.credential_type.as_deref() == Some("oauth2")
                 && detail.status.as_deref() == Some("active")

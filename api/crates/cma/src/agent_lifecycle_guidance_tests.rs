@@ -5,7 +5,13 @@ use layer2_core::sandbox::{AgentInstructionPolicy, AgentSettings, AgentStatus};
 
 #[test]
 fn owner_edits_preserve_exact_managed_revision_and_owner_whitespace() {
-    for managed in [GITHUB_API_V1, managed_v2(), managed_v3(), managed_v4()] {
+    for managed in [
+        GITHUB_API_V1,
+        managed_v2(),
+        managed_v3(),
+        managed_v4(),
+        managed_v5(),
+    ] {
         let owner = "  Keep citations.\n\nDo not change my formatting.\n";
         let original = compose_managed(Some(managed), owner);
         assert_eq!(split_managed(&original), (Some(managed), owner));
@@ -51,32 +57,80 @@ fn owner_policy_uses_the_captured_revision_even_after_transport_refresh() {
     assert_eq!(edited, format!("{}\n\n  New owner text\n", managed_v4()));
     assert_eq!(edited.matches(SESSION_GUIDANCE_V1).count(), 1);
     assert_eq!(edited.matches(managed_v3()).count(), 1);
+
+    let owner = format!("{GITHUB_PERMISSION_V1}\n\n  exact owner text\n");
+    agent.profile.content.system_prompt = compose_managed(Some(managed_v5()), &owner);
+    agent.conversation.settings = Some(AgentSettings {
+        system_prompt: Some(agent.profile.content.system_prompt.clone()),
+        ..agent.settings()
+    });
+    assert_eq!(policy.owner_prompt(&agent), owner);
+    assert_eq!(policy.pinned_managed_guidance(&agent), Some(managed_v5()));
+    let edited = policy.compose(&agent, "  New owner text\n");
+    assert_eq!(edited, format!("{}\n\n  New owner text\n", managed_v5()));
+    assert_eq!(edited.matches(GITHUB_PERMISSION_V1).count(), 1);
+    assert_eq!(edited.matches(managed_v4()).count(), 1);
 }
 
 #[test]
 fn new_admission_guidance_requires_explicit_activation() {
-    const KEY: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED";
-    for (value, expected) in [
-        (None, managed_v3()),
-        (Some("false"), managed_v3()),
-        (Some("true"), managed_v4()),
+    const V4: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED";
+    const V5: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V5_ENABLED";
+    for (v4, v5, expected) in [
+        (None, None, managed_v3()),
+        (Some("false"), Some("false"), managed_v3()),
+        (Some("true"), Some("false"), managed_v4()),
+        (None, Some("true"), managed_v5()),
+        (Some("true"), Some("true"), managed_v5()),
     ] {
         let flags = crate::config::FeatureFlags::from_lookup(&mut |key| {
-            Ok((key == KEY).then_some(value).flatten().map(str::to_owned))
+            Ok(match key {
+                V4 => v4.map(str::to_owned),
+                V5 => v5.map(str::to_owned),
+                _ => None,
+            })
         })
         .unwrap();
-        assert_eq!(admission_instructions(flags.session_guidance_v4), expected);
+        assert_eq!(
+            admission_instructions(flags.session_guidance_v4, flags.session_guidance_v5),
+            expected
+        );
     }
-    let error = crate::config::FeatureFlags::from_lookup(&mut |key| {
-        Ok((key == KEY).then(|| "TRUE".to_owned()))
-    })
-    .unwrap_err();
-    assert!(error.contains(KEY));
+    for flag in [V4, V5] {
+        let error = crate::config::FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == flag).then(|| "TRUE".to_owned()))
+        })
+        .unwrap_err();
+        assert!(error.contains(flag));
+    }
+}
+
+#[test]
+fn feedback_guidance_checks_the_target_before_recommending_github_scope() {
+    let guidance = managed_v5();
+    for required in [
+        "For CMA feedback, the target is ChronoAIProject/cma.",
+        "verify the target repository's current visibility and issue policy",
+        "When the target is public, classic GitHub OAuth public_repo can suffice",
+        "For an actual private or internal target, classic OAuth requires repo",
+        "limited to the intended repository with Issues write permission",
+        "Treat anything submitted there as public and redact it",
+        "owner's authorization to file",
+    ] {
+        assert!(guidance.contains(required), "missing guidance: {required}");
+    }
+    assert!(!guidance.contains("the internal ChronoAIProject/cma repository"));
 }
 
 #[test]
 fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() {
-    for instructions in [GITHUB_API_V1, managed_v2(), managed_v3(), managed_v4()] {
+    for instructions in [
+        GITHUB_API_V1,
+        managed_v2(),
+        managed_v3(),
+        managed_v4(),
+        managed_v5(),
+    ] {
         for (sandbox, workspace) in [
             (None, None),
             (Some("sandbox-owned"), None),
@@ -118,7 +172,7 @@ fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() 
             assert_eq!(prompt.contains(MEMORY_V1), instructions != GITHUB_API_V1);
             assert_eq!(
                 prompt.contains(DOCUMENTS_V1),
-                [managed_v3(), managed_v4()].contains(&instructions)
+                [managed_v3(), managed_v4(), managed_v5()].contains(&instructions)
             );
             assert_eq!(prompt.matches("CMA GitHub workflow:").count(), 1);
             let restored: LifecycleInput =
@@ -244,6 +298,10 @@ fn current_guidance_preserves_github_bytes_and_bounds_memory_management() {
         (
             managed_v4(),
             "d9432645d2f47ff0ebd093f0ad6c5eda1ea631e38a64a46e9289606f6ec6f5e3",
+        ),
+        (
+            managed_v5(),
+            "c880d275b266d34db85da31ac0189fb017bcd5aa3d645ad023159c07267c2e40",
         ),
     ] {
         assert_eq!(format!("{:x}", Sha256::digest(guidance)), hash);

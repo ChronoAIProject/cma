@@ -40,7 +40,7 @@ async fn declared_write_checks_only_the_unique_active_default_oauth_key() {
         provider
             .state
             .set_services_reply(Reply::json(json!({"services":rows})));
-        let report = broker.github_connections(&owner).await;
+        let report = broker.github_connections(&owner, false).await;
         assert_eq!(
             serde_json::to_value(report.scope_check(PublicRepositoryWrite)).unwrap(),
             json!({
@@ -58,7 +58,7 @@ async fn declared_write_checks_only_the_unique_active_default_oauth_key() {
         provider
             .state
             .set_services_reply(Reply::json(json!({"services":rows})));
-        let report = broker.github_connections(&owner).await;
+        let report = broker.github_connections(&owner, false).await;
         assert_eq!(
             serde_json::to_value(report.scope_check(PublicRepositoryWrite)).unwrap(),
             json!({"status":"verification_unavailable"})
@@ -68,7 +68,7 @@ async fn declared_write_checks_only_the_unique_active_default_oauth_key() {
     provider.state.set_services_reply(Reply::json(json!({
         "services":[row("weak", "api-github", false)]
     })));
-    let report = broker.github_connections(&owner).await;
+    let report = broker.github_connections(&owner, false).await;
     assert_eq!(
         serde_json::to_value(report.scope_check(PublicRepositoryWrite)).unwrap(),
         json!({"status":"missing_connection"})
@@ -78,7 +78,7 @@ async fn declared_write_checks_only_the_unique_active_default_oauth_key() {
         .set_services_reply(Reply::json(json!({"services":[{
             "id":"weak", "slug":"api-github", "catalog_service_id":"foreign", "is_active":true
         }]})));
-    let report = broker.github_connections(&owner).await;
+    let report = broker.github_connections(&owner, false).await;
     assert_eq!(
         serde_json::to_value(report.scope_check(PublicRepositoryWrite)).unwrap(),
         json!({"status":"verification_unavailable"})
@@ -143,7 +143,7 @@ async fn scope_check_distinguishes_missing_and_empty_evidence_and_the_two_operat
                 "status":"active", "connection_status":"active"
             })),
         );
-        let report = broker.github_connections(&owner).await;
+        let report = broker.github_connections(&owner, false).await;
         for (need, expected) in [
             (PublicRepositoryWrite, write),
             (PrivateRepositoryRead, read),
@@ -184,7 +184,7 @@ async fn scope_check_distinguishes_missing_and_empty_evidence_and_the_two_operat
             .lock()
             .unwrap()
             .insert("selected".into(), Reply::json(detail));
-        let report = broker.github_connections(&owner).await;
+        let report = broker.github_connections(&owner, false).await;
         for need in [PublicRepositoryWrite, PrivateRepositoryRead] {
             let check = serde_json::to_value(report.scope_check(need)).unwrap();
             assert_eq!(check["status"], expected);
@@ -226,7 +226,9 @@ async fn reports_both_owner_visible_grants_without_claiming_a_selected_connectio
         provider
             .state
             .set_services_reply(Reply::json(json!({"services": rows})));
-        let result = broker.github_connections(&SubjectId::new("visitor")).await;
+        let result = broker
+            .github_connections(&SubjectId::new("visitor"), false)
+            .await;
         assert_eq!(
             serde_json::to_value(result).unwrap(),
             json!({
@@ -251,7 +253,9 @@ async fn reports_both_owner_visible_grants_without_claiming_a_selected_connectio
         Reply::json(json!({"id":"different","slug":"api-github-2",
             "catalog_service_id":"github-catalog","label":"Repository access","granted_scopes":["repo"]})),
     );
-    let result = broker.github_connections(&SubjectId::new("visitor")).await;
+    let result = broker
+        .github_connections(&SubjectId::new("visitor"), false)
+        .await;
     assert_eq!(
         serde_json::to_value(result).unwrap(),
         json!({"manage_url":"https://nyx.example/keys"})
@@ -368,4 +372,44 @@ async fn verifies_only_the_selected_active_user_service_and_its_live_grant() {
         ));
     }
     assert_eq!(*provider.state.github_proxy_reads.lock().unwrap(), reads);
+
+    // Preview is purpose-specific. It verifies each visible exact row and
+    // never claims a live scope merely because the stored grant is positive.
+    provider.state.set_services_reply(Reply::json(json!({
+        "services":[
+            {"id":"strong","slug":"api-github-2","catalog_service_id":"github-catalog","is_active":true},
+            {"id":"weak","slug":"strong","catalog_service_id":"github-catalog","is_active":true}
+        ]
+    })));
+    *provider.state.github_proxy_scopes.lock().unwrap() = None;
+    let ordinary = serde_json::to_value(broker.github_connections(&owner, false).await).unwrap();
+    assert!(ordinary["connections"][0].get("account").is_none());
+    assert_eq!(*provider.state.github_proxy_reads.lock().unwrap(), reads);
+    let report = serde_json::to_value(broker.github_connections(&owner, true).await).unwrap();
+    assert_eq!(
+        report["connections"][0]["account"],
+        json!({"login":"fixture-strong","observed_scopes":null})
+    );
+    assert_eq!(
+        report["connections"][1]["account"],
+        json!({"login":"fixture-weak","observed_scopes":null})
+    );
+    *provider.state.github_proxy_scopes.lock().unwrap() = Some("read:user, repo".into());
+    let report = serde_json::to_value(broker.github_connections(&owner, true).await).unwrap();
+    assert_eq!(
+        report["connections"][0]["account"]["observed_scopes"],
+        json!(["read:user", "repo"])
+    );
+    let observed = provider.state.github_proxy_reads.lock().unwrap();
+    let mut preview_routes = observed[reads.len()..].to_vec();
+    preview_routes.sort();
+    assert_eq!(
+        preview_routes,
+        vec![
+            ("github-catalog".into(), "strong".into()),
+            ("github-catalog".into(), "strong".into()),
+            ("github-catalog".into(), "weak".into()),
+            ("github-catalog".into(), "weak".into()),
+        ]
+    );
 }

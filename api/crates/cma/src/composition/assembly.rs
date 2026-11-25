@@ -112,7 +112,7 @@ impl ControlPlaneComposition {
         )
         .with_released_runtime(stores.released_runtime.clone())
         .with_task_experience(config.task_experience.clone())
-        .with_session_guidance_v4(config.features.session_guidance_v4)
+        .with_session_guidance(config.features.session_guidance_v4, config.features.session_guidance_v5)
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
         .with_managed_repository_preflight(config.features.github_repository_preflight);
         let lifecycle_drain = inline_lifecycle.drain_handle();
@@ -301,6 +301,8 @@ impl ControlPlaneComposition {
                 deliverables: deliverables.clone(),
                 public_origin: config.public_url.clone(),
                 task_experience: config.task_experience.clone(),
+                github_connection_approval: config.features.github_connection_approval,
+                runtime_adapter: adapter.clone(),
             },
         );
         let projections = projections.with_commands(agent_access.commands.clone());
