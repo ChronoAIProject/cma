@@ -19,6 +19,7 @@ concurrency:
   cancel-in-progress: "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"
 permissions:
   contents: "read"
+  actions: "read"
   # ci-images.yml and ci-omarchy.yml request it for the runtime vulnerability
   # gate's tracking-issue lookup; a called workflow cannot exceed its caller.
   issues: "read"
@@ -136,6 +137,7 @@ jobs:
     uses: "./.github/workflows/ci-images.yml"
     with:
       components: "[\"api\"]"
+      changed_deployables: "${{ needs.changes.outputs.deployables }}"
   eg-images:
     name: "EG images"
     needs:
@@ -160,12 +162,15 @@ jobs:
     uses: "./.github/workflows/ci-images.yml"
     with:
       components: "[\"runtime\"]"
+      changed_deployables: "${{ needs.changes.outputs.deployables }}"
   omarchy:
     name: "Runtime Omarchy"
     needs:
       - "changes"
     if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
     uses: "./.github/workflows/ci-omarchy.yml"
+    with:
+      staging_lane_changed: ${{ contains(fromJSON(needs.changes.outputs.deployables), 'cma-runtime-omarchy') }}
   gate-repo:
     name: "CI / Repo"
     needs:

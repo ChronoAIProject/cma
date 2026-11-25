@@ -206,6 +206,17 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(run.call_args.kwargs["timeout"], 360)
             self.assertIn(f"-gt {6 * 1024 ** 2} ]", run.call_args.kwargs["input"])
 
+    def test_am_compaction_keeps_the_cache_and_target_bounds(self):
+        bound = 6 * 1024 ** 3
+        ordinary = cache.dockerfile("extract", bound)
+        compact = cache.dockerfile("extract", bound, compact_registry=True)
+        self.assertNotIn("--exclude=./src", ordinary)
+        self.assertIn("--exclude=./src", compact)
+        self.assertIn(f"-gt {bound // 1024} ]", compact)
+        self.assertIn("tar -C /cache/registry -cf - $skip_src .", compact)
+        self.assertIn("tar -C /cache/target -cf - .", compact)
+        self.assertNotIn("rm -rf /cache", compact)
+
     def test_archive_symlink_and_extra_files_are_rejected(self):
         self.bundle()
         (self.root / "unexpected").touch()

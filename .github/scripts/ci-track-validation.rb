@@ -25,6 +25,10 @@ def require_pinned_actions(steps, actions, parents = [])
   end
 end
 
+STAGING_IMAGE_FALLBACK = "steps.staging-image.outputs.adopted != 'true'"
+STAGING_READ_ONLY = {'contents' => 'read', 'actions' => 'read', 'issues' => 'read'}.freeze
+
+
 def check_component_cache_writers(documents)
   develop = "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
   writer = "${{ #{develop} }}"
@@ -57,7 +61,7 @@ def check_component_cache_writers(documents)
     web_nodes.first.dig('with', 'cache') == "${{ #{develop} && 'npm' || '' }}", 'setup-node may save a PR cache')
   writers = (images + web).select { |s| s.fetch('uses', '').match?(%r{\Aactions/cache(?:/save)?@}) }
   require_check(writers.size == 1 && writers.first['uses'].start_with?('actions/cache/save@') &&
-    writers.first['if'] == "success() && #{develop} && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'",
+    writers.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (success() && #{develop} && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true')",
     'only the accepted develop Cargo archive may be saved')
   restore = 'actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830'
   npm = {'path' => '${{ steps.npm-cache.outputs.directory }}',
@@ -87,14 +91,37 @@ def check_merge_group_artifacts(documents)
     steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
     names.each do |name|
       found = steps.select { |s| s['name'] == name }
-      require_check(found.length == 1 && found.first['if'] == MERGE_GROUP_EXPORT && !found.first.key?('continue-on-error'),
+      require_check(found.length == 1 && found.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (#{MERGE_GROUP_EXPORT})" && !found.first.key?('continue-on-error'),
         "#{name} must retain push, same-repository PR and merge-group images only")
     end
   end
   images = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
   prepare = images.select { |s| s['name'] == 'Prepare API Cargo cache identity' }
-  require_check(prepare.length == 1 && prepare.first['if'] == API_CACHE_READERS,
+  require_check(prepare.length == 1 && prepare.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (#{API_CACHE_READERS})",
     'queue entries may restore, never save, the develop API Cargo archive')
+end
+
+def check_staging_image_adoption(documents)
+  develop = "vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true' && github.event_name == 'push' && " \
+    "github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma' && "
+  inputs = {
+    'ci-images' => ['images', '${{ matrix.component }}',
+      "((matrix.component == 'api' && contains(fromJSON(inputs.changed_deployables), 'cma-agent-manager')) || (matrix.component == 'runtime' && contains(fromJSON(inputs.changed_deployables), 'cma-runtime')))"],
+    'ci-omarchy' => ['omarchy', 'runtime-omarchy', "(inputs.staging_lane_changed || github.workflow == 'Runtime Omarchy')"]
+  }
+  inputs.each do |file, (job, component, changed)|
+    steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
+    adopters = steps.select { |step| step['id'] == 'staging-image' }
+    require_check(adopters.length == 1, "#{file} must have one staging-image loader")
+    loader = adopters.first
+    require_check(loader['if'].gsub(/\s+/, ' ').strip == develop + changed &&
+      loader['env'] == {'IMAGE_COMPONENT' => component, 'GH_TOKEN' => '${{ github.token }}'} &&
+      loader['timeout-minutes'] == 32 && loader['run'] == 'python3 -B .github/scripts/ci_staging_image.py' &&
+      !loader.key?('continue-on-error'), "#{file} may adopt only changed develop images with bounded read authority")
+    builds = steps.select { |step| step.fetch('uses', '').start_with?('docker/build-push-action@') }
+    require_check(!builds.empty? && builds.all? { |step| step['if'] == STAGING_IMAGE_FALLBACK &&
+      steps.index(loader) < steps.index(step) }, "#{file} builds from source only when there is no verified adoption")
+  end
 end
 
 # Only the read-only CI workflow may run on merge-queue refs: publication and
@@ -106,7 +133,7 @@ def check_merge_group_triggers(workflows)
   end
   require_check(queued.keys == ['ci'], 'only CI may run on merge groups')
   ci = queued.fetch('ci')
-  require_check(ci['permissions'] == {'contents' => 'read', 'issues' => 'read'} &&
+  require_check(ci['permissions'] == STAGING_READ_ONLY &&
     ci.fetch('jobs').values.all? { |job| job.fetch('permissions', {}).values.all? { |grant| grant == 'read' } },
     'merge-group CI must remain read-only')
 end
@@ -232,6 +259,7 @@ def validate(documents, actions)
   require_runtime_vulnerability_gate(documents)
   check_component_cache_writers(documents)
   check_merge_group_artifacts(documents)
+  check_staging_image_adoption(documents)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
   require_check(events.keys.sort == %w[merge_group push], 'post-merge CI must cover pushes and retained merge-group events')
@@ -240,9 +268,9 @@ def validate(documents, actions)
   # checks; a non-develop queue is refused by the selector, not left pending.
   require_check(events['merge_group'] == {'types' => ['checks_requested']}, 'CI must report on every merge group')
   # Read-only: issues is read for the runtime vulnerability gate's tracking-issue age.
-  require_check(ci['permissions'] == {'contents' => 'read', 'issues' => 'read'}, 'CI permissions must remain read-only')
+  require_check(ci['permissions'] == STAGING_READ_ONLY, 'CI permissions must remain read-only')
   %w[ci-images ci-omarchy].each do |called|
-    require_check(documents.fetch(called)['permissions'] == {'contents' => 'read', 'issues' => 'read'},
+    require_check(documents.fetch(called)['permissions'] == STAGING_READ_ONLY,
                   "#{called} permissions must remain read-only and within the caller's")
   end
   # Queue entries run on refs/heads/gh-readonly-queue/develop/pr-N-SHA: their
@@ -400,7 +428,7 @@ def check_os_refresh(steps, label)
   builds = steps.select { |s| s.fetch('uses', '').start_with?('docker/build-push-action@') }
   args = builds.map { |b| b.fetch('with').fetch('build-args', '').lines.map(&:strip).grep(/\AOS_SECURITY_REFRESH=/) }
   require_check(key && key['run'].to_s.start_with?('python3 .github/scripts/os_refresh_key.py ') &&
-    !key.key?('if') && !key.key?('continue-on-error') && !builds.empty? &&
+    key['if'] == STAGING_IMAGE_FALLBACK && !key.key?('continue-on-error') && !builds.empty? &&
     args.all? { |a| a == ['OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}'] } &&
     steps.index(key) < steps.index(builds.first),
     "#{label} image builds must take OS_SECURITY_REFRESH from the snapshot-aware refresh key")
@@ -414,7 +442,7 @@ def check_omarchy_archive(steps)
     'Omarchy must rewrite layer timestamps to the fixed epoch')
   save = steps.find { |s| s['name'] == 'Save qualified Omarchy layer cache' }
   storage = {'path' => OmarchyCIContract::CACHE_PATH, 'key' => OmarchyCIContract::CACHE_KEY}
-  require_check(restore && !restore.key?('if') && restore['uses'].start_with?('actions/cache/restore@') &&
+  require_check(restore && restore['if'] == STAGING_IMAGE_FALLBACK && restore['uses'].start_with?('actions/cache/restore@') &&
     restore['with'] == storage.merge('fail-on-cache-miss' => false), 'PRs must restore only an exact Omarchy archive')
   hit = "steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true'"
   writer = OmarchyCIContract::CACHE_WRITE
@@ -436,5 +464,5 @@ def check_omarchy_archive(steps)
     'Omarchy may export new layers only on a develop push with a cache miss')
   writers = steps.select { |s| s.fetch('uses', '').match?(%r{\Aactions/cache(?:/save)?@}) }
   require_check(save && writers == [save] && save['uses'].start_with?('actions/cache/save@') && save['with'] == storage &&
-    save['if'] == "success() && #{writer}" && steps.last == save, 'only a qualified develop push may save the Omarchy archive')
+    save['if'] == "#{STAGING_IMAGE_FALLBACK} && (success() && #{writer})" && steps.last == save, 'only a qualified develop push may save the Omarchy archive')
 end
