@@ -277,8 +277,9 @@ fn resets_and_ambiguous_neighbors_cannot_fund_an_interior_estimate() {
     another.pod_uid = Some("other-pod".into());
     another.runtime_container_id = Some("other-container".into());
     let mut raw = [(0, 0.0), (60_000, 60.0), (180_000, 180.0), (240_000, 240.0)]
+        .into_iter()
         .map(|(time, value)| sample(&compute, SourceMetric::CpuCounter, time, value))
-        .to_vec();
+        .collect::<Vec<_>>();
     raw.extend([
         sample(&another, SourceMetric::CpuCounter, 0, 0.0),
         sample(&another, SourceMetric::CpuCounter, 60_000, 60.0),
