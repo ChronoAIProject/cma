@@ -196,10 +196,10 @@ impl AgentSandboxClient {
                     .verify_explicit_template_policy(&original.request.pool),
                 self.pools.prove_native_home(home),
             );
-            if matches!(
-                &policy,
-                Err(crate::AdapterError::NativePoolConfigurationDrift)
-            ) {
+            if policy
+                .as_ref()
+                .is_err_and(|error| error.is_native_pool_binding_hold())
+            {
                 if let Err(error) = actual.as_ref() {
                     return Err(error.clone());
                 }

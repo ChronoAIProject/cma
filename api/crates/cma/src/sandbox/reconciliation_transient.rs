@@ -17,6 +17,7 @@ pub(super) enum StartupFailure {
     Unavailable,
     NativeHomeIdentity,
     NativePoolConfigurationDrift,
+    NativePoolDefinitionAbsent,
 }
 
 pub(super) fn provider_error(error: AdapterError) -> SandboxStoreError {
@@ -24,6 +25,9 @@ pub(super) fn provider_error(error: AdapterError) -> SandboxStoreError {
         AdapterError::Unavailable(_) => Some(StartupFailure::Unavailable),
         AdapterError::NativePoolConfigurationDrift => {
             Some(StartupFailure::NativePoolConfigurationDrift)
+        }
+        AdapterError::NativePoolDefinitionAbsent { .. } => {
+            Some(StartupFailure::NativePoolDefinitionAbsent)
         }
         _ => None,
     };

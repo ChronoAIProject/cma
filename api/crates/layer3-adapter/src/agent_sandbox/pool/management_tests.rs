@@ -16,6 +16,11 @@ fn ready(fixture: &Fixture, binding: &NativePoolBinding, count: u32) {
 async fn admitting_pool_observes_current_generation_zero_and_refuses_retiring_binding() {
     let fixture = Fixture::new().await;
     let original = fixture.client.configure(&spec(), 2).await.unwrap().binding;
+    let target = super::NativePoolTarget {
+        target_id: format!("wp_{}", "a".repeat(64)),
+        revision: 1,
+        replicas: 2,
+    };
     for count in [Some(json!(0)), None] {
         fixture.edit("sandboxwarmpools", &original.name, |row| {
             row["status"] = json!({"observedGeneration":row["metadata"]["generation"]});
@@ -25,7 +30,7 @@ async fn admitting_pool_observes_current_generation_zero_and_refuses_retiring_bi
         });
         let observed = fixture
             .client
-            .observe_admitting_pool(&original)
+            .observe_admitting_pool(&original, &target, false)
             .await
             .unwrap();
         assert!(observed.observed);
@@ -39,7 +44,7 @@ async fn admitting_pool_observes_current_generation_zero_and_refuses_retiring_bi
         assert!(
             !fixture
                 .client
-                .observe_admitting_pool(&original)
+                .observe_admitting_pool(&original, &target, false)
                 .await
                 .unwrap()
                 .observed
@@ -51,7 +56,7 @@ async fn admitting_pool_observes_current_generation_zero_and_refuses_retiring_bi
     });
     assert!(fixture
         .client
-        .observe_admitting_pool(&original)
+        .observe_admitting_pool(&original, &target, false)
         .await
         .is_err());
     ready(&fixture, &original, 0);
@@ -60,7 +65,7 @@ async fn admitting_pool_observes_current_generation_zero_and_refuses_retiring_bi
     });
     assert!(fixture
         .client
-        .observe_admitting_pool(&original)
+        .observe_admitting_pool(&original, &target, false)
         .await
         .is_err());
 }
@@ -295,7 +300,7 @@ async fn pool_drift_observation_preserves_uid_retirement_and_healthy_plan_author
     assert_eq!(
         fixture
             .client
-            .observe_admitting_pool(&first)
+            .observe_admitting_pool(&first, &target, true)
             .await
             .unwrap_err(),
         crate::AdapterError::NativePoolConfigurationDrift
@@ -347,10 +352,35 @@ async fn pool_drift_observation_preserves_uid_retirement_and_healthy_plan_author
     assert!(matches!(
         fixture
             .client
+            .observe_admitting_pool(&first, &resize, true)
+            .await,
+        Err(crate::AdapterError::Rejected(_))
+    ));
+    assert!(matches!(
+        fixture
+            .client
             .observe_planned_pool(&plan_first, &resize, true)
             .await,
         Err(crate::AdapterError::Rejected(_))
     ));
+    fixture.edit("sandboxwarmpools", &first.name, |row| {
+        row["metadata"]["annotations"]
+            .as_object_mut()
+            .unwrap()
+            .remove("cma/native-target-v1");
+    });
+    fixture.edit("sandboxwarmpools", &first.name, |row| {
+        row["metadata"]["annotations"]["cma/native-target-v1"] =
+            json!(serde_json::to_string(&resize).unwrap());
+    });
+    assert_eq!(
+        fixture
+            .client
+            .observe_admitting_pool(&first, &resize, true)
+            .await
+            .unwrap_err(),
+        crate::AdapterError::NativePoolConfigurationDrift
+    );
     fixture.edit("sandboxwarmpools", &first.name, |row| {
         row["metadata"]["annotations"]
             .as_object_mut()
@@ -376,7 +406,10 @@ async fn pool_drift_observation_preserves_uid_retirement_and_healthy_plan_author
         row["metadata"]["uid"] = json!("replacement");
     });
     assert!(matches!(
-        fixture.client.observe_admitting_pool(&first).await,
+        fixture
+            .client
+            .observe_admitting_pool(&first, &target, true)
+            .await,
         Err(crate::AdapterError::Rejected(_))
     ));
     fixture.edit("sandboxwarmpools", &first.name, |row| {
@@ -384,7 +417,10 @@ async fn pool_drift_observation_preserves_uid_retirement_and_healthy_plan_author
         row["metadata"]["annotations"][super::retirement::RETIRING] = json!("true");
     });
     assert!(matches!(
-        fixture.client.observe_admitting_pool(&first).await,
+        fixture
+            .client
+            .observe_admitting_pool(&first, &target, true)
+            .await,
         Err(crate::AdapterError::Rejected(_))
     ));
     fixture.edit("sandboxwarmpools", &first.name, |row| {
@@ -397,10 +433,54 @@ async fn pool_drift_observation_preserves_uid_retirement_and_healthy_plan_author
     assert_eq!(
         fixture
             .client
-            .observe_admitting_pool(&first)
+            .observe_admitting_pool(&first, &target, true)
             .await
             .unwrap()
             .binding,
         first
     );
+}
+
+#[tokio::test]
+async fn recorded_pool_definition_absence_checks_surviving_identity() {
+    let fixture = Fixture::new().await;
+    let binding = fixture.client.configure(&spec(), 2).await.unwrap().binding;
+    let pool = format!(
+        "{}/sandboxwarmpools/{}",
+        super::fixture::prefix(),
+        binding.name
+    );
+    let template = format!(
+        "{}/sandboxtemplates/{}",
+        super::fixture::prefix(),
+        binding.template_name
+    );
+    for (missing, surviving) in [(&pool, &template), (&template, &pool)] {
+        let original = fixture.state.lock().unwrap().rows.remove(missing).unwrap();
+        let expected = crate::AdapterError::NativePoolDefinitionAbsent {
+            pool: missing == &pool,
+            template: missing == &template,
+        };
+        assert_eq!(
+            fixture.client.bound_resources(&binding).await.unwrap_err(),
+            expected
+        );
+        let old_uid = {
+            let mut state = fixture.state.lock().unwrap();
+            let object = state.rows.get_mut(surviving).unwrap();
+            let uid = object["metadata"]["uid"].clone();
+            object["metadata"]["uid"] = json!("replacement");
+            uid
+        };
+        assert!(matches!(
+            fixture.client.bound_resources(&binding).await,
+            Err(crate::AdapterError::Rejected(_))
+        ));
+        {
+            let mut state = fixture.state.lock().unwrap();
+            state.rows.get_mut(surviving).unwrap()["metadata"]["uid"] = old_uid;
+            state.rows.insert(missing.clone(), original);
+        }
+        fixture.client.bound_resources(&binding).await.unwrap();
+    }
 }

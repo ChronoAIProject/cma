@@ -293,11 +293,18 @@ async fn step(
         return Ok(true);
     }
     if target.binding.is_some() && target.applied_revision == target.revision {
+        let provider_target = layer3_adapter::agent_sandbox::NativePoolTarget {
+            target_id: target.id.clone(),
+            revision: target.revision,
+            replicas: target.target_replicas,
+        };
         let inventory = match provider.inventory().await {
             Ok(inventory) => inventory,
             Err(AdapterError::NativePoolConfigurationDrift) => {
                 let binding = target.binding.as_ref().ok_or(WarmPoolError::Conflict)?;
-                let observation = provider.observe_admitting_pool(binding).await;
+                let observation = provider
+                    .observe_admitting_pool(binding, &provider_target, policy.target_fencing)
+                    .await;
                 if matches!(
                     &observation,
                     Err(AdapterError::NativePoolConfigurationDrift)
@@ -317,7 +324,10 @@ async fn step(
         if ready || empty {
             if empty {
                 let binding = target.binding.as_ref().ok_or(WarmPoolError::Conflict)?;
-                let confirmed = match provider.observe_admitting_pool(binding).await {
+                let confirmed = match provider
+                    .observe_admitting_pool(binding, &provider_target, policy.target_fencing)
+                    .await
+                {
                     Err(AdapterError::NativePoolConfigurationDrift) => {
                         if current_target(store, &target).await? {
                             return Err(WarmPoolError::ProviderConfigurationDrift);

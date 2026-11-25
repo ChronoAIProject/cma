@@ -371,7 +371,7 @@ async fn startup_pool_drift_requires_exact_target_and_preserves_healthy_capacity
         planner.inventory_drift.store(true, Ordering::SeqCst);
         let policy = StartupPoolPolicy {
             allow_empty,
-            ..Default::default()
+            target_fencing: true,
         };
         let await_pool = || {
             await_ready_with_fencing(
@@ -393,6 +393,9 @@ async fn startup_pool_drift_requires_exact_target_and_preserves_healthy_capacity
         assert_eq!(await_pool().await, Ok(()));
 
         planner.bound_drift.store(true, Ordering::SeqCst);
+        planner.superseded_target.store(true, Ordering::SeqCst);
+        assert_eq!(await_pool().await, Err(WarmPoolError::Conflict));
+        planner.superseded_target.store(false, Ordering::SeqCst);
         assert_eq!(await_pool().await, Ok(()));
         assert_eq!(
             store.find(&original.id).await.unwrap().unwrap().binding,

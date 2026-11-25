@@ -84,6 +84,8 @@ pub trait NativePoolControl: Send + Sync {
     async fn observe_admitting_pool(
         &self,
         _binding: &NativePoolBinding,
+        _target: &super::NativePoolTarget,
+        _fenced: bool,
     ) -> Result<NativePoolStatus> {
         Err(crate::AdapterError::Unsupported(
             "native pool admission observation is unavailable".into(),
@@ -164,8 +166,10 @@ impl NativePoolControl for AgentSandboxPools {
     async fn observe_admitting_pool(
         &self,
         binding: &NativePoolBinding,
+        target: &super::NativePoolTarget,
+        fenced: bool,
     ) -> Result<NativePoolStatus> {
-        self.observe_admitting_pool(binding).await
+        self.observe_admitting_pool(binding, target, fenced).await
     }
     async fn resize(&self, binding: &NativePoolBinding, replicas: u32) -> Result<NativePoolStatus> {
         self.resize(binding, replicas).await

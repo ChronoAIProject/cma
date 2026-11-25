@@ -290,6 +290,7 @@ impl AgentHistoryExporter for AdapterAgentHistoryExporter {
                     AdapterError::Unsupported(_) => AgentHistoryExportError::Unsupported,
                     AdapterError::InputAuthorityUnavailable(_)
                     | AdapterError::PromptNotWritten(_)
+                    | AdapterError::NativePoolDefinitionAbsent { .. }
                     | AdapterError::NativeClaimNotReady(_)
                     | AdapterError::RuntimeStartupHold(_)
                     | AdapterError::Unavailable(_)
@@ -372,6 +373,7 @@ fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceRea
         ),
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
+        | AdapterError::NativePoolDefinitionAbsent { .. }
         | AdapterError::NativeClaimNotReady(_)
         | AdapterError::RuntimeStartupHold(_)
         | AdapterError::Unavailable(_)

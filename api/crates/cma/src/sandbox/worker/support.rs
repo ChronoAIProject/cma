@@ -365,6 +365,7 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         }
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
+        | AdapterError::NativePoolDefinitionAbsent { .. }
         | AdapterError::Unavailable(_) => WorkerFailure::retryable(
             "runtime dependency unavailable",
         )

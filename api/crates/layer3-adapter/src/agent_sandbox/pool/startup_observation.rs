@@ -58,8 +58,18 @@ impl AgentSandboxPools {
     pub async fn observe_admitting_pool(
         &self,
         binding: &NativePoolBinding,
+        target: &NativePoolTarget,
+        fenced: bool,
     ) -> Result<NativePoolStatus> {
-        let resources = self.bound_resources(binding).await;
+        let resources = self
+            .bound_resources_with(binding, |pool| {
+                if fenced {
+                    super::target_fence::check_target_authority(pool, target).map(|_| ())
+                } else {
+                    super::target_fence::allow_unversioned(pool, target.replicas)
+                }
+            })
+            .await;
         match resources {
             Ok((_, pool)) => {
                 retirement::admitting(&pool)?;

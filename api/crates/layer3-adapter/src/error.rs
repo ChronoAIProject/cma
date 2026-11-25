@@ -37,6 +37,8 @@ pub enum AdapterError {
     Rejected(String),
     #[error("native pool or template differs from its recorded configuration")]
     NativePoolConfigurationDrift,
+    #[error("recorded native definitions absent (pool={pool}, template={template})")]
+    NativePoolDefinitionAbsent { pool: bool, template: bool },
     /// Current authority no longer permits the operation.
     #[error("current access authority was revoked")]
     AccessRevoked,
@@ -61,6 +63,13 @@ pub enum AdapterError {
 }
 
 impl AdapterError {
+    pub(crate) fn is_native_pool_binding_hold(&self) -> bool {
+        matches!(
+            self,
+            Self::NativePoolConfigurationDrift | Self::NativePoolDefinitionAbsent { .. }
+        )
+    }
+
     pub(crate) const NATIVE_HOME_IDENTITY_REFUSAL: &str =
         "native home identity changed or disappeared";
 
@@ -88,6 +97,7 @@ impl AdapterError {
             guarded @ Self::NativeClaimNotReady(_) => guarded,
             Self::Rejected(message) => context(Self::Rejected, message, detail),
             Self::NativePoolConfigurationDrift => Self::NativePoolConfigurationDrift,
+            absent @ Self::NativePoolDefinitionAbsent { .. } => absent,
             Self::AccessRevoked => Self::AccessRevoked,
             refusal @ Self::SkillUpgradeRefused(_) => refusal,
             Self::OperationIdentityConflict(message) => {

@@ -297,47 +297,6 @@ impl AgentSandboxPools {
         status(binding.clone(), &updated)
     }
 
-    pub(super) async fn bound_resources(
-        &self,
-        binding: &NativePoolBinding,
-    ) -> Result<(DynamicObject, DynamicObject)> {
-        self.bound_resources_with(binding, |_| Ok(())).await
-    }
-
-    pub(super) async fn bound_resources_with(
-        &self,
-        binding: &NativePoolBinding,
-        authority: impl FnOnce(&DynamicObject) -> Result<()>,
-    ) -> Result<(DynamicObject, DynamicObject)> {
-        let config = model::binding_config(&self.config, binding);
-        let desired = model::template(&config, &binding.spec)?;
-        if binding.config_sha256 != model::digest(&config, &binding.spec)?
-            || binding.template_name != desired.name_any()
-        {
-            return Err(rejected("native pool binding has another configuration"));
-        }
-        // Both names are persisted authority. Start the independent reads
-        // together, then preserve Template-before-Pool validation and errors.
-        let (template, actual) = tokio::join!(
-            self.templates.get(&binding.template_name),
-            self.pools.get(&binding.name),
-        );
-        let template = template.map_err(api_error)?;
-        model::verify_identity(&template, &desired)?;
-        if template.uid().as_deref() != Some(&binding.template_uid) {
-            return Err(rejected("native pool template UID changed"));
-        }
-        let actual = actual.map_err(api_error)?;
-        let desired_pool = model::pool(&config, &binding.spec, &template, target(&actual)?)?;
-        model::verify_identity(&actual, &desired_pool)?;
-        if actual.uid().as_deref() != Some(&binding.uid) {
-            return Err(rejected("native pool UID changed"));
-        }
-        authority(&actual)?;
-        Self::verify_pool_specs(&template, &desired, &actual, &desired_pool)?;
-        Ok((template, actual))
-    }
-
     pub(super) async fn discover(&self, pool: &DynamicObject) -> Result<NativePoolStatus> {
         let encoded = pool
             .annotations()
@@ -367,7 +326,7 @@ impl AgentSandboxPools {
         status(binding(&config, &definition.spec, &template, pool)?, pool)
     }
 
-    fn verify_pool_specs(
+    pub(super) fn verify_pool_specs(
         template: &DynamicObject,
         desired_template: &DynamicObject,
         pool: &DynamicObject,

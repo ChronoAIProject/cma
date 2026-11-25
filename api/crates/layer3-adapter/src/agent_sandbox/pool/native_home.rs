@@ -30,10 +30,10 @@ impl AgentSandboxPools {
             self.verify_explicit_template_policy(&original.request.pool),
             self.read_native_adoption(original),
         );
-        if matches!(
-            &policy,
-            Err(crate::AdapterError::NativePoolConfigurationDrift)
-        ) {
+        if policy
+            .as_ref()
+            .is_err_and(|error| error.is_native_pool_binding_hold())
+        {
             // A configuration hold cannot take precedence over an independent
             // Claim/member/PVC authority failure.
             if let Err(error) = observed.as_ref() {
