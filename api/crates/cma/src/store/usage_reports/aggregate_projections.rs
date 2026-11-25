@@ -10,6 +10,7 @@ use std::time::Instant;
 pub(super) const COLLECTION: &str = usage_projections::COLLECTION;
 pub(super) const GENERATION_FIELD: &str = "projection_generation";
 pub(super) const MANIFEST_FIELD: &str = "projection_manifest";
+pub(in crate::store) const INVALIDATED_FIELD: &str = "projection_invalidated";
 const MAX_PROJECTION_BYTES: usize = 32 * 1024 * 1024;
 
 impl ReportingStore {
@@ -41,7 +42,10 @@ impl ReportingStore {
             None => Ok(None),
             Some(value) => {
                 let generation = job.get_i64("generation").map_err(unavailable)?;
-                if value.as_i64() != Some(generation) || job.get_document(MANIFEST_FIELD).is_err() {
+                if value.as_i64() != Some(generation)
+                    || job.get_document(MANIFEST_FIELD).is_err()
+                    || job.contains_key(INVALIDATED_FIELD)
+                {
                     return Err(MetricsError::Unavailable);
                 }
                 if !job.contains_key("kind") {
@@ -68,7 +72,7 @@ impl ReportingStore {
             self.build_projections(lease, report),
         )
         .await;
-        let batch = match result {
+        let (batch, row_count, chart_count) = match result {
             Ok(Ok(batch)) => batch,
             Err(_) | Ok(Err(MetricsError::Busy)) => {
                 tracing::info!(target: "cma::store::usage_reports::budget",
@@ -84,22 +88,41 @@ impl ReportingStore {
                 .checked_add(document.as_bytes().len() as i64)
                 .ok_or(MetricsError::Busy)
         })?;
-        let stored = self.persist_projections(lease, &documents, bytes).await?;
+        let stored = self
+            .persist_projections(lease, &documents, bytes, (row_count, chart_count))
+            .await?;
         tracing::info!(target: "cma::store::usage_reports::budget",
             stage = "aggregate_projection", stored, bytes, chunks = documents.len(),
             elapsed_ms = started.elapsed().as_millis() as u64);
         Ok(())
     }
 
-    async fn build_projections(
+    pub(super) async fn build_projections(
         &self,
         lease: &ReportLease,
         report: &Report,
-    ) -> Result<ProjectionBatch> {
+    ) -> Result<(ProjectionBatch, i64, i64)> {
+        // The job counts are written together with every immutable source chunk.
+        // Erasure fences this parent before removing any source document.
+        let job = self
+            .collection(JOBS)
+            .find_one(lease.fence())
+            .max_time(DB_DEADLINE)
+            .await
+            .map_err(unavailable)?
+            .ok_or(MetricsError::Unavailable)?;
+        if job.contains_key(INVALIDATED_FIELD) {
+            return Err(MetricsError::Unavailable);
+        }
+        let row_count = job.get_i64("row_count").map_err(unavailable)?;
+        let chart_count = job.get_i64("chart_count").map_err(unavailable)?;
+        self.retained_counts(report, &job).await?;
         let base = doc! {"report_id":&report.report_id,"generation":lease.generation,
         "document_schema_version":1_i64,"expires_at":expires(report.expires_at + 60)};
         let mut batch = ProjectionBatch::new(MAX_PROJECTION_BYTES);
         let deadline = Instant::now() + Duration::from_secs(10);
+        self.build_contributors(report, &base, &mut batch, deadline)
+            .await?;
         build_chart_projections(
             &self.collection(CHARTS),
             report,
@@ -113,9 +136,7 @@ impl ReportingStore {
             self.build_owner_allocation_projections(report, &base, &mut batch, deadline)
                 .await?;
         }
-        self.build_contributors(report, &base, &mut batch, deadline)
-            .await?;
-        Ok(batch)
+        Ok((batch, row_count, chart_count))
     }
 
     async fn build_contributors(
@@ -170,14 +191,18 @@ impl ReportingStore {
         lease: &ReportLease,
         documents: &[RawDocumentBuf],
         bytes: i64,
+        source_counts: (i64, i64),
     ) -> Result<bool> {
         let manifest = Self::projection_manifest(lease, documents, bytes);
         let result = tx::run(
             &self.client,
-            (self, lease, documents, bytes, &manifest),
-            |&(store, lease, documents, bytes, manifest), session| {
+            (self, lease, documents, bytes, &manifest, source_counts),
+            |&(store, lease, documents, bytes, manifest, (rows, charts)), session| {
                 Box::pin(async move {
-                    let fence = lease.fence();
+                    let mut fence = lease.fence();
+                    fence.insert(INVALIDATED_FIELD, doc! {"$exists":false});
+                    fence.insert("row_count", rows);
+                    fence.insert("chart_count", charts);
                     let has_budget = doc! {"$and":[fence.clone(),{
                         "bytes":{"$lte":store.budgets.report_bytes - bytes},
                         "$expr":{"$lte":[{"$add":["$bytes",bytes]},"$reserved_bytes"]},
@@ -214,6 +239,17 @@ impl ReportingStore {
                             Some(_) => Err(MetricsError::Unavailable.into()),
                         };
                     }
+                    for (collection, expected) in [(ROWS, rows), (CHARTS, charts)] {
+                        let actual = store
+                            .collection(collection)
+                            .count_documents(doc! {"report_id":&lease.report.report_id})
+                            .session(&mut *session)
+                            .await
+                            .map_err(tx::mongo)?;
+                        if i64::try_from(actual).ok() != Some(expected) {
+                            return Err(MetricsError::Unavailable.into());
+                        }
+                    }
                     store
                         .collection(COLLECTION)
                         .clone_with_type::<RawDocumentBuf>()
@@ -231,8 +267,12 @@ impl ReportingStore {
         }
         // An acknowledged marker and its pages are one commit. Read the exact
         // manifest from the original fenced job before accepting an uncertain reply.
+        let mut fence = lease.fence();
+        fence.insert(INVALIDATED_FIELD, doc! {"$exists":false});
+        fence.insert("row_count", source_counts.0);
+        fence.insert("chart_count", source_counts.1);
         let current = crate::store::durability::majority_collection::<Document>(&self.db, JOBS)
-            .find_one(lease.fence())
+            .find_one(fence)
             .max_time(DB_DEADLINE)
             .await
             .map_err(unavailable)?;

@@ -227,6 +227,7 @@ impl ReportingStore {
                     // Keep the server-time lease expression and byte expression together;
                     // inserting another $expr into the lease filter would discard expiry.
                     let fence = doc! {"$and":[lease.fence(), {
+                    aggregate_projections::GENERATION_FIELD:{"$exists":false},
                     "bytes":{"$lte":store.budgets.report_bytes-bytes},
                     "$expr":{"$lte":[{"$add":["$bytes",bytes]},"$reserved_bytes"]}}]};
                     let updated = store
@@ -289,7 +290,7 @@ impl ReportingStore {
                 lease.fence(),
                 // A terminal report cannot grow: retain its actual cache bytes,
                 // not its maximum work reservation, throughout the cache TTL.
-                vec![doc! {"$set":{"record":{"$literal":encode(&report)?},"state":state,"lease_until":0_i64,"reserved_bytes":"$bytes","logical_expires_at":report.expires_at as i64,"expires_at":expires(report.expires_at+86_400)}}],
+                vec![doc! {"$set":{"record":{"$literal":encode(&report)?},"state":state,"lease_until":0_i64,"reserved_bytes":"$bytes","logical_expires_at":report.expires_at as i64,"expires_at":{"$cond":[{"$ne":[{"$type":"$projection_generation"},"missing"]},mongodb::bson::Bson::Null,expires(report.expires_at+86_400)]}}}],
             )
             .await
             .map_err(unavailable)?;

@@ -161,3 +161,232 @@ async fn projected_reports_preserve_series_owner_pages_and_fail_closed() {
     assert!(old.series(&report, total).await.is_ok());
     store.db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn projection_parent_survives_delayed_pruning_for_ready_and_failed_reports() {
+    let store = fixture().await;
+    for (collection, index) in usage_projections::inspect(&store.db).await.unwrap() {
+        store
+            .db
+            .run_command(doc! {"createIndexes":collection,"indexes":[index]})
+            .await
+            .unwrap();
+    }
+    for success in [true, false] {
+        let at = now();
+        let principal = if success {
+            "ready-operator"
+        } else {
+            "failed-operator"
+        };
+        store
+            .submit(
+                scope(principal, true),
+                ReportInput::default().validate(at).unwrap(),
+                at,
+            )
+            .await
+            .unwrap();
+        let lease = store
+            .claim_report("report:0", principal)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut batch = cma_am_reporting::ProjectionBatch::new(32_768);
+        for (kind, series) in [("chart_total", ""), ("contributor", "fixture-owner")] {
+            batch
+                .push(
+                    doc! {"report_id":&lease.report.report_id,"generation":lease.generation,
+                    "document_schema_version":1_i64,"kind":kind,"metric":0_i64,"series":series,
+                    "chunk":0_i64},
+                )
+                .unwrap();
+        }
+        let documents = batch.into_documents();
+        let bytes = documents
+            .iter()
+            .map(|row| row.as_bytes().len() as i64)
+            .sum();
+        assert!(store
+            .persist_projections(&lease, &documents, bytes, (0, 0))
+            .await
+            .unwrap());
+        store
+            .finish_report(&lease, lease.report.clone(), success)
+            .await
+            .unwrap();
+
+        let filter = doc! {"_id":&lease.report.report_id};
+        let job = store
+            .collection(JOBS)
+            .find_one(filter.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.get("expires_at"), Some(&mongodb::bson::Bson::Null));
+        assert_eq!(job.get_i64("reserved_bytes").unwrap(), bytes);
+        // The original TTL would have passed while the pruner was unavailable.
+        store
+            .collection(JOBS)
+            .update_one(
+                filter.clone(),
+                doc! {"$set":{"logical_expires_at":at.saturating_sub(86_401) as i64}},
+            )
+            .await
+            .unwrap();
+        store.prune_cache(now()).await.unwrap();
+        let released = store
+            .collection(JOBS)
+            .find_one(filter)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!released.get_bool("reserved").unwrap());
+        assert_eq!(released.get_i64("bytes").unwrap(), 0);
+        assert!(released.get_datetime("expires_at").is_ok());
+        assert_eq!(
+            store
+                .collection(COLLECTION)
+                .count_documents(doc! {"report_id":&lease.report.report_id})
+                .await
+                .unwrap(),
+            0
+        );
+    }
+    store.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn account_erasure_invalidates_aggregate_before_first_commit() {
+    use crate::store::account_erasure::{erase_records, Cursor, Target};
+    use layer2_core::account_deletion::ErasureInventory;
+
+    let store = fixture().await;
+    for (collection, index) in usage_projections::inspect(&store.db).await.unwrap() {
+        store
+            .db
+            .run_command(doc! {"createIndexes":collection,"indexes":[index]})
+            .await
+            .unwrap();
+    }
+    let at = now();
+    store
+        .submit(
+            scope("operator", true),
+            ReportInput::default().validate(at).unwrap(),
+            at,
+        )
+        .await
+        .unwrap();
+    let lease = store
+        .claim_report("report:0", "aggregate-worker")
+        .await
+        .unwrap()
+        .unwrap();
+    let rows = [
+        fixture_row(&state(0, at - 3600)),
+        fixture_row(&state(1, at - 3600)),
+    ];
+    let mut charts = Vec::new();
+    for row in &rows {
+        for metric in [Metric::Cpu, Metric::Memory, Metric::Disk] {
+            charts.extend(
+                chart_documents(
+                    &lease.report,
+                    &row.sandbox_id,
+                    &row.owner.subject,
+                    metric,
+                    Vec::new(),
+                    &[],
+                )
+                .unwrap(),
+            );
+        }
+    }
+    store
+        .write_prepared_report_chunk(&lease, &rows, charts)
+        .await
+        .unwrap();
+    let mut report = lease.report.clone();
+    report.summary = Some(Summary {
+        sandbox_count: 2,
+        ..Default::default()
+    });
+    let (batch, row_count, chart_count) = store.build_projections(&lease, &report).await.unwrap();
+    let documents = batch.into_documents();
+    let bytes = documents
+        .iter()
+        .map(|row| row.as_bytes().len() as i64)
+        .sum();
+    assert_eq!((row_count, chart_count), (2, 6));
+    assert_eq!(
+        store
+            .collection(COLLECTION)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+
+    let owner = SubjectId::new(rows[0].owner.subject.clone());
+    let inventory = ErasureInventory::default();
+    let mut cursor = Cursor::default();
+    let mut removed = false;
+    for _ in 0..700 {
+        let batch = erase_records(
+            &store.db,
+            &[Target {
+                subject: &owner,
+                inventory: &inventory,
+            }],
+            &mut cursor,
+            &layer2_core::now_rfc3339(),
+        )
+        .await
+        .unwrap();
+        if [ROWS, CHARTS]
+            .iter()
+            .any(|name| batch.deleted.get(*name).copied().unwrap_or_default() > 0)
+        {
+            removed = true;
+            break;
+        }
+        if !batch.has_more {
+            break;
+        }
+    }
+    assert!(removed);
+    let job = store
+        .collection(JOBS)
+        .find_one(doc! {"_id":&report.report_id})
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(job.get_bool(INVALIDATED_FIELD).unwrap());
+    let original_bytes = job.get_i64("bytes").unwrap();
+    assert!(matches!(
+        store
+            .persist_projections(&lease, &documents, bytes, (row_count, chart_count))
+            .await,
+        Err(MetricsError::Unavailable)
+    ));
+    assert_eq!(
+        store
+            .collection(COLLECTION)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    let job = store
+        .collection(JOBS)
+        .find_one(doc! {"_id":&report.report_id})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.get_i64("bytes").unwrap(), original_bytes);
+    assert!(job.get_datetime("expires_at").is_ok());
+    store.db.drop().await.unwrap();
+}

@@ -48,7 +48,10 @@ async fn aggregate_projection_reconciles_committed_manifest_after_lost_acknowled
     f.fail(&["commitTransaction"], 20, doc! {
         "writeConcernError":{"code":50,"codeName":"MaxTimeMSExpired","errmsg":"injected commit uncertainty"}
     }).await;
-    let outcome = f.store.persist_projections(&lease, &initial, bytes).await;
+    let outcome = f
+        .store
+        .persist_projections(&lease, &initial, bytes, (0, 0))
+        .await;
     f.disable().await;
     assert!(outcome.unwrap());
     assert_eq!(f.commands.attempts(), 1);
@@ -57,13 +60,13 @@ async fn aggregate_projection_reconciles_committed_manifest_after_lost_acknowled
     let (replay, replay_bytes) = build([1, 0], 7);
     assert!(f
         .store
-        .persist_projections(&lease, &replay, replay_bytes)
+        .persist_projections(&lease, &replay, replay_bytes, (0, 0))
         .await
         .unwrap());
     let (amended, amended_bytes) = build([1, 0], 8);
     assert!(matches!(
         f.store
-            .persist_projections(&lease, &amended, amended_bytes)
+            .persist_projections(&lease, &amended, amended_bytes, (0, 0))
             .await,
         Err(MetricsError::Unavailable)
     ));

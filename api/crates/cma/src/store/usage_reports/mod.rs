@@ -40,6 +40,7 @@ use std::{sync::Arc, time::Duration};
 pub(crate) use cma_am_reporting::{CONTROL, JOBS};
 pub(crate) const ROWS: &str = "sandbox_usage_report_rows";
 pub(crate) const CHARTS: &str = "sandbox_usage_report_charts";
+pub(super) use aggregate_projections::INVALIDATED_FIELD;
 #[cfg(test)]
 use cma_am_reporting::pool::configure_pool;
 pub(super) use cma_am_reporting::pool::DB_DEADLINE;
