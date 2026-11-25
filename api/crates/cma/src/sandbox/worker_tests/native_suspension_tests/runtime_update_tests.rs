@@ -20,7 +20,10 @@ async fn active_with_image_origin(managed_desktop: bool) -> (Fixture, Sandbox, S
         created.origin = layer2_core::sandbox::SandboxOrigin::Lifecycle {
             operation_id: "desktop-fixture".into(),
         };
-        created.profile.content.runtime_image = Some(runtime_image());
+        created.profile.content.runtime_image = Some(format!(
+            "registry.example/runtime@sha256:{}",
+            "a".repeat(64)
+        ));
         created.profile.digest =
             layer2_core::profiles::content_digest(&created.profile.content).unwrap();
         created.lifecycle.runtime_image_origin =
