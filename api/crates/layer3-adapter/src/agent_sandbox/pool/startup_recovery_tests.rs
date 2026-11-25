@@ -30,6 +30,13 @@ async fn retained_cold_adoption_reconstructs_one_hold_and_due_probe() {
     let home = adopted(&bound.fixture, &bound.claim).await;
     history(&bound, 4, 2, 2);
     let backend = cold(&bound);
+    backend
+        .adopt_with_home(&bound.runtime, &bound.request, &home)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(deliveries(&bound), 2);
+    restart(&bound, 5, 0, 2, "Error");
     tokio::time::pause();
     let deadline = Instant::now() + Duration::from_secs(15 * 60);
     io(async {
@@ -40,11 +47,11 @@ async fn retained_cold_adoption_reconstructs_one_hold_and_due_probe() {
         for result in results {
             let failure = hold(result);
             assert_eq!(failure.probe().unwrap().next_probe_at, deadline);
-            assert_eq!(failure.consecutive, 0);
+            assert_eq!(failure.consecutive, 1);
         }
     })
     .await;
-    assert_eq!(deliveries(&bound), 1);
+    assert_eq!(deliveries(&bound), 2);
     tokio::time::advance(Duration::from_secs(15 * 60 - 1)).await;
     let repeated = io(backend.adopt_with_home(&bound.runtime, &bound.request, &home)).await;
     assert_eq!(hold(repeated).probe().unwrap().next_probe_at, deadline);
@@ -62,7 +69,7 @@ async fn retained_cold_adoption_reconstructs_one_hold_and_due_probe() {
         }
     })
     .await;
-    assert_eq!(deliveries(&bound), 2);
+    assert_eq!(deliveries(&bound), 3);
 }
 
 #[tokio::test]
@@ -137,6 +144,17 @@ async fn retained_cold_adoption_ignores_incomplete_or_nonqualifying_history() {
             .unwrap()
             .unwrap();
         assert_eq!(deliveries(&bound), 2, "{case}");
+        restart(&bound, restarts + 1, 0, 2, "Error");
+        backend
+            .adopt_with_home(&bound.runtime, &bound.request, &home)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            deliveries(&bound),
+            3,
+            "{case} cannot seed immediate recovery"
+        );
     }
 }
 
@@ -157,5 +175,39 @@ async fn known_serving_assignment_and_fresh_provision_keep_ordinary_delivery() {
         deliveries(&bound),
         2,
         "current acknowledged assignment wins over historical failures"
+    );
+}
+
+#[tokio::test]
+async fn cold_adoption_with_old_failure_history_proves_healthy_current_serving() {
+    let bound = fixture(true).await;
+    let home = adopted(&bound.fixture, &bound.claim).await;
+    history(&bound, 4, 2, 2);
+    let backend = AgentSandboxBackend::new(
+        client(&bound.fixture, false),
+        Arc::new(Serving(bound.transport.clone())),
+    );
+    backend
+        .adopt_with_home(&bound.runtime, &bound.request, &home)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(deliveries(&bound), 2);
+    let inspected = backend
+        .inspect_native_runtime(&bound.runtime, &bound.request, &home)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(inspected.observation.handle, bound.runtime);
+    restart(&bound, 5, 0, 2, "Error");
+    backend
+        .adopt_with_home(&bound.runtime, &bound.request, &home)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        deliveries(&bound),
+        3,
+        "serving proof clears historical recovery evidence"
     );
 }

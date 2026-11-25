@@ -26,6 +26,7 @@ struct StartupRecord {
     generation: u64,
     boot: String,
     last_delivery: Option<Delivery>,
+    recovery_incarnation: Option<StartupIncarnation>,
     failure: RuntimeStartupFailure,
     next_probe: Option<Instant>,
     probe_interval: Duration,
@@ -58,8 +59,8 @@ impl StartupBreaker {
         incarnation.restart >= THRESHOLD && !self.entries.lock().unwrap().contains_key(handle)
     }
 
-    /// History proves a conservative hold without claiming any acknowledged
-    /// assignment deliveries in this process.
+    /// Qualifying history can shorten relearning after a freshly acknowledged
+    /// failed startup. The ordinary first adoption can still prove serving.
     pub(super) fn recover(
         &self,
         handle: &RuntimeHandle,
@@ -84,11 +85,11 @@ impl StartupBreaker {
             generation,
             boot: incarnation.boot.clone(),
             last_delivery: None,
+            recovery_incarnation: Some(incarnation.clone()),
             failure: RuntimeStartupFailure::new(history.class, 0),
-            next_probe: Some(Instant::now() + FIRST_PROBE),
+            next_probe: None,
             probe_interval: FIRST_PROBE,
         };
-        transition(&record, "opened");
         entries.insert(handle.clone(), record);
     }
 
@@ -170,9 +171,10 @@ impl StartupBreaker {
             return;
         };
         record.last_delivery.as_mut().unwrap().inspected = true;
+        let relearned = record.recovery_incarnation.take().as_ref() == Some(&delivered.incarnation);
         record.failure.consecutive = record.failure.consecutive.saturating_add(1);
         record.failure.class = fast.class;
-        if record.failure.consecutive >= THRESHOLD && record.next_probe.is_none() {
+        if (relearned || record.failure.consecutive >= THRESHOLD) && record.next_probe.is_none() {
             record.probe_interval = FIRST_PROBE;
             record.next_probe = Some(Instant::now() + FIRST_PROBE);
             transition(record, "opened");
@@ -223,6 +225,13 @@ impl StartupBreaker {
             // Duplicate acknowledgements are still delivered normally. They
             // must not re-arm an already inspected failure of this incarnation
             // or replace evidence of a newer acknowledged incarnation.
+            if record
+                .recovery_incarnation
+                .as_ref()
+                .is_some_and(|prior| prior != &incarnation)
+            {
+                record.recovery_incarnation = None;
+            }
             if record.last_delivery.as_ref().is_none_or(|previous| {
                 incarnation != previous.incarnation
                     && incarnation.restart >= previous.incarnation.restart
@@ -237,6 +246,7 @@ impl StartupBreaker {
                     generation,
                     boot: incarnation.boot,
                     last_delivery: Some(delivery),
+                    recovery_incarnation: None,
                     failure: RuntimeStartupFailure::new(
                         RuntimeStartupFailureClass::ExitedBeforeServing,
                         0,
