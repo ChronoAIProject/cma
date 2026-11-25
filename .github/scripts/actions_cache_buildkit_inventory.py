@@ -4,7 +4,7 @@ import json
 import os
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
@@ -26,6 +26,7 @@ DIGEST = r"sha256:[a-f0-9]{64}"
 BLOB = re.compile("buildkit-blob-1-(" + DIGEST + ")")
 RESULTS_LOOKUP = "/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL"
 MAX_INDEXES = 1000
+MAX_INDEX_RETIREMENTS = 8
 MAX_INDEX_BYTES = 1024 * 1024
 DEVELOP_SCOPE = hashlib.sha256(DEVELOP.encode()).hexdigest()[:8]
 MANAGED_INDEX_STEMS = frozenset(
@@ -188,17 +189,67 @@ def superseded_indexes(pinned, references, stable_keys, cutoff):
     return tuple(sorted(retired, key=lambda row: (row.created, row.id)))
 
 
+def retirement_batch(aged, references, superseded, *, target=None):
+    """Prioritize reference sets that can make the most aged bytes unreachable."""
+    order = {row.id: index for index, row in enumerate(superseded)}
+    aged_bytes = Counter()
+    for row in aged:
+        aged_bytes[row.key] += row.size
+    owners = defaultdict(set)
+    for index_id, keys in references.items():
+        for key in keys & aged_bytes.keys():
+            owners[key].add(index_id)
+
+    # A blob only contributes once the batch removes all of its references.
+    # Any surviving, unmanaged or newer index excludes it from this calculation.
+    weights = Counter()
+    for key, ids in owners.items():
+        if ids <= order.keys():
+            weights[frozenset(ids)] += aged_bytes[key]
+
+    selected = set()
+    projected = 0
+    while len(selected) < MAX_INDEX_RETIREMENTS and (target is None or projected < target):
+        remaining = Counter()
+        for group, size in weights.items():
+            missing = group - selected
+            if missing:
+                remaining[missing] += size
+        if not remaining:
+            break
+
+        slots = MAX_INDEX_RETIREMENTS - len(selected)
+        # Prefer a set we can finish now. If none fits, advance one set across
+        # multiple independent observations instead of scattering removals.
+        fitting = [group for group in remaining if len(group) <= slots]
+        if not fitting and selected:
+            break
+
+        def priority(group):
+            count, size = len(group), remaining[group]
+            enough = target is not None and count <= slots and size >= target - projected
+            order_score = tuple(-index for index in sorted(order[member] for member in group))
+            return enough, -count if enough else size // count, size, order_score
+
+        best = max(fitting or remaining, key=priority)
+        selected.update(sorted(best, key=order.__getitem__)[:slots])
+        projected = sum(size for group, size in weights.items() if group <= selected)
+    return tuple(row for row in superseded if row.id in selected), projected, weights.total()
+
+
 @dataclass(frozen=True)
 class Observation:
     pinned: dict[int, Entry]
     candidates: tuple[Entry, ...]
     superseded: tuple[Entry, ...]
+    retirement_batch: tuple[Entry, ...]
+    projected_newly_unreachable_bytes: int
     projected_candidate_bytes: int
     observed_blob_bytes: int
     reachable_layer_count: int
 
 
-def observe(api, reader, revision, now):
+def observe(api, reader, revision, now, *, retirement_target=None):
     with observing("develop-before"):
         api.require_live_policy(revision)
     # The exact index key/version must be unique across all refs. Only blob
@@ -225,10 +276,11 @@ def observe(api, reader, revision, now):
     candidates = tuple(sorted((row for row in aged if row.key not in reachable),
                               key=lambda row: (-row.size, row.id)))
     superseded = superseded_indexes(pinned, references, {row.key for row in stable}, cutoff)
-    retired_ids = {row.id for row in superseded}
-    future_reachable = set().union(*(keys for index_id, keys in references.items() if index_id not in retired_ids))
-    projected = sum(row.size for row in aged if row.key not in future_reachable)
-    return Observation(pinned, candidates, superseded, projected,
+    batch, newly_unreachable, all_newly_unreachable = retirement_batch(
+        aged, references, superseded, target=retirement_target,
+    )
+    projected = sum(row.size for row in candidates) + all_newly_unreachable
+    return Observation(pinned, candidates, superseded, batch, newly_unreachable, projected,
                        sum(row.size for row in after.values()), len(reachable))
 
 
@@ -240,6 +292,8 @@ def snapshot(api, reader, revision, now):
             "candidate_bytes": sum(entry.size for entry in observation.candidates),
             "candidates": [asdict(entry) for entry in observation.candidates],
             "superseded_index_count": len(observation.superseded),
+            "next_index_batch_count": len(observation.retirement_batch),
+            "projected_newly_unreachable_bytes": observation.projected_newly_unreachable_bytes,
             "projected_candidate_bytes_after_index_retirement": observation.projected_candidate_bytes}
 
 
