@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { CmaClientProvider } from './api/context';
@@ -68,6 +68,9 @@ it('keeps accepted cleanup optional across navigation and allows deleting anothe
   await act(async () => {});
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   await actor.click(screen.getByRole('button', { name: 'View deletion status' }));
+  const progress = screen.getByRole('dialog', { name: 'Deletion progress' });
+  const second = within(progress).getByText('second', { selector: 'code' }).closest('li')!;
+  await actor.click(within(second).getByRole('button'));
   expect(screen.getByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
   expect(deleteSandbox).toHaveBeenCalledTimes(2);
 });

@@ -40,6 +40,7 @@ pub(crate) struct FeatureFlags {
     pub visitor_two_sandbox_defaults: bool,
     pub admin_runtime_inventory: bool,
     pub binding_diagnostics: bool,
+    pub agent_inspection_parking: bool,
     pub ownership_retry_hints_enabled: bool,
     pub home_backup_enabled: bool,
     pub home_backup_expiry_enabled: bool,
@@ -54,6 +55,7 @@ pub(crate) struct FeatureFlags {
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
+    pub reviewed_sandbox_retirement_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub command_cancel_wake: bool,
     pub ownership_cleanup_pacing: bool,
@@ -75,6 +77,7 @@ pub(crate) struct FeatureFlags {
     pub parent_not_ready_pacing_enabled: bool,
     pub startup_sibling_hold_enabled: bool,
     pub retained_reopen_enabled: bool,
+    pub runtime_image_origin_enabled: bool,
     pub retained_suspended_reopen_enabled: bool,
     pub retained_repeat_reopen_enabled: bool,
     pub agent_skill_upgrade_enabled: bool,
@@ -167,6 +170,7 @@ impl FeatureFlags {
                 "CHRONO_VISITOR_TWO_SANDBOX_DEFAULTS_ENABLED",
             )?,
             admin_runtime_inventory: flag(lookup, "CHRONO_ADMIN_RUNTIME_INVENTORY_ENABLED")?,
+            agent_inspection_parking: flag(lookup, "CHRONO_AGENT_INSPECTION_PARKING_ENABLED")?,
             ownership_retry_hints_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_OWNERSHIP_RETRY_HINT_ENABLED",
@@ -192,6 +196,10 @@ impl FeatureFlags {
             native_retirement_finality_enabled: flag(
                 lookup,
                 "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
+            )?,
+            reviewed_sandbox_retirement_enabled: flag(
+                lookup,
+                "CHRONO_REVIEWED_SANDBOX_RETIREMENT_ENABLED",
             )?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
             command_cancel_wake: flag(lookup, "CHRONO_COMMAND_CANCEL_WAKE_ENABLED")?,
@@ -224,6 +232,7 @@ impl FeatureFlags {
                 "CHRONO_AGENT_STARTUP_SIBLING_HOLD_ENABLED",
             )?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
+            runtime_image_origin_enabled: flag(lookup, "CHRONO_RUNTIME_IMAGE_ORIGIN_ENABLED")?,
             retained_suspended_reopen_enabled: flag(
                 lookup,
                 "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED",

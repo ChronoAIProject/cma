@@ -1,7 +1,7 @@
 use super::super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::super::{resource_access, sandbox_events, sandboxes};
 use super::{records, ApplyError, Change};
-use layer2_core::sandbox::control::*;
+use layer2_core::sandbox::{control::*, store::SandboxStore};
 use mongodb::{bson::doc, ClientSession};
 
 pub(super) async fn apply(
@@ -39,7 +39,7 @@ pub(super) async fn apply(
                 record,
                 &snapshot.lineage.sandbox,
                 &at,
-                (!release.agent.is_empty()).then_some(release.agent.as_str()),
+                store.managed_runtime_target(&snapshot.lineage.sandbox, &release.agent),
             )?;
             let plan = if let SandboxControlPlan::Transition { sandbox, .. } = &plan {
                 if store
@@ -67,13 +67,7 @@ pub(super) async fn apply(
                         Some(proof.audit().map_err(|_| SandboxControlError::Conflict)?);
                 }
                 SandboxControlPlan::Transition { sandbox, event } => {
-                    if snapshot
-                        .lineage
-                        .sandbox
-                        .profile
-                        .content
-                        .runtime_image
-                        .is_none()
+                    if snapshot.lineage.sandbox.has_managed_runtime_image()
                         && snapshot.lineage.sandbox.runtime_update_request()
                             != sandbox.runtime_update_request()
                     {

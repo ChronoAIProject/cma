@@ -1,3 +1,4 @@
+import { channelLifecycleCases } from './channel-lifecycle-cases';
 import { test, expect } from '@playwright/test';
 import { setup } from './channel-setup.fixture';
 
@@ -229,3 +230,5 @@ for (const expired of [true, false]) {
     expect(writes).toEqual([]);
   });
 }
+
+channelLifecycleCases();

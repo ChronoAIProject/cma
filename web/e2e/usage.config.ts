@@ -17,6 +17,7 @@ export default defineConfig({
     'usage-settings.check.ts',
     'usage-redesign.check.ts',
     'usage-coverage.check.ts',
+    'usage-evidence.check.ts',
     'usage-backoff.check.ts',
     'usage-ranges.check.ts',
     'usage-initial.check.ts',

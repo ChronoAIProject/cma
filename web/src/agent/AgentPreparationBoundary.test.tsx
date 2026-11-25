@@ -3,7 +3,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
 import type { AgentLifecycleOperationView } from '../api/client';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, agentClient } from '../test/agent';
-import { workspaceFixture } from '../test/hierarchy';
+import type { Failure } from '../api/types';
+import { sandboxFixture, workspaceFixture } from '../test/hierarchy';
 import { lifecycleRecoveryKey } from '../create/lifecycleIntentStorage';
 import { retainPreparationDraftOwner } from '../preparation/preparationDraftIdentity';
 import { readPreparationDraft, savePreparationDraft } from '../preparation/preparationDraftStorage';
@@ -69,11 +70,23 @@ function fixture() {
     },
   };
   const connection = vi.spyOn(connections, 'readAgentConnections');
-  function Host({ started = false }: { readonly started?: boolean }) {
+  function Host({
+    started = false,
+    failure,
+    sandboxFailure,
+  }: {
+    readonly started?: boolean;
+    readonly failure?: Failure;
+    readonly sandboxFailure?: Failure;
+  }) {
     const draft = useAgentDraft(client, 'owner', 'agt_1');
     const state = {
       status: 'ready' as const,
-      detail: started ? AGENT_DETAIL : detail,
+      detail: failure
+        ? { ...detail, status: 'failed' as const, failure }
+        : started
+          ? AGENT_DETAIL
+          : detail,
       workspace: workspaceFixture(),
       conversation: conversationFromTranscript(
         started ? AGENT_TRANSCRIPT : { ...AGENT_TRANSCRIPT, turns: [] },
@@ -91,7 +104,20 @@ function fixture() {
           onDetailsOpenChange={vi.fn()}
           onNavigate={vi.fn()}
           firstSendContext={{ authEpoch: 7, visible: true }}
-          controller={controller(state, undefined, { send })}
+          controller={controller(state, undefined, {
+            send,
+            progressObservation: sandboxFailure
+              ? {
+                  sandbox: {
+                    ...sandboxFixture(),
+                    id: detail.sandbox.id,
+                    status: 'failed',
+                    failure: sandboxFailure,
+                  },
+                  stale: false,
+                }
+              : undefined,
+          })}
         />
       </CmaClientProvider>
     );
@@ -107,6 +133,27 @@ function fixture() {
     },
   };
 }
+
+it.each(['failure', 'sandboxFailure'] as const)(
+  'shows a recorded %s without a browser creation receipt',
+  async (field) => {
+    sessionStorage.removeItem(journal);
+    const h = fixture();
+    const failure = {
+      class: 'terminal',
+      detail: 'The Agent process could not start.',
+    };
+    const { container } = render(<h.Host {...{ [field]: failure }} />);
+    expect(await screen.findByRole('heading', { name: 'Setup needs attention' })).toBeVisible();
+    expect(screen.getByRole('alert')).toHaveTextContent(failure.detail);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Review its environment before trying again.',
+    );
+    expect(screen.getByText('Task hasn’t started')).toBeVisible();
+    expect(screen.queryByText('Preparing cloud computer')).toBeNull();
+    expect(container.querySelectorAll('[data-motion="live"]')).toHaveLength(0);
+  },
+);
 
 it('uses one bound preparation view and transfers only the follow-up into the mounted Agent draft after real activity', async () => {
   const source = savePreparationDraft(scope, undefined, text, binding);
