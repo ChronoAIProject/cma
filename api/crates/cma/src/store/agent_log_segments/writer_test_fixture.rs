@@ -170,6 +170,7 @@ impl Fixture {
             before: self.head.clone(),
             batch,
             plan,
+            active_proof: None,
             delta,
             evidence: Vec::new(),
             receipt,

@@ -216,6 +216,7 @@ pub(crate) struct LifecycleLease {
 #[derive(Clone)]
 pub(crate) struct MongoAgentLifecycleStore {
     pub(super) creation_writer_epoch: Option<String>,
+    pub(super) creation_terminal_settlement_enabled: bool,
     operations: Collection<LifecycleRecord>,
     admission_settings: Collection<mongodb::bson::Document>,
     pub(super) released_lanes: Option<super::released_runtimes::MongoReleasedRuntimes>,
@@ -257,9 +258,23 @@ impl MongoAgentLifecycleStore {
             )
             .await
             .map_err(driver)?;
+        operations
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"status":1,"creation_fence.epoch":1,"_id":1})
+                    .options(
+                        IndexOptions::builder()
+                            .name("creation_terminal_recovery".to_owned())
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(driver)?;
         canary_admission::ensure_admission_indexes(&operations).await?;
         Ok(Self {
             creation_writer_epoch: None,
+            creation_terminal_settlement_enabled: false,
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
             released_lanes: None,
