@@ -116,3 +116,136 @@ it('requires the owner to choose a repo-capable connection and replays the exact
   expect(decide.mock.calls[1]?.[3]).toBe(decide.mock.calls[0]?.[3]);
   expect(decide.mock.calls[1]?.[6]).toEqual(decide.mock.calls[0]?.[6]);
 });
+
+it('requires fresh consent after a definitely refused stale generation, including after reload', async () => {
+  const context = {
+    sandbox_id: 'sandbox-one',
+    sandbox_name: 'Shared workspace',
+    other_agents: ['agent-two'],
+    current_user_service_id: 'previous',
+    scope_revision: 3,
+    credential_generation: 7,
+  };
+  vi.mocked(accessRequests.list).mockResolvedValue([{ ...request, github_approval: context }]);
+  const writes: { key: string | null; choice: unknown }[] = [];
+  const current = { ...context, scope_revision: 4, credential_generation: 8 };
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_path: string, options?: RequestInit) => {
+      if (options?.method === 'POST' && new Headers(options.headers).has('Idempotency-Key')) {
+        writes.push({
+          key: new Headers(options.headers).get('Idempotency-Key'),
+          choice: JSON.parse(String(options.body)).github_connection,
+        });
+        if (writes.length === 1) {
+          vi.mocked(accessRequests.list).mockResolvedValue([
+            { ...request, github_approval: current },
+          ]);
+          return Response.json(
+            {
+              code: 'agent_access_stale_github_approval',
+              detail: 'GitHub access changed before approval. Choose again.',
+            },
+            { status: 409, headers: { 'Content-Type': 'application/problem+json' } },
+          );
+        }
+        return Response.json({ ...request, status: 'applying' });
+      }
+      return Response.json({
+        owner: 'owner',
+        github: {
+          manage_url: 'https://nyx.example/keys',
+          connections: [
+            {
+              id: 'repository-access',
+              label: 'Repository access',
+              granted_scopes: ['repo'],
+              manage_url: 'https://nyx.example/keys/repository-access',
+            },
+          ],
+        },
+      });
+    }),
+  );
+  const first = show();
+  await userEvent.click(await screen.findByRole('button', { name: /Select Repository access/ }));
+  await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+  expect(
+    await screen.findByText('GitHub access changed before approval. Choose again.'),
+  ).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+  expect(sessionStorage.length).toBe(0);
+  first.unmount();
+
+  show();
+  expect(await screen.findByRole('button', { name: 'Approve' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Deny' })).toBeEnabled();
+  expect(writes).toHaveLength(1);
+  await userEvent.click(await screen.findByRole('button', { name: /Select Repository access/ }));
+  await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+  await waitFor(() => expect(writes).toHaveLength(2));
+  expect(writes[0]?.choice).toMatchObject({ scope_revision: 3, credential_generation: 7 });
+  expect(writes[1]?.choice).toMatchObject({
+    scope_revision: 4,
+    credential_generation: 8,
+    user_service_id: 'repository-access',
+  });
+  expect(writes[1]?.key).not.toBe(writes[0]?.key);
+});
+
+it('preserves an exact retry for generic conflict until durable request state is refreshed', async () => {
+  const original = {
+    ...request,
+    github_approval: {
+      sandbox_id: 'sandbox-one',
+      sandbox_name: 'Shared workspace',
+      other_agents: [],
+      current_user_service_id: null,
+      scope_revision: 3,
+      credential_generation: 7,
+    },
+  };
+  vi.mocked(accessRequests.list).mockResolvedValue([original]);
+  const writes: string[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_path: string, options?: RequestInit) => {
+      if (options?.method === 'POST' && new Headers(options.headers).has('Idempotency-Key')) {
+        writes.push(new Headers(options.headers).get('Idempotency-Key') ?? '');
+        if (writes.length === 2) {
+          vi.mocked(accessRequests.list).mockResolvedValue([{ ...request, status: 'applying' }]);
+        }
+        return Response.json(
+          { code: 'agent_access_conflict', detail: 'The request already changed.' },
+          { status: 409, headers: { 'Content-Type': 'application/problem+json' } },
+        );
+      }
+      return Response.json({
+        owner: 'owner',
+        github: {
+          manage_url: 'https://nyx.example/keys',
+          connections: [
+            {
+              id: 'repository-access',
+              label: 'Repository access',
+              granted_scopes: ['repo'],
+              manage_url: 'https://nyx.example/keys/repository-access',
+            },
+          ],
+        },
+      });
+    }),
+  );
+  show();
+  await userEvent.click(await screen.findByRole('button', { name: /Select Repository access/ }));
+  await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+  await screen.findByText('The request already changed.');
+  expect(screen.getByRole('button', { name: 'Deny' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: /Select Repository access/ })).toBeDisabled();
+  expect(sessionStorage.length).toBe(1);
+  await userEvent.click(screen.getByRole('button', { name: 'Retry access decision' }));
+  await screen.findByText(/Verifying the updated Agent key/, {}, { timeout: 5000 });
+  expect(writes).toHaveLength(2);
+  expect(writes[1]).toBe(writes[0]);
+  expect(screen.queryByRole('button', { name: 'Retry access decision' })).not.toBeInTheDocument();
+});

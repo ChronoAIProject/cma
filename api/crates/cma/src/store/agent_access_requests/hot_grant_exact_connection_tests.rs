@@ -115,8 +115,24 @@ async fn mongo_hot_scope_binds_connection_to_original_approval_and_generation() 
                 "switch-connection-approval",
             )
             .await,
-        Err(AgentAccessError::Conflict)
+        Err(AgentAccessError::StaleGithubApproval)
     );
+    // A definite stale consent refusal leaves the exact pending request intact.
+    assert_eq!(
+        reopened
+            .github_approval_replay(
+                &change.requester.owner,
+                &change.requester.agent_id,
+                &change.id,
+                std::slice::from_ref(&service),
+                &replacement,
+                &stale_binding,
+                "switch-connection-approval",
+            )
+            .await,
+        Ok(None)
+    );
+    assert_eq!(sandbox(&reopened, &record).await, after);
     let approved = reopened
         .approve_agent_access_bound(
             &change.requester.owner,

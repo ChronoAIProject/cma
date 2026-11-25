@@ -311,6 +311,9 @@ fn problem(error: AgentAccessError) -> Response {
         ),
         AgentAccessError::NotFound => (StatusCode::NOT_FOUND, "agent_access_not_found"),
         AgentAccessError::Conflict => (StatusCode::CONFLICT, "agent_access_conflict"),
+        AgentAccessError::StaleGithubApproval => {
+            (StatusCode::CONFLICT, "agent_access_stale_github_approval")
+        }
         AgentAccessError::Unavailable => {
             (StatusCode::SERVICE_UNAVAILABLE, "agent_access_unavailable")
         }

@@ -83,19 +83,23 @@ function accessRequest(value: unknown, agentId: string): AgentAccessRequest {
   return request;
 }
 export class AgentAccessError extends ApiError {
-  constructor(status: number, message: string, retryAfterMs?: number) {
-    super(status, message, undefined, undefined, retryAfterMs);
+  constructor(status: number, message: string, retryAfterMs?: number, code?: string) {
+    super(status, message, code, undefined, retryAfterMs);
   }
 }
 async function readResponse(response: Response): Promise<unknown> {
   if (!response.ok) {
-    const problem = (await response.json().catch(() => ({}))) as { detail?: unknown };
+    const problem = (await response.json().catch(() => ({}))) as {
+      detail?: unknown;
+      code?: unknown;
+    };
     throw new AgentAccessError(
       response.status,
       typeof problem.detail === 'string'
         ? problem.detail
         : `Agent access could not be updated (${String(response.status)}).`,
       retryAfterMilliseconds(response),
+      typeof problem.code === 'string' ? problem.code : undefined,
     );
   }
   return response.json();

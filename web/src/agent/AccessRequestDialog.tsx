@@ -8,6 +8,7 @@ import { ScopePicker } from './ScopePicker';
 import { REQUIRED_AGENT_SCOPES } from './requiredScopes';
 import {
   accessRequests,
+  AgentAccessError,
   validAccessServices,
   type AgentAccessRequest,
   type GithubConnectionApproval,
@@ -109,7 +110,15 @@ function AccessRequestDialog({
   const [showGitHubConnections, setShowGitHubConnections] = useState(false);
   const [selection, setSelection] = useState<GithubConnectionApproval>();
   const approval = request.github_approval;
+  const [refusedBinding, setRefusedBinding] = useState<GithubConnectionApproval>();
+  const awaitingCurrentBinding =
+    refusedBinding !== undefined &&
+    (!approval ||
+      (refusedBinding.sandbox_id === approval.sandbox_id &&
+        refusedBinding.scope_revision === approval.scope_revision &&
+        refusedBinding.credential_generation === approval.credential_generation));
   const selectedGithub =
+    !awaitingCurrentBinding &&
     selection &&
     approval &&
     selection.sandbox_id === approval.sandbox_id &&
@@ -136,7 +145,9 @@ function AccessRequestDialog({
     if (
       active.current ||
       saved.error ||
-      (action === 'approve' && !intent && (!preflight.ready || (approval && !selectedGithub)))
+      (action === 'approve' &&
+        !intent &&
+        (awaitingCurrentBinding || !preflight.ready || (approval && !selectedGithub)))
     )
       return;
     const selected = intent ?? {
@@ -180,12 +191,33 @@ function AccessRequestDialog({
         onRefresh();
       }
     } catch (cause) {
-      if (!abort.signal.aborted)
+      if (!abort.signal.aborted) {
+        if (cause instanceof AgentAccessError && cause.status === 409) {
+          if (cause.code === 'agent_access_stale_github_approval' && selected.githubConnection) {
+            // The transaction refused before saving the decision. Unlock only
+            // this exact intent, and require a fresh choice on current context.
+            try {
+              saveAccessDecision(owner, request.agent_id, request.id);
+              setSaved({});
+              setSelection(undefined);
+              setRefusedBinding(selected.githubConnection);
+            } catch {
+              setError(
+                'The saved decision could not be cleared. Restore browser session storage before retrying.',
+              );
+              return;
+            }
+          }
+          // A generic conflict may represent a different committed decision.
+          // Keep its exact retry intent while refreshing the durable request.
+          onRefresh();
+        }
         setError(
           cause instanceof Error
             ? cause.message
             : 'The decision could not be confirmed. Retry the same request.',
         );
+      }
     } finally {
       active.current = undefined;
       if (!abort.signal.aborted) setPending(false);
@@ -239,7 +271,10 @@ function AccessRequestDialog({
               disabled={
                 pending ||
                 !!saved.error ||
-                (!intent && (!preflight.ready || (approval !== undefined && !selectedGithub)))
+                (!intent &&
+                  (awaitingCurrentBinding ||
+                    !preflight.ready ||
+                    (approval !== undefined && !selectedGithub)))
               }
               onClick={() => void decide('approve')}
             >
@@ -288,7 +323,7 @@ function AccessRequestDialog({
               target={githubInventoryTarget}
               selection={{
                 id: (intent?.githubConnection ?? selectedGithub)?.user_service_id,
-                disabled: pending || !!intent || !!saved.error,
+                disabled: pending || !!intent || !!saved.error || awaitingCurrentBinding,
                 onSelect: (id) =>
                   setSelection({
                     sandbox_id: approval.sandbox_id,

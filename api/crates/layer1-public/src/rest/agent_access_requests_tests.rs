@@ -370,8 +370,10 @@ async fn domain_refusals_keep_safe_http_semantics_and_private_cache_headers() {
         (AgentAccessError::ServiceConnectionRequired, 409),
         (AgentAccessError::NotFound, 404),
         (AgentAccessError::Conflict, 409),
+        (AgentAccessError::StaleGithubApproval, 409),
         (AgentAccessError::Unavailable, 503),
     ] {
+        let stale = error == AgentAccessError::StaleGithubApproval;
         *service.error.lock().unwrap() = Some(error);
         for (method, action, body) in [
             (Method::GET, None, None),
@@ -396,6 +398,13 @@ async fn domain_refusals_keep_safe_http_semantics_and_private_cache_headers() {
                 response.headers()[header::CONTENT_TYPE],
                 "application/problem+json"
             );
+            if stale {
+                let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                    .await
+                    .unwrap();
+                let problem: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(problem["code"], "agent_access_stale_github_approval");
+            }
         }
     }
 }

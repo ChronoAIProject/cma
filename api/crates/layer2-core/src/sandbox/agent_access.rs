@@ -62,6 +62,8 @@ pub enum AgentAccessError {
     Invalid,
     #[error("this access request has already changed")]
     Conflict,
+    #[error("GitHub access changed before approval. Review the current Sandbox and choose a connection again.")]
+    StaleGithubApproval,
     #[error("service access is temporarily unavailable")]
     Unavailable,
 }

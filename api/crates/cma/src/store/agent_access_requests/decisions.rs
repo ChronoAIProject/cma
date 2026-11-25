@@ -227,7 +227,9 @@ impl MongoSandboxStore {
                     || binding.scope_revision != scope_revision
                     || binding.credential_generation != sandbox.credential.key_generation
             }) {
-                return Err(AgentAccessError::Conflict.into());
+                // No decision exists in this transaction, and no write has
+                // been attempted. The owner must approve the new binding.
+                return Err(AgentAccessError::StaleGithubApproval.into());
             }
             let required = sandbox.credential.effective_reaches();
             if !baseline
