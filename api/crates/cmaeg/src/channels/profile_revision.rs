@@ -63,20 +63,23 @@ fn unavailable() -> ManagementError {
         "profile revision custody unavailable".into(),
     ))
 }
-fn check(state: &ManagementState, definition: &ChannelDefinition) -> Result<(), ManagementError> {
-    if !state.profile_revisions_enabled {
-        return Err(refuse("profile revision writes are disabled"));
-    }
-    if definition.provider.slug.as_str() != "cma_codex"
-        || !definition.provider.target.is_profile()
-        || definition
+pub(crate) fn can_baseline(definition: &ChannelDefinition) -> bool {
+    definition.provider.slug.as_str() == "cma_codex"
+        && definition.provider.target.is_profile()
+        && definition
             .profile
             .environment
             .as_ref()
             .and_then(|environment| environment.get("session_affinity"))
             .and_then(serde_json::Value::as_str)
-            == Some("source_user")
-    {
+            != Some("source_user")
+}
+
+fn check(state: &ManagementState, definition: &ChannelDefinition) -> Result<(), ManagementError> {
+    if !state.profile_revisions_enabled {
+        return Err(refuse("profile revision writes are disabled"));
+    }
+    if !can_baseline(definition) {
         return Err(refuse(
             "profile revisions require a CMA conversation-affinity channel",
         ));

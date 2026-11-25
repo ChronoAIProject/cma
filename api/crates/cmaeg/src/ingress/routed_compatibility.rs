@@ -33,7 +33,14 @@ impl RoutedIngress {
             .await?;
         let committed = match self
             .plans
-            .replay_compatibility(request, &source.body)
+            .replay_compatibility(
+                request,
+                &source.body,
+                crate::channels::profile_assignment::requires_guard(
+                    &request.channel.definition,
+                    self.profile_writes_enabled,
+                ),
+            )
             .await
             .map_err(admission_problem)?
         {

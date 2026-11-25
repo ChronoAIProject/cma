@@ -54,6 +54,7 @@ pub(crate) mod telegram;
 pub struct RoutedIngress {
     plans: PlanStore,
     profile_resolver: Option<crate::channels::resolver::ChannelResolver>,
+    profile_writes_enabled: bool,
     schedule: ScheduleHandle,
     keys: Arc<MasterKeyRing>,
     records: BTreeSet<String>,
@@ -81,6 +82,7 @@ impl RoutedIngress {
         Self {
             plans,
             profile_resolver: None,
+            profile_writes_enabled: false,
             schedule,
             keys,
             records,
@@ -103,8 +105,10 @@ impl RoutedIngress {
     pub(crate) fn with_profile_resolver(
         mut self,
         resolver: crate::channels::resolver::ChannelResolver,
+        writes_enabled: bool,
     ) -> Self {
         self.profile_resolver = Some(resolver);
+        self.profile_writes_enabled = writes_enabled;
         self
     }
 
@@ -122,6 +126,7 @@ impl RoutedIngress {
         let admission = crate::channels::profile_assignment::prepare_admission(
             self.profile_resolver.as_ref(),
             &mut request,
+            self.profile_writes_enabled,
         )
         .await?;
         Ok((request, admission))
@@ -271,12 +276,10 @@ impl RoutedIngress {
                 let (assigned, assignment) = if let Some(target) =
                     plan.targets.iter_mut().find(|target| {
                         target.consumer.is_default()
-                            && request
-                                .channel
-                                .definition
-                                .secrets
-                                .profile_revisions
-                                .is_some()
+                            && crate::channels::profile_assignment::requires_guard(
+                                &request.channel.definition,
+                                self.profile_writes_enabled,
+                            )
                     }) {
                     let mut desired = request.clone();
                     desired.consumer = None;
@@ -287,7 +290,12 @@ impl RoutedIngress {
                     assigned.conversation_id = request.conversation_id.clone();
                     (assigned, assignment)
                 } else {
-                    (request.clone(), None)
+                    let guard = crate::channels::profile_assignment::requires_guard(
+                        &request.channel.definition,
+                        self.profile_writes_enabled,
+                    )
+                    .then(|| crate::channels::profile_assignment::channel_guard(&request.channel));
+                    (request.clone(), guard)
                 };
                 let request = &assigned;
                 let mut candidate = if message_plan.is_some() {

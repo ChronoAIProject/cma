@@ -70,13 +70,10 @@ impl IngressState {
         self.routed
             .as_ref()
             .filter(|routing| {
-                request
-                    .channel
-                    .definition
-                    .secrets
-                    .profile_revisions
-                    .is_some()
-                    || routing.plans.replicas_enabled()
+                crate::channels::profile_assignment::requires_guard(
+                    &request.channel.definition,
+                    self.profile_revisions_enabled,
+                ) || routing.plans.replicas_enabled()
                     || (routing.selected_request(request) && ordinary(request))
             })
             .map(|_| VerifiedIngress {
@@ -134,13 +131,10 @@ impl IngressState {
             .filter(|routing| routing.selected_request(&request) && ordinary(&request))
         {
             let selected_source = if routing.plans.replicas_enabled()
-                || request
-                    .channel
-                    .definition
-                    .secrets
-                    .profile_revisions
-                    .is_some()
-            {
+                || crate::channels::profile_assignment::requires_guard(
+                    &request.channel.definition,
+                    self.profile_revisions_enabled,
+                ) {
                 source.clone()
             } else {
                 source.take()
@@ -170,12 +164,10 @@ impl IngressState {
         }
         if let Some(routing) = self.routed.as_ref().filter(|r| {
             r.plans.replicas_enabled()
-                || request
-                    .channel
-                    .definition
-                    .secrets
-                    .profile_revisions
-                    .is_some()
+                || crate::channels::profile_assignment::requires_guard(
+                    &request.channel.definition,
+                    self.profile_revisions_enabled,
+                )
         }) {
             let Some(source) = source else {
                 return LaunchOutcome::Refused(Problem::new(

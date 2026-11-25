@@ -163,15 +163,9 @@ impl PlanStore {
         &self,
         request: &LaunchRequest,
         source_body: &[u8],
+        profile_guard: bool,
     ) -> Result<Option<AdmittedPlan>, AdmissionError> {
-        if !self.replicas_enabled()
-            && request
-                .channel
-                .definition
-                .secrets
-                .profile_revisions
-                .is_none()
-        {
+        if !self.replicas_enabled() && !profile_guard {
             return Err(AdmissionError::Invalid);
         }
         let (identity, event) = verified(request, source_body, &self.keys, (self.clock)())?;

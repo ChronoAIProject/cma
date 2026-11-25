@@ -287,18 +287,28 @@ pub(crate) async fn execution_channel(
     project(&current, &assignment).map_err(|_| ResolveError::InvalidDefinition)
 }
 
+/// Even an event using the original binding must serialize its event root
+/// with the first baseline. Retained revisions continue to require the fence.
+pub(crate) fn requires_guard(definition: &ChannelDefinition, writes_enabled: bool) -> bool {
+    definition.secrets.profile_revisions.is_some()
+        || (writes_enabled && super::profile_revision::can_baseline(definition))
+}
+
+pub(crate) fn channel_guard(channel: &ResolvedChannel) -> Admission {
+    Admission {
+        channel_record_id: channel.definition.record_id.to_string(),
+        channel_version: channel.version,
+        insert: None,
+    }
+}
+
 pub(crate) async fn prepare_admission(
     resolver: Option<&super::resolver::ChannelResolver>,
     request: &mut crate::ingress::launch::LaunchRequest,
+    writes_enabled: bool,
 ) -> Result<Option<Admission>, cmaeg_core::problem::Problem> {
     use cmaeg_core::problem::{Problem, ProblemCode};
-    if request
-        .channel
-        .definition
-        .secrets
-        .profile_revisions
-        .is_none()
-    {
+    if !requires_guard(&request.channel.definition, writes_enabled) {
         return Ok(None);
     }
     let unavailable = || {
@@ -328,7 +338,7 @@ pub(crate) async fn prepare_admission(
             .await
             .map_err(|_| unavailable())?
     else {
-        return Ok(None);
+        return Ok(Some(channel_guard(&current)));
     };
     request.channel = project(&current, &assignment).map_err(|_| unavailable())?;
     Ok(Some(Admission {
@@ -366,127 +376,5 @@ pub(super) async fn baseline(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::replicas::mongo_fixture::Fixture;
-    use cmaeg_core::{channel::ProfileRevisions, seal::seal_blob};
-
-    #[tokio::test]
-    #[ignore = "requires authenticated disposable Mongo"]
-    async fn first_assignment_commits_only_with_the_accepted_event_and_channel_version() {
-        let fixture = Fixture::new().await;
-        let left = fixture.records("https://fixture.example").await;
-        let right = fixture.records("https://fixture.example").await;
-        let store = Store::new(left.clone(), fixture.keys()).unwrap();
-        let peer = Store::new(right.clone(), fixture.keys()).unwrap();
-        let request = crate::ingress::routing_plan::fixture::request(
-            |_| {},
-            crate::ingress::routing_plan::fixture::message("assignment"),
-        );
-        let mut channel = (*request.channel).clone();
-        channel.definition.secrets.profile_revisions = Some(ProfileRevisions {
-            current_revision: 1,
-            baseline_complete: true,
-            last_publication: None,
-            retained: Vec::new(),
-        });
-        channel.definition.validate().unwrap();
-        let blob = seal_blob(
-            &fixture.keys(),
-            &serde_json::to_vec(&channel.definition.to_blob_json()).unwrap(),
-        )
-        .unwrap();
-        channel.version = left
-            .put(
-                &channel.definition.record_id,
-                &channel.definition.owner.subject,
-                &blob,
-                None,
-            )
-            .await
-            .unwrap();
-        let consumer = ConsumerId::default_consumer();
-        let conversation = &request.conversation_id;
-        let (candidate, write) = prepare(&store, &channel, &consumer, conversation, true)
-            .await
-            .unwrap()
-            .unwrap();
-        let id = candidate.id.clone();
-        assert!(peer.read::<Assignment>(&id, false).await.unwrap().is_none());
-        let stale = Admission {
-            channel_record_id: channel.definition.record_id.to_string(),
-            channel_version: channel.version + 1,
-            insert: write,
-        };
-        let expiry = time::OffsetDateTime::now_utc().unix_timestamp() + 600;
-        assert!(left
-            .put_profile_admission(
-                "fixture-refused",
-                &channel.definition.owner.subject,
-                b"fixture",
-                expiry,
-                &stale,
-                &[],
-                None
-            )
-            .await
-            .is_err());
-        assert!(peer.read::<Assignment>(&id, false).await.unwrap().is_none());
-        let (_, first) = prepare(&store, &channel, &consumer, conversation, true)
-            .await
-            .unwrap()
-            .unwrap();
-        let (_, second) = prepare(&peer, &channel, &consumer, conversation, true)
-            .await
-            .unwrap()
-            .unwrap();
-        let admission = |insert| Admission {
-            channel_record_id: channel.definition.record_id.to_string(),
-            channel_version: channel.version,
-            insert,
-        };
-        let a = admission(first);
-        let b = admission(second);
-        let owner = &channel.definition.owner.subject;
-        let (one, two) = tokio::join!(
-            left.put_profile_admission("fixture-first", owner, b"fixture", expiry, &a, &[], None),
-            right.put_profile_admission("fixture-second", owner, b"fixture", expiry, &b, &[], None)
-        );
-        assert_eq!(usize::from(one.is_ok()) + usize::from(two.is_ok()), 1);
-        let (retained, version) = peer.read::<Assignment>(&id, false).await.unwrap().unwrap();
-        assert_eq!(retained, candidate);
-        assert_eq!(version, 1);
-        let (again, insert) = prepare(&peer, &channel, &consumer, conversation, true)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(again, retained);
-        assert_eq!(insert.as_ref().and_then(|guard| guard.expected), Some(1));
-        let stale_admission = admission(insert);
-        peer.write(
-            &id,
-            owner,
-            &retained,
-            Write {
-                expected: Some(1),
-                channel: Some((channel.definition.record_id.to_string(), channel.version)),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-        assert!(right
-            .put_profile_admission(
-                "fixture-stale-assignment",
-                owner,
-                b"fixture",
-                expiry,
-                &stale_admission,
-                &[],
-                None
-            )
-            .await
-            .is_err());
-        fixture.cleanup().await;
-    }
-}
+#[path = "profile_assignment_tests.rs"]
+mod tests;
