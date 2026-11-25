@@ -3,7 +3,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from staging_cd_common import matches, require
+import ci_retry
+from staging_cd_common import Refusal, matches, require
 
 
 class DevelopHistory:
@@ -42,8 +43,9 @@ class DevelopHistory:
             result = runner(["git", "-c", "credential.helper=", "-c", "http.extraHeader=", *args],
                             cwd=root or Path.cwd(), env=env, text=True, capture_output=True,
                             timeout=120, check=False)
-            require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024,
-                    "Develop ancestry could not be verified")
+            if result.returncode != 0:
+                raise Refusal("Develop ancestry could not be verified") from ci_retry.cli_cause(result.stderr)
+            require(len(result.stdout) <= 16 * 1024 * 1024, "Develop ancestry could not be verified")
             return result.stdout.strip()
 
         shallow = git("rev-parse", "--is-shallow-repository")

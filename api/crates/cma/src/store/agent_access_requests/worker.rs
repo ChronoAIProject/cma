@@ -284,6 +284,9 @@ fn validate_progress(
                                 || !record
                                     .approved_services()
                                     .is_ok_and(|approved| scope.services == approved)
+                                || record.approved_connection().is_some_and(|selected| {
+                                    scope.connection.as_ref() != Some(selected)
+                                })
                         })))
             || !sandbox.credential.delivered
             || sandbox.credential.pending.is_some()

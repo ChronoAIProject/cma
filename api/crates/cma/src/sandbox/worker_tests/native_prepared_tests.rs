@@ -287,6 +287,7 @@ async fn native_prepared_owner_credential_contamination_retires_exact_runtime() 
                 operation_id: "fixture-contamination".into(),
                 value: layer3_adapter::RuntimeCredential::new("opaque-native-fixture"),
                 custody_generation: Some(1),
+                github_route: None,
             },
         )
         .await

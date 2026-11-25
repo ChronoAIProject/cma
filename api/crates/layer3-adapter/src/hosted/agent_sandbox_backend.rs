@@ -41,28 +41,17 @@ impl AgentSandboxBackend {
             startup_breaker: Default::default(),
         }
     }
-
-    async fn bind(&self, handle: &RuntimeHandle, request: &ProviderSandboxRequest) -> Result<()> {
-        if let Some(until) = request.funded_until {
-            self.client
-                .set_runtime_deadline(handle, request, until)
-                .await?;
-        }
-        let mut timing = crate::agent_sandbox::provision_timing::ProvisionTiming::new();
-        let pod = self.client.wait_ready_for_create(handle).await?;
-        timing.completed("wait_ready");
-        if let Some(until) = request.funded_until {
-            // Readiness can consume the remaining window; never bind expired work.
-            crate::agent_sandbox::funding::deadline(until)?;
-        }
-        let result = self.assign_and_bind(handle, &pod, request).await;
-        timing.completed("assign_and_bind");
-        result
-    }
 }
 
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
+    fn stale_turn_producer(
+        &self,
+        _: &RuntimeHandle,
+    ) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
+        self.transport.stale_turn_producer()
+    }
+
     fn startup_binding_headroom(&self, _handles: &[RuntimeHandle]) -> Option<usize> {
         Some(binding::MAX_ASSIGNMENTS.saturating_sub(self.assignments.lock().unwrap().len()))
     }
@@ -97,6 +86,19 @@ impl HostedBackend for AgentSandboxBackend {
             .select_runtime(request, image, home)
             .await
     }
+    async fn select_native_canary_pool(
+        &self,
+        request: &ProviderSandboxRequest,
+        image: &crate::RuntimeImage,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<crate::agent_sandbox::NativePoolBinding> {
+        self.client
+            .warm_pools()
+            .select_runtime_with_cold_policy(request, image, home, true)
+            .await?
+            .ok_or_else(|| crate::AdapterError::Rejected("native canary pool unavailable".into()))
+    }
+
     async fn validate_funding(
         &self,
         request: &ProviderSandboxRequest,
@@ -213,6 +215,9 @@ impl HostedBackend for AgentSandboxBackend {
     ) -> Result<()> {
         self.client.verify_suspended(handle, request).await
     }
+    fn retained_startup_policy(&self) -> Option<&dyn super::HostedRetainedStartupPolicy> {
+        Some(self)
+    }
     async fn resume(
         &self,
         handle: &RuntimeHandle,
@@ -311,7 +316,7 @@ impl HostedBackend for AgentSandboxBackend {
         else {
             return Ok(None);
         };
-        self.bind_adopted(handle, request, &object).await?;
+        self.bind_adopted(handle, request, &object, None).await?;
         // The first object authorized binding, but readiness and assignment can
         // change while that operation waits. Revalidate the exact provider
         // object before exposing a current Running observation.
@@ -461,21 +466,8 @@ impl HostedBackend for AgentSandboxBackend {
     }
 }
 
-#[async_trait::async_trait]
-impl super::CapacityRecoveryNativeTransport for AgentSandboxBackend {
-    async fn reattach_existing(
-        &self,
-        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
-        updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::agent_capacity_recovery::CapacityRecoveryResult<(
-        ConversationChannel,
-        crate::agent_capacity_recovery::CapacityRecoveryConfirmation,
-    )> {
-        self.transport
-            .reattach_existing_capacity_recovery(request, updates)
-            .await
-    }
-}
+#[path = "agent_sandbox_backend_capacity_recovery.rs"]
+mod capacity_recovery;
 
 #[path = "runtime_routing_backend.rs"]
 mod routing;
@@ -492,3 +484,6 @@ mod routing_tests;
 #[cfg(test)]
 #[path = "agent_sandbox_backend_ingress_tests.rs"]
 mod ingress_tests;
+
+#[path = "retained_startup_policy_native.rs"]
+mod retained_policy;

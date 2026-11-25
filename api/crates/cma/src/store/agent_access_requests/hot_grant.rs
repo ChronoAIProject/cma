@@ -57,6 +57,12 @@ async fn apply_at(
     }
     let services = record.approved_services()?.to_vec();
     let expected_revision = record.expected_scope_revision.unwrap_or(0);
+    if record
+        .approved_connection_binding()
+        .is_some_and(|binding| binding.credential_generation != current.credential.key_generation)
+    {
+        return Err(AgentAccessError::Conflict.into());
+    }
     let effective = current.credential.effective_reaches();
     if record.progress != AgentAccessProgress::default()
         || expected_revision

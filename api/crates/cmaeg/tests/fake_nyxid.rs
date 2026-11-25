@@ -238,7 +238,9 @@ async fn introspect(
     assert_eq!(form["client_id"], "gateway-management");
     assert_eq!(form["client_secret"], "gateway-management-fixture");
     let subject = match form.get("token").map(String::as_str) {
-        Some("token-alice" | "token-alice-manager") => "alice".to_owned(),
+        Some("token-alice" | "token-alice-manager" | "token-alice-create-only") => {
+            "alice".to_owned()
+        }
         Some("token-bob") => "bob".to_owned(),
         Some(token) if state.oauth.subject_of(token).is_some() => {
             state.oauth.subject_of(token).unwrap()
@@ -255,6 +257,8 @@ async fn introspect(
         "token_type":"access","resource":[format!("{}/api/v1/proxy/s/cma-event-gateway",state.issuer)],
         "permissions":if form.get("token").map(String::as_str) == Some("token-alice-manager") {
             vec!["cma-eg:channels:read", "cma-eg:channels:create", "cma-eg:channels:update"]
+        } else if form.get("token").map(String::as_str) == Some("token-alice-create-only") {
+            vec!["cma-eg:channels:create"]
         } else { vec!["cma-eg:admin"] }}),
     )
 }

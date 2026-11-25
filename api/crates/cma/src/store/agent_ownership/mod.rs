@@ -16,6 +16,7 @@ use super::sandbox_mongo::{
 };
 
 mod acquisition;
+mod binding_diagnostics;
 mod effects;
 mod failure;
 mod membership;
@@ -75,13 +76,7 @@ impl MongoAgentOwnership {
         super::schema::initialize_collections(&database, &[MEMBERS, OWNERS])
             .await
             .map_err(unavailable)?;
-        let store = Self {
-            client: client.clone(),
-            receiver_diagnostics_enabled,
-            members: majority_collection(&database, MEMBERS),
-            owners: majority_collection(&database, OWNERS),
-            database,
-        };
+        let store = Self::from_database(client, database, receiver_diagnostics_enabled);
         store
             .members
             .create_index(
@@ -108,6 +103,49 @@ impl MongoAgentOwnership {
             .await
             .map_err(unavailable)?;
         Ok(store)
+    }
+
+    fn from_database(
+        client: &Client,
+        database: Database,
+        receiver_diagnostics_enabled: bool,
+    ) -> Self {
+        Self {
+            client: client.clone(),
+            receiver_diagnostics_enabled,
+            members: majority_collection(&database, MEMBERS),
+            owners: majority_collection(&database, OWNERS),
+            database,
+        }
+    }
+
+    #[cfg(feature = "qualification-hooks")]
+    pub(crate) async fn prepare_qualification_renewal(
+        uri: &str,
+        name: &str,
+    ) -> Result<std::sync::Arc<dyn OwnershipStore>, &'static str> {
+        let mut options = mongodb::options::ClientOptions::parse(uri)
+            .await
+            .map_err(|_| "qualification MongoDB configuration refused")?;
+        options.app_name = Some("cma-qualification-renewal".into());
+        options.min_pool_size = Some(0);
+        options.max_pool_size = Some(1);
+        super::transaction_barrier::bind(&mut options, name);
+        let client =
+            Client::with_options(options).map_err(|_| "qualification MongoDB client refused")?;
+        let database = client.database(name);
+        // Open and verify this separate pool before the local plan can arm.
+        // The ordinary composition owns collections, indexes and all other calls.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            database.run_command(doc! {"ping": 1}),
+        )
+        .await
+        .map_err(|_| "qualification MongoDB startup timed out")?
+        .map_err(|_| "qualification MongoDB startup failed")?;
+        Ok(std::sync::Arc::new(Self::from_database(
+            &client, database, false,
+        )))
     }
 
     async fn server_now(&self) -> Result<i64, OwnershipError> {
@@ -280,6 +318,15 @@ impl OwnershipStore for MongoAgentOwnership {
         self.acquire_owner(agent_id, instance_id).await
     }
 
+    async fn reconcile_acquisition(
+        &self,
+        agent_id: &AgentId,
+        instance_id: &str,
+    ) -> Result<Option<OwnershipToken>, OwnershipError> {
+        self.reconcile_owner_acquisition(agent_id, instance_id)
+            .await
+    }
+
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError> {
         self.renew_owner(token).await
     }
@@ -334,6 +381,8 @@ fn invalid(error: impl std::fmt::Display) -> OwnershipError {
     OwnershipError::Invalid(error.to_string())
 }
 
+#[cfg(test)]
+mod mongo_failure_containment_tests;
 #[cfg(test)]
 pub(crate) mod mongo_renewal_faults;
 #[cfg(test)]

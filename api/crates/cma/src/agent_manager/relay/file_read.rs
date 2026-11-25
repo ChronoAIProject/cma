@@ -19,13 +19,20 @@ pub(super) fn eligible(path: &str, method: &Method) -> bool {
             })
 }
 
-pub(super) fn refusal(reason: Refusal) -> Response {
-    tracing::debug!(
-        target: "cma::agent_manager::file_read_relay",
-        ?reason,
-        "Verified file read reached an owner during handoff"
-    );
-    let mut response = http::unavailable();
+pub(super) async fn run(next: Next, request: Request, retry: bool) -> Response {
+    let response = next.run(request);
+    if retry {
+        layer3_adapter::file_receiver_retry::scope_read(response).await
+    } else {
+        response.await
+    }
+}
+
+pub(super) fn refusal(
+    diagnostic: Option<&relay_diagnostics::RelayDiagnostic>,
+    reason: Refusal,
+) -> Response {
+    let mut response = http::unavailable_with(diagnostic, reason);
     mark(&mut response);
     response
 }
@@ -65,6 +72,11 @@ impl Relay {
                 && proof.owner.protocol == layer2_core::agent_ownership::PROTOCOL_VERSION
         }) {
             mark(response);
+            if let Some(mut diagnostic) = relay_diagnostics::RelayDiagnostic::from_request(request)
+            {
+                diagnostic.correlate_hop(request.headers()[PROOF].as_bytes());
+                diagnostic.record(Refusal::AdmissionClosed);
+            }
         }
     }
 }
@@ -72,33 +84,4 @@ impl Relay {
 pub(super) fn reported(headers: &HeaderMap) -> bool {
     let mut values = headers.get_all(HANDOFF_HEADER).iter();
     values.next().is_some_and(|value| value == "1") && values.next().is_none()
-}
-
-pub(super) async fn recover(
-    relay: &Relay,
-    id: &AgentId,
-    request: Request,
-    next: Next,
-    permit: capacity::Permit,
-    deadline: tokio::time::Instant,
-    reason: &'static str,
-) -> Response {
-    let response = tokio::time::timeout_at(deadline, async {
-        if !relay.coordinator.is_ready() {
-            return http::unavailable();
-        }
-        if let Err(refusal) = http::authorize_public(relay, id, &request, None, false).await {
-            return refusal;
-        }
-        next.run(request).await
-    })
-    .await
-    .unwrap_or_else(|_| http::unavailable());
-    tracing::debug!(
-        target: "cma::agent_manager::file_read_relay",
-        reason,
-        status = response.status().as_u16(),
-        "File read handoff handled at relay ingress"
-    );
-    http::retain_until(response, permit, Some(deadline))
 }

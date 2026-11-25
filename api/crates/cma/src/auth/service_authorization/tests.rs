@@ -31,6 +31,10 @@ impl GrantAuthority for SyntheticGrants {
         Some(&self.issuer)
     }
 
+    fn management_url(&self) -> Option<Url> {
+        Some(self.issuer.join("/settings/consents").unwrap())
+    }
+
     async fn account(
         &self,
         _auth: &AuthState,
@@ -385,10 +389,16 @@ async fn disabled_unsupported_unavailable_and_absent_are_conservative() {
     )
     .await;
     assert!(page.contains("could not be verified"));
-    for app in [&unsupported, &f.b] {
-        let account = body(get(app, &f.cookie, "/auth/service-authorization").await).await;
-        assert!(account.contains("\"status\":\"unknown\""));
-        assert!(!account.contains("management_url"));
+    for (app, expected_url) in [
+        (&unsupported, None),
+        (&f.b, Some("https://provider.example/settings/consents")),
+    ] {
+        let account: serde_json::Value = serde_json::from_str(
+            &body(get(app, &f.cookie, "/auth/service-authorization").await).await,
+        )
+        .unwrap();
+        assert_eq!(account["status"], "unknown");
+        assert_eq!(account["management_url"].as_str(), expected_url);
         assert_eq!(
             start(app, &f.cookie, "https://app.example", "agent", "/")
                 .await
@@ -398,10 +408,14 @@ async fn disabled_unsupported_unavailable_and_absent_are_conservative() {
     }
     f.grants.unavailable.store(false, Ordering::SeqCst);
     *f.grants.account.lock().await = None;
-    assert!(
-        body(get(&f.a, &f.cookie, "/auth/service-authorization").await)
-            .await
-            .contains("\"status\":\"unknown\"")
+    let account: serde_json::Value = serde_json::from_str(
+        &body(get(&f.a, &f.cookie, "/auth/service-authorization").await).await,
+    )
+    .unwrap();
+    assert_eq!(account["status"], "unknown");
+    assert_eq!(
+        account["management_url"],
+        "https://provider.example/settings/consents"
     );
 }
 

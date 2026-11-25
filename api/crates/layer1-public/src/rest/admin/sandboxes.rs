@@ -7,6 +7,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use layer2_core::sandbox::reviewed_retirement::{
+    ReviewedRetirementMember, ReviewedRetirementOutcome, ReviewedRetirementReceipt,
+};
 use layer2_core::sandbox::store::PageRequest;
 use layer2_core::sandbox::{
     AgentAdminSummary, AgentStatus, Sandbox, SandboxAdminQuery, SandboxAdminSummary,
@@ -189,6 +192,14 @@ pub(super) fn routes() -> Router<Arc<AdminState>> {
         .route("/api/v1/admin/sandboxes/{id}/always-on", post(always_on))
         .route("/api/v1/admin/sandboxes/{id}/events", get(events))
         .route("/api/v1/admin/sandboxes/{id}/retire", post(retire))
+        .route(
+            "/api/v1/admin/sandboxes/{id}/retire-reviewed",
+            post(retire_reviewed),
+        )
+        .route(
+            "/api/v1/admin/sandboxes/{id}/retire-reviewed/{batch}/{member}",
+            get(reviewed_retirement_receipt),
+        )
 }
 
 #[utoipa::path(
@@ -340,6 +351,37 @@ pub(crate) async fn retire(
         .retire_sandbox(&caller, &SandboxId(id), params.expected_revision)
         .await
         .map(|result| Json(result.sandbox))
+        .map_err(ProtectedProblem::sandbox)
+}
+
+async fn retire_reviewed(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    body: Result<Json<ReviewedRetirementMember>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<ReviewedRetirementOutcome>, ProtectedProblem> {
+    if !caller.authorization.allows(Capability::ControlAnySandbox) {
+        return Err(ProtectedProblem::Hidden(ProtectedKind::Sandbox));
+    }
+    let Json(member) = body.map_err(|_| ProtectedProblem::InvalidRequest)?;
+    state
+        .sandboxes
+        .admit_reviewed_retirement(&caller, &SandboxId(id), &member)
+        .await
+        .map(Json)
+        .map_err(ProtectedProblem::sandbox)
+}
+
+async fn reviewed_retirement_receipt(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path((id, batch, member)): Path<(String, String, String)>,
+) -> Result<Json<ReviewedRetirementReceipt>, ProtectedProblem> {
+    state
+        .sandboxes
+        .reviewed_retirement_receipt(&caller, &SandboxId(id), &batch, &member)
+        .await
+        .map(Json)
         .map_err(ProtectedProblem::sandbox)
 }
 

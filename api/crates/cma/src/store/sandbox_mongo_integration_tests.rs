@@ -86,7 +86,9 @@ mod conversation_fixtures;
 mod ledger_census_tests;
 pub(in crate::store) mod ledger_retirement_tests;
 mod live_sandbox_pages;
+pub(super) mod native_home_fixture;
 mod read_telemetry_tests;
+mod released_runtime_revival_tests;
 pub(in crate::store) mod resource_access_tests;
 mod visible_inventory;
 use conversation_fixtures::*;
@@ -101,8 +103,10 @@ struct CommandTrace {
 }
 
 mod common_fixtures;
-pub(super) use common_fixtures::sandbox;
 use common_fixtures::*;
+pub(super) use common_fixtures::{
+    encryption_key, ready_conversation_fixture, ready_workspace, sandbox,
+};
 
 mod agent_capacity_recovery_tests;
 mod agent_log_read_tests;

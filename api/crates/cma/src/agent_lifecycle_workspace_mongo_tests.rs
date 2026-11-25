@@ -118,6 +118,7 @@ async fn personal_account_authority_is_not_persisted_in_lifecycle_capabilities()
 
 fn work(record: &crate::store::LifecycleRecord, existing: bool) -> ProvisionInput {
     ProvisionInput {
+        creation_fence: None,
         behavior: record.input.behavior,
         first_message: validation::admitted_first_message(&record.input),
         request: record.input.request.clone(),
@@ -131,6 +132,7 @@ fn work(record: &crate::store::LifecycleRecord, existing: bool) -> ProvisionInpu
         existing_agent_id: existing.then(|| record.agent_id.clone()).flatten(),
         actor: record.input.actor.clone(),
         canary_profiles: None,
+        repository_access_pin: None,
     }
 }
 
@@ -157,7 +159,7 @@ async fn admitted_session_guidance_survives_retry_after_selection_is_disabled() 
                 .unwrap(),
         );
         let service = fixture::facade(store.clone(), profiles, operations.clone())
-            .with_session_guidance_v4(enabled);
+            .with_session_guidance(false, enabled);
         let _slots = service
             .worker_slots
             .clone()
@@ -183,7 +185,7 @@ async fn admitted_session_guidance_survives_retry_after_selection_is_disabled() 
             .unwrap();
         assert_eq!(
             saved.input.managed_agent_instructions.as_deref(),
-            Some(guidance::admission_instructions(true))
+            Some(guidance::admission_instructions(false, true))
         );
         assert_eq!(
             serde_json::to_vec(&saved.input.request).unwrap(),
@@ -556,3 +558,6 @@ async fn assert_profile_counts(db: &mongodb::Database, expected_agents: u64) {
         );
     }
 }
+
+#[path = "agent_lifecycle_release_source_tests.rs"]
+mod release_source_tests;

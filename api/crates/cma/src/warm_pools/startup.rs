@@ -4,10 +4,36 @@ use super::{
     PoolTarget, PoolTargetStore, WarmPoolError,
 };
 use layer3_adapter::agent_sandbox::NativePoolControl;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 
 use crate::startup::Admission;
+
+pub(crate) type StartupWriter<'a> = (
+    &'a crate::store::released_runtimes::MongoReleasedRuntimes,
+    &'a crate::store::released_runtimes::BootWriter,
+);
+
+pub(crate) async fn boot_effect<T>(
+    writer: Option<StartupWriter<'_>>,
+    effect: impl std::future::Future<Output = Result<T, WarmPoolError>>,
+) -> Result<T, WarmPoolError> {
+    if let Some((lanes, writer)) = writer {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        lanes
+            .protect_boot_effect(writer)
+            .await
+            .map_err(|_| WarmPoolError::Conflict)?;
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(deadline) => Err(WarmPoolError::Unavailable),
+            result = effect => result,
+        }
+    } else {
+        effect.await
+    }
+}
 
 // Outlast the release settle window plus drain, scheduling and image pull:
 // with 120 s each, a promotion onto a full node pool always gave up exactly
@@ -17,6 +43,11 @@ use crate::startup::Admission;
 const STARTUP_WARMUP_LIMIT: Duration = Duration::from_secs(super::RELEASE_SETTLE.as_secs() + 120);
 
 impl NativeWarmPools {
+    pub(crate) fn with_empty_pool_startup(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::make_mut(&mut self).allow_empty_startup = enabled;
+        self
+    }
+
     /// Release preparation should prewarm this plan before the Recreate rollout.
     /// This bounded guard never serves allocations before readiness and does not
     /// imply that the old API remains available during a Recreate deployment.
@@ -34,12 +65,20 @@ impl NativeWarmPools {
         &self,
         admission: Option<&Admission>,
     ) -> Result<(), WarmPoolError> {
+        self.await_default_ready_as(admission, None).await
+    }
+
+    pub(crate) async fn await_default_ready_as(
+        &self,
+        admission: Option<&Admission>,
+        writer: Option<StartupWriter<'_>>,
+    ) -> Result<(), WarmPoolError> {
         if let Some(admission) = admission {
             let (settled, retiring) = watch::channel(false);
             let stopping = || admission.is_draining() || *retiring.borrow();
             let (result, ()) = tokio::join!(
                 async {
-                    let result = self.await_default_plan_ready(Some(admission)).await;
+                    let result = self.await_default_plan_ready(Some(admission), writer).await;
                     settled.send_replace(true);
                     result
                 },
@@ -47,7 +86,7 @@ impl NativeWarmPools {
                     // Each admitted retirement must settle before either startup
                     // or shutdown continues, even if readiness wins the race.
                     while !stopping() {
-                        self.retire_during_startup(&stopping).await;
+                        self.retire_during_startup(&stopping, writer).await;
                         tokio::select! {
                             () = crate::shutdown::signalled(retiring.clone()) => break,
                             () = admission.stopping() => break,
@@ -64,18 +103,22 @@ impl NativeWarmPools {
         // so a starting pod frees the room it needs.
         let drain = async {
             loop {
-                self.retire_during_startup(&|| false).await;
+                self.retire_during_startup(&|| false, writer).await;
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
         };
         tokio::select! {
-            result = self.await_default_plan_ready(None) => result,
+            result = self.await_default_plan_ready(None, writer) => result,
             _ = drain => unreachable!("superseded pool draining never completes"),
         }
     }
 
-    async fn retire_during_startup(&self, stopping: &impl Fn() -> bool) {
-        if self.retire_superseded(stopping).await.is_err() {
+    async fn retire_during_startup(
+        &self,
+        stopping: &impl Fn() -> bool,
+        writer: Option<StartupWriter<'_>>,
+    ) {
+        if self.retire_superseded(stopping, writer).await.is_err() {
             tracing::warn!("superseded native pool retirement during startup will retry");
         }
     }
@@ -84,7 +127,11 @@ impl NativeWarmPools {
     /// generic reconciler's unbound path would configure a freshly inserted
     /// default at zero replicas and empty a pool that release preparation
     /// prewarmed, which `step` deliberately adopts instead.
-    async fn retire_superseded(&self, stopping: &impl Fn() -> bool) -> Result<(), WarmPoolError> {
+    async fn retire_superseded(
+        &self,
+        stopping: &impl Fn() -> bool,
+        writer: Option<StartupWriter<'_>>,
+    ) -> Result<(), WarmPoolError> {
         let Some(provider) = self.adapter.native_pools() else {
             return Ok(());
         };
@@ -92,15 +139,25 @@ impl NativeWarmPools {
             if stopping() {
                 break;
             }
-            if target.retired || (!target.retiring && self.current_plan(&target)?) {
+            if target.retired
+                || (!target.retiring
+                    && (self.current_plan(&target)?
+                        || self.store.candidate_protected(&target).await?))
+            {
                 continue;
             }
             // Plans are immutable and retirement only advances, so a claimed
             // superseded target is still superseded. A target an earlier pod
             // marked retiring and deferred is resumed, not skipped.
-            if let Some(claimed) = self.store.claim_retirement(&target.id).await? {
-                self.retire_claimed(provider, claimed).await?;
-            }
+            boot_effect(writer, async {
+                if !stopping() {
+                    if let Some(claimed) = self.store.claim_retirement(&target.id).await? {
+                        self.retire_claimed(provider, claimed).await?;
+                    }
+                }
+                Ok(())
+            })
+            .await?;
         }
         Ok(())
     }
@@ -108,6 +165,7 @@ impl NativeWarmPools {
     async fn await_default_plan_ready(
         &self,
         admission: Option<&Admission>,
+        writer: Option<StartupWriter<'_>>,
     ) -> Result<(), WarmPoolError> {
         let provider = self
             .adapter
@@ -115,6 +173,7 @@ impl NativeWarmPools {
             .ok_or(WarmPoolError::Unavailable)?;
         let plan = provider
             .plan(&NativePoolSpec {
+                cold_canary: false,
                 image: self.released_images().agent,
                 cpu_millis: self.default_capacity.cpu_millis,
                 memory_mib: self.default_capacity.memory_mib,
@@ -126,11 +185,21 @@ impl NativeWarmPools {
             provider,
             &plan,
             STARTUP_WARMUP_LIMIT,
-            self.target_fencing,
+            StartupPoolPolicy {
+                target_fencing: self.target_fencing,
+                allow_empty: self.allow_empty_startup,
+            },
             admission,
+            writer,
         )
         .await
     }
+}
+
+#[derive(Clone, Copy, Default)]
+pub(super) struct StartupPoolPolicy {
+    pub(super) target_fencing: bool,
+    pub(super) allow_empty: bool,
 }
 
 #[cfg(test)]
@@ -140,16 +209,26 @@ pub(super) async fn await_ready(
     plan: &NativePoolConfiguration,
     limit: Duration,
 ) -> Result<(), WarmPoolError> {
-    await_ready_with_fencing(store, provider, plan, limit, false, None).await
+    await_ready_with_fencing(
+        store,
+        provider,
+        plan,
+        limit,
+        StartupPoolPolicy::default(),
+        None,
+        None,
+    )
+    .await
 }
 
-async fn await_ready_with_fencing(
+pub(super) async fn await_ready_with_fencing(
     store: &dyn PoolTargetStore,
     provider: &dyn NativePoolControl,
     plan: &NativePoolConfiguration,
     limit: Duration,
-    target_fencing: bool,
+    policy: StartupPoolPolicy,
     admission: Option<&Admission>,
+    writer: Option<StartupWriter<'_>>,
 ) -> Result<(), WarmPoolError> {
     let deadline = tokio::time::Instant::now() + limit;
     let readiness = async {
@@ -160,7 +239,7 @@ async fn await_ready_with_fencing(
             if tokio::time::Instant::now() >= deadline {
                 return Err(WarmPoolError::Unavailable);
             }
-            match step(store, provider, plan, target_fencing).await {
+            match boot_effect(writer, step(store, provider, plan, policy)).await {
                 Ok(true) => return Ok(()),
                 Ok(false) => {}
                 Err(WarmPoolError::Conflict) => return Err(WarmPoolError::Conflict),
@@ -192,7 +271,7 @@ async fn step(
     store: &dyn PoolTargetStore,
     provider: &dyn NativePoolControl,
     plan: &NativePoolConfiguration,
-    target_fencing: bool,
+    policy: StartupPoolPolicy,
 ) -> Result<bool, WarmPoolError> {
     let target = store
         .list()
@@ -212,7 +291,22 @@ async fn step(
             .inventory()
             .await
             .map_err(|_| WarmPoolError::Unavailable)?;
-        if observed_ready(&target, &inventory) {
+        let capacity = observed_capacity(&target, &inventory);
+        let ready = capacity.is_some_and(|ready| ready > 0);
+        let empty = policy.allow_empty && capacity == Some(0);
+        if ready || empty {
+            if empty {
+                let binding = target.binding.as_ref().ok_or(WarmPoolError::Conflict)?;
+                let confirmed = provider.observe_admitting_pool(binding).await.map_err(
+                    |error| match error {
+                        layer3_adapter::AdapterError::Rejected(_) => WarmPoolError::Conflict,
+                        _ => WarmPoolError::Unavailable,
+                    },
+                )?;
+                if observed_capacity(&target, &[confirmed]) != Some(0) {
+                    return Ok(false);
+                }
+            }
             // An operator may resize while the provider observation is in flight.
             let current = store
                 .find(&target.id)
@@ -221,9 +315,17 @@ async fn step(
             if current.revision == target.revision
                 && current.plan == target.plan
                 && current.binding == target.binding
+                && current.applied_revision == current.revision
+                && current.target_replicas == target.target_replicas
+                && current.error.is_none()
                 && !current.retiring
                 && !current.retired
             {
+                if empty {
+                    tracing::warn!(target: "cma_warm_pool_startup", parent: None,
+                        reason = "provider_reports_zero_ready", desired = current.target_replicas,
+                        "Agent Manager will serve while the default native pool fills");
+                }
                 return Ok(true);
             }
             return Ok(false);
@@ -254,18 +356,29 @@ async fn step(
                 claimed.binding = Some(existing.binding);
             }
         }
-        reconcile_claimed(store, provider, claimed, target_fencing).await?;
+        reconcile_claimed(store, provider, claimed, policy.target_fencing).await?;
     }
     Ok(false)
 }
 
+#[cfg(test)]
 pub(super) fn observed_ready(target: &PoolTarget, inventory: &[NativePoolStatus]) -> bool {
-    target.error.is_none()
-        && target.applied_revision == target.revision
-        && inventory.iter().any(|status| {
-            target.binding.as_ref() == Some(&status.binding)
-                && status.observed
-                && status.desired_replicas == target.target_replicas
-                && status.ready_replicas > 0
-        })
+    observed_capacity(target, inventory).is_some_and(|ready| ready > 0)
+}
+
+pub(super) fn observed_capacity(
+    target: &PoolTarget,
+    inventory: &[NativePoolStatus],
+) -> Option<u32> {
+    if target.error.is_some() || target.applied_revision != target.revision {
+        return None;
+    }
+    let mut matching = inventory
+        .iter()
+        .filter(|status| target.binding.as_ref() == Some(&status.binding));
+    let status = matching.next()?;
+    (matching.next().is_none()
+        && status.observed
+        && status.desired_replicas == target.target_replicas)
+        .then_some(status.ready_replicas)
 }

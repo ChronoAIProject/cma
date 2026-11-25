@@ -120,6 +120,8 @@ export interface SandboxSummary {
 }
 
 export interface SandboxRuntimeUpdate {
+  readonly currentVersionConfirmed?: boolean;
+  readonly imageOrigin?: 'managed_agent' | 'managed_desktop' | 'user_selected' | 'unknown';
   readonly currentVersion: string | null;
   readonly latestVersion: string;
   readonly updateAvailable: boolean;
@@ -285,6 +287,7 @@ export interface AgentDetail {
   readonly firstMessage?: FirstMessageState;
   readonly failure?: Failure;
   readonly stopReason?: string;
+  readonly restartAvailable?: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly readyAt?: string;

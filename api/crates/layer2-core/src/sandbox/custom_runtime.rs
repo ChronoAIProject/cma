@@ -41,11 +41,16 @@ pub struct SandboxCustomRuntimeState {
     pub source_generation: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_basis: Option<Box<super::store::RuntimeMigrationAdmissionBasis>>,
 }
 
 impl SandboxCustomRuntimeOrigin {
     pub fn capture(sandbox: &Sandbox) -> Result<Self, SandboxModelError> {
         sandbox.validate()?;
+        if sandbox.has_managed_runtime_image() {
+            return Err(invalid());
+        }
         let origin = Self {
             sandbox_id: sandbox.id.clone(),
             owner: sandbox.owner.clone(),
@@ -74,6 +79,9 @@ impl Sandbox {
     /// Callers handling persisted data must validate before using this fallback.
     /// A migration never rewrites the immutable profile's original custom pin.
     pub fn effective_custom_runtime_image(&self) -> Option<&str> {
+        if self.has_managed_desktop_image() {
+            return None;
+        }
         self.lifecycle
             .custom_runtime
             .as_ref()
@@ -86,6 +94,12 @@ impl Sandbox {
     /// changing the permanent pin or treating a queued target as source authority.
     pub fn custom_runtime_image_for_binding(&self) -> Result<Option<&str>, SandboxModelError> {
         self.validate_custom_runtime()?;
+        if self.has_managed_desktop_image() {
+            return Ok(self
+                .retained_runtime_binding()
+                .map(|binding| binding.runtime_version.as_str())
+                .or(self.profile.content.runtime_image.as_deref()));
+        }
         let Some(state) = self.lifecycle.custom_runtime.as_ref() else {
             return Ok(self.profile.content.runtime_image.as_deref());
         };
@@ -97,7 +111,7 @@ impl Sandbox {
     }
 
     pub(super) fn validate_custom_rotation(&self, target: &str) -> Result<(), SandboxModelError> {
-        if self.profile.content.runtime_image.is_none() {
+        if self.has_managed_runtime_image() {
             return Ok(());
         }
         self.validate_custom_runtime()?;
@@ -121,6 +135,24 @@ impl Sandbox {
             .is_none_or(|binding| binding.runtime_version != target)
         {
             return Err(invalid());
+        }
+        if let Some(transition) = self.admitted_retained_runtime_transition() {
+            let matching = self
+                .lifecycle
+                .retained_startup_policy
+                .as_ref()
+                .zip(self.runtime.as_ref())
+                .is_some_and(|(evidence, binding)| {
+                    evidence.observation.legacy_journal_recovery_enabled
+                        == transition.request.journal_recovery
+                        && evidence.observation.runtime.generation
+                            == transition.successor_generation
+                        && binding.boot_id.as_deref()
+                            == Some(evidence.observation.runtime.boot_id.as_str())
+                });
+            if !matching {
+                return Err(invalid());
+            }
         }
         self.validate_custom_runtime()?;
         if let Some(state) = self
@@ -164,6 +196,6 @@ mod recovery_tests;
 #[cfg(test)]
 mod refusal_tests;
 #[cfg(test)]
-mod test_support;
+pub(in crate::sandbox) mod test_support;
 #[cfg(test)]
 mod tests;

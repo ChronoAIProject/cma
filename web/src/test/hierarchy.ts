@@ -69,6 +69,26 @@ export function sandboxFixture(status: SandboxStatus = 'active'): SandboxDetail 
   };
 }
 
+export function delayedRetirementFixture(): SandboxDetail {
+  const sandbox = sandboxFixture('retiring');
+  return {
+    ...sandbox,
+    lifecycle: {
+      ...sandbox.lifecycle!,
+      result: {
+        state: 'recoverable_pending',
+        code: 'lifecycle_wait_exceeded',
+        operationId: 'retirement-fixture',
+        startedAt: '2026-09-06T00:00:00Z',
+        resultDueAt: '2026-09-06T00:01:30Z',
+        continuing: true,
+        actions: ['observe'],
+        retryAfterSeconds: 5,
+      },
+    },
+  };
+}
+
 export function navigationFixture(
   sandboxStatus: SandboxStatus = 'active',
   agentStatus: AgentStatus = 'ready',

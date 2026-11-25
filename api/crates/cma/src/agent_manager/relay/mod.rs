@@ -2,13 +2,14 @@
 mod authentication;
 mod control;
 pub(crate) use control::{prestop, DRAIN};
-mod environment_diagnostics;
 mod file_read;
 mod file_write;
 mod forward;
+mod handoff_recovery;
 mod http;
 mod ingress;
 mod live;
+mod relay_diagnostics;
 #[cfg(test)]
 pub(crate) use live::admitted_observation;
 mod maintenance;
@@ -22,12 +23,12 @@ pub(crate) use queued_cancellation::{
 mod reopen;
 pub(crate) use reopen::{output_refused, ReopenCall, OUTPUT_REFUSED};
 
-use environment_diagnostics::Refusal;
 use layer2_core::agent_ownership::{
     bounded, Authority, Member, OwnershipCoordinator, OwnershipToken,
 };
 use layer2_core::sandbox::DurableAgentUpdateRecorder;
 use layer2_core::AgentId;
+use relay_diagnostics::Refusal;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::Semaphore;

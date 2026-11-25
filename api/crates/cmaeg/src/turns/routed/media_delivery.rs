@@ -132,7 +132,11 @@ impl MediaDelivery {
                     String::new()
                 };
                 let custom = is_custom_origin(&body).then(|| {
-                    CustomCheckpoint::new(&super::model::delivery_event(plan, target), &body, true)
+                    CustomCheckpoint::new(
+                        &super::model::delivery_event(plan, target),
+                        &body.delivery.policy.sinks,
+                        true,
+                    )
                 });
                 recovered = false;
                 self.store
@@ -294,7 +298,11 @@ impl MediaDelivery {
             .ok_or(ExecutionError::Unsupported)?;
         let event = super::model::delivery_event(plan, target);
         let mut evidence = state.custom.clone().ok_or(ExecutionError::Corrupt)?;
-        if !evidence.valid_for(&CustomCheckpoint::new(&event, body, true)) {
+        if !evidence.valid_for(&CustomCheckpoint::new(
+            &event,
+            &body.delivery.policy.sinks,
+            true,
+        )) {
             return Err(ExecutionError::Corrupt);
         }
         if recovered {

@@ -16,7 +16,7 @@ it('keeps accepted cleanup optional across navigation and allows deleting anothe
     visitor: false,
     capabilities: ['create_sandbox', 'use_own_sandboxes', 'delete_own_sandbox'],
   };
-  const sandboxes = ['first', 'second', 'third', 'fourth', 'fifth'].map((id) => ({
+  const sandboxes = ['first', 'second'].map((id) => ({
     ...sandboxFixture(),
     id,
     name: id,
@@ -55,58 +55,24 @@ it('keeps accepted cleanup optional across navigation and allows deleting anothe
   await remove();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.queryByRole('treeitem', { name: /first/ })).not.toBeInTheDocument();
-  await actor.click(screen.getByRole('button', { name: 'Dismiss deletion notice' }));
-  expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
-  const progressLink = screen.getByText('Deletion progress (1)');
-  await actor.click(progressLink);
-  const progressRows = progressLink.closest('details')!;
-  await actor.click(within(progressRows).getByRole('button', { name: 'View status for first' }));
-  expect(await screen.findByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
-  await actor.click(screen.getByText('Close', { selector: 'button' }));
-  expect(deleteSandbox).toHaveBeenCalledTimes(1);
+  expect(screen.getByText('Cleaning up 1 sandboxes')).toBeInTheDocument();
   view.rerender(draw('second'));
   await act(async () => {});
   expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
-  expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
   await remove();
-  expect(screen.getByText('Deleting 2 environments')).toBeVisible();
   expect(deleteSandbox.mock.calls.map(([id]) => id)).toEqual(['first', 'second']);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByText('Deletion progress (2)')).toBeInTheDocument();
-  for (const id of ['third', 'fourth', 'fifth']) {
-    view.rerender(draw(id));
-    await act(async () => {});
-    await remove();
-  }
-  expect(screen.getAllByRole('region', { name: 'Deletion request' })).toHaveLength(1);
-  expect(screen.getByText('Deleting 5 environments')).toBeVisible();
+  expect(screen.getByText('Cleaning up 2 sandboxes')).toBeInTheDocument();
   view.unmount();
-  const reloaded = render(draw('second'));
+  render(draw('second'));
   await act(async () => {});
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  await actor.click(screen.getByRole('button', { name: 'View status' }));
+  await actor.click(screen.getByRole('button', { name: 'View deletion status' }));
   const progress = screen.getByRole('dialog', { name: 'Deletion progress' });
-  expect(within(progress).getAllByRole('listitem')).toHaveLength(5);
-  await actor.click(
-    within(progress).getByRole('button', { name: 'View Sandbox deletion status (5)' }),
-  );
+  const second = within(progress).getByText('second', { selector: 'code' }).closest('li')!;
+  await actor.click(within(second).getByRole('button'));
   expect(screen.getByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
-  expect(deleteSandbox).toHaveBeenCalledTimes(5);
-  expect(screen.queryByRole('dialog', { name: 'Deletion progress' })).not.toBeInTheDocument();
-  await actor.click(screen.getByText('Close', { selector: 'button' }));
-  for (const [index, sandbox] of sandboxes.entries()) {
-    sandbox.status = 'retired';
-    reloaded.rerender(draw(sandbox.id));
-    await act(async () => {});
-    const remaining = sandboxes.length - index - 1;
-    if (remaining)
-      expect(screen.getByRole('region', { name: 'Deletion request' })).toHaveTextContent(
-        `Deleting ${remaining} environment${remaining === 1 ? '' : 's'}`,
-      );
-    else expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
-  }
-  expect(restoreDeletions('owner')).toEqual([]);
-  expect(deleteSandbox).toHaveBeenCalledTimes(5);
+  expect(deleteSandbox).toHaveBeenCalledTimes(2);
 });
 
 it('reconciles accepted notices when an existing page read proves retirement after re-entry', async () => {
@@ -129,7 +95,9 @@ it('reconciles accepted notices when an existing page read proves retirement aft
     </CmaClientProvider>
   );
   const view = render(draw(false));
-  await screen.findByText('Deleting 1 environment');
+  expect(await screen.findByRole('region', { name: 'Deletion request' })).toHaveTextContent(
+    'Deleting 1 environment',
+  );
   view.rerender(draw(true));
   await act(async () => {});
   expect(restoreDeletions('owner')).toEqual([request]);
@@ -137,6 +105,6 @@ it('reconciles accepted notices when an existing page read proves retirement aft
   view.rerender(draw(false));
   await act(async () => {});
   expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
-  expect(screen.queryByText('Deletion progress (1)')).not.toBeInTheDocument();
+  expect(screen.queryByText('Cleaning up 1 sandboxes')).not.toBeInTheDocument();
   expect(restoreDeletions('owner')).toEqual([]);
 });

@@ -30,6 +30,7 @@ pub(in crate::store) enum PublicationSource {
     Conversation,
     Checkpoint,
     StaleTurn,
+    TurnPolicy,
 }
 
 pub(in crate::store) async fn apply(
@@ -41,12 +42,30 @@ pub(in crate::store) async fn apply(
     adoption: Option<&adoption::Prepared>,
     scope: &mut TransactionScope<'_>,
 ) -> Result<ConversationReceipt, ApplyError> {
+    if mutation.agent.conversation.turn_timeout.is_some() {
+        crate::store::turn_timeouts::floor::retain(store, scope.session())
+            .await
+            .map_err(ApplyError::Driver)?;
+    }
     let row = scope
         .find_one(&store.agents, doc! {"_id":mutation.agent.id.as_str()})
         .await
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    let exact_checkpoint = if matches!(source, PublicationSource::StaleTurn) {
+    let current = read_agent(&row).map_err(ApplyError::Domain)?;
+    if !matches!(source, PublicationSource::Checkpoint)
+        && current.work.step.fences_conversation_output()
+    {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
+    if !matches!(source, PublicationSource::TurnPolicy) {
+        layer2_core::sandbox::turn_timeout::validate_ordinary_publication(&current, mutation)
+            .map_err(ApplyError::Domain)?;
+    }
+    let exact_checkpoint = if matches!(
+        source,
+        PublicationSource::StaleTurn | PublicationSource::TurnPolicy
+    ) {
         Some(checkpoint.ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?)
     } else {
         None
@@ -54,7 +73,9 @@ pub(in crate::store) async fn apply(
     if read_format(&row).map_err(ApplyError::Domain)?.is_none() && adoption.is_none() {
         let caller = match source {
             PublicationSource::Conversation => ScanCaller::ConversationPublication,
-            PublicationSource::Checkpoint | PublicationSource::StaleTurn => ScanCaller::Checkpoint,
+            PublicationSource::Checkpoint
+            | PublicationSource::StaleTurn
+            | PublicationSource::TurnPolicy => ScanCaller::Checkpoint,
         };
         return Box::pin(domain::publication::apply_mutation_with_capacity(
             caller,

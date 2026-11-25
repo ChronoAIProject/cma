@@ -49,10 +49,19 @@ impl AgentManager {
     }
 
     pub async fn drain(&self) -> Result<(), String> {
+        if self.coordinator.contains_failures() {
+            return self
+                .drain_contained(
+                    DrainCause::PreStop,
+                    Instant::now() + Duration::from_secs(23),
+                )
+                .await;
+        }
         self.stop_admission();
         // Include serialization, membership IO, task joins and all receiver IO
         // in one budget below the signed preStop client's 25-second timeout.
-        let result = tokio::time::timeout(Duration::from_secs(23), self.drain_inner()).await;
+        let until = Instant::now() + Duration::from_secs(23);
+        let result = tokio::time::timeout_at(until, self.drain_inner(until)).await;
         match result {
             Ok(Ok(())) => Ok(()),
             result => {
@@ -66,12 +75,16 @@ impl AgentManager {
         }
     }
 
-    async fn drain_inner(&self) -> Result<(), String> {
+    async fn drain_inner(&self, until: Instant) -> Result<(), String> {
         let mut drained = self.drain.lock().await;
         if *drained {
             return Ok(());
         }
-        let owned = self.coordinator.begin_drain().await;
+        let custody = self.coordinator.prepare_drain(until).await;
+        let owned = self.coordinator.owned().await;
+        for authority in &owned {
+            authority.revoke();
+        }
         self.lifecycle
             .get()
             .ok_or("Agent Manager lifecycle drain is missing")?
@@ -93,6 +106,7 @@ impl AgentManager {
         if results.iter().any(Result::is_err) {
             return Err("Agent Manager receiver drain was not confirmed".into());
         }
+        custody.map_err(|_| "Agent Manager lease operation drain was not confirmed")?;
         *drained = true;
         Ok(())
     }

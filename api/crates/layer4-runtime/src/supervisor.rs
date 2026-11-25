@@ -95,6 +95,37 @@ pub(crate) struct Supervisor {
 }
 
 impl Supervisor {
+    pub(crate) async fn stale_turn_bridge(
+        &self,
+        target: &layer3_adapter::stale_turn::StaleTurnTarget,
+    ) -> std::result::Result<Arc<Bridge>, layer3_adapter::stale_turn::StaleTurnHold> {
+        use layer3_adapter::stale_turn::StaleTurnHold;
+        if self
+            .config
+            .process_env
+            .get(crate::bridge::STALE_TURN_SEAL_FLAG)
+            .map(String::as_str)
+            != Some("1")
+        {
+            return Err(StaleTurnHold::Unsupported);
+        }
+        if !target.is_valid()
+            || target.sandbox_id != self.config.sandbox_id
+            || target.runtime_boot != self.boot_id
+            || target.runtime_generation != self.config.generation
+        {
+            return Err(StaleTurnHold::Unconfirmed);
+        }
+        self.require_credentialed()
+            .await
+            .map_err(|_| StaleTurnHold::Unconfirmed)?;
+        self.bridge(&target.slot.0)
+            .await
+            .ok_or(StaleTurnHold::Unconfirmed)
+    }
+}
+
+impl Supervisor {
     pub(crate) fn desktop_generation(
         &self,
     ) -> Option<
@@ -227,6 +258,27 @@ impl Supervisor {
         {
             return writers_held_error().response(operation);
         }
+        if let RequestFrame::ProveAgentProcessClosed(proof) = request {
+            return match self.prove_agent_process_closed(proof).await {
+                Ok(proof) => ResponseFrame::ProveAgentProcessClosed(proof),
+                Err(error) => error.response(operation),
+            };
+        }
+        if let RequestFrame::FenceAgentRestart(request) = request {
+            return match self.fence_agent_restart(request).await {
+                Ok(receipt) => ResponseFrame::FenceAgentRestart(receipt),
+                Err(error) => error.response(operation),
+            };
+        }
+        let _restart_writer = match &request {
+            RequestFrame::OpenAgent(open) if open.restart_runtime.is_some() => {
+                match self.removal_writer_guard() {
+                    Ok(writer) => writer,
+                    Err(error) => return error.response(operation),
+                }
+            }
+            _ => None,
+        };
         if let Err(error) = self.authorize_mutation(&request).await {
             return error.response(operation);
         }
@@ -284,6 +336,12 @@ impl Supervisor {
             return Err(RuntimeError::rejected(
                 "credential_operation_invalid",
                 "credential operation id is empty or too large",
+            ));
+        }
+        if frame.github_route.is_some() && !self.supports_exact_github_credential_route() {
+            return Err(RuntimeError::rejected(
+                "credential_github_route_unavailable",
+                "runtime does not have a GitHub credential proxy",
             ));
         }
         let phase = *self.phase.read().await;

@@ -1,4 +1,5 @@
 //! Transactional Mongo admission and removal for workspace aggregates.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 mod commit;
 pub(super) mod retry;
 use super::sandbox_events::{append_in_transaction, reconcile_event};
@@ -93,23 +94,23 @@ impl WorkspaceAdmissionStore for MongoSandboxStore {
             let workspace = match apply_removal(self, id, owner, &now, &mut session).await {
                 Ok(workspace) => workspace,
                 Err(ApplyError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(ApplyError::Retry(error)) | Err(ApplyError::Driver(error))
                     if is_transient(&error) =>
                 {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(ApplyError::Retry(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };
@@ -298,7 +299,7 @@ async fn apply_admission(
         let revival = next
             .record_creation_admission_with_managed_runtime(
                 cause,
-                store.managed_agent_release().as_deref(),
+                store.managed_agent_release_for(&sandbox).as_deref(),
                 admission.event_at.clone(),
             )
             .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;

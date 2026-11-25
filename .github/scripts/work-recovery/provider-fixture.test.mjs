@@ -4,8 +4,49 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { startProviderFixture } from './provider-fixture.mjs';
-import { fixtureIdentity, scopePlan } from './provider-protocol.mjs';
+import { fixtureIdentity, scopePlan, validateMint } from './provider-protocol.mjs';
 import { barrier, call, fixture, mintBody } from './provider-test-support.mjs';
+
+const expiry = JSON.parse(readFileSync(new URL('./fixtures/mint-expiry.json', import.meta.url), 'utf8'));
+const fixedNow = Date.parse('2039-01-01T00:00:00.000Z');
+const invalidExpiries = [null, 2208988800, '', 'not-a-date', '2040-99-01T00:00:00Z',
+  '2040-01-01T00:00:00.Z', '2040-01-01T00:00:00.1234Z', '2040-01-01T00:00:00+00:00',
+  '2038-12-31T23:59:59.999Z', '2039-01-01T00:00:00Z'];
+
+for (const [milliseconds, expires_at] of expiry.cases) {
+  test(`mint expiry accepts the production timestamp at ${milliseconds} milliseconds`, t => {
+    t.mock.method(Date, 'now', () => fixedNow);
+    const body = { ...mintBody(), expires_at };
+    assert.equal(validateMint(body), body);
+    assert.equal(Date.parse(expires_at), expiry.base_unix_seconds * 1000 + milliseconds);
+  });
+}
+
+test('mint expiry keeps strict UTC millisecond format and future-only boundaries', t => {
+  t.mock.method(Date, 'now', () => fixedNow);
+  for (const expires_at of invalidExpiries) {
+    assert.throws(() => validateMint({ ...mintBody(), expires_at }), /unsupported_mint_request/);
+  }
+  for (const fraction of ['001', '01', '1']) {
+    const body = { ...mintBody(), expires_at: `2039-01-01T00:00:00.${fraction}Z` };
+    assert.equal(validateMint(body), body);
+  }
+});
+
+test('HTTP fixture accepts production timestamp precision with one effect per POST', async t => {
+  t.mock.method(Date, 'now', () => fixedNow);
+  const server = await fixture(t);
+  for (const [, expires_at] of expiry.cases) {
+    const response = await call(server, 'POST', '/api/v1/api-keys', { ...mintBody(), expires_at }).result;
+    assert.equal(response.status, 200, expires_at);
+  }
+  const ledger = server.snapshot();
+  for (const count of ['received_mint_posts', 'accepted_calls', 'physical_commits', 'distinct_effects']) {
+    assert.equal(ledger[count], expiry.cases.length);
+  }
+  assert.equal(ledger.refusals, 0);
+  assert.equal(ledger.replays, 0);
+});
 
 test('preparation barrier holds the actual GET without sending a mint', async t => {
   const server = await fixture(t);
@@ -134,11 +175,15 @@ test('known-key revocation does not close a held late mint', async t => {
 });
 
 test('invalid grants, malformed requests and wrong bearer never create an effect', async t => {
+  t.mock.method(Date, 'now', () => fixedNow);
   const server = await fixture(t);
-  const base = mintBody();
+  const base = { ...mintBody(), expires_at: '2040-01-01T00:00:00.12Z' };
   const invalid = [null, [], '{', { ...base, name: 'not-a-fixture' },
+    { ...base, scopes: 'admin' }, { ...base, allowed_service_ids: ['unconfigured'] },
+    { ...base, allow_all_services: true }, { ...base, allow_auto_connected_services: true },
     { ...base, allow_all_nodes: true }, { ...base, allowed_node_ids: [] },
-    { ...base, scope_plan_digest: 'unbound' }, { ...base, expires_at: '2000-01-01T00:00:00Z' },
+    { ...base, allowed_node_ids: ['unconfigured'] }, { ...base, scope_plan_digest: 'unbound' },
+    ...invalidExpiries.map(expires_at => ({ ...base, expires_at })),
     { ...base, extra: true }];
   for (const body of invalid) {
     assert.equal((await call(server, 'POST', '/api/v1/api-keys', body).result).status, 400);

@@ -28,6 +28,8 @@ pub struct SandboxRuntimeUpdateRequest {
     pub completed_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<TypedFailure>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_transition: Option<Box<super::RetainedRuntimeTransition>>,
 }
 
 impl SandboxRuntimeUpdateState {
@@ -62,7 +64,7 @@ impl Sandbox {
     }
 
     pub fn supports_retained_runtime_update(&self) -> bool {
-        self.profile.content.runtime_image.is_none()
+        self.has_managed_runtime_image()
             && self.lifecycle.home.as_ref().is_some_and(|home| {
                 !home.released
                     && home.native_pool.is_some()
@@ -104,7 +106,7 @@ impl Sandbox {
         at: String,
     ) -> Result<bool, SandboxModelError> {
         self.validate()?;
-        if self.profile.content.runtime_image.is_some()
+        if !self.has_managed_runtime_image()
             || !valid_version(&target)
             || seconds_from_rfc3339(&at).is_none()
         {
@@ -114,13 +116,16 @@ impl Sandbox {
             .runtime_update_request()
             .filter(|r| r.completed_at.is_none())
         {
-            if request.target_version != target {
+            if request.retained_transition.is_some() || request.target_version != target {
                 return Err(invalid());
             }
             if request.failure.is_none() {
                 return Ok(false);
             }
-            if self.work.lease.is_some()
+            // Retained scoped clearance authorizes the original attempt only.
+            // An ordinary explicit retry cannot renew that activity admission.
+            if self.lifecycle.runtime_migration_admission.is_some()
+                || self.work.lease.is_some()
                 || self.admitted_runtime_update_target() != Some(target.as_str())
             {
                 return Err(invalid());
@@ -162,6 +167,7 @@ impl Sandbox {
             started_at: None,
             completed_at: None,
             failure: None,
+            retained_transition: None,
         });
         self.touch_runtime_update(at)?;
         Ok(true)

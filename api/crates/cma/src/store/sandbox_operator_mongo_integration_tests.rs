@@ -29,7 +29,7 @@ use super::sandbox_mongo::MongoSandboxStore;
 const NOW: &str = "2026-09-05T00:00:00Z";
 static DATABASE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-async fn database(prefix: &str) -> (Client, String, MongoSandboxStore) {
+pub(super) async fn database(prefix: &str) -> (Client, String, MongoSandboxStore) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
     let client = Client::with_uri_str(uri)
@@ -41,7 +41,7 @@ async fn database(prefix: &str) -> (Client, String, MongoSandboxStore) {
     (client, name, store)
 }
 
-fn sandbox(
+pub(super) fn sandbox(
     id: &str,
     owner: &str,
     name: &str,
@@ -163,7 +163,7 @@ fn workspace(sandbox: &Sandbox) -> Workspace {
     }
 }
 
-fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
+pub(super) fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
     Agent {
         id: AgentId(id.into()),
         worktree_id: WorktreeId(format!("wkt_{id}")),
@@ -190,6 +190,7 @@ fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
         ]),
         status,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

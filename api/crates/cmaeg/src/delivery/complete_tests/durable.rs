@@ -85,3 +85,108 @@ async fn coordinator_waits_for_actual_engine_send_and_preserves_consumer_shardin
             .await
     );
 }
+
+#[derive(Default)]
+struct SideAndAnswer {
+    side_started: Notify,
+    release_side: Notify,
+    bearers: Mutex<Vec<String>>,
+}
+
+impl RelayTransport for SideAndAnswer {
+    fn post(
+        &self,
+        _: Url,
+        headers: HeaderMap,
+        body: Vec<u8>,
+        _: Duration,
+    ) -> BoxFuture<'_, Result<HttpReply, TransportError>> {
+        let payload = String::from_utf8(body).unwrap();
+        let side = payload.contains("side notice");
+        let bearer = headers[reqwest::header::AUTHORIZATION].to_str().unwrap();
+        self.bearers.lock().unwrap().push(bearer.into());
+        Box::pin(async move {
+            if side {
+                self.side_started.notify_one();
+                self.release_side.notified().await;
+                return Err(TransportError::Unavailable);
+            }
+            Ok(HttpReply::new(
+                StatusCode::OK,
+                br#"{"message_id":"out-answer","platform_message_id":"p-answer"}"#.to_vec(),
+            ))
+        })
+    }
+}
+
+#[tokio::test]
+async fn event_side_message_pending_relay_send_leaves_live_answer_and_reply_token_available() {
+    use crate::delivery::{
+        gate::Ungated,
+        intents::{DeliveryCommand, ReplySource},
+        router::DeliverySink as _,
+    };
+
+    let (sender, _, mut channel, event) = setup();
+    Arc::get_mut(&mut channel)
+        .unwrap()
+        .definition
+        .secrets
+        .channel_key = Some(Secret::new("side-channel-fixture"));
+    let transport = Arc::new(SideAndAnswer::default());
+    let relay = sender.relay.with_transport(transport.clone());
+    let (tx, rx) = tokio::sync::mpsc::channel(2);
+    let tracker = crate::turns::TurnTracker::new(Default::default());
+    let engine = DeliveryEngine::start(
+        rx,
+        sender.keys,
+        relay,
+        crate::DeliveryConfig::default(),
+        tracker,
+        sender.custom,
+    );
+    let delivery = engine.side_messages_if(true).unwrap();
+    let notice = message("side notice".into());
+    let mut side = Box::pin(delivery.send(&channel, &event, &notice, &Ungated));
+    tokio::select! {
+        _ = transport.side_started.notified() => {},
+        _ = &mut side => panic!("the pending side send settled before the transport ran"),
+    }
+
+    let scheduler = ShardedScheduler::new(tx);
+    let (receipt, receive) = tokio::sync::oneshot::channel();
+    scheduler
+        .try_submit(DeliveryCommand::Reply {
+            trace: tracing::Span::none(),
+            channel: channel.clone(),
+            event: event.clone(),
+            message: message("ordinary answer".into()),
+            source: ReplySource::Stream,
+            receipt,
+        })
+        .unwrap();
+    let answer = tokio::time::timeout(Duration::from_secs(2), receive)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(answer.delivery, DeliveryOutcome::Confirmed { .. }));
+    transport.release_side.notify_one();
+    assert!(matches!(
+        side.await.delivery,
+        DeliveryOutcome::Unknown { .. }
+    ));
+
+    assert_eq!(
+        *transport.bearers.lock().unwrap(),
+        [
+            "Bearer side-channel-fixture",
+            "Bearer single-use-test-fixture"
+        ]
+    );
+    drop(scheduler);
+    assert!(
+        engine
+            .drain(std::time::Instant::now() + Duration::from_secs(1))
+            .await
+    );
+}

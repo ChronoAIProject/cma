@@ -3,8 +3,10 @@ use std::time::{Instant, SystemTime};
 use layer2_core::{
     rfc3339_at,
     sandbox::{
-        store::SandboxLifecycleAgentScope, Sandbox, SandboxEventKind, SandboxStoreError,
-        SandboxUnpublishedRecoveryQuiescence, SandboxWorkStep,
+        store::SandboxLifecycleAgentScope,
+        work_retry::{WorkRetryFailure, WORK_RETRY_BUDGET, WORK_RETRY_EXTERNAL_BUDGET},
+        Sandbox, SandboxEventKind, SandboxStoreError, SandboxUnpublishedRecoveryQuiescence,
+        SandboxWorkStep,
     },
 };
 use layer3_adapter::{
@@ -32,13 +34,12 @@ impl SandboxWorker {
                 receipt
             }
             Err(error) => {
-                // Keep the admitted plan and its original runtime. A failed
-                // drain must never become permission to force termination.
-                let failure = WorkerFailure::retryable(
-                    "original conversation persistence is not yet verified; recovery will retry with all data retained",
-                ).with_retry_kind(if matches!(error, SandboxStoreError::Corrupt(_)) {
-                    layer2_core::sandbox::work_retry::WorkRetryFailure::ExternalAction
-                } else { layer2_core::sandbox::work_retry::WorkRetryFailure::Transient });
+                if error == SandboxStoreError::Conflict {
+                    return Err(error);
+                }
+                // The ordinary parked-update transition preserves the admitted
+                // recovery plan, source binding, and any unverified history.
+                let failure = quiescence_failure(&error, sandbox.work.attempts);
                 return self
                     .handle_lifecycle_failure(sandbox, failure, completed)
                     .await;
@@ -228,14 +229,29 @@ fn observed_recovery_failure(sandbox: &Sandbox, error: AdapterError) -> SandboxS
     tracing::warn!(
         sandbox_id = %sandbox.id,
         detail,
-        "original runtime recovery step failed; recovery will retry with all data retained"
+        "original runtime recovery step failed; all data retained"
     );
     recovery_failure(error)
 }
 
-// Keep uncertain transport failures retryable; a refused original-history or
-// identity proof requires outside recovery and uses the smaller retry budget.
-// This internal classification never changes the persisted failure diagnostic.
+fn quiescence_failure(error: &SandboxStoreError, attempts: u32) -> WorkerFailure {
+    let (kind, budget) = if matches!(error, SandboxStoreError::Corrupt(_)) {
+        (WorkRetryFailure::ExternalAction, WORK_RETRY_EXTERNAL_BUDGET)
+    } else {
+        (WorkRetryFailure::Transient, WORK_RETRY_BUDGET)
+    };
+    if attempts >= budget {
+        return WorkerFailure::terminal_validation(
+            "original conversation persistence could not be verified; original runtime and home retained",
+        );
+    }
+    WorkerFailure::retryable(
+        "original conversation persistence is not yet verified; recovery will retry with all data retained",
+    )
+    .with_retry_kind(kind)
+}
+
+// A refused original-history or identity proof uses the smaller retry budget.
 fn recovery_failure(error: AdapterError) -> SandboxStoreError {
     match error {
         AdapterError::NativeClaimNotReady(_)
@@ -270,6 +286,31 @@ mod tests {
                 recovery_failure(error),
                 SandboxStoreError::Unavailable(_)
             ));
+        }
+    }
+
+    #[test]
+    fn original_quiescence_retry_budget_ends_in_a_retained_hold() {
+        for (error, budget, kind) in [
+            (
+                recovery_failure(AdapterError::Rejected("fixture refusal".into())),
+                WORK_RETRY_EXTERNAL_BUDGET,
+                WorkRetryFailure::ExternalAction,
+            ),
+            (
+                recovery_failure(AdapterError::Unavailable("fixture timeout".into())),
+                WORK_RETRY_BUDGET,
+                WorkRetryFailure::Transient,
+            ),
+        ] {
+            let retry = quiescence_failure(&error, budget - 1);
+            assert!(retry.is_retryable());
+            assert_eq!(retry.retry_kind(), kind);
+            for attempts in [budget, u32::MAX] {
+                let hold = quiescence_failure(&error, attempts);
+                assert!(!hold.is_retryable());
+                assert_eq!(hold.typed().class, "terminal_validation");
+            }
         }
     }
 }

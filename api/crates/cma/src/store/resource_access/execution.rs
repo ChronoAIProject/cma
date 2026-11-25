@@ -1,6 +1,7 @@
 //! Versioned sidecars are opened explicitly by activation-aware composition.
 //! Legacy store construction does not create collections or execution records.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 mod collections;
 #[cfg(test)]
 mod compat_tests;
@@ -112,7 +113,7 @@ impl MongoResourceExecutionStore {
             let output = match result {
                 Ok(output) => output,
                 Err(error) => {
-                    if session.abort_transaction().await.is_err() {
+                    if session.abort_guarded().await.is_err() {
                         tracing::warn!("resource execution transaction abort was not acknowledged");
                     }
                     match error {

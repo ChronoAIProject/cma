@@ -139,7 +139,14 @@ impl Setup {
         request: LaunchRequest,
         source: &[u8],
     ) -> Self {
-        let server = Server::start().await;
+        Self::with_server(support, request, source, Server::start().await).await
+    }
+    pub async fn with_server(
+        support: RecoverySupport,
+        request: LaunchRequest,
+        source: &[u8],
+        server: Server,
+    ) -> Self {
         let candidate = Candidate::prepare(
             &request,
             &fixture::routed(&request),

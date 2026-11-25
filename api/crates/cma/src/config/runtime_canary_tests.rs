@@ -40,6 +40,13 @@ fn agent() -> Value {
 }
 
 fn native_runtime(catalog: Option<&str>) -> Result<RuntimeConfig, String> {
+    native_runtime_with(catalog, &[])
+}
+
+fn native_runtime_with(
+    catalog: Option<&str>,
+    overrides: &[(&str, &str)],
+) -> Result<RuntimeConfig, String> {
     let key = TemporaryEntry::file(b"native-control-key-fixture-padding-0000");
     let machine = format!(
         "registry.example/fixture/global-desktop@sha256:{}",
@@ -58,7 +65,44 @@ fn native_runtime(catalog: Option<&str>) -> Result<RuntimeConfig, String> {
         ("CHRONO_NATIVE_MACHINE_PREPARED_TARGET", "1"),
     ];
     env.extend(catalog.map(|value| (CATALOG, value)));
+    env.extend_from_slice(overrides);
     configured(&env).map(|config| config.runtime)
+}
+
+pub(crate) fn desktop_canary_config(cpu: u32, memory: u32, enabled: bool) -> RuntimeConfig {
+    let mut candidate = release(
+        "debian-candidate",
+        "debian_desktop",
+        "registry.example/fixture/debian",
+        "b",
+        "1",
+    );
+    candidate["capacity"] = json!({"cpu_millis": cpu, "memory_mib": memory});
+    native_runtime_with(
+        Some(&json!([candidate]).to_string()),
+        &[
+            (
+                "CHRONO_RUNTIME_CANARY_WRITE_ENABLED",
+                if enabled { "true" } else { "false" },
+            ),
+            ("CHRONO_RUNTIME_CANARY_OWNERS", "[\"owner\"]"),
+        ],
+    )
+    .unwrap()
+}
+
+pub(crate) fn retained_runtime_config(image: &str, owner: &str) -> RuntimeConfig {
+    let mut candidate = agent();
+    candidate["image"]["uri"] = json!(image);
+    let owners = json!([owner]).to_string();
+    native_runtime_with(
+        Some(&json!([candidate]).to_string()),
+        &[
+            ("CHRONO_RETAINED_RUNTIME_TRANSITIONS_ENABLED", "true"),
+            ("CHRONO_RETAINED_RUNTIME_TRANSITION_OWNERS", &owners),
+        ],
+    )
+    .unwrap()
 }
 
 #[test]

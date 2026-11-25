@@ -13,6 +13,10 @@ import {
 } from './warm-pools.js';
 export type * from './warm-pools.js';
 import type { ResolvedConfig } from '../config.js';
+import { bindingHoldOverview } from './binding-holds.js';
+import * as runtimeMigration from './runtime-migration.js';
+export type * from './runtime-migration.js';
+export type * from './binding-holds.js';
 import { platformSpend, spendObservationRequest, type SpendObservationRequest } from './spend.js';
 import {
   admissionCeilingsState,
@@ -145,6 +149,13 @@ function bound(options: { readonly limit?: number; readonly cursor?: string }) {
 export class Administration {
   constructor(readonly config: ResolvedConfig) {}
 
+  bindingHolds(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/runtime-binding-holds', bindingHoldOverview, {
+      ...options,
+      cache: 'no-store',
+    });
+  }
+
   listWarmPools(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/warm-pools', warmPoolList, options);
   }
@@ -256,6 +267,18 @@ export class Administration {
       },
     );
   }
+  runtimeActivity(id: string, options: OperationOptions = {}) {
+    return runtimeMigration.readRuntimeActivity(this.config, id, options);
+  }
+
+  migrateSandboxRuntime(
+    id: string,
+    body: runtimeMigration.CustomRuntimeMigrationRequest,
+    options: OperationOptions = {},
+  ) {
+    return runtimeMigration.requestRuntimeMigration(this.config, id, body, options);
+  }
+
   listProfiles(options: AdminProfileListOptions = {}) {
     bound(options);
     return read(

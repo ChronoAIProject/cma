@@ -5,6 +5,10 @@
 
 mod placement;
 pub use placement::candidates;
+mod heartbeat_retry;
+mod lease_operation;
+mod policy;
+pub use policy::{MaintenancePolicy, MaintenanceStep, RetirementIntent, Settlement};
 mod authority;
 pub use authority::{execution_authority, execution_owner, Authority};
 mod cleanup_pacing;
@@ -14,6 +18,8 @@ mod receiver_binding;
 pub mod receiver_diagnostics;
 mod transport;
 pub use coordinator::{bounded, OwnershipCoordinator};
+#[cfg(feature = "qualification-hooks")]
+pub use coordinator::{qualification_owner_digest, CapturedOwner, RenewalWindow};
 pub use observations::{observe_transport, observed_transport, transport_observation_scope};
 
 use crate::AgentId;
@@ -129,11 +135,25 @@ pub trait OwnershipStore: Send + Sync {
     async fn has_owner_history(&self, agent_id: &AgentId) -> Result<bool, OwnershipError>;
     /// Returns None for a live peer owner, another preferred member, or capacity.
     /// Missing process-local attachment is never evidence for takeover.
+    /// Errors other than Unavailable prove no acquisition committed. If a
+    /// store cannot establish the result, it must return Unavailable.
     async fn acquire(
         &self,
         agent_id: &AgentId,
         instance_id: &str,
     ) -> Result<Option<OwnershipLease>, OwnershipError>;
+    /// Order a read of exact acquisition custody after any in-flight write
+    /// from a completed or cancelled acquisition task. Return this member's
+    /// token even when its lease has expired.
+    async fn reconcile_acquisition(
+        &self,
+        _agent_id: &AgentId,
+        _instance_id: &str,
+    ) -> Result<Option<OwnershipToken>, OwnershipError> {
+        Err(OwnershipError::Unavailable(
+            "acquisition custody could not be reconciled".into(),
+        ))
+    }
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError>;
     fn supports_batch_renewal(&self) -> bool {
         false
@@ -174,3 +194,16 @@ mod coordinator_race_tests;
 
 #[cfg(test)]
 mod receiver_loss_tests;
+
+#[cfg(test)]
+mod containment_diagnostic_tests;
+#[cfg(test)]
+mod containment_test_support;
+#[cfg(test)]
+mod containment_tests;
+#[cfg(test)]
+mod drain_containment_tests;
+#[cfg(test)]
+mod receiver_settlement_containment_tests;
+#[cfg(test)]
+mod retirement_containment_tests;

@@ -316,7 +316,22 @@ fn bind_runtime(
     at: &str,
 ) -> Result<(), crate::sandbox::SandboxModelError> {
     let binding = submitted.runtime.clone().ok_or_else(invalid_execution)?;
-    expected.bind_lifecycle_runtime(binding, holder, fence, at.into())
+    if expected.admitted_retained_runtime_transition().is_some() {
+        let evidence = submitted
+            .lifecycle
+            .retained_startup_policy
+            .as_ref()
+            .ok_or_else(invalid_execution)?;
+        expected.bind_retained_lifecycle_runtime(
+            binding,
+            evidence.observation.clone(),
+            holder,
+            fence,
+            at.into(),
+        )
+    } else {
+        expected.bind_lifecycle_runtime(binding, holder, fence, at.into())
+    }
 }
 
 fn advance_queue(
@@ -345,4 +360,19 @@ fn publish_active(
 
 const fn invalid_execution() -> crate::sandbox::SandboxModelError {
     crate::sandbox::SandboxModelError::invalid_value("sandbox.lifecycle.execution")
+}
+
+pub(super) fn custom_authority_preserved(current: &Sandbox, next: &Sandbox) -> bool {
+    match (
+        &current.lifecycle.custom_runtime,
+        &next.lifecycle.custom_runtime,
+    ) {
+        (None, None) => true,
+        (Some(current), Some(next)) => {
+            current.migration == next.migration
+                && current.source_generation == next.source_generation
+                && current.admission_basis == next.admission_basis
+        }
+        _ => false,
+    }
 }

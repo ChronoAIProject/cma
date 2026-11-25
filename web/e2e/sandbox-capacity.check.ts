@@ -197,6 +197,8 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
     }
     if (path === '/api/agent-manager/v1/agent-lifecycle/new-capacity-task')
       return reply({ id: 'new-capacity-task', status: 'queued', phase: 'queued', events: [] });
+    if (/\/agents\/agt_quota_\d+\/reply-preview$/.test(path))
+      return reply({ code: 'not_found' }, 404);
     if (path.includes('quota_')) {
       unexpected.push(`${request.method()} ${path}`);
       return reply({ code: 'unavailable' }, 503);
@@ -205,7 +207,7 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   });
   await page.goto('/');
   const capacity = page.getByRole('region', { name: 'Sandbox capacity' });
-  await expect(capacity.getByText('All 10 Sandbox environment slots are in use')).toBeVisible();
+  await expect(capacity.getByText('Environment limit reached')).toBeVisible();
   await page.getByLabel('Your task').fill('Use the next available environment');
   await expect(page.getByRole('button', { name: 'Start task' })).toBeDisabled();
   await page.screenshot({ path: info.outputPath('full-capacity.png'), fullPage: true });
@@ -224,16 +226,16 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   expect(agents.filter((agent) => agent.status !== 'deleted')).toHaveLength(8);
   expect(parents).toHaveLength(10);
   await page.reload();
-  await expect(capacity.getByText('All 10 Sandbox environment slots are in use')).toBeVisible();
+  await expect(capacity.getByText('Environment limit reached')).toBeVisible();
   await expect(
     page.getByRole('tree', { name: 'Personal Agents' }).getByRole('treeitem'),
   ).toHaveCount(8);
   await expect(page.getByLabel('Your task')).toHaveValue('Use the next available environment');
-  await capacity.getByRole('button', { name: 'Manage environments' }).click();
-  const inventory = page.getByRole('dialog', { name: 'Manage environments' });
-  await expect(inventory.getByRole('link')).toHaveCount(10);
+  await capacity.getByRole('button', { name: 'Environments', exact: true }).click();
+  const inventory = page.getByRole('complementary', { name: 'Application navigation' });
+  await expect(inventory.getByRole('treeitem', { level: 1 })).toHaveCount(10);
   await page.screenshot({ path: info.outputPath('environment-inventory.png'), fullPage: true });
-  await inventory.getByRole('link', { name: 'Environment 00', exact: true }).click();
+  await inventory.getByRole('link', { name: /^Environment 00 Live$/ }).click();
   await page.getByRole('button', { name: 'More actions', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Delete Sandbox', exact: true }).click();
   const confirmation = page.getByRole('dialog', { name: 'Delete Sandbox', exact: true });
@@ -257,29 +259,31 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   };
   await expect.poll(retainedDeletion).toEqual(acceptedDeletion);
   await page.goto('/');
-  await expect(capacity.getByText('All 10 Sandbox environment slots are in use')).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Deletion request', exact: true })).toHaveText(
-    /Deleting 1 environment/,
-  );
-  await expect(
-    page.getByRole('button', { name: 'View deletion status', exact: true }),
-  ).toBeEnabled();
+  await expect(capacity.getByText('Environment limit reached')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Deletion request', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'View deletion status', exact: true }).click();
+  const progress = page.getByRole('dialog', { name: 'Deletion progress', exact: true });
+  await expect(progress.getByRole('listitem')).toHaveCount(1);
+  await expect(progress.getByRole('code')).toHaveText(acceptedDeletion.action.sandboxId);
+  await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(await retainedDeletion()).toEqual(acceptedDeletion);
   await expect(page.getByLabel('Your task')).toHaveValue('Use the next available environment');
   await expect(page.getByRole('button', { name: 'Start task' })).toBeDisabled();
-  await expect(capacity.getByText(/being deleted and still uses a slot/)).toBeVisible();
+  await expect(capacity).toHaveAttribute('data-state', 'full');
+  expect(parents.filter((parent) => parent.status !== 'retired')).toHaveLength(10);
   committedRetirement = true;
   parents[0] = { ...parents[0]!, status: 'retired' };
   const committedAt = Date.now();
-  await expect(capacity.getByText('1 environment slot left')).toBeVisible({
+  await expect(capacity.getByText('1 slot left')).toBeVisible({
     timeout: 15_000,
   });
   const elapsed = Date.now() - committedAt;
   expect(elapsed).toBeLessThan(15_000);
   await expect(page.getByRole('button', { name: 'Start task' })).toBeEnabled();
   await page.getByRole('button', { name: 'Start task' }).click();
-  await expect(page.getByRole('heading', { name: 'Submitted task' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Original request', exact: true })).toBeVisible();
   expect(writes).toEqual([
     'DELETE agt_quota_00',
     'DELETE agt_quota_01',

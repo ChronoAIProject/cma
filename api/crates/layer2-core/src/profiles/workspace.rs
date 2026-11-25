@@ -19,6 +19,13 @@ pub enum WorkspaceLocation {
         url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reference: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        connection_id: Option<String>,
+    },
+    PublicRepositorySnapshot {
+        url: String,
+        commit: String,
+        operation_id: String,
     },
     GitRepository {
         url: String,
@@ -34,8 +41,41 @@ impl WorkspaceLocation {
     pub(super) fn validate(&self) -> Result<(), ProfileError> {
         match self {
             Self::Directory { name } => validate_workspace_name(name),
+            Self::PublicRepositorySnapshot {
+                url,
+                commit,
+                operation_id,
+            } => {
+                if operation_id.is_empty()
+                    || operation_id.len() > 128
+                    || !operation_id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+                {
+                    return Err(ProfileError::new(
+                        "invalid_repository_operation",
+                        "location.operation_id",
+                    ));
+                }
+                if commit.len() != 40
+                    || !commit
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                {
+                    return Err(ProfileError::new(
+                        "invalid_repository_reference",
+                        "location.reference",
+                    ));
+                }
+                Self::RepositorySnapshot {
+                    url: url.clone(),
+                    reference: Some(commit.clone()),
+                    connection_id: None,
+                }
+                .validate()
+            }
             Self::GitRepository { url, reference }
-            | Self::RepositorySnapshot { url, reference } => {
+            | Self::RepositorySnapshot { url, reference, .. } => {
                 let parsed = url::Url::parse(url)
                     .map_err(|_| ProfileError::new("invalid_repository", "location.url"))?;
                 if parsed.scheme() != "https"

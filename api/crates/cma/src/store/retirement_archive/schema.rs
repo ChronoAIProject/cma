@@ -1,5 +1,8 @@
 //! Exact archive census versions. Compatibility never means an arbitrary subset.
-use super::*;
+use super::{
+    census_catalog::{AUDIT, DEPLOYMENT_ONLY, OUTSIDE_MANIFEST},
+    *,
+};
 use crate::retirement_archive::Manifest;
 use std::{collections::BTreeSet, sync::LazyLock};
 
@@ -39,22 +42,33 @@ pub(super) const LEGACY_COLLECTIONS: &[&str] = legacy::COLLECTIONS;
 #[cfg(test)]
 pub(super) const LEGACY_SHA256: &str = legacy::SHA256;
 
+// Creation evidence follows its owner across Sandbox retirement.
+const CREATION_PROOFS: &str = super::super::creation_outcomes::COLLECTION;
+
 pub(crate) fn manifest_collections() -> &'static [&'static str] {
     static NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         super::super::isolation::COLLECTIONS
             .iter()
             .copied()
-            .filter(|name| !super::census_catalog::OUTSIDE_MANIFEST.contains(name))
+            .filter(|name| {
+                *name != CREATION_PROOFS
+                    && !OUTSIDE_MANIFEST.contains(name)
+                    && !DEPLOYMENT_ONLY.contains(name)
+            })
             .collect()
     });
     &NAMES
 }
 
 pub(crate) fn schema_sha256() -> String {
+    let audit: Vec<_> = AUDIT
+        .iter()
+        .copied()
+        .filter(|(name, _)| *name != CREATION_PROOFS && !DEPLOYMENT_ONLY.contains(name))
+        .collect();
     digest(
         format!(
-            "archive-census-v2\n{:?}\n{}",
-            super::census_catalog::AUDIT,
+            "archive-census-v2\n{audit:?}\n{}",
             manifest_collections().join("\n")
         )
         .as_bytes(),

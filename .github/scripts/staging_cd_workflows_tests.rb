@@ -104,8 +104,17 @@ class StagingWorkflowTest < Minitest::Test
         refute_nil bound, "#{name}: step without a bound: #{label}"
         assert_operator bound.to_i, :<, limit, "#{name}: #{label} may use the whole job"
       end
-      setup = job['steps'].reject { |s| s['name'] == 'Build once, scan every layer, and publish exact bytes' }
+      release_steps = %w[producer publication]
+      setup = job['steps'].reject { |step| release_steps.include?(step['id']) }
       assert setup.all? { |s| s['timeout-minutes'].to_i <= 15 }, "#{name}: setup and upload steps must fail within 15 minutes"
+      next unless name == 'publish'
+
+      producer, publication = release_steps.map { |id| job['steps'].find { |step| step['id'] == id } }
+      assert_equal 'python3 -B .github/scripts/staging_cd_produce.py', producer.fetch('run')
+      assert_includes producer.fetch('if'), "vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true'"
+      assert_operator producer.fetch('timeout-minutes'), :<=, 240
+      assert_operator job['steps'].index(producer), :<, job['steps'].index(publication)
+      assert_equal '${{ steps.producer.outputs.prepared }}', publication.fetch('env').fetch('CD_PREPARED_ARCHIVE')
     end
     transport = File.read(File.join(ROOT, 'scripts/staging_cd_transport.sh'))
     %w[Acquire::http::Timeout DPkg::Lock::Timeout].each { |option| assert_includes transport, option }
@@ -526,6 +535,29 @@ class StagingWorkflowTest < Minitest::Test
       refute_equal inputs['omarchy-key-expiry'], copy['omarchy-key-expiry'], label
       assert_raises(CIContract::Refusal, label) { CIContract.omarchy_key_expiry_authority(copy) }
     end
+  end
+
+  def test_publication_signal_waits_for_every_publisher_and_isolates_dispatch_credentials
+    jobs = workflow('staging-cd')['jobs']
+    signal = jobs.fetch('publication_signal')
+    publishers = %w[web am eg runtime runtime_omarchy]
+    assert_equal ['allocate', *publishers.map { |name| "release_#{name}" }], signal['needs']
+    assert_includes signal['if'], "vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true'"
+    assert_equal({ 'contents' => 'read', 'actions' => 'read' }, signal['permissions'])
+    refute signal.key?('environment')
+    checkout, verify, retain, notify = signal['steps']
+    assert_equal 0, checkout['with']['fetch-depth']
+    publishers.each do |name|
+      assert_equal "$" + "{{ needs.release_#{name}.outputs.finalized }}", verify['env']["CD_FINALIZED_#{name.upcase}"]
+      assert_equal "$" + "{{ needs.release_#{name}.result }}", verify['env']["CD_PUBLISH_#{name.upcase}"]
+    end
+    assert_equal '${{ runner.temp }}/publication-signal.json', retain['with']['path']
+    assert_equal 'error', retain['with']['if-no-files-found']
+    refute signal['steps'][0...-1].to_s.include?('secrets.')
+    assert_equal({
+      'PUBLICATION_CONSUMER' => '${{ secrets.PUBLICATION_CONSUMER }}',
+      'PUBLICATION_SIGNAL_TOKEN' => '${{ secrets.PUBLICATION_SIGNAL_TOKEN }}'
+    }, notify['env'])
   end
 
   def test_all_external_actions_are_pinned_and_only_sanitized_deployment_outcomes_upload

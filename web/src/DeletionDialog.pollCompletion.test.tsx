@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ApiError } from '@cma/client';
 import { useResourceActions } from './ResourceActions';
@@ -105,6 +105,12 @@ it.each(['Agent', 'Sandbox'] as const)(
     );
     render(<f.Actions />);
     fireEvent.click(screen.getByRole('button', { name: 'Reopen request' }));
+    const progress = screen.getByRole('dialog', { name: 'Deletion progress' });
+    fireEvent.click(
+      within(progress).getByRole('button', {
+        name: `View ${target === 'Sandbox' ? 'Sandbox' : 'Agent'} deletion status (1)`,
+      }),
+    );
     await act(() => vi.advanceTimersByTimeAsync(0));
     expect(screen.getByRole('dialog')).toHaveAccessibleName(`Deleting ${target}`);
     expect(screen.getByText('Last status read:')).toBeInTheDocument();
@@ -176,9 +182,7 @@ it.each(['successful detail', 'parent refusal', 'history refusal'] as const)(
       readAgentEvents.mock.calls.length,
     ]).toEqual(readCounts);
     expect(writes).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByText(outcome === 'successful detail' ? 'Done' : 'Close', { selector: 'button' }),
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     await act(() => vi.advanceTimersByTimeAsync(1000));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reopen request' })).toBeDisabled();

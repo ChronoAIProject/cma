@@ -8,7 +8,7 @@ use eligibility::{owned_home, warm_blocks};
 
 const MAX_RECORDS: i64 = 10_000;
 
-fn release_scope(store: &MongoNativeWarmPools, machine: bool) -> Document {
+pub(super) fn release_scope(store: &MongoNativeWarmPools, machine: bool) -> Document {
     let mut scope = store.scope();
     scope.insert(
         "machine",
@@ -179,6 +179,19 @@ async fn scan(
     if !authorized(store, target, image).await? {
         return Ok(deferred(target, "release_settling"));
     }
+    // Inspect the operation first. If it has finished, the later Sandbox
+    // scan sees any home it created before publishing that outcome.
+    if store.released_lanes.is_some()
+        && crate::store::agent_lifecycle_operations::released::protects_pool(
+            &store.database,
+            target.machine,
+            &target.plan.spec.image.uri,
+        )
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)?
+    {
+        return Ok(deferred(target, "lifecycle_admission"));
+    }
     let mut homes = Vec::new();
     for document in documents(store, "sandboxes", doc! {}).await? {
         let sandbox = crate::store::sandboxes::read_sandbox(&document)
@@ -248,10 +261,17 @@ pub(super) async fn begin(
     if target.retiring {
         return Ok(target.clone());
     }
+    let mut filter = fence(target);
+    filter.insert("preparation", doc! {"$exists": false});
+    filter.insert(
+        "activated_at",
+        mongodb::bson::serialize_to_bson(&target.activated_at)
+            .map_err(|_| WarmPoolError::Unavailable)?,
+    );
     let updated = store
         .targets
         .find_one_and_update(
-            fence(target),
+            filter,
             doc! {
                 "$set":{"retiring":true,"target_replicas":0_i64},"$inc":{"revision":1_i64}
             },

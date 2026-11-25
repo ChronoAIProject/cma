@@ -10,6 +10,9 @@ use mongodb::{
 #[cfg(test)]
 #[path = "agent_opening_reads/diagnostics_tests.rs"]
 mod diagnostics_tests;
+#[cfg(test)]
+#[path = "agent_opening_reads/privacy.rs"]
+mod privacy;
 pub(super) mod transcript;
 const INDEX: &str = "agent_log_kind_sequence";
 const MAX_BYTES: usize = 4 * 1024 * 1024;

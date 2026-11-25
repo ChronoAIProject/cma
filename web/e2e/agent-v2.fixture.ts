@@ -34,6 +34,9 @@ export class LocalAgentV2 {
   readonly errors: string[] = [];
   readonly streams = new Set<ServerResponse>();
   enabled = true;
+  externalApprovals = false;
+  approvalReviewAllowed = true;
+  approvalPolicyAvailable = true;
   owner = 'local-owner';
   holdInput = false;
   loseInput = false;
@@ -46,6 +49,8 @@ export class LocalAgentV2 {
   private readonly admittedInputs: CapturedWrite[] = [];
   private pendingSnapshot?: ServerResponse;
   private baseURL = '';
+  private origin = '';
+  private finishSignOut?: () => void;
   private readonly server = createServer((request, response) => {
     void this.handle(request, response).catch((error: unknown) => {
       this.errors.push(String(error));
@@ -60,6 +65,7 @@ export class LocalAgentV2 {
     const address = this.server.address();
     if (!address || typeof address === 'string') throw new Error('Missing local fixture port');
     const origin = `http://127.0.0.1:${address.port}`;
+    this.origin = origin;
     await this.boundary.route(page, baseURL);
     await page.route(`${origin}/**`, (route) => route.continue());
     await page.route('**/api/v2/**', (route) => {
@@ -85,6 +91,13 @@ export class LocalAgentV2 {
           services: [],
         },
       }),
+    );
+  }
+
+  async routeSignOut(page: Page, onSignOut: () => void) {
+    this.finishSignOut = onSignOut;
+    await page.route(`${this.baseURL}/auth/logout`, (route) =>
+      route.continue({ url: `${this.origin}/auth/logout` }),
     );
   }
 
@@ -242,6 +255,20 @@ export class LocalAgentV2 {
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse) {
+    if (
+      this.externalApprovals &&
+      String(request.headers.prefer ?? '')
+        .split(',')
+        .some((token) => token.trim() === 'cma-external-approval-v1')
+    ) {
+      response.setHeader('Preference-Applied', 'cma-external-approval-v1');
+      if (this.approvalPolicyAvailable)
+        response.setHeader('CMA-Approval-Review-Origin', 'https://identity.example.test');
+      response.setHeader(
+        'CMA-External-Approval-Action',
+        this.approvalReviewAllowed ? 'review' : 'none',
+      );
+    }
     response.setHeader('Access-Control-Allow-Origin', this.baseURL);
     response.setHeader('Access-Control-Allow-Credentials', 'true');
     response.setHeader(
@@ -249,10 +276,18 @@ export class LocalAgentV2 {
       'content-type, x-request-id, last-event-id, idempotency-key, prefer',
     );
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    response.setHeader('Access-Control-Expose-Headers', 'x-cma-response-id, x-cma-command-id');
+    response.setHeader(
+      'Access-Control-Expose-Headers',
+      'x-cma-response-id, x-cma-command-id, Preference-Applied, CMA-Approval-Review-Origin, CMA-External-Approval-Action',
+    );
     if (request.method === 'OPTIONS') return response.end();
     const url = new URL(request.url!, 'http://localhost');
     const path = url.pathname;
+    if (request.method === 'GET' && path === '/auth/logout' && this.finishSignOut) {
+      this.finishSignOut();
+      response.writeHead(302, { Location: `${this.baseURL}/agents/${agent}` });
+      return response.end();
+    }
     if (request.method === 'POST') {
       let source = '';
       for await (const chunk of request) source += String(chunk);

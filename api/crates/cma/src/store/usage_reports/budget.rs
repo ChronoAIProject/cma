@@ -2,7 +2,10 @@
 //! Multi-query projection wall time is diagnostic only. Never inspect commands.
 use super::allocation_deadline::REPORTING_HOLD_DEADLINE;
 use super::*;
-use mongodb::event::{cmap::CmapEvent, EventHandler};
+use mongodb::{
+    event::{cmap::CmapEvent, EventHandler},
+    options::ClientOptions,
+};
 use std::{
     collections::HashMap,
     sync::{

@@ -25,6 +25,7 @@ impl SandboxTransactionStore for InMemorySandboxStore {
             }
             SandboxTransaction::SaveSandboxAndAppend {
                 command_revival,
+                released_runtime,
                 expected_revision,
                 sandbox,
                 event_at,
@@ -37,7 +38,9 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                         &sandbox,
                         &event_at,
                         &event,
-                        self.managed_runtime_version().as_deref(),
+                        released_runtime.as_ref().and_then(|release| {
+                            self.managed_runtime_target(&sandbox, &release.agent)
+                        }),
                     )?;
                 }
                 let id = sandbox.id.clone();

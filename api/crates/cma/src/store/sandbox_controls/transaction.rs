@@ -1,7 +1,7 @@
 use super::super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::super::{resource_access, sandbox_events, sandboxes};
 use super::{records, ApplyError, Change};
-use layer2_core::sandbox::control::*;
+use layer2_core::sandbox::{control::*, store::SandboxStore};
 use mongodb::{bson::doc, ClientSession};
 
 pub(super) async fn apply(
@@ -34,11 +34,12 @@ pub(super) async fn apply(
             // Serialize policy mutation and concurrent resource activity even
             // for an already-satisfied command that only writes a receipt.
             resource_access::fence_lineage(store, &snapshot, session).await?;
+            let release = store.released_runtime();
             let plan = plan_sandbox_control(
                 record,
                 &snapshot.lineage.sandbox,
                 &at,
-                store.managed_agent_release().as_deref(),
+                store.managed_runtime_target(&snapshot.lineage.sandbox, &release.agent),
             )?;
             let plan = if let SandboxControlPlan::Transition { sandbox, .. } = &plan {
                 if store
@@ -66,6 +67,24 @@ pub(super) async fn apply(
                         Some(proof.audit().map_err(|_| SandboxControlError::Conflict)?);
                 }
                 SandboxControlPlan::Transition { sandbox, event } => {
+                    if snapshot.lineage.sandbox.has_managed_runtime_image()
+                        && snapshot.lineage.sandbox.runtime_update_request()
+                            != sandbox.runtime_update_request()
+                    {
+                        store
+                            .fence_released_admission(
+                                &release,
+                                layer2_core::released_runtime::ReleasedLane::Agent,
+                                session,
+                            )
+                            .await
+                            .map_err(|error| match error {
+                                layer2_core::sandbox::SandboxStoreError::Conflict => {
+                                    SandboxControlError::Conflict
+                                }
+                                _ => SandboxControlError::Unavailable,
+                            })?;
+                    }
                     let fields = sandboxes::sandbox_replacement_fields(&sandbox)
                         .map_err(|_| SandboxControlError::Corrupt)?;
                     let result = store.sandboxes.update_one(

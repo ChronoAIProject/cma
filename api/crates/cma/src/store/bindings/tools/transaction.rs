@@ -4,6 +4,7 @@ use crate::store::resource_access::ReadError;
 use crate::store::sandbox_mongo::{
     commit_transaction, is_transient, start_transaction, CommitOutcome, TRANSACTION_ATTEMPTS,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(super) enum Operation<'a> {
     Resolve(&'a RuntimeHandle, &'a AgentOpenRequest, u64),
@@ -86,7 +87,7 @@ impl MongoProviderToolSource {
                 }
             };
             if let Err(error) = start_transaction(&mut session).await {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if retry_driver(&operation, "start_transaction", attempt, &error) {
                     continue;
                 }
@@ -113,7 +114,7 @@ impl MongoProviderToolSource {
             let outcome = match result {
                 Ok(outcome) => outcome,
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     match error {
                         Error::Driver(error) => {
                             if retry_driver(&operation, "read_write", attempt, &error) {
@@ -135,7 +136,7 @@ impl MongoProviderToolSource {
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => return Ok(outcome),
                 CommitOutcome::Retry(_) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     diagnostic(&operation, "commit", "transient_transaction", attempt);
                 }
                 // An unknown commit may have installed the receipt. Do not
@@ -145,7 +146,7 @@ impl MongoProviderToolSource {
                     return Err(unavailable(()));
                 }
                 CommitOutcome::Failed(_) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     diagnostic(&operation, "commit", "driver_failure", attempt);
                     return Err(unavailable(()));
                 }

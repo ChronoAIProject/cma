@@ -60,6 +60,8 @@ pub(crate) use received_source::retained_received_source;
 mod replay_frame;
 mod replay_projection;
 pub mod scheduler;
+mod side_message_authority;
+pub(crate) use side_message_authority::SideMessageAuthority;
 mod storage;
 mod stream_relay;
 pub(crate) use stream_relay::monitor::StreamMonitor;

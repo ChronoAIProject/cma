@@ -6,6 +6,53 @@ use domain::{
 };
 use layer2_core::sandbox::{store::AgentMessageCheckpoint, AgentUpdateOutcome};
 
+pub(in crate::store) async fn apply_turn_policy(
+    store: &MongoSandboxStore,
+    proof: &layer2_core::sandbox::turn_timeout::TurnTimeoutSettlement,
+    scope: &mut TransactionScope<'_>,
+) -> Result<layer2_core::sandbox::agent_io::AdmittedAgentCommand, ApplyError> {
+    let conflict = || ApplyError::Domain(SandboxStoreError::Conflict);
+    let snapshot = proof.snapshot();
+    let lane = scope
+        .find_one(
+            &store.agent_command_orders,
+            doc! {"_id":snapshot.agent.id.as_str()},
+        )
+        .await
+        .map_err(ApplyError::Driver)?
+        .ok_or_else(conflict)?;
+    let mut lane =
+        crate::store::agent_commands::lane_records::read(&lane, snapshot.agent.id.as_str())
+            .map_err(|_| conflict())?;
+    let settled = proof.settle_command(&mut lane).map_err(|_| conflict())?;
+    let (_, publication) = Box::pin(apply(
+        store,
+        (&snapshot.agent, None),
+        snapshot.checkpoint.as_ref(),
+        proof.checkpoint(),
+        Some(proof.mutation()),
+        &Authority::TurnPolicy,
+        scope,
+    ))
+    .await?;
+    if publication.is_none() {
+        return Err(conflict());
+    }
+    crate::store::agent_commands::worker_apply::write(
+        store,
+        &settled,
+        proof.command().revision,
+        &lane,
+        scope.session(),
+    )
+    .await
+    .map_err(|error| match error {
+        crate::store::agent_commands::ApplyError::Driver(error) => ApplyError::Driver(error),
+        _ => conflict(),
+    })?;
+    Ok(settled)
+}
+
 pub(in crate::store) async fn apply_stale_turn(
     store: &MongoSandboxStore,
     proof: &layer2_core::sandbox::store::StaleTurnSettlement,
@@ -66,9 +113,11 @@ pub(in crate::store) async fn apply(
             scope.session(),
         ))
         .await?;
-    } else if actual.as_ref().is_some_and(|checkpoint| {
-        Some(checkpoint.runtime_generation) > current.conversation.runtime_generation
-    }) {
+    } else if actual_agent.work.step.fences_conversation_output()
+        || actual.as_ref().is_some_and(|checkpoint| {
+            Some(checkpoint.runtime_generation) > current.conversation.runtime_generation
+        })
+    {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
     let project = |agent: &Agent| match guard {
@@ -125,10 +174,10 @@ pub(in crate::store) async fn apply(
                 .map_err(ApplyError::Domain)?;
         }
         let receipt = Box::pin(super::apply(
-            if matches!(authority, Authority::StaleTurn) {
-                PublicationSource::StaleTurn
-            } else {
-                PublicationSource::Checkpoint
+            match authority {
+                Authority::StaleTurn => PublicationSource::StaleTurn,
+                Authority::TurnPolicy => PublicationSource::TurnPolicy,
+                _ => PublicationSource::Checkpoint,
             },
             store,
             mutation,
@@ -152,7 +201,7 @@ pub(in crate::store) async fn apply(
         }
         current
     };
-    if matches!(authority, Authority::StaleTurn) {
+    if matches!(authority, Authority::StaleTurn | Authority::TurnPolicy) {
         // Both writers set the exact checkpoint in the publication CAS.
     } else if mutation.is_some() {
         // Publication can adopt or advance the log envelope. Its original row

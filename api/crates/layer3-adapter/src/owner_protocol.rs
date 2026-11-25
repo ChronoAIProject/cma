@@ -10,6 +10,9 @@ pub use failure::{OwnershipFailure, OwnershipFailureReason, OwnershipPhase};
 #[path = "hosted/provider_ownership_evidence.rs"]
 mod evidence;
 pub use evidence::{FirstOwnershipFailure, OwnershipEvidence, OwnershipReceiver};
+#[path = "receiver_settlement.rs"]
+mod settlement;
+pub use settlement::{ReceiverSettlementFailure, ReceiverSettlementWatch};
 
 #[async_trait::async_trait]
 pub trait ReceiverRevocation: Send + Sync {
@@ -26,6 +29,17 @@ pub trait ReceiverRevocation: Send + Sync {
     ) -> crate::Result<ReceiverCleanup> {
         self.revoke().await?;
         Ok(ReceiverCleanup::Acknowledged)
+    }
+
+    async fn settle_typed(
+        &self,
+        custody: ReceiverConfirmationCustody,
+        outcome: &ReceiverSettlementWatch,
+    ) -> Result<ReceiverCleanup, ReceiverSettlementFailure> {
+        self.settle(custody).await.map_err(|_| {
+            outcome.record(ReceiverSettlementFailure::Unclassified);
+            ReceiverSettlementFailure::Unclassified
+        })
     }
 }
 
@@ -86,6 +100,38 @@ impl<T: TransportAuthority + ?Sized> Drop for RevokeOnDrop<'_, T> {
 
 tokio::task_local! {
     static AUTHORITY: Arc<dyn TransportAuthority>;
+    static INSPECTION_FAILURE: Box<dyn Fn(InspectionRefusal) + Send + Sync>;
+}
+
+/// Retain the receiver failure from this read even when it cancels the caller.
+pub async fn observe_inspection_failure<F: Future>(
+    observed: impl Fn(InspectionRefusal) + Send + Sync + 'static,
+    read: F,
+) -> F::Output {
+    INSPECTION_FAILURE.scope(Box::new(observed), read).await
+}
+
+/// Evidence from this exact receiver exchange, retained before scope cancellation.
+pub struct InspectionRefusal {
+    pub owner: TransportOwner,
+    pub receiver: OwnershipReceiver,
+    pub failure: OwnershipFailure,
+}
+
+pub(crate) fn record_inspection_refusal(
+    owner: TransportOwner,
+    receiver: OwnershipReceiver,
+    failure: OwnershipFailure,
+) {
+    if failure.reason != OwnershipFailureReason::AuthorityLost {
+        let _ = INSPECTION_FAILURE.try_with(|observed| {
+            observed(InspectionRefusal {
+                owner,
+                receiver,
+                failure,
+            });
+        });
+    }
 }
 
 pub fn current_authority() -> Option<Arc<dyn TransportAuthority>> {

@@ -4,6 +4,7 @@ import { ProtocolError, ValidationError } from '../errors.js';
 import { raceWithAbortSignal, type OperationOptions } from '../http.js';
 import { query, read, segment } from '../resources.js';
 import { eventStream } from '../streaming.js';
+import { ownerHeaders } from './owner.js';
 import {
   ActivityPageSchema,
   HistoryDetailsSchema,
@@ -48,13 +49,6 @@ export interface ChannelActivityEvent {
   readonly event: 'activity' | 'reset';
   readonly id: string;
   readonly data: ActivityPage;
-}
-
-function ownerHeaders(owner: string | undefined): Record<string, string> {
-  if (owner === undefined) return {};
-  if (!/^[\x21-\x7e]{1,512}$/.test(owner))
-    throw new ValidationError('owner must contain 1–512 visible ASCII bytes');
-  return { 'X-CMAEG-Owner': owner };
 }
 
 export class CmaegActivity {

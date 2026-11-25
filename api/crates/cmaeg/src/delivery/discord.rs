@@ -1,6 +1,6 @@
 //! Native Discord reply delivery, independent of relay envelopes and credentials.
 use super::{
-    gate::expired,
+    gate::{expired, within_deadline},
     intents::{ConfirmedMessagePart, DeliveryOutcome, IntentReceipt},
     render::{LiteralText, RenderedPart, Renderer},
     send::{unsupported, SendContext, SendEffects, Sender},
@@ -93,11 +93,23 @@ impl Sender {
             };
             return (receipt, effects);
         };
-        if let Err(error) = self.relay.discord.verify_bot(credential, bot_id).await {
+        if let Err(error) = within_deadline(
+            ctx.gate,
+            self.relay.discord.verify_bot(credential, bot_id),
+            Err(RestError::Unknown),
+        )
+        .await
+        {
             receipt.delivery = outcome(error);
             return (receipt, effects);
         }
-        let target_receipt = match self.discord_reaction_receipt(ctx.channel, event).await {
+        let target_receipt = match within_deadline(
+            ctx.gate,
+            self.discord_reaction_receipt(ctx.channel, event),
+            Err(crate::discord::GatewayError::Unavailable),
+        )
+        .await
+        {
             Ok(receipt) => receipt,
             Err(_) => {
                 receipt.delivery = DeliveryOutcome::Rejected {
@@ -147,7 +159,8 @@ impl Sender {
         let mut confirmed = 0;
         let mut first = None;
         for (index, part) in parts.iter().enumerate() {
-            let Some(mut slot) = self.pacing.acquire(&route).await else {
+            let Some(mut slot) = within_deadline(ctx.gate, self.pacing.acquire(&route), None).await
+            else {
                 receipt.delivery = DeliveryOutcome::Rejected {
                     reason: "pacing_capacity".into(),
                 };
@@ -205,15 +218,27 @@ impl Sender {
                         .await
                 }
             };
-            let sent =
-                super::trace::native::part(index, false, send, super::trace::native::discord).await;
+            let sent = super::trace::native::part(
+                index,
+                false,
+                within_deadline(ctx.gate, send, Err(RestError::Unknown)),
+                super::trace::native::discord,
+            )
+            .await;
             drop(permit);
             ctx.gate.progress();
             match sent {
                 Ok(id) => {
                     confirmed += 1;
                     if let Some(target) = &target_receipt {
-                        if target.confirm(&id).await.is_err() {
+                        if within_deadline(
+                            ctx.gate,
+                            target.confirm(&id),
+                            Err(crate::discord::GatewayError::Unavailable),
+                        )
+                        .await
+                        .is_err()
+                        {
                             receipt.delivery = DeliveryOutcome::Unknown {
                                 reason: "reaction_target_receipt_unconfirmed".into(),
                             };

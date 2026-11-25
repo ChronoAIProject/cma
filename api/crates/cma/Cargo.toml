@@ -5,12 +5,15 @@ edition.workspace = true
 publish = false
 
 [features]
+qualification-hooks = ["dep:cma-qualification", "layer1-public/qualification-hooks"]
 real-model-suggestion-samples = []
 
 [dependencies]
+cma-qualification = { path = "../cma-qualification", optional = true }
 cma-allocator-qualification = { path = "../cma-allocator-qualification" }
 cma-am-auth = { path = "../cma-am-auth" }
 cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
+cma-am-reporting = { path = "../cma-am-reporting" }
 async-trait = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
@@ -31,10 +34,12 @@ sha1 = { workspace = true }
 layer1-public = { workspace = true }
 layer2-core = { workspace = true }
 layer3-adapter = { workspace = true }
+libc = { workspace = true }
 mongodb = { workspace = true, features = ["opentelemetry"] }
 opentelemetry = { workspace = true }
 reqwest = { workspace = true }
 ring = { workspace = true }
+semver = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 similar = { workspace = true }

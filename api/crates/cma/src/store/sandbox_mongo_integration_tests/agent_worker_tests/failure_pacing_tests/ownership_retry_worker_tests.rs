@@ -17,6 +17,8 @@ use layer3_adapter as l3;
 #[path = "ownership_retry_runtime_fixture.rs"]
 mod runtime_fixture;
 use runtime_fixture::{Backend, Home, Runtime, HANDLE};
+#[path = "failed_inspection_takeover_tests.rs"]
+mod failed_inspection_takeover_tests;
 #[path = "legacy_receiver_handoff_tests.rs"]
 mod legacy_receiver_handoff;
 

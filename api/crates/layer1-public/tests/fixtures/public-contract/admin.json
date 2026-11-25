@@ -611,6 +611,7 @@
           "owner_name": "Alex Chen",
           "runtime_update": {
             "current_version": "runtime-v1",
+            "image_origin": "managed_agent",
             "latest_version": "runtime-v2",
             "update_available": false,
             "state": "up_to_date",
@@ -1204,6 +1205,7 @@
               "at": "2026-09-05T00:00:00Z",
               "actor": "operator-a",
               "actor_name": "Morgan Park",
+              "actor_reference": "actor-ab4a922790380f90",
               "target_name": null,
               "action": "configure",
               "target": {

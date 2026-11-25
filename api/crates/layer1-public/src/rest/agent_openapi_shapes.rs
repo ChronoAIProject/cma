@@ -229,6 +229,9 @@ pub(crate) struct AgentView {
     failure: Option<AgentFailureView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stop_reason: Option<String>,
+    /// The owner may request a restart; admission still verifies the retained runtime.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) restart_available: Option<bool>,
     created_at: String,
     updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -323,6 +326,7 @@ impl AgentView {
                 source: matches!(
                     workspace.source,
                     layer2_core::sandbox::WorkspaceSource::RepositorySnapshot { .. }
+                        | layer2_core::sandbox::WorkspaceSource::PublicRepositorySnapshot { .. }
                 )
                 .then(|| {
                     super::instances_openapi_shapes::WorkspaceSourceView::from(&workspace.source)
@@ -358,6 +362,7 @@ impl AgentView {
                 detail: failure.detail,
             }),
             stop_reason: agent.stop_reason.map(|reason| reason.as_str().into()),
+            restart_available: None,
             created_at: agent.created_at,
             updated_at: agent.updated_at,
             ready_at: agent.ready_at,

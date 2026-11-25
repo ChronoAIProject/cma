@@ -1,5 +1,6 @@
 //! Gateway-owned sealed record persistence. No Agent Manager collections.
 use super::{AuthorityGuard, RecordError, RecordHead, RecordKind, RecordValue};
+use crate::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
@@ -72,6 +73,14 @@ impl MongoRecords {
             worker_credentials: None,
             replica_attempt_fixture: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_worker_tracking(
+        &mut self,
+        tracking: crate::worker_credentials::WorkerCredentials,
+    ) {
+        self.worker_credentials = Some(tracking);
     }
 
     pub(crate) fn database(&self) -> Database {
@@ -256,7 +265,7 @@ impl MongoRecords {
             .session(&mut session)
             .await
             .map_err(failure)?;
-        session.commit_transaction().await.map_err(failure)?;
+        session.commit_guarded().await.map_err(failure)?;
         Ok(1)
     }
     pub(super) async fn put_with_retention(
@@ -273,7 +282,11 @@ impl MongoRecords {
         }
         if self.kind == RecordKind::Channel {
             if let Some(tracking) = &self.worker_credentials {
-                tracking.record_blob(blob).await?;
+                let version = expected
+                    .unwrap_or(0)
+                    .checked_add(1)
+                    .ok_or_else(|| RecordError::Rejected("invalid record revision".into()))?;
+                tracking.record_blob(id, version, blob).await?;
             }
         }
         if retention == super::retention::InteractionRetention::WhatsappReaction
