@@ -78,6 +78,8 @@ impl HostedBackend for Backend {
                 .await;
         };
         let request = launch.request;
+        // Keep the retained output stream alive until the worker detaches.
+        tokio::spawn(async move { updates.closed().await });
         Ok((
             l3::ConversationChannel {
                 input: l3::ConversationInputSender::spawn(1, |_| async { Ok(()) }),

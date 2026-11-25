@@ -35,7 +35,7 @@ async fn observe_takeover(
     let client = Client::with_uri_str(uri).await.unwrap();
     let name = format!("inspection_takeover_{}", uuid::Uuid::new_v4().simple());
     let standalone = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let agent = ready_conversation_fixture(&standalone, "inspection").await;
+    let mut agent = ready_conversation_fixture(&standalone, "inspection").await;
     let workspace = standalone
         .get_workspace(&agent.workspace_id)
         .await
@@ -50,8 +50,30 @@ async fn observe_takeover(
     worktree.path = format!("{}/.worktrees/{}", workspace.path, worktree.name);
     worktree.base_commit = workspace.resolved_commit.unwrap();
     worktree.revision += 1;
-    standalone.save_worktree(revision, worktree).await.unwrap();
+    standalone
+        .save_worktree(revision, worktree.clone())
+        .await
+        .unwrap();
     let home = bind_runtime(&standalone, &agent, HANDLE).await;
+    let sandbox = standalone
+        .get_sandbox(&agent.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let open = layer3_adapter::AgentOpenRequest::new(
+        format!("agent:{}:open:v1", agent.id),
+        crate::sandbox::runtime_options(&agent, &sandbox, &worktree),
+        None,
+    );
+    let receipt = agent
+        .work
+        .receipts
+        .iter_mut()
+        .find(|receipt| receipt.step == AgentWorkStep::OpenConversation)
+        .unwrap();
+    assert_eq!(receipt.operation_id, open.operation_id);
+    receipt.request_sha256 = open.request_sha256;
+    replace_agent_fixture(&standalone, &agent).await;
     let crash_after_close = refusal == "after_close";
     let runtime = Runtime::start(if crash_after_close { "auth" } else { refusal }).await;
     let confirmations = usize::from(refusal == "confirm_ambiguous");
