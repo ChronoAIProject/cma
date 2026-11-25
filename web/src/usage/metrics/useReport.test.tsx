@@ -280,3 +280,18 @@ it('uses the legacy report flow only for an explicitly unsupported latest route'
   expect(latest).toHaveBeenCalledTimes(1);
   expect(api.create).toHaveBeenCalledTimes(1);
 });
+
+it('reuses a disabled view negotiation for repeated selections within the same session', async () => {
+  const api = metricsClient(true);
+  const latest = vi.fn().mockRejectedValue(new ApiError(501, 'disabled', 'report_view_disabled'));
+  (api as unknown as { latest: typeof latest }).latest = latest;
+  const first = renderHook(() => useUsageReport(api, defaultSelection, true));
+  await waitFor(() => expect(first.result.current.report?.report_id).toBe('report-one'));
+  first.unmount();
+
+  const nextSelection = { ...defaultSelection, range: '7d' as const };
+  const second = renderHook(() => useUsageReport(api, nextSelection, true));
+  await waitFor(() => expect(second.result.current.report?.report_id).toBe('report-one'));
+  expect(latest).toHaveBeenCalledTimes(1);
+  expect(api.create).toHaveBeenCalledTimes(2);
+});
