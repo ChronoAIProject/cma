@@ -27,6 +27,10 @@ use serde::Deserialize;
 use std::sync::Arc;
 #[derive(Clone, Copy)]
 struct Admin(bool);
+
+/// A typed capability response produced by the Usage service.
+#[derive(Clone, Copy)]
+pub struct UsageViewDisabled;
 type Service = State<Arc<MetricsService>>;
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -210,6 +214,9 @@ fn problem(error: MetricsError) -> Response {
         status,
         super::problem_document(status, code, &error.to_string(), code),
     );
+    if matches!(error, MetricsError::ViewDisabled) {
+        response.extensions_mut().insert(UsageViewDisabled);
+    }
     if matches!(
         status,
         StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE

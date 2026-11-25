@@ -336,3 +336,93 @@ async fn configured_audit_sampling_preserves_default_reads_and_all_refusals_muta
         assert_eq!(store.records.lock().unwrap().len(), before + 1);
     }
 }
+
+#[tokio::test]
+async fn typed_usage_capability_refusal_is_retained_without_reclassifying_real_failures() {
+    use axum::{response::IntoResponse, Extension};
+    use layer1_public::rest::UsageViewDisabled;
+    use layer2_core::{ActivityAction, ActivityOutcome};
+    let store = Arc::new(Store::default());
+    let recorder = ActivityRecorder::new(ActivityService::new(store.clone()));
+    let app = Router::new()
+        .route(
+            "/api/v1/admin/usage/metrics/view",
+            get(|| async {
+                (Extension(UsageViewDisabled), StatusCode::NOT_IMPLEMENTED).into_response()
+            }),
+        )
+        .route(
+            "/api/v1/usage/metrics/view",
+            get(|| async { StatusCode::NOT_IMPLEMENTED }),
+        )
+        .route(
+            "/other",
+            get(|| async {
+                (Extension(UsageViewDisabled), StatusCode::NOT_IMPLEMENTED).into_response()
+            }),
+        )
+        .route(
+            "/api/v1/admin/usage/metrics/initial/view",
+            axum::routing::post(|| async {
+                (Extension(UsageViewDisabled), StatusCode::NOT_IMPLEMENTED).into_response()
+            }),
+        )
+        .route(
+            "/api/v1/admin/usage/metrics/reports",
+            axum::routing::post(|| async { StatusCode::OK }),
+        )
+        .layer(middleware::from_fn_with_state(recorder, super::record));
+    for (method, path, status) in [
+        (
+            "GET",
+            "/api/v1/admin/usage/metrics/view",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            "GET",
+            "/api/v1/usage/metrics/view",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        ("GET", "/other", StatusCode::NOT_IMPLEMENTED),
+        (
+            "POST",
+            "/api/v1/admin/usage/metrics/initial/view",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            "POST",
+            "/api/v1/admin/usage/metrics/reports",
+            StatusCode::OK,
+        ),
+    ] {
+        let result = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status(), status);
+    }
+    let records = store.records.lock().unwrap();
+    assert_eq!(records.len(), 5);
+    for index in [0, 3] {
+        assert_eq!(records[index].action, ActivityAction::Read);
+        assert_eq!(
+            records[index].outcome,
+            ActivityOutcome::Refused("report_view_disabled".into())
+        );
+    }
+    for index in [1, 2] {
+        assert_eq!(
+            records[index].outcome,
+            ActivityOutcome::Failed("501".into())
+        );
+    }
+    assert_eq!(records[4].action, ActivityAction::Create);
+    assert_eq!(records[4].outcome, ActivityOutcome::Succeeded);
+}

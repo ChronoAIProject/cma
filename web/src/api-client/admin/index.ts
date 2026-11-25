@@ -1,3 +1,4 @@
+import { listActivitySummary } from './activity-summary.js';
 import {
   pendingHomesReconciliation,
   reconcilePendingHomesRequest,
@@ -27,7 +28,7 @@ import {
   changeAdmissionRequest,
   type ChangeAdmissionRequest,
 } from './admission.js';
-import { ApiError, ProtocolError, ValidationError } from '../errors.js';
+import { ProtocolError, ValidationError } from '../errors.js';
 import type { OperationOptions } from '../http.js';
 import { sandboxEvent } from '../instances/events.js';
 import { sandbox, type SandboxStatus } from '../instances/types.js';
@@ -68,7 +69,6 @@ import {
 import {
   activityAction,
   activityRecord,
-  activitySummary,
   adminPage,
   adminProfileSummary,
   adminSandbox,
@@ -98,6 +98,7 @@ export interface ActivityListOptions extends PageOptions {
   readonly actor?: string;
   readonly action?: ActivityAction;
   readonly excludeSuccessfulReads?: boolean;
+  readonly excludeCompatibilityProbes?: boolean;
 }
 
 const autoPauseBatch = {
@@ -445,33 +446,7 @@ export class Administration {
   listActivitySummary(options: ActivityListOptions = {}) {
     bound(options);
     if (options.action !== undefined) input(activityAction, options.action);
-    const request = (excludeSuccessfulReads: boolean) =>
-      read(
-        this.config,
-        query('/api/v1/admin/activity', {
-          view: 'summary',
-          actor: options.actor,
-          action: options.action,
-          exclude_successful_reads: excludeSuccessfulReads ? 'true' : undefined,
-          cursor: options.cursor,
-          limit: options.limit,
-        }),
-        adminPage(activitySummary),
-        options,
-      );
-    if (options.excludeSuccessfulReads !== true) return request(false);
-    return request(true).catch((error: unknown) => {
-      // Older Agent Managers reject unknown query options during a mixed rollout.
-      if (
-        error instanceof ApiError &&
-        error.status === 400 &&
-        error.code === 'invalid_admin_request' &&
-        !options.signal?.aborted
-      ) {
-        return request(false);
-      }
-      throw error;
-    });
+    return listActivitySummary(this.config, options);
   }
   listActivity(options: ActivityListOptions = {}) {
     bound(options);
@@ -482,6 +457,8 @@ export class Administration {
         actor: options.actor,
         action: options.action,
         exclude_successful_reads: options.excludeSuccessfulReads === true ? 'true' : undefined,
+        exclude_compatibility_probes:
+          options.excludeCompatibilityProbes === true ? 'true' : undefined,
         cursor: options.cursor,
         limit: options.limit,
       }),

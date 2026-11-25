@@ -84,3 +84,25 @@ describe('Activity summary contract', () => {
     expect(new URL(t.calls[1]!.url).searchParams.has('exclude_successful_reads')).toBe(false);
   });
 });
+
+it('preserves the older successful-read filter if a mixed replica refuses the probe filter', async () => {
+  const t = transport();
+  const admin = new Administration(t.client.config);
+  t.fetch.mockImplementationOnce(async (url, init) => {
+    t.calls.push({ url: String(url), init: init ?? {} });
+    return Response.json(
+      { title: 'Invalid request', status: 400, code: 'invalid_admin_request' },
+      { status: 400 },
+    );
+  });
+  t.answer({ items: [row], next: null });
+  await admin.listActivitySummary({
+    excludeSuccessfulReads: true,
+    excludeCompatibilityProbes: true,
+  });
+  const attempted = new URL(t.calls[0]!.url).searchParams;
+  const fallback = new URL(t.calls[1]!.url).searchParams;
+  expect(attempted.get('exclude_compatibility_probes')).toBe('true');
+  expect(fallback.has('exclude_compatibility_probes')).toBe(false);
+  expect(fallback.get('exclude_successful_reads')).toBe('true');
+});

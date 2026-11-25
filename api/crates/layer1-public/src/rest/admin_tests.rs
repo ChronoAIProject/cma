@@ -70,6 +70,10 @@ impl ActivityStore for MemoryActivity {
                                 | ActivityAction::GatewayRecordRead
                         )
                         && record.outcome == ActivityOutcome::Succeeded)
+                    && !(query.exclude_compatibility_probes
+                        && record.action == ActivityAction::Read
+                        && record.outcome
+                            == ActivityOutcome::Refused("report_view_disabled".into()))
             })
             .take(query.limit as usize)
             .cloned()

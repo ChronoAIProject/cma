@@ -47,6 +47,8 @@ async fn audit_filter_excludes_successful_reads_before_pagination() {
         ActivityRecord::new(Read, Refused("forbidden".into())),
         ActivityRecord::new(GatewayRecordRead, Failed("source_unavailable".into())),
         ActivityRecord::new(Configure, Succeeded),
+        ActivityRecord::new(Read, Refused("report_view_disabled".into())),
+        ActivityRecord::new(Read, Failed("501".into())),
     ];
     let db = client.database(&name);
     let at = DateTime::now();
@@ -64,7 +66,8 @@ async fn audit_filter_excludes_successful_reads_before_pagination() {
 
     let mut query = ActivityQuery {
         exclude_successful_reads: true,
-        limit: 2,
+        exclude_compatibility_probes: true,
+        limit: 3,
         ..Default::default()
     };
     let ids = |page: Page<ActivitySummary>| -> Vec<ActivityId> {
@@ -75,7 +78,11 @@ async fn audit_filter_excludes_successful_reads_before_pagination() {
     assert!(query.cursor.is_some());
     assert_eq!(
         ids(first),
-        vec![records[6].id.clone(), records[5].id.clone()]
+        vec![
+            records[8].id.clone(),
+            records[6].id.clone(),
+            records[5].id.clone()
+        ]
     );
     let second = store.list_summaries(&query).await.unwrap();
     assert!(second.next_cursor.is_none());
@@ -90,7 +97,12 @@ async fn audit_filter_excludes_successful_reads_before_pagination() {
     let reads = store.list_summaries(&read_query).await.unwrap();
     assert_eq!(
         ids(reads),
-        vec![records[4].id.clone(), records[1].id.clone()]
+        vec![
+            records[8].id.clone(),
+            records[7].id.clone(),
+            records[4].id.clone(),
+            records[1].id.clone()
+        ]
     );
     db.drop().await.unwrap();
 }

@@ -184,3 +184,26 @@ it.each(['pending', 'deferred'] as const)(
     expect(hook.result.current.stale).toBe(false);
   },
 );
+
+it('remembers the typed capability refusals for both view routes across report selections', async () => {
+  const disabled = new ApiError(501, 'disabled', 'report_view_disabled');
+  const api = Object.assign(metricsClient(true), {
+    createInitial: vi.fn(),
+    initialReport: vi.fn(),
+    latestInitial: vi.fn().mockRejectedValue(disabled),
+    latest: vi.fn().mockRejectedValue(disabled),
+  });
+  const { result, rerender } = renderHook(
+    ({ selection }) => useUsageReport(api, selection, true, true, undefined, false, false, true),
+    { initialProps: { selection: defaultSelection } },
+  );
+  await waitFor(() => expect(result.current.report?.status).toBe('ready'));
+  expect(api.latestInitial).toHaveBeenCalledTimes(1);
+  expect(api.latest).toHaveBeenCalledTimes(1);
+  expect(api.create).toHaveBeenCalledTimes(1);
+  rerender({ selection: { ...defaultSelection, range: '7d' } });
+  await waitFor(() => expect(result.current.report?.status).toBe('ready'));
+  expect(api.latestInitial).toHaveBeenCalledTimes(1);
+  expect(api.latest).toHaveBeenCalledTimes(1);
+  expect(api.create).toHaveBeenCalledTimes(2);
+});

@@ -199,6 +199,10 @@ async fn initial_latest_preserves_staleness_and_typed_unsupported() {
         )
         .await;
         assert_eq!(response.status(), expected);
+        assert_eq!(
+            response.extensions().get::<UsageViewDisabled>().is_some(),
+            expected == 501
+        );
         let result = body(response).await;
         if expected == 200 {
             assert_eq!(result["view"]["stale"], true);
