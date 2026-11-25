@@ -26,6 +26,12 @@ describe('channel record management', () => {
   it.each([
     valid,
     { ...valid, creation: 'legacy', address: { state: 'not_recorded' } },
+    {
+      ...valid,
+      creation: 'legacy',
+      address: { state: 'not_recorded' },
+      retirement: { expected_version: 3, state: 'cleanup_unconfirmed' },
+    },
     { ...valid, creation: 'incomplete', address: { state: 'unverifiable' } },
     { ...valid, pending_operation: null },
     ...['create', 'update', 'delete', 'audit_routing', 'audit_attachments'].map(
@@ -75,5 +81,19 @@ describe('channel record management', () => {
       ValidationError,
     );
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it('retires the exact record version using the requested owner scope', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    const client = new Cmaeg({ baseUrl: 'https://gateway.example', fetch });
+    await client.retireLegacyChannelRecord(recordId, 3, { owner });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, options] = fetch.mock.calls[0]!;
+    expect(url).toBe(
+      `https://gateway.example/v1/channel-records/${recordId}/management?expected_version=3`,
+    );
+    expect(options?.method).toBe('DELETE');
+    expect(new Headers(options?.headers).get('X-CMAEG-Owner')).toBe(owner);
   });
 });

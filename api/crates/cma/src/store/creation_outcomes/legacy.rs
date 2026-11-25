@@ -215,18 +215,11 @@ impl CreationOutcomes {
             .projection(doc! {"_id":1,"document_schema_version":1,"record.owner":1,"record.origin":1})
             .max_time(IO_BUDGET).session(session).await.map_err(unavailable)?;
         if let Some(origin) = origin {
-            let version = origin
-                .get_i64("document_schema_version")
-                .map_err(unavailable)?;
+            super::super::work_schema::require(&origin).map_err(unavailable)?;
             let id = origin.get_str("_id").map_err(unavailable)?;
             let sandbox = origin.get_document("record").map_err(unavailable)?;
             let lineage = sandbox.get_document("origin").map_err(unavailable)?;
-            if !matches!(
-                version,
-                VERSION
-                    | super::super::work_schema::RENEWED_VERSION
-                    | super::super::work_schema::PREPARED_VERSION
-            ) || !valid_sandbox_id(id)
+            if !valid_sandbox_id(id)
                 || sandbox.get_str("owner").map_err(unavailable)? != identity.owner.as_str()
                 || lineage.get_str("type").map_err(unavailable)? != "lifecycle"
                 || lineage.get_str("operation_id").map_err(unavailable)? != operation_id
