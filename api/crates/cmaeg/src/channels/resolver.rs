@@ -63,11 +63,7 @@ impl ResolveError {
                 503,
                 "stored channel is invalid",
             ),
-            Self::CreationPending => (
-                ProblemCode::Conflict,
-                409,
-                "channel_creation_pending: the channel owner must complete the original creation request before sending events",
-            ),
+            Self::CreationPending => (ProblemCode::Conflict, 409, super::creation::PENDING_DETAIL),
             Self::RateLimited => (
                 ProblemCode::RateLimited,
                 429,

@@ -60,6 +60,7 @@ const sandboxKinds = new Set([
   'runtime_recovery_admitted',
   'runtime_recovery_quiesced',
   'revived',
+  'home_restored',
   'rotated',
   'failed',
 ]);

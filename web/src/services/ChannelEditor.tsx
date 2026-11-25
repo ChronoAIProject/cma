@@ -39,6 +39,7 @@ export type { EditorSection } from './channelForm/model';
 import { hasChannelAddress, type Channel, type ChannelListItem } from './channelTypes';
 export { hasChannelAddress, type Channel, type ChannelListItem } from './channelTypes';
 interface Pending {
+  uncertain?: boolean;
   key: string;
   body: string;
   record: string;
@@ -144,7 +145,18 @@ export function ChannelEditor({
       onDone(hasChannelAddress(value) ? value : undefined);
     } catch (e) {
       if (e instanceof ServiceError && [401, 403].includes(e.status)) denied(e.status);
-      if (e instanceof ServiceError && e.status === 400) setPending(undefined);
+      if (
+        e instanceof ServiceError &&
+        (e.status === 400 ||
+          (e.status === 409 &&
+            e.code === 'conflict' &&
+            e.message.startsWith('channel_creation_pending:') &&
+            !request.uncertain))
+      )
+        // This precondition is checked before any update effect. Keep the
+        // draft editable; an uncertain write or version conflict keeps its key.
+        setPending(undefined);
+      else setPending({ ...request, uncertain: true });
       setError(
         e instanceof Error
           ? e.message

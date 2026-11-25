@@ -89,6 +89,11 @@ export const sandboxEventKind = tagged({
     receipt: runtimeRecoveryReceipt,
   }),
   revived: variant('revived', {}),
+  home_restored: variant('home_restored', {
+    restore_id: text,
+    backup_id: text,
+    restored_to: text,
+  }),
   rotated: variant('rotated', { runtime_version: text }),
   failed: variant('failed', { failure }),
 });
