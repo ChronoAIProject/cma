@@ -1,5 +1,5 @@
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { unavailableClient, type CmaWebClient } from '../api/client';
 import { taskExperience } from '../test/taskExperience';
 import { selectTaskTemplate } from '../test/taskTemplateSelection';
@@ -324,46 +324,68 @@ it.each([
   },
 );
 
-it.each([true, false])(
-  'keeps the code preview and submission in sync when v2 support resolves to %s after typing',
-  async (supportsV2) => {
-    let finishDiscovery!: (supported: boolean) => void;
-    const { create } = setup({
-      readTaskTemplateV2Support: () =>
-        new Promise<boolean>((resolve) => {
-          finishDiscovery = resolve;
-        }),
-    });
-    await ready();
-    selectTaskTemplate('Write code');
-    const behavior = 'Create a small accessible page on a new branch.';
-    fill('Language', 'JavaScript');
-    fill('What should the code do?', behavior);
-    const preview = screen.getByRole('region', { name: 'Task preview · read-only' });
-    const start = screen.getByRole('button', { name: 'Start task' });
-    const corrected = `Write a JavaScript script for the following task:\n\n${behavior}`;
-    expect(preview).toHaveTextContent(corrected.replace(/\s+/g, ' '));
-    expect(start).toBeDisabled();
-    fireEvent.submit(start.closest('form')!);
-    expect(create).not.toHaveBeenCalled();
+const researchTopic =
+  'Compare three established methods for testing AI agent browser reliability. Cite public sources and provide a concise table.';
+const codeBehavior = 'Create a small accessible page on a new branch.';
 
-    await act(async () => finishDiscovery(supportsV2));
-    const expected = supportsV2 ? corrected : `Write a JavaScript script that ${behavior}.`;
-    expect(preview).toHaveTextContent(expected.replace(/\s+/g, ' '));
-    expect(start).toBeEnabled();
-    expect(JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!).template.version).toBe(
-      1,
-    );
-    fireEvent.click(start);
-    await waitFor(() => expect(create).toHaveBeenCalledOnce());
-    const template = {
-      id: 'code',
-      version: supportsV2 ? 2 : 1,
-      fields: { language: 'JavaScript', behavior },
-    };
-    expect(create.mock.calls[0]![0]).toMatchObject({ initial_message: expected, template });
-    expect(JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!).template).toEqual(
-      template,
+describe.each([
+  {
+    id: 'research',
+    name: 'Research a topic',
+    values: [['Topic', researchTopic]],
+    fields: { topic: researchTopic },
+    corrected: `Research the following topic:\n\n${researchTopic}\n\nSummarize the key findings, with links to sources.`,
+    legacy: `Research ${researchTopic} and summarize the key findings, with links to sources.`,
+  },
+  {
+    id: 'code',
+    name: 'Write code',
+    values: [
+      ['Language', 'JavaScript'],
+      ['What should the code do?', codeBehavior],
+    ],
+    fields: { language: 'JavaScript', behavior: codeBehavior },
+    corrected: `Write a JavaScript script for the following task:\n\n${codeBehavior}`,
+    legacy: `Write a JavaScript script that ${codeBehavior}.`,
+  },
+] as const)(
+  '$name before template support settles',
+  ({ id, name, values, fields, corrected, legacy }) => {
+    it.each([true, false])(
+      'previews and submits the same text when v2 support is %s',
+      async (supportsV2) => {
+        let finishDiscovery!: (supported: boolean) => void;
+        const { create } = setup({
+          readTaskTemplateV2Support: () =>
+            new Promise<boolean>((resolve) => {
+              finishDiscovery = resolve;
+            }),
+        });
+        await ready();
+        selectTaskTemplate(name);
+        for (const [label, value] of values) fill(label, value);
+        const preview = screen.getByRole('region', { name: 'Task preview · read-only' });
+        const start = screen.getByRole('button', { name: 'Start task' });
+        expect(preview.textContent).toBe(corrected);
+        expect(start).toBeDisabled();
+        fireEvent.submit(start.closest('form')!);
+        expect(create).not.toHaveBeenCalled();
+
+        await act(async () => finishDiscovery(supportsV2));
+        const expected = supportsV2 ? corrected : legacy;
+        expect(preview.textContent).toBe(expected);
+        expect(start).toBeEnabled();
+        expect(
+          JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!).template.version,
+        ).toBe(1);
+        fireEvent.click(start);
+        await waitFor(() => expect(create).toHaveBeenCalledOnce());
+        const template = { id, version: supportsV2 ? 2 : 1, fields };
+        expect(create.mock.calls[0]![0]).toMatchObject({ initial_message: expected, template });
+        expect(JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!).template).toEqual(
+          template,
+        );
+      },
     );
   },
 );
