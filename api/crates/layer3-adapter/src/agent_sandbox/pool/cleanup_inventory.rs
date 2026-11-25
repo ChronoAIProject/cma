@@ -5,6 +5,8 @@ use kube::{
     Api, ResourceExt,
 };
 
+use crate::HomeVolumeAttachment;
+
 use super::{
     api_error, rejected, unavailable, AgentSandboxPools, NativePoolClaim, NativePoolCleanup,
     NativePoolMember, Result, API_VERSION,
@@ -38,6 +40,39 @@ impl AgentSandboxPools {
                 .any(|owner| owner.uid == uid);
         }
         Ok((!present).then_some(version))
+    }
+
+    pub(in crate::agent_sandbox) async fn prove_retirement_volumes_absent(
+        &self,
+        member_uid: &str,
+        home: &HomeVolumeAttachment,
+    ) -> Result<()> {
+        let mut present = false;
+        for volume in complete(&self.volumes).await? {
+            if volume.namespace().as_deref() != Some(&self.config.namespace) {
+                return Err(rejected("retirement PVC is outside its namespace"));
+            }
+            let original_home =
+                volume.metadata.uid.as_deref() == Some(home.receipt.storage_generation.as_str());
+            if volume.metadata.name.as_deref() == Some(home.receipt.storage_reference.as_str())
+                && !original_home
+            {
+                return Err(rejected("retirement home UID changed"));
+            }
+            // A native VCT still belongs to this retirement if its owner
+            // reference was removed. Detached legacy homes release later.
+            present |= (original_home && home.request.policy.is_native_vct())
+                || volume
+                    .metadata
+                    .owner_references
+                    .iter()
+                    .flatten()
+                    .any(|owner| owner.uid == member_uid);
+        }
+        if present {
+            return Err(unavailable("native retirement PVCs remain present"));
+        }
+        Ok(())
     }
 
     pub(super) fn cleanup_member(

@@ -49,6 +49,21 @@ async fn verified_retirement_retries_lost_deletion_without_reconstructing_a_rece
                 .retire_verified(&handle, &request, &home, None)
                 .await
                 .unwrap();
+            if native {
+                {
+                    let mut state = fixture.state.lock().unwrap();
+                    let pvc = state.rows.get_mut(VOLUME).unwrap()["metadata"]
+                        .as_object_mut()
+                        .unwrap();
+                    pvc.remove("labels");
+                    pvc.remove("ownerReferences");
+                }
+                assert!(matches!(
+                    client(&fixture, false).verify_retired(&handle, &home).await,
+                    Err(AdapterError::Unavailable(reason)) if reason == "native retirement PVCs remain present"
+                ));
+                fixture.state.lock().unwrap().rows.remove(VOLUME).unwrap();
+            }
             client(&fixture, false)
                 .verify_retired(&handle, &home)
                 .await
@@ -64,7 +79,7 @@ async fn verified_retirement_retries_lost_deletion_without_reconstructing_a_rece
                 .unwrap();
             let state = fixture.state.lock().unwrap();
             assert!(!state.rows.contains_key(MEMBER));
-            assert!(state.rows.contains_key(VOLUME));
+            assert_eq!(state.rows.contains_key(VOLUME), !native);
             let deletes: Vec<_> = state
                 .calls
                 .iter()
@@ -166,6 +181,7 @@ async fn fresh_finality_waits_for_owned_pods_regardless_of_tracking_label() {
         assert!(state.calls.iter().all(|(call, _)| call.starts_with("GET ")));
     }
     fixture.state.lock().unwrap().rows.remove(path);
+    fixture.state.lock().unwrap().rows.remove(VOLUME).unwrap();
     runtime.verify_retired(&handle, &home).await.unwrap();
 }
 
@@ -214,13 +230,9 @@ async fn restarted_verifier_waits_for_original_pod_after_acknowledged_delete() {
             result = tokio::time::timeout(deadline, gate.entered.notified()) => result.unwrap(),
         }
         if remove_pod {
-            fixture
-                .state
-                .lock()
-                .unwrap()
-                .rows
-                .remove(&pod_path)
-                .unwrap();
+            let mut state = fixture.state.lock().unwrap();
+            state.rows.remove(&pod_path).unwrap();
+            state.rows.remove(VOLUME).unwrap();
         }
         gate.release.notify_one();
     }
@@ -243,10 +255,7 @@ async fn restarted_verifier_waits_for_original_pod_after_acknowledged_delete() {
     ));
     let state = fixture.state.lock().unwrap();
     assert_eq!(state.rows[MEMBER], replacement);
-    assert_eq!(
-        state.rows[VOLUME]["metadata"]["uid"],
-        home.receipt.storage_generation
-    );
+    assert!(!state.rows.contains_key(VOLUME));
     assert!(state.calls[before_restart..]
         .iter()
         .all(|(call, _)| call.starts_with("GET ")));
@@ -254,7 +263,7 @@ async fn restarted_verifier_waits_for_original_pod_after_acknowledged_delete() {
 
 #[tokio::test]
 async fn finality_rejects_replacements_and_incomplete_observations() {
-    for change in ["runtime", "claim", "pod_page", "runtime_page"] {
+    for change in ["runtime", "claim", "home", "pod_page", "runtime_page"] {
         let (fixture, home, request, handle) = bound(true).await;
         let original = fixture.state.lock().unwrap().rows[MEMBER].clone();
         let origin = home.receipt.native_authority.as_deref().unwrap();
@@ -282,6 +291,9 @@ async fn finality_rejects_replacements_and_incomplete_observations() {
                     let mut replacement = original_claim;
                     replacement["metadata"]["uid"] = json!("replacement");
                     state.rows.insert(claim_path, replacement);
+                }
+                "home" => {
+                    state.rows.get_mut(VOLUME).unwrap()["metadata"]["uid"] = json!("replacement");
                 }
                 "pod_page" | "runtime_page" => {
                     let complete = json!({"apiVersion":"v1","kind":"List","metadata":{"resourceVersion":"20"},"items":[]});
@@ -354,6 +366,7 @@ async fn finality_checks_owned_pods_on_later_pages() {
     {
         let mut state = fixture.state.lock().unwrap();
         state.calls.clear();
+        state.rows.remove(VOLUME).unwrap();
         state.rows.insert(format!("{pods}/survivor"), pod);
         state
             .read_replies
@@ -381,4 +394,91 @@ async fn finality_checks_owned_pods_on_later_pages() {
         .await
         .unwrap()
         .unwrap();
+}
+
+#[tokio::test]
+async fn finality_reads_every_pvc_page_and_refuses_a_label_less_owned_survivor() {
+    let (fixture, home, request, handle) = bound(true).await;
+    let runtime = client(&fixture, false);
+    runtime
+        .retire_verified(&handle, &request, &home, None)
+        .await
+        .unwrap();
+    const PVCS: &str = "/api/v1/namespaces/cma-test/persistentvolumeclaims";
+    let pvc = json!({
+        "apiVersion": "v1",
+        "kind": "PersistentVolumeClaim",
+        "metadata": {
+            "name": "extra-volume",
+            "namespace": "cma-test",
+            "uid": "extra-volume-uid",
+            "deletionTimestamp": "2026-01-01T00:00:00Z",
+            "ownerReferences": [{
+                "apiVersion": "agents.x-k8s.io/v1beta1", "kind": "Sandbox",
+                "name": "warm-member", "uid": "member-uid", "controller": true
+            }]
+        }
+    });
+    let mut unrelated = pvc.clone();
+    unrelated["metadata"]["name"] = json!("sibling-volume");
+    unrelated["metadata"]["uid"] = json!("sibling-volume-uid");
+    unrelated["metadata"]["ownerReferences"][0]["uid"] = json!("sibling-member-uid");
+    let last = json!({
+        "apiVersion": "v1", "kind": "PersistentVolumeClaimList",
+        "metadata": {"resourceVersion": "100"}, "items": []
+    });
+    let mut first = last.clone();
+    first["metadata"]["continue"] = json!("next");
+    first["items"] = json!([unrelated]);
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.rows.remove(VOLUME).unwrap();
+        state.calls.clear();
+        state.list_queries.clear();
+    }
+    for (resource_version, items, expected_refusal) in [
+        (
+            "100",
+            json!([pvc]),
+            Some("native retirement PVCs remain present"),
+        ),
+        (
+            "101",
+            json!([]),
+            Some("native cleanup inventory changed between pages"),
+        ),
+        ("100", json!([]), None),
+    ] {
+        let mut second = last.clone();
+        second["metadata"]["resourceVersion"] = json!(resource_version);
+        second["items"] = items;
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .list_replies
+            .extend([(200, first.clone()), (200, second)]);
+        let result = runtime.verify_retired(&handle, &home).await;
+        match expected_refusal {
+            Some(expected) => assert!(matches!(
+                result,
+                Err(AdapterError::Unavailable(reason)) if reason == expected
+            )),
+            None => result.unwrap(),
+        }
+    }
+    let state = fixture.state.lock().unwrap();
+    assert!(state.list_replies.is_empty());
+    assert_eq!(state.list_queries.len(), 6);
+    assert!(state
+        .list_queries
+        .iter()
+        .all(|query| !query.contains("labelSelector")));
+    assert!(state
+        .list_queries
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .all(|query| query.contains("continue=next")));
+    assert!(state.calls.iter().all(|(call, _)| call.starts_with("GET ")));
 }
