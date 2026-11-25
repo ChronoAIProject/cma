@@ -13,7 +13,7 @@ from staging_cd_comparisons import SelectionIncomplete, batch_selection
 from staging_cd_admission import event_identity
 from staging_cd_common import matches, require
 from staging_cd_compatibility import GROUP
-from staging_cd_plan_window import (PlanRefused, earlier_transition, introductions, plan_window, read_finals,
+from staging_cd_plan_window import (HISTORY_LIMIT, PlanRefused, earlier_transition, introductions, plan_window, read_finals,
                                     window_line, window_warning)
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
@@ -109,7 +109,7 @@ def release_queue(root, adoption, head, event_source, metrics, budget=None, fina
     the chosen start and why. Raises PlanRefused when no start can be proved.
     """
     deadline = None if budget is None else time.monotonic() + budget
-    history = DevelopHistory(head, git(root, "rev-list", "--first-parent", "--max-count=2000", head).splitlines())
+    history = DevelopHistory(head, git(root, "rev-list", "--first-parent", f"--max-count={HISTORY_LIMIT}", head).splitlines())
     require(event_source in history.positions,
             "Push commit is no longer on develop")
     if finals is None:
@@ -122,6 +122,9 @@ def release_queue(root, adoption, head, event_source, metrics, budget=None, fina
         # Every batch shares one budget with the tag reads before it.
         return None if deadline is None else max(1, int(deadline - time.monotonic()))
 
+    if event_source != head:
+        window.update(stale=head, head=event_source)
+        return queue_of(head, event_source, [], None)
     develop, lanes = finals(history)
     if lanes is None:
         # Allocation only plans the develop head; the newer push's run plans this one too.
@@ -173,7 +176,9 @@ def main(argv=None):
     def operation(_masker):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Allocation planning only accepts develop pushes")
-        head = git(root, "rev-parse", "origin/develop")
+        # The checkout is pinned to the push that owns this workflow, even on reruns.
+        git(root, "fetch", "--no-tags", f"--depth={HISTORY_LIMIT + 1}", "origin", "refs/heads/develop")
+        head = git(root, "rev-parse", "FETCH_HEAD^{commit}")
         try:
             queue = release_queue(root, env.get("CD_ADOPTION_SHA"), head, env["GITHUB_SHA"], metrics,
                                   budget=BUDGET_SECONDS, window=window,
