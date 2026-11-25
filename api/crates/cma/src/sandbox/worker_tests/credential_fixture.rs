@@ -66,6 +66,16 @@ impl MemoryCredentials {
 
 #[async_trait::async_trait]
 impl SandboxCredentialController for MemoryCredentials {
+    async fn retain_retirement_issuance(
+        &self,
+        _: &Sandbox,
+        _: SystemTime,
+    ) -> Result<(), CredentialError> {
+        // This fixture mints and retains material synchronously, and it has
+        // no unresolved external issuance to hand off.
+        Ok(())
+    }
+
     async fn issue(
         &self,
         sandbox: &Sandbox,

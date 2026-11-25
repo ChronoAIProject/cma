@@ -138,73 +138,81 @@ async fn rejected_result_write_keeps_discoverable_responsibility_after_return() 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a replica set"]
 async fn retirement_retains_exact_initial_issuance_for_revoke_only_custody() {
-    let mut f = Fixture::new("retirement_revoke_only_custody").await;
-    let app = format!("retirement-result-rejected-{}", uuid::Uuid::new_v4());
-    f.use_custody_app(&app).await;
-    let issuing = f.issue(1);
-    let mint = f.prepare().await;
-    let intent = f.custody.issuance(&f.claim).await.unwrap().unwrap();
-    let before = reject_command(&f, &app, "insert").await;
-    accepted(mint);
-    assert!(matches!(
-        issuing.await.unwrap().unwrap(),
-        Err(CredentialError::Uncertain)
-    ));
-    finish_rejection(&f, before).await;
-    let (_worker, _) = retirement_fixture::begin(&f).await;
-    let claim = f
-        .store
-        .claim_sandbox_work(&f.claim.id, "retirement-custody", at(0), at(15))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(claim.status, SandboxStatus::Retiring);
-    assert_eq!(claim.work.step, SandboxWorkStep::StopAgents);
-    let controller = f.controller.clone();
-    WorkAuthority::new(
-        ClaimedWork::Sandbox(Box::new(claim.clone())),
-        tokio::time::Instant::now(),
-    )
-    .run(
-        async {
-            controller
-                .retain_retirement_issuance(&claim, SystemTime::now())
+    for (enabled, provenance_allowed) in [(true, true), (false, true), (true, false)] {
+        let mut f = Fixture::new_with_runtime("retirement_revoke_only_custody", true, true).await;
+        let app = format!("retirement-result-rejected-{}", uuid::Uuid::new_v4());
+        f.use_custody_app(&app).await;
+        let issuing = f.issue(1);
+        let mint = f.prepare().await;
+        let intent = f.custody.issuance(&f.claim).await.unwrap().unwrap();
+        let before = reject_command(&f, &app, "insert").await;
+        accepted(mint);
+        assert!(matches!(
+            issuing.await.unwrap().unwrap(),
+            Err(CredentialError::Uncertain)
+        ));
+        finish_rejection(&f, before).await;
+        let (_worker, _) = retirement_fixture::begin(&f).await;
+        if !provenance_allowed {
+            Kind::Sandbox
+                .set(
+                    &f.store,
+                    doc! {"channel_mint_reconciliation": {"fixture": true}},
+                )
+                .await;
+        }
+        let (worker, controller) = retirement_fixture::native_custody_worker(&f, enabled);
+        let independent = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+        let records = independent
+            .database(&f.name)
+            .collection::<mongodb::bson::Document>("sandbox_credential_issuance");
+        let filter = doc! {"retirement_custody.state":"pending", "retirement_custody.issuance.operation_id": &intent.operation_id};
+        let mut previous = None;
+        for _ in 0..2 {
+            assert!(worker
+                .run_one(&f.claim.id, SystemTime::now())
                 .await
-                .unwrap();
-            controller
-                .retain_retirement_issuance(&claim, SystemTime::now())
-                .await
-                .unwrap();
-            Ok(())
-        },
-        || async {
-            f.store
-                .renew_sandbox_authority(&claim, &at(0), &at(15))
-                .await
-        },
-    )
-    .await
-    .unwrap();
-    let independent = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
-        .await
-        .unwrap();
-    let row = independent.database(&f.name).collection::<mongodb::bson::Document>("sandbox_credential_issuance")
-        .find_one(doc! {"retirement_custody.state":"pending", "retirement_custody.issuance.operation_id": &intent.operation_id})
-        .await.unwrap().unwrap();
-    let frozen = row.get_document("retirement_custody").unwrap();
-    assert_eq!(
-        frozen.get_str("reason").unwrap(),
-        "initial_issuance_unresolved"
-    );
-    assert_eq!(frozen.get("issuance"), row.get("record"));
-    assert_eq!(f.custody.issuance(&claim).await.unwrap(), Some(intent));
-    assert!(f.custody.list(&claim.id).await.unwrap().is_empty());
-    assert!(matches!(
-        controller.settle_revocations(&claim).await,
-        Err(CredentialError::Uncertain)
-    ));
-    assert_eq!(f.peer.count_route("POST", "/api/v1/api-keys"), 1);
-    f.cleanup().await;
+                .unwrap());
+            let row = records.find_one(filter.clone()).await.unwrap();
+            if enabled && provenance_allowed {
+                let row = row.unwrap();
+                let marker = row.get_document("retirement_custody").unwrap();
+                assert_eq!(
+                    marker.get_str("reason").unwrap(),
+                    "initial_issuance_unresolved"
+                );
+                let mut immutable = row.get_document("record").unwrap().clone();
+                immutable.remove("next_check_at");
+                assert_eq!(marker.get_document("issuance").unwrap(), &immutable);
+                if let Some(previous) = previous.as_ref() {
+                    assert_eq!(previous, marker);
+                }
+                previous = Some(marker.clone());
+            } else {
+                assert!(row.is_none());
+            }
+        }
+        let retiring = f.store.get_sandbox(&f.claim.id).await.unwrap().unwrap();
+        assert_eq!(retiring.status, SandboxStatus::Retiring);
+        assert_eq!(retiring.work.step, SandboxWorkStep::StopAgents);
+        assert_eq!(f.custody.issuance(&retiring).await.unwrap(), Some(intent));
+        assert!(f.custody.list(&retiring.id).await.unwrap().is_empty());
+        if provenance_allowed {
+            assert!(matches!(
+                controller.settle_revocations(&retiring).await,
+                Err(CredentialError::Uncertain)
+            ));
+        } else {
+            assert!(matches!(
+                controller.settle_revocations(&retiring).await,
+                Err(CredentialError::Unavailable(_))
+            ));
+        }
+        assert_eq!(f.peer.count_route("POST", "/api/v1/api-keys"), 1);
+        f.cleanup().await;
+    }
 }
 
 #[tokio::test]

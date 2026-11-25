@@ -23,7 +23,9 @@ impl SandboxWorker {
             .retirement_finalizer
             .as_ref()
             .filter(|_| NativeRetirementFinalizer::applies(&sandbox));
-        if finalizer.is_some_and(|finalizer| finalizer.admission_enabled()) {
+        if finalizer.is_some_and(|finalizer| finalizer.admission_enabled())
+            && crate::sandbox::initial_retirement_issuance_candidate(&sandbox)
+        {
             if let Err(error) = self
                 .dependencies
                 .credentials

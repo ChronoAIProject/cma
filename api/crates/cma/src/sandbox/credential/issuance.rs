@@ -42,6 +42,18 @@ pub(crate) enum IssuanceObservation {
     Unavailable,
 }
 
+pub(crate) fn initial_retirement_issuance_candidate(sandbox: &Sandbox) -> bool {
+    use layer2_core::sandbox::{SandboxStatus, SandboxWorkStep};
+    sandbox.status == SandboxStatus::Retiring
+        && sandbox.work.step == SandboxWorkStep::StopAgents
+        && sandbox.credential.source.is_managed()
+        && sandbox.credential.key_generation == 0
+        && !sandbox.credential.delivered
+        && sandbox.credential.current.is_none()
+        && sandbox.credential.pending.is_none()
+        && sandbox.credential.revoke_debt.is_empty()
+}
+
 impl ManagedSandboxCredentials {
     pub(super) async fn issue_protected(
         &self,

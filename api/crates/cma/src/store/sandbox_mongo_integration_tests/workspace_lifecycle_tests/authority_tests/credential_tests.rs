@@ -49,6 +49,10 @@ impl Fixture {
     }
 
     async fn new_mode(suffix: &str, enabled: bool) -> Self {
+        Self::new_with_runtime(suffix, enabled, false).await
+    }
+
+    async fn new_with_runtime(suffix: &str, enabled: bool, native: bool) -> Self {
         use base64::Engine;
         use ring::rand::{SecureRandom, SystemRandom};
         let (client, name) = database(suffix).await;
@@ -65,6 +69,15 @@ impl Fixture {
         let mut row = provisioning_sandbox(Kind::Sandbox.id());
         row.status = SandboxStatus::Installing;
         row.work = SandboxWorkState::new(SandboxWorkStep::MintInitialCredential, at(-1));
+        if native {
+            row.runtime = Some(layer2_core::sandbox::RuntimeBinding {
+                boot_id: None,
+                runtime_id: "agent-sandbox:fixture".into(),
+                runtime_version: "fixture-runtime".into(),
+                provision_generation: None,
+                bound_at: at(-1),
+            });
+        }
         row.credential.reaches = vec![layer2_core::ServiceId::new("fixture-service")];
         row.profile.content.nyxid_services = row.credential.reaches.clone();
         store.create_sandbox(row).await.unwrap();

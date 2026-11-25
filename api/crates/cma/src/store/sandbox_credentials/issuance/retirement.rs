@@ -1,9 +1,6 @@
 //! Retained revoke-only custody for an unresolved initial mint.
 use super::*;
-use layer2_core::{
-    rfc3339_at,
-    sandbox::{SandboxStatus, SandboxWorkStep},
-};
+use layer2_core::rfc3339_at;
 use std::time::SystemTime;
 
 /// Freeze the exact unresolved issuance under the retirement claim. The
@@ -13,15 +10,7 @@ pub(in crate::store::sandbox_credentials) async fn retain_retirement(
     sandbox: &Sandbox,
     now: SystemTime,
 ) -> Result<(), CredentialCustodyError> {
-    if sandbox.status != SandboxStatus::Retiring
-        || sandbox.work.step != SandboxWorkStep::StopAgents
-        || !sandbox.credential.source.is_managed()
-        || sandbox.credential.key_generation != 0
-        || sandbox.credential.delivered
-        || sandbox.credential.current.is_some()
-        || sandbox.credential.pending.is_some()
-        || !sandbox.credential.revoke_debt.is_empty()
-    {
+    if !crate::sandbox::initial_retirement_issuance_candidate(sandbox) {
         return Ok(());
     }
     let Some(intent) = read(store, sandbox).await? else {
@@ -49,12 +38,14 @@ pub(in crate::store::sandbox_credentials) async fn retain_retirement(
         if decode(row.clone())? != intent {
             return Err(corrupt());
         }
-        let exact = row.get("record").cloned().ok_or_else(corrupt)?;
+        let exact = row.get_document("record").map_err(|_| corrupt())?.clone();
+        let mut frozen = exact.clone();
+        frozen.remove("next_check_at");
         if let Some(retirement) = row.get("retirement_custody") {
             let retirement = retirement.as_document().ok_or_else(corrupt)?;
             if retirement.get_i64("version").ok() != Some(1)
                 || retirement.get_str("state").ok() != Some("pending")
-                || retirement.get("issuance") != Some(&exact)
+                || retirement.get_document("issuance").ok() != Some(&frozen)
                 || retirement.get_str("reason").ok() != Some("initial_issuance_unresolved")
             {
                 return Err(corrupt());
@@ -86,7 +77,7 @@ pub(in crate::store::sandbox_credentials) async fn retain_retirement(
                 "retirement_custody":{"$exists":false}},
                 doc! {"$set":{"retirement_custody":{
                     "version":1_i64, "state":"pending", "reason":"initial_issuance_unresolved",
-                    "issuance":exact, "recorded_at":rfc3339_at(now),
+                    "issuance":frozen, "recorded_at":rfc3339_at(now),
                 }}},
             )
             .session(&mut session)

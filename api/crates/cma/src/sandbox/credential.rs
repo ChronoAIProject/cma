@@ -10,7 +10,8 @@ use crate::auth::persistence::SecretValue;
 mod contracts;
 mod issuance;
 pub(crate) use issuance::{
-    CredentialIssuance, IssuanceIdentity, IssuanceObservation, IssuanceState,
+    initial_retirement_issuance_candidate, CredentialIssuance, IssuanceIdentity,
+    IssuanceObservation, IssuanceState,
 };
 pub(crate) mod owner_tokens;
 mod provided;

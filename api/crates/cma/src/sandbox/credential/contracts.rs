@@ -136,7 +136,9 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
         _sandbox: &Sandbox,
         _now: SystemTime,
     ) -> Result<(), CredentialCustodyError> {
-        Ok(())
+        Err(CredentialCustodyError::Unavailable(
+            "retirement issuance custody is not supported".into(),
+        ))
     }
 
     /// Retain supplied material only. Managed material requires an issuance intent
@@ -272,6 +274,8 @@ pub(crate) trait SandboxCredentialController: Send + Sync {
         _sandbox: &Sandbox,
         _now: SystemTime,
     ) -> Result<(), CredentialError> {
-        Ok(())
+        Err(CredentialError::Unavailable(
+            "retirement issuance custody is not supported".into(),
+        ))
     }
 }

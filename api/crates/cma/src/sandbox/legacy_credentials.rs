@@ -60,6 +60,14 @@ impl SandboxCredentialController for LegacySandboxCredentials {
         self.provenance.require_ordinary(&sandbox.id).await?;
         self.ordinary.settle_revocations(sandbox).await
     }
+    async fn retain_retirement_issuance(
+        &self,
+        sandbox: &Sandbox,
+        now: SystemTime,
+    ) -> Result<(), CredentialError> {
+        self.provenance.require_ordinary(&sandbox.id).await?;
+        self.ordinary.retain_retirement_issuance(sandbox, now).await
+    }
     async fn material(
         &self,
         sandbox_id: &SandboxId,

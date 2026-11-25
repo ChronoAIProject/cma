@@ -15,6 +15,18 @@ use layer3_adapter::{
 };
 
 struct EmptyChildren;
+struct PendingChildren;
+#[async_trait::async_trait]
+impl LiveAgentStopper for PendingChildren {
+    async fn stop_live_agents(
+        &self,
+        _: &Sandbox,
+        _: Option<&RuntimeHandle>,
+        _: &str,
+    ) -> Result<(), SandboxDependencyError> {
+        Err(SandboxDependencyError::AgentsStopping)
+    }
+}
 #[async_trait::async_trait]
 impl LiveAgentStopper for EmptyChildren {
     async fn stop_live_agents(
@@ -87,6 +99,51 @@ impl SandboxCredentialController for ScanObserver {
 
 pub(super) async fn begin(f: &Fixture) -> (Arc<SandboxWorker>, Arc<ScanObserver>) {
     begin_with_store(f, Arc::new(peer(&f.name).await)).await
+}
+
+pub(super) fn native_custody_worker(
+    f: &Fixture,
+    enabled: bool,
+) -> (Arc<SandboxWorker>, Arc<dyn SandboxCredentialController>) {
+    let store = Arc::new(f.store.clone());
+    let registry = Arc::new(LiveAgentRegistry::default());
+    let spec = CodexSandboxSpec::default();
+    let image = spec.deployment.image.uri.clone();
+    let (adapter, _) = CodexAdapter::in_memory(spec);
+    let adapter: Arc<dyn layer3_adapter::SandboxAdapter> = Arc::new(adapter);
+    let credentials = crate::sandbox::legacy_credentials::LegacySandboxCredentials::new(
+        f.controller.clone(),
+        store.clone(),
+    );
+    let mut config = SandboxWorkerConfig::new(
+        "retirement-custody",
+        "work-contract",
+        image,
+        SandboxPolicy::default(),
+    )
+    .with_replicas(true);
+    config.retry_delay = Duration::ZERO;
+    config.retirement_finalizer = Some(Arc::new(crate::sandbox::NativeRetirementFinalizer::new(
+        store.clone(),
+        adapter.clone(),
+        "work-contract".into(),
+        store.clone(),
+        enabled,
+    )));
+    let worker = SandboxWorker::new(
+        SandboxWorkerDependencies {
+            store: store.clone(),
+            adapter,
+            credentials: credentials.clone(),
+            workspaces: Arc::new(EmptyChildren),
+            agents: Arc::new(PendingChildren),
+            registry: registry.clone(),
+            updates: DurableAgentUpdateRecorder::new(store.clone()),
+            operations: AgentOperationService::new(store, registry),
+        },
+        config,
+    );
+    (worker, credentials)
 }
 
 pub(super) async fn begin_with_store(

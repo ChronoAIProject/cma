@@ -26,6 +26,8 @@ mod provenance_backfill;
 pub(crate) use provenance_backfill::AgentProvenanceBackfill;
 mod model_request_budget;
 mod native_retirement_finalizer;
+#[cfg(test)]
+pub(crate) use native_retirement_finalizer::NativeRetirementFinalizer;
 mod reconciliation;
 pub(crate) mod retained_recovery;
 pub(crate) mod retained_runtime_service;
@@ -54,10 +56,10 @@ pub(crate) use composition::{
     SandboxLifecycleComposition, SandboxLifecycleConfig, SandboxLifecycleDependencies,
 };
 pub(crate) use credential::{
-    CredentialCustodyError, CredentialError, CredentialIssuance, CredentialMaterial,
-    CredentialRevocation, IssuanceIdentity, IssuanceObservation, IssuanceState,
-    ManagedSandboxCredentials, OwnerTokenSource, SandboxCredentialController,
-    SandboxCredentialCustody,
+    initial_retirement_issuance_candidate, CredentialCustodyError, CredentialError,
+    CredentialIssuance, CredentialMaterial, CredentialRevocation, IssuanceIdentity,
+    IssuanceObservation, IssuanceState, ManagedSandboxCredentials, OwnerTokenSource,
+    SandboxCredentialController, SandboxCredentialCustody,
 };
 #[cfg(test)]
 pub(crate) use live_agents::record_update_for_test;
