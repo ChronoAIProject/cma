@@ -37,9 +37,12 @@ impl CmaServiceConnectionBroker {
     pub(crate) async fn github_connections(
         &self,
         owner: &SubjectId,
+        observe_accounts: bool,
     ) -> Option<super::GitHubConnections> {
         match &self.mode {
-            BrokerMode::Provider(broker) => Some(broker.github_connections(owner).await),
+            BrokerMode::Provider(broker) => {
+                Some(broker.github_connections(owner, observe_accounts).await)
+            }
             BrokerMode::Trusted => None,
         }
     }

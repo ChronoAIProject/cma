@@ -41,7 +41,7 @@ async fn declared_write_checks_only_the_unique_active_default_oauth_key() {
         provider
             .state
             .set_services_reply(Reply::json(json!({"services":rows})));
-        let report = broker.github_connections(&owner).await;
+        let report = broker.github_connections(&owner, false).await;
         assert_eq!(
             serde_json::to_value(report.scope_check(PublicRepositoryWrite)).unwrap(),
             json!({
@@ -90,7 +90,7 @@ async fn declared_write_checks_only_the_unique_active_default_oauth_key() {
         provider
             .state
             .set_services_reply(Reply::json(json!({"services":rows})));
-        let report = broker.github_connections(&owner).await;
+        let report = broker.github_connections(&owner, false).await;
         assert_eq!(
             serde_json::to_value(report.scope_check(PublicRepositoryWrite)).unwrap(),
             json!({"status":"verification_unavailable"})
@@ -100,7 +100,7 @@ async fn declared_write_checks_only_the_unique_active_default_oauth_key() {
     provider.state.set_services_reply(Reply::json(json!({
         "services":[row("weak", "api-github", false)]
     })));
-    let report = broker.github_connections(&owner).await;
+    let report = broker.github_connections(&owner, false).await;
     assert_eq!(
         serde_json::to_value(report.scope_check(PublicRepositoryWrite)).unwrap(),
         json!({"status":"missing_connection"})
@@ -110,7 +110,7 @@ async fn declared_write_checks_only_the_unique_active_default_oauth_key() {
         .set_services_reply(Reply::json(json!({"services":[{
             "id":"weak", "slug":"api-github", "catalog_service_id":"foreign", "is_active":true
         }]})));
-    let report = broker.github_connections(&owner).await;
+    let report = broker.github_connections(&owner, false).await;
     assert_eq!(
         serde_json::to_value(report.scope_check(PublicRepositoryWrite)).unwrap(),
         json!({"status":"verification_unavailable"})
@@ -175,7 +175,7 @@ async fn scope_check_distinguishes_missing_and_empty_evidence_and_the_two_operat
                 "status":"active", "connection_status":"active"
             })),
         );
-        let report = broker.github_connections(&owner).await;
+        let report = broker.github_connections(&owner, false).await;
         for (need, expected) in [
             (PublicRepositoryWrite, write),
             (PrivateRepositoryRead, read),
@@ -216,7 +216,7 @@ async fn scope_check_distinguishes_missing_and_empty_evidence_and_the_two_operat
             .lock()
             .unwrap()
             .insert("selected".into(), Reply::json(detail));
-        let report = broker.github_connections(&owner).await;
+        let report = broker.github_connections(&owner, false).await;
         for need in [PublicRepositoryWrite, PrivateRepositoryRead] {
             let check = serde_json::to_value(report.scope_check(need)).unwrap();
             assert_eq!(check["status"], expected);
@@ -336,7 +336,9 @@ async fn reports_both_owner_visible_grants_without_claiming_a_selected_connectio
         provider
             .state
             .set_services_reply(Reply::json(json!({"services": rows})));
-        let result = broker.github_connections(&SubjectId::new("visitor")).await;
+        let result = broker
+            .github_connections(&SubjectId::new("visitor"), false)
+            .await;
         assert_eq!(
             serde_json::to_value(result).unwrap(),
             json!({
@@ -361,121 +363,14 @@ async fn reports_both_owner_visible_grants_without_claiming_a_selected_connectio
         Reply::json(json!({"id":"different","slug":"api-github-2",
             "catalog_service_id":"github-catalog","label":"Repository access","granted_scopes":["repo"]})),
     );
-    let result = broker.github_connections(&SubjectId::new("visitor")).await;
+    let result = broker
+        .github_connections(&SubjectId::new("visitor"), false)
+        .await;
     assert_eq!(
         serde_json::to_value(result).unwrap(),
         json!({"manage_url":"https://nyx.example/keys"})
     );
 }
 
-#[tokio::test]
-async fn verifies_only_the_selected_active_user_service_and_its_live_grant() {
-    let provider = Provider::start().await;
-    *provider.state.catalog_reply.lock().unwrap() =
-        Reply::json(json!({"services": [{"id": "github-catalog", "slug": "api-github"}]}));
-    let strong = json!({"id":"strong", "slug":"api-github-2", "catalog_service_id":"github-catalog",
-        "is_active":true, "credential_source":{"type":"personal"}});
-    let weak = json!({"id":"weak", "slug":"strong", "catalog_service_id":"github-catalog",
-        "is_active":true, "credential_source":{"type":"personal"}});
-    let default = json!({"id":"default", "slug":"api-github",
-        "catalog_service_id":"github-catalog", "is_active":true,
-        "credential_source":{"type":"personal"}});
-    let strong_detail = json!({"id":"strong", "slug":"api-github-2",
-        "catalog_service_id":"github-catalog", "label":"Repository access",
-        "granted_scopes":["repo"], "credential_type":"oauth2", "is_active":true,
-        "status":"active", "connection_status":"active"});
-    provider.state.credential_replies.lock().unwrap().extend([
-        ("strong".into(), Reply::json(strong_detail.clone())),
-        ("weak".into(), Reply::json(json!({"id":"weak","slug":"strong",
-            "catalog_service_id":"github-catalog","label":"Profile access","granted_scopes":["read:user"],
-            "credential_type":"oauth2","is_active":true,"status":"active","connection_status":"active"}))),
-    ]);
-    provider.state.set_services_reply(Reply::json(
-        json!({"services":[default, strong.clone(), weak.clone()]}),
-    ));
-    let broker = broker(&provider, Tokens::available());
-    let owner = SubjectId::new("visitor");
-    assert!(matches!(
-        broker.verify_github_repo_connection(&owner, "weak").await,
-        Err(ServiceConnectionError::Refused)
-    ));
-    assert!(provider.state.github_proxy_reads.lock().unwrap().is_empty());
-    assert!(matches!(
-        broker.verify_github_repo_connection(&owner, "strong").await,
-        Err(ServiceConnectionError::Unavailable(_))
-    ));
-    *provider.state.github_proxy_scopes.lock().unwrap() = Some("read:user".into());
-    assert!(matches!(
-        broker.verify_github_repo_connection(&owner, "strong").await,
-        Err(ServiceConnectionError::Refused)
-    ));
-    *provider.state.github_proxy_scopes.lock().unwrap() = Some("read:user, repo".into());
-    let proof = broker
-        .verify_github_repo_connection(&owner, "strong")
-        .await
-        .unwrap();
-    assert_eq!(proof.id(), "strong");
-    assert_eq!(proof.catalog_id(), "github-catalog");
-    let reads = provider.state.github_proxy_reads.lock().unwrap().clone();
-    assert_eq!(reads, vec![("github-catalog".into(), "strong".into()); 3]);
-
-    for (field, value) in [
-        ("status", Some(json!("revoked"))),
-        ("connection_status", Some(json!("expired"))),
-        ("credential_type", None),
-        ("is_active", None),
-        ("status", None),
-        ("connection_status", None),
-    ] {
-        let mut detail = strong_detail.clone();
-        let fields = detail.as_object_mut().unwrap();
-        match value {
-            Some(value) => {
-                fields.insert(field.into(), value);
-            }
-            None => {
-                fields.remove(field);
-            }
-        }
-        provider
-            .state
-            .credential_replies
-            .lock()
-            .unwrap()
-            .insert("strong".into(), Reply::json(detail));
-        assert!(matches!(
-            broker.verify_github_repo_connection(&owner, "strong").await,
-            Err(ServiceConnectionError::Refused)
-        ));
-    }
-    assert_eq!(*provider.state.github_proxy_reads.lock().unwrap(), reads);
-    provider
-        .state
-        .credential_replies
-        .lock()
-        .unwrap()
-        .insert("strong".into(), Reply::json(strong_detail));
-
-    let mut inactive = strong.clone();
-    inactive["is_active"] = json!(false);
-    let mut unauthorized = strong.clone();
-    unauthorized["credential_source"] = json!({"type":"org","allowed":false});
-    let mut wrong_catalog = strong.clone();
-    wrong_catalog["catalog_service_id"] = json!("other-catalog");
-    for rows in [
-        vec![weak.clone()],
-        vec![weak.clone(), inactive],
-        vec![weak.clone(), unauthorized],
-        vec![weak.clone(), wrong_catalog],
-        vec![weak, strong.clone(), strong],
-    ] {
-        provider
-            .state
-            .set_services_reply(Reply::json(json!({"services":rows})));
-        assert!(matches!(
-            broker.verify_github_repo_connection(&owner, "strong").await,
-            Err(ServiceConnectionError::Refused)
-        ));
-    }
-    assert_eq!(*provider.state.github_proxy_reads.lock().unwrap(), reads);
-}
+#[path = "github/account.rs"]
+mod account;

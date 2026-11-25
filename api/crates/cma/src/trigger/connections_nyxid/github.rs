@@ -2,7 +2,9 @@ use serde::Serialize;
 
 use super::*;
 
+mod account;
 mod repository;
+use account::GitHubAccount;
 pub(crate) use repository::GitHubRepositoryCheck;
 
 pub(crate) const GITHUB_SERVICE: &str = "api-github";
@@ -111,6 +113,8 @@ struct GitHubConnection {
     label: String,
     granted_scopes: Option<Vec<String>>,
     manage_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account: Option<GitHubAccount>,
     #[serde(skip)]
     active_oauth: bool,
 }
@@ -140,7 +144,11 @@ struct KeyDetail {
 }
 
 impl NyxidServiceConnectionBroker {
-    pub(crate) async fn github_connections(&self, owner: &SubjectId) -> GitHubConnections {
+    pub(crate) async fn github_connections(
+        &self,
+        owner: &SubjectId,
+        observe_accounts: bool,
+    ) -> GitHubConnections {
         let manage_url = self
             .browser_origin
             .join("/keys")
@@ -148,11 +156,12 @@ impl NyxidServiceConnectionBroker {
         let deadline = Instant::now() + PROVIDER_HTTP_TIMEOUT;
         let credential = self.credential(owner).await;
         let connections = match credential {
-            Ok(credential) if Instant::now() < deadline => {
-                timeout_at(deadline, self.github_inventory(&credential, deadline))
-                    .await
-                    .ok()
-            }
+            Ok(credential) if Instant::now() < deadline => timeout_at(
+                deadline,
+                self.github_inventory(&credential, deadline, observe_accounts),
+            )
+            .await
+            .ok(),
             _ => None,
         };
         let (binding, connections) = match connections {
@@ -173,6 +182,7 @@ impl NyxidServiceConnectionBroker {
         &self,
         credential: &SecretValue,
         deadline: Instant,
+        observe_accounts: bool,
     ) -> Result<(Binding, Vec<GitHubConnection>), ServiceConnectionError> {
         let (catalog_id, rows) = self.github_source(credential, deadline).await?;
         let catalog_id = &catalog_id;
@@ -191,22 +201,21 @@ impl NyxidServiceConnectionBroker {
         }
         let choices = choices
             .into_iter()
-            .map(|row| {
-                (
-                    row.id.clone(),
-                    row.slug.clone(),
-                    row.is_active == Some(true),
-                )
-            })
+            .map(|row| (row.id.clone(), row.slug.clone(), row.is_usable()))
             .collect::<Vec<_>>();
+        let observe_accounts = observe_accounts && valid_browser_id(catalog_id);
         let results = futures_util::stream::iter(choices)
-            .map(|(id, slug, active)| async move {
-                self.github_detail(&id, &slug, catalog_id, credential, deadline)
-                    .await
-                    .map(|mut detail| {
-                        detail.active_oauth &= active;
-                        detail
-                    })
+            .map(|(id, slug, usable)| async move {
+                let mut connection = self
+                    .github_detail(&id, &slug, catalog_id, credential, deadline)
+                    .await?;
+                connection.active_oauth &= usable;
+                if observe_accounts && connection.active_oauth {
+                    connection.account = self
+                        .github_account(credential, catalog_id, &id, deadline)
+                        .await;
+                }
+                Ok::<_, ServiceConnectionError>(connection)
             })
             .buffered(4)
             .collect::<Vec<_>>()
@@ -386,6 +395,7 @@ impl NyxidServiceConnectionBroker {
             label: detail.label,
             granted_scopes: detail.granted_scopes,
             manage_url: manage_url.to_string(),
+            account: None,
             active_oauth: detail.is_active == Some(true)
                 && detail.credential_type.as_deref() == Some("oauth2")
                 && detail.status.as_deref() == Some("active")

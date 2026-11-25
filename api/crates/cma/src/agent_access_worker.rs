@@ -26,6 +26,8 @@ pub(crate) struct AgentAccessWorker {
     store: Arc<MongoSandboxStore>,
     auth: Arc<AuthState>,
     broker: Arc<dyn ServiceConnectionBroker>,
+    github_broker: Option<Arc<crate::trigger::CmaServiceConnectionBroker>>,
+    github_runtime: Option<Arc<dyn layer3_adapter::SandboxAdapter>>,
     commands: Arc<AgentCommandService>,
     holder: String,
 }
@@ -42,9 +44,21 @@ impl AgentAccessWorker {
             store,
             auth,
             broker,
+            github_broker: None,
+            github_runtime: None,
             commands,
             holder,
         }
+    }
+
+    pub(crate) fn with_github_approval(
+        mut self,
+        broker: Arc<crate::trigger::CmaServiceConnectionBroker>,
+        runtime: Arc<dyn layer3_adapter::SandboxAdapter>,
+    ) -> Self {
+        self.github_broker = Some(broker);
+        self.github_runtime = Some(runtime);
+        self
     }
 
     pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
@@ -184,6 +198,29 @@ impl AgentAccessWorker {
         record: &AgentAccessRecord,
     ) -> Result<bool, AgentAccessError> {
         let services = record.approved_services()?;
+        let unselected_services;
+        let services = if let Some(connection) = record.approved_connection() {
+            let broker = self
+                .github_broker
+                .as_ref()
+                .ok_or(AgentAccessError::Unavailable)?;
+            let (_, credential) = self.authority(record).await?;
+            broker
+                .verify_github_repo_token(&credential, &connection.connection_id)
+                .await
+                .map_err(crate::agent_access::github_proof_error)?;
+            unselected_services = services
+                .iter()
+                .filter(|service| *service != &connection.service)
+                .cloned()
+                .collect::<Vec<_>>();
+            if unselected_services.is_empty() {
+                return Ok(true);
+            }
+            unselected_services.as_slice()
+        } else {
+            services
+        };
         if matches!(&record.decision, Some(AgentAccessDecision::Approved { authorization, .. }) if authorization.authority_id.starts_with("owner-api:"))
         {
             let (context, credential) = self.authority(record).await?;
@@ -247,20 +284,23 @@ impl AgentAccessWorker {
             Phase::Connecting => {
                 if self.connections_ready(record).await? {
                     if sandbox.status == SandboxStatus::Active {
-                        waiting_quiet::schedule(&self.store, record, &sandbox, async { Ok(true) })
-                            .await?;
+                        waiting_quiet::schedule(
+                            &self.store,
+                            record,
+                            &sandbox,
+                            self.github_runtime_ready(record, &sandbox),
+                        )
+                        .await?;
                     } else {
                         self.advance(record, Phase::WaitingQuiet).await?;
                     }
                 }
             }
             Phase::WaitingQuiet => {
-                waiting_quiet::schedule(
-                    &self.store,
-                    record,
-                    &sandbox,
-                    self.connections_ready(record),
-                )
+                waiting_quiet::schedule(&self.store, record, &sandbox, async {
+                    Ok(self.connections_ready(record).await?
+                        && self.github_runtime_ready(record, &sandbox).await?)
+                })
                 .await?;
             }
             Phase::Updating => self.updated(record, &agent, &sandbox).await?,
@@ -274,6 +314,29 @@ impl AgentAccessWorker {
             Phase::Pending | Phase::Succeeded | Phase::Denied | Phase::Failed => {}
         }
         Ok(())
+    }
+
+    async fn github_runtime_ready(
+        &self,
+        record: &AgentAccessRecord,
+        sandbox: &layer2_core::sandbox::Sandbox,
+    ) -> Result<bool, AgentAccessError> {
+        if record.approved_connection().is_none() {
+            return Ok(true);
+        }
+        let runtime = self
+            .github_runtime
+            .as_ref()
+            .ok_or(AgentAccessError::Unavailable)?;
+        let binding = sandbox.runtime.as_ref().ok_or(AgentAccessError::Conflict)?;
+        let handle = layer3_adapter::RuntimeHandle::new(&binding.runtime_id);
+        let status = tokio::time::timeout(Duration::from_secs(5), runtime.runtime_status(&handle))
+            .await
+            .map_err(|_| AgentAccessError::Unavailable)?
+            .map_err(|_| AgentAccessError::Unavailable)?;
+        Ok(status.exact_github_credential_route
+            && status.credential_ready
+            && sandbox.runtime_process_matches(&status).unwrap_or(false))
     }
 
     async fn advance(

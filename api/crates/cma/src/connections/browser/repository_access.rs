@@ -51,7 +51,11 @@ pub(super) async fn report(
     if request.github_connection_id.is_some() && request.github_operation.is_none() {
         return Err(ConnectionError::Invalid);
     }
-    let github = broker.github_connections(&caller.subject).await;
+    let observe_accounts = state.github_connection_approval
+        && matches!(&request.target, ConnectionTarget::AgentServiceAccess { .. });
+    let github = broker
+        .github_connections(&caller.subject, observe_accounts)
+        .await;
     let github_scope_check = if let Some(operation) = request.github_operation {
         let check = match request.github_connection_id.as_deref() {
             Some(id) => {

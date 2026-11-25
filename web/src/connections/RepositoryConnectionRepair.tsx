@@ -24,6 +24,10 @@ interface Choice {
   readonly label: string;
   readonly granted_scopes: readonly string[] | null;
   readonly manage_url: string;
+  readonly account?: {
+    readonly login: string;
+    readonly observed_scopes: readonly string[] | null;
+  };
 }
 
 interface Inventory {
@@ -50,11 +54,26 @@ function choice(value: unknown, manage: URL): Choice | undefined {
     return undefined;
   const href = connectionUrl(value.manage_url);
   if (href !== new URL(`/keys/${value.id}`, manage).href) return undefined;
+  const account = value.account;
+  const availableAccount =
+    record(account) &&
+    typeof account.login === 'string' &&
+    /^[A-Za-z0-9_-]{1,100}$/.test(account.login) &&
+    (account.observed_scopes === null ||
+      (Array.isArray(account.observed_scopes) &&
+        account.observed_scopes.length <= 100 &&
+        account.observed_scopes.every((scope) => typeof scope === 'string')));
   return {
     id: value.id,
     label: value.label,
     granted_scopes: value.granted_scopes as readonly string[] | null,
     manage_url: href,
+    account: availableAccount
+      ? {
+          login: account.login as string,
+          observed_scopes: account.observed_scopes as string[] | null,
+        }
+      : undefined,
   };
 }
 
@@ -135,13 +154,19 @@ export function RepositoryConnectionRepair({
   );
 }
 
-type ConnectionDetailsProps = Pick<Props, 'target' | 'owner'>;
+type ConnectionDetailsProps = Pick<Props, 'target' | 'owner'> & {
+  readonly selection?: {
+    readonly id?: string;
+    readonly disabled: boolean;
+    readonly onSelect: (id: string) => void;
+  };
+};
 
 export function GitHubConnectionDetails(props: ConnectionDetailsProps) {
   return <ConnectionDetails key={JSON.stringify([props.owner, props.target])} {...props} />;
 }
 
-function ConnectionDetails({ target, owner }: ConnectionDetailsProps) {
+function ConnectionDetails({ target, owner, selection }: ConnectionDetailsProps) {
   const [result, setResult] = useState<{ readonly inventory?: Inventory }>();
   useEffect(() => {
     const controller = new AbortController();
@@ -171,18 +196,35 @@ function ConnectionDetails({ target, owner }: ConnectionDetailsProps) {
       ) : null}
       {result?.inventory?.connections?.length ? (
         <>
-          <p>NyxID reports these connections. CMA has not verified the Agent’s connection.</p>
+          <p>
+            {selection
+              ? 'Choose the connection CMA should verify for this Sandbox.'
+              : 'NyxID reports these connections. CMA has not verified the Agent’s connection.'}
+          </p>
           <ul>
             {result.inventory.connections.map((row) => (
               <li key={row.id}>
                 <a href={row.manage_url} target="_blank" rel="noreferrer">
                   {row.label} ({row.id})
                 </a>
+                {row.account ? <p>GitHub account @{row.account.login}</p> : null}
                 <p>
-                  {row.granted_scopes === null
-                    ? 'Granted scopes unavailable'
-                    : `Reported scopes: ${row.granted_scopes.join(', ') || 'None'}`}
+                  {row.account?.observed_scopes
+                    ? `Live scopes — ${row.account.observed_scopes.join(', ') || 'None'}`
+                    : row.granted_scopes === null
+                      ? 'Granted scopes unavailable'
+                      : `Reported scopes: ${row.granted_scopes.join(', ') || 'None'}`}
                 </p>
+                {selection && row.granted_scopes?.includes('repo') ? (
+                  <Button
+                    size="sm"
+                    aria-pressed={selection.id === row.id}
+                    disabled={selection.disabled}
+                    onClick={() => selection.onSelect(row.id)}
+                  >
+                    Select {row.label} ({row.id})
+                  </Button>
+                ) : null}
               </li>
             ))}
           </ul>

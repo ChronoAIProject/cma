@@ -76,9 +76,11 @@ impl InlineAgentLifecycle {
                 .await?;
         }
         let profile = request.profile.clone().unwrap_or_default();
-        let instructions = guidance::admission_instructions(
-            self.session_guidance_v4.get().copied().unwrap_or_default(),
-        );
+        let instructions = self
+            .session_guidance
+            .get()
+            .copied()
+            .unwrap_or_else(guidance::managed_v3);
         agent_content(&guidance::profile_with_instructions(
             profile.clone(),
             Some(instructions),

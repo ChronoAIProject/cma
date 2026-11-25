@@ -316,7 +316,7 @@ impl HostedBackend for AgentSandboxBackend {
         else {
             return Ok(None);
         };
-        self.bind_adopted(handle, request, &object).await?;
+        self.bind_adopted(handle, request, &object, None).await?;
         // The first object authorized binding, but readiness and assignment can
         // change while that operation waits. Revalidate the exact provider
         // object before exposing a current Running observation.
