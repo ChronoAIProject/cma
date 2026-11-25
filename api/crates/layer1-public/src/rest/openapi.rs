@@ -199,6 +199,7 @@ use self::schemas::*;
         super::agent_access_requests::AgentAccessConnection,
         super::agent_access_requests::AgentAccessConnectionTarget,
         super::agent_access_requests::ApproveAgentAccessRequest,
+        super::agent_access_requests::AgentAccessConnectionSelection,
         super::agent_access_requests::DenyAgentAccessRequest,
         super::agent_access_requests::scope::ReplaceAgentServiceAccess,
         super::agent_attachments::AgentAttachmentView,

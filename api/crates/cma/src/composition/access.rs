@@ -10,7 +10,6 @@ use layer2_core::{
         agent_io::AgentCommandService, answer_deliverables::AnswerDeliverableService,
         AgentReadService, SandboxOperatorService, SandboxPolicySource, StoredSandboxRetirement,
     },
-    trigger_domain::ServiceConnectionBroker,
     ActivityService,
 };
 use layer3_adapter::SandboxAdapter;
@@ -32,6 +31,7 @@ pub(super) struct ToolServices {
     pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub cancel_wake: Option<Arc<tokio::sync::Notify>>,
     pub model_credit_required: bool,
+    pub github_connection_selection: bool,
     pub model_funding: Option<Arc<layer2_core::sandbox::model_credit::AgentTurnFunding>>,
     pub source: Arc<MongoAgentAccessToolSource>,
     pub documents: Option<Arc<layer2_core::document_artifacts::DocumentService>>,
@@ -81,7 +81,7 @@ pub(super) fn compose(
     stores: &MongoStores,
     auth: Arc<AuthState>,
     policy: Arc<dyn SandboxPolicySource>,
-    broker: Arc<dyn ServiceConnectionBroker>,
+    broker: Arc<crate::trigger::CmaServiceConnectionBroker>,
     resource_access: Arc<ResourceAccessService>,
     holder: String,
     tools: ToolServices,
@@ -93,7 +93,8 @@ pub(super) fn compose(
             .with_cancel_wake(tools.cancel_wake)
             .with_model_credit_required(tools.model_credit_required)
             .with_model_funding(tools.model_funding);
-    let service = AgentAccessService::new(stores.sandbox_model.clone(), auth.clone(), policy);
+    let service = AgentAccessService::new(stores.sandbox_model.clone(), auth.clone(), policy)
+        .with_connection_selection(tools.github_connection_selection.then(|| broker.clone()));
     let worker = AgentAccessWorker::new(
         stores.sandbox_model.clone(),
         auth,

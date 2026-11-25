@@ -2,6 +2,7 @@ use super::*;
 use layer2_core::sandbox::ServiceConnectionSelection;
 
 impl MongoSandboxStore {
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn approve_agent_access(
         &self,

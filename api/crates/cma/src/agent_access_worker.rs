@@ -16,6 +16,7 @@ use crate::store::agent_access_requests::{
     AgentAccessDecision, AgentAccessPhase as Phase, AgentAccessRecord,
 };
 use crate::store::MongoSandboxStore;
+use crate::trigger::CmaServiceConnectionBroker;
 
 mod effects;
 mod notification;
@@ -25,7 +26,7 @@ mod waiting_quiet;
 pub(crate) struct AgentAccessWorker {
     store: Arc<MongoSandboxStore>,
     auth: Arc<AuthState>,
-    broker: Arc<dyn ServiceConnectionBroker>,
+    broker: Arc<CmaServiceConnectionBroker>,
     commands: Arc<AgentCommandService>,
     holder: String,
 }
@@ -34,7 +35,7 @@ impl AgentAccessWorker {
     pub(crate) fn new(
         store: Arc<MongoSandboxStore>,
         auth: Arc<AuthState>,
-        broker: Arc<dyn ServiceConnectionBroker>,
+        broker: Arc<CmaServiceConnectionBroker>,
         commands: Arc<AgentCommandService>,
         holder: String,
     ) -> Self {
@@ -183,7 +184,29 @@ impl AgentAccessWorker {
         &self,
         record: &AgentAccessRecord,
     ) -> Result<bool, AgentAccessError> {
-        let services = record.approved_services()?;
+        let approved = record.approved_services()?;
+        let remaining;
+        let services = if let Some(selection) = record.approved_connection() {
+            let (_, credential) = self.authority(record).await?;
+            crate::agent_access::verify_github_selection(
+                &self.broker,
+                credential.expose(),
+                selection,
+                approved,
+            )
+            .await?;
+            remaining = approved
+                .iter()
+                .filter(|service| **service != selection.service)
+                .cloned()
+                .collect::<Vec<_>>();
+            if remaining.is_empty() {
+                return Ok(true);
+            }
+            remaining.as_slice()
+        } else {
+            approved
+        };
         if matches!(&record.decision, Some(AgentAccessDecision::Approved { authorization, .. }) if authorization.authority_id.starts_with("owner-api:"))
         {
             let (context, credential) = self.authority(record).await?;

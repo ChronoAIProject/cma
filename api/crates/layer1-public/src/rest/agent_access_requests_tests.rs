@@ -61,6 +61,7 @@ impl AgentAccessRequests for Service {
         self.result(AgentAccessStatus::Pending)
             .map(|value| vec![value])
     }
+    #[allow(clippy::too_many_arguments)]
     async fn approve(
         &self,
         context: &CallerContext,
@@ -68,10 +69,15 @@ impl AgentAccessRequests for Service {
         agent: &AgentId,
         request: &str,
         services: Vec<String>,
+        connection: Option<layer2_core::sandbox::ServiceConnectionSelection>,
         key: &str,
     ) -> Result<AgentAccessRequest, AgentAccessError> {
         assert_eq!(credential, "request-credential");
-        self.calls.lock().unwrap().push(json!({"action":"approve","caller":context.caller.subject.as_str(),"agent":agent.0,"request":request,"services":services,"key":key}));
+        let mut call = json!({"action":"approve","caller":context.caller.subject.as_str(),"agent":agent.0,"request":request,"services":services,"key":key});
+        if let Some(connection) = connection {
+            call["connection"] = json!(connection);
+        }
+        self.calls.lock().unwrap().push(call);
         self.result(AgentAccessStatus::Connecting)
     }
     async fn deny(
@@ -379,3 +385,21 @@ fn approved_connection_recovery_remains_available_until_the_request_is_terminal(
 #[cfg(test)]
 #[path = "agent_service_access_tests.rs"]
 mod scope_tests;
+
+#[tokio::test]
+async fn approval_forwards_exact_optional_connection() {
+    let (router, service) = app();
+    let selection = json!({"service":"api-github","connection_id":"chosen"});
+    let (status, _) = agents_tests::json_response(
+        &router,
+        request(
+            Method::POST,
+            Some("approve"),
+            Some("selection-key"),
+            Some(json!({"services":["api-github"],"connection":selection})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(service.calls.lock().unwrap()[0]["connection"], selection);
+}

@@ -68,6 +68,23 @@ impl BrowserCookie {
                 "/userinfo",
                 get(|| async { Json(json!({"sub":"owner", "permissions":["cma:sandbox:use"]})) }),
             )
+            .route("/api/v1/services", get(|| async {
+                Json(json!({"services":[{"id":"catalog","slug":"api-github"}]}))
+            }))
+            .route("/api/v1/user-services", get(|| async {
+                Json(json!({"services": (["first", "second"].map(|id| json!({
+                    "id":id, "slug":id, "catalog_service_id":"catalog", "is_active":true,
+                    "credential_source":{"type":"personal"}
+                })))}))
+            }))
+            .route("/api/v1/keys/{id}", get(|axum::extract::Path(id): axum::extract::Path<String>| async move {
+                Json(json!({"id":id, "slug":id, "catalog_service_id":"catalog", "label":"Fixture connection",
+                    "granted_scopes":["repo"], "credential_type":"oauth2", "is_active":true,
+                    "status":"active", "connection_status":"active"}))
+            }))
+            .route("/api/v1/proxy/catalog/user", get(|| async {
+                ([("x-oauth-scopes", "repo")], Json(json!({})))
+            }))
             .route(
                 "/introspect",
                 post(move || {
@@ -287,6 +304,7 @@ async fn mongo_access_service_requires_current_retained_owner_authority_and_stor
                     &record.requester.agent_id,
                     &record.id,
                     services.clone(),
+                    None,
                     "human-approve"
                 )
                 .await,
@@ -303,6 +321,7 @@ async fn mongo_access_service_requires_current_retained_owner_authority_and_stor
                 &record.requester.agent_id,
                 &record.id,
                 services.clone(),
+                None,
                 "human-approve"
             )
             .await,
@@ -317,6 +336,7 @@ async fn mongo_access_service_requires_current_retained_owner_authority_and_stor
                 &record.requester.agent_id,
                 &record.id,
                 services.clone(),
+                None,
                 "human-approve"
             )
             .await,
@@ -330,6 +350,7 @@ async fn mongo_access_service_requires_current_retained_owner_authority_and_stor
                 &record.requester.agent_id,
                 &record.id,
                 vec!["github".into()],
+                None,
                 "human-approve"
             )
             .await,
@@ -342,6 +363,7 @@ async fn mongo_access_service_requires_current_retained_owner_authority_and_stor
             &record.requester.agent_id,
             &record.id,
             services,
+            None,
             "human-approve",
         )
         .await
@@ -359,5 +381,104 @@ async fn mongo_access_service_requires_current_retained_owner_authority_and_stor
     assert!(!encoded.contains("owner-fixture-credential"));
     assert!(!encoded.contains("human-approve"));
     assert!(encoded.contains("personal:fixture-owner-login"));
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn mongo_owner_selection_is_opt_in_and_binds_retries() {
+    let (client, name, store, first) =
+        crate::store::agent_access_requests::tests::approved_fixture().await;
+    let browser = BrowserCookie::new().await;
+    let authority = Arc::new(Authority {
+        revoked: AtomicBool::new(false),
+        calls: AtomicUsize::new(0),
+    });
+    let mut proposal = first.proposal.clone();
+    proposal.request_key = "selected-consent".into();
+    proposal.services = vec!["api-github".into()];
+    let record = store
+        .request_agent_access(first.requester.clone(), proposal)
+        .await
+        .unwrap();
+    let service =
+        AgentAccessService::new(store.clone(), authority, Arc::new(SandboxPolicy::default()));
+    let selection = |id: &str| {
+        Some(ServiceConnectionSelection {
+            service: ServiceId::new("api-github"),
+            connection_id: id.into(),
+        })
+    };
+    let approve = |service: Arc<AgentAccessService>, context: CallerContext, id: &'static str| {
+        let record = record.clone();
+        async move {
+            service
+                .approve(
+                    &context,
+                    "owner-fixture-credential",
+                    &record.requester.agent_id,
+                    &record.id,
+                    vec!["api-github".into()],
+                    selection(id),
+                    "selection-approval",
+                )
+                .await
+        }
+    };
+    assert_eq!(
+        approve(service.clone(), browser.context.clone(), "first").await,
+        Err(AgentAccessError::Invalid)
+    );
+    let broker = Arc::new(
+        CmaServiceConnectionBroker::from_auth_config(
+            &browser.auth.mode,
+            Some("https://identity.example.test"),
+            browser.auth.clone(),
+        )
+        .unwrap(),
+    );
+    let service = service.with_connection_selection(Some(broker));
+    let denied = ineligible_contexts(&browser.context).remove(0);
+    assert_eq!(
+        approve(service.clone(), denied, "first").await,
+        Err(AgentAccessError::Forbidden)
+    );
+    assert_eq!(
+        approve(service.clone(), browser.context.clone(), "missing").await,
+        Err(AgentAccessError::ServiceConnectionRequired)
+    );
+    assert_eq!(
+        store
+            .read_access_request(&record.id)
+            .await
+            .unwrap()
+            .unwrap(),
+        record
+    );
+    let approved = approve(service.clone(), browser.context.clone(), "first")
+        .await
+        .unwrap();
+    let saved = store
+        .read_access_request(&record.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.approved_connection(), selection("first").as_ref());
+    assert_eq!(
+        approve(service.clone(), browser.context.clone(), "first").await,
+        Ok(approved)
+    );
+    assert_eq!(
+        approve(service, browser.context.clone(), "second").await,
+        Err(AgentAccessError::Conflict)
+    );
+    assert_eq!(
+        store
+            .read_access_request(&record.id)
+            .await
+            .unwrap()
+            .unwrap(),
+        saved
+    );
     client.database(&name).drop().await.unwrap();
 }

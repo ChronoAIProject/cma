@@ -55,6 +55,7 @@ pub trait AgentAccessRequests: Send + Sync {
         caller: &Caller,
         agent: &AgentId,
     ) -> Result<Vec<AgentAccessRequest>, AgentAccessError>;
+    #[allow(clippy::too_many_arguments)]
     async fn approve(
         &self,
         context: &CallerContext,
@@ -62,6 +63,7 @@ pub trait AgentAccessRequests: Send + Sync {
         agent: &AgentId,
         request: &str,
         services: Vec<String>,
+        connection: Option<super::ServiceConnectionSelection>,
         key: &str,
     ) -> Result<AgentAccessRequest, AgentAccessError>;
     async fn replace_services(

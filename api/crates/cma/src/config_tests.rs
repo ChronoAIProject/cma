@@ -490,6 +490,7 @@ fn interface_feature_flags_are_strict_independent_booleans() {
     assert!(config.features.v2_ui_transport);
     assert!(!config.features.trigger_command_admission);
     assert!(!config.features.github_repository_preflight);
+    assert!(!config.features.github_connection_selection);
     assert!(!config.features.nyxid_resource_request);
     assert!(!config.features.document_revocation_reserve);
     assert!(!config.features.retained_context_lookup);
@@ -503,6 +504,7 @@ fn interface_feature_flags_are_strict_independent_booleans() {
         "CHRONO_V2_UI_TRANSPORT_ENABLED",
         "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
         "CHRONO_GITHUB_REPOSITORY_PREFLIGHT_ENABLED",
+        "CHRONO_GITHUB_CONNECTION_SELECTION_ENABLED",
         "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED",
         "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
         "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED",
@@ -559,6 +561,10 @@ fn interface_feature_flags_are_strict_independent_booleans() {
         assert_eq!(
             config.features.github_repository_preflight,
             key == "CHRONO_GITHUB_REPOSITORY_PREFLIGHT_ENABLED"
+        );
+        assert_eq!(
+            config.features.github_connection_selection,
+            key == "CHRONO_GITHUB_CONNECTION_SELECTION_ENABLED"
         );
         assert_eq!(
             config.features.nyxid_resource_request,

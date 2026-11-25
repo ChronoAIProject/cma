@@ -342,6 +342,7 @@ impl ControlPlaneComposition {
                 ownership,
                 cancel_wake,
                 model_credit_required: config.features.model_credit_required,
+                github_connection_selection: config.features.github_connection_selection,
                 model_funding: adapters.model_funding,
                 source: access_tools,
                 documents: config.document_storage.as_ref().map(|_| documents.clone()),

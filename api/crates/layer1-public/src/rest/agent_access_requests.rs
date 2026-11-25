@@ -96,6 +96,14 @@ pub(crate) struct AgentAccessRequestList {
 pub(crate) struct ApproveAgentAccessRequest {
     #[schema(min_items = 1, max_items = 32)]
     pub services: Vec<String>,
+    #[serde(default)]
+    pub connection: Option<AgentAccessConnectionSelection>,
+}
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AgentAccessConnectionSelection {
+    service: String,
+    connection_id: String,
 }
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -201,6 +209,12 @@ pub(crate) async fn approve(
                 &AgentId(id),
                 &request_id,
                 body.services,
+                body.connection.map(
+                    |selection| layer2_core::sandbox::ServiceConnectionSelection {
+                        service: layer2_core::ServiceId::new(selection.service),
+                        connection_id: selection.connection_id,
+                    },
+                ),
                 &key,
             )
             .await,
