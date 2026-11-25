@@ -214,9 +214,8 @@ class CacheTests(unittest.TestCase):
         self.assertIn("--exclude=./src", compact)
         self.assertIn(f"max_expanded={bound}", compact)
         self.assertIn(f"max_compressed={cache.MAX_ARCHIVE_BYTES}", compact)
-        self.assertIn('archive_stream "$registry" "$registry_archive" $skip_src .', compact)
-        self.assertIn('archive_stream "$target" "$target_archive" .', compact)
-        self.assertIn('archive_stream "$target" "$target_archive" "$@"', compact)
+        self.assertIn('archive_stream "$registry" "$registry_archive" "$max_expanded" "$max_compressed"', compact)
+        self.assertIn('archive_stream "$target" "$target_archive" "$remaining_expanded" "$remaining_compressed"', compact)
         self.assertNotIn("rm -rf /cache", compact)
 
     def test_am_compaction_restores_complete_groups_and_cross_group_links(self):
