@@ -132,7 +132,7 @@ async fn run(
     let mut expanded = if receipt.usage_projections_absent {
         false
     } else {
-        super::history::discover_usage_projections(db, contexts).await?
+        context::discover_usage_projections(db, contexts).await?
     };
     for context in contexts.iter_mut() {
         let target = targets

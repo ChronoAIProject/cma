@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[path = "history.rs"]
 mod history;
+pub(super) use history::discover_usage_projections;
 #[path = "context_inventory.rs"]
 mod inventory;
 const PAGE: i64 = 500;

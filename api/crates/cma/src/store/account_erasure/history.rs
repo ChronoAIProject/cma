@@ -142,7 +142,7 @@ pub(super) async fn discover(
     Ok(())
 }
 
-pub(super) async fn discover_usage_projections(
+pub(in crate::store::account_erasure) async fn discover_usage_projections(
     db: &Database,
     contexts: &mut [Context],
 ) -> Result<bool, Error> {
