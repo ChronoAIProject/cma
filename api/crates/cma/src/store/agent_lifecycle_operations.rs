@@ -156,6 +156,9 @@ pub(crate) struct LifecycleRecord {
     pub lease_token: Option<String>,
     #[serde(default)]
     pub attempts: u32,
+    /// Confirmed pre-allocation quota refusals that scheduled another attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_quota_refusals: Option<u32>,
     #[serde(default)]
     pub retry_at: Option<DateTime>,
     pub created_at: DateTime,
