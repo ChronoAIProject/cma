@@ -2,6 +2,7 @@ use super::*;
 use crate::sandbox::ManagedSandboxCredentials;
 use crate::store::sandbox_credentials::MongoSandboxCredentialStore;
 use crate::store::sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::binding::{BindingCredentialCustody, ProvidedCredential};
 use layer2_core::{CoreError, SandboxId, ServiceId, SubjectId};
 use mongodb::ClientSession;
@@ -25,27 +26,36 @@ impl MongoBindingCredentials {
         expected: &ProviderBinding,
         session: &mut ClientSession,
     ) -> Result<(), CoreError> {
+        self.fence_transaction(expected, session)
+            .await
+            .map_err(|error| error.into_core(unavailable))
+    }
+
+    /// Preserve transaction abort classification for callers that own retry.
+    pub(super) async fn fence_transaction(
+        &self,
+        expected: &ProviderBinding,
+        session: &mut ClientSession,
+    ) -> Result<(), BindingTransactionError> {
         let records = &self.store.bindings.records;
         let result = records.update_one(doc! {"_id": &expected.binding_id,
             "revision": integer(expected.revision).map_err(unavailable)?, "document_schema_version": DOCUMENT_SCHEMA_VERSION},
-            doc! {"$inc": {"admission_fence": 1_i64}}).session(&mut *session).await.map_err(unavailable)?;
+            doc! {"$inc": {"admission_fence": 1_i64}}).session(&mut *session).await.map_err(BindingTransactionError::Driver)?;
         if result.matched_count != 1 {
-            return Err(CoreError::InvalidState(
-                "binding credential fence changed".into(),
-            ));
+            return Err(CoreError::InvalidState("binding credential fence changed".into()).into());
         }
         let actual = records
             .find_one(doc! {"_id": &expected.binding_id})
             .session(&mut *session)
             .await
-            .map_err(unavailable)?
+            .map_err(BindingTransactionError::Driver)?
             .map(read_binding)
             .transpose()
             .map_err(unavailable)?;
         if actual.as_ref() != Some(expected) {
-            return Err(CoreError::InvalidState(
-                "binding credential identity changed".into(),
-            ));
+            return Err(
+                CoreError::InvalidState("binding credential identity changed".into()).into(),
+            );
         }
         Ok(())
     }
@@ -106,7 +116,7 @@ impl MongoBindingCredentials {
         }
         .await;
         if let Err(error) = result {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(error);
         }
         match commit_transaction(&mut session).await {

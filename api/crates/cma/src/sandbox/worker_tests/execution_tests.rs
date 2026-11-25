@@ -70,6 +70,7 @@ async fn pending_install_replays_the_persisted_policy_after_deployment_changes()
             .store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: current.revision,
                 sandbox: Box::new(changed),
                 event_at: rfc3339_at(now),
@@ -160,6 +161,7 @@ async fn workspace_clone_and_setup_replay_the_first_persisted_policy() {
         harness
             .store
             .commit(SandboxTransaction::SaveWorkspaceAndAppend {
+                repository_runtime: None,
                 expected_revision: current.revision,
                 workspace: Box::new(changed),
                 event_at: rfc3339_at(now),

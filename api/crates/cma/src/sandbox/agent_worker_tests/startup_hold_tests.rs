@@ -3,6 +3,8 @@ use super::*;
 use crate::sandbox::agent_worker::WorkerFailure;
 use layer2_core::sandbox::store::{AGENT_RUNTIME_STARTUP_HOLD, AGENT_RUNTIME_STARTUP_HOLD_DETAIL};
 
+mod sibling;
+
 #[tokio::test]
 async fn startup_hold_retries_keep_starting_and_cleanup_work_pending_across_worker_takeover() {
     for (step, _, _) in CASES {

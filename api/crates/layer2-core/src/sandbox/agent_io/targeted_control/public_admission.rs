@@ -83,6 +83,8 @@ impl AgentCommandService {
                 {
                     return Err(TargetedControlError::CapabilityUnsupported);
                 }
+                self.require_model_credit(&request.command.envelope.command)
+                    .map_err(CommandAdmissionError::from)?;
                 Ok(self
                     .store
                     .reserve_targeted_control(request.clone())
@@ -93,6 +95,8 @@ impl AgentCommandService {
         self.fence(&authorized, &resource, capability).await?;
         let result = result??;
         let result = request.replay(result.record, Some(result.binding))?;
+        self.notify_new_cancel(&request.command.envelope, &result.record)
+            .await;
         Ok(TargetedControlStatusView::from_record(&result))
     }
 }

@@ -14,7 +14,8 @@ from unittest.mock import Mock, patch
 import yaml
 
 from actions_cache_retention import BUDGET, DEVELOP, Entry, Policies, Readers, plan
-from actions_cache_sweep import Actions, authorized_completion, main, pages, sweep
+from actions_cache_sweep import (INVENTORY_BACKOFF_SECONDS, INVENTORY_READS, Actions, InconsistentInventory,
+                                 authorized_completion, main, pages, sweep)
 
 ROOT = Path(__file__).resolve().parents[2]
 CLOCK = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -61,7 +62,7 @@ class Inventory:
 class Generations(unittest.TestCase):
     def test_scope_versions_and_shared_blobs(self):
         rows = []
-        services = ("am", "eg", "web", "runtime", "runtime-omarchy", "am-staging-opt-0", "am-staging-opt-1")
+        services = ("am", "eg", "web", "runtime", "runtime-omarchy", "cd-am-staging-opt-0", "cd-am-staging-opt-1")
         for i, service in enumerate(services):
             prefix = f"index-cma-{service}-1-fd3dfe2c#"
             # Two-digit BuildKit generations sort numerically.
@@ -238,14 +239,18 @@ class Contracts(unittest.TestCase):
         with self.assertRaises(ValueError):
             pages(lambda n: fetch(n) if n == 1 else {"total_count": 102, "items": []}, "items")
 
-    def test_only_qualified_publication_with_positive_budget_grant_can_save(self):
+    def test_only_qualified_develop_publication_can_save(self):
         steps = yaml.safe_load((ROOT / ".github/workflows/staging-release.yml").read_text())["jobs"]["publish"]["steps"]
         ids = [s["name"] for s in steps if "name" in s]
         self.assertLess(ids.index("Build once, scan every layer, and publish exact bytes"),
-                        ids.index("Check repository headroom before Cargo rollover"))
+                        ids.index("Retain accepted Cargo mounts"))
+        self.assertNotIn("Check repository headroom before Cargo rollover", ids)
         save = next(s for s in steps if s.get("name") == "Retain accepted Cargo mounts")
-        self.assertIn("steps.cargo-headroom.outcome == 'success'", save["if"])
-        self.assertIn("steps.cargo-headroom.outputs.allowed == 'true'", save["if"])
+        for condition in ("success()", "github.event_name == 'push'", "github.ref == 'refs/heads/develop'",
+                          "steps.publication.outputs.build-cache-ready == 'true'"):
+            self.assertIn(condition, save["if"])
+        self.assertTrue(save["uses"].startswith("actions/upload-artifact@"))
+        self.assertFalse(any(str(s.get("uses", "")).startswith("actions/cache/save@") for s in steps))
 
     def test_legacy_rerun_window_requires_an_old_default_branch_completion_trigger(self):
         api = Actions("fixture", 99)
@@ -267,9 +272,8 @@ class Contracts(unittest.TestCase):
         self.assertEqual(lock, {"group": "cma-develop-cache-sweep", "queue": "max", "cancel-in-progress": False})
         cd = load("staging-cd")
         self.assertNotIn("concurrency", cd)
-        self.assertEqual(cd["jobs"]["cargo_budget"]["needs"], "allocate")
-        for job in cd["jobs"].values():
-            self.assertNotIn("cargo_budget", job.get("needs", []))
+        # Cargo bundles travel as run artifacts; no job reserves Actions cache bytes.
+        self.assertNotIn("cargo_budget", cd["jobs"])
         for name, job in (("ci-images", "images"), ("ci-omarchy", "omarchy"), ("migration-harness", "contracts")):
             gate = load(name)["jobs"][job]["concurrency"]
             self.assertNotIn(lock["group"], gate["group"])
@@ -293,6 +297,41 @@ class Contracts(unittest.TestCase):
         for bad in ({"id": True}, {"size_in_bytes": -1}, {"version": ""}, {"created_at": "2026-01-01"}):
             with self.assertRaises(ValueError):
                 Entry.parse(row | bad)
+
+    def test_a_listing_that_changes_while_read_is_reread_from_its_first_page(self):
+        # A run that changes state between GitHub's count and its page makes one
+        # read disagree with itself. Re-read it whole; never mix two listings.
+        run = {"id": 5, "status": "in_progress"}
+        sleeps = []
+        api = Actions("fixture", 99, sleep=sleeps.append)
+        moving = {"total_count": 2, "workflow_runs": [run]}
+        settled = {"total_count": 1, "workflow_runs": [run]}
+        empty = {"total_count": 0, "workflow_runs": []}
+        responses = {state: [empty] for state in ("requested", "queued", "pending", "waiting")}
+        responses["in_progress"] = [moving, settled]
+        def request(path):
+            state = path.split("status=")[1].split("&")[0]
+            return responses[state].pop(0)
+        api.api.request = Mock(side_effect=request)
+        with patch("actions_cache_sweep.Readers.from_runs", side_effect=lambda runs, _run_id: runs):
+            self.assertEqual(api.readers(), [run])
+        self.assertEqual(sleeps, [INVENTORY_BACKOFF_SECONDS[0]])
+        self.assertEqual(sum("status=in_progress&" in call.args[0] and "page=1&" in call.args[0]
+                             for call in api.api.request.call_args_list), 2)
+        # A persistent disagreement still refuses the sweep after bounded reads.
+        sleeps.clear()
+        api.api.request = Mock(return_value=moving)
+        with self.assertRaises(InconsistentInventory):
+            api.list("runs", "workflow_runs", status="queued")
+        self.assertEqual(api.api.request.call_count, INVENTORY_READS)
+        self.assertEqual(sleeps, list(INVENTORY_BACKOFF_SECONDS))
+        # Malformed pages are not a race and are never re-read.
+        for doc in ({"total_count": "1", "actions_caches": []}, {"total_count": 1, "actions_caches": None}):
+            api.api.request = Mock(return_value=doc)
+            with self.assertRaises(ValueError) as refused:
+                api.list("caches", "actions_caches")
+            self.assertNotIsInstance(refused.exception, InconsistentInventory)
+            self.assertEqual(api.api.request.call_count, 1)
 
     def test_rest_adapter_uses_exact_ids_and_all_nonterminal_run_states(self):
         api = Actions("fixture", 99)

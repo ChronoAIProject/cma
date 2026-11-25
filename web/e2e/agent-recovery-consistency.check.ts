@@ -1,3 +1,4 @@
+import { registerAgentRedesignCases } from './redesign-agent.cases';
 import { test, expect, type Page } from '@playwright/test';
 import { binding, LocalAgentV2 } from './agent-v2.fixture';
 
@@ -62,14 +63,14 @@ test('LOCAL completed-turn recovery agrees across task, header and tools after r
         .getByRole('article', { name: 'Tool call: Inspect synthetic file' })
         .getByRole('img', { name: 'Completed', exact: true }),
     ).toBeVisible();
-    await expect(task(page)).toHaveAccessibleName(/Completed/);
+    await expect(task(page)).toHaveAccessibleName(/Turn ended/);
     await expect(header(page)).toHaveAttribute('title', /Ready/);
     await expect(page.getByText('Refreshing live updates…', { exact: true })).toHaveCount(0);
     await expect(page.locator('[data-streaming]')).toHaveCount(0);
     await page.reload();
     await expect.poll(() => fixture.streams.size).toBe(1);
     fixture.gap(null);
-    await expect(task(page)).toHaveAccessibleName(/Completed/);
+    await expect(task(page)).toHaveAccessibleName(/Turn ended/);
     await expect(header(page)).toHaveAttribute('title', /Ready/);
     await expect(page.getByText('Refreshing live updates…', { exact: true })).toHaveCount(0);
     await page.goto('/agent-manager');
@@ -91,7 +92,7 @@ test('LOCAL completed-turn recovery agrees across task, header and tools after r
     fixture.append({ type: 'turn_completed', turn_sequence: next });
     fixture.append({ type: 'status_changed', from: 'working', to: 'ready' });
     await expect(page.getByText('Refreshing live updates…', { exact: true })).toHaveCount(0);
-    await expect(task(page)).toHaveAccessibleName(/Completed/);
+    await expect(task(page)).toHaveAccessibleName(/Turn ended/);
     noWrites(fixture);
   } finally {
     await fixture.close(page);
@@ -114,20 +115,27 @@ test('LOCAL running reload shows loading until activity is known, then agrees wi
   try {
     await fixture.route(page, baseURL!);
     await page.goto('/agents/agt_contract');
+    await expect.poll(() => fixture.snapshots).toBe(2);
     await expect(page.getByText('Loading conversation activity.', { exact: true })).toBeVisible();
     await expect(task(page)).toHaveAccessibleName(/Loading activity/);
     await expect(header(page)).toHaveAttribute('title', /Loading activity/);
+    await expect.poll(() => fixture.snapshotPending).toBe(true);
     fixture.releaseSnapshot();
-    await page.getByRole('button', { name: 'View activity', exact: true }).click();
+    await expect(page.getByText('Loading conversation activity.', { exact: true })).toHaveCount(0);
+    await expect(task(page)).toHaveAccessibleName(/Working/);
+    await expect(header(page)).toHaveAttribute('title', /Working/);
+    const activity = page.getByRole('button', { name: 'View activity', exact: true });
+    await activity.click();
+    await expect(activity).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('.thinking__activity')).toContainText(
       'Inspect synthetic file - running',
     );
-    await expect(task(page)).toHaveAccessibleName(/Working/);
-    await expect(header(page)).toHaveAttribute('title', /Working/);
     fixture.holdSnapshot = true;
     await page.reload();
+    await expect.poll(() => fixture.snapshots).toBe(4);
     await expect(page.getByText('Loading conversation activity.', { exact: true })).toBeVisible();
     await expect(task(page)).toHaveAccessibleName(/Loading activity/);
+    await expect.poll(() => fixture.snapshotPending).toBe(true);
     fixture.releaseSnapshot();
     await expect(task(page)).toHaveAccessibleName(/Working/);
     await expect(header(page)).toHaveAttribute('title', /Working/);
@@ -190,3 +198,83 @@ for (const failure of ['503', 'stream close']) {
     }
   });
 }
+
+for (const reportedStatus of ['pending', 'blocked']) {
+  test(`LOCAL ended turn with ${reportedStatus} plan keeps a scoped check after recovery and later work`, async ({
+    page,
+    baseURL,
+  }) => {
+    const fixture = running();
+    fixture.append({
+      type: 'plan_set',
+      entries: [
+        { title: 'Write the answer', status: 'completed' },
+        { title: 'Check supporting file', status: reportedStatus },
+      ],
+    });
+    complete(fixture);
+    const notice =
+      reportedStatus === 'pending'
+        ? 'Turn ended · Check unfinished plan steps and output.'
+        : 'Turn ended · Check plan progress and output.';
+    try {
+      await fixture.route(page, baseURL!);
+      await page.goto('/agents/agt_contract');
+      const plans = page.getByRole('region', { name: 'Plan', exact: true });
+      const checkEnded = async () => {
+        await expect(task(page)).toHaveAccessibleName(/Turn ended/);
+        await expect(header(page)).toHaveAttribute('title', /Ready/);
+        await expect(plans).toHaveCount(1);
+        await expect(plans).toContainText(notice);
+        await expect(plans.getByRole('button', { name: 'View plan' })).toHaveAttribute(
+          'aria-expanded',
+          'false',
+        );
+        await expect(page.getByText('Synthetic final answer', { exact: true })).toBeVisible();
+      };
+      await checkEnded();
+      await expect.poll(() => fixture.streams.size).toBe(1);
+      fixture.endTails();
+      await expect(
+        page.getByText('Live updates are reconnecting. Recorded activity is retained.', {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect.poll(() => fixture.streams.size).toBe(1);
+      fixture.gap(null, 'reconnected');
+      await checkEnded();
+      await page.reload();
+      await checkEnded();
+      await page.goto('/agent-manager');
+      await task(page).click();
+      await checkEnded();
+      await expect.poll(() => fixture.streams.size).toBe(1);
+      const next = fixture.items.length + 1;
+      fixture.append(
+        { type: 'turn_started', turn_sequence: next },
+        { command_id: 'cmd_followup', response_id: 'resp_followup', turn_sequence: next },
+      );
+      fixture.append({ type: 'status_changed', from: 'ready', to: 'working' });
+      fixture.append({
+        type: 'plan_set',
+        entries: [{ title: 'Confirm the follow-up', status: 'completed' }],
+      });
+      fixture.append({ type: 'message', role: 'assistant', content: 'Follow-up output retained.' });
+      fixture.append({ type: 'turn_completed', turn_sequence: next });
+      fixture.append({ type: 'status_changed', from: 'working', to: 'ready' });
+      await expect(plans).toHaveCount(2);
+      await expect(plans.first()).toContainText(notice);
+      await expect(plans.last()).toContainText('Turn ended · 1 plan step reported complete');
+      await expect(plans.last()).not.toContainText(/Check unfinished|Check plan progress/);
+      await expect(task(page)).toHaveAccessibleName(/Turn ended/);
+      await expect(header(page)).toHaveAttribute('title', /Ready/);
+      await expect(page.getByText('Follow-up output retained.', { exact: true })).toBeVisible();
+      await expect(page.getByText('Synthetic final answer', { exact: true })).toBeVisible();
+      noWrites(fixture);
+    } finally {
+      await fixture.close(page);
+    }
+  });
+}
+
+registerAgentRedesignCases();

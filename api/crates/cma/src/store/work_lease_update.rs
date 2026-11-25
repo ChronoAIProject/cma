@@ -83,7 +83,8 @@ pub(super) fn replacement(fields: Document) -> Vec<Document> {
         update.insert(
             "document_schema_version",
             doc! {"$cond":[
-            {"$eq":["$document_schema_version",3_i64]},3_i64,
+            {"$and":[{"$eq":["$document_schema_version",3_i64]},
+                {"$not":[{"$in":[{"$literal":fields.get("document_schema_version").cloned().unwrap_or(Bson::Null)},[5_i64,6_i64]]}]}]},3_i64,
             {"$literal":fields.get("document_schema_version").cloned().unwrap_or(Bson::Null)}]},
         );
     }

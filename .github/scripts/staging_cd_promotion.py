@@ -1,4 +1,5 @@
 """Recover outstanding promotions from the latest serialized staging writers."""
+import collections
 import json
 import os
 import re
@@ -17,6 +18,13 @@ LIMIT = 12
 PREFIX = "Verified staging receipts "
 WORKFLOWS = {".github/workflows/staging-cd.yml": ("push", "infrastructure"),
              ".github/workflows/redeploy-staging.yml": ("workflow_dispatch", "resolve")}
+# The newest writer of each component, read as one fenced snapshot: proofs of
+# finished writers, components any listed writer covered, components whose
+# newest writer is unfinished, and when the oldest listed writer was created
+# (None when the listing holds every deployment).
+Snapshot = collections.namedtuple("Snapshot", "proofs observed running since")
+# Failures that leave the controller outcome unknown.
+UNAVAILABLE = (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError)
 
 
 def proof(components):
@@ -76,31 +84,51 @@ def observation(deployment, request):
         return set(), ""
     scope = TARGETS
     if run["event"] == "push":
-        lane = re.fullmatch(r"Promote ([a-z-]+) / Deploy admitted components / Deploy set", job["name"])
-        if not lane or lane[1] not in TARGETS | {"contract"}:
+        scope = push_scope(job["name"])
+        if scope is None:
             return blocked
-        scope = GROUP if lane[1] == "contract" else {lane[1]}
     elif job["name"] != "deploy / Deploy set":
         return blocked
-    if job["status"] != "completed" or job["conclusion"] == "cancelled":
-        return scope, ""
+    return scope, job_proof(job, scope, source)
+
+
+def push_scope(name):
+    """The components a develop push run's deploy job writes, or None for any other job."""
+    lane = re.fullmatch(r"Promote ([a-z-]+) / Deploy admitted components / Deploy set", name or "")
+    if not lane or lane[1] not in TARGETS | {"contract"}:
+        return None
+    return GROUP if lane[1] == "contract" else {lane[1]}
+
+
+def job_proof(job, scope, source):
+    """A deploy job's controller proof; blank without a usable result, None while unfinished."""
+    if job["status"] != "completed":
+        return None
+    if job["conclusion"] == "cancelled":
+        return ""
     steps = job["steps"]
     launch = [index for index, step in enumerate(steps) if step["name"] == "Coordinate the immutable deployment set"
               and step["conclusion"] in ("success", "failure")]
     if len(launch) != 1:
-        return scope, ""
+        return ""
     stamps = [step["name"][len(PREFIX):] for step in steps[launch[0] + 1:] if step["name"].startswith(PREFIX)
               and step["conclusion"] == "success"]
     if len(stamps) != 1:
-        return scope, ""
+        return ""
     names, _, digest = stamps[0].partition(" ")
     keys = names.split(",")
     if keys != sorted(set(keys)) or not set(keys) <= scope or not matches(r"[0-9a-f]{64}", digest):
-        return scope, ""
-    return scope, {"writer": source, "stamp": stamps[0]}
+        return ""
+    return {"writer": source, "stamp": stamps[0]}
 
 
 def inventory(request, environment):
+    value = snapshot(request, environment)
+    return {} if value is None else value.proofs
+
+
+def snapshot(request, environment):
+    """The newest writers' outcomes, or None when a writer started during the read."""
     require(matches(r"[a-z0-9-]+", environment), "Invalid staging environment")
     listing = f"deployments?environment={environment}&per_page="
     rows = request(listing + str(LIMIT))
@@ -110,33 +138,40 @@ def inventory(request, environment):
     require(ids == sorted(set(ids), reverse=True), "Staging deployment order is uncertain")
     # All automatic and manual mutations acquire the same lock before this
     # environment job starts. Older pages cannot supersede a more recent job.
-    remaining, evidence = set(TARGETS), {}
+    remaining, evidence, running = set(TARGETS), {}, set()
     for start in range(0, len(rows), 4):
         for scope, observation_proof in parallel_read(lambda row: observation(row, request), rows[start:start + 4]):
             for key in remaining & scope:
                 if observation_proof:
                     evidence[key] = observation_proof
+                elif observation_proof is None:
+                    running.add(key)
             remaining -= scope
         if not remaining:
             break
-    if evidence:
-        newest = request(listing + "1")
-        if not newest or newest[0].get("id") != ids[0]:
-            return {}  # A writer started while the snapshot was being read.
-    return evidence
+    newest = request(listing + "1")
+    if not isinstance(newest, list) or [row.get("id") for row in newest[:1]] != ids[:1]:
+        return None  # A writer started while the snapshot was being read.
+    since = rows[-1].get("created_at") if len(rows) == LIMIT else None
+    return Snapshot(evidence, TARGETS - remaining, running, since)
+
+
+def read_snapshot(token, environment, *, seconds=10):
+    # The evidence read has no write permission; it raises UNAVAILABLE errors.
+    io = AllocationIO(seconds=seconds)
+    return snapshot(GitHub(token, runner=io.read_once, retry=io.retry).request, environment)
 
 
 def main():
     try:
-        # The evidence read runs before allocation and has no write permission.
-        io = AllocationIO(seconds=10)
-        evidence = inventory(GitHub(os.environ["GH_TOKEN"], runner=io.read_once).request,
-                             os.environ["CD_STAGING_ENVIRONMENT"])
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
+        # The evidence read runs before allocation.
+        value = read_snapshot(os.environ["GH_TOKEN"], os.environ["CD_STAGING_ENVIRONMENT"])
+    except UNAVAILABLE:
         # Missing evidence can add a promotion for an independently qualified
         # final. It never grants a reservation, a version or admission.
-        evidence = {}
+        value = None
         print("Staging controller verification unavailable; final receipts require promotion")
+    evidence = {} if value is None else value.proofs
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
         output.write("verified=" + json.dumps(evidence, sort_keys=True) + "\n")
     return 0

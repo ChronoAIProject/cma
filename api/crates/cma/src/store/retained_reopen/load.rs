@@ -10,27 +10,54 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::{domain, ApplyError, MongoSandboxStore};
 use crate::store::{
     agent_commands::{lane_records, records},
+    agent_log_integrity::IntegrityFailurePolicy,
     sandbox_events::validate_in_transaction,
-    sandbox_unpublished_recovery::transaction::{load_reopen_with_sources, NativeFacts},
+    sandbox_unpublished_recovery::transaction::{
+        load_reopen_with_sources, load_suspended_reopen_with_sources, NativeFacts,
+    },
     worktrees::read_worktree,
 };
-
-pub(super) async fn snapshot(
-    store: &MongoSandboxStore,
-    id: &SandboxId,
-    session: &mut ClientSession,
-) -> Result<(RetainedReopenSnapshot, u64), ApplyError> {
-    snapshot_with_sources(store, id, session, None).await
-}
 
 pub(super) async fn snapshot_with_sources(
     store: &MongoSandboxStore,
     id: &SandboxId,
     session: &mut ClientSession,
     sources: Option<&NativeFacts>,
+    policy: IntegrityFailurePolicy,
 ) -> Result<(RetainedReopenSnapshot, u64), ApplyError> {
     let (original, last_seq, history_state_sha256) =
-        load_reopen_with_sources(store, id, session, sources).await?;
+        load_reopen_with_sources(store, id, session, sources, policy).await?;
+    complete_snapshot(store, id, session, original, last_seq, history_state_sha256).await
+}
+
+pub(super) async fn suspended_snapshot(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+    session: &mut ClientSession,
+    sources: &NativeFacts,
+    integrity_policy: IntegrityFailurePolicy,
+) -> Result<(RetainedReopenSnapshot, u64), ApplyError> {
+    let (original, last_seq, history_state_sha256) =
+        load_suspended_reopen_with_sources(store, id, session, sources, integrity_policy).await?;
+    let policy = store
+        .resource_policies
+        .find_one(doc! {"_id":id.as_str()})
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    super::suspended::require_personal(policy.as_ref(), &original.sandbox)
+        .map_err(ApplyError::Domain)?;
+    complete_snapshot(store, id, session, original, last_seq, history_state_sha256).await
+}
+
+async fn complete_snapshot(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+    session: &mut ClientSession,
+    original: layer2_core::sandbox::SandboxUnpublishedRecoverySnapshot,
+    last_seq: u64,
+    history_state_sha256: String,
+) -> Result<(RetainedReopenSnapshot, u64), ApplyError> {
     validate_in_transaction(store, id, last_seq, session).await?;
     let mut cursor = store
         .worktrees

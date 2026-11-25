@@ -100,7 +100,11 @@ impl From<WorkspaceLocationBody> for layer2_core::profiles::WorkspaceLocation {
     fn from(value: WorkspaceLocationBody) -> Self {
         match value {
             WorkspaceLocationBody::RepositorySnapshot { url, reference } => {
-                Self::RepositorySnapshot { url, reference }
+                Self::RepositorySnapshot {
+                    url,
+                    reference,
+                    connection_id: None,
+                }
             }
             WorkspaceLocationBody::GitRepository { url, reference } => {
                 Self::GitRepository { url, reference }
@@ -113,9 +117,17 @@ impl From<WorkspaceLocationBody> for layer2_core::profiles::WorkspaceLocation {
 impl From<layer2_core::profiles::WorkspaceLocation> for WorkspaceLocationBody {
     fn from(value: layer2_core::profiles::WorkspaceLocation) -> Self {
         match value {
-            layer2_core::profiles::WorkspaceLocation::RepositorySnapshot { url, reference } => {
-                Self::RepositorySnapshot { url, reference }
-            }
+            layer2_core::profiles::WorkspaceLocation::RepositorySnapshot {
+                url, reference, ..
+            } => Self::RepositorySnapshot { url, reference },
+            layer2_core::profiles::WorkspaceLocation::PublicRepositorySnapshot {
+                url,
+                commit,
+                ..
+            } => Self::RepositorySnapshot {
+                url,
+                reference: Some(commit),
+            },
             layer2_core::profiles::WorkspaceLocation::GitRepository { url, reference } => {
                 Self::GitRepository { url, reference }
             }

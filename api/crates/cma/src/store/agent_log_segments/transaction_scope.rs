@@ -6,7 +6,7 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::{bson::Document, ClientSession, Collection};
 use uuid::Uuid;
 
-use crate::store::sandbox_mongo::start_transaction;
+use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::start_transaction};
 
 mod page;
 
@@ -39,8 +39,85 @@ impl<'session> TransactionScope<'session> {
     pub(in crate::store) async fn fence_ordinary_work(
         &mut self,
         store: &crate::store::MongoSandboxStore,
-    ) -> Result<(), SandboxStoreError> {
-        crate::store::work_publication::fence(store, self.session).await
+    ) -> Result<(), crate::store::work_publication::FenceError> {
+        crate::store::work_publication::fence_transaction(store, self.session).await
+    }
+
+    pub(in crate::store) async fn control_snapshot(
+        &mut self,
+        store: &crate::store::sandbox_mongo::MongoSandboxStore,
+        target: &layer2_core::sandbox::store::AgentControlTarget,
+    ) -> Result<
+        crate::store::agent_control_lineage::ControlSnapshot,
+        crate::store::agent_control_lineage::LineageError,
+    > {
+        crate::store::agent_control_lineage::load_control_snapshot(
+            store,
+            target,
+            self.session,
+            false,
+        )
+        .await
+    }
+
+    pub(in crate::store) async fn live_agents(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        sandbox_id: &layer2_core::SandboxId,
+        workspace_id: &layer2_core::WorkspaceId,
+    ) -> Result<u64, TransactionLogError> {
+        use crate::store::shared_child_capacity::{agents, CapacityError};
+        agents(store, sandbox_id, workspace_id, self.session)
+            .await
+            .map_err(|error| match error {
+                CapacityError::Domain(error) => error.into(),
+                CapacityError::Driver(error) => TransactionLogError::Driver(error),
+            })
+    }
+
+    pub(in crate::store) async fn retained_reopen_view(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        id: &layer2_core::SandboxId,
+        path: layer2_core::sandbox::RetainedReopenPath,
+        policy: crate::store::agent_log_integrity::IntegrityFailurePolicy,
+    ) -> Result<
+        (layer2_core::sandbox::RetainedReopenSnapshot, u64),
+        crate::store::sandbox_unpublished_recovery::transaction::ApplyError,
+    > {
+        use crate::store::sandbox_unpublished_recovery::transaction::NativeFacts;
+        let facts = NativeFacts::capture_reopen(store, id, self).await?;
+        crate::store::retained_reopen::snapshot_in_transaction(
+            store,
+            id,
+            self.session,
+            &facts,
+            path,
+            policy,
+        )
+        .await
+    }
+
+    pub(in crate::store) async fn retained_reopen_history(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        row: &Document,
+        key: &str,
+    ) -> Result<
+        layer2_core::sandbox::RetainedReopenHistory,
+        crate::store::sandbox_unpublished_recovery::transaction::ApplyError,
+    > {
+        crate::store::retained_reopen::read_history(store, row, Some(key), self.session, None).await
+    }
+
+    pub(in crate::store) async fn settle_runtime_loss_budget(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        current: &layer2_core::sandbox::Agent,
+        change: &layer2_core::sandbox::store::SandboxRuntimeLossAgentMutation,
+        at: &str,
+    ) -> Result<(), TransactionLogError> {
+        crate::store::budget::settle_runtime_loss(store, current, change, at, self.session).await
     }
 
     /// Release consumes the scope. The caller may commit/abort and do normal
@@ -56,10 +133,26 @@ impl<'session> TransactionScope<'session> {
         collection: &Collection<Document>,
         filter: Document,
     ) -> Result<Option<Document>, mongodb::error::Error> {
+        crate::store::stale_turns::find_with_proof_budget(
+            collection,
+            crate::store::work_schema::for_collection(collection, filter),
+            &mut *self.session,
+            false,
+        )
+        .await
+    }
+
+    pub(in crate::store) async fn find_projected(
+        &mut self,
+        collection: &Collection<Document>,
+        filter: Document,
+        projection: Document,
+    ) -> Result<Option<Document>, mongodb::error::Error> {
         collection
             .find_one(crate::store::work_schema::for_collection(
                 collection, filter,
             ))
+            .projection(projection)
             .session(&mut *self.session)
             .await
     }
@@ -73,16 +166,31 @@ impl<'session> TransactionScope<'session> {
         sort: Document,
         limit: u32,
     ) -> Result<Vec<Document>, mongodb::error::Error> {
+        self.find_projected_page(collection, filter, sort, limit, None)
+            .await
+    }
+
+    pub(in crate::store) async fn find_projected_page(
+        &mut self,
+        collection: &Collection<Document>,
+        filter: Document,
+        sort: Document,
+        limit: u32,
+        projection: Option<Document>,
+    ) -> Result<Vec<Document>, mongodb::error::Error> {
         page::validate_limit(limit)?;
-        let mut cursor = collection
+        let query = collection
             .find(crate::store::work_schema::for_collection(
                 collection, filter,
             ))
             .sort(sort)
             .limit(i64::from(limit))
-            .batch_size(limit)
-            .session(&mut *self.session)
-            .await?;
+            .batch_size(limit);
+        let query = match projection {
+            Some(projection) => query.projection(projection),
+            None => query,
+        };
+        let mut cursor = query.session(&mut *self.session).await?;
         page::collect(cursor.stream(&mut *self.session), limit).await
     }
 

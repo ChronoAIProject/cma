@@ -75,12 +75,15 @@ it.each([false, true])(
 it('opens same-origin document links within the SPA and keeps their fragment authority', () => {
   const id = `doc_${'a'.repeat(32)}`;
   const token = 'b'.repeat(64);
-  const push = vi.spyOn(window.history, 'pushState').mockImplementation(() => {});
-  const changed = vi.fn();
-  window.addEventListener('popstate', changed);
+  const changed = vi.fn((event: Event) => event.preventDefault());
+  const push = vi.spyOn(window.history, 'pushState');
+  window.addEventListener('cma:route-request', changed);
   render(<MessageContent content={`[Document](/artifacts/${id}#token=${token})`} />);
   screen.getByRole('link', { name: 'Document' }).click();
-  expect(push).toHaveBeenCalledWith(null, '', `/artifacts/${id}#token=${token}`);
+  expect(push).not.toHaveBeenCalled();
   expect(changed).toHaveBeenCalledOnce();
-  window.removeEventListener('popstate', changed);
+  expect((changed.mock.calls[0]![0] as CustomEvent<string>).detail).toBe(
+    `/artifacts/${id}#token=${token}`,
+  );
+  window.removeEventListener('cma:route-request', changed);
 });

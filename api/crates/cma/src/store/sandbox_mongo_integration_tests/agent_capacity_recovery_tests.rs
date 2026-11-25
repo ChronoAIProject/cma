@@ -4,6 +4,7 @@ use super::*;
 mod composition;
 mod discovery;
 mod fixture;
+mod observations;
 mod pacing;
 mod records;
 mod restart;
@@ -12,3 +13,5 @@ mod service;
 mod source;
 mod transactions;
 mod worker;
+
+pub(super) use fixture::ready_with_created;

@@ -7,6 +7,7 @@ import { AgentSurface } from './AgentSurface';
 import { useAgentController } from './controller';
 import { accepted, binding, harness, json, queuedPage } from './transport/controller.fixture';
 import { agentClient } from '../test/agent';
+import { status } from './transport/queuedReconciliation.fixture';
 
 const connected: ConnectionReport = {
   owner: 'alice',
@@ -133,10 +134,14 @@ it('skips the per-message catalog wait, retains identity and acknowledgement gat
   expect(bubbles('Immediate local message')).toHaveLength(1);
   await act(async () => identity.resolve('alice'));
   expect(h.post).toHaveBeenCalledOnce();
+  expect(screen.getByText('Sending…')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Pending request')).not.toBeInTheDocument();
+  expect(screen.queryByText('We can’t confirm this message arrived')).not.toBeInTheDocument();
   expect(screen.queryByText('Sent')).not.toBeInTheDocument();
   await act(async () => response.resolve(accepted()));
   await waitFor(() => expect(field).toHaveValue(''));
   expect(screen.getByText('Sent')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Pending request')).not.toBeInTheDocument();
   await act(async () => {
     h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding);
     h.durable(2, { type: 'message', role: 'user', content: 'Immediate local message' });
@@ -180,22 +185,88 @@ it('preserves the draft and original request through a lost acknowledgement, rel
   click();
   expect(bubbles('Immediate local message')).toHaveLength(1);
   await waitFor(() => expect(screen.getByText('Awaiting confirmation')).toBeInTheDocument());
+  expect(within(screen.getByLabelText('Pending request')).getByRole('alert')).toBeInTheDocument();
+  expect(await screen.findByText('We can’t confirm this message arrived')).toBeInTheDocument();
   expect(field).toHaveValue('Immediate local message');
   expect(h.post).toHaveBeenCalledOnce();
   const original = h.post.mock.calls[0]![0]!;
+  const reads = h.inputReceipt.mock.calls.length;
   view.unmount();
   render(<Agent />);
   await screen.findByText('Awaiting confirmation');
   expect(bubbles('Immediate local message')).toHaveLength(1);
-  fireEvent.click(screen.getByRole('button', { name: 'Recover pending request' }));
+  const recover = await screen.findByRole('button', { name: 'Recover pending request' });
+  h.inputReceipt.mockImplementationOnce(async () => json(status(1, 'completed')));
+  fireEvent.click(recover);
   await waitFor(() => expect(screen.getByText('Sent')).toBeInTheDocument());
-  expect(h.post).toHaveBeenCalledTimes(2);
-  const recovered = h.post.mock.calls[1]![0]!;
-  expect(recovered.body).toBe(original.body);
-  expect(new Headers(recovered.headers).get('idempotency-key')).toBe(
-    new Headers(original.headers).get('idempotency-key'),
-  );
+  expect(h.post).toHaveBeenCalledOnce();
+  expect(h.inputReceipt.mock.calls.length).toBeGreaterThan(reads);
+  for (const [lookup] of h.inputReceipt.mock.calls) {
+    expect(lookup?.body).toBe(original.body);
+    expect(new Headers(lookup?.headers).get('idempotency-key')).toBe(
+      new Headers(original.headers).get('idempotency-key'),
+    );
+  }
   expect(bubbles('Immediate local message')).toHaveLength(1);
+});
+
+it('restores a committed artifact request after reopen without submitting it again', async () => {
+  const { h, view, Agent } = await setup();
+  const bytes = new TextEncoder().encode('Verified artifact revision');
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const sha256 = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0'),
+  ).join('');
+  const artifact = {
+    id: `art_${'a'.repeat(64)}`,
+    agent_id: 'agt_1',
+    name: 'report.txt',
+    media_type: 'text/plain',
+    sha256,
+    size_bytes: bytes.length,
+    created_at: '2026-09-16T00:00:00Z',
+  };
+  let committed: RequestInit | undefined;
+  let exposeReceipt = false;
+  const revisions: Uint8Array[] = [];
+  h.post.mockImplementationOnce(async (init) => {
+    committed = init;
+    revisions.push(bytes);
+    throw new TypeError('Connection dropped after durable admission');
+  });
+  const receipt = vi.fn(async (init?: RequestInit) => {
+    if (!exposeReceipt || !committed) return json(null);
+    expect(init?.body).toBe(committed.body);
+    expect(new Headers(init?.headers).get('idempotency-key')).toBe(
+      new Headers(committed.headers).get('idempotency-key'),
+    );
+    return json(status(1, 'completed'));
+  });
+  const request = h.fetch.getMockImplementation()!;
+  const download = `/api/v1/agents/agt_1/artifacts/${artifact.id}`;
+  h.fetch.mockImplementation(async (input, init) => {
+    if (String(input) === '/api/v2/agents/agt_1/responses/receipt') return receipt(init);
+    if (String(input) === download && revisions.length === 1) return json(artifact);
+    if (String(input) === `${download}/download` && revisions.length === 1)
+      return new Response(revisions[0]!.slice().buffer, {
+        headers: { 'content-type': 'application/octet-stream' },
+      });
+    return request(input, init);
+  });
+
+  click();
+  await screen.findByText('Awaiting confirmation');
+  expect(h.post).toHaveBeenCalledOnce();
+  view.unmount();
+  exposeReceipt = true;
+  render(<Agent />);
+  await waitFor(() => expect(receipt).toHaveBeenCalled());
+  await waitFor(() => expect(screen.queryByText('Awaiting confirmation')).not.toBeInTheDocument());
+  expect(screen.queryByRole('button', { name: 'Recover pending request' })).not.toBeInTheDocument();
+  expect(h.post).toHaveBeenCalledOnce();
+  expect(revisions).toHaveLength(1);
+  const downloaded = await h.sdk.agents.downloadArtifact('agt_1', artifact.id);
+  expect(Array.from(downloaded)).toEqual(Array.from(bytes));
 });
 
 it('uses observed receipt metadata only to reconcile replay while the acceptance identity check is still pending', async () => {
@@ -248,8 +319,8 @@ it('retains two separately accepted identical messages until their own command a
   expect(screen.getAllByText('Sent')).toHaveLength(1);
   view.unmount();
   render(<Agent />);
-  // The last accepted request remains visible from its exact journal receipt after reload.
-  expect(await screen.findByText('Sent')).toBeInTheDocument();
+  // The last accepted request stays visible while its current status is unavailable.
+  await screen.findAllByText('Message status could not be confirmed. Refresh status.');
   expect(h.post).toHaveBeenCalledTimes(2);
   const next = deferred<Response>();
   h.post.mockReturnValueOnce(next.promise);
@@ -396,4 +467,27 @@ it('keeps a legacy ambiguous submission unconfirmed with its draft intact and no
   expect(screen.queryByText('Not sent')).not.toBeInTheDocument();
   expect(field).toHaveValue('Legacy input\nwith a second line');
   expect(runAgent).toHaveBeenCalledOnce();
+});
+
+it('replaces a discovered then absent admitted message with its expiry explanation through the real controller', async () => {
+  const { h } = await setup();
+  h.listQueued.mockImplementation(async () => json(queuedPage('Immediate local message')));
+  click();
+  await screen.findByText('Sent');
+  await waitFor(() => expect(h.listQueued.mock.calls.length).toBeGreaterThan(1));
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  h.listQueued.mockImplementation(async () =>
+    json({ object: 'cma.agent.queued_inputs', agent_id: 'agt_1', data: [], next_after: null }),
+  );
+  const originalFetch = h.fetch.getMockImplementation()!;
+  h.fetch.mockImplementation((url, init) =>
+    String(url).endsWith('/commands/cmd_1')
+      ? Promise.resolve(json(status(1, 'expired')))
+      : originalFetch(url, init),
+  );
+  fireEvent(window, new Event('focus'));
+  await screen.findByText('Expired before starting', {}, { timeout: 3000 });
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  expect(screen.queryByText('Sent')).not.toBeInTheDocument();
+  expect(h.post).toHaveBeenCalledOnce();
 });

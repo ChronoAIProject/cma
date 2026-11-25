@@ -1,15 +1,13 @@
 use super::{
     event::now,
-    gate::{expired, SendGate},
+    gate::{expired, within_deadline, SendGate},
     intents::{DeliveryOutcome, IntentReceipt},
     pacing::Pacing,
     relay_client::{unknown, Credential, RelayClient},
-    render::{RelayText, Renderer},
+    render::{LiteralText, RelayText, Renderer},
 };
 use crate::{
-    channels::resolver::ResolvedChannel,
-    tools::Capabilities,
-    turns::observer::{default_consumer, ActivityObserver, DeliveryStep, Destination},
+    channels::resolver::ResolvedChannel, tools::Capabilities, turns::observer::ActivityObserver,
 };
 use cmaeg_core::{
     channel::Platform,
@@ -47,66 +45,6 @@ pub(super) struct Sender {
     pub observer: Arc<dyn ActivityObserver>,
 }
 impl Sender {
-    /// Report the consumer bound to this event reference, at its origin.
-    pub async fn observe(
-        &self,
-        event: &EventRefPayload,
-        step: DeliveryStep,
-        outcome: &DeliveryOutcome,
-    ) {
-        self.observe_at(event, step, outcome, Destination::Origin, None)
-            .await;
-    }
-    pub async fn observe_at(
-        &self,
-        event: &EventRefPayload,
-        step: DeliveryStep,
-        outcome: &DeliveryOutcome,
-        destination: Destination,
-        default: Option<&super::destination::DefaultDestination>,
-    ) {
-        self.observer.delivered(
-            &event.record_id,
-            &event.event_id,
-            event
-                .consumer
-                .as_ref()
-                .unwrap_or_else(|| default_consumer()),
-            step,
-            outcome,
-            destination,
-        );
-        if default.is_none()
-            && matches!(
-                event.reply,
-                ReplyAddress::Sync { .. } | ReplyAddress::ResultWebhook { .. } | ReplyAddress::None
-            )
-        {
-            // Custom delivery reports its actual local queue and each webhook
-            // leg separately; the compatibility aggregate is not another send.
-            return;
-        }
-        crate::telemetry::delivery::outcome(step, outcome, destination, &event.reply, default);
-        self.observer
-            .checkpoint(
-                &event.record_id,
-                &event.event_id,
-                crate::activity::facts::delivery(
-                    event
-                        .consumer
-                        .as_ref()
-                        .unwrap_or_else(|| default_consumer())
-                        .as_str(),
-                    step,
-                    outcome,
-                    destination,
-                    &event.reply,
-                    default,
-                ),
-            )
-            .await;
-    }
-
     #[tracing::instrument(name="cmaeg.deliver", parent = ctx.trace, skip_all, fields(
         channel = %crate::telemetry::channel_hash(ctx.channel.id.as_str()), event_id = %event.event_id))]
     pub async fn reply(
@@ -278,7 +216,11 @@ impl Sender {
         if !interactive {
             capabilities.buttons = "numbered_text".into();
         }
-        let (parts, rendering) = RelayText.render(message, &capabilities);
+        let (parts, rendering) = if super::render::literal_platform(*platform) {
+            LiteralText.render(message, &capabilities)
+        } else {
+            RelayText.render(message, &capabilities)
+        };
         let mut result = IntentReceipt {
             message_parts: vec![],
             message_ref: None,
@@ -311,7 +253,9 @@ impl Sender {
         let mut confirmed_parts = 0;
         let mut first_platform_id = None;
         for (index, part) in parts.iter().enumerate() {
-            let Some(mut slot) = self.pacing.acquire(route_id).await else {
+            let Some(mut slot) =
+                within_deadline(ctx.gate, self.pacing.acquire(route_id), None).await
+            else {
                 result.delivery = DeliveryOutcome::Rejected {
                     reason: "pacing_capacity".into(),
                 };
@@ -351,14 +295,16 @@ impl Sender {
                 break;
             };
             first_send_done = true;
-            let (mut outcome, mut outbound) = self
-                .relay
-                .send_rich(&address, credential, &part.text, None)
-                .await;
+            let (mut outcome, mut outbound) = within_deadline(
+                ctx.gate,
+                self.relay.send_rich(&address, credential, &part.text, None),
+                (unknown("side_message_delivery_timeout"), None),
+            )
+            .await;
             drop(permit);
             if let DeliveryOutcome::RateLimited { retry_after } = outcome {
                 slot.cooldown(retry_after);
-                slot.retry().await;
+                within_deadline(ctx.gate, slot.retry(), ()).await;
                 let retry = match ctx.gate.attempt().await {
                     Ok(permit) => permit,
                     Err(refusal) => {
@@ -369,9 +315,17 @@ impl Sender {
                 // The single-use credential is never presented twice, even after a 429.
                 (outcome, outbound) = match ctx.channel.definition.secrets.channel_key.as_ref() {
                     Some(key) => {
-                        self.relay
-                            .send_rich(&address, Credential::ChannelKey(key), &part.text, None)
-                            .await
+                        within_deadline(
+                            ctx.gate,
+                            self.relay.send_rich(
+                                &address,
+                                Credential::ChannelKey(key),
+                                &part.text,
+                                None,
+                            ),
+                            (unknown("side_message_delivery_timeout"), None),
+                        )
+                        .await
                     }
                     None => (
                         DeliveryOutcome::Rejected {
@@ -438,8 +392,17 @@ impl Sender {
                     (result.message_ref.as_ref(), outbound.as_deref())
                 {
                     result.message_ref = Some(
-                        self.lark_effect_reference(ctx.channel, event, reference.clone(), outbound)
-                            .await,
+                        within_deadline(
+                            ctx.gate,
+                            self.lark_effect_reference(
+                                ctx.channel,
+                                event,
+                                reference.clone(),
+                                outbound,
+                            ),
+                            reference.clone(),
+                        )
+                        .await,
                     );
                 }
             }

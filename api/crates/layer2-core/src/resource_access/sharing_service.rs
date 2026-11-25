@@ -122,6 +122,14 @@ impl ResourceAccessService {
         {
             return Ok(request.replay(receipt)?);
         }
+        if self.execution.is_some()
+            && matches!(
+                request.change,
+                ShareChange::Revoke { .. } | ShareChange::SetMode { .. }
+            )
+        {
+            return Err(ResourceAccessStoreError::Conflict.into());
+        }
         let organization = match &request.change {
             ShareChange::Create { target_org_id, .. } => Some(target_org_id),
             ShareChange::CreateLink { audience, .. } => audience.organization(),
@@ -151,6 +159,15 @@ impl ResourceAccessService {
                 || evidence.memberships[0].observed_at < started_at
             {
                 return Err(MembershipError::InvalidEvidence.into());
+            }
+        }
+        if let ShareChange::CreateLink {
+            audience: AgentShareAudience::Users { subjects },
+            ..
+        } = &request.change
+        {
+            for subject in subjects {
+                self.require_recipient_available(subject).await?;
             }
         }
         Ok(self.store.mutate_share(request).await?)

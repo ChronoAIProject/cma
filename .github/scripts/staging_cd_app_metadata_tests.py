@@ -2,8 +2,10 @@
 import contextlib
 import io
 import os
+import socket
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -48,7 +50,8 @@ class AppMetadataTests(unittest.TestCase):
         checkout_index = next(i for i, step in enumerate(steps) if step.get("with", {}).get("repository"))
         self.assertLess(steps.index(prepare), checkout_index)
         self.assertEqual(prepare["run"], "python3 -B .github/scripts/staging_cd_checkout.py prepare-app")
-        self.assertEqual(prepare["env"]["CD_INFRA_TOKEN"], "${{ steps.infra-token.outputs.token }}")
+        self.assertEqual(prepare["env"]["CD_INFRA_TOKEN"],
+                         "${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}")
 
         repo_patch = patch.object(metadata, "REPOSITORY", "Example/xy")
         repo_patch.start()
@@ -69,10 +72,10 @@ class AppMetadataTests(unittest.TestCase):
             def resolve(token, revision, masker):
                 return metadata.resolve_app_commit(token, revision, masker, lambda _: read)
             with contextlib.redirect_stdout(output):
-                self.assertEqual(run_private(lambda mask: checkout.prepare_app(env, mask, resolve), None), 0)
+                self.assertEqual(run_private(lambda mask: checkout.prepare_app(env, mask, resolve), None, subject="private-checkout"), 0)
 
         lines = output.getvalue().splitlines()
-        self.assertEqual(lines[-1], "PASS")
+        self.assertEqual(lines[-1], "PASS private-checkout")
         self.assertTrue(all(line.startswith("::add-mask::") for line in lines[:-1]))
         masks = {line[len("::add-mask::"):] for line in lines[:-1]}
         required = {"z", metadata.REPOSITORY, "xy", "ab", "Li", "12345678", "who@example.invalid",
@@ -137,6 +140,24 @@ class AppMetadataTests(unittest.TestCase):
                 metadata.github_reader(token)
         self.assertIsNone(metadata.NoRedirect().redirect_request(None, None, 302, "", {}, "https://example.invalid"))
 
+    def test_transport_failures_repeat_and_refusals_do_not(self):
+        response = Mock(status=200)
+        response.read.return_value = b'{"fixture":true}'
+        for failure, calls in ((urllib.error.URLError(socket.gaierror(-3, "private")), 2),
+                               (urllib.error.HTTPError("https://api.github.com", 503, "private", {}, None), 2),
+                               (urllib.error.HTTPError("https://api.github.com", 401, "private", {}, None), 1)):
+            opener = Mock()
+            opener.open.side_effect = [failure, contextlib.nullcontext(response)]
+            with self.subTest(failure=failure), \
+                    patch.object(metadata.urllib.request, "build_opener", return_value=opener):
+                read = metadata.github_reader("fixture", retry={"sleep": lambda _seconds: None})
+                if calls == 2:
+                    self.assertEqual(read("installation/repositories?per_page=100"), {"fixture": True})
+                else:
+                    with self.assertRaises(urllib.error.HTTPError):
+                        read("installation/repositories?per_page=100")
+            self.assertEqual(opener.open.call_count, calls)
+
     def test_prepare_app_keeps_metadata_private_and_requires_configured_sha(self):
         with tempfile.TemporaryDirectory() as directory:
             env = {"GITHUB_WORKSPACE": directory, "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
@@ -149,10 +170,11 @@ class AppMetadataTests(unittest.TestCase):
                 return "a" * 40
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                self.assertEqual(run_private(lambda masker: checkout.prepare_app(env, masker, resolve), None), 0)
+                self.assertEqual(run_private(lambda masker: checkout.prepare_app(env, masker, resolve), None,
+                                             subject="private-checkout"), 0)
             public = output.getvalue()
             self.assertNotIn("private response", public)
-            self.assertTrue(public.endswith("PASS\n"))
+            self.assertTrue(public.endswith("PASS private-checkout\n"))
             for field, value in [("CD_INFRA_REF", "develop"), ("GITHUB_RUN_ID", "0")]:
                 with self.subTest(field=field), self.assertRaises(Refusal):
                     checkout.prepare_app(dict(env, **{field: value}), Mock(), Mock())

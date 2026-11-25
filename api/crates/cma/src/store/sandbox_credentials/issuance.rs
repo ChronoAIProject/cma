@@ -1,57 +1,16 @@
 //! One unresolved issuance barrier per Sandbox, retained across generation changes.
+use super::issuance_record::{decode, validate};
 use super::*;
 use crate::sandbox::{CredentialIssuance, IssuanceIdentity, IssuanceObservation, IssuanceState};
 use crate::store::sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome};
 use layer2_core::sandbox::Sandbox;
 use mongodb::bson::{Bson, Document};
+use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 
 pub(in crate::store) const COLLECTION: &str = "sandbox_credential_issuance";
 pub(in crate::store) mod legacy;
 mod transactions;
-
-fn decode(row: Document) -> Result<CredentialIssuance, CredentialCustodyError> {
-    if row.get_i64("document_schema_version").ok() != Some(1) {
-        return Err(corrupt());
-    }
-    let intent: CredentialIssuance =
-        mongodb::bson::deserialize_from_bson(row.get("record").cloned().ok_or_else(corrupt)?)
-            .map_err(|_| corrupt())?;
-    validate(&intent)?;
-    if row.get_str("_id").ok() != Some(intent.sandbox_id.as_str()) {
-        return Err(corrupt());
-    }
-    Ok(intent)
-}
-
-fn validate(intent: &CredentialIssuance) -> Result<(), CredentialCustodyError> {
-    let digest = |value: &str| {
-        value.len() == 64
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    };
-    if intent
-        .operation_id
-        .strip_prefix("mint_")
-        .is_none_or(|id| uuid::Uuid::parse_str(id).is_err())
-        || intent.generation == 0
-        || intent.original_holder.is_empty()
-        || intent.original_fence == 0
-        || match &intent.identity {
-            IssuanceIdentity::Prepared {
-                provider_identity,
-                request_digest,
-            } => !digest(provider_identity) || !digest(request_digest),
-            IssuanceIdentity::LegacyUnobserved => intent.state != IssuanceState::Unknown,
-        }
-        || seconds_from_rfc3339(&intent.created_at).is_none()
-        || seconds_from_rfc3339(&intent.next_check_at).is_none()
-    {
-        return Err(corrupt());
-    }
-    Ok(())
-}
 
 fn document(intent: &CredentialIssuance) -> Result<Document, CredentialCustodyError> {
     validate(intent)?;
@@ -65,13 +24,39 @@ pub(super) async fn read(
     store: &MongoSandboxCredentialStore,
     sandbox: &Sandbox,
 ) -> Result<Option<CredentialIssuance>, CredentialCustodyError> {
-    store
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .await
+        .map_err(unavailable)?;
+    let intent = store
         .intents
         .find_one(doc! {"_id":sandbox.id.as_str()})
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut session)
         .await
         .map_err(unavailable)?
         .map(decode)
-        .transpose()
+        .transpose()?;
+    if intent.is_none()
+        && store
+            .sandboxes
+            .find_one(doc! {
+                "_id":sandbox.id.as_str(), "credential_issuance_fence":{"$exists":true}
+            })
+            .projection(doc! {"_id":1})
+            .read_concern(ReadConcern::snapshot())
+            .session(&mut session)
+            .await
+            .map_err(unavailable)?
+            .is_some()
+    {
+        return Err(CredentialCustodyError::Unavailable(
+            "credential intent is missing behind a retained issuance marker".into(),
+        ));
+    }
+    Ok(intent)
 }
 
 pub(super) async fn begin(
@@ -164,6 +149,7 @@ pub(super) async fn accept(
         || material.owner != intent.owner
         || material.authority.generation != intent.generation
         || !material.source.is_managed()
+        || !material.matches_connection(sandbox)
     {
         return Err(corrupt());
     }

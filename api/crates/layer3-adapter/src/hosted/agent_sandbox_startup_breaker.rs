@@ -1,7 +1,10 @@
 //! Process-local stop-loss state. Providers supply opaque boot/process identities
 //! and content-free termination evidence; durable work remains authoritative.
-use crate::runtime_startup::{StartupIncarnation, StartupTermination};
-use crate::{AdapterError, RuntimeHandle, RuntimeStartupFailure, RuntimeStartupFailureClass};
+use crate::runtime_startup::{StartupHistory, StartupIncarnation, StartupTermination};
+use crate::{
+    AdapterError, RuntimeHandle, RuntimeStartupFailure, RuntimeStartupFailureClass,
+    RuntimeStartupProbe,
+};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -20,11 +23,24 @@ pub(super) struct StartupBreaker {
 
 struct StartupRecord {
     sandbox_id: String,
+    generation: u64,
     boot: String,
-    last_delivery: Delivery,
+    last_delivery: Option<Delivery>,
+    recovery_incarnation: Option<StartupIncarnation>,
     failure: RuntimeStartupFailure,
     next_probe: Option<Instant>,
     probe_interval: Duration,
+}
+
+impl StartupRecord {
+    fn failure_at(&self, handle: &RuntimeHandle, next_probe_at: Instant) -> RuntimeStartupFailure {
+        self.failure.clone().with_probe(RuntimeStartupProbe {
+            runtime: handle.clone(),
+            sandbox_id: self.sandbox_id.clone(),
+            generation: self.generation,
+            next_probe_at,
+        })
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -35,6 +51,48 @@ pub(super) struct Delivery {
 }
 
 impl StartupBreaker {
+    pub(super) fn needs_recovery(
+        &self,
+        handle: &RuntimeHandle,
+        incarnation: &StartupIncarnation,
+    ) -> bool {
+        incarnation.restart >= THRESHOLD && !self.entries.lock().unwrap().contains_key(handle)
+    }
+
+    /// Qualifying history can shorten relearning after a freshly acknowledged
+    /// failed startup. The ordinary first adoption can still prove serving.
+    pub(super) fn recover(
+        &self,
+        handle: &RuntimeHandle,
+        incarnation: &StartupIncarnation,
+        sandbox_id: String,
+        generation: u64,
+        history: StartupHistory,
+    ) {
+        if incarnation.restart < THRESHOLD || history.duration.is_zero() || history.duration >= FAST
+        {
+            return;
+        }
+        let mut entries = self.entries.lock().unwrap();
+        if entries.contains_key(handle) {
+            return;
+        }
+        if entries.len() >= MAX_RECORDS {
+            entries.pop_first();
+        }
+        let record = StartupRecord {
+            sandbox_id,
+            generation,
+            boot: incarnation.boot.clone(),
+            last_delivery: None,
+            recovery_incarnation: Some(incarnation.clone()),
+            failure: RuntimeStartupFailure::new(history.class, 0),
+            next_probe: None,
+            probe_interval: FIRST_PROBE,
+        };
+        entries.insert(handle.clone(), record);
+    }
+
     pub(super) fn reset(&self, handle: &RuntimeHandle) {
         if let Some(record) = self.entries.lock().unwrap().remove(handle) {
             if record.next_probe.is_some() {
@@ -57,18 +115,18 @@ impl StartupBreaker {
     }
 
     pub(super) fn failure(&self, handle: &RuntimeHandle) -> Option<RuntimeStartupFailure> {
-        self.entries
-            .lock()
-            .unwrap()
-            .get(handle)
-            .filter(|record| record.next_probe.is_some())
-            .map(|record| record.failure)
+        self.entries.lock().unwrap().get(handle).and_then(|record| {
+            record
+                .next_probe
+                .map(|next| record.failure_at(handle, next))
+        })
     }
 
     pub(super) fn hold_before_wait(&self, handle: &RuntimeHandle) -> Option<AdapterError> {
         let entries = self.entries.lock().unwrap();
         let record = entries.get(handle)?;
-        (Instant::now() < record.next_probe?).then(|| suppressed(record.failure))
+        let next = record.next_probe?;
+        (Instant::now() < next).then(|| suppressed(record.failure_at(handle, next)))
     }
 
     pub(super) fn evidence_needed(
@@ -78,7 +136,7 @@ impl StartupBreaker {
     ) -> Option<Delivery> {
         let entries = self.entries.lock().unwrap();
         let record = entries.get(handle)?;
-        let delivery = &record.last_delivery;
+        let delivery = record.last_delivery.as_ref()?;
         (record.boot == current.boot
             && !delivery.inspected
             && (current.process != delivery.incarnation.process
@@ -97,7 +155,7 @@ impl StartupBreaker {
             return;
         };
         // A concurrent reset or successful serving proof invalidates the read.
-        if record.last_delivery != *delivered {
+        if record.last_delivery.as_ref() != Some(delivered) {
             return;
         }
         let fast = evidence.filter(|evidence| {
@@ -112,10 +170,11 @@ impl StartupBreaker {
             entries.remove(handle);
             return;
         };
-        record.last_delivery.inspected = true;
+        record.last_delivery.as_mut().unwrap().inspected = true;
+        let relearned = record.recovery_incarnation.take().as_ref() == Some(&delivered.incarnation);
         record.failure.consecutive = record.failure.consecutive.saturating_add(1);
         record.failure.class = fast.class;
-        if record.failure.consecutive >= THRESHOLD && record.next_probe.is_none() {
+        if (relearned || record.failure.consecutive >= THRESHOLD) && record.next_probe.is_none() {
             record.probe_interval = FIRST_PROBE;
             record.next_probe = Some(Instant::now() + FIRST_PROBE);
             transition(record, "opened");
@@ -132,7 +191,7 @@ impl StartupBreaker {
         };
         let now = Instant::now();
         if now < next {
-            return Err(suppressed(record.failure));
+            return Err(suppressed(record.failure_at(handle, next)));
         }
         // Claim before delivery, including failed or unacknowledged probes.
         record.probe_interval = (record.probe_interval * 2).min(MAX_PROBE);
@@ -146,6 +205,7 @@ impl StartupBreaker {
         handle: &RuntimeHandle,
         incarnation: StartupIncarnation,
         sandbox_id: String,
+        generation: u64,
         delivered_at: SystemTime,
     ) {
         let mut entries = self.entries.lock().unwrap();
@@ -157,29 +217,40 @@ impl StartupBreaker {
             delivered_at,
             inspected: false,
         };
-        if let Some(record) = entries
-            .get_mut(handle)
-            .filter(|record| record.boot == incarnation.boot)
-        {
+        if let Some(record) = entries.get_mut(handle).filter(|record| {
+            record.boot == incarnation.boot
+                && record.sandbox_id == sandbox_id
+                && record.generation == generation
+        }) {
             // Duplicate acknowledgements are still delivered normally. They
             // must not re-arm an already inspected failure of this incarnation
             // or replace evidence of a newer acknowledged incarnation.
-            if incarnation != record.last_delivery.incarnation
-                && incarnation.restart >= record.last_delivery.incarnation.restart
+            if record
+                .recovery_incarnation
+                .as_ref()
+                .is_some_and(|prior| prior != &incarnation)
             {
-                record.last_delivery = delivery;
+                record.recovery_incarnation = None;
+            }
+            if record.last_delivery.as_ref().is_none_or(|previous| {
+                incarnation != previous.incarnation
+                    && incarnation.restart >= previous.incarnation.restart
+            }) {
+                record.last_delivery = Some(delivery);
             }
         } else {
             entries.insert(
                 handle.clone(),
                 StartupRecord {
                     sandbox_id,
+                    generation,
                     boot: incarnation.boot,
-                    last_delivery: delivery,
-                    failure: RuntimeStartupFailure {
-                        class: RuntimeStartupFailureClass::ExitedBeforeServing,
-                        consecutive: 0,
-                    },
+                    last_delivery: Some(delivery),
+                    recovery_incarnation: None,
+                    failure: RuntimeStartupFailure::new(
+                        RuntimeStartupFailureClass::ExitedBeforeServing,
+                        0,
+                    ),
                     next_probe: None,
                     probe_interval: FIRST_PROBE,
                 },

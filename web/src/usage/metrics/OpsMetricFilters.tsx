@@ -6,7 +6,7 @@ import { FilterOptionPicker } from './FilterOptionPicker';
 import {
   defaultSelection,
   metricQuery,
-  statuses,
+  statusOptions,
   type MetricsClient,
   type Range,
   type Selection,
@@ -84,10 +84,7 @@ export function OpsMetricFilters({
           label="Usage Sandbox status"
           value={draft.status}
           searchable
-          options={[
-            { value: '', label: 'Any status' },
-            ...statuses.map((value) => ({ value, label: value.replaceAll('_', ' ') })),
-          ]}
+          options={[{ value: '', label: 'Any status' }, ...statusOptions]}
           onChange={(status) => update({ status })}
         />
       </label>

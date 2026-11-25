@@ -29,6 +29,13 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def content_image(path, payload):
+    # The same synthetic image exercises content resolution for web and runtime.
+    entries = [("etc/example.pem", payload), ("etc/machine-id", b""),
+               ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))]
+    return docker_archive(path, [tar_bytes(entries)])
+
+
 def finding(path, payload=None, **changes):
     row = {"scope": "layer", "image": 0, "layer": 0, "entry": 0, "path": path_hash(path),
            "rule": "path.key-or-certificate"}
@@ -48,10 +55,10 @@ class ContentPolicyTests(unittest.TestCase):
         self.output = self.root / "scan"
         self.payload = b"synthetic public payload"
         self.item = finding("etc/example.pem", self.payload)
-        config = docker_archive(self.archive, [tar_bytes([("etc/example.pem", self.payload)])])
+        config = content_image(self.archive, self.payload)
         files = [SCANNER / "scan-image-secrets.sh", SCANNER / "scan_image_secrets.py"]
         files += sorted((SCANNER / "image_secrets").glob("*.py"))
-        self.report = {"schema": "image-secret-scan-v1", "scanner_version": "1.0.3", "gitleaks_version": "8.30.1",
+        self.report = {"schema": "image-secret-scan-v1", "scanner_version": "1.0.4", "gitleaks_version": "8.30.1",
                        "complete": True, "input_kind": "archive", "archive_sha256": gate.checksum(self.archive),
                        "findings": [self.item], "allowlisted": [], "exit_code": 1,
                        "scanner_files": {str(p.relative_to(SCANNER)): gate.checksum(p) for p in files},
@@ -62,14 +69,17 @@ class ContentPolicyTests(unittest.TestCase):
         self.entry = {"component": "web", "scope": "layer", "path": "etc/example.pem", "file_sha256": digest(self.payload),
                       "candidate_sha256": digest(self.payload), "rule": self.item["rule"],
                       "classification": "public-material", "reason": "Synthetic fixture only"}
-        self.catalog = {"schema": "cma-image-content-policy-v1", "scanner_version": "1.0.3",
+        self.catalog = {"schema": "cma-image-content-policy-v1", "scanner_version": "1.0.4",
                         "gitleaks_version": "8.30.1", **self.report["policy"], "entries": [self.entry]}
         self.catalog_path = self.root / "catalog.json"
         self.catalog_path.write_text(json.dumps(self.catalog))
 
-    def scanner(self, *_args):
+    def scanner(self, *args):
         self.output.mkdir()
-        (self.output / "REPORT.json").write_text(json.dumps(self.report))
+        report = copy.deepcopy(self.report)
+        if "--staging-runtime-component" in args:
+            report["policy"]["staging_runtime_component"] = args[args.index("--staging-runtime-component") + 1]
+        (self.output / "REPORT.json").write_text(json.dumps(report))
         raise gate.ScanRefusal("Synthetic findings", "scanner_findings")
 
     def test_complete_scan_resolves_exact_content_and_keeps_all_findings(self):
@@ -118,6 +128,75 @@ class ContentPolicyTests(unittest.TestCase):
                 self.assertEqual(decisions(catalog_index(catalog, self.report), "web", [self.item], identities), [])
         self.assertEqual(decisions({}, "web", [self.item], identities), [])
 
+    def binary_case(self, component="am", path="usr/local/bin/cma"):
+        candidate = digest(b"adjacent public rust text")
+        item = finding(path, b"rebuilt first-party binary", rule="gitleaks.generic-api-key",
+                       candidate_sha256=candidate)
+        row = {"component": component, "path": path, "rule": "gitleaks.generic-api-key",
+               "candidate_sha256": candidate, "classification": "public-material",
+               "reason": "Synthetic first-party binary text"}
+        catalog = dict(copy.deepcopy(self.catalog), schema="cma-image-content-policy-v2",
+                       binary_candidates=[row])
+        return item, row, catalog
+
+    def test_first_party_binary_candidate_survives_a_rebuilt_file_digest(self):
+        for component, path in (("am", "usr/local/bin/cma"), ("eg", "usr/local/bin/cmaeg")):
+            with self.subTest(component=component):
+                item, _row, catalog = self.binary_case(component, path)
+                matched = decisions(catalog_index(catalog, self.report), component, [item],
+                                    {item["finding_id"]: item["file_sha256"]})
+                self.assertEqual([(m["finding_id"], m["classification"]) for m in matched],
+                                 [(item["finding_id"], "public-material")])
+
+    def test_first_party_binary_candidate_is_bound_to_component_path_rule_value_and_identity(self):
+        item, _row, catalog = self.binary_case()
+        index = catalog_index(catalog, self.report)
+        identities = {item["finding_id"]: item["file_sha256"]}
+        cases = {
+            "component": ("eg", [item], identities),
+            "path": ("am", [finding("usr/local/bin/other", b"rebuilt first-party binary",
+                                    rule="gitleaks.generic-api-key",
+                                    candidate_sha256=item["candidate_sha256"])], None),
+            "rule": ("am", [finding("usr/local/bin/cma", b"rebuilt first-party binary",
+                                    rule="gitleaks.image-secret-assignment",
+                                    candidate_sha256=item["candidate_sha256"])], None),
+            "candidate": ("am", [finding("usr/local/bin/cma", b"rebuilt first-party binary",
+                                         rule="gitleaks.generic-api-key", candidate_sha256="c" * 64)], None),
+            "identity": ("am", [item], {item["finding_id"]: "d" * 64}),
+            "unverified": ("am", [item], {}),
+        }
+        for name, (component, findings, known) in cases.items():
+            with self.subTest(name=name):
+                known = known if known is not None else {f["finding_id"]: f["file_sha256"] for f in findings}
+                self.assertEqual(decisions(index, component, findings, known), [])
+
+    def test_first_party_binary_rows_refuse_widening_and_real_conflicts(self):
+        _item, row, catalog = self.binary_case()
+        broken = [dict(row, path="usr/local/bin/cmaeg"), dict(row, component="web"),
+                  dict(row, rule="gitleaks.image-secret-assignment"), dict(row, classification="REAL"),
+                  dict(row, candidate_sha256="not-a-digest"), dict(row, reason=" "), dict(row, extra=True),
+                  {key: value for key, value in row.items() if key != "reason"}]
+        for value in broken:
+            with self.subTest(row=sorted(value)), self.assertRaises(ScanError):
+                catalog_index(dict(catalog, binary_candidates=[value]), self.report)
+        with self.assertRaises(ScanError):
+            catalog_index(dict(catalog, binary_candidates=[row, dict(row)]), self.report)
+        with self.assertRaises(ScanError):
+            catalog_index(dict(catalog, binary_candidates=[row] * 17), self.report)
+        real = dict(self.entry, component="am", rule=row["rule"], candidate_sha256=row["candidate_sha256"],
+                    classification="REAL")
+        with self.assertRaises(ScanError):
+            catalog_index(dict(catalog, entries=[*catalog["entries"], real]), self.report)
+        with self.assertRaises(ScanError):
+            catalog_index(dict(catalog, schema="cma-image-content-policy-v1"), self.report)
+
+    def test_reviewed_agent_manager_binary_candidate_is_exact_and_narrow(self):
+        catalog = json.loads((Path(__file__).parent / "image-content-policy.json").read_text())
+        self.assertEqual(catalog["binary_candidates"], [{
+            "component": "am", "path": "usr/local/bin/cma", "rule": "gitleaks.generic-api-key",
+            "candidate_sha256": "eee389a1fcecdde9bd6383b996396c5559dbf3b420ed5d80cead274341b0ab39",
+            "classification": "public-material", "reason": catalog["binary_candidates"][0]["reason"]}])
+
     def test_real_decision_overrides_matching_public_material(self):
         self.catalog["entries"].append(dict(self.entry, classification="REAL"))
         matched = decisions(catalog_index(self.catalog, self.report), "web", [self.item],
@@ -144,6 +223,16 @@ class ContentPolicyTests(unittest.TestCase):
             item = finding("etc/example.pem", entry=number)
             result = layer_identities(layer, {"target": ("file", digest(self.payload))}, {number: [item]})
             self.assertEqual(result.get(item["finding_id"]), expected)
+
+    def test_layer_resolution_keeps_backslash_and_plain_names_distinct(self):
+        escaped = r"usr/lib/systemd/system/example\x2dunit"
+        plain = "usr/lib/systemd/system/example-unit"
+        layer = self.root / "layer.tar"
+        layer.write_bytes(tar_bytes([(escaped, self.payload), (plain, b"other")]))
+        exact = finding(escaped, self.payload)
+        wrong = finding(plain, self.payload)
+        self.assertEqual(layer_identities(layer, {}, {0: [exact, wrong]}),
+                         {exact["finding_id"]: digest(self.payload)})
 
     def test_pax_credential_metadata_cannot_inherit_public_payload(self):
         layer = self.root / "layer.tar"

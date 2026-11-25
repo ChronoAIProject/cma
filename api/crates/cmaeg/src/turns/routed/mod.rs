@@ -17,11 +17,13 @@ mod dispatcher;
 mod dispatcher_authority;
 mod effect_roots;
 mod event_attestation;
+mod execution_port;
 mod executor;
 mod expiry;
 mod generation_provenance;
 mod journal;
 mod live_scope;
+mod measured_executor;
 mod media_delivery;
 mod media_delivery_gate;
 #[cfg(test)]
@@ -39,6 +41,8 @@ pub(crate) mod operator;
 mod operator_tests;
 mod partition_fence;
 mod preparation;
+#[cfg(test)]
+mod provider_start_tests;
 pub(crate) mod quarantine;
 pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
 #[cfg(test)]
@@ -56,6 +60,8 @@ pub(crate) use received_source::retained_received_source;
 mod replay_frame;
 mod replay_projection;
 pub mod scheduler;
+mod side_message_authority;
+pub(crate) use side_message_authority::SideMessageAuthority;
 mod storage;
 mod stream_relay;
 pub(crate) use stream_relay::monitor::StreamMonitor;
@@ -116,7 +122,7 @@ mod custom_http_webhook_tests;
 #[cfg(test)]
 mod delivery_crash_tests;
 #[cfg(test)]
-mod delivery_tests;
+pub(crate) mod delivery_tests;
 #[cfg(test)]
 mod destination_tests;
 #[cfg(test)]
@@ -140,11 +146,13 @@ mod builder_tests;
 #[cfg(test)]
 mod executor_activity_tests;
 #[cfg(test)]
-mod executor_tests;
+pub(crate) mod executor_tests;
 #[cfg(test)]
 mod expiry_tests;
 #[cfg(test)]
 mod oversized_frame_tests;
+#[cfg(test)]
+mod preparation_activity_tests;
 #[cfg(test)]
 mod projection_store_tests;
 #[cfg(test)]
@@ -199,3 +207,4 @@ mod compatibility_execution_tests;
 
 #[cfg(test)]
 mod compatibility_mongo_tests;
+mod execution_activity;

@@ -1,5 +1,6 @@
 import type { AgentSummary, SandboxSummary } from '../api/types';
-import { sandboxChildStatus } from '../sandbox/lifecycle';
+import { sandboxStatusPresentation } from '../sandbox/presentation';
+import { sandboxHasParkedRuntimeUpdate } from '../sandbox/parkedRuntimeUpdate';
 import { observedTaskStatus, taskWords, type TaskStatus, type CurrentTask } from './taskStatus';
 
 export type EnvironmentTaskGroup =
@@ -24,23 +25,24 @@ export function taskPresentation(
   const status = observedTaskStatus(agent, sandbox, currentTask);
   if (freshness === 'stale')
     return {
-      status,
+      status: 'unknown',
       group: 'Status unavailable',
       label: 'Status unavailable',
       showRunningTime: false,
     };
 
-  const rotating = sandboxChildStatus(sandbox, 'ready') === 'rotating';
-  if (rotating) {
+  const parent = sandboxStatusPresentation(sandbox);
+  const failed = sandboxHasParkedRuntimeUpdate(sandbox);
+  if (parent.status === 'rotating' || failed) {
     const recorded = observedTaskStatus(agent, undefined, currentTask);
     const ended = recorded === 'failed' || recorded === 'stopped';
-    const failed = sandbox.runtimeUpdate?.state === 'failed';
+    const showRecordedOutcome = ended || recorded === 'completed';
     const group = failed ? 'Needs attention' : 'Updating environment';
     return {
-      status: recorded,
+      status: failed && !showRecordedOutcome ? 'needs_attention' : recorded,
       group: ended ? undefined : group,
-      label: ended || recorded === 'completed' ? taskWords[recorded] : group,
-      parentNotice: failed ? 'Runtime update failed' : 'Updating environment',
+      label: showRecordedOutcome ? taskWords[recorded] : failed ? group : parent.label,
+      parentNotice: failed ? 'Runtime update failed' : parent.label,
       showRunningTime: false,
     };
   }

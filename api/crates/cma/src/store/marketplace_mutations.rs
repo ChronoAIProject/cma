@@ -1,8 +1,9 @@
 use layer2_core::ids::{AgentProfileId, SandboxProfileId, SubjectId, WorkspaceProfileId};
 use layer2_core::profiles::store::ProfileStoreError;
 use layer2_core::profiles::{
-    AgentProfile, AgentProfileRef, ForkedProfile, MarketplaceError, MarketplaceLocator,
-    ProfileVisibility, SandboxProfile, SandboxProfileRef, WorkspaceProfile, WorkspaceProfileRef,
+    AgentProfile, AgentProfileRef, ForkedProfile, MarketplaceError, MarketplaceKind,
+    MarketplaceLocator, ProfileVisibility, SandboxProfile, SandboxProfileRef, WorkspaceProfile,
+    WorkspaceProfileRef,
 };
 use mongodb::bson::{doc, Bson};
 
@@ -10,10 +11,10 @@ use super::marketplace_support::{
     collections_for_locator, find_public_profile, find_revision, fork_name, store_error,
     StoredProfile, StoredRevision,
 };
+use super::profile_draft_admission::{self, Error, Mutation, Pin, Pins};
 use super::sandbox_mongo::{MongoProfileStore, DOCUMENT_SCHEMA_VERSION};
 
-async fn create_agent_fork(
-    store: &MongoProfileStore,
+fn create_agent_fork(
     owner: &SubjectId,
     source: AgentProfile,
     revision: layer2_core::profiles::AgentProfileRevision,
@@ -37,16 +38,10 @@ async fn create_agent_fork(
     profile
         .validate()
         .map_err(|error| store_error(error.into()))?;
-    store
-        .agent_profiles
-        .insert_one(super::agent_profiles::document(&profile).map_err(store_error)?)
-        .await
-        .map_err(|error| MarketplaceError::Unavailable(error.to_string()))?;
     Ok(ForkedProfile::Agent(profile))
 }
 
-async fn create_workspace_fork(
-    store: &MongoProfileStore,
+fn create_workspace_fork(
     owner: &SubjectId,
     source: WorkspaceProfile,
     revision: layer2_core::profiles::WorkspaceProfileRevision,
@@ -70,21 +65,15 @@ async fn create_workspace_fork(
     profile
         .validate()
         .map_err(|error| store_error(error.into()))?;
-    store
-        .workspace_profiles
-        .insert_one(super::workspace_profiles::document(&profile).map_err(store_error)?)
-        .await
-        .map_err(|error| MarketplaceError::Unavailable(error.to_string()))?;
     Ok(ForkedProfile::Workspace(profile))
 }
 
-async fn create_sandbox_fork(
-    store: &MongoProfileStore,
+fn create_sandbox_fork(
     owner: &SubjectId,
     source: SandboxProfile,
     revision: layer2_core::profiles::SandboxProfileRevision,
     now: String,
-) -> Result<ForkedProfile, MarketplaceError> {
+) -> ForkedProfile {
     let profile = SandboxProfile {
         internal: false,
         availability: Default::default(),
@@ -101,12 +90,7 @@ async fn create_sandbox_fork(
         updated_at: now,
         retired_at: None,
     };
-    store
-        .sandbox_profiles
-        .insert_one(super::sandbox_profiles::document(&profile).map_err(store_error)?)
-        .await
-        .map_err(|error| MarketplaceError::Unavailable(error.to_string()))?;
-    Ok(ForkedProfile::Sandbox(profile))
+    ForkedProfile::Sandbox(profile)
 }
 
 pub(super) async fn fork_profile(
@@ -119,20 +103,73 @@ pub(super) async fn fork_profile(
     let target = collections_for_locator(store, locator);
     let (_, source) = find_public_profile(target, locator.as_str()).await?;
     let revision = find_revision(target, locator.as_str(), revision).await?;
-    match (source, revision) {
+    let (pin, aggregates, revisions) = match target.kind {
+        MarketplaceKind::Agent => (
+            Pin::agent(locator.as_str(), revision.revision()),
+            "agent_profiles",
+            "agent_profile_revisions",
+        ),
+        MarketplaceKind::Workspace => (
+            Pin::workspace(locator.as_str(), revision.revision()),
+            "workspace_profiles",
+            "workspace_profile_revisions",
+        ),
+        MarketplaceKind::Sandbox => (
+            Pin::sandbox(locator.as_str(), revision.revision()),
+            "sandbox_profiles",
+            "sandbox_profile_revisions",
+        ),
+    };
+    let mut pins = Pins::strict(pin);
+    pins.guard(aggregates, doc! {
+        "_id":locator.as_str(), "document_schema_version":DOCUMENT_SCHEMA_VERSION,
+        "visibility":"public", "record.internal":{"$ne":true}, "retired_at":Bson::Null,
+        "account_erasure_fenced":{"$ne":true},
+        "record.id":locator.as_str(), "record.visibility":"public", "record.retired_at":Bson::Null,
+    });
+    pins.guard(
+        revisions,
+        doc! {
+            "profile_id":locator.as_str(), "revision":i64::from(revision.revision()),
+            "document_schema_version":DOCUMENT_SCHEMA_VERSION,
+        },
+    );
+    let fork = match (source, revision) {
         (StoredProfile::Agent(source), StoredRevision::Agent(revision)) => {
-            create_agent_fork(store, owner, source, revision, now).await
+            create_agent_fork(owner, source, revision, now)
         }
         (StoredProfile::Workspace(source), StoredRevision::Workspace(revision)) => {
-            create_workspace_fork(store, owner, source, revision, now).await
+            create_workspace_fork(owner, source, revision, now)
         }
         (StoredProfile::Sandbox(source), StoredRevision::Sandbox(revision)) => {
-            create_sandbox_fork(store, owner, source, revision, now).await
+            Ok(create_sandbox_fork(owner, source, revision, now))
         }
         _ => Err(MarketplaceError::Corrupt(
             "marketplace profile and revision kinds disagree".into(),
         )),
+    }?;
+    let document = match &fork {
+        ForkedProfile::Agent(profile) => super::agent_profiles::document(profile),
+        ForkedProfile::Workspace(profile) => super::workspace_profiles::document(profile),
+        ForkedProfile::Sandbox(profile) => super::sandbox_profiles::document(profile),
     }
+    .map_err(store_error)?;
+    let db = store.client.database(&target.profiles.namespace().db);
+    profile_draft_admission::transact(
+        &store.client,
+        &db,
+        &mut pins,
+        &Mutation::Insert {
+            collection: target.profiles.clone(),
+            document,
+        },
+    )
+    .await
+    .map_err(|error| match error {
+        Error::ReferenceUnavailable => MarketplaceError::NotFound,
+        Error::Driver(error) => MarketplaceError::Unavailable(error.to_string()),
+    })?;
+    Ok(fork)
 }
 
 fn saturating_increment() -> Bson {

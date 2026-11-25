@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { isDeepStrictEqual } from 'node:util';
 import type { Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { commandStatus } from './agent-v2-command.fixture';
@@ -28,20 +29,28 @@ export class LocalAgentV2 {
   readonly queued = new LocalQueuedCancellation(this.started);
   readonly items: EventItem[] = [];
   readonly writes: CapturedWrite[] = [];
+  readonly receiptReads: CapturedWrite[] = [];
   readonly reads: string[] = [];
   readonly errors: string[] = [];
   readonly streams = new Set<ServerResponse>();
   enabled = true;
+  externalApprovals = false;
+  approvalReviewAllowed = true;
+  approvalPolicyAvailable = true;
   owner = 'local-owner';
   holdInput = false;
   loseInput = false;
+  revealInputReceipt = true;
   loseControl = false;
   controlConflict = false;
   holdSnapshot = false;
   snapshots = 0;
   private pendingInput?: ServerResponse;
+  private readonly admittedInputs: CapturedWrite[] = [];
   private pendingSnapshot?: ServerResponse;
   private baseURL = '';
+  private origin = '';
+  private finishSignOut?: () => void;
   private readonly server = createServer((request, response) => {
     void this.handle(request, response).catch((error: unknown) => {
       this.errors.push(String(error));
@@ -56,6 +65,7 @@ export class LocalAgentV2 {
     const address = this.server.address();
     if (!address || typeof address === 'string') throw new Error('Missing local fixture port');
     const origin = `http://127.0.0.1:${address.port}`;
+    this.origin = origin;
     await this.boundary.route(page, baseURL);
     await page.route(`${origin}/**`, (route) => route.continue());
     await page.route('**/api/v2/**', (route) => {
@@ -84,6 +94,13 @@ export class LocalAgentV2 {
     );
   }
 
+  async routeSignOut(page: Page, onSignOut: () => void) {
+    this.finishSignOut = onSignOut;
+    await page.route(`${this.baseURL}/auth/logout`, (route) =>
+      route.continue({ url: `${this.origin}/auth/logout` }),
+    );
+  }
+
   async close(page: Page) {
     await page.close();
     for (const stream of this.streams) stream.destroy();
@@ -93,12 +110,58 @@ export class LocalAgentV2 {
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
 
-  append(kind: Record<string, unknown>, responseBinding: typeof binding | null = null) {
+  async suggestReply(page: Page, text: string) {
+    await page.route('**/api/v2/ui/task-experience', (route) =>
+      route.fulfill({
+        json: {
+          object: 'cma.ui.task_experience',
+          schema_version: 1,
+          account_id: this.owner,
+          capabilities: {
+            task_home_admission: false,
+            suggested_followup_admission: true,
+            desktop_enable: false,
+            browser_takeover: false,
+            replay_presentation: false,
+          },
+        },
+      }),
+    );
+    await page.route('**/api/v1/agents/agt_contract/suggestions?*', (route) => {
+      const scope = { turn_sequence: 1, answer_sequence: 3 };
+      const query = new URL(route.request().url()).searchParams;
+      if (
+        query.get('turn_sequence') !== String(scope.turn_sequence) ||
+        query.get('answer_sequence') !== String(scope.answer_sequence)
+      )
+        return route.fallback();
+      return route.fulfill({
+        json: {
+          status: 'ready',
+          set: {
+            id: 'local-suggestions',
+            viewerId: this.owner,
+            agentId: agent,
+            answerId: 'event:3',
+            scope,
+            source: { kind: 'template', version: '1' },
+            items: [{ id: 'local-followup', text, rank: 1 }],
+          },
+        },
+      });
+    });
+  }
+
+  append(
+    kind: Record<string, unknown>,
+    responseBinding: typeof binding | null = null,
+    appendedAt = this.started,
+  ) {
     const sequence = this.items.length + 1;
     const item = {
       cursor: cursor(sequence),
       sequence,
-      appended_at: this.started,
+      appended_at: appendedAt,
       kind,
       response_binding: responseBinding,
     };
@@ -142,6 +205,11 @@ export class LocalAgentV2 {
     this.holdInput = false;
   }
 
+  /** Whether the app has requested a held snapshot page that is not yet released. */
+  get snapshotPending() {
+    return this.pendingSnapshot !== undefined;
+  }
+
   releaseSnapshot() {
     if (!this.pendingSnapshot) throw new Error('No snapshot page is pending');
     this.json(this.pendingSnapshot, this.snapshot(this.items.slice(1)));
@@ -172,6 +240,11 @@ export class LocalAgentV2 {
     );
   }
 
+  admitInput(write: CapturedWrite) {
+    this.admittedInputs.push(write);
+    this.queued.admit(write.body.input);
+  }
+
   private receipt(response: ServerResponse) {
     response.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -182,6 +255,20 @@ export class LocalAgentV2 {
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse) {
+    if (
+      this.externalApprovals &&
+      String(request.headers.prefer ?? '')
+        .split(',')
+        .some((token) => token.trim() === 'cma-external-approval-v1')
+    ) {
+      response.setHeader('Preference-Applied', 'cma-external-approval-v1');
+      if (this.approvalPolicyAvailable)
+        response.setHeader('CMA-Approval-Review-Origin', 'https://identity.example.test');
+      response.setHeader(
+        'CMA-External-Approval-Action',
+        this.approvalReviewAllowed ? 'review' : 'none',
+      );
+    }
     response.setHeader('Access-Control-Allow-Origin', this.baseURL);
     response.setHeader('Access-Control-Allow-Credentials', 'true');
     response.setHeader(
@@ -189,22 +276,43 @@ export class LocalAgentV2 {
       'content-type, x-request-id, last-event-id, idempotency-key, prefer',
     );
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    response.setHeader('Access-Control-Expose-Headers', 'x-cma-response-id, x-cma-command-id');
+    response.setHeader(
+      'Access-Control-Expose-Headers',
+      'x-cma-response-id, x-cma-command-id, Preference-Applied, CMA-Approval-Review-Origin, CMA-External-Approval-Action',
+    );
     if (request.method === 'OPTIONS') return response.end();
     const url = new URL(request.url!, 'http://localhost');
     const path = url.pathname;
+    if (request.method === 'GET' && path === '/auth/logout' && this.finishSignOut) {
+      this.finishSignOut();
+      response.writeHead(302, { Location: `${this.baseURL}/agents/${agent}` });
+      return response.end();
+    }
     if (request.method === 'POST') {
       let source = '';
       for await (const chunk of request) source += String(chunk);
       const body = JSON.parse(source) as Record<string, unknown>;
-      const key = request.headers['idempotency-key'];
-      this.writes.push({ path, body, key: typeof key === 'string' ? key : undefined });
-      if (
-        this.queued.handle('POST', path, response, body, typeof key === 'string' ? key : undefined)
-      )
-        return;
+      const header = request.headers['idempotency-key'];
+      const key = typeof header === 'string' ? header : undefined;
+      const captured = { path, body, key };
+      if (path === `/api/v2/agents/${agent}/responses/receipt`) {
+        this.receiptReads.push(captured);
+        const admitted = this.admittedInputs.some(
+          (write) =>
+            write.path === `/api/v2/agents/${agent}/responses` &&
+            key &&
+            write.key === key &&
+            isDeepStrictEqual(write.body, body),
+        );
+        return this.json(
+          response,
+          this.revealInputReceipt && admitted ? commandStatus(this.started) : null,
+        );
+      }
+      this.writes.push(captured);
+      if (this.queued.handle('POST', path, response, body, key)) return;
       if (path === `/api/v2/agents/${agent}/responses`) {
-        this.queued.admit(body.input);
+        this.admitInput(captured);
         if (this.loseInput) {
           this.loseInput = false;
           response.writeHead(200, { 'Content-Type': 'text/event-stream' });

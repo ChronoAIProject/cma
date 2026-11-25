@@ -59,7 +59,8 @@ pub(super) enum Reason {
     BodyRead,
     ErrorDisposition,
     InvalidClaims,
-    Capacity,
+    VerificationCapacity,
+    FenceCapacity,
     VerificationDeadline,
     CallerDeadline,
     MissingConfiguration,
@@ -78,7 +79,8 @@ impl Reason {
             Self::BodyRead => "body_read",
             Self::ErrorDisposition => "error_disposition",
             Self::InvalidClaims => "invalid_claims",
-            Self::Capacity => "capacity",
+            Self::VerificationCapacity => "verification_capacity",
+            Self::FenceCapacity => "verification_fence_capacity",
             Self::VerificationDeadline => "verification_deadline",
             Self::CallerDeadline => "caller_deadline",
             Self::MissingConfiguration => "missing_configuration",
@@ -104,9 +106,17 @@ pub(super) fn record(
     // JSON formatters may attach the current span even for a parentless event.
     // Enter a root span at the event's level so its entire scope is content-free.
     let context = layer2_core::diagnostic_context::DiagnosticContext::current();
-    let span = tracing::warn_span!(parent: None, "identity_verification");
+    let span = tracing::warn_span!(
+        target: crate::diagnostic_format::PROVIDER_IDENTITY_TARGET,
+        parent: None,
+        "identity_verification"
+    );
+    if span.is_disabled() {
+        return;
+    }
     let _entered = span.enter();
     tracing::warn!(
+        target: crate::diagnostic_format::PROVIDER_IDENTITY_TARGET,
         parent: &span,
         event = "identity_verification_failure",
         request_hash = context.request_hash.as_ref(),
@@ -118,6 +128,10 @@ pub(super) fn record(
         "Identity provider verification failed"
     );
 }
+
+#[cfg(test)]
+#[path = "verification_diagnostics_tests.rs"]
+mod tests;
 
 pub(super) fn claims<T>(endpoint: Endpoint, result: Result<T, Error>) -> Result<T, Error> {
     result.inspect_err(|error| record(endpoint, Stage::Claims, Reason::InvalidClaims, None, error))

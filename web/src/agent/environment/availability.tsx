@@ -4,14 +4,19 @@ import type { AgentFilesClient } from '../../api/agentFiles';
 import { useAuthorizedRead } from '../../resources/useAuthorizedRead';
 import type { useAgentAccess } from '../../resources/agentAccess';
 import { Button } from '../../ui/Button';
+import { ComputerToolsHelp } from './ComputerToolsHelp';
 
 export function useAgentEnvironment(
   client: AgentFilesClient | undefined,
   agentId: string,
   active: boolean,
   subject?: string,
+  runtimeVersion?: string,
 ) {
-  const scope = useMemo(() => ({ client, agentId, subject }), [client, agentId, subject]);
+  const scope = useMemo(
+    () => ({ client, agentId, subject, runtimeVersion }),
+    [client, agentId, subject, runtimeVersion],
+  );
   const read = useMemo(
     () =>
       !active || !scope.client?.environment
@@ -30,7 +35,15 @@ export function useAgentEnvironment(
           },
     [scope, active],
   );
-  return useAuthorizedRead(read);
+  return useAuthorizedRead(read, false, { scope, applies: ownerRetryDeadline });
+}
+
+function ownerRetryDeadline(error: ApiError): boolean {
+  return (
+    error.status === 503 &&
+    error.code === 'agent_owner_unavailable' &&
+    error.retryAfterMs !== undefined
+  );
 }
 
 export function EnvironmentAvailability({
@@ -71,7 +84,9 @@ export function FileAvailability({
   access,
   environment,
   reported,
+  onReturnToConversation,
 }: {
+  readonly onReturnToConversation?: () => void;
   readonly shared: boolean;
   readonly access: ReturnType<typeof useAgentAccess>;
   readonly environment: ReturnType<typeof useAgentEnvironment>;
@@ -100,7 +115,14 @@ export function FileAvailability({
     return <EnvironmentAvailability subject="file" environment={environment} />;
   const feature = environment.state.status === 'ready' ? environment.state.value?.files : undefined;
   if (feature && feature.state !== 'available')
-    return <FeatureAvailability name="Files" feature={feature} onRetry={environment.reload} />;
+    return (
+      <FeatureAvailability
+        name="Files"
+        feature={feature}
+        onRetry={environment.reload}
+        onReturnToConversation={onReturnToConversation}
+      />
+    );
   return <p role="status">File access is unavailable for this Agent.</p>;
 }
 
@@ -108,7 +130,11 @@ export function FeatureAvailability({
   name,
   feature,
   onRetry,
+  policyDisabled = false,
+  onReturnToConversation,
 }: {
+  readonly policyDisabled?: boolean;
+  readonly onReturnToConversation?: () => void;
   readonly onRetry?: () => void;
   readonly name: string;
   readonly feature: EnvironmentFeature;
@@ -128,6 +154,30 @@ export function FeatureAvailability({
     );
   if (name === 'Browser' && feature.reason === 'browser_disconnected')
     return <p role="status">Browser disconnected.</p>;
+  if (feature.state === 'not_enabled' && (name === 'Browser' || name === 'Files'))
+    return (
+      <div className="agent-computer__guidance">
+        <p role="status">
+          {name === 'Browser'
+            ? 'Live screen is not enabled'
+            : 'File browsing is not available for this environment.'}
+        </p>
+        {name === 'Browser' && policyDisabled ? (
+          <p>
+            This service does not currently allow you to enable a live screen for this environment.
+          </p>
+        ) : null}
+        {onReturnToConversation ? <p>You can continue the conversation</p> : null}
+        <div className="agent-computer__guidance-actions">
+          {onReturnToConversation ? (
+            <Button size="sm" variant="primary" onClick={onReturnToConversation}>
+              Back to conversation
+            </Button>
+          ) : null}
+          <ComputerToolsHelp />
+        </div>
+      </div>
+    );
   const fileDescription = {
     available: 'File browsing is available.',
     unsupported: 'This environment does not support file browsing.',

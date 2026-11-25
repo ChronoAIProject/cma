@@ -26,6 +26,7 @@ uuid = { workspace = true }
 zip = { workspace = true }
 
 [dev-dependencies]
+h2 = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 tokio-tungstenite = { workspace = true }

@@ -66,12 +66,21 @@ pub(super) fn analyze_budget(
     inventory: &Inventory,
     mut budget: Budget,
 ) -> Result<Analysis> {
+    analyze_with_budget(config, inventory, &mut budget)
+}
+
+pub(super) fn analyze_with_budget(
+    config: &RuntimeConfig,
+    inventory: &Inventory,
+    budget: &mut Budget,
+) -> Result<Analysis> {
+    budget.check()?;
     let mut result = Analysis::default();
     let mut binding = false;
     for (index, entry) in inventory.entries.iter().enumerate() {
         budget.check()?;
         let root = inventory.roots.get(entry.directory).ok_or_else(invalid)?;
-        let bytes = inventory.read(index, &mut budget)?;
+        let bytes = inventory.read(index, budget)?;
         let path = root.path.join(&entry.name);
         let mut scoped = config.clone();
         if root.scope != 0 {
@@ -83,7 +92,7 @@ pub(super) fn analyze_budget(
                 super::json::check(&bytes)?;
                 let record =
                     Authority::decode_inventory(&bytes, &scoped, &path).map_err(|_| invalid())?;
-                result.authority(index, record, &scoped, inventory, &mut budget)?;
+                result.authority(index, record, &scoped, inventory, budget)?;
             }
             Kind::Journal => {
                 super::json::check(&bytes)?;
@@ -93,7 +102,7 @@ pub(super) fn analyze_budget(
                 {
                     return Err(invalid());
                 }
-                result.journal(index, record, &scoped, inventory, &mut budget)?;
+                result.journal(index, record, &scoped, inventory, budget)?;
             }
             Kind::Workspace => {
                 super::json::check(&bytes)?;
@@ -136,11 +145,11 @@ pub(super) fn analyze_budget(
             scoped.generation = *scope;
         }
         let canonical = group.canonical.ok_or_else(invalid)?;
-        let record = journal(inventory, canonical, &scoped, &mut budget)?;
+        let record = journal(inventory, canonical, &scoped, budget)?;
         let mut selected = canonical;
         let mut status = record.status();
         if let Some(index) = group.replacement {
-            let candidate = journal(inventory, index, &scoped, &mut budget)?;
+            let candidate = journal(inventory, index, &scoped, budget)?;
             record
                 .inventory_replacement(&candidate)
                 .map_err(|_| invalid())?;

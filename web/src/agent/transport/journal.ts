@@ -6,8 +6,13 @@ import { QueuedCancellationJournal } from './queuedJournal';
 import { QueuedInputJournal } from './queuedInputJournal';
 import { InterruptionJournal } from './interruptionJournal';
 import { LegacySuggestionJournal } from './legacySuggestionJournal';
-import { bindDraftCommand } from '../draftDelivery';
+import { bindDraftCommand, DraftBindingError } from '../draftDelivery';
 import { acceptDraftCommand, clearOwnerDrafts } from '../draftStorage';
+import {
+  promptIntentJournal,
+  settingsIntentJournal,
+  type RetainedSettingsEditor,
+} from '../settingsIntent';
 
 const PREFIX = 'cma:agent-transport:v1:';
 const IDENTITY = `${PREFIX}identity`;
@@ -77,6 +82,14 @@ export function agentTransportJournal(
   return new AgentTransportJournal(storage, identity, agent, makeKey);
 }
 
+export function readRetainedPromptIntent(storage: BrowserStorage, user: string, agent: string) {
+  const identity = readIdentity(storage);
+  if (!user || !agent || identity?.user !== user) return undefined;
+  return new AgentTransportJournal(storage, identity, agent, () => crypto.randomUUID())
+    .promptSettingsIntent()
+    .read();
+}
+
 export class AgentTransportJournal {
   private readonly key: string;
   private invalidated = false;
@@ -135,11 +148,35 @@ export class AgentTransportJournal {
     return this.agent;
   }
 
-  private current(): TransportRecord | undefined {
+  private requireIdentity(): void {
     if (this.invalidated) throw new IdentityChangedError();
     const identity = readIdentity(this.storage);
     if (identity?.user !== this.identity.user || identity.epoch !== this.identity.epoch)
       throw new IdentityChangedError();
+  }
+
+  settingsIntent<Body>(
+    kind: RetainedSettingsEditor,
+    parseBody: (value: unknown) => Body | undefined,
+  ) {
+    return settingsIntentJournal(
+      this.storage,
+      `${this.key}:configuration:${kind}:${this.identity.epoch}`,
+      () => this.requireIdentity(),
+      parseBody,
+    );
+  }
+
+  promptSettingsIntent() {
+    return promptIntentJournal(
+      this.storage,
+      `${this.key}:configuration:prompt-fingerprint:${this.identity.epoch}`,
+      () => this.requireIdentity(),
+    );
+  }
+
+  private current(): TransportRecord | undefined {
+    this.requireIdentity();
     const source = this.storage.getItem(this.key);
     return source === null ? undefined : parseRecord(source, this.agent, this.identity.epoch);
   }
@@ -284,8 +321,12 @@ export class AgentTransportJournal {
       receipt: null,
       ...(answerContext === undefined ? {} : { answerContext }),
     };
+    if (
+      bindDraftCommand(this.identity.user, this.agent, input, intent.key, this.storage) ===
+      'unavailable'
+    )
+      throw new DraftBindingError();
     this.save({ ...current, input: intent });
-    bindDraftCommand(this.identity.user, this.agent, input, intent.key, this.storage);
     return intent;
   }
 

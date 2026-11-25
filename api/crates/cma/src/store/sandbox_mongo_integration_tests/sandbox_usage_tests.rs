@@ -3,6 +3,7 @@ use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 use layer2_core::sandbox_usage::{timestamp, UsageTotals};
 use layer2_core::sandbox_usage_service::SandboxUsageStore;
 
+mod continuation;
 mod terminal;
 
 async fn fixture(prefix: &str) -> (Client, String, MongoSandboxStore, Sandbox) {
@@ -254,6 +255,7 @@ async fn sandbox_usage_pause_retirement_and_purge_retain_history() {
                 to: current.status,
             },
             command_revival: None,
+            released_runtime: None,
         })
         .await
         .unwrap();
@@ -283,6 +285,7 @@ async fn sandbox_usage_pause_retirement_and_purge_retain_history() {
                 to: current.status,
             },
             command_revival: None,
+            released_runtime: None,
         })
         .await
         .unwrap();
@@ -341,6 +344,7 @@ async fn sandbox_usage_metadata_revision_then_pause_keeps_the_entire_active_inte
     store
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision,
             sandbox: Box::new(parent.clone()),
             event_at: TWO_MINUTES.into(),

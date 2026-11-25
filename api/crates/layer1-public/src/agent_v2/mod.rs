@@ -11,6 +11,7 @@ mod buffered_tests;
 mod cursor;
 mod eligibility;
 mod error;
+mod external_approval;
 #[cfg(test)]
 pub(crate) mod fixtures;
 mod head;
@@ -50,6 +51,7 @@ pub struct AgentV2State {
     fallback_poll: std::time::Duration,
     dependencies: UiTransportDependencies,
     task_experience: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
+    external_review_origin: external_approval::ReviewOrigin,
 }
 
 impl AgentV2State {
@@ -64,10 +66,15 @@ impl AgentV2State {
             fallback_poll: std::time::Duration::from_secs(1),
             dependencies: Default::default(),
             task_experience: Default::default(),
+            external_review_origin: Default::default(),
         }
     }
     pub fn with_single_fence_pages(mut self, enabled: bool) -> Self {
         self.single_fence_pages = enabled;
+        self
+    }
+    pub fn with_external_approval_review_origin(mut self, origin: &str) -> Self {
+        self.external_review_origin = external_approval::ReviewOrigin::configured(origin);
         self
     }
     pub fn with_event_wake(mut self, enabled: bool, fallback: std::time::Duration) -> Self {

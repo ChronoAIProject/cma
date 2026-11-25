@@ -39,6 +39,7 @@ pub(super) fn prepare(
         | WorkspaceSource::RepositorySnapshot { url, reference } => {
             format!("{url}:{}", reference.as_deref().unwrap_or("default"))
         }
+        WorkspaceSource::PublicRepositorySnapshot { url, commit } => format!("{url}:{commit}"),
         WorkspaceSource::Init => format!("init:{}", request.name),
     };
     let receipt = WorkspaceReceipt {
@@ -48,8 +49,11 @@ pub(super) fn prepare(
         name: request.name.clone(),
         path: format!("{}/{}", runtime_home(runtime), request.name),
         resolved_commit: super::state::digest(source.as_bytes()),
-        source_commit: matches!(request.source, WorkspaceSource::RepositorySnapshot { .. })
-            .then(|| "a".repeat(40)),
+        source_commit: match request.source {
+            WorkspaceSource::RepositorySnapshot { .. } => Some("a".repeat(40)),
+            WorkspaceSource::PublicRepositorySnapshot { commit, .. } => Some(commit),
+            _ => None,
+        },
     };
     runtime.workspaces.insert(request.name, receipt.clone());
     finish(

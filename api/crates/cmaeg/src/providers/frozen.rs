@@ -24,8 +24,9 @@ impl ProviderClient {
         idempotency: &IdempotencyKey,
         metadata: &BTreeMap<String, String>,
         credential: &Secret,
-        nyxid_trace: bool,
+        telemetry: (bool, Option<crate::telemetry::timing::IngressTiming>),
     ) -> FrozenSubmission {
+        let (nyxid_trace, timing) = telemetry;
         if self.record_worker_key(credential).await.is_err() {
             return FrozenSubmission::NotAccepted;
         }
@@ -63,7 +64,7 @@ impl ProviderClient {
                     credential.as_str(),
                     idempotency.as_str(),
                     bytes,
-                    None,
+                    timing,
                     self.turn_trace_enabled && provider.as_str() == "nyxbot" && nyxid_trace,
                 )
                 .await
@@ -87,13 +88,12 @@ impl ProviderClient {
             if matches!(observed.response.status().as_u16(), 403 | 422 | 503) {
                 return sender_context_refusal(observed.response).await;
             }
+            if observed.response.status() == reqwest::StatusCode::BAD_REQUEST {
+                return bad_request(observed.response).await;
+            }
             let response = match super::recovery::checked(observed.response).await {
                 Ok(response) => response,
                 Err(ProviderError::Busy { .. }) => return FrozenSubmission::Unknown,
-                // This precise CMA v2 refusal precedes durable admission.
-                Err(ProviderError::Rejected { status: 400, code }) if code == "invalid_json" => {
-                    return FrozenSubmission::Rejected(code);
-                }
                 Err(_) => return FrozenSubmission::Unknown,
             };
             let Some(response_id) = response
@@ -161,6 +161,40 @@ impl ProviderClient {
         .await
         .unwrap_or(FrozenSubmission::Unknown)
     }
+}
+
+/// A 400 proves non-admission only in a documented pre-admission dialect: CMA
+/// v2 `invalid_json`, or the NyxID provider's `validation_error` (code 1008),
+/// which it answers before accepting an event. Anything else stays unknown.
+async fn bad_request(response: reqwest::Response) -> FrozenSubmission {
+    let unadmitted = !response.headers().contains_key("x-cma-response-id");
+    let json = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.split(';').next())
+        .map(str::trim)
+        == Some("application/json");
+    let Ok(body) = super::recovery::bounded_body(response, 64 * 1024).await else {
+        return FrozenSubmission::Unknown;
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&body) else {
+        return FrozenSubmission::Unknown;
+    };
+    // The existing CMA v2 refusal, matched as before at either code location.
+    let code = value.get("code").or_else(|| value.pointer("/error/code"));
+    if code.and_then(Value::as_str) == Some("invalid_json") {
+        return FrozenSubmission::Rejected("invalid_json".into());
+    }
+    if unadmitted
+        && json
+        && value["error"] == "validation_error"
+        && value["error_code"] == 1008
+        && value["message"].is_string()
+    {
+        return FrozenSubmission::Rejected("provider_validation_refused".into());
+    }
+    FrozenSubmission::Unknown
 }
 
 /// Only the documented CMA pre-admission dialect proves that a turn did not start.

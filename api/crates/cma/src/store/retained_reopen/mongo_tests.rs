@@ -4,7 +4,7 @@ use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 use layer2_core::sandbox::store::{AgentStore, SandboxStore};
 use layer2_core::sandbox::*;
 const NOW: &str = "2026-09-05T00:30:00Z";
-use crate::store::sandbox_mongo::start_transaction;
+use crate::store::agent_log_segments::transaction_scope::TransactionScope;
 use layer2_core::sandbox::store::{SandboxEventStore, SandboxWorkerStore};
 
 use super::mongo_fixtures::reopen_fixture;
@@ -86,9 +86,9 @@ async fn retained_reopen_mongo_abort_has_no_partial_fences_and_lost_commit_recon
     let request = reopen_fixture(&store, "sbx_reopen_commit").await;
     let id = &request.snapshot.retained.sandbox.id;
     let mut session = client.start_session().await.unwrap();
-    start_transaction(&mut session).await.unwrap();
+    let scope = TransactionScope::start(&mut session).await.unwrap();
     assert!(matches!(
-        transaction::apply(&store, &request, &mut session)
+        transaction::apply_scoped(&store, &request, scope)
             .await
             .unwrap(),
         transaction::Applied::Commit { .. }
@@ -109,11 +109,14 @@ async fn retained_reopen_mongo_abort_has_no_partial_fences_and_lost_commit_recon
             .unwrap();
         assert!(!row.contains_key("sandbox_recovery_fence"));
     }
-    start_transaction(&mut session).await.unwrap();
-    let transaction::Applied::Commit { receipt, event } =
-        transaction::apply(&store, &request, &mut session)
-            .await
-            .unwrap()
+    let scope = TransactionScope::start(&mut session).await.unwrap();
+    let transaction::Applied::Commit {
+        receipt,
+        event,
+        repeat,
+    } = transaction::apply_scoped(&store, &request, scope)
+        .await
+        .unwrap()
     else {
         panic!("expected write");
     };
@@ -125,12 +128,12 @@ async fn retained_reopen_mongo_abort_has_no_partial_fences_and_lost_commit_recon
         .await
         .unwrap()
         .unwrap();
-    transaction::reconcile(&store, &receipt, &event, time)
+    transaction::reconcile(&store, &receipt, &event, time, repeat)
         .await
         .unwrap();
     let mut wrong = (*receipt).clone();
     wrong.result_sha256 = "0".repeat(64);
-    assert!(transaction::reconcile(&store, &wrong, &event, time)
+    assert!(transaction::reconcile(&store, &wrong, &event, time, repeat)
         .await
         .is_err());
     assert_eq!(

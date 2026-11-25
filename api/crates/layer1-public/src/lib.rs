@@ -6,7 +6,10 @@ pub mod agent_v2;
 pub mod agui;
 pub mod auth;
 mod conversation;
+#[path = "rest/desktop_telemetry.rs"]
+pub mod desktop_telemetry;
 pub mod mcp;
+mod model_funding_problem;
 pub mod pty;
 mod resource_auth;
 pub mod responses;
@@ -68,3 +71,6 @@ pub trait InterfaceProfile {
 
 #[cfg(test)]
 mod observation_test_support;
+
+#[cfg(test)]
+mod model_funding_problem_tests;

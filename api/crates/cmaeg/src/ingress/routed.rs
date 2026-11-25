@@ -53,6 +53,8 @@ mod message_event;
 pub(crate) mod telegram;
 pub struct RoutedIngress {
     plans: PlanStore,
+    profile_resolver: Option<crate::channels::resolver::ChannelResolver>,
+    profile_writes_enabled: bool,
     schedule: ScheduleHandle,
     keys: Arc<MasterKeyRing>,
     records: BTreeSet<String>,
@@ -79,6 +81,8 @@ impl RoutedIngress {
     ) -> Self {
         Self {
             plans,
+            profile_resolver: None,
+            profile_writes_enabled: false,
             schedule,
             keys,
             records,
@@ -98,6 +102,36 @@ impl RoutedIngress {
     pub fn selected(&self, record: &RecordId) -> bool {
         self.records.contains(record.as_str())
     }
+    pub(crate) fn with_profile_resolver(
+        mut self,
+        resolver: crate::channels::resolver::ChannelResolver,
+        writes_enabled: bool,
+    ) -> Self {
+        self.profile_resolver = Some(resolver);
+        self.profile_writes_enabled = writes_enabled;
+        self
+    }
+
+    async fn assign_profile(
+        &self,
+        request: &LaunchRequest,
+    ) -> Result<
+        (
+            LaunchRequest,
+            Option<crate::channels::profile_assignment::Admission>,
+        ),
+        Problem,
+    > {
+        let mut request = request.clone();
+        let admission = crate::channels::profile_assignment::prepare_admission(
+            self.profile_resolver.as_ref(),
+            &mut request,
+            self.profile_writes_enabled,
+        )
+        .await?;
+        Ok((request, admission))
+    }
+
     pub fn with_native_discovery(
         mut self,
         selection: crate::discord::selection::Selection,
@@ -205,7 +239,7 @@ impl RoutedIngress {
                         "routing_admission_refused",
                     )
                 })?;
-                let OrdinaryPlan::Routed(plan) = decision else {
+                let OrdinaryPlan::Routed(mut plan) = decision else {
                     return Ok(None);
                 };
                 if !self.admission_enabled || !self.schedule.accepting() {
@@ -239,7 +273,32 @@ impl RoutedIngress {
                         "routed_delivery_unsupported",
                     )
                 })?;
-                let candidate = if message_plan.is_some() {
+                let (assigned, assignment) = if let Some(target) =
+                    plan.targets.iter_mut().find(|target| {
+                        target.consumer.is_default()
+                            && crate::channels::profile_assignment::requires_guard(
+                                &request.channel.definition,
+                                self.profile_writes_enabled,
+                            )
+                    }) {
+                    let mut desired = request.clone();
+                    desired.consumer = None;
+                    desired.conversation_id = target.event.conversation_id.clone();
+                    let (mut assigned, assignment) = self.assign_profile(&desired).await?;
+                    target.provider = assigned.channel.definition.provider.clone();
+                    assigned.consumer = request.consumer.clone();
+                    assigned.conversation_id = request.conversation_id.clone();
+                    (assigned, assignment)
+                } else {
+                    let guard = crate::channels::profile_assignment::requires_guard(
+                        &request.channel.definition,
+                        self.profile_writes_enabled,
+                    )
+                    .then(|| crate::channels::profile_assignment::channel_guard(&request.channel));
+                    (request.clone(), guard)
+                };
+                let request = &assigned;
+                let mut candidate = if message_plan.is_some() {
                     Candidate::prepare_message_event_with_generation(
                         request,
                         &plan,
@@ -278,6 +337,7 @@ impl RoutedIngress {
                     )
                 }
                 .map_err(admission_problem)?;
+                candidate.profile_admission = assignment;
                 let committed = if let Some(github_fence) = github_fence {
                     let authority_guards = vec![
                         crate::records::AuthorityGuard {

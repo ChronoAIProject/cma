@@ -3,18 +3,30 @@
 # The production root is read-only; user-space tools install under /home/cma.
 # Python/archive tools serve those installers, and repository harnesses need ps/jq.
 set -eu
-# The managed browser uses local DevTools and disables Google sync. Keep the
-# packaged browser and its sandbox, without installing Debian's Google keys.
-printf '%s\n' 'path-exclude=/etc/chromium.d/apikeys' > /etc/dpkg/dpkg.cfg.d/cma-chromium
-apt-get update \
-    && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends \
+case "$1" in
+    install)
+        # The managed browser uses local DevTools with sync disabled.
+        printf '%s\n' 'path-exclude=/etc/chromium.d/apikeys' > /etc/dpkg/dpkg.cfg.d/cma-chromium
+        ;;
+    refresh)
+        test -n "${OS_SECURITY_REFRESH}"
+        ;;
+    *)
+        echo "Expected install or refresh" >&2
+        exit 1
+        ;;
+esac
+
+apt-get update
+apt-get upgrade -y
+if [ "$1" = install ]; then
+    apt-get install -y --no-install-recommends \
         bash \
         bubblewrap \
         ca-certificates \
-        chromium=156.0.8078.79-1~deb13u1 \
-        chromium-common=156.0.8078.79-1~deb13u1 \
-        chromium-sandbox=156.0.8078.79-1~deb13u1 \
+        chromium=156.0.8078.108-1~deb13u1 \
+        chromium-common=156.0.8078.108-1~deb13u1 \
+        chromium-sandbox=156.0.8078.108-1~deb13u1 \
         curl \
         build-essential \
         git \
@@ -34,10 +46,23 @@ apt-get update \
         unzip \
         xz-utils \
         zlib1g \
-        zstd \
-    && if [ "${RUNTIME_DESKTOP}" = "1" ]; then apt-get install -y --no-install-recommends chromium dbus-x11 fonts-liberation novnc scrot wmctrl x11vnc x11-xserver-utils x11-utils xdotool xvfb websockify xfce4-session xfce4-panel xfdesktop4 xfwm4 xfce4-settings xfce4-appfinder gvfs thunar xfce4-terminal adwaita-icon-theme librsvg2-common; else test "${RUNTIME_DESKTOP}" = "0"; fi \
-    && test ! -e /etc/chromium.d/apikeys \
-    && git --version \
-    && ps --version \
-    && jq --version \
-    && rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log /var/log/alternatives.log /var/cache/ldconfig/aux-cache
+        zstd
+    if [ "${RUNTIME_DESKTOP}" = "1" ]; then
+        apt-get install -y --no-install-recommends chromium dbus-x11 fonts-liberation novnc scrot \
+            wmctrl x11vnc x11-xserver-utils x11-utils xdotool xvfb websockify xfce4-session \
+            xfce4-panel xfdesktop4 xfwm4 xfce4-settings xfce4-appfinder gvfs thunar xfce4-terminal \
+            adwaita-icon-theme librsvg2-common
+    else
+        test "${RUNTIME_DESKTOP}" = "0"
+    fi
+    git --version
+    ps --version
+    jq --version
+fi
+
+sh /tmp/install-openssl-cli.sh /tmp/cma-openssl /usr/bin/openssl
+test ! -e /etc/chromium.d/apikeys
+python3 -B /tmp/normalize-binutils-notices.py
+python3 -B /tmp/remove-vendor-examples.py perl
+python3 -B /tmp/normalize-machine-id.py
+rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log /var/log/alternatives.log /var/cache/ldconfig/aux-cache

@@ -7,12 +7,18 @@ use std::sync::{
 };
 use tokio::sync::Notify;
 
+#[path = "transaction_cancellation.rs"]
+mod cancellation;
+
 #[derive(Default)]
 struct Commands {
     started: Mutex<Vec<(String, Document)>>,
     hold_abort: AtomicBool,
     abort_started: Notify,
     resume_abort: Notify,
+    terminal_command: Mutex<Option<&'static str>>,
+    terminal_started: Notify,
+    terminal_completed: Notify,
 }
 impl Commands {
     fn clear(&self) {
@@ -53,15 +59,34 @@ impl Fixture {
         configure_pool(&mut options, 4);
         options.app_name = Some(app.clone());
         options.command_event_handler = Some(EventHandler::async_callback(move |event| {
+            // Record inline: queued setup events must not satisfy a later
+            // cancellation barrier or appear after its command log is cleared.
+            if let CommandEvent::Started(event) = &event {
+                capture
+                    .started
+                    .lock()
+                    .unwrap()
+                    .push((event.command_name.clone(), event.command.clone()));
+            }
+            match &event {
+                CommandEvent::Started(event)
+                    if capture.terminal_command.lock().unwrap().as_deref()
+                        == Some(event.command_name.as_str()) =>
+                {
+                    capture.terminal_started.notify_one();
+                }
+                CommandEvent::Succeeded(event)
+                    if capture.terminal_command.lock().unwrap().as_deref()
+                        == Some(event.command_name.as_str()) =>
+                {
+                    capture.terminal_completed.notify_one();
+                }
+                _ => {}
+            }
             let capture = capture.clone();
             Box::pin(async move {
                 if let CommandEvent::Started(event) = event {
                     let abort = event.command_name == "abortTransaction";
-                    capture
-                        .started
-                        .lock()
-                        .unwrap()
-                        .push((event.command_name, event.command));
                     if abort && capture.hold_abort.load(Ordering::SeqCst) {
                         capture.abort_started.notify_one();
                         capture.resume_abort.notified().await;
@@ -71,8 +96,7 @@ impl Fixture {
         }));
         let client = Client::with_options(options).unwrap();
         let mut store = (*successor).clone();
-        store.db = client.database(successor.db.name());
-        store.client = client;
+        store.persistence = store.persistence.with_client(client);
         Self {
             store: Arc::new(store),
             successor,

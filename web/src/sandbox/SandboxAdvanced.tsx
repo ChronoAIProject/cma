@@ -5,6 +5,7 @@ import type { SandboxDetail, SandboxEvent, WorkspaceDetail } from '../api/types'
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { readSandboxHistory } from './eventHistory';
+import { SandboxRuntimeFacts } from './SandboxRuntimeFacts';
 import { eventLabel } from '../vocabulary/status';
 import { ProvisioningProgress } from './ProvisioningProgress';
 import { sandboxProgress, workspaceProgress } from './progress';
@@ -55,12 +56,6 @@ export function SandboxAdvanced({
       <div className="sandbox-advanced">
         <dl>
           <div>
-            <dt>Sandbox ID</dt>
-            <dd>
-              <code>{sandbox.id}</code>
-            </dd>
-          </div>
-          <div>
             <dt>Workspace limit</dt>
             <dd>{sandbox.limits.maxWorkspaces}</dd>
           </div>
@@ -69,19 +64,23 @@ export function SandboxAdvanced({
             <dd>{sandbox.limits.maxAgentsPerWorkspace}</dd>
           </div>
           <div>
-            <dt>Runtime version</dt>
-            <dd>
-              <code>{sandbox.runtimeVersion ?? 'Not reported'}</code>
-            </dd>
-          </div>
-          <div>
             <dt>Persistent storage</dt>
             <dd>
-              Agent Sandbox persists this Sandbox on its attached PV. CMA does not create, schedule,
-              download or delete S3 snapshots.
+              {sandbox.status === 'retired'
+                ? 'This environment is retired. Retained runtime details do not indicate that its storage is still available.'
+                : sandbox.status === 'retiring'
+                  ? 'Storage cleanup is part of environment retirement. Retained details describe the previous runtime.'
+                  : 'Agent Sandbox persists this Sandbox on its attached PV. CMA does not create, schedule, download or delete S3 snapshots.'}
             </dd>
           </div>
         </dl>
+        <SandboxRuntimeFacts
+          sandboxId={sandbox.id}
+          runtimeVersion={sandbox.runtimeVersion}
+          update={sandbox.runtimeUpdate}
+          sandboxStatus={sandbox.status}
+          copyable
+        />
         {operation === undefined ? null : (
           <p>
             Current step: {operation.phase.replaceAll('_', ' ')}. Started{' '}

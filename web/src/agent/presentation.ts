@@ -1,5 +1,5 @@
-import type { AgentResourceState } from './controllerTypes';
-import { useMemo } from 'react';
+import type { AgentCommand, AgentResourceState } from './controllerTypes';
+import { useEffect, useMemo, useState } from 'react';
 import type { AgentDetail, AgentStatus, AgentSummary } from '../api/types';
 import { observedActivity } from './activityStatus';
 import { currentAgentStatus } from './status';
@@ -20,9 +20,49 @@ export function usePresentedAgent(state: AgentResourceState, summary?: AgentSumm
   );
 }
 
-export function presentRetainedInputs(v2?: AgentV2Session, legacy?: AgentV2Session) {
-  const retained = v2?.pending();
+export function usePresentedRetainedInputs(
+  v2: AgentV2Session | undefined,
+  legacy: AgentV2Session | undefined,
+  pending: AgentCommand | undefined,
+  onIdentityChange: (error: unknown) => boolean,
+  recoverInputError?: (session: AgentV2Session, key: string) => () => void,
+) {
+  const [checked, setChecked] = useState<{ session: AgentV2Session; key: string }>();
   const legacyInput = legacy?.journal.legacySuggestion.read();
+  const session = v2 ?? legacy;
+  const key =
+    pending !== undefined
+      ? undefined
+      : v2
+        ? pendingInputKey(v2)
+        : legacyInput?.state === 'pending'
+          ? legacyInput.key
+          : undefined;
+  const checkingInputReceipt =
+    session !== undefined &&
+    key !== undefined &&
+    (checked?.session !== session || checked.key !== key);
+  useEffect(() => {
+    if (!session || key === undefined || !checkingInputReceipt) return;
+    const controller = new AbortController();
+    const recovered = recoverInputError?.(session, key);
+    const receipt =
+      v2 === undefined
+        ? session.recoverLegacySuggestion(controller.signal)
+        : session.recover(() => {
+            if (!controller.signal.aborted) recovered?.();
+          }, controller.signal);
+    void receipt
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) onIdentityChange(error);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setChecked({ session, key });
+      });
+    return () => controller.abort();
+  }, [checkingInputReceipt, key, onIdentityChange, recoverInputError, session, v2]);
+
+  const retained = v2?.pending();
   return {
     readSuggestionRequest: () => v2?.journal.read() ?? legacy?.journal.legacySuggestion.read(),
     pendingMessage:
@@ -32,7 +72,17 @@ export function presentRetainedInputs(v2?: AgentV2Session, legacy?: AgentV2Sessi
     acceptedSteeringMessage: retained?.acceptedSteering,
     acceptedInterruptionMessage: retained?.acceptedInterruption,
     pendingControl: retained?.control,
+    checkingInputReceipt,
   };
+}
+
+function pendingInputKey(session: AgentV2Session | undefined) {
+  try {
+    const input = session?.journal.read();
+    return input?.state === 'pending' ? input.key : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The same label is used by the header, document title and hierarchy. */

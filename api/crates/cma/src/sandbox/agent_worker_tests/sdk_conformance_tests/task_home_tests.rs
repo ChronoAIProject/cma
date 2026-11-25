@@ -11,14 +11,17 @@ use layer2_core::resource_access::{
 use tower::ServiceExt;
 
 mod authority;
+mod canary_desktop;
 mod desktop;
 mod desktop_native;
 mod environment;
 mod environment_workers;
 mod integrated_tests;
 mod machine_policy;
+mod receipt_output;
 mod recovery;
 mod repository_connection_tests;
+mod repository_marker;
 mod restart;
 mod store_retry;
 mod subprocess;
@@ -125,6 +128,28 @@ async fn router_with_support(
     can_create: bool,
     support: desktop::CreationSupport,
 ) -> (Router, crate::agent_lifecycle::LifecycleDrain) {
+    let (router, lifecycle) = fixture_with_support(
+        store,
+        registry,
+        database,
+        database_client,
+        owner,
+        can_create,
+        support,
+    )
+    .await;
+    (router, lifecycle.drain_handle())
+}
+
+async fn fixture_with_support(
+    store: Arc<MongoSandboxStore>,
+    registry: Arc<LiveAgentRegistry>,
+    database: &mongodb::Database,
+    database_client: &mongodb::Client,
+    owner: &str,
+    can_create: bool,
+    support: desktop::CreationSupport,
+) -> (Router, Arc<InlineAgentLifecycle>) {
     let profiles = Arc::new(
         MongoProfileStore::open(database_client, database.name())
             .await
@@ -167,7 +192,7 @@ async fn router_with_support(
         store.clone(),
         layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         profiles,
-        ImageManagerResolver::new("http://127.0.0.1:1".into()).unwrap(),
+        ImageManagerResolver::new("http://127.0.0.1:1".into(), false).unwrap(),
         ProfileCapacityBounds {
             min_cpu_millis: 100,
             max_cpu_millis: 8000,
@@ -196,10 +221,9 @@ async fn router_with_support(
         Some(policy) => lifecycle.with_task_experience(policy),
         None => lifecycle,
     };
-    let drain = lifecycle.drain_handle();
     let mut routes = services
         .with_lifecycle(lifecycle.clone())
-        .with_lifecycle_operations(lifecycle)
+        .with_lifecycle_operations(lifecycle.clone())
         .router(Arc::new(UnusedCompatibilityLedger))
         .merge(layer1_public::rest::hierarchy_router(hierarchy));
     if let Some(adapter) = support.adapter {
@@ -218,7 +242,7 @@ async fn router_with_support(
             (SubjectId::new(owner), can_create),
             authenticate_task_owner,
         )),
-        drain,
+        lifecycle,
     )
 }
 

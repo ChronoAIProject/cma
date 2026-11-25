@@ -9,6 +9,7 @@ import { WIRE_AGENT, WIRE_SANDBOX_DETAIL } from '../test/rest';
 import { ArtifactPublicationScope } from '../resources/artifactRecovery';
 import { AgentSidePanel } from '../agent/AgentSidePanel';
 import { TaskHome } from './TaskHome';
+import { taskDraftStorageKey } from './taskDraft';
 import { taskExperience } from '../test/taskExperience';
 
 afterEach(() => {
@@ -60,9 +61,7 @@ it('drops a legacy desktop draft choice without changing its task or blocking su
     "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
   );
   expect(writes).toEqual([{ name: 'New task', initial_message: 'Retain my draft' }]);
-  const saved = sessionStorage.getItem(
-    `cma:task-draft:${JSON.stringify([location.origin, 'owner', null, null])}`,
-  );
+  const saved = sessionStorage.getItem(taskDraftStorageKey('owner'));
   expect(JSON.parse(saved!)).not.toHaveProperty('desktop');
 });
 
@@ -194,15 +193,8 @@ it('recovers a lost desktop creation receipt after reload into the same task Age
     );
   }
   const first = render(<Journey />);
-  const toggle = computerOption('Agent browser');
-  expect(toggle).toBeChecked();
-  expect(toggle).toHaveAttribute('aria-disabled', 'true');
-  expect(toggle).toHaveAccessibleDescription(
-    'Agent browser choice is saved with the submitted task.',
-  );
-  expect(screen.getByRole('button', { name: /^Cloud computer/ })).toHaveTextContent(
-    /^Cloud computer$/,
-  );
+  expect(screen.queryByRole('button', { name: /^Cloud computer/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Original request' }).textContent).toBe(task);
   expect(requests).toHaveLength(0);
   fireEvent.click(screen.getByRole('button', { name: 'Recover original task' }));
   await screen.findByText(
@@ -210,8 +202,8 @@ it('recovers a lost desktop creation receipt after reload into the same task Age
   );
   first.unmount();
   render(<Journey />);
-  expect(computerOption('Agent browser')).toBeChecked();
-  expect(computerOption('Agent browser')).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.queryByRole('button', { name: /^Cloud computer/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Original request' }).textContent).toBe(task);
   fireEvent.click(screen.getByRole('button', { name: 'Recover original task' }));
   await waitFor(() =>
     expect(opened).toHaveBeenCalledExactlyOnceWith({ kind: 'agent', agentId: 'agent-1' }),

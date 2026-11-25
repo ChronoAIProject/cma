@@ -283,6 +283,7 @@ async fn save_generation_successor(
         store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision,
                 sandbox: Box::new(sandbox),
                 event_at: NOW.into(),
@@ -379,4 +380,37 @@ async fn mongo_generic_saves_preserve_runtime_generation_authority() {
         );
     }
     client.database(&name).drop().await.unwrap();
+}
+
+#[test]
+fn always_on_policy_changes_preserve_original_admission_replay() {
+    for origin in [
+        SandboxOrigin::Lifecycle {
+            operation_id: "operation-always-on".into(),
+        },
+        SandboxOrigin::Trigger {
+            launch_id: "launch-always-on".into(),
+        },
+    ] {
+        for original_policy in [None, Some(false), Some(true)] {
+            let mut original = sandbox(origin.clone());
+            original.profile.always_on = original_policy;
+            let (mut document, admission) = trigger_document(&original);
+            for policy in [Some(true), Some(false), None] {
+                let mut next = original.clone();
+                next.profile.always_on = policy;
+                next.revision += 1;
+                document.extend(sandbox_replacement_fields(&next).unwrap());
+                let replay = read_sandbox_admission_replay(&document).unwrap();
+                assert_eq!(replay.sandbox, next);
+                assert_eq!(replay.name, admission.name);
+                assert_eq!(
+                    replay.admission_fingerprint,
+                    admission.admission_fingerprint
+                );
+                replay.validate().unwrap();
+                assert_eq!(read_sandbox(&document).unwrap(), next);
+            }
+        }
+    }
 }

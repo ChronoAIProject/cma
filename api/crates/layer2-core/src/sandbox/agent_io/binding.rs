@@ -62,6 +62,8 @@ pub fn bind_command_dispatch(
         return Err(CommandLedgerError::Conflict);
     }
     if mutation.admission_guard.is_none()
+        || command.predates_owner_restart(current)
+        || current.work.step.fences_conversation_output()
         || command.status != AgentResponseStatus::Queued
         || command.work.dispatch.is_some()
         || command.queue_expired(now)
@@ -106,6 +108,23 @@ pub fn bind_command_dispatch(
     }
     let mut expected_metadata = Vec::new();
     let effective = command.effective_command()?;
+    let previous_task = &current.conversation.observations.task_acceptance;
+    let task = if let Some(intent) = effective.task_acceptance() {
+        Some(
+            crate::sandbox::task_acceptance::TaskAcceptance::bind(
+                previous_task.as_ref(),
+                intent,
+                &claim.command_id,
+                operation.turn_sequence,
+            )
+            .map_err(|_| CommandLedgerError::Conflict)?,
+        )
+    } else {
+        previous_task.clone()
+    };
+    if mutation.agent.conversation.observations.task_acceptance != task {
+        return Err(CommandLedgerError::Conflict);
+    }
     let (intent, text) = match &effective {
         AgentCommand::Message {
             input,

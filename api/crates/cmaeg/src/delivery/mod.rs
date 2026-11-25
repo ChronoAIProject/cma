@@ -1,4 +1,5 @@
 //! Neutral delivery intents; the transport engine owns external sends.
+mod activity_observation;
 mod complete;
 #[cfg(test)]
 pub(crate) mod complete_tests;
@@ -58,6 +59,7 @@ pub mod render;
 pub(crate) mod retained_receipt;
 pub mod router;
 mod send;
+pub(crate) mod side_messages;
 mod split_text;
 mod step;
 pub mod sync;

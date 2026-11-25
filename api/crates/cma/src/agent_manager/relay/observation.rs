@@ -179,7 +179,7 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         );
         match commands.response_status(context, credential, &id).await {
             Ok(status) => status.receipt.agent_id,
-            Err(_) => return public_access::refusal(StatusCode::NOT_FOUND),
+            Err(_) => return public_access::refusal(StatusCode::NOT_FOUND.into()),
         }
     } else {
         match agent(&request, &bytes) {
@@ -198,7 +198,7 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         .await
     {
         Ok(value) => value,
-        Err(_) => return public_access::refusal(StatusCode::NOT_FOUND),
+        Err(_) => return public_access::refusal(StatusCode::NOT_FOUND.into()),
     };
     let Some(created) = authorized.incarnation() else {
         return http::unavailable();
@@ -318,12 +318,12 @@ async fn forward(
     }
     // Negotiation is covered by the same proof as the exact caller and URI.
     headers.insert(admission::HEADER, admission::VERSION.parse().unwrap());
-    let proof = match relay.authentication.sign(
+    let headers = match relay.authentication.signed_headers(
         &relay.coordinator.instance_id,
         &wire_token(&destination),
         request.method(),
         request.uri(),
-        &headers,
+        headers,
         body,
     ) {
         Ok(value) => value,
@@ -343,7 +343,6 @@ async fn forward(
             .client
             .request(request.method().clone(), url)
             .headers(headers)
-            .header(PROOF, proof)
             .body(body.to_vec())
             .send(),
     )

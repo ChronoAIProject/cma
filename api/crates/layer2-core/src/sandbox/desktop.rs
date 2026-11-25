@@ -1,14 +1,12 @@
 //! Owner-authorized access to the desktop of a retained Sandbox.
-use std::collections::BTreeMap;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use layer3_adapter::{DesktopConnectionHandle, RuntimeHandle, SandboxAdapter};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use super::{
-    register_open_desktop_session, unregister_open_desktop_session, AgentReadService, AgentStatus,
-    RuntimeBinding, SandboxStatus,
+    unregister_open_desktop_session, AgentReadService, AgentStatus, RuntimeBinding, SandboxStatus,
 };
 use crate::ids::SandboxCommandId;
 use crate::{rfc3339_at, AgentId, Caller, Capability, SandboxId};
@@ -18,6 +16,7 @@ pub use layer3_adapter::DesktopFrame;
 mod authorization;
 mod owned;
 mod timing;
+use super::runtime_migration_guard::{try_acquire_desktop_runtime_guard, DesktopRuntimeGuard};
 pub use authorization::DesktopAuthorization;
 
 #[derive(Debug, thiserror::Error)]
@@ -30,32 +29,27 @@ pub enum DesktopError {
     Busy,
     #[error("desktop runtime could not be reached")]
     RuntimeUnavailable,
+    #[error(
+        "The desktop could not recover automatically. Contact support if you need desktop access."
+    )]
+    RuntimeFailed,
     #[error("desktop session authority is temporarily unavailable")]
     AuthorityUnavailable,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum DesktopAdmission {
+    #[default]
+    Disabled,
+    Protected,
 }
 
 #[derive(Clone)]
 pub struct DesktopService {
     reads: Arc<AgentReadService>,
     adapter: Arc<dyn SandboxAdapter>,
-    leases: DesktopLeases,
-    replicas_enabled: bool,
-}
-
-#[derive(Clone, Default)]
-struct DesktopLeases(Arc<Mutex<BTreeMap<String, Weak<Mutex<()>>>>>);
-
-impl DesktopLeases {
-    async fn acquire(&self, sandbox_id: &str) -> Result<OwnedMutexGuard<()>, DesktopError> {
-        let mut leases = self.0.lock().await;
-        leases.retain(|_, value| value.strong_count() > 0);
-        let lease = leases
-            .get(sandbox_id)
-            .and_then(Weak::upgrade)
-            .unwrap_or_default();
-        leases.insert(sandbox_id.to_owned(), Arc::downgrade(&lease));
-        lease.try_lock_owned().map_err(|_| DesktopError::Busy)
-    }
+    admission: DesktopAdmission,
+    migration_tracking: bool,
 }
 
 pub struct DesktopConnection {
@@ -64,6 +58,7 @@ pub struct DesktopConnection {
     session_id: String,
     runtime_id: String,
     _lease: Option<OwnedMutexGuard<()>>,
+    migration_guard: Option<DesktopRuntimeGuard>,
     owned: Option<owned::ConnectionState>,
 }
 
@@ -114,14 +109,29 @@ impl DesktopService {
         Self {
             reads,
             adapter,
-            leases: DesktopLeases::default(),
-            replicas_enabled: false,
+            admission: DesktopAdmission::Disabled,
+            migration_tracking: false,
         }
     }
 
-    pub fn with_replicas_enabled(mut self, enabled: bool) -> Self {
-        self.replicas_enabled = enabled;
+    pub fn with_admission(mut self, admission: DesktopAdmission) -> Self {
+        self.admission = admission;
         self
+    }
+
+    pub fn with_runtime_migration_tracking(mut self, enabled: bool) -> Self {
+        self.migration_tracking = enabled;
+        self
+    }
+
+    fn require_protected(&self) -> Result<(), DesktopError> {
+        match self.admission {
+            DesktopAdmission::Protected => Ok(()),
+            DesktopAdmission::Disabled => {
+                tracing::debug!(reason = "disabled", "desktop admission refused");
+                Err(DesktopError::AuthorityUnavailable)
+            }
+        }
     }
 
     async fn authorize(
@@ -165,26 +175,23 @@ impl DesktopService {
     }
 
     pub async fn available(&self, caller: &Caller, id: &AgentId) -> Result<(), DesktopError> {
+        self.require_protected()?;
         let (sandbox_id, _) = self.authorize(caller, id).await?;
         // Discovery makes the old viewer's outstanding lease observable before
         // a new WebSocket hides its refusal headers. Opening still checks atomically.
-        if self.replicas_enabled {
-            let store = self
-                .reads
-                .session_store()
-                .map_err(|_| DesktopError::AuthorityUnavailable)?;
-            let occupied = tokio::time::timeout(
-                Duration::from_secs(3),
-                store.has_open_sandbox_session(&sandbox_id, &crate::now_rfc3339()),
-            )
-            .await
-            .map_err(|_| DesktopError::AuthorityUnavailable)?
+        let store = self
+            .reads
+            .session_store()
             .map_err(|_| DesktopError::AuthorityUnavailable)?;
-            if occupied {
-                return Err(DesktopError::Busy);
-            }
-        } else {
-            let _lease = self.leases.acquire(sandbox_id.as_str()).await?;
+        let occupied = tokio::time::timeout(
+            Duration::from_secs(3),
+            store.has_open_sandbox_session(&sandbox_id, &crate::now_rfc3339()),
+        )
+        .await
+        .map_err(|_| DesktopError::AuthorityUnavailable)?
+        .map_err(|_| DesktopError::AuthorityUnavailable)?;
+        if occupied {
+            return Err(DesktopError::Busy);
         }
         Ok(())
     }
@@ -218,6 +225,7 @@ impl DesktopService {
             // Uncertainty retains the durable claim while dropping our socket.
             owned.close(&self.reads).await;
             connection.connection.take();
+            connection.migration_guard.take();
         } else {
             // Preserve the legacy handoff: slow persistence cannot retain the
             // old runtime socket or the local exclusive viewer lease.
@@ -227,6 +235,7 @@ impl DesktopService {
             }
             self.close(connection.sandbox_id.clone(), connection.session_id.clone())
                 .await;
+            connection.migration_guard.take();
         }
     }
 
@@ -247,47 +256,16 @@ impl DesktopService {
 
     pub async fn open(
         &self,
-        caller: &Caller,
-        id: &AgentId,
+        _caller: &Caller,
+        _id: &AgentId,
     ) -> Result<DesktopConnection, DesktopError> {
-        if self.replicas_enabled {
-            // A captured Caller alone cannot observe logout or revoked credentials.
-            return Err(DesktopError::AuthorityUnavailable);
-        }
-        let (sandbox_id, runtime) =
-            timing::observe("legacy_lineage", self.authorize(caller, id)).await?;
-        let sandbox_id = sandbox_id.to_string();
-        let runtime_id = runtime.runtime_id;
-        let lease = self.leases.acquire(&sandbox_id).await?;
-        let connection = timing::observe("legacy_runtime_open", async {
-            tokio::time::timeout(
-                Duration::from_secs(10),
-                self.adapter
-                    .open_desktop(&RuntimeHandle::new(runtime_id.clone())),
-            )
-            .await
-            .map_err(|_| DesktopError::RuntimeUnavailable)?
-            .map_err(DesktopError::adapter)
-        })
-        .await?;
-        let sandbox_id = SandboxId(sandbox_id);
-        let session_id = SandboxCommandId::generate().to_string();
-        timing::observe(
-            "legacy_session_write",
-            self.reads
-                .open_sandbox_session(&sandbox_id, &session_id, &session_expiry()),
-        )
-        .await
-        .map_err(|_| DesktopError::Unavailable)?;
-        register_open_desktop_session(&sandbox_id);
-        Ok(DesktopConnection {
-            connection: Some(connection),
-            sandbox_id,
-            session_id,
-            runtime_id,
-            _lease: Some(lease),
-            owned: None,
-        })
+        self.require_protected()?;
+        // A captured Caller cannot observe logout or revoked credentials.
+        tracing::debug!(
+            reason = "missing_current_authority",
+            "desktop admission refused"
+        );
+        Err(DesktopError::AuthorityUnavailable)
     }
 }
 
@@ -301,6 +279,9 @@ mod lease_tests;
 
 impl DesktopError {
     fn adapter(error: layer3_adapter::AdapterError) -> Self {
+        if matches!(error, layer3_adapter::AdapterError::DesktopFailed) {
+            return Self::RuntimeFailed;
+        }
         super::RuntimeCapacityError::from_adapter(&error)
             .map(Self::RuntimeCapacity)
             .unwrap_or(Self::RuntimeUnavailable)

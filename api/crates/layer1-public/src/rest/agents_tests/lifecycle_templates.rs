@@ -20,7 +20,7 @@ async fn task_templates_are_validated_before_the_provisioning_port() {
             "task_template_field_placeholder",
         ),
         (
-            json!({"id":"research","version":2,"fields":{"topic":"synthetic"}}),
+            json!({"id":"research","version":3,"fields":{"topic":"synthetic"}}),
             "task_template_version_unsupported",
         ),
         (
@@ -62,6 +62,7 @@ async fn task_templates_are_validated_before_the_provisioning_port() {
         "../../../../layer2-core/src/sandbox/task_template_vectors.json"
     ))
     .unwrap();
+    let count = vectors.len();
     for vector in vectors {
         let mut call = request(
             Method::POST,
@@ -79,5 +80,5 @@ async fn task_templates_are_validated_before_the_provisioning_port() {
             StatusCode::ACCEPTED
         );
     }
-    assert_eq!(port.calls.lock().unwrap().len(), 5);
+    assert_eq!(port.calls.lock().unwrap().len(), count);
 }

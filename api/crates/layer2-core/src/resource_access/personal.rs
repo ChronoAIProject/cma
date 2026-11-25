@@ -12,15 +12,20 @@ impl ResourceAccessService {
         target: &ResourceTarget,
         capability: ResourceCapability,
     ) -> Result<AuthorizedResource, ResourceAccessError> {
+        self.require_account_available(&caller.subject, false)
+            .await?;
         let snapshot = self.store.resource_access_snapshot(target).await?;
         let ResourceOwner::Person { subject } = snapshot.scope(target)?.owner else {
             return Err(AccessError::NotFound.into());
         };
         let decision = AccessDecision::personal(caller, &subject);
         decision.require(capability)?;
+        self.require_owner_available(&snapshot.scope(target)?.owner, false)
+            .await?;
         Ok(AuthorizedResource {
             snapshot,
             decision,
+            caller: caller.clone(),
             binding: None,
         })
     }
@@ -71,13 +76,33 @@ impl ResourceAccessService {
     ) -> Result<(), ResourceAccessError> {
         authorized.decision.require(capability)?;
         let original_scope = authorized.snapshot.scope(target)?;
+        self.validate_read_standing(authorized, target).await?;
         if current.fence() != authorized.snapshot.fence()
             || current.scope(target)? != original_scope
         {
             return Err(ResourceAccessStoreError::Conflict.into());
         }
         self.validate_binding_authority(authorized).await?;
+        if let Some(policy) = &self.execution {
+            policy
+                .validate_read(authorized, capability)
+                .await
+                .map_err(execution::access_error)?;
+        }
         authorized.decision.require(capability)?;
         Ok(())
+    }
+
+    /// Recheck the captured caller and owner without renewing policy evidence
+    /// or reading the resource store. Live batches use this before every delta.
+    pub(crate) async fn validate_read_standing(
+        &self,
+        authorized: &AuthorizedResource,
+        target: &ResourceTarget,
+    ) -> Result<(), ResourceAccessError> {
+        self.require_account_available(&authorized.caller.subject, false)
+            .await?;
+        self.require_owner_available(&authorized.snapshot.scope(target)?.owner, false)
+            .await
     }
 }

@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::{
     store::SandboxStoreError, SandboxHierarchyRecord, WorkspaceHierarchyRecord,
 };
@@ -84,7 +85,7 @@ pub(super) async fn read(
         // Snapshot sessions pin one atClusterTime across all reads without a
         // transaction or an abort checkout. Keep the rollout fallback unchanged.
         if !snapshot_session {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
         }
         match result {
             Ok(value) => return Ok(value),
@@ -142,13 +143,22 @@ async fn read_in_snapshot(
                 read_agent,
             )
             .await?;
+            let task_activity_at =
+                super::super::agent_task_status::activity::read_many(store, &agents, session)
+                    .await?;
             let task_started_at =
                 super::super::agent_task_status::active_starts(store, &agents, session).await?;
-            let task_statuses =
-                super::super::agent_task_status::read_many(store, &agents, session).await?;
+            let (task_statuses, task_turns) =
+                super::super::agent_task_status::read_many_with_turns(store, &agents, session)
+                    .await?
+                    .into_iter()
+                    .map(|(id, (status, turn))| ((id.clone(), status), (id, turn)))
+                    .unzip();
             Ok(Reading::Workspace(Some(Box::new(
                 WorkspaceHierarchyRecord {
                     task_statuses,
+                    task_turns,
+                    task_activity_at,
                     task_started_at,
                     workspace,
                     worktrees,

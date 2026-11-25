@@ -81,15 +81,15 @@ pub(super) fn reconcile(files: Vec<JournalFile>, apply: bool) -> Result<Vec<Jour
         }
     }
 
-    for (target, mut replacements) in temporary {
+    for (target, replacements) in &temporary {
         let current = canonical
-            .get_mut(&target)
+            .get(target)
             .ok_or_else(|| corrupt("runtime mutation replacement has no canonical record"))?;
-        for candidate in &replacements {
+        for candidate in replacements {
             validate_replacement(&current.record, &candidate.record)?;
         }
         let replacement = replacements
-            .pop()
+            .last()
             .expect("a temporary runtime mutation group is non-empty");
         if replacements
             .iter()
@@ -100,16 +100,34 @@ pub(super) fn reconcile(files: Vec<JournalFile>, apply: bool) -> Result<Vec<Jour
             ));
         }
 
-        if current.record.status == Status::Started {
-            if apply {
-                crate::fs_durability::rename(&replacement.path, &target)
-                    .map_err(|error| io_error("recover runtime mutation replacement", error))?;
-            }
-            current.record = replacement.record;
-        } else if current.record != replacement.record {
+        if current.record.status != Status::Started && current.record != replacement.record {
             return Err(corrupt(
                 "runtime mutation terminal record conflicts with a replacement",
             ));
+        }
+    }
+    if apply {
+        for current in canonical.values() {
+            sync_terminal(&current.path, &current.record)?;
+        }
+    }
+
+    for (target, mut replacements) in temporary {
+        let current = canonical
+            .get_mut(&target)
+            .expect("replacement canonical record was validated");
+        let replacement = replacements
+            .pop()
+            .expect("a temporary runtime mutation group is non-empty");
+        if current.record.status == Status::Started {
+            if apply {
+                sync_file(&replacement.path)?;
+                RecoveryIo::Rename(&replacement.path, &target)
+                    .run()
+                    .map_err(|error| io_error("recover runtime mutation replacement", error))?;
+                sync_parent(&target)?;
+            }
+            current.record = replacement.record;
         } else if apply {
             remove_temporary(&replacement.path)?;
         }
@@ -316,8 +334,58 @@ fn temporary_path(path: &Path) -> Result<PathBuf> {
 }
 
 fn remove_temporary(path: &Path) -> Result<()> {
-    crate::fs_durability::remove_file(path)
+    RecoveryIo::Remove(path)
+        .run()
         .map_err(|error| io_error("remove recovered runtime mutation replacement", error))
+}
+
+pub(super) fn sync_terminal(path: &Path, record: &Record) -> Result<()> {
+    if record.status != Status::Started {
+        sync_file(path)?;
+        sync_parent(path)?;
+    }
+    Ok(())
+}
+
+fn sync_file(path: &Path) -> Result<()> {
+    RecoveryIo::SyncFile(path)
+        .run()
+        .map_err(|error| io_error("sync recovered runtime mutation file", error))
+}
+
+fn sync_parent(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| corrupt("runtime mutation journal entry has no parent"))?;
+    RecoveryIo::SyncDirectory(parent)
+        .run()
+        .map_err(|error| io_error("sync recovered runtime mutation directory", error))
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) enum RecoveryIo<'a> {
+    SyncFile(&'a Path),
+    Rename(&'a Path, &'a Path),
+    SyncDirectory(&'a Path),
+    Remove(&'a Path),
+}
+
+impl RecoveryIo<'_> {
+    fn run(self) -> std::io::Result<()> {
+        #[cfg(test)]
+        super::tests::durability::before_io(self)?;
+        match self {
+            Self::SyncFile(path) => crate::fs_durability::sync_file(path),
+            // Recovery only promotes within the validated journal directory.
+            // Keep rename and its barrier separate so a failed barrier is retryable.
+            Self::Rename(source, target) => std::fs::rename(source, target),
+            Self::SyncDirectory(path) => crate::fs_durability::sync_directory(path),
+            Self::Remove(path) => crate::fs_durability::remove_file(path),
+        }?;
+        #[cfg(test)]
+        super::tests::durability::after_io(self);
+        Ok(())
+    }
 }
 
 fn journal_directory(state_root: &Path) -> PathBuf {

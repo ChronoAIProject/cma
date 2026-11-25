@@ -34,6 +34,7 @@ async fn parent_readiness_wake_follows_durable_commit_and_never_failed_publicati
             next.work = WorkspaceWorkState::new(WorkspaceWorkStep::None, MINUTE.into());
             next.revision += 1;
             SandboxTransaction::SaveWorkspaceAndAppend {
+                repository_runtime: None,
                 expected_revision: child.revision,
                 workspace: Box::new(next),
                 event_at: MINUTE.into(),
@@ -53,6 +54,7 @@ async fn parent_readiness_wake_follows_durable_commit_and_never_failed_publicati
             next.revision += 1;
             SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: parent.revision,
                 sandbox: Box::new(next),
                 event_at: MINUTE.into(),

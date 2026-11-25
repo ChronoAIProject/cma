@@ -84,6 +84,9 @@ impl HostedControlTransport for StatusTransport {
             agent_model_catalog: true,
             agent_browser: false,
             agent_resource_preparation: false,
+            agent_process_restart: false,
+            exact_github_credential_route: false,
+            github_repository_scope: false,
         });
         self.responses.fetch_add(1, Ordering::SeqCst);
         self.boundary(true);

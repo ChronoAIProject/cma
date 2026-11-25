@@ -1,9 +1,9 @@
 """Freeze complete, verified public release sets before deployment admission."""
 import json
 
-from staging_cd_common import matches, require
+from staging_cd_common import Refusal, matches, require
 from staging_cd_compatibility import ContractPolicy, GROUP
-from staging_cd_watermark import eligible_receipts
+from staging_cd_watermark import SUPERSEDED, eligible_receipts
 from staging_cd_transition import verify_transition
 from staging_cd_receipts import canonical, sha256, validate_receipt
 from staging_cd_reservations import validate_reservation
@@ -12,6 +12,32 @@ from staging_cd_versions import DEPLOYABLES, version_tuple
 
 from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS, TARGETS
 from staging_cd_runtime_smoke import validate_smoke
+
+
+OVERTAKEN = "superseded_by_newer_final"
+# A first staging attempt refused before any change for a transient cause; its
+# promotion re-admits and deploys once more, and that attempt's outcome counts.
+RETRY_PENDING = "retry-pending"
+
+
+class OvertakenByNewerFinal(Refusal):
+    """Every member of an independent automatic set has a newer final at a later develop source.
+
+    The run that finalized each newer version promotes it in its own lane: it
+    deploys it, is overtaken the same way, or fails. So this set deploys nothing
+    and is not a failure. A contract group member can be finalized in a lane
+    that never promotes it, so a set that holds one still fails.
+    """
+
+    def __init__(self, components):
+        super().__init__("Automatic deployment set was overtaken by newer finals")
+        self.components = tuple(sorted(components))
+
+
+def later_final(tags, source, history):
+    """True when a final of this component sits at a later develop first-parent source."""
+    position = history.position(source)
+    return any(history.position(tag["target"]) > position for tag in tags)
 
 
 def document(text):
@@ -123,20 +149,33 @@ def verify_set(value, api, registry, *, automatic, inputs=None):
         require(set(receipts) == set(mapping), "Dispatch set changed after resolution")
         require(all(version == "latest" or receipts[key]["identity"]["version"] == version
                     for key, version in mapping.items()), "Dispatch version changed after resolution")
-    obsolete = set()
+    obsolete, overtaken = set(), set()
     for component, receipt in receipts.items():
+        tags, history = api.tags(component), api.history()
         try:
-            verify(receipt, api.tags(component), registry, api.history(), automatic=automatic)
+            verify(receipt, tags, registry, history, automatic=automatic)
         except ObsoleteSource:
             if not automatic:
                 raise
             obsolete.add(component)
+            # Positive evidence: a final of this component at a later develop source.
+            if later_final(tags, receipt["source"], history):
+                overtaken.add(component)
     if automatic:
         transition = value.get("contract_transition")
         if transition:
             verify_transition(transition, receipts, ContractPolicy(api.history()))
-        current = eligible_receipts(receipts, api.require_current_versions, lambda: ContractPolicy(api.history()),
-                                    obsolete=obsolete, transition=transition)
+        try:
+            current = eligible_receipts(receipts, api.require_current_versions,
+                                        lambda: ContractPolicy(api.history()),
+                                        obsolete=obsolete, transition=transition)
+        except Refusal as error:
+            # Only a set whose every member a newer final overtook is handed to
+            # those finals' runs. Any other refusal, or a contract member, fails.
+            if (str(error) == SUPERSEDED and not transition and not GROUP & receipts.keys()
+                    and overtaken == receipts.keys()):
+                raise OvertakenByNewerFinal(overtaken) from error
+            raise
         return release_set(current, transition=transition if GROUP <= current.keys() else None)
     return value
 

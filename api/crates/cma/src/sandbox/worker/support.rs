@@ -197,6 +197,7 @@ async fn commit_advance(
     store
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision,
             sandbox: Box::new(sandbox),
             event_at,
@@ -237,6 +238,7 @@ pub(super) fn material_matches(
         && material.owner == sandbox.owner
         && material.source == sandbox.credential.source
         && material.matches_source()
+        && material.matches_connection(sandbox)
         && &material.authority == pending
 }
 
@@ -284,6 +286,7 @@ pub(super) struct WorkerFailure {
     retry_kind: WorkRetryFailure,
     pub(super) native_claim_pending: bool,
     pub(super) startup_hold: bool,
+    pub(super) reopen_refusal: Option<Box<layer2_core::sandbox::store::ReopenRefusalFence>>,
 }
 
 impl WorkerFailure {
@@ -320,13 +323,14 @@ impl WorkerFailure {
         Self::new("service_not_granted", service, false)
     }
 
-    fn new(class: &'static str, detail: &str, retryable: bool) -> Self {
+    pub(super) fn new(class: &'static str, detail: &str, retryable: bool) -> Self {
         Self {
             class,
             detail: safe_detail(detail),
             retryable,
             native_claim_pending: false,
             startup_hold: false,
+            reopen_refusal: None,
             retry_kind: if retryable {
                 WorkRetryFailure::Transient
             } else {
@@ -356,8 +360,12 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     let external = matches!(&error, AdapterError::Unavailable(detail)
         if crate::sandbox::work_retry::replaced_runtime(detail));
     match error {
+        AdapterError::AccessRevoked => {
+            WorkerFailure::terminal_security("current runtime authority was revoked")
+        }
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
+        | AdapterError::NativePoolDefinitionAbsent { .. }
         | AdapterError::Unavailable(_) => WorkerFailure::retryable(
             "runtime dependency unavailable",
         )
@@ -384,6 +392,8 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
             WorkerFailure::resource_quota("requested sandbox capacity is unavailable")
         }
         AdapterError::Rejected(_)
+        | AdapterError::NativePoolConfigurationDrift
+        | AdapterError::DesktopFailed
         | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)
         | AdapterError::Unsupported(_) => {
@@ -417,6 +427,10 @@ pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
 
 pub(super) fn dependency_failure(error: SandboxDependencyError) -> WorkerFailure {
     match error {
+        SandboxDependencyError::AgentsStopping => {
+            WorkerFailure::retryable("lifecycle dependency unavailable")
+                .with_retry_kind(WorkRetryFailure::Waiting)
+        }
         SandboxDependencyError::Transient(detail) => WorkerFailure::retryable(
             "lifecycle dependency unavailable",
         )

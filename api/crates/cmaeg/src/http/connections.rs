@@ -71,17 +71,21 @@ pub async fn capabilities(State(service): State<ConnectionService>, _creator: Cr
                 features
             },
             relay_authoring: Some(super::relay_capabilities::view(&service.management)),
-            platforms: vec![PlatformCapability {
-                id: "telegram".into(),
-                label: "Telegram".into(),
-                connection_methods: vec!["existing_credential".into(), "managed_create".into()],
-                optional_capabilities: vec!["manage_bots".into()],
-            }],
+            platforms: if service.management.managed_telegram_setup_enabled {
+                vec![PlatformCapability {
+                    id: "telegram".into(),
+                    label: "Telegram".into(),
+                    connection_methods: vec!["existing_credential".into(), "managed_create".into()],
+                    optional_capabilities: vec!["manage_bots".into()],
+                }]
+            } else {
+                Vec::new()
+            },
         })
         .into_response(),
     )
 }
-#[utoipa::path(post,path="/v1/channel-connections",operation_id="createChannelConnection",tag="connections",security(("creatorBearer"=[])),params(("X-CMAEG-Owner"=Option<String>,Header),("X-CMAEG-Agent-Authorization"=String,Header,description="Bearer authorizing the originating event's channel")),request_body=CreateConnection,responses((status=201,body=ConnectionView),(status="default",body=cmaeg_core::problem::Problem)))]
+#[utoipa::path(post,path="/v1/channel-connections",operation_id="createChannelConnection",tag="connections",security(("creatorBearer"=[])),params(("X-CMAEG-Owner"=Option<String>,Header),("X-CMAEG-Agent-Authorization"=String,Header,description="Bearer authorizing the originating event's channel")),request_body=CreateConnection,responses((status=201,body=ConnectionView),(status="default",body=cmaeg_core::problem::Problem,content_type="application/problem+json")))]
 pub async fn create(
     State(service): State<ConnectionService>,
     creator: Creator,
@@ -119,7 +123,7 @@ pub struct ConnectionPage {
     pub items: Vec<ConnectionView>,
     pub next_after: Option<String>,
 }
-#[utoipa::path(get,path="/v1/channel-connections",operation_id="listChannelConnections",tag="connections",security(("creatorBearer"=[])),params(ListQuery,("X-CMAEG-Owner"=Option<String>,Header)),responses((status=200,body=ConnectionPage),(status="default",body=cmaeg_core::problem::Problem)))]
+#[utoipa::path(get,path="/v1/channel-connections",operation_id="listChannelConnections",tag="connections",security(("creatorBearer"=[])),params(ListQuery,("X-CMAEG-Owner"=Option<String>,Header)),responses((status=200,body=ConnectionPage),(status="default",body=cmaeg_core::problem::Problem,content_type="application/problem+json")))]
 pub async fn list(
     State(service): State<ConnectionService>,
     creator: Creator,
@@ -132,7 +136,7 @@ pub async fn list(
         Err(e) => failure(e),
     }
 }
-#[utoipa::path(get,path="/v1/channel-connections/{connection_ref}",operation_id="getChannelConnection",tag="connections",security(("creatorBearer"=[])),params(("connection_ref"=String,Path),("X-CMAEG-Owner"=Option<String>,Header)),responses((status=200,body=ConnectionView),(status="default",body=cmaeg_core::problem::Problem)))]
+#[utoipa::path(get,path="/v1/channel-connections/{connection_ref}",operation_id="getChannelConnection",tag="connections",security(("creatorBearer"=[])),params(("connection_ref"=String,Path),("X-CMAEG-Owner"=Option<String>,Header)),responses((status=200,body=ConnectionView),(status="default",body=cmaeg_core::problem::Problem,content_type="application/problem+json")))]
 pub async fn read(
     State(service): State<ConnectionService>,
     creator: Creator,
@@ -143,7 +147,7 @@ pub async fn read(
         Err(e) => failure(e),
     }
 }
-#[utoipa::path(delete,path="/v1/channel-connections/{connection_ref}",operation_id="cancelChannelConnection",tag="connections",security(("creatorBearer"=[])),params(("connection_ref"=String,Path),("X-CMAEG-Owner"=Option<String>,Header)),responses((status=204),(status="default",body=cmaeg_core::problem::Problem)))]
+#[utoipa::path(delete,path="/v1/channel-connections/{connection_ref}",operation_id="cancelChannelConnection",tag="connections",security(("creatorBearer"=[])),params(("connection_ref"=String,Path),("X-CMAEG-Owner"=Option<String>,Header)),responses((status=204),(status="default",body=cmaeg_core::problem::Problem,content_type="application/problem+json")))]
 pub async fn cancel(
     State(service): State<ConnectionService>,
     creator: Creator,

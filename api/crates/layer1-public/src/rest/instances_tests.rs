@@ -41,6 +41,9 @@ use super::{hierarchy_router, HierarchyState};
 use crate::rest::instances_problem::HierarchyProblem;
 use crate::AuthenticatedSubject;
 
+#[path = "task_activity_tests.rs"]
+mod task_activity_tests;
+
 const NOW: &str = "2026-09-05T00:00:00Z";
 
 #[path = "sandbox_capacity_tests.rs"]
@@ -59,6 +62,8 @@ pub(super) mod runtime_update_tests;
 mod service_access_tests;
 #[path = "sandbox_visible_inventory_tests.rs"]
 mod visible_inventory_tests;
+#[path = "sandbox_visitor_boundary_tests.rs"]
+mod visitor_boundary_tests;
 type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);
 
@@ -429,6 +434,7 @@ fn stored_agent(parent: &Workspace, tree: &Worktree, id: &str) -> Agent {
         ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),
@@ -930,6 +936,7 @@ async fn task_navigation_workspace_list_reports_completion_without_reading_conve
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["agents"][0]["task_status"], "completed");
     assert!(body["agents"][0].get("task_started_at").is_none());
+    assert_eq!(body["agents"][0]["task_activity_at"], NOW);
 }
 
 #[tokio::test]

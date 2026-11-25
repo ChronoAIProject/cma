@@ -78,6 +78,9 @@ impl HostedBackend for Files {
                     agent_model_catalog: false,
                     agent_browser: false,
                     agent_resource_preparation: false,
+                    agent_process_restart: false,
+                    exact_github_credential_route: false,
+                    github_repository_scope: false,
                     sandbox_id: identity.sandbox_id,
                     generation: identity.generation + u64::from(self.fault == 5),
                     home_identity: identity.home_identity,
@@ -173,6 +176,61 @@ pub(in crate::hosted) fn binding_with_tools(
     .unwrap();
     (binding, files)
 }
+pub(in crate::hosted) fn owned_binding(
+    policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    fault: u8,
+) -> (
+    HostedContextRefresh,
+    crate::ingress_budget::SharedOwned<Files>,
+) {
+    owned_binding_with_tools(policy, fault, &[])
+}
+
+pub(in crate::hosted) fn owned_binding_with_tools(
+    policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    fault: u8,
+    tools: &[serde_json::Value],
+) -> (
+    HostedContextRefresh,
+    crate::ingress_budget::SharedOwned<Files>,
+) {
+    use super::binding::{ContextInput, ContextSources};
+    let original = "Old managed\n\nOwner exact text  \n";
+    let files = super::binding_fixture::source(
+        policy,
+        original.len() + super::binding_fixture::mutex_backing(),
+        || Files {
+            text: Mutex::new(original.into()),
+            status_reads: std::sync::atomic::AtomicUsize::new(0),
+            writes: std::sync::atomic::AtomicUsize::new(0),
+            goal_probes: std::sync::atomic::AtomicUsize::new(0),
+            fault,
+        },
+    );
+    drop(files.text.lock().unwrap());
+    let binding = HostedContextRefresh::new_admitted(
+        policy,
+        ContextSources {
+            backend: files.clone().into(),
+            access: None,
+            provider: None,
+        },
+        ContextInput {
+            handle: &RuntimeHandle("retained-runtime".into()),
+            identity: &RuntimeStatusRequest {
+                sandbox_id: "sandbox".into(),
+                generation: 3,
+                home_identity: "a".repeat(43),
+            },
+            home: "/home/cma/.cma/agents/agent/home",
+            cwd: "/home/cma/work",
+            tools,
+        },
+    )
+    .unwrap();
+    (binding, files)
+}
+
 #[tokio::test]
 async fn exact_home_write_uses_compare_and_swap_and_confirms_receipt() {
     let (binding, files) = binding(0);

@@ -12,6 +12,7 @@ enum Outcome {
     Abort,
     WrongReceipt,
     Refused,
+    Full,
 }
 #[derive(Default)]
 struct Fixture {
@@ -51,6 +52,7 @@ fn result(
         Outcome::Unknown => CommitOutcome::Unknown,
         Outcome::Abort => CommitOutcome::KnownAbort,
         Outcome::Refused => return Err(RecoveryError::Conflict),
+        Outcome::Full => return Err(RecoveryError::WorkspaceCapacityFull { limit: 1, live: 1 }),
         Outcome::WrongReceipt => {
             let mut wrong = work;
             wrong.next_fence += 1;
@@ -233,7 +235,12 @@ async fn uncertain_completion_reconciles_without_repeating_mutation_or_attachmen
 
 #[tokio::test(start_paused = true)]
 async fn aborted_refused_or_mismatched_completion_never_activates() {
-    for completion in [Outcome::Abort, Outcome::Refused, Outcome::WrongReceipt] {
+    for completion in [
+        Outcome::Abort,
+        Outcome::Refused,
+        Outcome::Full,
+        Outcome::WrongReceipt,
+    ] {
         let fixture = Arc::new(Fixture {
             completion,
             ..Fixture::default()
@@ -242,6 +249,10 @@ async fn aborted_refused_or_mismatched_completion_never_activates() {
         match completion {
             Outcome::Abort => assert_eq!(outcome.unwrap(), CommitOutcome::KnownAbort),
             Outcome::Refused => assert_eq!(outcome, Err(RecoveryError::Conflict)),
+            Outcome::Full => assert_eq!(
+                outcome,
+                Err(RecoveryError::WorkspaceCapacityFull { limit: 1, live: 1 })
+            ),
             _ => assert_eq!(outcome, Err(RecoveryError::InvalidEvidence)),
         }
         fixture.assert_events(&["claim", "restricted_attach", "complete", "drop_attachment"]);

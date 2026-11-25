@@ -49,7 +49,7 @@ impl AdmittedAgentCommand {
             let AgentCommand::Message { input, .. } = &mut command else {
                 return Err(CommandLedgerError::Corrupt);
             };
-            *input = AgentInput::text(&revision.text);
+            input.content = AgentInput::text(&revision.text).content;
         }
         Ok(command)
     }
@@ -95,6 +95,8 @@ pub struct AdmittedQueuedInput {
 pub enum QueuedInputOutcome {
     Applied(Box<AdmittedQueuedInput>),
     NotAdmitted,
+    /// A local observation was stale before any edit or receipt could be written.
+    StaleObservation,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueuedInputView {

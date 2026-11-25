@@ -1,5 +1,8 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::SubjectId;
-use layer2_core::trigger_domain::{PublicTrigger, TriggerId, TriggerStoreError};
+use layer2_core::trigger_domain::{
+    PublicTrigger, TriggerId, TriggerReferenceError, TriggerStoreError,
+};
 use mongodb::bson::doc;
 use mongodb::ClientSession;
 
@@ -44,23 +47,23 @@ pub(super) async fn publish(
             match publish_once(store, id, owner, expected, &published_at, &mut session).await {
                 Ok(published) => published,
                 Err(AttemptError::Retry(reason)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(reason.into());
                     continue;
                 }
                 Err(AttemptError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(AttemptError::Driver(error))
                     if is_transient(&error) || is_duplicate_key(&error) =>
                 {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(AttemptError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(unavailable("write Trigger publication", error));
                 }
             };
@@ -96,6 +99,14 @@ async fn publish_once(
         .await
         .map_err(AttemptError::Driver)?
         .ok_or(AttemptError::Domain(TriggerStoreError::NotFound))?;
+    if document.get_bool("account_erasure_fenced").ok() == Some(true) {
+        return Err(AttemptError::Domain(
+            TriggerReferenceError::Unavailable {
+                field: "trigger publisher",
+            }
+            .into(),
+        ));
+    }
     let stored = read_trigger(&document).map_err(AttemptError::Domain)?;
     match queries::verify_in_session(store, &stored.trigger, session).await {
         Ok(()) => {}
@@ -146,6 +157,7 @@ async fn publish_once(
                 "_id": id.as_str(),
                 "owner": owner.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "account_erasure_fenced": { "$ne": true },
                 "draft_version": signed(expected, "expected Trigger draft version")
                     .map_err(TriggerStoreError::Corrupt)
                     .map_err(AttemptError::Domain)?,

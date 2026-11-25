@@ -37,6 +37,7 @@ async fn unknown_commit_reconciles_buckets_and_progress_before_retry() {
         .await
         .unwrap();
     assert!(outcome.is_err());
+    crate::store::test_visibility::majority_barrier(&store.client, store.db.name()).await;
     let saved = store
         .collection(COLLECTION)
         .find_one(doc! {"_id":b.key()})
@@ -44,8 +45,8 @@ async fn unknown_commit_reconciles_buckets_and_progress_before_retry() {
         .unwrap()
         .unwrap();
     assert_projection(
-        &DayBucket::read(&saved).unwrap().total.projection,
-        &b.total.projection,
+        &DayBucket::read(&saved).unwrap().total().projection,
+        &b.total().projection,
     );
     assert!(checkpoint(&store, Lane::Backfill)
         .await

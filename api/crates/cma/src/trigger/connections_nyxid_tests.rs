@@ -18,6 +18,13 @@ use serde_json::{json, Value};
 use super::connections_nyxid::{NyxidServiceConnectionBroker, VisitorCredentialSource};
 use crate::auth::persistence::SecretValue;
 
+#[path = "connections_nyxid_tests/deadline.rs"]
+mod deadline;
+#[path = "connections_nyxid_tests/github.rs"]
+mod github;
+mod github_repository;
+pub(crate) use github_repository::GithubRepositoryFixture;
+
 const VISITOR_TOKEN: &str = "visitor-access-secret";
 const PROVIDER_EXPIRES_AT: &str = "2026-09-05T12:15:00.731Z";
 const CANONICAL_EXPIRES_AT: &str = "2026-09-05T12:15:00Z";
@@ -73,6 +80,8 @@ struct ProviderState {
     service_reads: Mutex<Vec<Option<String>>>,
     catalog_reads: Mutex<Vec<Option<String>>>,
     credential_reads: Mutex<Vec<Option<String>>>,
+    github_proxy_reads: Mutex<Vec<(String, String)>>,
+    github_proxy_scopes: Mutex<Option<String>>,
     readiness_reply: Mutex<Reply>,
 }
 
@@ -94,6 +103,8 @@ impl ProviderState {
             service_reads: Mutex::new(Vec::new()),
             catalog_reads: Mutex::new(Vec::new()),
             credential_reads: Mutex::new(Vec::new()),
+            github_proxy_reads: Mutex::new(Vec::new()),
+            github_proxy_scopes: Mutex::new(None),
             readiness_reply: Mutex::new(Reply::json(
                 json!({"revision":"nyxid-assistant-readiness.v1","capabilities":[{"capabilityId":"api-github","connectionState":"connected","grantState":"missing"}]}),
             )),
@@ -128,6 +139,15 @@ impl Provider {
             .route("/api/v1/user-services", get(read_services))
             .route("/api/v1/services", get(read_catalog))
             .route("/api/v1/keys/{id}", get(read_credential))
+            .route("/api/v1/proxy/{id}/user", get(read_github_proxy))
+            .route(
+                "/api/v1/proxy/{id}/repos/{owner}/{name}",
+                get(read_github_repository),
+            )
+            .route(
+                "/api/v1/proxy/{id}/repos/{owner}/{name}/commits/{reference}",
+                get(read_github_reference),
+            )
             .route("/api/v1/assistant/readiness", get(read_readiness))
             .with_state(Arc::clone(&state));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -249,6 +269,86 @@ async fn read_credential(
         Some(row) => Reply::json(json!({"id":id,"slug":row["slug"],"is_active":true,"status":"active","connected":true,"credential_missing":false})).response(),
         None => Reply::error(StatusCode::NOT_FOUND, "missing").response(),
     }
+}
+
+async fn read_github_proxy(
+    State(state): State<Arc<ProviderState>>,
+    Path(catalog): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    assert_eq!(
+        authorization(&headers),
+        Some(format!("Bearer {VISITOR_TOKEN}"))
+    );
+    let selected = query.get("_nyxid_via").unwrap().clone();
+    let login = format!("fixture-{selected}");
+    state
+        .github_proxy_reads
+        .lock()
+        .unwrap()
+        .push((catalog, selected));
+    let mut response = Reply::json(json!({"id": 19, "login": login})).response();
+    if let Some(scopes) = state.github_proxy_scopes.lock().unwrap().as_deref() {
+        response
+            .headers_mut()
+            .insert("x-oauth-scopes", scopes.parse().unwrap());
+    }
+    response
+}
+
+async fn read_github_repository(
+    State(state): State<Arc<ProviderState>>,
+    Path((catalog, owner, name)): Path<(String, String, String)>,
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let identity = read_github_proxy(State(state), Path(catalog), query, headers).await;
+    let mut response = if owner == "example"
+        && matches!(name.as_str(), "project" | "restricted" | "private-project")
+    {
+        Reply::json(json!({
+            "full_name": format!("{owner}/{name}"),
+            "default_branch": "main",
+            "private": name == "private-project",
+            "disabled": false,
+            "archived": false,
+            "permissions": {"push": name == "project"},
+        }))
+        .response()
+    } else {
+        Reply::error(StatusCode::NOT_FOUND, "repository missing").response()
+    };
+    if let Some(scopes) = identity.headers().get("x-oauth-scopes") {
+        response
+            .headers_mut()
+            .insert("x-oauth-scopes", scopes.clone());
+    }
+    response
+}
+
+async fn read_github_reference(
+    State(state): State<Arc<ProviderState>>,
+    Path((catalog, owner, name, reference)): Path<(String, String, String, String)>,
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    assert_eq!(owner, "example");
+    assert!(matches!(name.as_str(), "project" | "private-project"));
+    let identity = read_github_proxy(State(state), Path(catalog), query, headers).await;
+    let commit = "a".repeat(40);
+    let mut response =
+        if matches!(reference.as_str(), "main" | "branch/synthetic") || reference == commit {
+            Reply::json(json!({"sha":commit})).response()
+        } else {
+            Reply::error(StatusCode::NOT_FOUND, "ref missing").response()
+        };
+    if let Some(scopes) = identity.headers().get("x-oauth-scopes") {
+        response
+            .headers_mut()
+            .insert("x-oauth-scopes", scopes.clone());
+    }
+    response
 }
 
 async fn read_readiness(State(state): State<Arc<ProviderState>>, headers: HeaderMap) -> Response {
@@ -729,6 +829,12 @@ async fn credential_metadata_failures_never_look_like_satisfied_connections() {
             json!({"id":"github-row","slug":"api-github","is_active":true,"status":"active","connected":true}),
         ),
     ] {
+        let before = provider.state.credential_reads.lock().unwrap().len();
+        let expected_reads = if reply.status == StatusCode::TOO_MANY_REQUESTS {
+            2
+        } else {
+            1
+        };
         provider
             .state
             .credential_replies
@@ -747,7 +853,13 @@ async fn credential_metadata_failures_never_look_like_satisfied_connections() {
             ServiceConnectionError::Unavailable(_) | ServiceConnectionError::Malformed(_)
         ));
         assert!(!error.to_string().contains("private provider"));
+        assert_eq!(
+            provider.state.credential_reads.lock().unwrap().len(),
+            before + expected_reads,
+            "only an explicit provider throttle may repeat the credential read"
+        );
     }
+    let before_denied = provider.state.credential_reads.lock().unwrap().len();
     provider.state.set_services_reply(Reply::json(json!({ "services": [
         {"id":"github-row","slug":"api-github","is_active":true,"credential_source":{"type":"org","allowed":false}}
     ] })));
@@ -761,7 +873,7 @@ async fn credential_metadata_failures_never_look_like_satisfied_connections() {
     assert_eq!(requirements[0].state, ServiceRequirementState::Unknown);
     assert_eq!(
         provider.state.credential_reads.lock().unwrap().len(),
-        4,
+        before_denied,
         "denied organization credentials must not be probed"
     );
 }

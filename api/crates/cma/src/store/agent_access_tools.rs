@@ -1,4 +1,5 @@
 //! Limited consent-request capabilities, separate from all NyxID credentials.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::sync::Arc;
 
 use layer2_core::sandbox::{AgentCreationProvenance, RuntimeBinding};
@@ -40,6 +41,7 @@ pub(super) const COLLECTION: &str = "agent_access_tools";
 pub(crate) use layer2_core::sandbox::agent_access_tool::AgentAccessRequester as AuthenticatedAgentAccess;
 
 pub(crate) struct MongoAgentAccessToolSource {
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
     store: Arc<MongoSandboxStore>,
     origin: String,
     signing_key: ring::hmac::Key,
@@ -47,6 +49,26 @@ pub(crate) struct MongoAgentAccessToolSource {
 }
 
 impl MongoAgentAccessToolSource {
+    pub(crate) fn with_account_standing(
+        mut self: Arc<Self>,
+        standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("tool standing configured before sharing")
+            .standing = standing;
+        self
+    }
+    async fn require_owner_available(&self, owner: &layer2_core::SubjectId) -> Result<()> {
+        if self
+            .standing
+            .erasing(owner)
+            .await
+            .map_err(|_| Error::Unavailable)?
+        {
+            return Err(Error::Erasing);
+        }
+        Ok(())
+    }
     #[cfg(test)]
     pub(crate) fn new(
         store: Arc<MongoSandboxStore>,
@@ -106,14 +128,23 @@ impl MongoAgentAccessToolSource {
                     (100_u64 << (attempt - 1).min(3)) + (jitter.rotate_left(attempt as u32) & 31);
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
             }
-            let mut session = self.store.client.start_session().await.map_err(|error| {
-                operation.diagnostic("start_session", driver_category(&error), attempt);
-                unavailable(())
-            })?;
-            start_transaction(&mut session).await.map_err(|error| {
+            let mut session = match self.store.client.start_session().await {
+                Ok(session) => session,
+                Err(error) => {
+                    operation.diagnostic("start_session", driver_category(&error), attempt);
+                    if is_transient(&error) {
+                        continue;
+                    }
+                    return Err(unavailable(()));
+                }
+            };
+            if let Err(error) = start_transaction(&mut session).await {
                 operation.diagnostic("start_transaction", driver_category(&error), attempt);
-                unavailable(())
-            })?;
+                if is_transient(&error) {
+                    continue;
+                }
+                return Err(unavailable(()));
+            }
             let result = match operation {
                 Operation::Resolve(runtime, request, fence) => self
                     .resolve_in(runtime, request, fence, &mut session)
@@ -139,15 +170,19 @@ impl MongoAgentAccessToolSource {
             let result = match result {
                 Ok(value) => value,
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     match error {
                         Error::Driver(error) => {
                             operation.diagnostic("read_write", driver_category(&error), attempt);
-                            if is_transient(&error) || is_duplicate_key(&error) {
+                            if !error
+                                .contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
+                                && (is_transient(&error) || is_duplicate_key(&error))
+                            {
                                 continue;
                             }
                             return Err(unavailable(()));
                         }
+                        Error::Erasing => return Err(AdapterError::AccessRevoked),
                         Error::Refused => {
                             operation.diagnostic("read_write", "authority_rejected", attempt);
                             return Err(refused());
@@ -288,7 +323,9 @@ impl Operation<'_> {
 }
 
 fn driver_category(error: &mongodb::error::Error) -> &'static str {
-    if is_transient(error) {
+    if error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT) {
+        "unknown_commit"
+    } else if is_transient(error) {
         "transient_transaction"
     } else if is_duplicate_key(error) {
         "duplicate_key"
@@ -303,6 +340,7 @@ enum Outcome {
     Authenticated(Box<AuthenticatedAgentAccess>),
 }
 enum Error {
+    Erasing,
     Refused,
     Unavailable,
     Driver(mongodb::error::Error),
@@ -317,6 +355,14 @@ impl From<super::resource_access::ReadError> for Error {
         match value {
             super::resource_access::ReadError::Driver(error) => Self::Driver(error),
             super::resource_access::ReadError::Domain(_) => Self::Refused,
+        }
+    }
+}
+impl From<super::agent_admission::helper_error::HelperError> for Error {
+    fn from(value: super::agent_admission::helper_error::HelperError) -> Self {
+        match value {
+            super::agent_admission::helper_error::HelperError::Driver(error) => Self::Driver(error),
+            super::agent_admission::helper_error::HelperError::Domain(_) => Self::Refused,
         }
     }
 }

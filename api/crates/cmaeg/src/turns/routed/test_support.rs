@@ -139,7 +139,14 @@ impl Setup {
         request: LaunchRequest,
         source: &[u8],
     ) -> Self {
-        let server = Server::start().await;
+        Self::with_server(support, request, source, Server::start().await).await
+    }
+    pub async fn with_server(
+        support: RecoverySupport,
+        request: LaunchRequest,
+        source: &[u8],
+        server: Server,
+    ) -> Self {
         let candidate = Candidate::prepare(
             &request,
             &fixture::routed(&request),
@@ -268,6 +275,7 @@ pub fn recovery_frame(
         event: if terminal {
             ResponsesEvent::Completed {
                 response: json!({"id":response}),
+                matching_response_identity: true,
             }
         } else {
             ResponsesEvent::InProgress

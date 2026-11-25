@@ -57,11 +57,18 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CompletionFault {
+    BeforeWrite,
+    AfterWrite,
+}
+
 #[derive(Default)]
 struct MemoryOperationStore {
     records: Mutex<HashMap<OperationKey, OperationRecord>>,
     reservations: AtomicUsize,
     failure: Mutex<Option<Result<OperationReservation, StoreError>>>,
+    completion_fault: Mutex<Option<CompletionFault>>,
 }
 
 #[async_trait]
@@ -91,6 +98,12 @@ impl OperationStore for MemoryOperationStore {
     }
 
     async fn complete(&self, claim: &OperationClaim, outcome: Vec<u8>) -> Result<(), StoreError> {
+        let fault = *self.completion_fault.lock().unwrap();
+        if fault == Some(CompletionFault::BeforeWrite) {
+            return Err(StoreError::Unavailable(
+                "synthetic receipt write failure".into(),
+            ));
+        }
         let key = (
             claim.subject().to_string(),
             claim.operation().to_owned(),
@@ -101,6 +114,11 @@ impl OperationStore for MemoryOperationStore {
             .get_mut(&key)
             .ok_or_else(|| StoreError::Malformed("operation claim disappeared".into()))?;
         record.1 = Some(outcome);
+        if fault == Some(CompletionFault::AfterWrite) {
+            return Err(StoreError::Unavailable(
+                "synthetic receipt acknowledgement loss".into(),
+            ));
+        }
         Ok(())
     }
 }
@@ -366,6 +384,7 @@ impl TestApp {
             false,
             Arc::new(FixedSandboxCredentialPrerequisite::Ready),
             None,
+            Default::default(),
         )
         .await
     }
@@ -375,6 +394,7 @@ impl TestApp {
             true,
             Arc::new(FixedSandboxCredentialPrerequisite::Ready),
             None,
+            Default::default(),
         )
         .await
     }
@@ -382,7 +402,7 @@ impl TestApp {
     pub async fn with_credential_prerequisite(
         prerequisite: Arc<dyn SandboxCredentialPrerequisite>,
     ) -> Self {
-        Self::configured(false, prerequisite, None).await
+        Self::configured(false, prerequisite, None, Default::default()).await
     }
 
     pub async fn with_inline_materializer(
@@ -392,14 +412,23 @@ impl TestApp {
             false,
             Arc::new(FixedSandboxCredentialPrerequisite::Ready),
             Some(materializer),
+            Default::default(),
         )
         .await
+    }
+
+    pub async fn with_admission_policy(
+        policy: layer2_core::trigger_domain::LaunchAdmissionPolicy,
+        prerequisite: Arc<dyn SandboxCredentialPrerequisite>,
+    ) -> Self {
+        Self::configured(false, prerequisite, None, policy).await
     }
 
     async fn configured(
         private_profiles: bool,
         prerequisite: Arc<dyn SandboxCredentialPrerequisite>,
         materializer: Option<Arc<super::inline_image_routes::CredentialMaterializer>>,
+        admission_policy: layer2_core::trigger_domain::LaunchAdmissionPolicy,
     ) -> Self {
         let profiles = Arc::new(InMemoryProfileStore::default());
         let (agent, _workspace, sandbox) = publish_profiles(&profiles, private_profiles).await;
@@ -476,7 +505,8 @@ impl TestApp {
             broker.clone(),
             policy.clone(),
             prerequisite,
-        );
+        )
+        .with_admission_policy(admission_policy);
         let connections = ServiceConnectionService::new(launches.clone(), broker.clone());
         let operations = Arc::new(MemoryOperationStore::default());
         let operation_store: Arc<dyn OperationStore> = operations.clone();
@@ -514,6 +544,10 @@ impl TestApp {
         self.operations.reservations.load(Ordering::SeqCst)
     }
 
+    pub fn fail_completion(&self, fault: Option<CompletionFault>) {
+        *self.operations.completion_fault.lock().unwrap() = fault;
+    }
+
     pub fn fail_operations(&self, failure: Result<OperationReservation, StoreError>) {
         *self.operations.failure.lock().unwrap() = Some(failure);
     }
@@ -531,6 +565,7 @@ impl TestApp {
             capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
             status: AgentStatus::Ready,
             conversation: ConversationState {
+                turn_timeout: None,
                 preferences: Default::default(),
                 managed_guidance_revision: 0,
                 observations: Default::default(),

@@ -1,93 +1,21 @@
 pub use super::dispatcher_authority::Authority;
 pub(super) use super::dispatcher_authority::{current_target, validate_current};
-use super::{
-    journal::valid_response, model::*, BindingPreparation, Journal, PreparationIntent,
-    PreparationReceipt,
-};
+use super::{journal::valid_response, model::*, BindingPreparation, Journal};
 use crate::{
     channels::resolver::ResolvedChannel,
     ingress::routing_store::{
         AdmissionError, AdmittedPlan, EventIdentity, PlanStore, StoredTarget,
     },
 };
-use cmaeg_core::channel::{ProviderBinding, Secret};
-use futures_util::future::BoxFuture;
 use std::sync::Arc;
 
-/// A direct, awaited transport: it must not spawn a detached start or re-render
-/// any frozen field. Exact-body idempotency is opt-in only after provider proof.
-pub trait ExecutionPort: Send + Sync {
-    fn support(&self, binding: &ProviderBinding) -> RecoverySupport;
-    /// Preparation may read/render, but must never start a provider turn.
-    fn prepare<'a>(
-        &'a self,
-        plan: &'a AdmittedPlan,
-        target: &'a StoredTarget,
-        current: &'a ResolvedChannel,
-    ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>>;
-    fn inspect_binding<'a>(
-        &'a self,
-        _plan: &'a AdmittedPlan,
-        _target: &'a StoredTarget,
-        _current: &'a ResolvedChannel,
-    ) -> BoxFuture<'a, Result<BindingPreparation, ExecutionError>> {
-        Box::pin(async { Err(ExecutionError::Unsupported) })
-    }
-    fn reserve_binding<'a>(
-        &'a self,
-        _target: &'a StoredTarget,
-        _current: &'a ResolvedChannel,
-        _intent: &'a PreparationIntent,
-    ) -> BoxFuture<'a, Result<PreparationReceipt, ExecutionError>> {
-        Box::pin(async { Err(ExecutionError::Unsupported) })
-    }
-    fn prepare_at_generation<'a>(
-        &'a self,
-        plan: &'a AdmittedPlan,
-        target: &'a StoredTarget,
-        current: &'a ResolvedChannel,
-        generation: Option<u64>,
-    ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>> {
-        if generation.is_some() {
-            Box::pin(async { Err(ExecutionError::Unsupported) })
-        } else {
-            self.prepare(plan, target, current)
-        }
-    }
-    fn start<'a>(
-        &'a self,
-        body: &'a FrozenTurn,
-        binding: &'a ProviderBinding,
-        credential: &'a Secret,
-    ) -> BoxFuture<'a, StartResult>;
-    /// Persist independent continuation scheduling after immutable body freeze.
-    /// Failure must prevent the original provider POST; a wake-up never grants
-    /// permission to replay that original request.
-    fn prepare_continuations<'a>(
-        &'a self,
-        _plan: &'a AdmittedPlan,
-        _target: &'a StoredTarget,
-        _body: &'a FrozenTurn,
-    ) -> BoxFuture<'a, Result<(), ExecutionError>> {
-        Box::pin(async { Ok(()) })
-    }
-}
+pub use super::execution_port::{ExecutionPort, StartResult};
 
-pub enum StartResult {
-    Accepted {
-        response_id: String,
-    },
-    /// Proved no work was accepted, so the exact request can be retried.
-    NotAccepted,
-    NotAcceptedWithCode {
-        code: String,
-    },
-    /// A terminal rejection proved by the provider, never a network/5xx guess.
-    Rejected {
-        code: String,
-    },
-    Unknown,
-}
+#[path = "dispatcher_preparation.rs"]
+mod preparation;
+#[cfg(test)]
+pub(super) use preparation::preparation_failure_code;
+
 pub enum DispatchOutcome {
     /// Ownership and exact body needed by a separately durable delivery worker.
     /// Known accepted responses are never submitted again.
@@ -111,10 +39,11 @@ pub struct Dispatcher {
 impl Dispatcher {
     pub fn new(
         plans: PlanStore,
-        journal: Journal,
+        mut journal: Journal,
         authority: Arc<dyn Authority>,
         port: Arc<dyn ExecutionPort>,
     ) -> Self {
+        journal.start_measurement = plans.start_measurement.clone();
         Self {
             plans,
             journal,
@@ -178,6 +107,9 @@ impl Dispatcher {
                 Ok(outcome)
             }
             Err(error) => {
+                if let Some(measurement) = &self.plans.start_measurement {
+                    measurement.unknown(&plan.admission_id, "dispatch_refused_or_failed");
+                }
                 let _ = self.journal.release(&mut lease).await;
                 Err(error)
             }
@@ -305,33 +237,24 @@ impl Dispatcher {
             self.journal.transition(lease, Phase::Unknown).await?;
             return Ok(RunResult::Done(DispatchOutcome::Unknown));
         }
-        if lease.state.phase == Phase::Pending {
-            let generation = if plan.prepares_binding(target) {
-                self.prepare_binding(plan, target, lease).await?
-            } else {
-                None
-            };
-            let current = if plan.prepares_binding(target) {
-                let current = self.current(plan, target).await?;
-                self.journal.renew(lease).await?;
-                self.journal.guard(lease).await?;
-                current
-            } else {
-                current
-            };
-            let body = self
-                .port
-                .prepare_at_generation(plan, target, &current, generation)
-                .await?;
-            validate_delivery(&body, &current, target)?;
-            self.journal.freeze(lease, plan, target, &body).await?;
+        // Pending has no prepared body or durable start marker. A Prepared
+        // target may already have posted from another owner and been refused.
+        let first_attempt = lease.state.phase == Phase::Pending;
+        if first_attempt {
+            if let Err(error) = self.prepare_pending(plan, target, lease, current).await {
+                self.observe_preparation_failure(plan, target, &error).await;
+                return Err(error);
+            }
         }
         let body = self.journal.body(lease).await?;
         body.validate(plan, target, &self.journal.keys, (self.journal.clock)())?;
         // Media/conversation preparation has its own bound. Renew the still
         // owned lease so it cannot consume the subsequent acceptance budget.
         self.journal.renew(lease).await?;
-        self.port.prepare_continuations(plan, target, &body).await?;
+        if let Err(error) = self.port.prepare_continuations(plan, target, &body).await {
+            self.observe_preparation_failure(plan, target, &error).await;
+            return Err(error);
+        }
         self.journal.guard(lease).await?;
         // The durable start marker precedes any network effect. If either CAS
         // confirmation or the fresh authority check fails, no POST is made.
@@ -363,15 +286,27 @@ impl Dispatcher {
             self.journal.clone(),
             super::live_scope::Capture::execution(lease.clone(), None),
         );
+        let attempt = self
+            .plans
+            .start_measurement
+            .as_ref()
+            .map(|m| m.attempt(&plan.admission_id, first_attempt));
+        let timing = attempt.clone().map(|a| {
+            crate::telemetry::timing::IngressTiming::with_provider_start("routed", Some(a))
+        });
         let started = scope
             .run(
                 "provider_acceptance",
-                self.port.start(&body, &target.launch.provider, credential),
+                self.port
+                    .start_observed(&body, &target.launch.provider, credential, timing),
             )
             .await?;
         *lease = scope.execution();
         match started {
             StartResult::Accepted { response_id } if valid_response(&response_id) => {
+                if let Some(attempt) = &attempt {
+                    attempt.accepted();
+                }
                 self.journal
                     .transition(
                         lease,

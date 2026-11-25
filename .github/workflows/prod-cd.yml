@@ -1,0 +1,131 @@
+name: prod-cd
+
+# A merge into main releases to production by promoting the exact images staging
+# already verified for the merged develop commit. Nothing is rebuilt here.
+# Only the applications (am, eg, web) are promoted; runtime images stay pinned
+# in Agent Manager's private configuration until runtime promotion is designed.
+# production-plan (no reviewers) only reads the private deploy switches;
+# production (required reviewers) holds the deploy credential and gates the write.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      infra_ref:
+        description: Infrastructure commit; empty resolves main once at run start
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Select the staging-verified release
+    if: github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    environment: production-plan
+    outputs:
+      release_set: ${{ steps.select.outputs.release_set }}
+      released: ${{ steps.select.outputs.released }}
+      infra_ref: ${{ steps.private.outputs.revision }}
+    env:
+      CD_TARGET: production
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Install the reviewed policy reader
+        run: |
+          python3 -m venv "$RUNNER_TEMP/prod-cd-select"
+          "$RUNNER_TEMP/prod-cd-select/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
+      # Minting a token is safe to repeat. Only the repeat may fail the job.
+      - name: Create restricted infrastructure reader token
+        id: infra-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - name: Retry restricted infrastructure reader token
+        id: infra-token-retry
+        if: steps.infra-token.outcome == 'failure'
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - name: Resolve infrastructure revision once for the release
+        id: private
+        env:
+          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
+          CD_INFRA_REF: ${{ inputs.infra_ref }}
+        run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
+      # A checkout into the same path is safe to repeat; only the repeat may fail the job.
+      - name: Check out the production deploy switches
+        id: infra-checkout
+        continue-on-error: true
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ChronoAIProject/cma-infra
+          ref: ${{ steps.private.outputs.revision }}
+          token: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
+          path: .github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}
+          sparse-checkout: prod/chrono-cd
+          persist-credentials: false
+          show-progress: false
+      - name: Retry the production deploy switches checkout
+        if: steps.infra-checkout.outcome == 'failure'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ChronoAIProject/cma-infra
+          ref: ${{ steps.private.outputs.revision }}
+          token: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
+          path: .github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}
+          sparse-checkout: prod/chrono-cd
+          persist-credentials: false
+          show-progress: false
+      - name: Select the staging-verified images for the merged develop commit
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_PRIVATE_CONTROLLER: ${{ github.workspace }}/.github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}/prod/chrono-cd
+        run: '"$RUNNER_TEMP/prod-cd-select/bin/python" -B .github/scripts/prod_cd_select.py'
+      - name: Remove private checkout
+        if: always()
+        run: python3 -B .github/scripts/staging_cd_checkout.py cleanup
+  deploy:
+    needs: resolve
+    if: needs.resolve.outputs.release_set != ''
+    permissions:
+      contents: read
+      actions: read
+    # Held for the whole call, including the deploy job's full production
+    # budget; later releases queue behind it and none is cancelled.
+    concurrency:
+      group: cma-prod-deploy-set
+      queue: max
+      cancel-in-progress: false
+    uses: ./.github/workflows/prod-deploy.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+    with:
+      release_set: ${{ needs.resolve.outputs.release_set }}
+      infra_ref: ${{ needs.resolve.outputs.infra_ref }}

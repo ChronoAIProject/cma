@@ -1,12 +1,15 @@
+import { botIdMessage } from './connectorValidation';
 import { nativeDiscordUnavailable, useRelayCapabilities } from '../RelayCapabilities';
-import { AdmissionFields } from './AdmissionFields';
+import { SourceAdmissionFields } from './SourceAdmissionFields';
 import { Section, TextField, Toggle } from './Fields';
 import { optional, type Fields } from './model';
 
 export function DiscordSourceFields({
   value,
   onChange,
+  hideAdmission = false,
 }: {
+  hideAdmission?: boolean;
   value: Fields;
   onChange: (value: Fields) => void;
 }) {
@@ -42,6 +45,8 @@ export function DiscordSourceFields({
           </p>
         )}
         <TextField
+          path="bot_id"
+          validationMessage={botIdMessage(value.bot_id, 'discord')}
           label="Discord bot user ID"
           value={value.bot_id}
           onChange={(bot_id) => onChange({ ...value, bot_id })}
@@ -153,11 +158,7 @@ export function DiscordSourceFields({
           channel metadata enabled by the operator; otherwise thread partitioning is refused.
         </p>
       </Section>
-      <AdmissionFields
-        value={value.admission}
-        onChange={(admission) => onChange({ ...value, admission })}
-        allowBotMessages={false}
-      />
+      {!hideAdmission ? <SourceAdmissionFields value={value} onChange={onChange} /> : null}
     </>
   );
 }

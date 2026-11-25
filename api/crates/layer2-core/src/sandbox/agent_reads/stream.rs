@@ -46,6 +46,10 @@ impl AgentEventStreamAuthorization {
         self.personal_caller.is_some()
     }
 
+    pub fn can_review_external_approval(&self) -> bool {
+        self.is_personal_owner() && self.held.decision.allows(ResourceCapability::Interact)
+    }
+
     pub fn revalidation_deadline(&self) -> Option<tokio::time::Instant> {
         self.held
             .decision
@@ -128,6 +132,31 @@ impl AgentReadService {
             .bounded(self.current_event_stream_snapshot(authorization))
             .await
             .map(|_| ())
+    }
+
+    /// A live batch retains its existing policy observation, while account
+    /// deletion is checked again before each buffered fragment is released.
+    /// This reads only standing and never loads the resource aggregate.
+    pub async fn validate_event_stream_standing(
+        &self,
+        authorization: &AgentEventStreamAuthorization,
+    ) -> Result<(), AgentReadError> {
+        authorization
+            .bounded(async {
+                let access = self.access.as_ref().ok_or_else(|| {
+                    AgentReadError::Unavailable("resource access is absent".into())
+                })?;
+                access
+                    .validate_read_standing(
+                        &authorization.held,
+                        &ResourceTarget::Agent {
+                            agent_id: authorization.id.clone(),
+                        },
+                    )
+                    .await
+                    .map_err(authorized::access_error)
+            })
+            .await
     }
 
     pub(super) async fn current_event_stream_snapshot(

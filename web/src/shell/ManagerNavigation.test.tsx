@@ -1,9 +1,9 @@
 import { NavigationSettingsContext } from './sidebarContext';
-import type { ReactElement } from 'react';
+import { createRef, type ReactElement } from 'react';
 import { act, fireEvent, render as renderView, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
-import { ManagerNavigation } from './ManagerNavigation';
+import { ManagerNavigation, type EnvironmentNavigationHandle } from './ManagerNavigation';
 import type { TreePermissions, TreeProps } from './Tree';
 import type { AgentStatus } from '../api/types';
 import { navigationFixture } from '../test/hierarchy';
@@ -25,7 +25,6 @@ const permissions: TreePermissions = {
 };
 const props = {
   scope: '',
-  choices: { options: [{ value: '', label: 'Personal' }], selected: undefined, unavailable: false },
   route: { kind: 'agent_manager' } as const,
   viewerId: 'navigation-viewer',
   permissions,
@@ -63,11 +62,10 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   expect(filter).toHaveAccessibleDescription('Working');
   expect(filter.querySelector('.navigation-filters__dot')).not.toBeNull();
   expect(screen.getByText('Working', summary)).toBeInTheDocument();
-  await expandNavigationFilters(user);
-  await user.click(screen.getByRole('button', { name: 'Manage environments' }));
+  await user.click(screen.getByRole('button', { name: 'Environments' }));
   expect(filter).toHaveAttribute('aria-expanded', 'false');
   expect(screen.queryByRole('group', { name: 'Navigation filters' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Back to tasks' })).toHaveFocus();
+  expect(screen.getByRole('button', { name: 'Environments' })).toHaveFocus();
   await expandNavigationFilters(user);
   expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
     'All statuses',
@@ -77,10 +75,9 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   expect(filter.querySelector('.navigation-filters__dot')).toBeNull();
   expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent('chrono-bot');
   await user.click(screen.getByRole('button', { name: 'Collapse Atlas' }));
-  await user.click(screen.getByRole('button', { name: 'Back to tasks' }));
+  await user.click(screen.getByRole('button', { name: 'Tasks' }));
   expect(screen.getByRole('button', { name: 'Agent status filter' })).toHaveTextContent('Working');
-  await expandNavigationFilters(user);
-  await user.click(screen.getByRole('button', { name: 'Manage environments' }));
+  await user.click(screen.getByRole('button', { name: 'Environments' }));
   expect(screen.getByRole('button', { name: 'Expand Atlas' })).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: /Agent one/ })).not.toBeInTheDocument();
 });
@@ -96,7 +93,7 @@ it('shows visible task states alongside characters and respects parent lifecycle
   const view = render(draw('active', 'ready'));
   const cases = [
     ['active', 'ready', 'idle', 'still', 'brand', 'Ready', 'Status unavailable', 'neutral'],
-    ['active', 'starting', 'preparing', 'live', 'brand', 'Starting', 'Preparing', 'ongoing'],
+    ['active', 'starting', 'preparing', 'still', 'brand', 'Starting', 'Preparing', 'ongoing'],
     ['active', 'working', 'thinking', 'live', 'brand', 'Working', 'Working', 'ongoing'],
     [
       'active',
@@ -125,7 +122,9 @@ it('shows visible task states alongside characters and respects parent lifecycle
     expect(character).toHaveAttribute('aria-hidden', 'true');
     expect(row.getAttribute('aria-label')).not.toMatch(/\d{4}-\d\d-\d\dT/);
     expect(row.querySelector('.task-running__dot') !== null).toBe(taskWord === 'Working');
-    if (taskWord !== 'Working') expect(row.querySelector('time')).toHaveAttribute('dateTime');
+    if (taskWord === 'Preparing')
+      expect(row.querySelector('.task-ready')).toHaveTextContent('Preparing');
+    else if (taskWord !== 'Working') expect(row.querySelector('time')).toHaveAttribute('dateTime');
   }
   const user = userEvent.setup();
   await expandNavigationFilters(user);
@@ -139,8 +138,7 @@ it('shows visible task states alongside characters and respects parent lifecycle
       navigation={{ status: 'ready', items: navigationFixture(), refresh }}
     />,
   );
-  await expandNavigationFilters(user);
-  await user.click(screen.getByRole('button', { name: 'Manage environments' }));
+  await user.click(screen.getByRole('button', { name: 'Environments' }));
   const live = screen.getByRole('tree', { name: 'Live sandboxes' });
   expect(live.querySelector('.tree-row__state .statedot')).toHaveAttribute('data-state', 'neutral');
   expect(live.querySelectorAll('.statedot[data-state="done"]')).toHaveLength(0);
@@ -195,7 +193,7 @@ it('keeps the summary status while refreshing, then shows the refreshed completi
       }}
     />,
   );
-  expect(screen.getByRole('treeitem', { name: /Agent one.*Completed/ })).toBeInTheDocument();
+  expect(screen.getByRole('treeitem', { name: /Agent one.*Turn ended/ })).toBeInTheDocument();
 });
 
 it('lists Agents without Sandbox or Workspace groups, most recently active first', () => {
@@ -258,14 +256,6 @@ it('clears status and scope together and names the scope in the summary', async 
       {...props}
       client={{} as never}
       scope="shared"
-      choices={{
-        options: [
-          { value: '', label: 'Personal' },
-          { value: 'shared', label: 'Shared' },
-        ],
-        selected: undefined,
-        unavailable: false,
-      }}
       onScope={onScope}
       navigation={{ status: 'ready', items: navigationFixture(), refresh: vi.fn() }}
     />,
@@ -318,7 +308,7 @@ it('keeps task rows and their action menus operable by keyboard', async () => {
   expect(onAction).toHaveBeenCalledWith({ kind: 'stop_agent', agentId: 'agt_1' });
 });
 
-it('keeps filters open for status choices and closes them when managing environments', async () => {
+it('uses one accessible view control and closes task filters on entry to Environments', async () => {
   render(
     <ManagerNavigation
       {...props}
@@ -346,32 +336,38 @@ it('keeps filters open for status choices and closes them when managing environm
   await user.click(screen.getByRole('button', { name: 'Clear filters' }));
   expect(panel).toBeVisible();
   expect(picker).toHaveTextContent('All statuses');
-  picker.focus();
-  await user.tab();
-  const manage = screen.getByRole('button', { name: 'Manage environments' });
-  expect(manage).toHaveFocus();
-  expect(manage.parentElement).toHaveClass('navigation-filters__actions');
+  filter.focus();
+  await user.tab({ shift: true });
+  const environments = screen.getByRole('button', { name: 'Environments', pressed: false });
+  const tasks = screen.getByRole('button', { name: 'Tasks', pressed: true });
+  expect(environments).toHaveFocus();
+  expect(environments.parentElement).toBe(screen.getByRole('group', { name: 'Navigation view' }));
   await user.keyboard('{Enter}');
-  const back = screen.getByRole('button', { name: 'Back to tasks' });
-  expect(back).toHaveFocus();
-  expect(screen.queryByRole('button', { name: 'Manage environments' })).not.toBeInTheDocument();
+  expect(environments).toHaveFocus();
+  expect(environments).toHaveAttribute('aria-pressed', 'true');
+  expect(tasks).toHaveAttribute('aria-pressed', 'false');
   expect(filter).toHaveAttribute('aria-expanded', 'false');
   expect(panel).not.toBeVisible();
   expect(screen.queryByRole('button', { name: 'Sandbox status filter' })).not.toBeInTheDocument();
+  await user.tab({ shift: true });
+  expect(tasks).toHaveFocus();
   await user.keyboard('{Enter}');
+  expect(tasks).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByRole('treeitem', { name: /Agent one/ })).toHaveFocus();
   expect(filter).toHaveAttribute('aria-expanded', 'false');
   await expandNavigationFilters(user);
   expect(screen.getByRole('button', { name: 'Agent status filter' })).toHaveTextContent(
     'All statuses',
   );
-  expect(screen.getByRole('button', { name: 'Manage environments' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Environments' })).toBeVisible();
 });
 
-it('opens environments from the bottom Settings shortcut and restores the focused task', async () => {
+it('opens the sole Environments destination from Home and restores the focused task', async () => {
+  const navigationRef = createRef<EnvironmentNavigationHandle>();
   render(
     <ManagerNavigation
       {...props}
+      ref={navigationRef}
       route={{ kind: 'agent', agentId: 'agt_1' }}
       navigation={{ status: 'ready', items: navigationFixture(), refresh: vi.fn() }}
     />,
@@ -379,14 +375,15 @@ it('opens environments from the bottom Settings shortcut and restores the focuse
   const user = userEvent.setup();
   const task = screen.getByRole('treeitem', { name: /Agent one/ });
   task.focus();
-  await user.click(screen.getByRole('button', { name: 'Settings' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
-  const back = screen.getByRole('button', { name: 'Back to tasks' });
-  expect(back).toHaveFocus();
+  act(() => navigationRef.current!.openEnvironments({ scope: 'personal' }));
+  expect(screen.getAllByRole('button', { name: 'Environments' })).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'Environments', pressed: true })).toHaveFocus();
   expect(screen.queryByRole('menu', { name: 'Navigation settings' })).not.toBeInTheDocument();
+  await user.tab({ shift: true });
   await user.keyboard('{Enter}');
   expect(screen.getByRole('treeitem', { name: /Agent one/ })).toHaveFocus();
-  expect(screen.getByRole('button', { name: 'Settings' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Manage environments' })).not.toBeInTheDocument();
 });
 
 function render(view: ReactElement) {
@@ -437,7 +434,13 @@ it('keeps only the visible personal tree polling after visiting environments', a
       },
     }),
   );
-  const resources = createClient({ baseUrl: 'https://fixture.invalid', fetch: channel });
+  const resources = createClient({
+    baseUrl: 'https://fixture.invalid',
+    fetch: async (input) =>
+      new URL(String(input)).pathname.endsWith('/channel-usage')
+        ? channel()
+        : Response.json({ items: [] }),
+  });
   const client = { ...unavailableClient, readAgentProvenance: provenance };
   const view = render(
     <CmaClientProvider client={client}>
@@ -452,11 +455,10 @@ it('keeps only the visible personal tree polling after visiting environments', a
     await act(async () => {});
     expect(channel).toHaveBeenCalledOnce();
     expect(provenance).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Environments' }));
     await act(async () => {});
     expect(channel).toHaveBeenCalledTimes(2);
-    fireEvent.click(screen.getByRole('button', { name: 'Back to tasks' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
     await act(async () => {});
     expect(channel).toHaveBeenCalledTimes(3);
     await act(() => vi.advanceTimersByTimeAsync(120000));

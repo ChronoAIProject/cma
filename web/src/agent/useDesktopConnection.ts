@@ -1,6 +1,4 @@
-import { ApiError } from '@cma/client';
 import { useCmaClient } from '../api/context';
-import { readRetryDelay } from './transport/readRetry';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type RFB from '@novnc/novnc';
 import {
@@ -10,6 +8,16 @@ import {
 } from './desktopPreparation';
 import { desktopInput } from './desktopInput';
 import { watchDesktopDisplay } from './desktopDisplay';
+import {
+  checkDesktopBudget,
+  desktopStableMs,
+  desktopStopMessages,
+  failDesktopAttempt,
+  newDesktopReconnect,
+  startDesktopAttempt,
+  type DesktopReconnect,
+  type DesktopStop,
+} from './desktopReconnect';
 
 export type DesktopPhase = 'waiting' | 'connecting' | 'loading' | 'recovering' | 'ready' | 'error';
 
@@ -41,24 +49,47 @@ export function useDesktopConnection(
   inputAllowed: boolean,
   runtimeReady: boolean,
   preparation?: DesktopPreparationScope,
+  runtimeVersion?: string,
 ) {
   const discovery = useCmaClient().resourceViews?.agents;
-  const backoff = useRef({ agentId, failures: 0, at: 0 });
   const { context, owner } = preparation ?? {};
+  const recovery = useRef({
+    agentId,
+    owner,
+    attempt,
+    runtimeReady,
+    runtimeVersion,
+    policy: newDesktopReconnect(),
+  });
   const screen = useRef<HTMLDivElement>(null);
   const connection = useRef<RFB>(undefined);
   const input = useRef<ReturnType<typeof desktopInput>>(undefined);
   const [phase, setPhase] = useState<DesktopPhase>(runtimeReady ? 'connecting' : 'waiting');
   const [error, setError] = useState('');
-  const [generation, setGeneration] = useState({ agentId, attempt, runtimeReady });
+  const [stop, setStop] = useState<DesktopStop>();
+  const [generation, setGeneration] = useState({
+    agentId,
+    owner,
+    attempt,
+    runtimeReady,
+    runtimeVersion,
+  });
+  const sameGeneration = generation.agentId === agentId && generation.owner === owner;
+  // A refresh may briefly withhold the version. Treat that as the same admitted
+  // runtime, as the reconnect effect does, so a waiting retry keeps its status.
+  const admittedVersion = sameGeneration
+    ? (runtimeVersion ?? generation.runtimeVersion)
+    : runtimeVersion;
   if (
-    generation.agentId !== agentId ||
+    !sameGeneration ||
     generation.attempt !== attempt ||
-    generation.runtimeReady !== runtimeReady
+    generation.runtimeReady !== runtimeReady ||
+    generation.runtimeVersion !== admittedVersion
   ) {
-    setGeneration({ agentId, attempt, runtimeReady });
+    setGeneration({ agentId, owner, attempt, runtimeReady, runtimeVersion: admittedVersion });
     setPhase(runtimeReady ? 'connecting' : 'waiting');
     setError('');
+    setStop(undefined);
   }
   useLayoutEffect(() => {
     const current = connection.current;
@@ -71,10 +102,30 @@ export function useDesktopConnection(
   }, [inputAllowed, phase]);
 
   useEffect(() => {
+    const previous = recovery.current;
+    const sameResource = previous.agentId === agentId && previous.owner === owner;
+    // An authority refresh temporarily withholds the version. Remember the
+    // last admitted runtime so restoring the same one cannot renew its budget.
+    const admittedVersion = sameResource
+      ? (runtimeVersion ?? previous.runtimeVersion)
+      : runtimeVersion;
+    const newRuntime =
+      admittedVersion !== previous.runtimeVersion ||
+      (admittedVersion === undefined && runtimeReady !== previous.runtimeReady);
+    const reset = !sameResource || previous.attempt !== attempt || newRuntime;
+    recovery.current = {
+      agentId,
+      owner,
+      attempt,
+      runtimeReady,
+      runtimeVersion: admittedVersion,
+      policy: reset
+        ? newDesktopReconnect(sameResource ? previous.policy.retryAt : 0)
+        : previous.policy,
+    };
+    const session = recovery.current;
     if (!runtimeReady) return;
-    if (backoff.current.agentId !== agentId) backoff.current = { agentId, failures: 0, at: 0 };
     let disposed = false;
-    let terminal = false;
     let version = 0;
     let request: AbortController | undefined;
     let rfb: RFB | undefined;
@@ -84,6 +135,16 @@ export function useDesktopConnection(
     let retry: ReturnType<typeof setTimeout> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let stable: ReturnType<typeof setTimeout> | undefined;
+    let budget: ReturnType<typeof setTimeout> | undefined;
+    let reportedStop = false;
+    // The budget before the attempt now in progress began. An attempt that a
+    // rebuild or a hidden tab supersedes has not failed: restoring this keeps
+    // its restart from being spent as an automatic retry (#3295).
+    let unsettled: DesktopReconnect | undefined;
+    const supersede = () => {
+      if (unsettled) session.policy = unsettled;
+      unsettled = undefined;
+    };
     const hidden = () => document.hidden || document.visibilityState === 'hidden';
     const release = () => {
       // Invalidate callbacks before disconnect (noVNC may emit synchronously).
@@ -95,6 +156,7 @@ export function useDesktopConnection(
       clearTimeout(retry);
       clearTimeout(deadline);
       clearTimeout(stable);
+      clearTimeout(budget);
       stopWaiting?.();
       stopWatching?.();
       stopWaiting = stopWatching = undefined;
@@ -106,33 +168,50 @@ export function useDesktopConnection(
       rfb = undefined;
       previous?.disconnect();
     };
-    const failed = (message: string, cause?: unknown, permanent = false) => {
-      if (disposed) return;
+    const stopped = () => {
+      const reason = session.policy.terminal;
+      if (!reason) return false;
       release();
-      terminal = permanent;
+      if (!reportedStop) {
+        reportedStop = true;
+        console.warn('Desktop observation retries stopped', {
+          reason,
+          attempts: session.policy.automaticAttempts,
+        });
+      }
+      setStop(reason);
+      setError(desktopStopMessages[reason]);
+      setPhase('error');
+      return true;
+    };
+    const failed = (message: string, cause?: unknown, refused = false) => {
+      if (disposed) return;
+      unsettled = undefined;
+      release();
+      session.policy = failDesktopAttempt(session.policy, Date.now(), cause, refused);
+      if (stopped()) return;
       setError(message);
-      setPhase(permanent ? 'error' : 'recovering');
-      if (permanent) return;
-      const delay = readRetryDelay(cause, ++backoff.current.failures);
-      backoff.current.at = Date.now() + delay;
-      if (
-        backoff.current.failures === 1 ||
-        (backoff.current.failures & (backoff.current.failures - 1)) === 0
-      )
+      setPhase('recovering');
+      const { failures, retryAt } = session.policy;
+      if (failures === 1 || (failures & (failures - 1)) === 0)
         console.warn('Desktop observation retry scheduled', {
-          attempt: backoff.current.failures,
-          delayMs: delay,
+          attempt: failures,
+          delayMs: retryAt - Date.now(),
         });
       schedule();
     };
     const begin = async () => {
-      if (disposed || terminal || hidden() || request) return;
+      if (disposed || session.policy.terminal || hidden() || request) return;
+      const before = session.policy;
+      session.policy = startDesktopAttempt(before, Date.now());
+      if (stopped()) return;
+      unsettled = before;
       const current = ++version;
       const valid = () => !disposed && current === version && !hidden();
       request = new AbortController();
-      setPhase(backoff.current.failures ? 'recovering' : 'connecting');
+      setPhase(session.policy.automaticAttempts ? 'recovering' : 'connecting');
       deadline = setTimeout(() => {
-        if (valid()) failed('The screen is taking longer than expected. Reconnecting…');
+        if (valid()) failed('The screen is taking longer than expected.');
       }, 30_000);
       try {
         // A browser WebSocket hides failed-handshake headers. Discovery exposes
@@ -163,18 +242,25 @@ export function useDesktopConnection(
         rfb.viewOnly = true;
         input.current = desktopInput(rfb, target);
         connection.current = rfb;
+        let connected = false;
         rfb.addEventListener('connect', () => {
-          if (!valid()) return;
-          setPhase('loading');
+          if (!valid() || connected) return;
+          connected = true;
+          setPhase(session.policy.automaticAttempts ? 'recovering' : 'loading');
           stopWaiting = waitForDesktopFrame(target, () => {
             if (!valid()) return;
             clearTimeout(deadline);
+            clearTimeout(budget);
             setError('');
             setPhase('ready');
             // Short-lived connections must not reset an ongoing failure storm.
             stable = setTimeout(() => {
-              backoff.current = { agentId, failures: 0, at: 0 };
-            }, 30_000);
+              if (valid()) {
+                unsettled = undefined;
+                session.policy = newDesktopReconnect(0, true);
+                console.debug('Desktop observation stable; retry budget reset');
+              }
+            }, desktopStableMs);
             stopWatching = watchDesktopDisplay(
               target,
               () => {
@@ -187,30 +273,42 @@ export function useDesktopConnection(
           });
         });
         rfb.addEventListener('disconnect', () => {
-          if (valid()) failed('Connection lost. Reconnecting automatically…');
+          if (valid()) failed('Connection lost.');
         });
         rfb.addEventListener('securityfailure', () => {
           if (valid()) failed('Desktop connection refused.', undefined, true);
         });
         prepared?.replay();
       } catch (cause) {
-        if (valid())
-          failed(
-            'Desktop is temporarily unavailable. Reconnecting…',
-            cause,
-            cause instanceof ApiError && [401, 403].includes(cause.status),
-          );
+        if (valid()) failed('Desktop is temporarily unavailable.', cause);
       }
     };
     function schedule() {
       clearTimeout(retry);
-      if (disposed || terminal || hidden()) return;
-      const delay = Math.max(0, backoff.current.at - Date.now());
+      if (disposed || request) return;
+      session.policy = checkDesktopBudget(session.policy, Date.now());
+      if (stopped() || hidden()) return;
+      // Availability refreshes may rebuild the viewer during an existing backoff.
+      if (session.policy.started) setPhase('recovering');
+      clearTimeout(budget);
+      // Bound backoff, discovery and first-frame waits by the same deadline.
+      // A painted stream may finish its stability window without being torn down.
+      if (session.policy.expiresAt !== undefined)
+        budget = setTimeout(
+          () => {
+            session.policy = checkDesktopBudget(session.policy, Date.now());
+            stopped();
+          },
+          Math.max(0, session.policy.expiresAt - Date.now()),
+        );
+      const delay = Math.max(0, session.policy.retryAt - Date.now());
       if (delay) retry = setTimeout(() => void begin(), delay);
       else void begin();
     }
     const visibility = () => {
+      if (session.policy.terminal) return;
       if (hidden()) {
+        supersede();
         release();
         setPhase('recovering');
       } else schedule();
@@ -219,10 +317,11 @@ export function useDesktopConnection(
     schedule();
     return () => {
       disposed = true;
+      supersede();
       release();
       document.removeEventListener('visibilitychange', visibility);
     };
-  }, [agentId, attempt, context, discovery, owner, runtimeReady]);
+  }, [agentId, attempt, context, discovery, owner, runtimeReady, runtimeVersion]);
 
-  return { screen, phase, error };
+  return { screen, phase, error, stop };
 }

@@ -1,5 +1,9 @@
 use super::*;
 
+fn connection(id: u32) -> PoolConnection {
+    PoolConnection { server: 0, id }
+}
+
 #[test]
 fn unmatched_checkout_start_is_an_event_not_a_permanent_queue_entry() {
     let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
@@ -30,11 +34,11 @@ fn scrape_observes_checkout_failures_and_occupancy_without_connection_identifier
             "application",
             10,
         );
-        observer.checked_out(424242, Duration::from_millis(12));
+        observer.checked_out(connection(424242), Duration::from_millis(12));
         assert!(handle
             .render()
             .contains("cma_mongo_connections_tracked{pool=\"application\"} 1"));
-        observer.returned(424242, false);
+        observer.returned(connection(424242), false);
         observer.record(0, Duration::from_millis(30), true);
     });
     let text = handle.render();
@@ -164,23 +168,24 @@ fn connection_holds_survive_windows_and_closed_connections_release_tracking() {
         "application",
         10,
     );
-    observer.checked_out(1, Duration::ZERO);
-    observer.checked_out(2, Duration::ZERO);
+    observer.checked_out(connection(1), Duration::ZERO);
+    observer.checked_out(connection(2), Duration::ZERO);
     {
         let mut window = observer.0.lock().unwrap();
         window.started = Instant::now() - WINDOW;
         window
             .checked_out
-            .insert(1, Instant::now() - Duration::from_secs(12));
+            .insert(connection(1), Instant::now() - Duration::from_secs(12));
         assert_eq!(window.in_use_peak, 2);
     }
     observer.record(0, Duration::ZERO, false);
     assert_eq!(observer.0.lock().unwrap().checked_out.len(), 2);
-    observer.returned(1, false);
-    observer.returned(2, true);
-    observer.returned(2, true);
+    observer.returned(connection(1), false);
+    observer.returned(connection(2), true);
+    observer.returned(connection(2), true);
     let window = observer.0.lock().unwrap();
     assert!(window.checked_out.is_empty());
+    assert!(window.server_in_use.is_empty());
     assert_eq!(window.samples[3].count, 2);
     assert_eq!(window.samples[3].failures, 1);
     assert!(window.samples[3].max_us >= 12_000_000);
@@ -193,8 +198,8 @@ fn connection_tracking_is_bounded_and_separates_server_local_ids() {
         "application",
         10,
     );
-    for key in 0..MAX_TRACKED_CONNECTIONS as u64 + 2 {
-        observer.checked_out(key, Duration::ZERO);
+    for id in 0..MAX_TRACKED_CONNECTIONS as u32 + 2 {
+        observer.checked_out(connection(id), Duration::ZERO);
     }
     let window = observer.0.lock().unwrap();
     assert_eq!(window.checked_out.len(), MAX_TRACKED_CONNECTIONS);

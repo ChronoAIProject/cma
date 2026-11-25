@@ -1,4 +1,5 @@
 //! Proof-bound recovery admission; no native side effects occur in a transaction.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
     Sandbox, SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoverySnapshot,
@@ -43,7 +44,7 @@ pub(super) async fn retained_snapshot(
             }
             .await
             .map_err(ApplyError::domain);
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             result
         })
         .await
@@ -61,7 +62,7 @@ pub(super) async fn snapshot(
                 .await
                 .map(|(snapshot, _)| snapshot)
                 .map_err(ApplyError::domain);
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             result
         })
         .await
@@ -78,12 +79,12 @@ pub(super) async fn admit(
         let receipt = match apply_attempt(store, &request, &mut session).await {
             Ok(receipt) => receipt,
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error.domain());
             }
         };

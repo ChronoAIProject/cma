@@ -172,6 +172,7 @@ impl TurnRunner {
                 &provider,
                 &*self.delivery,
                 self.activity.as_ref(),
+                self.providers.execution_verifiers.verifier(&provider),
                 &mut admitted,
             )
             .await
@@ -355,6 +356,19 @@ impl TurnRunner {
             // Authority/retained-admission reads have their own bounded
             // deadline. Do not turn a slow denied lookup into Deferred/202:
             // at this point no new work has been submitted.
+            if request
+                .channel
+                .definition
+                .secrets
+                .profile_revisions
+                .is_some()
+            {
+                return LaunchOutcome::Refused(Problem::new(
+                    ProblemCode::ProviderUnavailable,
+                    503,
+                    "durable partition profile admission required",
+                ));
+            }
             match custom_replay::lookup(
                 &self.providers,
                 &request,

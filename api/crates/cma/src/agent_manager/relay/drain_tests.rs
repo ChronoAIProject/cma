@@ -2,6 +2,7 @@ use super::super::*;
 use crate::{agent_manager::AgentManager, sandbox::LiveAgentRegistry};
 use layer3_adapter::owner_protocol::{ReceiverRevocation, TransportAuthority};
 use std::sync::atomic::{AtomicBool, Ordering};
+use tower::ServiceExt;
 
 struct Receiver {
     revoked: Arc<AtomicBool>,
@@ -61,6 +62,7 @@ async fn authenticated_prestop_drains_actual_managers_before_peer_takeover() {
                 address.clone(),
                 256,
                 false,
+                false,
             )
             .await
             .unwrap();
@@ -71,6 +73,7 @@ async fn authenticated_prestop_drains_actual_managers_before_peer_takeover() {
                 Router::new().route("/ready", get(|| async { StatusCode::OK })),
                 manager.clone(),
             );
+            let router = crate::with_request_context(router);
             let lifecycle = crate::agent_lifecycle::LifecycleDrain::fixture(1);
             let exited = Arc::new(AtomicBool::new(false));
             let exit = LifecycleExit(exited.clone());
@@ -80,7 +83,7 @@ async fn authenticated_prestop_drains_actual_managers_before_peer_takeover() {
             }));
             manager.register_lifecycle(lifecycle).unwrap();
             lifecycle_exits.push(exited);
-            manager.activate().unwrap();
+            manager.activate().await.unwrap();
             let server = tokio::spawn(async move {
                 axum::serve(
                     listener,
@@ -202,6 +205,7 @@ async fn prestop_and_main_retain_ownership_until_blocked_lifecycle_has_joined() 
         address.clone(),
         256,
         false,
+        false,
     )
     .await
     .unwrap();
@@ -219,7 +223,7 @@ async fn prestop_and_main_retain_ownership_until_blocked_lifecycle_has_joined() 
     }));
     ready.await.unwrap();
     manager.register_lifecycle(lifecycle.clone()).unwrap();
-    manager.activate().unwrap();
+    manager.activate().await.unwrap();
     let authority = manager
         .coordinator
         .acquire(&AgentId("blocked-agent".into()))
@@ -243,6 +247,18 @@ async fn prestop_and_main_retain_ownership_until_blocked_lifecycle_has_joined() 
     let updates = DurableAgentUpdateRecorder::new(Arc::new(InMemorySandboxStore::default()));
     let relay = Relay::new(manager.coordinator.clone(), &updates, key()).unwrap();
     let router = relay.router(Router::new(), manager.clone());
+    let router = crate::with_request_context(router);
+    let mut remote = axum::http::Request::post(control::DRAIN)
+        .extension(axum::extract::ConnectInfo(
+            "192.0.2.7:1234".parse::<std::net::SocketAddr>().unwrap(),
+        ))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    *remote.headers_mut() = control::signed_drain_headers(key()).unwrap();
+    assert_eq!(
+        router.clone().oneshot(remote).await.unwrap().status(),
+        StatusCode::FORBIDDEN,
+    );
     let server = tokio::spawn(async move {
         axum::serve(
             listener,
@@ -258,6 +274,40 @@ async fn prestop_and_main_retain_ownership_until_blocked_lifecycle_has_joined() 
         address,
         server,
     };
+    let wrong_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"other-drain-fixture");
+    assert_eq!(
+        control::drain_local(port, wrong_key).await.unwrap_err(),
+        "local Agent Manager rejected drain (HTTP 403)",
+    );
+    // Each refusal exercises the real control route with request context and
+    // leaves the current owner and blocked lifecycle intact.
+    for headers in [
+        {
+            let mut headers = control::signed_drain_headers(key()).unwrap();
+            headers.insert("x-request-id", "different-fixture-request".parse().unwrap());
+            headers
+        },
+        {
+            let mut headers = control::signed_drain_headers(key()).unwrap();
+            headers.append(PROOF, headers[PROOF].clone());
+            headers
+        },
+    ] {
+        assert_eq!(
+            client()
+                .post(format!("{}{}", instance.address, control::DRAIN))
+                .headers(headers)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN,
+        );
+    }
+    assert!(manager.is_ready());
+    assert!(authority.is_current());
+    assert!(!revoked.load(Ordering::Acquire));
+    assert!(!exited.load(Ordering::Acquire));
     let result = control::drain_local(port, key()).await;
     assert!(
         result.is_err(),

@@ -10,6 +10,7 @@ async fn provided_custody_encrypts_round_trips_and_rejects_hash_or_source_tamper
     let secret = format!("nyx_{}", uuid::Uuid::new_v4().simple());
     let hash = format!("{:x}", Sha256::digest(secret.as_bytes()));
     let original = CredentialMaterial {
+        github_route: None,
         source: SandboxCredentialSource::Provided {
             key_sha256: hash.clone(),
         },
@@ -67,6 +68,7 @@ async fn legacy_managed_bytes_remain_readable_but_raw_and_binding_writes_refuse(
     let store = serialization_store().await;
     let original = CredentialMaterial {
         source: SandboxCredentialSource::Managed,
+        github_route: None,
         sandbox_id: SandboxId::generate(),
         owner: SubjectId::new("retained-owner"),
         authority: SandboxCredentialAuthority {

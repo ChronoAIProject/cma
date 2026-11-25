@@ -2,6 +2,8 @@
 mod admission_capacity;
 mod admission_checks;
 
+pub(crate) mod account_deletions;
+pub(crate) mod account_erasure;
 pub mod activity;
 pub(crate) mod admission_ceilings;
 pub(crate) mod admission_control;
@@ -22,7 +24,9 @@ mod agent_control_store;
 mod agent_control_transaction;
 mod agent_conversation_store;
 mod agent_failure_pacing;
+pub(crate) mod agent_inspection_park;
 mod agent_lifecycle_operations;
+pub(crate) use agent_lifecycle_operations::released::managed_lifecycle_release_lane;
 mod agent_log;
 mod agent_log_codec;
 mod agent_log_integrity;
@@ -52,11 +56,20 @@ mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
+pub(crate) mod stale_turns;
+pub(crate) mod transaction_barrier;
+pub(crate) mod turn_timeouts;
+#[cfg(test)]
+pub(crate) use agent_worker_transaction::adoption_probe;
+#[cfg(test)]
+pub(crate) use agent_worker_transaction::skill_result_test_support;
 mod agent_worktree_recovery;
 mod agent_worktree_recovery_records;
 mod agent_write_coordination;
+pub(crate) use agent_write_coordination::CLEANUP_RETRY_DEADLINE;
 mod agents;
 pub mod auth;
+mod billing_authority;
 mod bindings;
 pub(crate) mod bot_setup_contexts;
 pub(crate) mod bot_setups;
@@ -73,17 +86,21 @@ mod child_writer_claims;
 mod codex_subscriptions;
 mod contention;
 mod cooperative_budget;
+pub(crate) mod creation_outcomes;
 mod default_profiles;
 pub mod directory;
 mod durability;
 mod empty_discovery;
 mod encryption;
 mod execution_sections;
+pub(crate) mod legal_consents;
 mod media_uploads;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
+mod retained_consents;
 mod segment_response;
 mod transaction_scope;
+pub(crate) mod transaction_terminal;
 pub(crate) use segment_response::emit as emit_response_reads;
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
@@ -94,6 +111,8 @@ mod gateway_records;
 #[cfg(test)]
 mod gateway_records_mongo_integration_tests;
 mod hierarchy;
+#[allow(dead_code)] // Foundation primitives have no production capture worker.
+pub(crate) mod home_backups;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
@@ -112,25 +131,34 @@ mod marketplace_mutations;
 mod marketplace_query;
 mod marketplace_support;
 mod marketplace_visibility;
+pub(crate) mod measured_capture;
 mod message_feedback;
 pub(crate) mod migrations;
 pub mod mongo;
 mod mongo_diagnostics;
+pub(crate) mod pending_launch_homes;
+#[cfg(test)]
+pub(crate) mod test_visibility;
 #[cfg(test)]
 pub(crate) use mongo_diagnostics::attach_readiness_fixture;
 pub(crate) mod mongo_latency;
 pub(crate) mod mongo_read_telemetry;
 pub(crate) mod native_prepared;
+pub(crate) mod native_retirement_action;
 pub mod operation;
 mod operator_profiles;
 mod operator_sandboxes;
 mod platform_write_coordination;
 mod profile_documents;
+mod profile_draft_admission;
 #[cfg(test)]
 mod profile_index_tests;
+#[cfg(test)]
+mod profile_initial_publication_mongo_tests;
 mod profile_mongo;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;
+mod profile_pin_admission;
 mod profile_references;
 mod profiles;
 pub(crate) mod request_limits;
@@ -139,7 +167,7 @@ mod retained_reopen;
 pub(crate) mod retirement_archive;
 mod sandbox_admission;
 #[cfg(test)]
-mod sandbox_admission_mongo_integration_tests;
+pub(crate) mod sandbox_admission_mongo_integration_tests;
 pub(crate) mod sandbox_billing;
 pub(crate) mod sandbox_colors;
 mod sandbox_controls;
@@ -157,6 +185,8 @@ pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_normal_c
 #[cfg(test)]
 pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_to as fill_agent_capacity_to_fixture;
 #[cfg(test)]
+pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fingerprint as agent_capacity_fixture_fingerprint;
+#[cfg(test)]
 mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
 mod sandbox_reconciliation;
@@ -164,6 +194,7 @@ mod sandbox_sessions;
 mod sandbox_transactions;
 mod sandbox_unpublished_recovery;
 pub(crate) mod sandbox_usage;
+pub(crate) mod sandbox_usage_export;
 mod sandbox_worker_store;
 mod sandboxes;
 #[cfg(test)]
@@ -173,8 +204,11 @@ mod schema;
 mod schema_mongo_integration_tests;
 pub(crate) mod segment_operations;
 pub mod settings;
+mod settings_barrier;
+pub(crate) mod settings_defaults;
 mod shared_child_capacity;
 mod suggestions;
+pub(crate) mod task_audit;
 mod trigger_definitions;
 mod trigger_first_messages;
 mod warm_sandboxes;
@@ -200,11 +234,14 @@ pub use admission_control::MongoAdmissionControlStore;
 #[cfg(test)]
 pub(crate) use agent_access_tools::fixtures as agent_access_fixtures;
 pub(crate) use agent_access_tools::MongoAgentAccessToolSource;
+pub(crate) use agent_lifecycle_operations::canary_admission as runtime_canary;
+pub(crate) use agent_lifecycle_operations::canary_key;
 #[cfg(test)]
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
-    CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput, LifecycleLease,
-    MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
+    CanaryProfiles, CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput,
+    LifecycleLease, MongoAgentLifecycleStore, PublicRepositoryPin, RepositoryAccessPin,
+    DISCOVERY_BATCH, HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};
@@ -218,6 +255,9 @@ pub use mongo::MongoStores;
 pub use operation::MongoOperationStore;
 pub use registration_capacity::MongoRegistrationCapacityStore;
 pub(crate) use sandbox_credentials::MongoSandboxCredentialStore;
+pub(crate) use sandbox_mongo::{
+    commit_transaction, is_confirmed_body_retry, is_duplicate_key, start_transaction, CommitOutcome,
+};
 pub use sandbox_mongo::{MongoProfileStore, MongoSandboxStore};
 pub use settings::MongoPlatformSettingsStore;
 pub use trigger_definitions::MongoTriggerDefinitionStore;
@@ -231,6 +271,7 @@ mod legacy_sandbox;
 pub(crate) mod runtime_routing;
 
 pub(crate) mod native_warm_pools;
+pub(crate) mod released_runtimes;
 
 // Measured reporting read models (#1332); independent of lifecycle writes.
 pub(crate) mod allocation_buckets;
@@ -238,3 +279,38 @@ pub(crate) mod sandbox_metric_bindings;
 pub(crate) mod sandbox_metric_rollups;
 pub(crate) mod sandbox_usage_rollups;
 pub(crate) mod usage_reports;
+
+#[cfg(test)]
+pub(crate) async fn open_pointer_fixture_sandbox_store(
+    database: &mongodb::Database,
+    pin: String,
+    released: std::sync::Arc<released_runtimes::StoreReleasedRuntime>,
+) -> Result<MongoSandboxStore, layer2_core::StoreError> {
+    let mut store = MongoSandboxStore::open(database.client(), database.name())
+        .await?
+        .with_managed_runtime_version(pin);
+    store.released_lanes = Some(released.lanes.clone());
+    Ok(store.with_released_runtime(released))
+}
+
+#[cfg(test)]
+pub(crate) async fn open_pointer_fixture_pool_store(
+    database: &mongodb::Database,
+    deployment: &str,
+) -> Result<native_warm_pools::MongoNativeWarmPools, layer2_core::StoreError> {
+    let mut store = native_warm_pools::MongoNativeWarmPools::open(database, deployment).await?;
+    store.released_lanes = Some(released_runtimes::MongoReleasedRuntimes::open(
+        database, deployment,
+    ));
+    Ok(store)
+}
+
+#[cfg(test)]
+pub(crate) async fn open_pointer_fixture_lifecycle_store(
+    database: &mongodb::Database,
+    released: &released_runtimes::StoreReleasedRuntime,
+) -> Result<MongoAgentLifecycleStore, layer2_core::StoreError> {
+    let mut store = MongoAgentLifecycleStore::open(database).await?;
+    store.released_lanes = Some(released.lanes.clone());
+    Ok(store)
+}

@@ -4,26 +4,31 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from runpy import run_path
 
 from staging_cd_build_cargo_keys import CARGO_NAMESPACE, identity
 
 DEVELOP = "refs/heads/develop"
-BUDGET = 8 * 1024 ** 3
+# The repository cache eviction limit is 100 GiB. Keep 10 GiB below it so
+# this sweep, not GitHub's least-recently-used eviction, decides removals.
+BUDGET = 90 * 1024 ** 3
 PULL = re.compile(r"refs/pull/([1-9][0-9]*)/merge")
 HEX = r"[a-f0-9]{64}"
-INDEX = re.compile(r"(index-cma-(?:am(?:-staging-opt-[01])?|eg|web|runtime|runtime-omarchy)-1-[0-9a-f]{8})#([0-9]+)")
+INDEX = re.compile(r"(index-cma-(?:am|cd-am-staging-opt-[01]|eg|web|runtime|runtime-omarchy)-1-[0-9a-f]{8})#([0-9]+)")
 CARGO = re.compile(rf"{CARGO_NAMESPACE}(am|eg)-({HEX})-{HEX}-[1-9][0-9]*-[1-9][0-9]*")
 OMARCHY = re.compile(rf"omarchy-layer-archive-v1-runtime-omarchy-deps-{HEX}")
 # Default-branch CodeQL builds these databases. Its automatic overlay reader
 # is the PR analysis; neither release nor develop CI restores this namespace.
 CODEQL_BASE = re.compile(r"(codeql-overlay-base-database-1-[a-f0-9]+-[a-z+_-]+-[0-9]+\.[0-9]+\.[0-9]+)-[a-f0-9]{40}-[0-9]+-[0-9]+")
+TRIVY = re.compile(r"(cache-trivy)-([0-9]{4}-[0-9]{2}-[0-9]{2})")
+RUST_CI = re.compile(r"(v0-rust-(?:build|lint)-Linux-x64-[0-9a-f]{8})-[0-9a-f]{8}")
 AUXILIARY = (
     re.compile(rf"(cma-develop-selection-v2-{HEX})-[a-f0-9]{{40}}-[0-9]+-[0-9]+"),
     CODEQL_BASE,
-    re.compile(r"(cache-trivy)-[0-9]{4}-[0-9]{2}-[0-9]{2}"),
+    TRIVY,
+    RUST_CI,
 )
 
 
@@ -71,9 +76,10 @@ class Removal:
     entry: Entry
     reason: str
     successor: Entry | None = None
+    spare: Entry | None = None
 
 
-def recovery_kind(action, today):
+def recovery_kind(action, today, policy):
     old, keep = action.entry, action.successor
     if (not keep or old.ref != DEVELOP or keep.ref != DEVELOP or old.id == keep.id
             or old.version != keep.version or not keep.size
@@ -84,6 +90,31 @@ def recovery_kind(action, today):
         # Default-branch CodeQL produces bases. Only best-effort PR overlays
         # download them, and a missing base falls back to full analysis.
         return "pr-overlay-base"
+    trivy, replacement = TRIVY.fullmatch(old.key), TRIVY.fullmatch(keep.key)
+    if trivy and replacement:
+        try:
+            old_day, keep_day = (date.fromisoformat(match[2]) for match in (trivy, replacement))
+        except ValueError:
+            return None
+        # Trivy restores from the daily key family and refreshes its database
+        # during the scan. Keep the same-day entry and require a later day.
+        if old_day < keep_day <= today:
+            return "superseded-trivy-database"
+    if OMARCHY.fullmatch(old.key) and old.key != policy.omarchy and keep.key == policy.omarchy:
+        # Omarchy restores by exact recipe and builds from pinned inputs on
+        # a cache miss. Retain the archive used by current develop.
+        return "superseded-omarchy-archive"
+    rust_ci, replacement = RUST_CI.fullmatch(old.key), RUST_CI.fullmatch(keep.key)
+    spare = action.spare
+    spare_key = RUST_CI.fullmatch(spare.key) if spare else None
+    if (rust_ci and replacement and spare_key and rust_ci[1] == replacement[1] == spare_key[1]
+            and spare.ref == DEVELOP and spare.version == old.version and spare.size
+            and spare.id not in (old.id, keep.id)
+            and (spare.created, spare.id) > (old.created, old.id)
+            and old.created.astimezone(timezone.utc).date() < today and old.accessed < keep.accessed):
+        # The pinned Rust cache action tries the exact key and then this
+        # environment prefix. It cleans stale target files after a partial hit.
+        return "superseded-rust-ci-cache"
     cargo, replacement = CARGO.fullmatch(old.key), CARGO.fullmatch(keep.key)
     if cargo and replacement and cargo[1] == replacement[1] and old.created.astimezone(timezone.utc).date() < today:
         return "prior-day-v4-seed"
@@ -124,6 +155,13 @@ def generations(entries, policy):
 
     for (group, _), candidates in groups.items():
         ordered = sorted(candidates, key=lambda pair: pair[0], reverse=True)
+        if RUST_CI.fullmatch(ordered[0][1].key):
+            usable = [item for _, item in ordered if item.size]
+            if len(usable) > 2:
+                keep, spare, *older = usable
+                for old in older:
+                    yield Removal(old, "superseded", keep, spare)
+            continue
         rank, keep = ordered[0]
         if (group.startswith("cargo-") or group == "omarchy") and not rank[0]:
             # The latest reserved-source build may still need the previous family.

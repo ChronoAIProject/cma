@@ -162,5 +162,12 @@ async function send(
     commandId: result.response.receipt.command_id,
     responseId: result.response.receipt.response_id!,
   });
+  session.recordAcceptedInput(
+    {
+      commandId: result.response.receipt.command_id,
+      responseId: result.response.receipt.response_id!,
+    },
+    intent.body.text,
+  );
   return result;
 }

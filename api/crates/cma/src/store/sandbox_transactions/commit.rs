@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 #[async_trait::async_trait]
 impl SandboxTransactionStore for MongoSandboxStore {
@@ -9,7 +10,14 @@ impl SandboxTransactionStore for MongoSandboxStore {
                 && sandbox.work.is_due(event_at)
                 && matches!(sandbox.work.step,
                     layer2_core::sandbox::SandboxWorkStep::RunLifecycleOperation
-                    | layer2_core::sandbox::SandboxWorkStep::StopAgents));
+                    | layer2_core::sandbox::SandboxWorkStep::StopAgents))
+            || matches!(
+                &transaction,
+                SandboxTransaction::SaveWorkspaceAndAppend {
+                    repository_runtime: Some(_),
+                    ..
+                }
+            );
         let parent_ready = match &transaction {
             SandboxTransaction::SaveSandboxAndAppend { sandbox, event, .. } => {
                 sandbox.status == layer2_core::sandbox::SandboxStatus::Active
@@ -70,21 +78,21 @@ impl MongoSandboxStore {
             let receipt = match apply_transaction(self, &mut session, &transaction).await {
                 Ok(receipt) => receipt,
                 Err(ApplyError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };
             if let Err(error) = command_revival::require_current(&transaction) {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             match commit_transaction(&mut session).await {

@@ -3,6 +3,18 @@ import type { ConversationState } from './model';
 
 export const THINKING_NO_PROGRESS_THRESHOLD_MS = 5 * 60_000;
 
+export function hasVisibleTurnProgress(state: ConversationState): boolean {
+  const run = state.activeRunId;
+  return (
+    state.messages.some(
+      (item) => item.runId === run && item.role === 'assistant' && item.content.trim() !== '',
+    ) ||
+    state.reasoning.some((item) => item.runId === run && item.content.trim() !== '') ||
+    state.toolCalls.some((item) => item.runId === run) ||
+    state.plans.some((item) => item.runId === run && item.entries.length > 0)
+  );
+}
+
 /** Only visible work changes restart the local observation window, never reconnects. */
 export function thinkingProgressKey(state: ConversationState): string {
   const runId = state.activeRunId;

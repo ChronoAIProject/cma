@@ -19,6 +19,16 @@ use super::sandboxes::admitted_sandbox_document;
 const NOW: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:01:00Z";
 
+#[path = "sandbox_admission/canary_tests.rs"]
+mod canary;
+#[path = "sandbox_admission/runtime_image_origin_mongo_tests.rs"]
+mod runtime_image_origin;
+
+mod visitor_limit;
+
+#[path = "sandbox_admission_always_on_service_mongo_tests.rs"]
+mod always_on_service;
+
 #[path = "warm_sandboxes/mongo_integration_tests.rs"]
 mod warmup;
 
@@ -33,7 +43,7 @@ async fn database(prefix: &str) -> (Client, String) {
     (client, name)
 }
 
-pub(super) fn sandbox(id: &str, launch_id: &str) -> Sandbox {
+pub(crate) fn sandbox(id: &str, launch_id: &str) -> Sandbox {
     let content = SandboxProfileContent {
         runtime_image: None,
         cpu_millis: 1_000,
@@ -355,3 +365,60 @@ mod pending_home_ceilings;
 
 #[path = "sandbox_owner_admission_mongo_tests.rs"]
 mod owner_replicas;
+
+#[path = "sandbox_admission/public_owner_mongo_tests.rs"]
+mod public_owner;
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn exact_admission_replay_precedes_deletion_but_new_admission_is_refused() {
+    use layer2_core::account_deletion::AccountDeletionStore;
+    let (client, database) = database("deletion_replay").await;
+    let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let created = match store
+        .admit_sandbox(admission("sbx_original", "launch-original", 1))
+        .await
+        .unwrap()
+    {
+        SandboxAdmissionResult::Created(record) => record,
+        SandboxAdmissionResult::Existing(_) => panic!("fresh admission replayed"),
+    };
+    let deletions =
+        super::account_deletions::MongoAccountDeletionStore::open(&client.database(&database))
+            .await
+            .unwrap();
+    deletions
+        .request(&SubjectId::new("owner"), "delete", NOW)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .admit_sandbox(admission("sbx_replay", "launch-original", 0))
+            .await
+            .unwrap(),
+        SandboxAdmissionResult::Existing(created.clone())
+    );
+    assert_eq!(
+        store
+            .admit_sandbox(admission("sbx_new", "launch-new", 1))
+            .await,
+        Err(SandboxStoreError::AccountDeletionInProgress)
+    );
+    assert_eq!(
+        store
+            .sandboxes
+            .count_documents(doc! {"owner":"owner"})
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .sandbox_events(&created.id, 0, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    client.database(&database).drop().await.unwrap();
+}

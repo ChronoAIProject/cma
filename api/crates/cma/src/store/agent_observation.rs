@@ -1,4 +1,5 @@
 //! Read-only observation custody; never grants native or lifecycle effects.
+mod acquisition;
 mod lease;
 mod output_generation;
 use super::sandbox_mongo::MongoSandboxStore;
@@ -93,34 +94,7 @@ impl MongoAgentObservation {
                     .and_then(|candidates| candidates.first().copied())
             })
             .ok_or_else(|| unavailable("no eligible observation member"))?;
-        if let Err(error) = self.leases.update_one(doc! {"_id": id.as_str()}, doc! {"$setOnInsert": {
-            "document_schema_version": 1_i64, "created_at": created_at, "instance_id": &selected.instance_id,
-            "epoch": 0_i64, "expires_at": mongodb::bson::DateTime::from_millis(0),
-            "next_refresh_at": mongodb::bson::DateTime::from_millis(0), "round": ""
-        }}).upsert(true).await {
-            if !super::sandbox_mongo::is_duplicate_key(&error) { return Err(unavailable(error)); }
-        }
-        let row = self.leases.find_one_and_update(
-            doc! {"_id": id.as_str(), "document_schema_version": 1_i64, "epoch": {"$gte": 0_i64, "$lt": i64::MAX}, "$expr": {"$lte": ["$expires_at", "$$NOW"]}},
-            vec![doc! {"$set": {
-                "document_schema_version": 1_i64,
-                "created_at": created_at,
-                "instance_id": &selected.instance_id,
-                "epoch": {"$add": [{"$ifNull": ["$epoch", 0_i64]}, 1_i64]},
-                "expires_at": {"$add": ["$$NOW", LEASE_MS]},
-                "next_refresh_at": {"$max": [{"$ifNull": ["$next_refresh_at", "$$NOW"]}, {"$add": ["$$NOW", 1000_i64]}]},
-                "round": "",
-            }}],
-        ).return_document(mongodb::options::ReturnDocument::After).await.map_err(unavailable)?;
-        let row = match row {
-            Some(row) => row,
-            None => self
-                .leases
-                .find_one(doc! {"_id": id.as_str()})
-                .await
-                .map_err(unavailable)?
-                .ok_or_else(|| unavailable("observation acquisition absent"))?,
-        };
+        let row = self.acquire(id, created_at, &selected.instance_id).await?;
         lease::destination(lease::read(&row)?, created_at, &membership, started)
     }
 
@@ -430,7 +404,12 @@ impl AgentObservationStore for MongoAgentObservation {
     ) -> Result<Vec<AgentObservationRefresh>, AgentReadError> {
         tokio::time::timeout(Duration::from_secs(2), self.refresh_inner(tokens))
             .await
-            .map_err(|_| unavailable("observation timed out"))?
+            .map_err(|_| {
+                tracing::warn!(target: "cma.agent_observation",
+                    reason = "mongo_refresh_timeout", agents = tokens.len(),
+                    "Agent observation refresh exceeded its Mongo deadline");
+                unavailable("observation timed out")
+            })?
     }
 }
 

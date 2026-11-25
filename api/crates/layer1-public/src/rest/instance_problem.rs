@@ -8,9 +8,15 @@ use layer2_core::sandbox::{AgentOperationError, AgentReadError, AgentServiceErro
 use layer2_core::RuntimeCapability;
 
 use super::{problem_document, problem_response};
+use configuration_write::ConfigurationWriteReason;
+
+#[path = "configuration_write.rs"]
+pub(super) mod configuration_write;
 
 pub(crate) enum InstanceProblem {
     AdmissionPaused,
+    ModelFundingUnsupported,
+    ModelFunding(layer2_core::sandbox::model_credit::FundingError),
     RuntimeCapacity(layer2_core::sandbox::RuntimeCapacityError),
     SessionCapacityUnavailable,
     Budget(layer2_core::budget::BudgetError),
@@ -51,9 +57,11 @@ pub(crate) enum InstanceProblem {
     SkillHistoryFull,
     SkillNotReady,
     OperationInFlight,
+    ConfigurationWrite(Box<Self>, ConfigurationWriteReason),
     CheckpointInProgress,
     DeliveryAmbiguous,
     ResourcesUnsupported,
+    HistoryExport(super::AgentHistoryExportError),
     Unavailable,
 }
 
@@ -63,6 +71,7 @@ impl InstanceProblem {
             AgentServiceError::Connection(error) => Self::Connection(error),
             AgentServiceError::Budget(reason) => Self::Budget(reason),
             AgentServiceError::AdmissionPaused => Self::AdmissionPaused,
+            AgentServiceError::ModelFundingUnsupported => Self::ModelFundingUnsupported,
             AgentServiceError::Forbidden => Self::Forbidden,
             AgentServiceError::ProfileNotFound => Self::AgentProfileNotFound,
             AgentServiceError::WorkspaceNotFound => Self::WorkspaceNotFound,
@@ -127,6 +136,9 @@ impl From<AgentReadError> for InstanceProblem {
                 Self::CapabilityUnsupported { capability }
             }
             AgentReadError::ResourcesUnsupported(_) => Self::ResourcesUnsupported,
+            AgentReadError::HistoryRuntimeUnavailable => {
+                Self::HistoryExport(super::AgentHistoryExportError::Unavailable)
+            }
             AgentReadError::RuntimeCapacity(capacity) => Self::RuntimeCapacity(capacity),
             AgentReadError::Corrupt(_) | AgentReadError::Unavailable(_) => Self::Unavailable,
         }
@@ -139,6 +151,8 @@ impl From<AgentOperationError> for InstanceProblem {
             AgentOperationError::Connection(error) => Self::Connection(error),
             AgentOperationError::Budget(reason) => Self::Budget(reason),
             AgentOperationError::AdmissionPaused => Self::AdmissionPaused,
+            AgentOperationError::ModelFundingUnsupported => Self::ModelFundingUnsupported,
+            AgentOperationError::ModelFunding(reason) => Self::ModelFunding(reason),
             AgentOperationError::SessionCapacityUnavailable => Self::SessionCapacityUnavailable,
             AgentOperationError::Forbidden => Self::Forbidden,
             AgentOperationError::NotFound => Self::AgentNotFound,
@@ -171,6 +185,8 @@ impl From<AgentOperationError> for InstanceProblem {
             AgentOperationError::DispatchInProgress { .. }
             | AgentOperationError::DispatchRecoveryRequired { .. }
             | AgentOperationError::PreviousTurnConflict
+            | AgentOperationError::ConfigurationAdmissionConflict
+            | AgentOperationError::PreferencesRevisionMismatch
             | AgentOperationError::Conflict => Self::OperationInFlight,
             AgentOperationError::CheckpointInProgress => Self::CheckpointInProgress,
             AgentOperationError::DeliveryAmbiguous { .. } => Self::DeliveryAmbiguous,
@@ -185,9 +201,19 @@ impl From<AgentOperationError> for InstanceProblem {
 
 impl IntoResponse for InstanceProblem {
     fn into_response(self) -> Response {
-        let (status, slug, detail, code): (_, _, &str, _) = match &self {
+        let (problem, configuration_reason) = match self {
+            Self::ConfigurationWrite(problem, reason) => (*problem, Some(reason)),
+            other => (other, None),
+        };
+        let (status, slug, detail, code): (_, _, &str, _) = match &problem {
+            Self::ConfigurationWrite(..) => unreachable!("only an instance problem is annotated"),
             Self::RuntimeCapacity(capacity) => return super::problems::runtime_capacity(*capacity),
+            Self::HistoryExport(error) => return super::agent_history::problem(*error),
             Self::AdmissionPaused => return super::admission_problem::paused(),
+            Self::ModelFundingUnsupported => crate::model_funding_problem::projection(
+                layer2_core::sandbox::model_credit::FundingError::Unsupported,
+            ),
+            Self::ModelFunding(reason) => crate::model_funding_problem::projection(*reason),
             Self::SessionCapacityUnavailable => return super::admission_problem::session_capacity(),
             // Every budget refusal, the platform's included, is a final 402
             // without Retry-After: clients treat >= 500 as retryable.
@@ -353,9 +379,16 @@ impl IntoResponse for InstanceProblem {
                 "instance_service_unavailable",
             ),
         };
+        let detail = match configuration_reason {
+            Some(reason) => reason.detail(),
+            None => detail,
+        };
         let mut body = problem_document(status, slug, detail, code);
         if let Some(object) = body.as_object_mut() {
-            match self {
+            if let Some(reason) = configuration_reason {
+                object.insert("settings_update_reason".into(), reason.as_str().into());
+            }
+            match problem {
                 Self::AgentLimitReached { limit, live } => {
                     object.insert("limit".into(), limit.into());
                     object.insert("live".into(), live.into());

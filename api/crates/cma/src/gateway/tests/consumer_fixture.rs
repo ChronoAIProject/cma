@@ -72,11 +72,15 @@ impl ConsumerGateway {
             .with_state(platform.clone());
         let platform_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let config = cmaeg::Config {
+            profile_revisions_enabled: false,
             github_enabled: false,
             native_media_presentations_enabled: false,
             native_discord_voice_enabled: false,
             native_split_text_refs_enabled: false,
             native_telegram_message_events_writes_enabled: false,
+            native_telegram_member_joins_enabled: false,
+            relay_telegram_member_joins_enabled: false,
+            managed_telegram_setup_enabled: true,
             native_lark_writes_enabled: false,
         native_lark_intake_enabled: false,
         native_lark_controls_enabled: false,
@@ -136,6 +140,7 @@ impl ConsumerGateway {
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,
         outbound_messages_writes_enabled: false,
+        event_side_messages_enabled: false,
             listen: "127.0.0.1:0".parse().unwrap(), metrics_listen: "127.0.0.1:0".parse().unwrap(),
             providers: cmaeg::providers::ProviderRegistry::parse(&json!([{
                 "slug":"cma_codex","base_url":server.base,"kind":"responses_http","max_inflight":8,
@@ -159,12 +164,13 @@ impl ConsumerGateway {
             config.management,
             config.channel_cache,
         );
+        state.managed_telegram_setup_enabled = config.managed_telegram_setup_enabled;
         state.telegram = Some(Arc::new(
             cmaeg::telegram::TelegramClient::new(&platform_origin, Duration::from_secs(2)).unwrap(),
         ));
         let (delivery, _receiver) = tokio::sync::mpsc::channel(1);
         let tools = cmaeg::tools::ToolsState {
-            commonmark_relay_enabled: false,
+            commonmark_relay: Default::default(),
             native_media_presentations_enabled: false,
             native_discord_voice_enabled: false,
             discord_thread_history: None,

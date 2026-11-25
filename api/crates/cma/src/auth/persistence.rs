@@ -81,6 +81,7 @@ pub struct LoginAttempt {
     pub return_to: Option<String>,
     /// Server-created authority intent; never inferred from return_to.
     pub actor_link_intent: Option<super::actor_links::ActorLoginIntent>,
+    pub(crate) service_authorization: Option<super::service_authorization::RecoveryIntent>,
     /// Asked the provider not to interact; a refusal returns to `return_to`.
     pub silent: bool,
     /// A silent-origin attempt has already escalated once to provider consent.
@@ -203,6 +204,7 @@ pub trait AuthStore: Send + Sync {
     async fn due_actor_links(
         &self,
         _renewed_before: u64,
+        _after_actor_key: Option<&str>,
         _limit: usize,
     ) -> Result<Vec<super::actor_links::ActorLinkRecord>, StoreError> {
         Err(StoreError::Unavailable(

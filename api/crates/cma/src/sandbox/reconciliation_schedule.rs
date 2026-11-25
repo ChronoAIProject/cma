@@ -3,14 +3,24 @@ use super::*;
 
 impl SandboxReconciler {
     pub(crate) async fn run_due(&self, now: SystemTime) -> Result<bool, SandboxStoreError> {
+        // Reserved binding work shares the outer opportunity with the prelude.
+        let reserved_deadline = self
+            .runtime_loss_bounded_proof_enabled
+            .then(|| tokio::time::Instant::now() + Duration::from_secs(25));
         let mut progress = self.progress.lock().await;
         // Independent of sweep progress: a failing earlier phase must not hold
         // back platform spend transitions (contract §5.3).
         self.platform_spend_stop(now).await;
+        self.reconcile_pending_homes(now).await;
         // The progress lock serializes both lanes, including outer cancellation.
         if self.failed_runtime_recovery.is_some() {
             let mut recovery = self.recovery_schedule.lock().await;
-            if recovery.take_turn() {
+            // A platform spend stop defers automatic recovery, as it defers
+            // managed runtime updates (decision 26): recovery reopens a failed
+            // Sandbox as Active through an image rotation that starts a
+            // runtime. Candidates keep their eligibility and recover after
+            // the lift; the deferred turn goes to the ordinary sweep.
+            if recovery.take_turn() && !self.platform_spend_stop(now).await {
                 recovery.run(self).await?;
                 return Ok(false);
             }
@@ -44,21 +54,15 @@ impl SandboxReconciler {
             if reserved && dispatched {
                 break false;
             }
-            let budget = if reserved {
-                if self.runtime_loss_bounded_proof_enabled {
-                    Duration::from_secs(25)
-                } else {
-                    BINDING_OPPORTUNITY
-                }
-            } else {
-                OPERATION
-            };
             let deadline = if reserved {
-                // Reserved work starts an empty slice. Keep five seconds under
-                // the outer 30s deadline for cancellation and bookkeeping.
-                started + budget
+                // The bounded path leaves five seconds before the outer timeout.
+                let deadline = reserved_deadline.unwrap_or(started + BINDING_OPPORTUNITY);
+                if reserved_deadline.is_some() && tokio::time::Instant::now() >= deadline {
+                    break false;
+                }
+                deadline
             } else {
-                tokio::time::Instant::now() + budget
+                tokio::time::Instant::now() + OPERATION
             };
             if !refreshing && !current.is_binding_phase() {
                 // Set before awaiting, so errors, deadlines and outer cancellation

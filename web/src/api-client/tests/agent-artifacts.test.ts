@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { createHash } from 'node:crypto';
 import { expect, it } from 'vitest';
 import { ApiError, ProtocolError, RequestAborted, ValidationError } from '../index.js';
 import { now, transport } from './resource-fixtures.js';
@@ -12,7 +13,7 @@ const metadata = {
   name: body.name,
   media_type: body.media_type,
   size_bytes: 6,
-  sha256: 'c'.repeat(64),
+  sha256: createHash('sha256').update('review').digest('hex'),
   created_at: now,
 };
 
@@ -69,6 +70,59 @@ it('refuses changed identities, malformed metadata, repeated pages and mismatche
   ).rejects.toBeInstanceOf(ProtocolError);
 });
 
+it('confirms the exact 1 MiB publication only after explicit replay returns the matching receipt', async () => {
+  const test = transport();
+  const bytes = Buffer.alloc(1024 * 1024);
+  const selected = { ...body, content_base64: bytes.toString('base64') };
+  const receipt = {
+    ...metadata,
+    size_bytes: bytes.length,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+  };
+  const options = { idempotencyKey: 'publish-max' };
+  const wrongHash = createHash('sha256').update(Buffer.alloc(bytes.length, 65)).digest('hex');
+  test.answer({ ...receipt, sha256: wrongHash }, 201);
+  await expect(
+    test.client.agents.publishArtifact('agent-1', selected, options),
+  ).rejects.toBeInstanceOf(ProtocolError);
+  expect(test.calls).toHaveLength(1);
+
+  test.answer(receipt, 201);
+  await expect(test.client.agents.publishArtifact('agent-1', selected, options)).resolves.toEqual(
+    receipt,
+  );
+  expect(test.calls).toHaveLength(2);
+  for (const { init } of test.calls) {
+    expect(init).toMatchObject({ method: 'POST', body: JSON.stringify(selected) });
+    expect(new Headers(init.headers).get('idempotency-key')).toBe(options.idempotencyKey);
+  }
+  test.answer({ items: [receipt] });
+  expect(await test.client.agents.listArtifacts('agent-1')).toEqual({ items: [receipt] });
+  test.fetch.mockImplementation(
+    async () =>
+      new Response(new Uint8Array(bytes), {
+        headers: { 'content-type': 'application/octet-stream' },
+      }),
+  );
+  const downloaded = await test.client.agents.downloadArtifact('agent-1', id);
+  expect(downloaded).toBeInstanceOf(Uint8Array);
+  expect(Buffer.from(downloaded).equals(bytes)).toBe(true);
+});
+
+it('uses the original validated body after the caller changes its request object', async () => {
+  const test = transport();
+  const selected = { ...body, name: 'Review.txt', content_base64: 'cmV2aWV3' };
+  test.answer(metadata, 201);
+  const publication = test.client.agents.publishArtifact('agent-1', selected, {
+    idempotencyKey: 'original-selection',
+  });
+  selected.name = 'Other.txt';
+  selected.content_base64 = 'dXBkYXRl';
+  await expect(publication).resolves.toEqual(metadata);
+  expect(test.calls).toHaveLength(1);
+  expect(test.calls[0]?.init.body).toBe(JSON.stringify(body));
+});
+
 it('rejects unsafe publication and invalid artifact paging before transport', () => {
   const test = transport();
   for (const patch of [
@@ -80,6 +134,7 @@ it('rejects unsafe publication and invalid artifact paging before transport', ()
     { content_base64: 'YQ' },
     { content_base64: 'YR==' },
     { content_base64: 'YQ==\n' },
+    { content_base64: Buffer.alloc(1024 * 1024 + 1).toString('base64') },
   ])
     expect(() =>
       test.client.agents.publishArtifact('agent-1', { ...body, ...patch } as never, {

@@ -1,10 +1,145 @@
 use super::*;
 
+#[path = "transaction_opening_tests.rs"]
+mod real_transaction_opening;
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn real_erasure_optional_authority_preserves_disabled_deployments() {
+    crate::store::account_erasure::optional_authority_tests::verify_runtime().await;
+}
+
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn real_allocation_buckets_activate_only_with_confined_namespace_grants() {
     super::allocation_tests::verify_runtime().await;
 }
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn real_cancelled_terminal_command_can_end_its_own_session_under_the_exact_runtime_grant() {
+    use mongodb::{
+        options::{ClientOptions, Credential},
+        Client,
+    };
+    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_terminal_grant_{}", uuid::Uuid::new_v4().simple());
+    let db = admin.database(&name);
+    db.run_command(role(&name)).await.unwrap();
+    let password = uuid::Uuid::new_v4().to_string();
+    db.run_command(doc! {"createUser":"terminal-runtime","pwd":&password,
+    "roles":[{"role":"cma_am_runtime","db":&name}]})
+        .await
+        .unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.credential = Some(
+        Credential::builder()
+            .username("terminal-runtime".to_owned())
+            .password(password)
+            .source(name.clone())
+            .build(),
+    );
+    let runtime = Client::with_options(options).unwrap();
+    let agents = runtime.database(&name).collection::<Document>("agents");
+    let mut session = runtime.start_session().await.unwrap();
+    session.start_transaction().await.unwrap();
+    agents
+        .find_one(doc! {})
+        .session(&mut session)
+        .await
+        .expect("the runtime grant reads agents");
+    // Control: the credential really is confined to its grant.
+    let foreign = runtime
+        .database(&format!("{name}_foreign"))
+        .collection::<Document>("agents")
+        .find_one(doc! {})
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(foreign.kind.as_ref(), mongodb::error::ErrorKind::Command(c) if c.code == 13),
+        "the runtime credential must be refused outside its grant"
+    );
+    // The guard's recovery command needs no privilege beyond owning the session (#3288).
+    crate::store::transaction_terminal::kill_session(&runtime, session.id())
+        .await
+        .expect("a runtime credential may end its own session");
+    assert!(
+        agents
+            .find_one(doc! {})
+            .session(&mut session)
+            .await
+            .is_err(),
+        "ending the session aborts its open transaction"
+    );
+    drop(session);
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn real_transaction_barrier_is_authorized_by_the_exact_runtime_grant() {
+    use mongodb::{
+        bson::Document,
+        options::{ClientOptions, Credential},
+        Client,
+    };
+    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_barrier_grant_{}", uuid::Uuid::new_v4().simple());
+    let db = admin.database(&name);
+    db.run_command(role(&name)).await.unwrap();
+    let password = uuid::Uuid::new_v4().to_string();
+    db.run_command(doc! {"createUser":"barrier-runtime","pwd":&password,
+    "roles":[{"role":"cma_am_runtime","db":&name}]})
+        .await
+        .unwrap();
+    let (commands, mut observed) = tokio::sync::mpsc::unbounded_channel();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.credential = Some(
+        Credential::builder()
+            .username("barrier-runtime".to_owned())
+            .password(password)
+            .source(name.clone())
+            .build(),
+    );
+    options.command_event_handler = Some(mongodb::event::EventHandler::callback(move |event| {
+        if let mongodb::event::command::CommandEvent::Started(event) = event {
+            if event.command.get_bool("startTransaction").ok() == Some(true) {
+                let _ = commands.send(event);
+            }
+        }
+    }));
+    crate::store::transaction_barrier::bind(&mut options, &name);
+    let runtime = Client::with_options(options).unwrap();
+    let mut session = runtime.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .expect("the barrier must run under the exact runtime grant");
+    let opening = observed.try_recv().unwrap();
+    assert_eq!(opening.db, name);
+    assert_eq!(opening.command_name, "aggregate");
+    assert_eq!(opening.command.get_i32("aggregate").unwrap(), 1);
+    assert_eq!(
+        opening.command.get_array("pipeline").unwrap(),
+        doc! {"pipeline": [{"$documents": [doc! {}]}]}
+            .get_array("pipeline")
+            .unwrap()
+    );
+    session.commit_transaction().await.unwrap();
+    // The literal command grants no access to data in other databases.
+    let foreign = runtime.database(&format!("{name}_foreign"));
+    let error = foreign
+        .collection::<Document>("agents")
+        .find_one(doc! {})
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(c) if c.code == 13),
+        "an actual read must be refused outside the runtime grant"
+    );
+    db.drop().await.unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
@@ -83,7 +218,7 @@ async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
         assert!(stores.sandbox_model.warm_runtime_version.is_none());
         assert!(stores.sandbox_model.warm_home_policy.is_none());
         assert_eq!(
-            stores.sandbox_model.managed_runtime_version.as_deref(),
+            stores.sandbox_model.managed_agent_release().as_deref(),
             Some("runtime-isolation-contract")
         );
     }
@@ -463,5 +598,98 @@ async fn real_progress_grants_cannot_delete_receipts_or_access_another_service()
         );
     }
     assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 1);
+    db.drop().await.unwrap();
+}
+
+mod observation_grants_tests {
+    use super::*;
+    #[test]
+    fn observation_grants_are_optional_when_closed_and_required_when_enabled() {
+        let mut grants = role("cma").get_array("privileges").unwrap().clone();
+        let status = |grants| doc! {"authInfo": {"authenticatedUsers": [{"user": "manager", "db": "cma"}], "authenticatedUserPrivileges": grants}};
+        validate_observation_grants(&status(grants.clone()), "cma").unwrap();
+        grants.retain(|grant| {
+            grant
+                .as_document()
+                .unwrap()
+                .get_document("resource")
+                .unwrap()
+                .get_str("collection")
+                .unwrap()
+                != crate::store::agent_observation::COLLECTION
+        });
+        validate(&status(grants.clone()), "cma").unwrap();
+        assert!(validate_observation_grants(&status(grants), "cma").is_err());
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn real_measured_custody_role_can_be_added_and_revoked_with_capture_off() {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use mongodb::{
+        options::{ClientOptions, Credential},
+        Client,
+    };
+    use std::{sync::Arc, time::Duration};
+
+    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_measured_role_{}", uuid::Uuid::new_v4().simple());
+    let db = admin.database(&name);
+    db.run_command(required_role(&name)).await.unwrap();
+    let password = uuid::Uuid::new_v4().to_string();
+    db.run_command(doc! {"createUser": "runtime", "pwd": &password,
+    "roles": [{"role": "cma_am_runtime", "db": &name}]})
+        .await
+        .unwrap();
+    db.create_collection(MEASURED_CUSTODY).await.unwrap();
+    let privilege = doc! {"resource": {"db": &name, "collection": MEASURED_CUSTODY},
+    "actions": MEASURED_CUSTODY_ACTIONS};
+    let key = crate::store::AuthEncryptionKey::from_base64(&STANDARD.encode([7_u8; 32])).unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.credential = Some(
+        Credential::builder()
+            .username("runtime".to_owned())
+            .password(password)
+            .source(name.clone())
+            .build(),
+    );
+    for (command, widened) in [
+        (None, false),
+        (Some("grantPrivilegesToRole"), true),
+        (Some("revokePrivilegesFromRole"), false),
+    ] {
+        if let Some(command) = command {
+            db.run_command(doc! {command: "cma_am_runtime", "privileges": [privilege.clone()]})
+                .await
+                .unwrap();
+        }
+        let runtime = Client::with_options(options.clone()).unwrap();
+        let stores = crate::store::MongoStores::open(
+            runtime.clone(),
+            &name,
+            "measured-role-fixture",
+            &key,
+            Duration::from_secs(86_400),
+            Arc::new(crate::store::checkpoint_storage::RetiredCheckpointStorage),
+            ("measured-role-fixture", None),
+        )
+        .await
+        .unwrap();
+        stores.ping().await.unwrap();
+        let rows = runtime
+            .database(&name)
+            .collection::<Document>(MEASURED_CUSTODY);
+        assert_eq!(rows.find_one(doc! {}).await.is_ok(), widened);
+        assert!(rows.delete_one(doc! {}).await.is_err());
+    }
+    assert_eq!(
+        db.collection::<Document>(MEASURED_CUSTODY)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
     db.drop().await.unwrap();
 }

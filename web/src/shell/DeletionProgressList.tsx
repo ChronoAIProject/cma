@@ -1,10 +1,18 @@
 import { useState } from 'react';
 import type { SandboxSummary } from '../api/types';
+import {
+  sandboxRetirementWaitExceeded,
+  type SandboxRetirementObservation,
+} from '../sandbox/lifecycle';
 import { Button } from '../ui/Button';
+import { IconWarningOutline16 } from '../ui/icons/IconWarningOutline16';
 import { IconCopyOutline16 } from '../ui/icons/IconCopyOutline16';
 import './DeletionProgressList.css';
 
-type DeletingSandbox = Pick<SandboxSummary, 'id' | 'name' | 'status'>;
+type DeletingSandbox = Pick<SandboxSummary, 'id' | 'name'> &
+  SandboxRetirementObservation & {
+    readonly unknown?: boolean;
+  };
 
 function DeletionProgressRow({
   sandbox,
@@ -15,6 +23,7 @@ function DeletionProgressRow({
 }) {
   const [copy, setCopy] = useState<'copied' | 'failed'>();
   const name = sandbox.name.trim() || 'Sandbox';
+  const delayed = !sandbox.unknown && sandboxRetirementWaitExceeded(sandbox);
   return (
     <li className="deletion-progress__row">
       <span className="deletion-progress__name" title={name}>
@@ -24,8 +33,21 @@ function DeletionProgressRow({
         {sandbox.id}
       </code>
       <span className="deletion-progress__state">
-        {sandbox.status === 'retiring' ? 'Deleting' : 'Deletion requested'}
+        <IconWarningOutline16 />
+        {sandbox.unknown
+          ? 'Deletion not confirmed'
+          : delayed
+            ? 'Cleanup taking longer'
+            : sandbox.status === 'retiring'
+              ? 'Deleting'
+              : 'Deletion requested'}
       </span>
+      <p className="deletion-progress__note">
+        {delayed
+          ? 'The expected deletion time has passed. Check status for the latest cleanup progress. '
+          : null}
+        Still counts toward your environment limit until cleanup is confirmed.
+      </p>
       <div className="deletion-progress__actions">
         <Button
           size="sm"
@@ -62,16 +84,22 @@ function DeletionProgressRow({
 }
 
 export function DeletionProgressList({
+  footer = false,
   sandboxes,
   onViewStatus,
 }: {
+  readonly footer?: boolean;
   readonly sandboxes: readonly DeletingSandbox[];
   readonly onViewStatus: (id: string) => void;
 }) {
   if (sandboxes.length === 0) return null;
   return (
-    <details className="deletion-progress">
-      <summary>Deletion progress ({sandboxes.length})</summary>
+    <details className="deletion-progress" data-navigation-footer={footer || undefined}>
+      <summary>
+        {sandboxes.some((sandbox) => sandbox.unknown || sandboxRetirementWaitExceeded(sandbox))
+          ? `${sandboxes.length} deletions need checking`
+          : `Cleaning up ${sandboxes.length} sandboxes`}
+      </summary>
       <ul className="deletion-progress__list" aria-label="Sandbox deletion progress">
         {sandboxes.map((sandbox) => (
           <DeletionProgressRow key={sandbox.id} sandbox={sandbox} onViewStatus={onViewStatus} />

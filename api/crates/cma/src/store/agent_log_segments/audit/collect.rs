@@ -28,6 +28,14 @@ pub(super) async fn run(
     {
         return Err(corrupt());
     }
+    super::super::source_keys::prove(database, &current, &mut snapshot, true)
+        .await
+        .map_err(|error| match error {
+            crate::store::agent_log_integrity::TransactionLogError::Domain(error) => error,
+            crate::store::agent_log_integrity::TransactionLogError::Driver(error) => {
+                unavailable(error)
+            }
+        })?;
     // Completed units are immutable. Capture current metadata for the next
     // unprocessed unit so a newly sealed former tail is audited normally.
     progress.captured_agent = agent;
@@ -161,10 +169,6 @@ pub(super) async fn run(
             .validate_aggregate(&progress.captured_agent)
             .map_err(SandboxStoreError::Corrupt)?;
         validate_queue(database, progress, &staged, &output, &batch, &mut snapshot).await?;
-        let source = collection(database, "agent_log");
-        if source.find_one(doc! {"agent_id":&progress.agent_id,"$or":[{"seq":{"$gt":current.last_seq}},{"seq":{"$lt":1_i64}}]})
-            .projection(doc! {"_id":1}).read_concern(ReadConcern::snapshot()).session(&mut snapshot)
-            .await.map_err(unavailable)?.is_some() {return Err(corrupt());}
     }
     // No completed-prefix progress advances until every source row and all
     // aggregate/queue proofs passed. Only this durable phase permits promotion.

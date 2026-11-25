@@ -30,8 +30,13 @@ pub(super) fn valid_prepare_receipt(
         && receipt.path == expected_path
         && valid_commit(&receipt.resolved_commit)
         && match &request.source {
-            layer3_adapter::WorkspaceSource::RepositorySnapshot { .. } => {
+            layer3_adapter::WorkspaceSource::RepositorySnapshot { reference, .. } => {
                 receipt.source_commit.as_deref().is_some_and(valid_commit)
+                    && (request.repository_connection_id.is_none()
+                        || &receipt.source_commit == reference)
+            }
+            layer3_adapter::WorkspaceSource::PublicRepositorySnapshot { commit, .. } => {
+                receipt.source_commit.as_ref() == Some(commit)
             }
             _ => receipt.source_commit.is_none(),
         }
@@ -95,8 +100,13 @@ impl WorkerFailure {
 
 pub(super) fn failure(error: AdapterError) -> WorkerFailure {
     match error {
+        AdapterError::AccessRevoked => WorkerFailure::terminal(
+            "workspace_access_revoked",
+            "current runtime authority was revoked",
+        ),
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
+        | AdapterError::NativePoolDefinitionAbsent { .. }
         | AdapterError::NativeClaimNotReady(_)
         | AdapterError::RuntimeStartupHold(_)
         | AdapterError::Unavailable(_) => {
@@ -116,6 +126,9 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
         AdapterError::Rejected(detail) if detail.starts_with("repository_unavailable:") => WorkerFailure::terminal(
             "repository_unavailable", "The repository is unavailable to the connected account. Check repository access before starting another task.",
         ),
+        AdapterError::Rejected(detail) if detail.starts_with("repository_archive_unavailable:") => WorkerFailure::terminal(
+            "repository_archive_unavailable", "The repository archive is unavailable. Check access to the requested revision before starting another task.",
+        ),
         AdapterError::Rejected(detail) if detail.starts_with("repository_connection_required:") => WorkerFailure::terminal(
             "repository_connection_required", "GitHub authorization does not allow repository preparation. Check the existing GitHub connection before starting another task.",
         ),
@@ -123,6 +136,8 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
             "repository_source_invalid", "Repository files could not be safely prepared. The task has not run. Check source contents before starting another task.",
         ),
         AdapterError::Rejected(_)
+        | AdapterError::NativePoolConfigurationDrift
+        | AdapterError::DesktopFailed
         | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)
         | AdapterError::Unsupported(_) => WorkerFailure::terminal(

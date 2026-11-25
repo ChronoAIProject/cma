@@ -1,11 +1,12 @@
 import type { SandboxResourceAvailability } from './sandboxInput';
+import { ComputerScreen } from './environment/ComputerScreen';
+import { ComputerLifecycleNotice } from './environment/ComputerLifecycleNotice';
 import { screenApplication } from './screenOperations';
 import { changedFiles, homeFilePath } from './fileChanges';
 import { agentWorkingDirectory } from './files/filePath';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentDetail } from '../api/types';
 import { useCmaClient } from '../api/context';
-import { detailReadSource } from '../api/detailReads';
 import { SharedAgentDetails } from '../resources/SharedAgentDetails';
 import { useAgentAccess } from '../resources/agentAccess';
 import type { ArtifactPublicationScope } from '../resources/artifactRecovery';
@@ -24,12 +25,12 @@ import {
   FeatureAvailability,
   useAgentEnvironment,
 } from './environment/availability';
-import { useComputerObservation, type AgentComputerObservation } from './environment/observation';
-import { BrowserPanel, EnableBrowser } from './environment/BrowserPanel';
-import { useTaskExperience } from '../taskExperience';
+import {
+  useComputerObservation,
+  useConversationReturn,
+  type AgentComputerObservation,
+} from './environment/observation';
 import { agentInitialized } from './modelReadiness';
-import { DesktopPanel } from './DesktopPanel';
-import { desktopRuntimeReady } from './DesktopWorkspace';
 
 export type AgentPanel = 'details' | 'files' | 'activity' | 'browser' | undefined;
 
@@ -52,7 +53,9 @@ export function AgentSidePanel({
   viewerId,
   onStopForControl,
   resourceAvailability,
+  canManageSandbox = false,
 }: {
+  readonly canManageSandbox?: boolean;
   readonly onStopForControl?: () => Promise<void>;
   readonly resourceAvailability?: SandboxResourceAvailability;
   readonly agentId: string;
@@ -67,15 +70,13 @@ export function AgentSidePanel({
   readonly controlReady?: boolean;
   readonly publicationScope: ArtifactPublicationScope;
   readonly conversation?: ConversationState;
-  readonly onSelect?: (panel: AgentPanel) => void;
+  readonly onSelect?: (panel: AgentPanel, expected?: AgentPanel) => void;
   readonly observation?: AgentComputerObservation;
   readonly viewerId?: string;
 }) {
   const client = useCmaClient();
-  const policy = useTaskExperience(client, viewerId ?? observation?.scope.subject);
   const filesOpen = panel === 'files';
   const computerOpen = panel !== undefined && panel !== 'details';
-  const machineAvailable = !shared && detail?.desktop === true;
   const computerRef = useRef<HTMLElement>(null);
   const [connectionRevision, reconnect] = useState(0);
   const [fullScreen, setFullScreen] = useState(false);
@@ -99,7 +100,20 @@ export function AgentSidePanel({
     visitedScope?.client === client &&
     visitedScope.agentId === agentId &&
     visitedScope.subject === subject;
-  const environment = useAgentEnvironment(client.files, agentId, computerOpen || visited, subject);
+  const lifecycleHeld = resourceAvailability !== undefined && resourceAvailability.state !== 'live';
+  const environment = useAgentEnvironment(
+    client.files,
+    agentId,
+    computerOpen && !lifecycleHeld,
+    subject,
+    resourceAvailability?.state === 'live' ? resourceAvailability.runtimeVersion : undefined,
+  );
+  const lifecycleNotice = lifecycleHeld ? (
+    <ComputerLifecycleNotice
+      availability={resourceAvailability}
+      onOpenSandbox={!shared && canManageSandbox ? onOpenSandbox : undefined}
+    />
+  ) : null;
   const features = environment.state.status === 'ready' ? environment.state.value : undefined;
   const readiness =
     detail &&
@@ -117,7 +131,14 @@ export function AgentSidePanel({
     setScreenError(undefined);
   }
   const select = (tab: AgentPanel) => onSelect?.(tab);
-  const observed = useComputerObservation(observation);
+  const currentObservation =
+    observation?.scope.client === client &&
+    observation.scope.subject === subject &&
+    observation.scope.agentId === agentId
+      ? observation
+      : undefined;
+  const observed = useComputerObservation(currentObservation);
+  const onReturnToConversation = useConversationReturn(currentObservation);
   const operations = shared ? observed : (conversation ?? observed);
   const workingDirectory = agentWorkingDirectory(
     conversation?.runtimeMetadata?.workingDirectory,
@@ -127,7 +148,8 @@ export function AgentSidePanel({
   const historyLoaded =
     !historyLoading && (conversation !== undefined || observed?.historyLoaded === true);
   useEffect(() => {
-    if (historyLoaded && panel === 'activity' && !terminalAvailable) onSelect?.('browser');
+    if (historyLoaded && panel === 'activity' && !terminalAvailable)
+      onSelect?.('browser', 'activity');
   }, [historyLoaded, panel, terminalAvailable, onSelect]);
   const lastScreen = [...(operations?.toolCalls ?? [])]
     .reverse()
@@ -136,15 +158,11 @@ export function AgentSidePanel({
   const controlsReady = controlReady ?? historyLoaded;
   const running =
     operations?.activeRunId !== undefined || (!controlsReady && detail?.status === 'working');
-  const agentBrowserActive =
-    lastScreen === 'Browser' &&
-    features?.browser.state === 'available' &&
-    !!features.runtime_incarnation &&
-    !!client.browser;
   // Shared file access is independently renewed and never inferred from a visible toolbar.
   const access = useAgentAccess(
     client.resourceViews,
     shared && (visited || computerOpen || observation) ? agentId : undefined,
+    subject,
   );
   const authorized = access.state.status === 'ready' ? access.state.value.access : undefined;
   const reloadAccess = access.reload;
@@ -153,6 +171,8 @@ export function AgentSidePanel({
     onAccessChanged();
   }, [reloadAccess, onAccessChanged]);
   const mayRead =
+    computerOpen &&
+    !lifecycleHeld &&
     (!shared || authorized?.capabilities.includes('view_files') === true) &&
     (!client.files?.environment ||
       (environment.state.status === 'ready' &&
@@ -173,12 +193,13 @@ export function AgentSidePanel({
     : client.files?.environment && environment.state.status === 'loading'
       ? false
       : !shared || authorized?.capabilities.includes('operate_agent') === true;
-  const fileAvailability = (
+  const fileAvailability = lifecycleNotice ?? (
     <FileAvailability
       shared={shared}
       access={access}
       environment={environment}
       reported={!!client.files?.environment}
+      onReturnToConversation={onReturnToConversation}
     />
   );
   return (
@@ -261,17 +282,22 @@ export function AgentSidePanel({
           <div className="agent-computer__actions">
             {panel === 'browser' ? (
               <>
-                <Button
-                  size="sm"
-                  icon={<IconRefreshOutline14 />}
-                  aria-label="Reconnect"
-                  title="Reconnect"
-                  onClick={() => {
-                    setScreenError(undefined);
-                    reconnect((revision) => revision + 1);
-                    environment.reload();
-                  }}
-                />
+                {!lifecycleHeld &&
+                ((!shared && detail?.desktop === true) ||
+                  !features ||
+                  ['available', 'temporarily_unavailable'].includes(features.browser.state)) ? (
+                  <Button
+                    size="sm"
+                    icon={<IconRefreshOutline14 />}
+                    aria-label="Reconnect"
+                    title="Reconnect"
+                    onClick={() => {
+                      setScreenError(undefined);
+                      reconnect((revision) => revision + 1);
+                      environment.reload();
+                    }}
+                  />
+                ) : null}
                 <Button
                   size="sm"
                   icon={<IconFullscreenOutline16 />}
@@ -323,8 +349,9 @@ export function AgentSidePanel({
           {visited && mayRetain && client.files ? (
             <FileExplorer
               initialDirectory={homeFilePath(workingDirectory ?? '')}
+              navigationMemory={currentObservation?.fileNavigation}
               changes={changedFiles(operations?.toolCalls, workingDirectory)}
-              key={`${agentId}:${shared}:${subject}:${visitedScope?.generation}`}
+              key={`${agentId}:${shared}:${subject}:${currentObservation?.scope.authEpoch}:${visitedScope?.generation}`}
               panel
               embedded
               active={mayRead}
@@ -368,9 +395,11 @@ export function AgentSidePanel({
                 </Button>
               ) : null}
             </>
-          ) : features && features.operation_output.state !== 'available' ? (
+          ) : !lifecycleHeld && features && features.operation_output.state !== 'available' ? (
             <FeatureAvailability name="Operation output" feature={features.operation_output} />
-          ) : client.files?.environment && environment.state.status !== 'ready' ? (
+          ) : !lifecycleHeld &&
+            client.files?.environment &&
+            environment.state.status !== 'ready' ? (
             <EnvironmentAvailability subject="operation" environment={environment} />
           ) : (
             <OperationOutput
@@ -389,77 +418,30 @@ export function AgentSidePanel({
           className="agent-computer__page agent-computer__screen"
           hidden={panel !== 'browser'}
         >
-          <>
-            {!shared && detail === undefined && features?.browser.state === 'unsupported' ? (
-              <p role="status">Checking Agent desktop availability…</p>
-            ) : machineAvailable && !agentBrowserActive ? (
-              panel === 'browser' ? (
-                <DesktopPanel
-                  key={agentId}
-                  reconnectRevision={connectionRevision}
-                  agentId={agentId}
-                  application="Desktop"
-                  runtimeReady={desktopRuntimeReady(detail)}
-                  running={running}
-                  runId={operations?.activeRunId}
-                  onStop={onStopForControl}
-                  controlUnavailable={!controlsReady}
-                  preparation={{ context: detailReadSource(client), owner: subject }}
-                  onClose={onClose}
-                  embedded
-                />
-              ) : null
-            ) : features?.browser.state === 'available' &&
-              features.runtime_incarnation &&
-              client.browser &&
-              (!shared || authorized?.capabilities.includes('view_history') === true) ? (
-              <BrowserPanel
-                key={`${agentId}:${features.runtime_incarnation}:${features.policy_revision}:${observation?.scope.subject}:${connectionRevision}`}
-                client={client.browser}
-                controlAccountId={subject}
-                controlClient={
-                  !shared && features.control.state === 'available' && features.control.writable
-                    ? client.browserControl
-                    : undefined
-                }
-                agentId={agentId}
-                incarnation={features.runtime_incarnation}
-                active={panel === 'browser'}
-                running={running}
-                controlAdmission={policy.browser_takeover}
-                onReload={environment.reload}
-              />
-            ) : features ? (
-              <FeatureAvailability
-                name="Browser"
-                feature={features.browser}
-                onRetry={environment.reload}
-              />
-            ) : !client.files?.environment ? (
-              <p role="status">Environment capabilities not reported.</p>
-            ) : (
-              <EnvironmentAvailability subject="screen" environment={environment} />
-            )}
-          </>
-
-          {!shared &&
-          policy.desktop_enable &&
-          features?.browser.state === 'not_enabled' &&
-          features.runtime_incarnation &&
-          client.browser ? (
-            <EnableBrowser
-              key={`${agentId}:${features.runtime_incarnation}`}
-              client={client.browser}
-              agentId={agentId}
-              incarnation={features.runtime_incarnation}
-              onEnabled={environment.reload}
-            />
-          ) : null}
-          {machineAvailable && !agentBrowserActive && environment.state.status === 'error' ? (
-            <Button size="sm" onClick={environment.reload}>
-              Check environment again
-            </Button>
-          ) : null}
+          {lifecycleNotice}
+          <ComputerScreen
+            onReturnToConversation={onReturnToConversation}
+            agentId={agentId}
+            detail={detail}
+            shared={shared}
+            active={panel === 'browser'}
+            environment={environment}
+            lifecycleHeld={lifecycleHeld}
+            runtimeVersion={
+              resourceAvailability?.state === 'live'
+                ? resourceAvailability.runtimeVersion
+                : undefined
+            }
+            subject={subject}
+            lastScreen={lastScreen}
+            connectionRevision={connectionRevision}
+            running={running}
+            runId={operations?.activeRunId}
+            controlsReady={controlsReady}
+            mayViewHistory={!shared || authorized?.capabilities.includes('view_history') === true}
+            onStopForControl={onStopForControl}
+            onClose={onClose}
+          />
         </div>
       </aside>
     </>

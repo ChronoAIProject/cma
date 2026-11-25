@@ -120,6 +120,13 @@
               "null"
             ]
           },
+          "execution_reference": {
+            "description": "Provider-verified execution reference for this response, when available.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "last_non_admission_code": {
             "description": "Last precise retryable provider refusal, retained even after event expiry.",
             "type": [
@@ -135,6 +142,13 @@
             "type": "array"
           },
           "produced_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "produced_by": {
+            "description": "Upper bound from the earliest confirmed Answer receipt bound to this\nresponse. Only projected when the exact production time is unavailable.",
             "type": [
               "string",
               "null"
@@ -194,6 +208,13 @@
       },
       "ActivityDelivery": {
         "properties": {
+          "answer_response_id": {
+            "description": "Exact provider response bound to this confirmed Answer at delivery.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "confirmed_at": {
             "description": "Present only for a confirmed platform/transport receipt.",
             "type": [
@@ -2537,6 +2558,28 @@
         ],
         "type": "object"
       },
+      "ChannelRecordManagement": {
+        "properties": {
+          "record": {
+            "$ref": "#/components/schemas/ManagedRecord"
+          },
+          "record_id": {
+            "$ref": "#/components/schemas/RecordId"
+          },
+          "version": {
+            "description": "Storage version of this read; does not authorize a mutation or retry.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "record_id",
+          "version",
+          "record"
+        ],
+        "type": "object"
+      },
       "ChannelResponse": {
         "properties": {
           "channel_id": {
@@ -3327,6 +3370,15 @@
           "state"
         ],
         "type": "object"
+      },
+      "CoverageGap": {
+        "enum": [
+          "legacy_partial",
+          "retention_expired",
+          "unreadable_record",
+          "capture_gap"
+        ],
+        "type": "string"
       },
       "CreateAppRequest": {
         "additionalProperties": false,
@@ -4498,14 +4550,144 @@
           }
         ]
       },
+      "HistoryCoverage": {
+        "properties": {
+          "all_writers_capture_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "all_writers_capture_until": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "complete_event_enumeration": {
+            "type": "boolean"
+          },
+          "current_summaries": {
+            "description": "Summaries may advance during paging; intermediate transitions are not archived.",
+            "type": "boolean"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageGap"
+            },
+            "type": "array"
+          },
+          "retained_from": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "complete_event_enumeration",
+          "gaps",
+          "retained_from",
+          "current_summaries"
+        ],
+        "type": "object"
+      },
       "HistoryCursor": {
         "type": "string"
+      },
+      "HistoryDetailPart": {
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "index": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "sha256",
+          "data"
+        ],
+        "type": "object"
+      },
+      "HistoryDetails": {
+        "properties": {
+          "detail_incomplete": {
+            "type": "boolean"
+          },
+          "detail_truncated": {
+            "type": "boolean"
+          },
+          "encoding": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "string"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parts": {
+            "description": "Concatenate decoded parts in index order, then deserialize ChannelActivity.",
+            "items": {
+              "$ref": "#/components/schemas/HistoryDetailPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "generation",
+          "encoding",
+          "parts",
+          "detail_incomplete",
+          "detail_truncated"
+        ],
+        "type": "object"
       },
       "HistoryDirection": {
         "enum": [
           "backward"
         ],
         "type": "string"
+      },
+      "HistoryItem": {
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/ChannelActivity"
+          },
+          "detail_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "detail_incomplete": {
+            "type": "boolean"
+          },
+          "detail_truncated": {
+            "type": "boolean"
+          },
+          "history_event_id": {
+            "description": "Opaque identity used by the details route; activity.event_id is the source identity.",
+            "type": "string"
+          },
+          "legacy_partial": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "history_event_id",
+          "activity",
+          "detail_incomplete",
+          "detail_truncated",
+          "legacy_partial"
+        ],
+        "type": "object"
       },
       "HistoryMessage": {
         "additionalProperties": false,
@@ -4569,6 +4751,53 @@
           "media"
         ],
         "type": "string"
+      },
+      "HistoryPage": {
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/HistoryCoverage"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryItem"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "range": {
+            "$ref": "#/components/schemas/HistoryRange"
+          }
+        },
+        "required": [
+          "items",
+          "has_more",
+          "range",
+          "coverage"
+        ],
+        "type": "object"
+      },
+      "HistoryRange": {
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "until"
+        ],
+        "type": "object"
       },
       "HmacSecretRequest": {
         "additionalProperties": false,
@@ -4778,6 +5007,32 @@
         ],
         "type": "string"
       },
+      "LegacyRetirement": {
+        "properties": {
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/LegacyRetirementState"
+          }
+        },
+        "required": [
+          "expected_version",
+          "state"
+        ],
+        "type": "object"
+      },
+      "LegacyRetirementState": {
+        "enum": [
+          "available",
+          "blocked_missing_credential",
+          "pending",
+          "cleanup_unconfirmed"
+        ],
+        "type": "string"
+      },
       "ManageThreadRequest": {
         "additionalProperties": false,
         "properties": {
@@ -4799,6 +5054,102 @@
           "action"
         ],
         "type": "object"
+      },
+      "ManagedProvider": {
+        "properties": {
+          "level": {
+            "$ref": "#/components/schemas/ConformanceLevel"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "level"
+        ],
+        "type": "object"
+      },
+      "ManagedRecord": {
+        "oneOf": [
+          {
+            "properties": {
+              "address": {
+                "$ref": "#/components/schemas/RecordedAddress"
+              },
+              "creation": {
+                "$ref": "#/components/schemas/RecordedCreation"
+              },
+              "name": {
+                "type": "string"
+              },
+              "owner": {
+                "$ref": "#/components/schemas/NyxIdIdentity"
+              },
+              "pending_operation": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/RecordedOperation"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "provider": {
+                "$ref": "#/components/schemas/ManagedProvider"
+              },
+              "retirement": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LegacyRetirement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "retirement_expected_version": {
+                "description": "Expected version for the retained Delete intent of a retired incomplete channel.",
+                "format": "int64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "state": {
+                "enum": [
+                  "valid"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "owner",
+              "provider",
+              "creation",
+              "address",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "invalid"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "McpAuth": {
         "oneOf": [
@@ -6965,6 +7316,78 @@
       "RecordId": {
         "type": "string"
       },
+      "RecordedAddress": {
+        "oneOf": [
+          {
+            "properties": {
+              "channel_id": {
+                "$ref": "#/components/schemas/ChannelId"
+              },
+              "endpoints": {
+                "$ref": "#/components/schemas/EndpointResponse"
+              },
+              "state": {
+                "enum": [
+                  "available"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "channel_id",
+              "endpoints",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "not_recorded"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "unverifiable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "RecordedCreation": {
+        "enum": [
+          "legacy",
+          "incomplete",
+          "complete"
+        ],
+        "type": "string"
+      },
+      "RecordedOperation": {
+        "enum": [
+          "create",
+          "update",
+          "delete",
+          "audit_routing",
+          "audit_attachments"
+        ],
+        "type": "string"
+      },
       "Refusal": {
         "enum": [
           "bot_sender",
@@ -7209,6 +7632,12 @@
               "null"
             ]
           },
+          "native_telegram_member_joins_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_telegram_message_events_enabled": {
             "type": [
               "boolean",
@@ -7278,6 +7707,12 @@
           },
           "relay_raw_verification_writes_enabled": {
             "type": "boolean"
+          },
+          "relay_telegram_member_joins_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "response_recovery_providers": {
             "description": "Registered provider slugs with response replay. Configuration, not connection health.",
@@ -7858,6 +8293,29 @@
         "description": "A secret that only appears in the encrypted channel blob.",
         "type": "string"
       },
+      "SideMessageBody": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
+      "SideMessageCapability": {
+        "properties": {
+          "available": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "type": "object"
+      },
       "Sink": {
         "oneOf": [
           {
@@ -8054,6 +8512,14 @@
                 "description": "Admit native channel posts as non-human channel identities; requires message_events.",
                 "type": "boolean"
               },
+              "member_join_chat_ids": {
+                "description": "Exact Telegram groups that opted into one event per human membership update.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
               "message_events": {
                 "description": "Retain original message routing for edits and attributable reactions.",
                 "type": "boolean"
@@ -8232,6 +8698,14 @@
                     "type": "null"
                   }
                 ]
+              },
+              "member_join_chat_ids": {
+                "description": "Exact Telegram relay groups opted into one event per human membership update.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": "array"
               },
               "platform": {
                 "$ref": "#/components/schemas/Platform"
@@ -8665,6 +9139,17 @@
                 "description": "Admit native channel posts as non-human channel identities; requires message_events.",
                 "type": "boolean"
               },
+              "member_join_chat_ids": {
+                "description": "Exact opted-in group IDs. Omit to retain the saved list; send an empty list to clear it.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
               "message_events": {
                 "description": "Retain original message routing for edits and attributable reactions.",
                 "type": "boolean"
@@ -8838,6 +9323,17 @@
                   {
                     "type": "null"
                   }
+                ]
+              },
+              "member_join_chat_ids": {
+                "description": "Exact opted-in Telegram relay group IDs. Omit to retain them; send an empty list to clear them.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": [
+                  "array",
+                  "null"
                 ]
               },
               "platform": {
@@ -10422,7 +10918,7 @@
           },
           "default": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
                 }
@@ -10487,7 +10983,7 @@
           },
           "default": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
                 }
@@ -10536,7 +11032,7 @@
           },
           "default": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
                 }
@@ -10590,7 +11086,7 @@
           },
           "default": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
                 }
@@ -10640,6 +11136,121 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channel-records/{record_id}/management": {
+      "delete": {
+        "operationId": "retireLegacyChannelRecord",
+        "parameters": [
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      },
+      "get": {
+        "operationId": "getChannelRecordManagement",
+        "parameters": [
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelRecordManagement"
                 }
               }
             },
@@ -10825,9 +11436,21 @@
               "minimum": 0,
               "type": "integer"
             }
+          },
+          {
+            "description": "Retain the provider cleanup intent for an incomplete channel.",
+            "in": "query",
+            "name": "retire_unready",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
+          "202": {
+            "description": "Incomplete channel retired, provider cleanup pending"
+          },
           "204": {
             "description": ""
           },
@@ -11007,6 +11630,183 @@
               }
             },
             "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/activity/history": {
+      "get": {
+        "operationId": "getChannelActivityHistory",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid range or cursor"
+          },
+          "410": {
+            "description": "Paging session expired"
+          },
+          "503": {
+            "description": "History unavailable"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/activity/history/events/{event_id}/details": {
+      "get": {
+        "operationId": "getChannelActivityHistoryDetails",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryDetails"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid detail cursor"
+          },
+          "410": {
+            "description": "Paging session expired"
           },
           "default": {
             "content": {
@@ -12686,6 +13486,112 @@
         ]
       }
     },
+    "/events/{event_ref}/side-messages": {
+      "get": {
+        "operationId": "getSideMessageCapability",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SideMessageCapability"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      },
+      "post": {
+        "operationId": "sendSideMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SideMessageBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
     "/events/{event_ref}/threads": {
       "get": {
         "operationId": "listEventThreads",
@@ -14092,7 +14998,7 @@
           },
           "default": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
                 }

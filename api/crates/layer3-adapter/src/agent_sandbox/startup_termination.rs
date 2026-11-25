@@ -1,7 +1,7 @@
 //! Exact owned Pod evidence for startup failure detection. Identities retain the
 //! same unmodified containerID format used by model::pod_binding.
 use super::{model, pods, AgentSandboxClient, PodBinding};
-use crate::runtime_startup::{StartupIncarnation, StartupTermination};
+use crate::runtime_startup::{StartupHistory, StartupIncarnation, StartupTermination};
 use crate::RuntimeStartupFailureClass;
 use k8s_openapi::api::core::v1::Pod;
 use kube::{api::DynamicObject, api::ListParams, ResourceExt};
@@ -32,6 +32,14 @@ impl AgentSandboxClient {
         &self,
         expected: &PodBinding,
     ) -> Option<Option<StartupTermination>> {
+        Some(termination(&self.owned_startup_pod(expected).await?))
+    }
+
+    pub(crate) async fn startup_history(&self, expected: &PodBinding) -> Option<StartupHistory> {
+        startup_history(&self.owned_startup_pod(expected).await?, expected)
+    }
+
+    async fn owned_startup_pod(&self, expected: &PodBinding) -> Option<Pod> {
         let pod = self.pods.get(&expected.pod_name).await.ok()?;
         if pod.name_any() != expected.pod_name
             || pod.uid().as_deref() != Some(&expected.pod_uid)
@@ -44,7 +52,7 @@ impl AgentSandboxClient {
         {
             return None;
         }
-        Some(termination(&pod))
+        Some(pod)
     }
 
     // Used only while open: establish a replacement boot without waiting for Ready.
@@ -69,6 +77,52 @@ impl AgentSandboxClient {
             .flatten();
         Some((boot, binding))
     }
+}
+
+fn startup_history(pod: &Pod, expected: &PodBinding) -> Option<StartupHistory> {
+    if pod.metadata.deletion_timestamp.is_some() {
+        return None;
+    }
+    let status = pod.status.as_ref()?;
+    if status.phase.as_deref() != Some("Running")
+        || !status.conditions.as_ref().is_some_and(|conditions| {
+            conditions
+                .iter()
+                .any(|condition| condition.type_ == "Ready" && condition.status == "True")
+        })
+    {
+        return None;
+    }
+    let container = status
+        .container_statuses
+        .as_ref()?
+        .iter()
+        .find(|container| container.name == "runtime")?;
+    let current = container.state.as_ref()?.running.as_ref()?;
+    let current_process = container.container_id.as_deref()?;
+    let previous = container.last_state.as_ref()?.terminated.as_ref()?;
+    if !container.ready
+        || Some(container.restart_count) != expected.runtime_restart_count
+        || Some(current_process) != expected.runtime_container_id.as_deref()
+        || previous
+            .container_id
+            .as_deref()
+            .is_none_or(|id| id.is_empty() || id == current_process)
+        || previous.exit_code == 0
+    {
+        return None;
+    }
+    let started: std::time::SystemTime = previous.started_at.as_ref()?.0.into();
+    let finished: std::time::SystemTime = previous.finished_at.as_ref()?.0.into();
+    let current_started: std::time::SystemTime = current.started_at.as_ref()?.0.into();
+    if finished > current_started || current_started > std::time::SystemTime::now() {
+        return None;
+    }
+    let duration = finished.duration_since(started).ok()?;
+    Some(StartupHistory {
+        class: termination(pod)?.class,
+        duration,
+    })
 }
 
 fn termination(pod: &Pod) -> Option<StartupTermination> {

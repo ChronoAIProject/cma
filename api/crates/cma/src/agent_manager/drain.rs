@@ -5,31 +5,37 @@ use layer2_core::agent_ownership::{Authority, OwnershipError};
 use std::future::Future;
 
 #[derive(Debug)]
-struct HandoffFailure {
+pub(crate) struct HandoffFailure {
     phase: &'static str,
     error: OwnershipError,
 }
 
-async fn handoff(
+pub(crate) async fn handoff(
     coordinator: &OwnershipCoordinator,
     authority: &Arc<Authority>,
     revoke: impl Future<Output = Result<(), OwnershipError>>,
 ) -> Result<(), HandoffFailure> {
-    let mut receivers_confirmed = false;
+    let mut receivers_settled = false;
     let result = coordinator
         .handoff(authority, async {
             revoke.await?;
-            receivers_confirmed = true;
+            receivers_settled = true;
             Ok(())
         })
         .await;
-    result.map_err(|error| HandoffFailure {
-        phase: if receivers_confirmed {
+    result.map_err(|error| {
+        let phase = if receivers_settled {
             "durable_release"
         } else {
             "receiver_revocation"
-        },
-        error,
+        };
+        let failure = HandoffFailure { phase, error };
+        authority.log_receiver_handoff_failure(
+            failure.phase,
+            &failure.error,
+            "Agent Manager drain handoff failed",
+        );
+        failure
     })
 }
 
@@ -43,10 +49,19 @@ impl AgentManager {
     }
 
     pub async fn drain(&self) -> Result<(), String> {
+        if self.coordinator.contains_failures() {
+            return self
+                .drain_contained(
+                    DrainCause::PreStop,
+                    Instant::now() + Duration::from_secs(23),
+                )
+                .await;
+        }
         self.stop_admission();
         // Include serialization, membership IO, task joins and all receiver IO
         // in one budget below the signed preStop client's 25-second timeout.
-        let result = tokio::time::timeout(Duration::from_secs(23), self.drain_inner()).await;
+        let until = Instant::now() + Duration::from_secs(23);
+        let result = tokio::time::timeout_at(until, self.drain_inner(until)).await;
         match result {
             Ok(Ok(())) => Ok(()),
             result => {
@@ -60,12 +75,16 @@ impl AgentManager {
         }
     }
 
-    async fn drain_inner(&self) -> Result<(), String> {
+    async fn drain_inner(&self, until: Instant) -> Result<(), String> {
         let mut drained = self.drain.lock().await;
         if *drained {
             return Ok(());
         }
-        let owned = self.coordinator.begin_drain().await;
+        let custody = self.coordinator.prepare_drain(until).await;
+        let owned = self.coordinator.owned().await;
+        for authority in &owned {
+            authority.revoke();
+        }
         self.lifecycle
             .get()
             .ok_or("Agent Manager lifecycle drain is missing")?
@@ -74,17 +93,12 @@ impl AgentManager {
             .map_err(|error| error.to_string())?;
         let results = stream::iter(owned.into_iter().map(|authority| async move {
             self.registry.detach_owner(&authority.token);
-            let result =
-                handoff(&self.coordinator, &authority, authority.revoke_transports()).await;
-            if let Err(failure) = &result {
-                tracing::warn!(
-                    agent_id = %authority.token.agent_id,
-                    phase = failure.phase,
-                    error = %failure.error,
-                    "Agent Manager drain handoff failed"
-                );
-            }
-            result
+            handoff(
+                &self.coordinator,
+                &authority,
+                authority.revoke_transports_after_local_drain(),
+            )
+            .await
         }))
         .buffer_unordered(4)
         .collect::<Vec<_>>()
@@ -92,6 +106,7 @@ impl AgentManager {
         if results.iter().any(Result::is_err) {
             return Err("Agent Manager receiver drain was not confirmed".into());
         }
+        custody.map_err(|_| "Agent Manager lease operation drain was not confirmed")?;
         *drained = true;
         Ok(())
     }

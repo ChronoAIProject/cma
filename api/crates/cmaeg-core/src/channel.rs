@@ -1,7 +1,7 @@
 //! Channel definitions and their stateless gateway policy.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::{collections::BTreeSet, str::FromStr};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use utoipa::ToSchema;
@@ -12,6 +12,8 @@ use crate::{
     require_string, ValidationError,
 };
 
+mod admission;
+pub use admission::{AdmissionPolicy, BotMessageAdmission, GroupAdmission, IdentityAdmission};
 mod consumer;
 mod mutation;
 pub use mutation::{ChannelMutation, ChannelMutationKind};
@@ -25,7 +27,11 @@ pub use lark_resources::{LarkMessageEffectsBinding, LarkResourceBinding, LarkRes
 pub mod native_lark;
 mod partition;
 mod platform;
+mod profile_revision;
 mod provider;
+pub use profile_revision::{
+    ProfilePublication, ProfileRevisionView, ProfileRevisions, RetainedProfileRevision,
+};
 pub use provider::{ConformanceLevel, ProviderBinding, ProviderTarget};
 mod routing;
 mod routing_validation;
@@ -102,6 +108,10 @@ pub enum Source {
         /// Admit native channel posts as non-human channel identities; requires message_events.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         channel_posts: bool,
+        /// Exact Telegram groups that opted into one event per human membership update.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schema(max_items = 16)]
+        member_join_chat_ids: Vec<String>,
         bot_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bot_username: Option<String>,
@@ -153,6 +163,10 @@ pub enum Source {
         /// Optional exact NyxID connection for embedded Lark/Feishu resources.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_resources: Option<LarkResourceBinding>,
+        /// Exact Telegram relay groups opted into one event per human membership update.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schema(max_items = 16)]
+        member_join_chat_ids: Vec<String>,
         /// Explicit write authority; independent of resource reads.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_message_effects: Option<Box<LarkMessageEffectsBinding>>,
@@ -175,71 +189,6 @@ pub enum Source {
 pub enum CustomAuth {
     Hmac { key_id: String },
     NyxidKey { key_hashes: Vec<String> },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
-pub enum AdmissionPolicy {
-    All {},
-    Allowlist {
-        sender_ids: Vec<String>,
-    },
-    Scoped {
-        senders: IdentityAdmission,
-        chats: IdentityAdmission,
-        groups: GroupAdmission,
-        /// Native exact bot mentions only. The caller must bound downstream
-        /// automated execution; the gateway grants no human execution identity.
-        #[serde(default, skip_serializing_if = "BotMessageAdmission::is_deny")]
-        bot_messages: BotMessageAdmission,
-    },
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum BotMessageAdmission {
-    #[default]
-    Deny,
-    NativeMentions,
-}
-impl BotMessageAdmission {
-    pub fn is_deny(&self) -> bool {
-        *self == Self::Deny
-    }
-}
-impl AdmissionPolicy {
-    pub fn native_bot_mentions(&self) -> bool {
-        matches!(
-            self,
-            Self::Scoped {
-                bot_messages: BotMessageAdmission::NativeMentions,
-                ..
-            }
-        )
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(
-    rename_all = "snake_case",
-    tag = "type",
-    content = "ids",
-    deny_unknown_fields
-)]
-pub enum IdentityAdmission {
-    Deny,
-    Open,
-    Allowlist(Vec<String>),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GroupAdmission {
-    Deny,
-    All,
-    Mention,
-    ReplyToBot,
-    MentionOrReplyToBot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -337,6 +286,9 @@ impl ChannelDefinition {
             mutation.validate()?;
         }
         self.validate_head()?;
+        if let Some(revisions) = &self.secrets.profile_revisions {
+            revisions.validate(self)?;
+        }
         if self.validate_legacy_sources_and_partition().is_err() {
             sources::validate_extended_sources(&self.sources, &self.secrets)?;
             self.partition.validate_extended(&self.sources)?;
@@ -432,65 +384,5 @@ impl ChannelDefinition {
         OffsetDateTime::parse(&self.created_at, &Rfc3339)
             .map_err(|_| ValidationError::new("/created_at", "must be RFC 3339"))?;
         Ok(())
-    }
-
-    /// Serialize the private blob consumed by the sealing layer.
-    pub fn to_blob_json(&self) -> Value {
-        let mut object = serde_json::to_value(self)
-            .expect("channel definition is serializable without private fields")
-            .as_object()
-            .cloned()
-            .expect("channel definition is an object");
-        let mut secrets = json!({
-            "agent_key_hash": self.secrets.agent_key_hash,
-            "channel_key": self.secrets.channel_key.as_ref().map(Secret::as_str),
-            "hmac_secrets": self.secrets.hmac_secrets.iter().map(|(key, secret)| {
-                json!([key, secret.as_str()])
-            }).collect::<Vec<_>>(),
-            "provider_credential": self.secrets.provider_credential.as_ref().map(Secret::as_str),
-            "telegram_bot_token": self.secrets.telegram_bot_token.as_ref().map(Secret::as_str),
-            "telegram_webhook_secret": self.secrets.telegram_webhook_secret.as_ref().map(Secret::as_str),
-        });
-        // Emitted only when present, so a legacy blob keeps its exact bytes and
-        // an older image, which refuses the unknown key, can still read it.
-        if let Some(credentials) = &self.secrets.native_lark {
-            secrets["native_lark"] = credentials.private_json();
-        }
-        if let Some(credentials) = &self.secrets.whatsapp {
-            secrets["whatsapp"] = credentials.private_json();
-        }
-        if let Some(token) = &self.secrets.discord_bot_token {
-            secrets["discord_bot_token"] = json!(token.as_str());
-        }
-        if !self.secrets.consumer_keys.is_empty() {
-            secrets["consumer_keys"] = self
-                .secrets
-                .consumer_keys
-                .iter()
-                .map(|(id, secret)| json!([id, secret.as_str()]))
-                .collect();
-        }
-        if let Some(mutation) = &self.mutation {
-            object.insert(
-                "mutation".into(),
-                serde_json::to_value(mutation).expect("mutation serializes"),
-            );
-        }
-        object.insert("secrets".into(), secrets);
-        Value::Object(object)
-    }
-
-    /// Serialize the public view, retaining only the hash needed for auth.
-    pub fn to_public_json(&self) -> Value {
-        let mut object = serde_json::to_value(self)
-            .expect("channel definition is serializable without private fields")
-            .as_object()
-            .cloned()
-            .expect("channel definition is an object");
-        object.insert(
-            "secrets".into(),
-            json!({ "agent_key_hash": self.secrets.agent_key_hash }),
-        );
-        Value::Object(object)
     }
 }

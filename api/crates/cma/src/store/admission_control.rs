@@ -1,7 +1,8 @@
 //! Transactional operator control and its activity evidence on one singleton.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::admission::{AdmissionControl, AdmissionControlRead, AdmissionControlStore};
-use layer2_core::{PlatformSettings, StoreError, SubjectId};
+use layer2_core::{StoreError, SubjectId};
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::{Client, ClientSession, Collection};
 
@@ -17,17 +18,28 @@ use super::settings::SETTINGS;
 mod history;
 
 pub struct MongoAdmissionControlStore {
+    initial_settings: super::settings_defaults::InitialSettings,
     client: Client,
     settings: Collection<Document>,
     activity: Collection<ActivityDoc>,
 }
 
 impl MongoAdmissionControlStore {
+    #[cfg(test)]
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
+        Self::open_with_defaults(client, database, Default::default()).await
+    }
+
+    pub(super) async fn open_with_defaults(
+        client: &Client,
+        database: &str,
+        initial_settings: super::settings_defaults::InitialSettings,
+    ) -> Result<Self, StoreError> {
         let database = client.database(database);
         require_transaction_topology(&database).await?;
         schema::initialize_collections(&database, &[SETTINGS, ACTIVITY]).await?;
         Ok(Self {
+            initial_settings,
             client: client.clone(),
             settings: majority_collection(&database, SETTINGS),
             activity: majority_collection(&database, ACTIVITY),
@@ -88,8 +100,8 @@ impl MongoAdmissionControlStore {
                 )));
             }
         } else {
-            let settings =
-                mongodb::bson::serialize_to_bson(&PlatformSettings::default()).map_err(|_| {
+            let settings = mongodb::bson::serialize_to_bson(&self.initial_settings.platform())
+                .map_err(|_| {
                     ApplyError::Domain(StoreError::Malformed("serialize default settings".into()))
                 })?;
             self.settings
@@ -203,14 +215,14 @@ impl AdmissionControlStore for MongoAdmissionControlStore {
                     }
                 },
                 Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if is_transient(&error) || is_duplicate_key(&error) {
                         continue;
                     }
                     return Err(unavailable(&format!("write admission change: {error}")));
                 }
                 Err(ApplyError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
             }

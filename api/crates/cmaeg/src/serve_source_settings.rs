@@ -76,6 +76,7 @@ pub(super) async fn configure(
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
     state.lark_resource_writes_enabled = config.lark_resource_writes_enabled;
+    state.managed_telegram_setup_enabled = config.managed_telegram_setup_enabled;
     state.native_lark_intake_enabled = config.native_lark_intake_enabled;
     state.native_lark_controls_enabled = config.native_lark_controls_enabled;
     state.native_lark_forms_enabled = config.native_lark_forms_enabled;
@@ -97,6 +98,8 @@ pub(super) async fn configure(
         config.routing.admission_enabled && config.routing.recovery_enabled;
     state.lark_message_effects_writes_enabled = config.lark_message_effects_writes_enabled;
     state.native_discord_writes_enabled = config.native_discord_writes_enabled;
+    state.native_telegram_member_joins_enabled = config.native_telegram_member_joins_enabled;
+    state.relay_telegram_member_joins_enabled = config.relay_telegram_member_joins_enabled;
     state.native_telegram_message_events_writes_enabled =
         config.native_telegram_message_events_writes_enabled;
     state.native_telegram_durable_admission_enabled =
@@ -204,7 +207,9 @@ pub(super) fn native_typing(
 
 impl crate::ingress::IngressState {
     /// Preserve independent intake gates while composing all native source settings.
-    pub(super) fn with_native_intake_config(self, config: &Config) -> Self {
+    pub(super) fn with_native_intake_config(mut self, config: &Config) -> Self {
+        self.native_telegram_member_joins_enabled = config.native_telegram_member_joins_enabled;
+        self.relay_telegram_member_joins_enabled = config.relay_telegram_member_joins_enabled;
         self.with_media_enabled(config.media.enabled)
             .with_native_lark_intake(config.native_lark_intake_enabled)
             .with_native_lark_media(config.native_lark_media_enabled)

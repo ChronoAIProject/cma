@@ -6,6 +6,8 @@ import type { AgentModelOption, AgentSettingsView } from '../api/client';
 import { Button } from '../ui/Button';
 import { useSettingsEditor, type SettingsEditorAdapter } from './useSettingsEditor';
 import { unconfirmedSettingsWarning, useUnconfirmedSettings } from './useUnconfirmedSettings';
+import { parseSettingsIntentBody } from './settingsIntent';
+import { agentTransportJournal } from './transport/journal';
 import { Presence } from '../ui/Presence';
 import { ModelEffortPicker } from './ModelEffortPicker';
 import { PermissionChip } from './PermissionChip';
@@ -16,6 +18,7 @@ import './ComposerSettings.css';
 interface SessionSettingsProps {
   readonly usage?: AgentUsage;
   readonly agentId: string;
+  readonly viewerId?: string;
   readonly active: boolean;
   readonly runtimeReady: boolean;
   readonly busy: boolean;
@@ -27,17 +30,22 @@ const settingsProposal = (view: AgentSettingsView): AgentSettingsView => ({
   reasoning_effort: view.reasoning_effort,
   permission_mode: view.permission_mode,
 });
+const settingsFields = ['model', 'reasoning_effort', 'permission_mode'] as const;
+const settingsFieldLabels = {
+  model: 'model',
+  reasoning_effort: 'reasoning effort',
+  permission_mode: 'permission mode',
+};
 const sameSettings = (left: AgentSettingsView, right: AgentSettingsView) =>
-  left.model === right.model &&
-  left.reasoning_effort === right.reasoning_effort &&
-  left.permission_mode === right.permission_mode;
+  settingsFields.every((field) => left[field] === right[field]);
 
 export function SessionSettings(props: SessionSettingsProps) {
-  return <SessionSettingsForm key={props.agentId} {...props} />;
+  return <SessionSettingsForm key={JSON.stringify([props.viewerId, props.agentId])} {...props} />;
 }
 
 function SessionSettingsForm({
   agentId,
+  viewerId,
   active,
   runtimeReady,
   busy,
@@ -67,15 +75,26 @@ function SessionSettingsForm({
       body: (_view, proposal) => ({ ...settingsProposal(proposal), model: proposal.model.trim() }),
       equal: sameSettings,
       pending: (view) => view.pending === true,
+      mergeFields: settingsFields,
+      retention: viewerId
+        ? {
+            journal: () =>
+              agentTransportJournal(sessionStorage, viewerId, agentId).settingsIntent(
+                'settings',
+                parseSettingsIntentBody,
+              ),
+            proposal: settingsProposal,
+          }
+        : undefined,
     }),
-    [client, agentId],
+    [client, agentId, viewerId],
   );
   const editor = useSettingsEditor(adapter, active && !!client.readAgentSettings);
   const { proposal: value, snapshot: saved, intent } = editor;
   const error = editor.failure?.message;
   const pending = editor.saving;
   const confirmed = editor.confirmed;
-  useUnconfirmedSettings(intent !== undefined);
+  useUnconfirmedSettings(intent !== undefined && !viewerId);
   const [modelsReload, setModelsReload] = useState(0);
   const [models, setModels] = useState<readonly AgentModelOption[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
@@ -114,7 +133,9 @@ function SessionSettingsForm({
   );
   const draft =
     unavailableModelChange && !intent && value && saved ? { ...value, model: saved.model } : value;
-  const changed = Boolean(draft && saved && !sameSettings(draft, saved));
+  const changedFields =
+    draft && saved ? settingsFields.filter((field) => draft[field] !== saved[field]) : [];
+  const changed = changedFields.length > 0;
   const update = async () => {
     if (busy || !runtimeReady || !draft || !editor.canApply) return;
     if (!intent) editor.edit(draft);
@@ -145,21 +166,22 @@ function SessionSettingsForm({
   const change = (next: AgentSettingsView) => {
     editor.edit(next);
   };
-  const summary = draft
-    ? `${modelLabel(models, draft.model)} · ${effortLabel(draft.reasoning_effort)} · ${permissionLabel(draft.permission_mode)}`
+  const summaryModel = saved ? modelLabel(models, saved.model) : '';
+  const summary = saved
+    ? `${summaryModel} · ${effortLabel(saved.reasoning_effort)} · ${permissionLabel(saved.permission_mode)}`
     : undefined;
-  const compactSummary = draft
-    ? `${modelLabel(models, draft.model).match(/\(([^)]+)\)/)?.[1] ?? modelLabel(models, draft.model)} · ${effortLabel(draft.reasoning_effort)}`
+  const compactSummary = saved
+    ? `${summaryModel.match(/\(([^)]+)\)/)?.[1] ?? summaryModel} · ${effortLabel(saved.reasoning_effort)}`
     : undefined;
-  const settingsTooltip = draft
-    ? `${modelLabel(models, draft.model)} · ${effortLabel(draft.reasoning_effort)} reasoning · ${permissionLabel(draft.permission_mode)}`
+  const settingsTooltip = saved
+    ? `${summaryModel} · ${effortLabel(saved.reasoning_effort)} reasoning · ${permissionLabel(saved.permission_mode)}`
     : undefined;
   return (
     <>
       <span id={usageId} className="sr-only">
         {usageText}
       </span>
-      {draft ? (
+      {draft && saved ? (
         <>
           <button
             type="button"
@@ -208,13 +230,19 @@ function SessionSettingsForm({
         </p>
       )}
       <div className="agent-settings__status">
+        {changed && !intent && !pending ? (
+          <p role="status">
+            Unapplied changes to{' '}
+            {changedFields.map((field) => settingsFieldLabels[field]).join(', ')}.
+          </p>
+        ) : null}
         {editor.pending ? (
           <p role="status">Waiting for the runtime to confirm these settings.</p>
         ) : null}
         {busy && changed ? (
           <p role="status">Settings can be changed after the current turn finishes.</p>
         ) : null}
-        {intent ? <p role="status">{unconfirmedSettingsWarning}</p> : null}
+        {intent ? <p role="status">{unconfirmedSettingsWarning(viewerId)}</p> : null}
         {editor.waiting ? <p role="status">Waiting before another request is allowed.</p> : null}
         {error ? <p role="alert">{error}</p> : null}
         {error && draft ? (

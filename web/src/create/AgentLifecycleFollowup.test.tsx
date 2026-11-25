@@ -3,8 +3,9 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { AgentLifecycleOperationView } from '../api/client';
 import { agentClient } from '../test/agent';
 import { connectionClient } from '../connections/client';
-import { AgentLifecycleFollowup } from './AgentLifecycleFollowup';
+import { AgentLifecycleFollowup, type LifecycleFollowupView } from './AgentLifecycleFollowup';
 import { lifecycleScopeForAgent, lifecycleStorageKey } from './lifecycleIntent';
+import { lifecycleRecoveryKey } from './lifecycleIntentStorage';
 
 const body = {
   name: 'Created agent',
@@ -12,6 +13,10 @@ const body = {
   repository: { url: 'https://github.com/org/repo' },
 };
 const key = lifecycleStorageKey('owner', 'wsp_1');
+const recoveryKey = lifecycleRecoveryKey(
+  { owner: 'owner', workspaceId: 'wsp_1' },
+  { agentId: 'agt_1', operationId: 'operation-one' },
+);
 const running: AgentLifecycleOperationView = {
   id: 'operation-one',
   status: 'running',
@@ -48,12 +53,62 @@ it('continues observation after reload without resubmitting, and clears only con
   expect(screen.getByText('Workspace')).toBeInTheDocument();
   expect(screen.getByText('Service access')).toBeInTheDocument();
   expect(screen.getByText('Agent startup')).toBeInTheDocument();
-  expect(sessionStorage.getItem(key)).toContain('original-key');
+  expect(sessionStorage.getItem(key)).toBeNull();
+  expect(sessionStorage.getItem(recoveryKey)).toContain('original-key');
   first.unmount();
   operation = { ...running, status: 'succeeded' };
   render(<AgentLifecycleFollowup client={client} viewerId="owner" agentId="agt_1" />);
-  await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull());
+  await waitFor(() => expect(sessionStorage.getItem(recoveryKey)).toBeNull());
+  expect(sessionStorage.getItem(key)).toBeNull();
   expect(create).not.toHaveBeenCalled();
+});
+
+it('suspends reads and stale recovery callbacks without losing the retained request or mounted child', async () => {
+  let finish!: (operation: AgentLifecycleOperationView) => void;
+  const read = vi.fn<
+    (id: string, options?: { signal?: AbortSignal }) => Promise<AgentLifecycleOperationView>
+  >(
+    () =>
+      new Promise<AgentLifecycleOperationView>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const create = vi.fn();
+  const client = agentClient({ readAgentLifecycle: read, createAgentLifecycle: create });
+  let observed: LifecycleFollowupView | undefined;
+  const show = (enabled: boolean) => (
+    <AgentLifecycleFollowup
+      client={client}
+      viewerId="owner"
+      agentId="agt_1"
+      enabled={enabled}
+      render={(value) => {
+        observed = value;
+        return <input aria-label="Mounted draft" />;
+      }}
+    />
+  );
+  const view = render(show(true));
+  await waitFor(() => expect(read).toHaveBeenCalledOnce());
+  const input = screen.getByLabelText('Mounted draft');
+  fireEvent.change(input, { target: { value: 'Unsent text' } });
+  const stale = observed!.lifecycle!;
+  const retained = sessionStorage.getItem(recoveryKey);
+  view.rerender(show(false));
+  expect(read.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+  await act(async () => {
+    finish({ ...running, status: 'succeeded' });
+    await stale.submit();
+    stale.clear();
+  });
+  expect(observed!.lifecycle!.operation).toBeUndefined();
+  expect(screen.getByLabelText('Mounted draft')).toBe(input);
+  expect(input).toHaveValue('Unsent text');
+  expect(sessionStorage.getItem(recoveryKey)).toBe(retained);
+  expect(create).not.toHaveBeenCalled();
+  view.rerender(show(true));
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  expect(screen.getByLabelText('Mounted draft')).toBe(input);
 });
 
 it('recovers a worker connection gate with the original creation body/key only after an explicit action', async () => {
@@ -92,7 +147,8 @@ it('recovers a worker connection gate with the original creation body/key only a
     expect.objectContaining({ idempotencyKey: 'original-key' }),
   );
   expect(check).toHaveBeenCalledWith(target, undefined, expect.any(AbortSignal));
-  await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull());
+  await waitFor(() => expect(sessionStorage.getItem(recoveryKey)).toBeNull());
+  expect(sessionStorage.getItem(key)).toBeNull();
 });
 
 it.each(['owner', 'agent', 'client', 'unmount'] as const)(
@@ -132,7 +188,8 @@ it.each(['owner', 'agent', 'client', 'unmount'] as const)(
       resolve({ owner: 'owner', ready: true, checked_at: '2026-10-14T00:00:00Z', services: [] }),
     );
     expect(create).not.toHaveBeenCalled();
-    expect(sessionStorage.getItem(key)).toContain('original-key');
+    expect(sessionStorage.getItem(key)).toBeNull();
+    expect(sessionStorage.getItem(recoveryKey)).toContain('original-key');
   },
 );
 
@@ -153,7 +210,8 @@ it('refuses mismatched operation lineage and preserves the recoverable record', 
     />,
   );
   await screen.findByText('Agent setup identity could not be verified.');
-  expect(sessionStorage.getItem(key)).toContain('original-key');
+  expect(sessionStorage.getItem(key)).toBeNull();
+  expect(sessionStorage.getItem(recoveryKey)).toContain('original-key');
   expect(create).not.toHaveBeenCalled();
 });
 

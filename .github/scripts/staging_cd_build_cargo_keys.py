@@ -73,9 +73,16 @@ def identity(root, component, *, day=None, staging_am_opt_level=""):
     workspace = tomllib.loads((api / "Cargo.toml").read_text())
     configs = {p.relative_to(api).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                for p in sorted((api / ".cargo").rglob("*")) if p.is_file()}
-    # The Rust base tag and native Alpine packages can change independently of Git.
+    # The Rust base tag and native Alpine packages can change independently of
+    # Git, so the exact key still turns over each UTC day. The day is part of the
+    # graph, not the family: across the boundary a bundle may seed only rustc's
+    # incremental state, as across a dependency change. Rustc validates that
+    # state against its compiler and every upstream crate, and the bundle never
+    # carries dependency objects, build-script output or the registry across it.
+    # In the family, the first build of each day recompiled the whole workspace
+    # from nothing (AM 32 minutes on 21 Nov 2026 instead of 14).
     refresh = day if day is not None else datetime.now(timezone.utc).date()
-    compiler = {"refresh_day": refresh.isoformat(), "platform": "linux/amd64",
+    compiler = {"platform": "linux/amd64",
                 "target": "x86_64-unknown-linux-musl", "profile": "release",
                 "release_profile": workspace.get("profile", {}).get("release", {}),
                 "config": configs, "toolchain": tomllib.loads((api / "rust-toolchain.toml").read_text()),
@@ -96,5 +103,6 @@ def identity(root, component, *, day=None, staging_am_opt_level=""):
             tables["workspace"]["package"] = {k: v for k, v in settings.get("package", {}).items()
                                               if k in PACKAGE_GRAPH_FIELDS}
         manifests[path.relative_to(api).as_posix()] = tables
-    graph = digest({"lock": hashlib.sha256((api / "Cargo.lock").read_bytes()).hexdigest(), "manifests": manifests})
+    graph = digest({"refresh_day": refresh.isoformat(),
+                    "lock": hashlib.sha256((api / "Cargo.lock").read_bytes()).hexdigest(), "manifests": manifests})
     return CargoKey(f"{CARGO_NAMESPACE}{component}-{family}-", graph)

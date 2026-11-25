@@ -29,6 +29,8 @@ const MAX_NON_HUMAN_PROVIDERS: usize = 8;
 pub struct RoutingConfig {
     /// Keep enabled while any durably admitted target still needs recovery.
     pub recovery_enabled: bool,
+    /// Collect bounded first-write observations for routed events.
+    pub provider_start_measurement_enabled: bool,
     /// Reader-first writer gate for immutable self-service Custom selection.
     pub custom_durable_execution_enabled: bool,
     /// Keep the generation reader active after any binding migrates.
@@ -78,6 +80,7 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
         quoted_context_enabled: write_flag("CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED")?,
         media_continuations_enabled: write_flag("CMAEG_MEDIA_CONTINUATIONS_ENABLED")?,
         recovery_enabled: write_flag(CMAEG_ROUTED_RECOVERY_ENABLED)?,
+        provider_start_measurement_enabled: write_flag("CMAEG_PROVIDER_START_MEASUREMENT_ENABLED")?,
         admission_enabled: write_flag(CMAEG_ROUTED_ADMISSION_ENABLED)?,
         execution_records: execution_records(
             env::var(CMAEG_ROUTED_CHANNEL_RECORDS)
@@ -110,6 +113,7 @@ impl RoutingConfig {
         if !self.recovery_enabled
             && (self.custom_durable_execution_enabled
                 || self.admission_enabled
+                || self.provider_start_measurement_enabled
                 || self.quoted_context_enabled
                 || self.media_continuations_enabled
                 || self.binding_preparation_enabled
@@ -248,15 +252,10 @@ pub(crate) fn github_writes_enabled() -> Result<bool, super::ConfigError> {
     write_flag("CMAEG_GITHUB_ENABLED")
 }
 
-/// Reader-first authoring gate; an unset value never enables a new stored shape.
+/// Reader-first authoring gate. Unset is off unless the gate has graduated
+/// (see `super::graduated`); an explicit `false` always turns it off.
 pub(super) fn write_flag(name: &str) -> Result<bool, super::ConfigError> {
-    match std::env::var(name).as_deref() {
-        Ok("true") => Ok(true),
-        Ok("false") | Err(std::env::VarError::NotPresent) => Ok(false),
-        _ => Err(super::ConfigError::InvalidManagement {
-            detail: format!("{name} must be true or false"),
-        }),
-    }
+    super::graduated::flag(name, &mut |key| std::env::var(key))
 }
 
 #[cfg(test)]
@@ -265,7 +264,20 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn self_service_custom_writer_defaults_off_and_requires_durable_reader() {
+    fn provider_start_measurement_requires_the_durable_reader() {
+        let config = RoutingConfig::default();
+        assert!(!config.provider_start_measurement_enabled);
+        let mut enabled = RoutingConfig {
+            provider_start_measurement_enabled: true,
+            ..config
+        };
+        assert!(enabled.validate().is_err());
+        enabled.recovery_enabled = true;
+        assert!(enabled.validate().is_ok());
+    }
+
+    #[test]
+    fn self_service_custom_writer_requires_durable_reader() {
         let mut config = RoutingConfig::default();
         assert!(!config.custom_durable_execution_enabled);
         config.custom_durable_execution_enabled = true;

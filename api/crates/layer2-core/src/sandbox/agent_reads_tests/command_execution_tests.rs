@@ -15,7 +15,10 @@ mod lifecycle_dispatch;
 #[path = "composer_admission_tests.rs"]
 mod composer_admission;
 
-async fn grant(store: &InMemorySandboxStore, mode: ShareMode) -> ResourceShare {
+#[path = "command_funding_tests.rs"]
+mod funding;
+
+pub(super) async fn grant(store: &InMemorySandboxStore, mode: ShareMode) -> ResourceShare {
     let snapshot = store
         .resource_access_snapshot(&ResourceTarget::Sandbox {
             sandbox_id: SandboxId("sandbox".into()),

@@ -9,7 +9,7 @@ import {
 import type { ToolGroup } from './timeline';
 import { toolOutcome, toolOutcomeWord } from './toolStatus';
 import { ComputerContext } from './environment/context';
-import { durationLabel, toolDuration } from './workspaceTime';
+import { toolTimingLabel } from './toolTiming';
 import { toolCategory, summarizeTools, conciseToolError } from './toolSummary';
 import { ToolIcon } from './ToolIcon';
 import './ToolCallRows.css';
@@ -25,13 +25,14 @@ function ToolCallLine({
   const computer = useContext(ComputerContext);
   const outcome = toolOutcome(tool, activeRunId);
   const category = toolCategory(tool);
+  const title = tool.title.trim() ? tool.title : category === 'command' ? 'Command' : 'Tool call';
   const screen = screenOperation(tool);
-  const duration = toolDuration(tool.startedAt, tool.finishedAt);
+  const duration = toolTimingLabel(tool);
   const detailsId = useId();
   return (
     <article
       className="agent-event--tool"
-      aria-label={`Tool call: ${tool.title}`}
+      aria-label={`Tool call: ${title}`}
       data-outcome={outcome}
     >
       {screen ? (
@@ -39,9 +40,14 @@ function ToolCallLine({
           <span className="tool-call__icon" aria-hidden="true">
             <ToolIcon kind={screen.action} />
           </span>
-          <span className="tool-call__literal" title={tool.title}>
+          <span className="tool-call__literal" title={title}>
             {screen.description}
           </span>
+          {duration ? (
+            <span className="tool-call__duration" title="Recorded tool interval">
+              {duration}
+            </span>
+          ) : null}
           {screen.at ? (
             <time dateTime={screen.at}>{screenOperationTime(screen.at)}</time>
           ) : (
@@ -60,11 +66,13 @@ function ToolCallLine({
             <span className="tool-call__icon" aria-hidden="true">
               <ToolIcon kind={category} />
             </span>
-            <span className="tool-call__literal" title={tool.title}>
-              {tool.title}
+            <span className="tool-call__literal" title={title}>
+              {title}
             </span>
             {duration === undefined ? null : (
-              <span className="tool-call__duration">{durationLabel(duration)}</span>
+              <span className="tool-call__duration" title="Recorded tool interval">
+                {duration}
+              </span>
             )}
             <span
               className="tool-call__outcome"
@@ -104,7 +112,7 @@ function ToolCallLine({
       {outcome === 'failed' ? <p className="tool-call__error">{conciseToolError(tool)}</p> : null}
       {open ? (
         <div id={detailsId} className="tool-call__details">
-          <pre>{tool.detail ?? tool.title}</pre>
+          <pre>{tool.detail ?? title}</pre>
           {tool.output ? (
             <>
               <pre aria-label={category === 'edit' ? 'Recorded diff' : 'Recorded output'}>
@@ -190,7 +198,9 @@ export const ToolCallGroup = memo(function ToolCallGroup({
         {summary.duration ? (
           <>
             {' '}
-            <span className="tool-call__duration">{summary.duration}</span>
+            <span className="tool-call__duration" title={summary.durationTitle}>
+              {summary.duration}
+            </span>
           </>
         ) : null}
         {failures ? (

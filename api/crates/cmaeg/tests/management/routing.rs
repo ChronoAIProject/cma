@@ -149,6 +149,7 @@ async fn a_routed_channel_reads_back_with_only_hashes_and_survives_a_full_put() 
 
     let mut put = create_body();
     put.as_object_mut().unwrap().remove("credentials");
+    put["profile"] = read["definition"]["profile"].clone();
     put["sources"] = sources();
     put["partition"] = serde_json::to_value(&before.partition).unwrap();
     put["reply"] = serde_json::to_value(&before.reply).unwrap();

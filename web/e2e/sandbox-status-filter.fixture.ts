@@ -1,24 +1,37 @@
 import type { Page } from '@playwright/test';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
-import type { SandboxStatus } from '../src/api-client';
+import type { SandboxDetail } from '../src/api-client';
 
 export class LocalSandboxFilters {
   readonly boundary = new LocalStartup();
   viewer = 'local-owner';
+  paginated = true;
+  ownedAccess = false;
   readonly writes: string[] = [];
   readonly lists: URL[] = [];
-  readonly sandboxes = (['provisioning', 'installing', 'retiring', 'retired'] as const).map(
-    (status, i) => ({
-      ...this.boundary.sandbox,
-      id: `sbx_filter_${i}`,
-      name: `${status} fixture`,
-      status: status as SandboxStatus,
-      workspaces: [],
-      workspace_count: 0,
-      worktree_count: 0,
-      agent_count: 0,
-    }),
-  );
+  readonly sandboxes: SandboxDetail[] = (
+    [
+      'provisioning',
+      'installing',
+      'retiring',
+      'retired',
+      'failed',
+      'paused',
+      'pausing',
+      'reviving',
+      'credential_rotating',
+      'rotating',
+    ] as const
+  ).map((status, i) => ({
+    ...this.boundary.sandbox,
+    id: `sbx_filter_${i}`,
+    name: `${status} fixture`,
+    status,
+    workspaces: [],
+    workspace_count: 0,
+    worktree_count: 0,
+    agent_count: 0,
+  }));
   async route(page: Page, baseURL: string) {
     await this.boundary.route(page, baseURL);
     await page.route('**/*', async (route) => {
@@ -26,6 +39,8 @@ export class LocalSandboxFilters {
       const url = new URL(request.url());
       if (url.origin !== baseURL) return route.fallback();
       const reply = (json: unknown) => route.fulfill({ json });
+      if (url.pathname === '/auth/connections/check' && request.method() === 'POST')
+        return reply({ owner: this.viewer, ready: true, checked_at: localTime, services: [] });
       if (request.method() !== 'GET' && /^\/(api|auth)\//.test(url.pathname)) {
         this.writes.push(`${request.method()} ${url.pathname}`);
         return route.fulfill({ status: 500, json: { code: 'unexpected_write' } });
@@ -45,6 +60,12 @@ export class LocalSandboxFilters {
         });
       if (url.pathname === '/api/v1/sandboxes') {
         this.lists.push(url);
+        if (!this.paginated)
+          return reply({
+            items: [this.boundary.sandbox, ...this.sandboxes].sort((a, b) =>
+              a.id.localeCompare(b.id),
+            ),
+          });
         if (url.searchParams.has('shared') || url.searchParams.has('organization'))
           return reply(
             url.searchParams.has('cursor')
@@ -55,10 +76,13 @@ export class LocalSandboxFilters {
       }
       const sandbox = this.sandboxes.find((row) => url.pathname === `/api/v1/sandboxes/${row.id}`);
       if (sandbox) return reply(sandbox);
-      if (url.pathname.startsWith('/api/v1/resource-access/sandbox/sbx_filter_'))
+      if (
+        url.pathname.startsWith('/api/v1/resource-access/sandbox/sbx_filter_') ||
+        url.pathname === '/api/v1/resource-access/workspace/wks_route'
+      )
         return reply({
           capabilities: ['view_details'],
-          owner: { kind: 'person', is_current_person: false },
+          owner: { kind: 'person', is_current_person: this.ownedAccess },
           revalidate_at: null,
           policy_revision: 1,
         });

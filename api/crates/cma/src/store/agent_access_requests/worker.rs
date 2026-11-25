@@ -18,7 +18,8 @@ impl MongoSandboxStore {
     ) -> Result<(layer2_core::sandbox::Agent, layer2_core::sandbox::Sandbox), AgentAccessError>
     {
         transaction!(self, session, {
-            let snapshot = validate_lineage(self, &record.requester, session, false).await?;
+            let snapshot =
+                validate_lineage_transaction(self, &record.requester, session, false).await?;
             fence(self, &snapshot, session).await?;
             Ok((
                 snapshot
@@ -111,7 +112,8 @@ impl MongoSandboxStore {
             if record.phase != expected || !progress.extends(&record.progress) {
                 return Err(AgentAccessError::Conflict.into());
             }
-            let snapshot = validate_lineage(self, &record.requester, session, false).await?;
+            let snapshot =
+                validate_lineage_transaction(self, &record.requester, session, false).await?;
             validate_progress(&record, next, &progress, &snapshot)?;
             if next.applying() && self.agent_access_requests.count_documents(doc! {
                 "_id":{"$ne":&record.id},"record.requester.sandbox_id":record.requester.sandbox_id.as_str(),
@@ -282,6 +284,9 @@ fn validate_progress(
                                 || !record
                                     .approved_services()
                                     .is_ok_and(|approved| scope.services == approved)
+                                || record.approved_connection().is_some_and(|selected| {
+                                    scope.connection.as_ref() != Some(selected)
+                                })
                         })))
             || !sandbox.credential.delivered
             || sandbox.credential.pending.is_some()

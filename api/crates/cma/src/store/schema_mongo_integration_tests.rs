@@ -18,8 +18,10 @@ mod activity_batch;
 mod activity_pages;
 mod activity_retention;
 mod auto_pause_compatibility;
+mod released_authority;
 mod session_versions;
 mod startup_ddl;
+mod visitor_defaults;
 
 async fn database() -> (Client, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")

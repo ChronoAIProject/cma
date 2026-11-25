@@ -1,8 +1,8 @@
 //! Synthetic provider API and receiving-runtime bytes; production ownership transport is unchanged.
 use futures_util::{SinkExt, StreamExt};
 use l3::hosted::{
-    HostedBackend, HostedControlTransport, InMemoryHostedBackend, NativeRuntimeTransport,
-    ProviderHostedControlTransport,
+    HostedBackend, HostedControlTransport, InMemoryHostedBackend, LegacyReceiverImage,
+    NativeRuntimeTransport, ProviderHostedControlTransport,
 };
 use layer3_adapter as l3;
 use serde_json::{json, Value};
@@ -28,12 +28,24 @@ impl HostedBackend for Backend {
     async fn adopt(
         &self,
         handle: &l3::RuntimeHandle,
-        _: &l3::provider::ProviderSandboxRequest,
+        request: &l3::provider::ProviderSandboxRequest,
     ) -> l3::Result<Option<l3::RuntimeObservation>> {
         self.0
             .exchange(handle, l3::wire::RequestFrame::Resources)
             .await?;
-        Ok(None)
+        let meta = &request.metadata;
+        Ok(Some(l3::RuntimeObservation {
+            handle: handle.clone(),
+            sandbox_id: meta["cma/sandbox"].clone(),
+            generation: meta["cma/runtime-generation"].parse().unwrap(),
+            image_sha256: meta["cma/image-sha256"].clone(),
+            spec_fingerprint: meta["cma/spec-sha256"].clone(),
+            runtime_contract: meta["cma/runtime-contract"].clone(),
+            lifecycle: l3::RuntimeLifecycle {
+                state: "running".into(),
+                reason: None,
+            },
+        }))
     }
     async fn provision(
         &self,
@@ -59,9 +71,32 @@ impl HostedBackend for Backend {
         l3::ConversationChannel,
         l3::wire::FencedReceipt<l3::wire::AgentOpenReceipt>,
     )> {
-        self.1
-            .open_agent(handle, launch, resume, settings, updates)
-            .await
+        let Some(conversation) = resume else {
+            return self
+                .1
+                .open_agent(handle, launch, None, settings, updates)
+                .await;
+        };
+        let request = launch.request;
+        // Keep the retained output stream alive until the worker detaches.
+        tokio::spawn(async move { updates.closed().await });
+        Ok((
+            l3::ConversationChannel {
+                input: l3::ConversationInputSender::spawn(1, |_| async { Ok(()) }),
+                conversation_id: Some(conversation.clone()),
+            },
+            l3::wire::FencedReceipt::new(
+                launch.authority_fence,
+                l3::wire::AgentOpenReceipt {
+                    operation_id: request.operation_id,
+                    request_sha256: request.request_sha256,
+                    agent_id: request.agent_id,
+                    cwd: request.cwd,
+                    home: request.home,
+                    conversation_id: Some(conversation),
+                },
+            ),
+        ))
     }
     async fn teardown(&self, handle: &l3::RuntimeHandle) -> l3::Result<()> {
         self.1.teardown(handle).await
@@ -76,6 +111,14 @@ pub(super) struct Counts {
     acp: AtomicUsize,
     revoke: AtomicUsize,
     pub(super) cleanup: AtomicBool,
+    restarted: AtomicBool,
+    repaired: AtomicBool,
+    hold_first_close: AtomicBool,
+    close_received: tokio::sync::Notify,
+    close_reply: tokio::sync::Notify,
+    close_receipt: std::sync::Mutex<Option<l3::wire::AgentCloseReceipt>>,
+    closes: AtomicUsize,
+    pub(super) replace_after_revocation: AtomicBool,
 }
 
 pub(super) struct Runtime {
@@ -91,6 +134,13 @@ impl Drop for Runtime {
 
 impl Runtime {
     pub(super) async fn start(failure: &'static str) -> Self {
+        Self::start_with_legacy_compatibility(failure, false).await
+    }
+
+    pub(super) async fn start_with_legacy_compatibility(
+        failure: &'static str,
+        enabled: bool,
+    ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let mut config = kube::Config::new(format!("http://{address}").parse().unwrap());
@@ -112,12 +162,21 @@ impl Runtime {
             "fixture",
         )
         .unwrap();
+        let legacy_image = enabled.then(|| {
+            LegacyReceiverImage::from_reviewed_mapping(
+                format!("ghcr.io/fixture/runtime@sha256:{}", "1".repeat(64)),
+                legacy_config_digest(),
+                "bc8cd8bf0f585446a37d3bd50a8e3df2d6d06e6e",
+            )
+            .unwrap()
+        });
         let transport = Arc::new(
             ProviderHostedControlTransport::for_agent_sandbox_with_transport(
                 client,
                 NativeRuntimeTransport::KubernetesExec,
             )
-            .unwrap(),
+            .unwrap()
+            .with_legacy_receiver_image(legacy_image),
         );
         let counts = Arc::new(Counts::default());
         let observed = counts.clone();
@@ -143,6 +202,37 @@ impl Runtime {
     pub(super) fn assert_counts(&self, probes: usize) {
         self.assert_counts_with_confirmation(probes, 0);
     }
+    pub(super) fn repair(&self) {
+        self.counts.repaired.store(true, Ordering::SeqCst);
+    }
+
+    pub(super) fn hold_first_close(&self) {
+        self.counts.hold_first_close.store(true, Ordering::SeqCst);
+    }
+
+    pub(super) async fn close_received(&self) {
+        self.counts.close_received.notified().await;
+    }
+
+    pub(super) fn release_close(&self) {
+        self.counts.close_reply.notify_one();
+    }
+
+    pub(super) fn assert_close_replayed(&self) {
+        assert_eq!(self.counts.closes.load(Ordering::SeqCst), 2);
+        assert!(self.counts.close_receipt.lock().unwrap().is_some());
+    }
+
+    pub(super) fn assert_repaired_probe(&self, controls: usize) {
+        assert_eq!(self.counts.challenge.load(Ordering::SeqCst), controls + 1);
+        assert_eq!(self.counts.confirm.load(Ordering::SeqCst), controls);
+        assert_eq!(self.counts.control.load(Ordering::SeqCst), controls);
+        assert_eq!(self.counts.acp.load(Ordering::SeqCst), 0);
+    }
+
+    pub(super) fn revocations(&self) -> usize {
+        self.counts.revoke.load(Ordering::SeqCst)
+    }
     pub(super) fn assert_counts_with_confirmation(&self, probes: usize, confirmations: usize) {
         assert!(!self.server.is_finished(), "runtime fixture failed");
         assert_eq!(self.counts.challenge.load(Ordering::SeqCst), probes);
@@ -150,6 +240,10 @@ impl Runtime {
         assert_eq!(self.counts.control.load(Ordering::SeqCst), 0);
         assert_eq!(self.counts.acp.load(Ordering::SeqCst), 0);
     }
+}
+
+fn legacy_config_digest() -> String {
+    format!("sha256:{}", "2".repeat(64))
 }
 
 async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: &str) {
@@ -173,14 +267,22 @@ async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: 
         } else {
             assert!(header.lines().next().unwrap().contains("/pods?"));
             let hash = "claimed".bytes().fold(2_166_136_261u32, |h, b| (h ^ u32::from(b)).wrapping_mul(16_777_619));
+            let restarted = counts.restarted.load(Ordering::SeqCst);
+            let image = match failure {
+                "receiverless" | "receiverless_confirm_ambiguous" => legacy_config_digest(),
+                _ => "sha256:runtime".into(),
+            };
             json!({"apiVersion":"v1", "kind":"PodList", "metadata":{"resourceVersion":"8"}, "items":[{
                 "metadata":{"name":"claimed-pod", "namespace":"fixture", "uid":"original-pod",
                     "labels":{"cma/control-plane":"fixture", "agents.x-k8s.io/sandbox-name-hash":format!("{hash:08x}")},
                     "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1", "kind":"Sandbox",
                         "name":"claimed", "uid":"sandbox-uid", "controller":true}]},
+                "spec":{"containers":[{"name":"runtime"}]},
                 "status":{"phase":"Running", "podIP":"10.0.0.1", "conditions":[{"type":"Ready", "status":"True"}],
-                    "containerStatuses":[{"name":"runtime", "image":"runtime", "imageID":"sha256:runtime",
-                        "ready":true, "restartCount":0, "containerID":"containerd://original", "state":{"running":{}}}]}}]})
+                    "containerStatuses":[{"name":"runtime", "image":"runtime", "imageID":image,
+                        "ready":true, "restartCount":usize::from(restarted),
+                        "containerID":if restarted {"containerd://replacement"} else {"containerd://original"},
+                        "state":{"running":{"startedAt":"2000-01-01T00:00:00Z"}}}]}}]})
         }.to_string();
         socket
             .write_all(response(200, &body).as_bytes())
@@ -233,7 +335,9 @@ async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: 
     let (code, reply) = if path.contains("/challenge ") {
         counts.challenge.fetch_add(1, Ordering::SeqCst);
         match failure {
-            "capability_missing" => (404, json!({})),
+            "capability_missing" | "receiverless" | "receiverless_unknown_image" => {
+                (404, json!({}))
+            }
             "challenge_protocol_mismatch" => (
                 200,
                 json!({"protocol":2, "nonce":uuid::Uuid::new_v4(), "valid_for_ms":10000}),
@@ -246,8 +350,12 @@ async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: 
                 200,
                 json!({"protocol":2, "nonce":"malformed", "valid_for_ms":10000}),
             ),
+            "auth" if counts.repaired.load(Ordering::SeqCst) => (
+                200,
+                json!({"protocol":1, "nonce":uuid::Uuid::new_v4(), "valid_for_ms":10000}),
+            ),
             "auth" => (403, json!({})),
-            "confirm_ambiguous" => (
+            "confirm_ambiguous" | "receiverless_confirm_ambiguous" => (
                 200,
                 json!({"protocol":1, "nonce":uuid::Uuid::new_v4(), "valid_for_ms":10000}),
             ),
@@ -259,8 +367,13 @@ async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: 
         }
     } else if path.contains("/revoke ") {
         counts.revoke.fetch_add(1, Ordering::SeqCst);
+        if counts.replace_after_revocation.load(Ordering::SeqCst) {
+            counts.restarted.store(true, Ordering::SeqCst);
+        }
         (
-            if counts.cleanup.load(Ordering::SeqCst) {
+            if failure.starts_with("receiverless") {
+                404
+            } else if counts.cleanup.load(Ordering::SeqCst) {
                 200
             } else {
                 403
@@ -268,15 +381,25 @@ async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: 
             json!({"protocol":1, "owner":serde_json::from_slice::<Value>(&body).unwrap()}),
         )
     } else {
+        let repaired = counts.repaired.load(Ordering::SeqCst);
         if path.contains("/confirm ") {
             counts.confirm.fetch_add(1, Ordering::SeqCst);
-            return;
+            if !repaired {
+                return;
+            }
+            let request = serde_json::from_slice::<Value>(&body).unwrap();
+            (200, json!({"protocol": 1, "owner": request["owner"]}))
         } else if path.contains("/runtime/control ") {
             counts.control.fetch_add(1, Ordering::SeqCst);
+            if repaired {
+                (200, json!(repair_response(&body, &counts).await))
+            } else {
+                (500, json!({}))
+            }
         } else {
             counts.acp.fetch_add(1, Ordering::SeqCst);
+            (500, json!({}))
         }
-        (500, json!({}))
     };
     let mut response_bytes = vec![1];
     response_bytes.extend_from_slice(response(code, &reply.to_string()).as_bytes());
@@ -311,5 +434,58 @@ impl l3::HomeVolumeStore for Home {
         _: Option<&l3::HomeVolumeReceipt>,
     ) -> l3::Result<()> {
         panic!("reconnect cannot delete its retained home")
+    }
+}
+
+async fn repair_response(bytes: &[u8], counts: &Counts) -> l3::wire::ResponseFrame {
+    use l3::wire::{AgentCloseReceipt, FencedReceipt, RequestFrame, ResponseFrame};
+    match serde_json::from_slice::<RequestFrame>(bytes).unwrap() {
+        RequestFrame::Resources => ResponseFrame::Resources(Default::default()),
+        RequestFrame::RuntimeStatus(request) => ResponseFrame::RuntimeStatus(l3::RuntimeStatus {
+            agent_browser: false,
+            agent_filesystem: false,
+            agent_attachment_upload: false,
+            agent_skill_install: false,
+            agent_skill_upgrade: false,
+            agent_model_catalog: false,
+            agent_resource_preparation: false,
+            agent_process_restart: false,
+            exact_github_credential_route: false,
+            github_repository_scope: false,
+            sandbox_id: request.sandbox_id,
+            generation: request.generation,
+            home_identity: request.home_identity,
+            boot_id: "a".repeat(32),
+            installation_ready: true,
+            credential_ready: true,
+            restore_pending: false,
+            agent_processes: 1,
+        }),
+        RequestFrame::CloseAgent(close) => {
+            let receipt = AgentCloseReceipt {
+                operation_id: close.request.operation_id,
+                request_sha256: close.request.request_sha256,
+                agent_id: close.request.agent_id,
+            };
+            {
+                let mut durable = counts.close_receipt.lock().unwrap();
+                if let Some(previous) = &*durable {
+                    assert_eq!(previous, &receipt);
+                } else {
+                    *durable = Some(receipt.clone());
+                }
+            }
+            if counts.closes.fetch_add(1, Ordering::SeqCst) == 0
+                && counts.hold_first_close.load(Ordering::SeqCst)
+            {
+                counts.close_received.notify_one();
+                counts.close_reply.notified().await;
+            }
+            ResponseFrame::CloseAgent(FencedReceipt::new(close.authority_fence, receipt))
+        }
+        other => panic!(
+            "unexpected repaired runtime request: {:?}",
+            other.operation()
+        ),
     }
 }

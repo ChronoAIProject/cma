@@ -2,7 +2,8 @@
 
 # Keep Omarchy independent of the Backend graph, including its archive split.
 module OmarchyCIContract
-  EXPORT_IF = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+  EXPORT_IF = "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
+  SCAN_IF = "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
   CACHE_MISS = "steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true'"
   DEVELOP_PUSH = "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
   CACHE_WRITE = "#{DEVELOP_PUSH} && (#{CACHE_MISS})"
@@ -18,8 +19,8 @@ module OmarchyCIContract
     }, "Omarchy must run on develop, isolated release pushes and ordinary PRs")
     contract.require!(ci["concurrency"] == {
       "group" => "ci-${{ github.workflow }}-${{ github.ref }}",
-      "cancel-in-progress" => true,
-    }, "CI cancellation must remain isolated by the exact workflow and ref")
+      "cancel-in-progress" => "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}",
+    }, "CI cancellation must remain isolated by the exact workflow and ref, and spare develop cache writers")
     row = contract.job(ci, "omarchy", "Images (runtime-omarchy)")
     contract.require!(row.keys.sort == %w[name permissions runs-on steps timeout-minutes].sort,
       "Omarchy cannot acquire conditional, dependency, matrix or deployment authority")
@@ -54,6 +55,8 @@ module OmarchyCIContract
         "continue-on-error" => true, "with" => { "path" => CACHE_PATH, "key" => CACHE_KEY, "fail-on-cache-miss" => false } },
       { "name" => "Discard incomplete Omarchy cache restore", "if" => CACHE_MISS,
         "run" => 'rm -rf "$RUNNER_TEMP/omarchy-layer-cache"' },
+      { "name" => "Resolve OS security refresh key", "id" => "os-refresh",
+        "run" => 'python3 .github/scripts/os_refresh_key.py runtime-omarchy api/crates/layer4-runtime/Dockerfile "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"' },
       { "name" => "Build current-source Omarchy image", "id" => "build",
         "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
         "with" => { "context" => ".", "file" => "api/crates/layer4-runtime/Dockerfile", "target" => "omarchy",
@@ -64,7 +67,7 @@ module OmarchyCIContract
             RUNTIME_DESKTOP=1
             CHRONO_BUILD=${{ steps.identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
             SOURCE_DATE_EPOCH=0
           ARGS
             ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
@@ -77,6 +80,8 @@ module OmarchyCIContract
       SH
       { "name" => "Verify Omarchy runtime contract",
         "run" => 'node .github/scripts/omarchy-contract.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/runtime-contract.json"' },
+      { "name" => "Verify Omarchy staging qualification profile",
+        "run" => 'CMA_RUNTIME_EVIDENCE_PROFILE=omarchy node .github/scripts/runtime-image-evidence.mjs run cma-runtime-omarchy:ci "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/staging-qualification.json"' },
       { "name" => "Qualify exact Omarchy ledger storage",
         "run" => 'node .github/scripts/runtime-ledger-evidence.mjs cma-runtime-omarchy:ci "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/ledger-storage.json"' },
       { "name" => "Prepare native Chromium namespaces", "run" => "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0" },
@@ -94,13 +99,22 @@ module OmarchyCIContract
       { "name" => "Scan tested Omarchy image", "uses" => "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
         "with" => { "cache" => "${{ #{DEVELOP_PUSH} }}", "image-ref" => "cma-runtime-omarchy:ci", "format" => "json",
           "output" => "${{ runner.temp }}/omarchy-evidence/vulnerabilities.json", "severity" => "HIGH,CRITICAL",
-          "exit-code" => "1", "ignore-unfixed" => true } },
+          "exit-code" => "0", "ignore-unfixed" => true } },
+      { "name" => "Omarchy vulnerability gate", "timeout-minutes" => 5,
+        "env" => { "BASE_SHA" => "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}",
+          "GH_TOKEN" => "${{ github.token }}" },
+        "run" => 'python3 -B .github/scripts/image_vulnerability_gate.py --component runtime-omarchy --report "$RUNNER_TEMP/omarchy-evidence/vulnerabilities.json" --base "$BASE_SHA"' },
       { "name" => "Retain Omarchy image evidence", "if" => "always() && steps.build.outcome == 'success'",
         "uses" => "actions/upload-artifact@v4", "with" => {
           "name" => "omarchy-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
           "path" => "${{ runner.temp }}/omarchy-evidence/", "if-no-files-found" => "error", "retention-days" => 90 } },
       { "name" => "Export tested Omarchy image", "if" => EXPORT_IF, "timeout-minutes" => 10,
         "run" => 'python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"' },
+      { "name" => "Install pinned image secret scanner", "if" => SCAN_IF, "timeout-minutes" => 5,
+        "env" => { "CD_COMPONENT" => "runtime-omarchy" },
+        "run" => "bash .github/scripts/staging_cd_transport.sh\nbash .github/scripts/install-image-gitleaks.sh\n" },
+      { "name" => "Scan tested Omarchy image as staging publication does", "if" => SCAN_IF, "timeout-minutes" => 30,
+        "run" => 'python3 -B .github/scripts/ci_image_secret_scan.py runtime-omarchy "$RUNNER_TEMP/ci-native-image" "$GITHUB_SHA"' },
       { "name" => "Retain tested Omarchy image", "if" => EXPORT_IF, "timeout-minutes" => 10,
         "uses" => "actions/upload-artifact@v4", "with" => {
           "name" => "ci-native-image-runtime-omarchy-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}",

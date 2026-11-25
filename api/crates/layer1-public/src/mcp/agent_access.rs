@@ -17,6 +17,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 mod deliverables;
+mod diagnostics;
 mod dispatch;
 mod documents;
 mod limits;
@@ -80,6 +81,7 @@ pub fn agent_delivery_tools_router(
 
 async fn headers(request: Request, next: axum::middleware::Next) -> Response {
     let mut response = next.run(request).await;
+    diagnostics::observe(&mut response);
     for (name, value) in [
         (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
         (
@@ -102,10 +104,7 @@ async fn invoke(State(state): State<Arc<AccessState>>, request: Request) -> Resp
     };
     match tokio::time::timeout(DEADLINE, accept(&state, request)).await {
         Ok(response) => response,
-        Err(_) => http_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Agent access service is temporarily unavailable",
-        ),
+        Err(_) => diagnostics::unavailable(diagnostics::UnavailableReason::AcceptTimeout),
     }
 }
 
@@ -242,10 +241,18 @@ fn unauthorized() -> Response {
 }
 fn auth_error(error: AgentAccessError) -> Response {
     match error {
-        AgentAccessError::Unavailable => http_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Agent access service is temporarily unavailable",
+        AgentAccessError::AccountDeletionInProgress => crate::rest::problem_response(
+            StatusCode::FORBIDDEN,
+            crate::rest::problem_document(
+                StatusCode::FORBIDDEN,
+                "account-deletion-in-progress",
+                "Account deletion is in progress.",
+                "account_deletion_in_progress",
+            ),
         ),
+        AgentAccessError::Unavailable => {
+            diagnostics::unavailable(diagnostics::UnavailableReason::AuthenticationUnavailable)
+        }
         _ => unauthorized(),
     }
 }

@@ -53,6 +53,16 @@ impl AuthEncryptionKey {
         Zeroizing::new(context.sign().as_ref().to_vec())
     }
 
+    pub(crate) fn usage_cursor_key(&self, deployment: &str) -> Zeroizing<[u8; 32]> {
+        let root = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.as_bytes());
+        let mut context = ring::hmac::Context::with_key(&root);
+        context.update(b"chrono.usage.continuation.v1\0");
+        context.update(deployment.as_bytes());
+        let mut key = Zeroizing::new([0; 32]);
+        key.copy_from_slice(context.sign().as_ref());
+        key
+    }
+
     /// Derive a separate signing key without exposing the encryption key bytes.
     pub(super) fn agent_access_signing_key(&self, namespace: &str) -> ring::hmac::Key {
         let root = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.as_bytes());
@@ -74,6 +84,14 @@ impl AuthEncryptionKey {
         let root = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.as_bytes());
         let mut context = ring::hmac::Context::with_key(&root);
         context.update(b"chrono.agent.manager.relay.v1\0");
+        context.update(namespace.as_bytes());
+        ring::hmac::Key::new(ring::hmac::HMAC_SHA256, context.sign().as_ref())
+    }
+
+    pub(crate) fn binding_diagnostics_key(&self, namespace: &str) -> ring::hmac::Key {
+        let root = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.as_bytes());
+        let mut context = ring::hmac::Context::with_key(&root);
+        context.update(b"chrono.binding.diagnostics.v1\0");
         context.update(namespace.as_bytes());
         ring::hmac::Key::new(ring::hmac::HMAC_SHA256, context.sign().as_ref())
     }
@@ -234,8 +252,45 @@ fn binary(bytes: Vec<u8>) -> Binary {
 }
 
 #[cfg(test)]
+mod restore_evidence_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binding_diagnostics_signatures_are_isolated_from_agent_relay_and_other_deployments() {
+        let root = AuthEncryptionKey::from_bytes([7; KEY_LEN]);
+        let signature = ring::hmac::sign(&root.binding_diagnostics_key("deployment-a"), b"sample");
+        assert!(ring::hmac::verify(
+            &root.binding_diagnostics_key("deployment-a"),
+            b"sample",
+            signature.as_ref()
+        )
+        .is_ok());
+        for key in [
+            root.agent_manager_signing_key("deployment-a"),
+            root.binding_diagnostics_key("deployment-b"),
+        ] {
+            assert!(ring::hmac::verify(&key, b"sample", signature.as_ref()).is_err());
+        }
+    }
+
+    #[test]
+    fn usage_cursor_keys_are_stable_and_isolated_from_metrics_deployments_and_roots() {
+        let root = AuthEncryptionKey::from_bytes([7; 32]);
+        let key = root.usage_cursor_key("deployment-a");
+        assert_eq!(key, root.clone().usage_cursor_key("deployment-a"));
+        assert_ne!(
+            key.as_slice(),
+            root.metrics_cursor_key("deployment-a").as_slice()
+        );
+        assert_ne!(key, root.usage_cursor_key("deployment-b"));
+        assert_ne!(
+            key,
+            AuthEncryptionKey::from_bytes([8; 32]).usage_cursor_key("deployment-a")
+        );
+    }
 
     fn test_cipher(key: u8, deployment: &str) -> AuthCipher {
         AuthCipher::new(deployment, &AuthEncryptionKey::from_bytes([key; KEY_LEN])).unwrap()

@@ -238,6 +238,7 @@ impl Native {
             topic_creation: false,
             message_events: false,
             channel_posts: false,
+            member_join_chat_ids: Vec::new(),
             bot_id: material.bot_id.clone(),
             bot_username: Some(material.username.clone()),
             admission: cmaeg_core::channel::AdmissionPolicy::All {},

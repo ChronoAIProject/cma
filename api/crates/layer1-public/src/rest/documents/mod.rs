@@ -1,6 +1,8 @@
 //! Public document projections; durable policy and mutations belong to Layer 2.
 mod reads;
 mod shapes;
+#[cfg(test)]
+mod tests;
 mod writes;
 use super::idempotency::{IdempotencyKey, RequestBody};
 use crate::AuthenticatedCaller;
@@ -25,6 +27,10 @@ pub fn documents_router(service: Arc<DocumentService>) -> Router {
         .route("/api/v1/documents/{id}/source", get(reads::source))
         .route("/api/v1/documents/{id}/revisions", get(reads::revisions))
         .route("/api/v1/documents/{id}/shares", get(reads::shares))
+        .route(
+            "/api/v1/documents/{id}/share-recipients",
+            get(reads::share_recipients),
+        )
         .route(
             "/api/v1/documents/{id}/shares/{subject}",
             axum::routing::put(writes::grant).delete(writes::revoke),
@@ -111,6 +117,19 @@ impl From<DocumentError> for DocumentProblem {
 impl IntoResponse for DocumentProblem {
     fn into_response(self) -> Response {
         let (status, code) = match self.0 {
+            DocumentError::AccountDeletionInProgress => {
+                (StatusCode::FORBIDDEN, "account_deletion_in_progress")
+            }
+            DocumentError::ShareRecipientUnavailable => {
+                (StatusCode::CONFLICT, "share_recipient_unavailable")
+            }
+            DocumentError::InvalidShareRecipient => {
+                (StatusCode::BAD_REQUEST, "invalid_share_recipient")
+            }
+            DocumentError::RecipientDirectoryUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "recipient_directory_unavailable",
+            ),
             DocumentError::Invalid => (StatusCode::BAD_REQUEST, "invalid_document_request"),
             DocumentError::NotFound => (StatusCode::NOT_FOUND, "document_not_found"),
             DocumentError::Conflict => (StatusCode::CONFLICT, "document_revision_conflict"),
@@ -135,6 +154,7 @@ impl IntoResponse for DocumentProblem {
         reads::source,
         reads::revisions,
         reads::shares,
+        reads::share_recipients,
         reads::links,
         reads::comments,
         writes::create,
@@ -155,6 +175,7 @@ impl IntoResponse for DocumentProblem {
         DocumentComment,
         DocumentCommentPage,
         DocumentShare,
+        DocumentShareRecipient,
         DocumentLink,
         DocumentMutation,
         CreateDocumentRequest,

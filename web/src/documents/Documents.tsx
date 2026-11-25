@@ -25,13 +25,19 @@ export default function Documents({
     );
   return route.kind === 'document' ? (
     <DocumentPage
-      key={route.documentId}
+      key={`${user.id}/${route.documentId}`}
       client={client}
       id={route.documentId}
       viewer={user.id}
       onNavigate={onNavigate}
     />
   ) : (
-    <DocumentRegistry client={client} canCreate={!user.visitor} onNavigate={onNavigate} />
+    <DocumentRegistry
+      key={user.id}
+      client={client}
+      viewer={user.id}
+      canCreate={!user.visitor}
+      onNavigate={onNavigate}
+    />
   );
 }

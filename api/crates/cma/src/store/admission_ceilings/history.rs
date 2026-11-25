@@ -1,8 +1,19 @@
 //! Immutable changes share the settings collection and control transaction.
 
 use super::*;
+use layer2_core::admission::PendingHomesObservation;
 use layer2_core::admission::{AdmissionCeilingsChange, ADMISSION_HISTORY_LIMIT};
 use serde::{Deserialize, Serialize};
+
+pub(super) enum ReadError {
+    Ordinary(ApplyError),
+    Census(super::super::pending_launch_homes::Error),
+}
+impl From<ApplyError> for ReadError {
+    fn from(value: ApplyError) -> Self {
+        Self::Ordinary(value)
+    }
+}
 
 const CHANGE_PREFIX: &str = "admission_ceilings_change:";
 const CHANGE_UPPER: &str = "admission_ceilings_change;";
@@ -45,6 +56,7 @@ pub(super) fn read_change(document: Document) -> Result<AdmissionCeilingsChange,
 
 impl MongoAdmissionCeilingsStore {
     pub(super) async fn read_history_snapshot(&self) -> Result<AdmissionCeilingsRead, StoreError> {
+        let mut readiness = self.pending_homes.readiness().await;
         for attempt in 0..TRANSACTION_ATTEMPTS {
             super::super::contention::backoff(attempt).await;
             let mut session = self.client.start_session().await.map_err(|error| {
@@ -59,10 +71,25 @@ impl MongoAdmissionCeilingsStore {
                     )))
                 }
             }
-            let result = self.read_history_in(&mut session).await;
+            let result = self.read_history_in(&mut session, &readiness).await;
             match result {
                 Ok(read) => match commit_transaction(&mut session).await {
-                    CommitOutcome::Committed => return Ok(read),
+                    CommitOutcome::Committed => {
+                        if let PendingHomesObservation::Verified {
+                            expected_pending_launch_homes,
+                            pending_launch_homes_drift,
+                        } = read.counts.pending_homes
+                        {
+                            super::super::pending_launch_homes::report_drift(
+                                &super::super::pending_launch_homes::Observation {
+                                    pending: read.counts.pending_launch_homes,
+                                    expected: expected_pending_launch_homes,
+                                    drift: pending_launch_homes_drift,
+                                },
+                            );
+                        }
+                        return Ok(read);
+                    }
                     CommitOutcome::Retry(_) => continue,
                     CommitOutcome::Unknown(error) | CommitOutcome::Failed(error) => {
                         return Err(unavailable(&format!(
@@ -70,15 +97,32 @@ impl MongoAdmissionCeilingsStore {
                         )));
                     }
                 },
-                Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                Err(ReadError::Census(error)) => {
+                    let _ = session.abort_guarded().await;
+                    match error {
+                        super::super::pending_launch_homes::Error::Driver(error) => {
+                            tracing::warn!(target: "cma::admission", error = %error, "pending home census unavailable")
+                        }
+                        super::super::pending_launch_homes::Error::Domain(error) => {
+                            tracing::warn!(target: "cma::admission", error = %error, "pending home census unavailable")
+                        }
+                    }
+                    readiness = Err(self
+                        .pending_homes
+                        .readiness()
+                        .await
+                        .err()
+                        .unwrap_or(PendingHomesObservation::Unavailable));
+                }
+                Err(ReadError::Ordinary(ApplyError::Driver(error))) => {
+                    let _ = session.abort_guarded().await;
                     if is_transient(&error) {
                         continue;
                     }
                     return Err(unavailable(&format!("read admission history: {error}")));
                 }
-                Err(ApplyError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                Err(ReadError::Ordinary(ApplyError::Domain(error))) => {
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
             }
@@ -91,7 +135,8 @@ impl MongoAdmissionCeilingsStore {
     async fn read_history_in(
         &self,
         session: &mut ClientSession,
-    ) -> Result<AdmissionCeilingsRead, ApplyError> {
+        readiness: &Result<(), PendingHomesObservation>,
+    ) -> Result<AdmissionCeilingsRead, ReadError> {
         let state = self
             .settings
             .find_one(doc! {"_id": "platform"})
@@ -120,7 +165,9 @@ impl MongoAdmissionCeilingsStore {
             let document = cursor.deserialize_current().map_err(ApplyError::Driver)?;
             history.push(read_change(document).map_err(ApplyError::Domain)?);
         }
-        let (effective_limits, counts) = self.read_counts(&state.ceilings, session).await?;
+        let (effective_limits, counts) = self
+            .read_counts(&state.ceilings, session, readiness)
+            .await?;
         let read = AdmissionCeilingsRead {
             state,
             history,

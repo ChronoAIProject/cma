@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { navigationFixture, sandboxFixture, workspaceFixture } from '../test/hierarchy';
 import { shellCommands, type ShellCommandOptions } from './commands';
-import { filterCommands } from './CommandMenu';
+import { CommandMenu, filterCommands } from './CommandMenu';
 
 function options(overrides: Partial<ShellCommandOptions> = {}): ShellCommandOptions {
   return {
@@ -15,6 +17,24 @@ function options(overrides: Partial<ShellCommandOptions> = {}): ShellCommandOpti
 }
 
 describe('shellCommands', () => {
+  it.each(['Artifact', 'Artifacts'])(
+    'opens Artifacts from command search for %s',
+    async (query) => {
+      const onNavigate = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <CommandMenu open onClose={vi.fn()} commands={shellCommands(options({ onNavigate }))} />,
+      );
+      expect(screen.getByRole('option', { name: 'Artifacts' })).toBeVisible();
+      await user.type(screen.getByRole('combobox', { name: 'Search commands' }), query);
+      expect(screen.getAllByRole('option')).toEqual([
+        screen.getByRole('option', { name: 'Artifacts' }),
+      ]);
+      await user.keyboard('{Enter}');
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'artifacts' });
+    },
+  );
+
   it('lists Agents with where they live, then Sandboxes and Workspaces', () => {
     const list = shellCommands(options());
     const agent = list.find(({ id }) => id === 'agent:agt_1');
@@ -166,9 +186,16 @@ describe('shellCommands', () => {
           {
             ...workspace,
             agents: [
-              { ...first, id: 'agt_old', updatedAt: '2026-09-01T00:00:00Z' },
-              { ...first, id: 'agt_new', updatedAt: '2026-09-09T00:00:00Z' },
-              { ...first, id: 'agt_bad', updatedAt: 'not a date' },
+              {
+                ...first,
+                id: 'agt_old',
+                taskActivityAt: '2026-09-01T00:00:00Z',
+                updatedAt: '2026-11-20T00:00:00Z',
+              },
+              { ...first, id: 'agt_new', taskActivityAt: '2026-09-09T00:00:00Z' },
+              { ...first, id: 'agt_z_missing', taskActivityAt: undefined },
+              { ...first, id: 'agt_bad', taskActivityAt: 'not a date' },
+              { ...first, id: 'agt_a_missing', taskActivityAt: undefined },
             ],
           },
         ],
@@ -177,7 +204,13 @@ describe('shellCommands', () => {
     const ids = shellCommands(options({ items }))
       .filter(({ group }) => group === 'Agents')
       .map(({ id }) => id);
-    expect(ids).toEqual(['agent:agt_new', 'agent:agt_old', 'agent:agt_bad']);
+    expect(ids).toEqual([
+      'agent:agt_new',
+      'agent:agt_old',
+      'agent:agt_a_missing',
+      'agent:agt_bad',
+      'agent:agt_z_missing',
+    ]);
   });
 
   it('leaves out deleted Agents, removed Workspaces and retiring Sandboxes', () => {

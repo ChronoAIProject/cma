@@ -85,10 +85,10 @@ it('keeps the dialog open after acceptance, reports recorded steps, and waits fo
     />,
   );
   await act(async () => {});
-  expect(screen.getByRole('button', { name: 'Delete Sandbox' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Request deletion' })).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox'));
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Request deletion' }));
   });
   expect(deleted).toHaveBeenCalledExactlyOnceWith('sbx_1', { idempotencyKey: initial.key });
   expect(screen.getByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
@@ -173,10 +173,10 @@ it('retains the same command key after an uncertain response and never automatic
   ]);
 });
 
-it('does not declare success on read failures or a missing resource', async () => {
+it.each([401, 403, 404])('does not declare success on a %s read failure', async (status) => {
   const client = agentClient({
     readSandbox: async () => {
-      throw new ApiError(404, 'Not found', 'not_found');
+      throw new ApiError(status, 'Unavailable', 'unavailable');
     },
   });
   render(
@@ -319,7 +319,7 @@ it.each(['authorized', 'checkpoint', 'no-retire'] as const)(
       />,
     );
     await actor.click(await screen.findByRole('checkbox'));
-    const confirm = screen.getByRole('button', { name: 'Delete Sandbox' });
+    const confirm = screen.getByRole('button', { name: 'Request deletion' });
     if (condition === 'authorized') {
       expect(confirm).toBeEnabled();
       await actor.click(confirm);

@@ -1,5 +1,11 @@
 //! The actual facade persists admission, restarts safely and retains its parent.
 use super::*;
+#[path = "agent_lifecycle_canary_worker_tests.rs"]
+mod canary_worker;
+#[path = "agent_lifecycle_image_retirement_tests.rs"]
+mod image_retirement;
+#[path = "agent_lifecycle_repository_preflight_tests.rs"]
+mod repository_preflight;
 #[path = "agent_lifecycle_template_tests.rs"]
 mod templates;
 use layer2_core::sandbox::store::{
@@ -9,8 +15,110 @@ use layer2_core::sandbox::store::{
 use layer2_core::sandbox::AgentStatus;
 use mongodb::bson::doc;
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn personal_account_authority_is_not_persisted_in_lifecycle_capabilities() {
+    use axum::{body::Body, http::Request, routing::post, Extension, Json, Router};
+    use layer1_public::AuthenticatedCaller;
+    use tower::ServiceExt;
+
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable Mongo URI is required");
+    let client = mongodb::Client::with_uri_str(uri).await.unwrap();
+    let db = client.database(&format!(
+        "cma_lifecycle_authority_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let operations = Arc::new(MongoAgentLifecycleStore::open(&db).await.unwrap());
+    let store = Arc::new(InMemorySandboxStore::default());
+    let profiles = Arc::new(
+        crate::store::MongoProfileStore::open(&client, db.name())
+            .await
+            .unwrap(),
+    );
+    let workspace = fixture::seed(&store).await;
+    let service = fixture::facade(store, profiles, operations.clone());
+    let _slots = service
+        .worker_slots
+        .clone()
+        .acquire_many_owned(crate::store::DISCOVERY_BATCH as u32)
+        .await
+        .unwrap();
+    let auth = crate::auth::AuthState::in_memory(
+        crate::auth::AuthMode::Trusted {
+            subject: "owner".into(),
+        },
+        None,
+    )
+    .with_account_deletion_enabled(true);
+    let app = Router::new()
+        .route(
+            "/api/v1/agent-lifecycle-fixture",
+            post({
+                let service = service.clone();
+                move |AuthenticatedCaller(caller): AuthenticatedCaller,
+                      Extension(context): Extension<CallerContext>| {
+                    let service = service.clone();
+                    let workspace = workspace.id.to_string();
+                    async move {
+                        let request =
+                            request(json!({"name":"Captured authority", "workspace_id":workspace}));
+                        let result = service
+                            .create(&caller, Some(&context), None, request, "personal-lifecycle")
+                            .await;
+                        match result {
+                            Ok(receipt) => (
+                                axum::http::StatusCode::ACCEPTED,
+                                Json(json!({"id":receipt.id})),
+                            ),
+                            Err(error) => (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(json!({"error":format!("{error:?}")})),
+                            ),
+                        }
+                    }
+                }
+            }),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            auth,
+            crate::auth::attach_subject,
+        ));
+    let response = app
+        .oneshot(
+            Request::post("/api/v1/agent-lifecycle-fixture")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 16384)
+        .await
+        .unwrap();
+    assert_eq!(status, 202, "{}", String::from_utf8_lossy(&body));
+    let receipt: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let record = operations
+        .read_for_owner(&SubjectId::new("owner"), receipt["id"].as_str().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let captured = serde_json::to_value(record.input.capabilities).unwrap();
+    assert!(!captured
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "delete_own_account"));
+    assert!(captured
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "use_own_sandboxes"));
+    db.drop().await.unwrap();
+}
+
 fn work(record: &crate::store::LifecycleRecord, existing: bool) -> ProvisionInput {
     ProvisionInput {
+        creation_fence: None,
         behavior: record.input.behavior,
         first_message: validation::admitted_first_message(&record.input),
         request: record.input.request.clone(),
@@ -23,7 +131,84 @@ fn work(record: &crate::store::LifecycleRecord, existing: bool) -> ProvisionInpu
         existing_sandbox_id: existing.then(|| record.sandbox_id.clone()).flatten(),
         existing_agent_id: existing.then(|| record.agent_id.clone()).flatten(),
         actor: record.input.actor.clone(),
+        canary_profiles: None,
+        repository_access_pin: None,
     }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn admitted_session_guidance_survives_retry_after_selection_is_disabled() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable Mongo URI is required");
+    let client = mongodb::Client::with_uri_str(uri).await.unwrap();
+    let db = client.database(&format!("cma_guidance_{}", uuid::Uuid::new_v4().simple()));
+    let store = Arc::new(InMemorySandboxStore::default());
+    let workspace = fixture::seed(&store).await;
+    let owner = fixture::context("owner");
+    let request = request(json!({
+        "name": "Guidance",
+        "workspace_id": workspace.id.as_str(),
+        "profile": {"system_prompt": "  exact owner prompt\n"},
+    }));
+    let mut first_id = None;
+    for enabled in [true, false] {
+        let operations = Arc::new(MongoAgentLifecycleStore::open(&db).await.unwrap());
+        let profiles = Arc::new(
+            crate::store::MongoProfileStore::open(&client, db.name())
+                .await
+                .unwrap(),
+        );
+        let service = fixture::facade(store.clone(), profiles, operations.clone())
+            .with_session_guidance(false, enabled);
+        let _slots = service
+            .worker_slots
+            .clone()
+            .acquire_many_owned(crate::store::DISCOVERY_BATCH as u32)
+            .await
+            .unwrap();
+        let receipt = service
+            .create(
+                &owner.caller,
+                Some(&owner),
+                None,
+                request.clone(),
+                "guidance",
+            )
+            .await
+            .unwrap();
+        let id = first_id.get_or_insert(receipt.id.clone());
+        assert_eq!(&receipt.id, id);
+        let saved = operations
+            .read_for_owner(&owner.caller.subject, id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved.input.managed_agent_instructions.as_deref(),
+            Some(guidance::admission_instructions(false, true))
+        );
+        assert_eq!(
+            serde_json::to_vec(&saved.input.request).unwrap(),
+            serde_json::to_vec(&request).unwrap()
+        );
+        if !enabled {
+            let fresh = service
+                .create(&owner.caller, Some(&owner), None, request.clone(), "fresh")
+                .await
+                .unwrap();
+            assert_ne!(&fresh.id, id);
+            let saved = operations
+                .read_for_owner(&owner.caller.subject, &fresh.id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                saved.input.managed_agent_instructions.as_deref(),
+                Some(guidance::managed_v3())
+            );
+        }
+    }
+    db.drop().await.unwrap();
 }
 
 #[tokio::test]
@@ -373,3 +558,6 @@ async fn assert_profile_counts(db: &mongodb::Database, expected_agents: u64) {
         );
     }
 }
+
+#[path = "agent_lifecycle_release_source_tests.rs"]
+mod release_source_tests;

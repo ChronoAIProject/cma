@@ -26,7 +26,7 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
 pub struct RetainedRecoveryView {
     /// Fixed classification of the latest complete assessment; never dispatch authority.
     pub disposition: String,
-    /// Explicit owner reopening is enabled; admission still requires fresh proof.
+    /// The verified recovery path can be offered to this owner.
     pub admission_enabled: bool,
 }
 
@@ -45,7 +45,7 @@ pub(super) async fn inspect(
         .retained_recovery
         .as_ref()
         .ok_or(HierarchyProblem::Unavailable)?
-        .assess(&caller, &SandboxId(id))
+        .assess_with_reopening(&caller, &SandboxId(id), state.retained_reopening.as_deref())
         .await
         .map_err(|error| match error {
             RetainedRecoveryError::Forbidden => HierarchyProblem::Forbidden,
@@ -54,10 +54,7 @@ pub(super) async fn inspect(
         })?;
     Ok(Json(RetainedRecoveryView {
         disposition: assessment.disposition.as_str().into(),
-        admission_enabled: state
-            .retained_reopening
-            .as_ref()
-            .is_some_and(|service| service.enabled()),
+        admission_enabled: assessment.admission_enabled,
     }))
 }
 
@@ -131,6 +128,7 @@ pub(super) async fn recover(
             E::NotFound => HierarchyProblem::SandboxNotFound,
             E::InvalidConsent => HierarchyProblem::Invalid("retained_recovery_consent_required"),
             E::Conflict => HierarchyProblem::Conflict("retained_recovery_authority_changed"),
+            E::StaleRequest => HierarchyProblem::Conflict("retained_recovery_revision_passed"),
             E::Refused => HierarchyProblem::Conflict("retained_recovery_not_proved"),
             E::Unavailable => {
                 HierarchyProblem::SandboxLifecycleUnavailable("retained_recovery_unavailable")

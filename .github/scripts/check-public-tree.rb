@@ -33,8 +33,13 @@ module PublicTree
   end
 
   def self.violation(path, content)
-    return "private repository path" if path.match?(%r{\A(?:infra|docs|sdk)(?:/|\z)})
+    return "private repository path" if path.match?(%r{\A(?:infra|docs|sdk|\.github/(?:evidence|scripts/cma_scale))(?:/|\z)})
     return "Terraform state" if File.basename(path).match?(/\.tfstate(?:\..*)?\z/i)
+    # Bytecode is generated (CLAUDE.md section 8) and embeds the absolute path
+    # of the tree that compiled it, which publishes a local home directory.
+    if path.match?(%r{(?:\A|/)__pycache__/}) || path.match?(/\.py[co]\z/i)
+      return "generated Python bytecode is never tracked"
+    end
     recipe = File.basename(path).match?(/\A(?:Dockerfile(?:\..*)?|.+\.Dockerfile)\z/)
     if recipe && !fixture?(path) && !DOCKERFILES.include?(path)
       return "Dockerfile outside its owning component"

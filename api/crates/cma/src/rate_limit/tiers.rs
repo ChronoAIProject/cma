@@ -40,10 +40,13 @@ pub(super) fn request_tier(
     {
         return RequestTier::Health;
     }
-    if request.method() != Method::POST
+    if path == layer1_public::rest::creation_outcomes::LOOKUP_PATH
+        || request.method() != Method::POST
         || matches!(
             path,
-            "/api/v1/profile-authoring/repositories/resolve" | "/auth/connections/check"
+            "/api/v1/profile-authoring/repositories/resolve"
+                | "/auth/connections/check"
+                | "/auth/connections/repository-access"
         )
     {
         return RequestTier::Default;
@@ -110,7 +113,10 @@ pub(super) fn uses_client_operation_key(path: &str) -> bool {
     // users behind the same network from consuming each other's login budget.
     if matches!(
         path,
-        "/auth/connections/check" | "/auth/connections/start" | "/auth/connections/cancel"
+        "/auth/connections/check"
+            | "/auth/connections/start"
+            | "/auth/connections/cancel"
+            | "/auth/connections/repository-access"
     ) {
         return false;
     }
@@ -136,12 +142,12 @@ pub(super) fn is_rest_path(path: &str) -> bool {
         && path != "/api/v1/responses"
 }
 
-fn is_public_trigger_preview(path: &str) -> bool {
+pub(super) fn is_public_trigger_preview(path: &str) -> bool {
     exact_path_segments(path, &["api", "v1", "triggers", "public", "*"])
         || exact_path_segments(path, &["api", "v1", "triggers", "public", "*", "badge.svg"])
 }
 
-fn exact_path_segments(path: &str, expected: &[&str]) -> bool {
+pub(super) fn exact_path_segments(path: &str, expected: &[&str]) -> bool {
     let mut segments = path.split('/').filter(|segment| !segment.is_empty());
     expected.iter().all(|expected| {
         segments

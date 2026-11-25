@@ -4,16 +4,13 @@ pub mod http;
 pub(crate) mod http_failure;
 pub mod names;
 pub mod operations;
+pub mod provider_start;
 pub mod timing;
 pub(crate) mod turn_trace;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use std::sync::OnceLock;
 static REGISTRY: OnceLock<Result<PrometheusHandle, String>> = OnceLock::new();
-pub fn channel_hash(id: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let hash = Sha256::digest(id.as_bytes());
-    hash[..8].iter().map(|byte| format!("{byte:02x}")).collect()
-}
+pub use cmaeg_execution::channel_hash;
 pub fn install() -> Result<PrometheusHandle, String> {
     REGISTRY
         .get_or_init(|| {

@@ -9,10 +9,16 @@ pub const EVENTS: &str = "cmaeg_events_total";
 pub const REFUSALS: &str = "cmaeg_refusals_total";
 pub const PROVIDER_ERRORS: &str = "cmaeg_provider_errors_total";
 pub const TURNS_INFLIGHT: &str = "cmaeg_turns_inflight";
+pub const PROVIDER_START_OBSERVATIONS: &str = "cmaeg_provider_start_observations_total";
+pub const PROVIDER_START_ACTIVE: &str = "cmaeg_provider_start_active_executors";
+pub const PROVIDER_START_LAG: &str = "cmaeg_provider_start_lag_seconds";
+pub const PROVIDER_START_WINDOW_VALID: &str = "cmaeg_provider_start_window_valid";
+pub const PROVIDER_START_OLDEST_LOCAL_CANDIDATE: &str =
+    "cmaeg_provider_start_oldest_local_candidate_seconds";
 pub const CHANNELS_CACHED: &str = "cmaeg_channels_cached";
 pub const RELAY_ENVELOPE_REPAIRS: &str = "cmaeg_relay_envelope_repairs_total";
 pub const CALLBACK_INVALID: &str = "cmaeg_callback_invalid_total";
-pub const DELIVERY_WORKER_RESTARTS: &str = "cmaeg_delivery_worker_restarts_total";
+pub use cmaeg_execution::delivery::engine::DELIVERY_WORKER_RESTARTS;
 pub const MEDIA_ACTIVITY_DEGRADED: &str = "cmaeg_media_activity_degraded_total";
 pub const MEDIA_FACTS_REPAIRED: &str = "cmaeg_media_facts_repaired_total";
 pub const MEDIA_ITEMS: &str = "cmaeg_media_items_total";
@@ -29,7 +35,7 @@ pub const MEDIA_DOWNLOADS: &str = "cmaeg_media_downloads_total";
 pub const MEDIA_LINKS: &str = "cmaeg_media_links_total";
 pub const STT_AUDIO_SECONDS: &str = "cmaeg_stt_audio_seconds_total";
 pub const STT_CHANNELS_AT_BUDGET: &str = "cmaeg_stt_channels_at_budget";
-pub const FENCE_WAIT: &str = "cmaeg_media_fence_wait_seconds";
+pub use cmaeg_execution::turns::sequencer::FENCE_WAIT;
 pub const MEDIA_PREPARE: &str = "cmaeg_media_prepare_seconds";
 pub const MEDIA_TRANSFORM_TOTAL: &str = "cmaeg_media_transform_total";
 pub const MEDIA_TRANSFORM_SECONDS: &str = "cmaeg_media_transform_seconds";
@@ -62,8 +68,9 @@ pub const VIEW: &str = "view";
 pub const STATUS: &str = "status";
 pub const MEDIA: &str = "media";
 pub const PAGE: &str = "page";
-pub const HISTOGRAMS: [&str; 6] = [
+pub const HISTOGRAMS: [&str; 7] = [
     INGRESS_TO_PROVIDER,
+    PROVIDER_START_LAG,
     RESTORE_DURATION,
     PROVIDER_ACCEPT,
     TURN_DURATION,

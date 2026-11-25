@@ -6,22 +6,23 @@ export async function sendQueuedInputIntent(
   session: AgentV2Session,
   intent: QueuedInputIntent,
   signal: AbortSignal,
-): Promise<void> {
+) {
   await session.authorize(signal);
   const body = {
     source_command_id: intent.commandId,
     expected_command_revision: intent.revision,
   };
+  let result;
   try {
     if (intent.action === 'edit')
-      await session.responses.editQueuedInput(
+      result = await session.responses.editQueuedInput(
         session.journal.agentId,
         intent.responseId,
         { ...body, text: intent.text! },
         { idempotencyKey: intent.key, signal },
       );
     else
-      await session.responses.cancelQueuedResponse(
+      result = await session.responses.cancelQueuedResponse(
         session.journal.agentId,
         intent.responseId,
         body,
@@ -42,10 +43,27 @@ export async function sendQueuedInputIntent(
           )))
     ) {
       await session.authorize(signal);
+      if (intent.action === 'edit' && error.code === 'queued_input_not_admitted') {
+        session.journal.queuedInputs.settle(intent, true);
+        return;
+      }
       session.journal.queuedInputs.settle(intent);
     }
     throw error;
   }
   await session.authorize(signal);
   session.journal.queuedInputs.settle(intent);
+  return {
+    response: result.response,
+    row:
+      'command_revision' in result
+        ? {
+            commandId: intent.commandId,
+            responseId: intent.responseId,
+            revision: result.command_revision,
+            input: result.text,
+            busy: true,
+          }
+        : undefined,
+  };
 }

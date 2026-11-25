@@ -4,7 +4,7 @@ use tokio::sync::oneshot;
 use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 
 use crate::{
-    connections, console, delivery, http, ingress, interactions, mcp, media, providers,
+    connections, console, delivery, http, ingress, interactions, media, providers,
     router_with_state, service_auth, telegram, telemetry, tools, turns, Config,
     REQUEST_BODY_LIMIT_BYTES,
 };
@@ -14,7 +14,7 @@ use crate::{
 pub(crate) async fn serve(
     mut config: Config,
     complete_replies: bool,
-    commonmark_relay: bool,
+    commonmark_relay: crate::config::CommonmarkRelay,
     native_media: bool,
     relay_text_edits: bool,
     native_discord_edits: bool,
@@ -66,10 +66,8 @@ pub(crate) async fn serve(
         config.channel_cache.clone(),
         observers.index.clone(),
     );
-    observers.activity = Arc::new(crate::activity::ObservedActivity::new(
-        state.activity.clone(),
-        observers.activity.clone(),
-    ));
+    crate::channels::profile_revision::configure(&config, &mut state)?;
+    activity::configure(&config, &mut state, &mut observers).await?;
     let telegram = Arc::new(telegram::TelegramClient::production(
         config.delivery.reply_timeout,
     )?);
@@ -179,7 +177,7 @@ pub(crate) async fn serve(
         .with_discord_voice_decoder(media.as_ref().and_then(|service| service.voice_decoder()))
         .with_native_whatsapp_config(&config)
         .with_complete_replies(complete_replies)
-        .with_commonmark_relay(commonmark_relay)
+        .with_commonmark_platforms(commonmark_relay)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
         .with_discord_reactions(config.native_discord_reactions_enabled)
@@ -251,6 +249,7 @@ pub(crate) async fn serve(
             observers.activity.clone(),
         )),
     )?
+    .with_profile_revisions(config.profile_revisions_enabled)
     .with_whatsapp_receipts(whatsapp_receipts)
     .with_telegram(telegram.clone())
     .with_telegram_effects(telegram_effects || config.native_telegram_received_reactions_enabled)
@@ -283,7 +282,7 @@ pub(crate) async fn serve(
             .transpose()?
             .map(Arc::new),
         complete_replies_enabled: complete_replies,
-        commonmark_relay_enabled: commonmark_relay,
+        commonmark_relay,
         routed_replies: routed
             .as_ref()
             .map(|composition| composition.tool_replies.clone()),
@@ -383,7 +382,8 @@ pub(crate) async fn serve(
         .github_enabled
         .then(|| crate::github::Initialization::start(state.clone(), ingress.clone()));
     let ingress = ingress.with_receipt_observer(Arc::new(connections.clone()));
-    let metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
+    let metrics =
+        crate::serve_routed::start_metrics(config.metrics_listen, metrics, routed.as_ref()).await?;
     let replica_routes = routed
         .as_ref()
         .map(|composition| composition.replica_routes.clone())
@@ -416,8 +416,8 @@ pub(crate) async fn serve(
     .map_err(|_| std::io::Error::other("native Discord runtime configuration is invalid"))?;
     listener::announce(&listener, metrics.address(), ephemeral)?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
-
     let (shutdown_started, shutdown_signal) = oneshot::channel();
+    let side_messages = delivery_engine.side_messages_if(config.event_side_messages_enabled);
     let mut router = router_with_state(state)
         .merge(drain_control.router(replicas.enabled))
         .merge(replica_routes)
@@ -434,9 +434,7 @@ pub(crate) async fn serve(
         .merge(http::whatsapp::router(ingress.clone()))
         .merge(http::telegram::router(ingress.clone()))
         .merge(http::callbacks::router(ingress))
-        .merge(http::tools::router(tools_state.clone()))
-        .merge(http::media::router(tools_state.clone()))
-        .merge(mcp::router(tools_state))
+        .merge(http::tools::gateway_router(tools_state, side_messages))
         .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
         .layer(CatchPanicLayer::custom(http::problems::panic_response));
     if let Some(browser) = browser {
@@ -488,6 +486,9 @@ pub(crate) async fn serve(
 mod listener;
 #[path = "serve_shutdown.rs"]
 mod shutdown;
+
+#[path = "serve_activity.rs"]
+mod activity;
 
 #[path = "serve_record_client.rs"]
 mod record_client_impl;

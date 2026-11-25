@@ -28,7 +28,10 @@ pub(crate) fn check_github_sources(
     Ok(())
 }
 
-pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationError> {
+pub(super) fn build_sources(
+    sources: &[SourceRequest],
+    current: Option<&ChannelDefinition>,
+) -> Result<Vec<Source>, ValidationError> {
     let mut result = Vec::with_capacity(sources.len());
     for (index, source) in sources.iter().enumerate() {
         let pointer = format!("/sources/{index}");
@@ -103,18 +106,41 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 topic_creation,
                 message_events,
                 channel_posts,
+                member_join_chat_ids,
                 bot_id,
                 bot_username,
                 admission,
-            } => Source::Telegram {
-                topic_lifecycle: *topic_lifecycle,
-                topic_creation: *topic_creation,
-                message_events: *message_events,
-                channel_posts: *channel_posts,
-                bot_id: bot_id.clone(),
-                bot_username: bot_username.clone(),
-                admission: admission.clone(),
-            },
+            } => {
+                let saved_member_joins = current.and_then(|definition| {
+                    definition.sources.iter().find_map(|source| match source {
+                        Source::Telegram {
+                            bot_id: saved_bot,
+                            message_events: true,
+                            member_join_chat_ids,
+                            ..
+                        } if saved_bot == bot_id => Some(member_join_chat_ids),
+                        _ => None,
+                    })
+                });
+                Source::Telegram {
+                    topic_lifecycle: *topic_lifecycle,
+                    topic_creation: *topic_creation,
+                    message_events: *message_events,
+                    channel_posts: *channel_posts,
+                    member_join_chat_ids: if !message_events && saved_member_joins.is_some() {
+                        Vec::new()
+                    } else {
+                        member_join_chat_ids
+                            .as_ref()
+                            .or(saved_member_joins)
+                            .cloned()
+                            .unwrap_or_default()
+                    },
+                    bot_id: bot_id.clone(),
+                    bot_username: bot_username.clone(),
+                    admission: admission.clone(),
+                }
+            }
             SourceRequest::Discord {
                 bot_id,
                 intents,
@@ -158,6 +184,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 verify_raw_event,
                 lark_message_effects,
                 lark_resources,
+                member_join_chat_ids,
                 admission,
             } => Source::NyxidRelay {
                 issuer: issuer.clone(),
@@ -171,6 +198,31 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 verify_raw_event: *verify_raw_event,
                 lark_message_effects: lark_message_effects.clone(),
                 lark_resources: lark_resources.clone(),
+                member_join_chat_ids: member_join_chat_ids.clone().unwrap_or_else(|| {
+                    current
+                        .and_then(|definition| {
+                            definition.sources.iter().find_map(|source| match source {
+                                Source::NyxidRelay {
+                                    issuer: saved_issuer,
+                                    key_id: saved_key,
+                                    route_ids: saved_routes,
+                                    bot_id: saved_bot,
+                                    platform: saved_platform,
+                                    member_join_chat_ids,
+                                    ..
+                                } if saved_issuer == issuer
+                                    && saved_key == key_id
+                                    && saved_routes == route_ids
+                                    && saved_bot == bot_id
+                                    && saved_platform == platform =>
+                                {
+                                    Some(member_join_chat_ids.clone())
+                                }
+                                _ => None,
+                            })
+                        })
+                        .unwrap_or_default()
+                }),
                 admission: admission.clone(),
             },
             SourceRequest::Custom {
@@ -194,6 +246,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
 
 pub(super) fn build_secrets(credentials: &CredentialsRequest) -> ChannelSecrets {
     ChannelSecrets {
+        profile_revisions: None,
         native_lark: credentials.native_lark.clone(),
         whatsapp: credentials.whatsapp.clone(),
         agent_key_hash: hash_secret(credentials.agent_key.as_str()),

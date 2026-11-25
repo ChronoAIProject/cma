@@ -1,7 +1,8 @@
 """Fixed conservative-selection reasons, separate from integrity refusals."""
 
 REASONS = frozenset({'input-analysis-uncertain', 'shallow-history',
-                     'comparison-boundary-not-found', 'unknown-input-path'})
+                     'comparison-boundary-not-found', 'unknown-input-path',
+                     'release-base-unmodeled'})
 
 
 class SelectionIntegrityError(ValueError):
@@ -25,7 +26,7 @@ def unknown_paths(paths, graphs):
     # Known repository automation and public documentation can select no image.
     # Anything outside the modeled roots, or an unowned package, cannot prove
     # a deployable unaffected. Old and new graphs both count for removed paths.
-    root_files = {'README.md', 'CLAUDE.md', 'AGENTS.md', 'CONTRIBUTING.md', '.gitignore', '.dockerignore'}
+    root_files = {'README.md', 'CLAUDE.md', 'AGENTS.md', 'CONTRIBUTING.md', 'LICENSE', 'NOTICE', '.gitignore', '.dockerignore'}
     for path in paths:
         if path.startswith('api/crates/'):
             if not any(path.startswith(directory + '/') or path == directory

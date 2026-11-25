@@ -1,6 +1,10 @@
 use super::*;
 
-pub(super) struct MemoryCredentials {
+pub(crate) struct MemoryCredentials {
+    pub(super) live_keys: Mutex<std::collections::BTreeSet<String>>,
+    pub(super) revoke_failure_ids: Mutex<std::collections::BTreeSet<String>>,
+    pub(super) census_failure: Mutex<Option<CredentialError>>,
+    pub(super) settlement_failure: Mutex<Option<CredentialError>>,
     pub(super) materials: Mutex<BTreeMap<(SandboxId, u64), CredentialMaterial>>,
     pub(super) issue_failures: Mutex<VecDeque<CredentialError>>,
     pub(super) revoke_failures: AtomicUsize,
@@ -10,8 +14,12 @@ pub(super) struct MemoryCredentials {
 }
 
 impl MemoryCredentials {
-    pub(super) fn new(actions: ActionLog) -> Arc<Self> {
+    pub(crate) fn new(actions: ActionLog) -> Arc<Self> {
         Arc::new(Self {
+            live_keys: Default::default(),
+            revoke_failure_ids: Default::default(),
+            census_failure: Default::default(),
+            settlement_failure: Default::default(),
             materials: Mutex::new(BTreeMap::new()),
             issue_failures: Mutex::new(VecDeque::new()),
             revoke_failures: AtomicUsize::new(0),
@@ -37,6 +45,10 @@ impl MemoryCredentials {
     }
 
     pub(super) fn restore(&self, material: CredentialMaterial) {
+        self.live_keys
+            .lock()
+            .unwrap()
+            .insert(material.authority.provider_key_id.clone());
         self.materials
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -79,6 +91,7 @@ impl SandboxCredentialController for MemoryCredentials {
         self.actions.push(format!("mint:{generation}"));
         let material = CredentialMaterial {
             source: Default::default(),
+            github_route: None,
             sandbox_id: sandbox.id.clone(),
             owner: sandbox.owner.clone(),
             authority: layer2_core::sandbox::SandboxCredentialAuthority {
@@ -93,6 +106,10 @@ impl SandboxCredentialController for MemoryCredentials {
             },
             value: SecretValue::new(format!("one-time-secret-{generation}")),
         };
+        self.live_keys
+            .lock()
+            .unwrap()
+            .insert(material.authority.provider_key_id.clone());
         materials.insert(key, material.clone());
         Ok(material)
     }
@@ -114,6 +131,9 @@ impl SandboxCredentialController for MemoryCredentials {
         &self,
         sandbox_id: &SandboxId,
     ) -> Result<Vec<CredentialMaterial>, CredentialError> {
+        if let Some(error) = self.census_failure.lock().unwrap().clone() {
+            return Err(error);
+        }
         Ok(self
             .materials
             .lock()
@@ -150,6 +170,16 @@ impl SandboxCredentialController for MemoryCredentials {
     ) -> Result<(), CredentialError> {
         self.actions.push(format!("revoke:{provider_key_id}"));
         if self
+            .revoke_failure_ids
+            .lock()
+            .unwrap()
+            .contains(provider_key_id)
+        {
+            return Err(CredentialError::Unavailable(
+                "simulated key revocation outage".into(),
+            ));
+        }
+        if self
             .revoke_failures
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                 remaining.checked_sub(1)
@@ -160,7 +190,14 @@ impl SandboxCredentialController for MemoryCredentials {
                 "simulated revoke outage".into(),
             ))
         } else {
+            self.live_keys.lock().unwrap().remove(provider_key_id);
             Ok(())
+        }
+    }
+    async fn settle_revocations(&self, _: &Sandbox) -> Result<(), CredentialError> {
+        match self.settlement_failure.lock().unwrap().clone() {
+            Some(error) => Err(error),
+            None => Ok(()),
         }
     }
 }

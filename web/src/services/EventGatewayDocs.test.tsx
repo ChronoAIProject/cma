@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { render, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { DocsIndex, EventGatewayDocs, GATEWAY_DOCUMENTS, gatewayDocLink } from './EventGatewayDocs';
+import { EventGatewayDocs, GATEWAY_DOCUMENTS, gatewayDocLink } from './EventGatewayDocs';
 import { GATEWAY_DIAGRAM_SIZES } from './gatewayDiagramSizes';
 
 afterEach(() => vi.restoreAllMocks());
@@ -69,7 +69,10 @@ it('renders all three canonical documents with complete navigation and all revie
 
 it('keeps every static diagram and reserved aspect ratio aligned with the backend source', () => {
   const backend = resolve(process.cwd(), '../api/crates/cmaeg');
-  const manifest = readFileSync(resolve(backend, 'src/http/docs/diagrams.rs'), 'utf8');
+  const manifest = readFileSync(
+    resolve(backend, '../cmaeg-http/src/http/docs/diagrams.rs'),
+    'utf8',
+  );
   let diagramCount = 0;
   for (const document of GATEWAY_DOCUMENTS) {
     const diagrams = [...document.markdown.matchAll(/```mermaid\s*\n([\s\S]*?)\n```/g)];
@@ -135,18 +138,6 @@ it('uses service discovery on the portal origin and preserves canonical document
   ).toBe('#protocol');
   const unrelated = 'https://bot-gateway.chrono-ai.fun/docs-other';
   expect(gatewayDocLink(unrelated, 'protocol')).toBe(unrelated);
-});
-
-it('opens the Event Gateway documentation from the Docs index using application navigation', () => {
-  const navigate = vi.fn();
-  render(<DocsIndex onNavigate={navigate} />);
-  const link = screen.getByRole('link', { name: /Event Gateway Protocol/ });
-  expect(link).toHaveAttribute('href', '/docs/event-gateway');
-  fireEvent.click(link);
-  expect(navigate).toHaveBeenCalledExactlyOnceWith({
-    kind: 'docs',
-    view: 'event_gateway_protocol',
-  });
 });
 
 it('rebases canonical Nyxid Gateway document links into the current portal', () => {

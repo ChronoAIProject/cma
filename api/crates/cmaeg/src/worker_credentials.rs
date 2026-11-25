@@ -8,7 +8,7 @@ use std::{
 
 use cmaeg_core::{
     channel::ChannelDefinition,
-    seal::{open_blob, MasterKeyRing},
+    seal::{open_retained_channel, MasterKeyRing},
 };
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
@@ -145,10 +145,16 @@ impl WorkerCredentials {
 
     /// Used at the persistence boundary, including offline import and rekeying.
     /// Retain default/additional/pending hashes even after rotation or removal.
-    pub async fn record_blob(&self, blob: &[u8]) -> Result<(), RecordError> {
-        let payload = open_blob(&self.keys, blob).map_err(|_| {
-            RecordError::Rejected("cannot classify sealed channel credentials".into())
-        })?;
+    pub async fn record_blob(
+        &self,
+        record_id: &str,
+        version: u64,
+        blob: &[u8],
+    ) -> Result<(), RecordError> {
+        let (payload, _) =
+            open_retained_channel(&self.keys, record_id, version, blob).map_err(|_| {
+                RecordError::Rejected("cannot classify sealed channel credentials".into())
+            })?;
         let definition: ChannelDefinition = serde_json::from_slice(&payload.payload)
             .map_err(|_| RecordError::Rejected("cannot classify channel definition".into()))?;
         definition
@@ -169,6 +175,16 @@ impl WorkerCredentials {
                 canonical_digest(&crate::channels::definition::hash_secret(key.as_str()))?
                     .to_owned(),
             );
+        }
+        if let Some(revisions) = &definition.secrets.profile_revisions {
+            for retained in &revisions.retained {
+                hashes.insert(
+                    canonical_digest(&crate::channels::definition::hash_secret(
+                        retained.credential.as_str(),
+                    ))?
+                    .to_owned(),
+                );
+            }
         }
         for hash in hashes {
             self.record_digest(&hash).await?;

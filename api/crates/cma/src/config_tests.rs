@@ -166,6 +166,75 @@ fn retained_defaults_and_runtime_values_form_a_complete_configuration() {
 }
 
 #[test]
+fn account_deletion_config_defaults_off() {
+    assert!(!configured(&[]).unwrap().account_deletion_enabled);
+    assert!(
+        !configured(&[("CHRONO_ACCOUNT_DELETION_ENABLED", "false")])
+            .unwrap()
+            .account_deletion_enabled
+    );
+    assert!(
+        configured(&[("CHRONO_ACCOUNT_DELETION_ENABLED", "true")])
+            .unwrap()
+            .account_deletion_enabled
+    );
+}
+
+#[test]
+fn account_deletion_config_rejects_non_boolean_values() {
+    for value in ["", "1", "TRUE", "False", " true ", "enabled"] {
+        assert_eq!(
+            configured(&[("CHRONO_ACCOUNT_DELETION_ENABLED", value)]).unwrap_err(),
+            "CHRONO_ACCOUNT_DELETION_ENABLED must be true or false"
+        );
+    }
+}
+
+const LEGAL: &str =
+    "2026-11-30 https://legal.example.test/terms https://legal.example.test/privacy";
+
+#[test]
+fn legal_terms_default_off_and_load_from_one_setting() {
+    assert!(configured(&[]).unwrap().legal_terms.is_none());
+    assert!(configured(&[("CHRONO_LEGAL_TERMS", "")])
+        .unwrap()
+        .legal_terms
+        .is_none());
+    let terms = configured(&[("CHRONO_LEGAL_TERMS", LEGAL)])
+        .unwrap()
+        .legal_terms
+        .unwrap();
+    assert_eq!(terms.version(), "2026-11-30");
+    assert_eq!(terms.terms_url(), "https://legal.example.test/terms");
+    assert_eq!(terms.privacy_url(), "https://legal.example.test/privacy");
+}
+
+#[test]
+fn legal_terms_refuse_malformed_or_invalid_settings() {
+    for value in [
+        "2026-11-30 https://legal.example.test/terms",
+        "2026-11-30  https://legal.example.test/terms https://legal.example.test/privacy",
+        " 2026-11-30 https://legal.example.test/terms https://legal.example.test/privacy",
+        "2026-11-30 https://legal.example.test/terms https://legal.example.test/privacy extra",
+    ] {
+        assert!(
+            configured(&[("CHRONO_LEGAL_TERMS", value)])
+                .unwrap_err()
+                .contains("separated by single spaces"),
+            "{value}"
+        );
+    }
+    for value in [
+        "v/1 https://legal.example.test/terms https://legal.example.test/privacy",
+        "1 http://legal.example.test/terms https://legal.example.test/privacy",
+        "1 https://legal.example.test/terms /privacy",
+    ] {
+        let error = configured(&[("CHRONO_LEGAL_TERMS", value)]).unwrap_err();
+        assert!(error.starts_with("CHRONO_LEGAL_TERMS: "), "{error}");
+    }
+}
+
+#[test]
 fn runtime_values_are_required_and_nonblank() {
     for key in REQUIRED_RUNTIME_KEYS {
         let missing = configured_without(key).unwrap_err();
@@ -362,15 +431,37 @@ fn provider_mode_requires_all_identity_configuration() {
 
 #[test]
 fn retained_agent_access_origins_are_explicit_and_do_not_change_browser_callbacks() {
-    assert!(configured(&[]).unwrap().agent_access_retained_origins.is_empty());
+    assert!(configured(&[])
+        .unwrap()
+        .agent_access_retained_origins
+        .is_empty());
     let config = configured(&[
         ("CHRONO_SERVER_PUBLIC_URL", "https://new.example"),
-        ("CHRONO_AGENT_ACCESS_RETAINED_ORIGINS", "https://old.example, https://old.example"),
-    ]).unwrap();
+        (
+            "CHRONO_AGENT_ACCESS_RETAINED_ORIGINS",
+            "https://old.example, https://old.example",
+        ),
+    ])
+    .unwrap();
     assert_eq!(config.public_url, "https://new.example");
-    assert_eq!(config.agent_access_retained_origins, ["https://old.example"]);
-    for value in ["http://old.example", "https://user@old.example", "https://old.example/api", "https://old.example,", "*", "https://old.example/", "https://Old.example", "https://a.example,https://b.example,https://c.example,https://d.example,https://e.example"] {
-        assert!(configured(&[("CHRONO_AGENT_ACCESS_RETAINED_ORIGINS", value)]).is_err(), "{value}");
+    assert_eq!(
+        config.agent_access_retained_origins,
+        ["https://old.example"]
+    );
+    for value in [
+        "http://old.example",
+        "https://user@old.example",
+        "https://old.example/api",
+        "https://old.example,",
+        "*",
+        "https://old.example/",
+        "https://Old.example",
+        "https://a.example,https://b.example,https://c.example,https://d.example,https://e.example",
+    ] {
+        assert!(
+            configured(&[("CHRONO_AGENT_ACCESS_RETAINED_ORIGINS", value)]).is_err(),
+            "{value}"
+        );
     }
 }
 
@@ -395,8 +486,10 @@ fn interface_feature_flags_are_strict_independent_booleans() {
     assert!(!config.features.model_request_budget_writes_enabled);
     assert!(!config.features.platform_spend_writes_enabled);
     assert!(!config.features.platform_counter_shards);
-    assert!(!config.features.v2_ui_transport);
+    // Graduated: unset enables the V2 transport.
+    assert!(config.features.v2_ui_transport);
     assert!(!config.features.trigger_command_admission);
+    assert!(!config.features.github_repository_preflight);
     assert!(!config.features.nyxid_resource_request);
     assert!(!config.features.document_revocation_reserve);
     assert!(!config.features.retained_context_lookup);
@@ -409,14 +502,23 @@ fn interface_feature_flags_are_strict_independent_booleans() {
         "CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED",
         "CHRONO_V2_UI_TRANSPORT_ENABLED",
         "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
+        "CHRONO_GITHUB_REPOSITORY_PREFLIGHT_ENABLED",
         "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED",
         "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
         "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED",
         "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
     ] {
         let config = configured(&[(key, "true")]).unwrap();
-        assert_eq!(config.features.retained_reopen_enabled, key == "CHRONO_RETAINED_REOPEN_ENABLED");
-        assert!(!configured(&[(key, "false")]).unwrap().features.retained_reopen_enabled);
+        assert_eq!(
+            config.features.retained_reopen_enabled,
+            key == "CHRONO_RETAINED_REOPEN_ENABLED"
+        );
+        assert!(
+            !configured(&[(key, "false")])
+                .unwrap()
+                .features
+                .retained_reopen_enabled
+        );
         assert_eq!(
             config.features.model_budget_writes_enabled,
             key == "CHRONO_MODEL_BUDGET_WRITES_ENABLED"
@@ -442,13 +544,21 @@ fn interface_feature_flags_are_strict_independent_booleans() {
             .unwrap()
             .features
             .model_budget_writes_enabled);
+        assert!(config.features.v2_ui_transport);
         assert_eq!(
-            config.features.v2_ui_transport,
-            key == "CHRONO_V2_UI_TRANSPORT_ENABLED"
+            configured(&[(key, "false")])
+                .unwrap()
+                .features
+                .v2_ui_transport,
+            key != "CHRONO_V2_UI_TRANSPORT_ENABLED"
         );
         assert_eq!(
             config.features.trigger_command_admission,
             key == "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED"
+        );
+        assert_eq!(
+            config.features.github_repository_preflight,
+            key == "CHRONO_GITHUB_REPOSITORY_PREFLIGHT_ENABLED"
         );
         assert_eq!(
             config.features.nyxid_resource_request,
@@ -466,7 +576,12 @@ fn interface_feature_flags_are_strict_independent_booleans() {
             config.features.event_driven_reconciliation,
             key == "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED"
         );
-        assert!(!configured(&[(key, "false")]).unwrap().features.document_revocation_reserve);
+        assert!(
+            !configured(&[(key, "false")])
+                .unwrap()
+                .features
+                .document_revocation_reserve
+        );
         assert_eq!(
             configured(&[(key, "enabled")]).unwrap_err(),
             format!("{key} must be true or false")
@@ -478,7 +593,17 @@ fn interface_feature_flags_are_strict_independent_booleans() {
 fn metrics_listener_is_private_and_has_a_distinct_valid_address() {
     let config = configured(&[]).unwrap();
     assert_eq!(config.metrics_bind.to_string(), "0.0.0.0:9091");
-    assert!(configured(&[("CHRONO_METRICS_BIND", "invalid")]).unwrap_err().contains("CHRONO_METRICS_BIND"));
-    assert!(configured(&[("CHRONO_METRICS_BIND", "0.0.0.0:8080")]).unwrap_err().contains("must differ"));
-    assert_eq!(configured(&[("CHRONO_METRICS_BIND", "127.0.0.1:9191")]).unwrap().metrics_bind.to_string(), "127.0.0.1:9191");
+    assert!(configured(&[("CHRONO_METRICS_BIND", "invalid")])
+        .unwrap_err()
+        .contains("CHRONO_METRICS_BIND"));
+    assert!(configured(&[("CHRONO_METRICS_BIND", "0.0.0.0:8080")])
+        .unwrap_err()
+        .contains("must differ"));
+    assert_eq!(
+        configured(&[("CHRONO_METRICS_BIND", "127.0.0.1:9191")])
+            .unwrap()
+            .metrics_bind
+            .to_string(),
+        "127.0.0.1:9191"
+    );
 }

@@ -1,6 +1,6 @@
 use super::*;
 
-async fn independent_custody(f: &Fixture) -> Arc<MongoSandboxCredentialStore> {
+pub(super) async fn independent_custody(f: &Fixture) -> Arc<MongoSandboxCredentialStore> {
     let client = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
@@ -11,9 +11,10 @@ async fn independent_custody(f: &Fixture) -> Arc<MongoSandboxCredentialStore> {
     )
 }
 
-fn retained(f: &Fixture) -> CredentialMaterial {
+pub(super) fn retained(f: &Fixture) -> CredentialMaterial {
     CredentialMaterial {
         source: Default::default(),
+        github_route: None,
         sandbox_id: f.claim.id.clone(),
         owner: f.claim.owner.clone(),
         authority: SandboxCredentialAuthority {

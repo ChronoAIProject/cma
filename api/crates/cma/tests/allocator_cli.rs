@@ -66,7 +66,7 @@ fn actual_api_allocator_completes_without_configuration() {
     assert!(output.status.success(), "{stdout}\n{stderr}");
     assert!(stderr.is_empty(), "{stderr}");
     assert!(stdout.contains(
-        "workers=18 blocks_per_worker=128 rounds=4096 warmup=256 retained_limit_kib=24576"
+        "workers=4 blocks_per_worker=128 rounds=4096 warmup=256 retained_limit_kib=24576"
     ));
     for boundary in [
         "256", "512", "1024", "1536", "2048", "2560", "3072", "3584", "4096", "quiesced",

@@ -16,12 +16,39 @@ pub(super) fn owned_home(
         return Ok(Owned::Unrelated);
     }
     // An incomplete initial allocation can have selected this pool without yet
-    // recording its Claim. Its durable Sandbox must block retirement first.
+    // recording its Claim. Until its home records the selected pool, its durable
+    // Sandbox blocks every retirement. Once recorded, it blocks only that pool
+    // (below): a single stuck installation must not keep every obsolete pool's
+    // spare capacity running.
     if matches!(
         sandbox.status,
         SandboxStatus::Provisioning | SandboxStatus::Installing
-    ) {
+    ) && home.is_none_or(|h| h.native_pool.is_none())
+    {
         return Ok(Owned::Blocked);
+    }
+    // A completed cold-canary home uses its own pool even when its image
+    // matches an ordinary target. Keep the image fence for incomplete homes.
+    if !target.plan.spec.cold_canary
+        && home
+            .and_then(|home| home.native_pool.as_ref())
+            .is_some_and(|native| {
+                let pool = &native.request.pool;
+                pool.spec.cold_canary
+                    && pool.config_sha256 != target.plan.config_sha256
+                    && target
+                        .binding
+                        .as_ref()
+                        .is_none_or(|binding| binding.uid != pool.uid && binding.name != pool.name)
+                    && sandbox.profile.content.runtime_image.as_deref()
+                        == Some(pool.spec.image.uri.as_str())
+                    && sandbox
+                        .retained_runtime_binding()
+                        .is_some_and(|runtime| runtime.runtime_version == pool.spec.image.uri)
+            })
+        && settled_attachment(sandbox, None)?.is_some()
+    {
+        return Ok(Owned::Unrelated);
     }
     if sandbox
         .runtime
@@ -95,6 +122,13 @@ pub(super) fn settled_native_home(
     sandbox: &Sandbox,
     target: &PoolTarget,
 ) -> Result<Option<HomeVolumeAttachment>, WarmPoolError> {
+    settled_attachment(sandbox, Some(target))
+}
+
+fn settled_attachment(
+    sandbox: &Sandbox,
+    target: Option<&PoolTarget>,
+) -> Result<Option<HomeVolumeAttachment>, WarmPoolError> {
     if !matches!(
         sandbox.status,
         SandboxStatus::Active | SandboxStatus::Paused | SandboxStatus::Failed
@@ -111,11 +145,13 @@ pub(super) fn settled_native_home(
     let Some(native) = home.native_pool.as_deref() else {
         return Ok(None);
     };
-    if native.request.pool.config_sha256 != target.plan.config_sha256 {
-        return Ok(None);
-    }
-    if target.binding.as_ref() != Some(&native.request.pool) {
-        return Err(WarmPoolError::Conflict);
+    if let Some(target) = target {
+        if native.request.pool.config_sha256 != target.plan.config_sha256 {
+            return Ok(None);
+        }
+        if target.binding.as_ref() != Some(&native.request.pool) {
+            return Err(WarmPoolError::Conflict);
+        }
     }
     if native.cleaned || native.cleanup.is_some() {
         return Ok(None);

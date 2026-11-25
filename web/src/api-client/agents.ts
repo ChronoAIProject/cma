@@ -1,4 +1,6 @@
 import { readAgentProjection } from './agents/read-projection.js';
+import { readReplyPreview } from './agents/reply-preview.js';
+import { readOriginalRequest } from './agents/original-request.js';
 import { readRetainedOutput, type RetainedOutputOptions } from './agents/retained-output.js';
 import { CapacityRecovery } from './agents/capacity-recovery.js';
 import {
@@ -40,7 +42,6 @@ import {
   type ApproveAgentAccessRequest,
   type UpdateAgentServiceAccessRequest,
 } from './agents/access-requests.js';
-import type { ResolvedConfig } from './config.js';
 import { readSuggestions } from './agents/suggestions.js';
 import { requestVoid, type OperationOptions } from './http.js';
 import { ProtocolError } from './errors.js';
@@ -80,6 +81,7 @@ import {
 } from './agents/provenance.js';
 import { readAgentEvents } from './agents/events.js';
 import {
+  cancelAgentLifecycle,
   createAgentLifecycle,
   readAgentLifecycle,
   recoverAgentWorktree,
@@ -97,16 +99,7 @@ import {
   downloadAgentArtifact,
   type PublishAgentArtifactRequest,
 } from './agents/artifacts.js';
-import {
-  listAnswerDeliverables,
-  readAnswerDeliverable,
-  downloadAnswerDeliverable,
-  describeDeliverable,
-  type AnswerDeliverable,
-  type DeliverableReadOptions,
-  type DeliverableResource,
-} from './agents/deliverables.js';
-import type { DocumentAccessOptions } from './documents.js';
+import { AgentDeliverables } from './agents/deliverables.js';
 export interface AgentListOptions extends PageOptions {
   readonly sandbox?: string;
   readonly workspace?: string;
@@ -128,8 +121,15 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
   readonly channelHistory?: boolean;
 }
 /** Public Agent REST commands and durable read projections. */
-export class Agents {
-  constructor(private readonly config: ResolvedConfig) {}
+export class Agents extends AgentDeliverables {
+  originalRequest(id: string, options: OperationOptions = {}) {
+    return readOriginalRequest(this.config, id, options);
+  }
+
+  replyPreview(id: string, options: OperationOptions = {}) {
+    return readReplyPreview(this.config, id, options);
+  }
+
   /** Discover and page retained partial text without changing the original failed outcome. */
   retainedOutput(id: string, options: RetainedOutputOptions = {}) {
     return readRetainedOutput(
@@ -251,6 +251,11 @@ export class Agents {
     return readAgentLifecycle(this.config, id, options);
   }
 
+  /** Cancel an owner-scoped lifecycle operation before Sandbox allocation. */
+  cancelLifecycle(id: string, options: OperationOptions = {}) {
+    return cancelAgentLifecycle(this.config, id, options);
+  }
+
   /** Legacy Bridge usage projection; provider admissions require providerAssociations(). */
   channelUsage(id: string, options: OperationOptions = {}) {
     return readAgentChannelUsage(this.config, id, options);
@@ -280,33 +285,6 @@ export class Agents {
   /** Download selected artifact bytes with current authorization; does not execute or render them. */
   downloadArtifact(id: string, artifactId: string, options: OperationOptions = {}) {
     return downloadAgentArtifact(this.config, id, artifactId, options);
-  }
-
-  answerDeliverables(id: string, answerId: string, options: DocumentAccessOptions = {}) {
-    return listAnswerDeliverables(this.config, id, answerId, options);
-  }
-  describeDeliverable(
-    id: string,
-    selected: DeliverableResource,
-    options: DocumentAccessOptions = {},
-  ) {
-    return describeDeliverable(this.config, id, selected, options);
-  }
-  readAnswerDeliverable(
-    id: string,
-    answerId: string,
-    deliveryId: string,
-    options: DeliverableReadOptions = {},
-  ) {
-    return readAnswerDeliverable(this.config, id, answerId, deliveryId, options);
-  }
-  downloadAnswerDeliverable(
-    id: string,
-    answerId: string,
-    expected: AnswerDeliverable,
-    options: DocumentAccessOptions = {},
-  ) {
-    return downloadAnswerDeliverable(this.config, id, answerId, expected, options);
   }
 
   /** Safe creation inventory. Omit organization and shared for personal scope. */
@@ -431,15 +409,27 @@ export class Agents {
     return this.operate(id, '/stop', 'POST', options, input(stopAgentRequest, body));
   }
 
+  restart(id: string, options: CommandOptions) {
+    return read(
+      this.config,
+      `/api/v1/agents/${segment(id)}/restart`,
+      object({ agent_id: text, worktree_id: text, operation_id: text, accepted_at: text }),
+      { ...command(options), method: 'POST', expectedStatus: 202 },
+    );
+  }
+
   delete(id: string, options: CommandOptions) {
     return this.operate(id, '', 'DELETE', options);
   }
 
-  events(id: string, options: EventOptions & { readonly toolOutput?: boolean } = {}) {
+  events(
+    id: string,
+    options: EventOptions & { readonly toolOutput?: boolean; readonly cache?: 'no-store' } = {},
+  ) {
     return readAgentEvents(this.config, id, options);
   }
 
-  transcript(id: string, options: OperationOptions = {}) {
+  transcript(id: string, options: import('./agents/transcript.js').TranscriptReadOptions = {}) {
     return readTranscript(this.config, id, options);
   }
   transcriptPage(id: string, options: TranscriptPageOptions = {}) {

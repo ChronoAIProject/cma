@@ -13,8 +13,9 @@ use mongodb::ClientSession;
 use sha2::{Digest, Sha256};
 
 use super::super::agent_capacity_recovery::source::{capture_segmented, fence_agent};
-use super::super::agent_log::scan_complete_log_with_session;
-use super::super::agent_log_integrity::TransactionLogError;
+use super::super::agent_log_integrity::{
+    scan_complete_log_with_policy, IntegrityFailurePolicy, TransactionLogError,
+};
 use super::super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
 use super::super::sandbox_events::{
     append_in_transaction, reconcile_event_with_snapshot_session, validate_in_transaction,
@@ -87,8 +88,19 @@ pub(in crate::store) async fn load_reopen_with_sources(
     id: &SandboxId,
     session: &mut ClientSession,
     sources: Option<&NativeFacts>,
+    policy: IntegrityFailurePolicy,
 ) -> Result<(SandboxUnpublishedRecoverySnapshot, u64, String), ApplyError> {
-    load_for_inspection(store, id, session, true, true, sources).await
+    load_for_inspection(store, id, session, true, true, sources, policy).await
+}
+
+pub(in crate::store) async fn load_suspended_reopen_with_sources(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+    session: &mut ClientSession,
+    sources: &NativeFacts,
+    policy: IntegrityFailurePolicy,
+) -> Result<(SandboxUnpublishedRecoverySnapshot, u64, String), ApplyError> {
+    load_for_inspection(store, id, session, false, true, Some(sources), policy).await
 }
 
 pub(super) async fn load_retained(
@@ -105,8 +117,16 @@ async fn load_retained_with_sources(
     session: &mut ClientSession,
     sources: Option<&scoped::NativeFacts>,
 ) -> Result<layer2_core::sandbox::RetainedRecoverySnapshot, ApplyError> {
-    let (snapshot, last_seq, _) =
-        load_for_inspection(store, id, session, false, false, sources).await?;
+    let (snapshot, last_seq, _) = load_for_inspection(
+        store,
+        id,
+        session,
+        false,
+        false,
+        sources,
+        IntegrityFailurePolicy::ReportOnly,
+    )
+    .await?;
     validate_in_transaction(store, id, last_seq, session).await?;
     Ok(layer2_core::sandbox::RetainedRecoverySnapshot {
         sandbox: snapshot.sandbox,
@@ -121,9 +141,17 @@ async fn load_with_sources(
     session: &mut ClientSession,
     sources: Option<&scoped::NativeFacts>,
 ) -> Result<(SandboxUnpublishedRecoverySnapshot, u64), ApplyError> {
-    load_for_inspection(store, id, session, true, false, sources)
-        .await
-        .map(|(snapshot, seq, _)| (snapshot, seq))
+    load_for_inspection(
+        store,
+        id,
+        session,
+        true,
+        false,
+        sources,
+        IntegrityFailurePolicy::Quarantine,
+    )
+    .await
+    .map(|(snapshot, seq, _)| (snapshot, seq))
 }
 
 async fn load_for_inspection(
@@ -133,6 +161,7 @@ async fn load_for_inspection(
     require_unpublished: bool,
     require_reopen: bool,
     sources: Option<&scoped::NativeFacts>,
+    policy: IntegrityFailurePolicy,
 ) -> Result<(SandboxUnpublishedRecoverySnapshot, u64, String), ApplyError> {
     let document = store
         .sandboxes
@@ -209,15 +238,17 @@ async fn load_for_inspection(
         }
         let mut published = false;
         let mut entries = Vec::new();
-        let result = if require_unpublished {
-            scan_complete_log_with_session(
+        let result = if require_unpublished || require_reopen {
+            scan_complete_log_with_policy(
                 ScanCaller::RecoveryProof,
                 store,
                 &agent.id,
                 agent.conversation.last_seq,
                 session,
+                policy,
                 |entry| {
-                    if matches!(entry.kind,
+                    if require_unpublished
+                        && matches!(entry.kind,
                 AgentLogKind::ConversationOpened { runtime_generation, .. }
                 | AgentLogKind::RuntimeGenerationRetired { runtime_generation, .. }
                     if generation.is_some_and(|generation| runtime_generation >= generation))
@@ -262,7 +293,9 @@ async fn load_for_inspection(
                 audit_checkpoint, ensure_reopen_capacity, SemanticCheckpoint,
             };
             // Audit before refusal so a disproved trusted checkpoint is revoked.
-            audit_checkpoint(store, agent, &entries, session).await?;
+            if policy == IntegrityFailurePolicy::Quarantine {
+                audit_checkpoint(store, agent, &entries, session).await?;
+            }
             SemanticCheckpoint::validate_retained_semantics(agent, &entries)
                 .map_err(ApplyError::Domain)?;
             ensure_reopen_capacity(&summary).map_err(ApplyError::Domain)?;
@@ -338,6 +371,19 @@ async fn apply_with_sources(
     })?;
     let mutation =
         apply_unpublished_runtime_recovery(&current, request).map_err(ApplyError::Domain)?;
+    if let Some(release) = &request.released_runtime {
+        if release.agent != request.target_runtime_version {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+        store
+            .fence_released_admission(
+                release,
+                layer2_core::released_runtime::ReleasedLane::Agent,
+                session,
+            )
+            .await
+            .map_err(ApplyError::Domain)?;
+    }
     validate_in_transaction(store, &current.sandbox.id, last_seq, session).await?;
     // Actual writes to every child serialize native proof with dispatch, cleanup,
     // Workspace setup and lifecycle publication. Preserve every child byte.

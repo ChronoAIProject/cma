@@ -63,7 +63,11 @@ describe('the retained application shell', () => {
       'true',
     );
     expect(window.location.pathname).toBe('/agent-manager');
-    expect(replace).toHaveBeenCalledWith(null, '', '/agent-manager');
+    expect(replace).toHaveBeenCalledWith(
+      expect.objectContaining({ cmaNavigation: { session: expect.any(String), index: 0 } }),
+      '',
+      '/agent-manager',
+    );
     expect(push).not.toHaveBeenCalled();
     expect(signIn).not.toHaveBeenCalled();
     observer.disconnect();

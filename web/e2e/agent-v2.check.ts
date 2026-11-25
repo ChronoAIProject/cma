@@ -1,3 +1,4 @@
+import './agent-v2-tool-timing.cases';
 import { test, expect, type Page } from '@playwright/test';
 import { binding, LocalAgentV2 } from './agent-v2.fixture';
 import { traceOpeningReads, openingReads } from './agent-v2-reads.fixture';
@@ -27,6 +28,19 @@ for (const theme of ['light', 'dark']) {
     try {
       await open(page, fixture, baseURL!);
       await expect.poll(() => fixture.streams.size).toBe(1);
+      await page.evaluate(() => {
+        document.body.dataset.recoveryPanelSeen = 'false';
+        const observe = (node: Node) => {
+          if (
+            node instanceof Element &&
+            (node.matches('.agent-pending-panel') || node.querySelector('.agent-pending-panel'))
+          )
+            document.body.dataset.recoveryPanelSeen = 'true';
+        };
+        new MutationObserver((records) => {
+          for (const record of records) for (const node of record.addedNodes) observe(node);
+        }).observe(document.body, { childList: true, subtree: true });
+      });
       await message(page).fill('Inspect the repository.');
       await page.getByRole('button', { name: 'Send message', exact: true }).click();
       await expect.poll(() => fixture.writes.length).toBe(1);
@@ -65,11 +79,13 @@ for (const theme of ['light', 'dark']) {
       await expect(page.locator('.message--user').filter({ hasText: 'Sending…' })).toContainText(
         'Inspect the repository.',
       );
-      await expect(recover(page)).toBeDisabled();
+      await expect(recover(page)).toHaveCount(0);
+      await expect(page.getByLabel('Pending request')).toHaveCount(0);
       expect(fixture.streams.size).toBe(1);
       fixture.acceptInput();
       await expect(message(page)).toHaveValue('');
       await expect(recover(page)).toHaveCount(0);
+      await expect(page.locator('body')).toHaveAttribute('data-recovery-panel-seen', 'false');
       const text = 'Live progress remains readable.\n\n'.repeat(70);
       fixture.live('text_delta', text);
       await expect(page.locator('.message--assistant')).toContainText(
@@ -158,21 +174,29 @@ test('LOCAL: explicit input recovery after reload keeps its body, key and select
 }) => {
   const fixture = new LocalAgentV2();
   fixture.loseInput = true;
+  fixture.revealInputReceipt = false;
   try {
     await open(page, fixture, baseURL!);
     await message(page).fill('First line\nSecond line 🛰️');
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
     await expect(recover(page)).toBeEnabled();
+    await expect(page.getByLabel('Pending request').getByRole('alert')).toContainText(
+      'We can’t confirm this message arrived',
+    );
     expect(fixture.writes).toHaveLength(1);
     fixture.enabled = false;
     await page.reload();
     await expect(recover(page)).toBeEnabled();
     expect(fixture.writes).toHaveLength(1);
+    fixture.revealInputReceipt = true;
     await recover(page).click();
     await expect(recover(page)).toHaveCount(0);
-    expect(fixture.writes).toHaveLength(2);
+    expect(fixture.writes).toHaveLength(1);
     expect(fixture.writes[0]!.key).toBeTruthy();
-    expect(fixture.writes[1]).toEqual(fixture.writes[0]);
+    expect(fixture.receiptReads.length).toBeGreaterThanOrEqual(2);
+    for (const lookup of fixture.receiptReads) {
+      expect(lookup).toEqual({ ...fixture.writes[0], path: `${fixture.writes[0]!.path}/receipt` });
+    }
     expect(fixture.writes[0]!.body).toEqual({ input: 'First line\nSecond line 🛰️', stream: true });
     await expect.poll(() => fixture.streams.size).toBe(1);
     clean(fixture);
@@ -210,7 +234,9 @@ test('LOCAL: targeted control recovery retains its target and delivery leaves th
     await expect(
       page.getByRole('status').filter({ hasText: 'Your response action was delivered.' }),
     ).toHaveCount(0);
-    await expect(thinking(page)).toBeVisible();
+    await expect(
+      page.getByRole('status').filter({ hasText: /^Waiting for a response$/ }),
+    ).toBeVisible();
     expect(fixture.writes).toHaveLength(3);
     expect(fixture.writes[2]).toEqual(fixture.writes[0]);
     expect(fixture.writes[0]!.path).toBe('/api/v2/agents/agt_contract/responses/resp_1/controls');
@@ -222,7 +248,9 @@ test('LOCAL: targeted control recovery retains its target and delivery leaves th
     expect(fixture.reads).toContain('/api/v2/commands/cmd_control');
     await expect.poll(() => fixture.streams.size).toBe(1);
     fixture.append({ type: 'turn_cancelled', turn_sequence: 1 });
-    await expect(thinking(page)).toHaveCount(0);
+    await expect(
+      page.getByRole('region', { name: 'What the agent is working through' }),
+    ).toHaveCount(0);
     expect(fixture.writes).toHaveLength(3);
     clean(fixture);
   } finally {

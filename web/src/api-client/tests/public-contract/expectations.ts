@@ -3,6 +3,13 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['admin-runtime-migration-malformed', 'invalid_runtime_migration'],
+  ['retained-runtime-policy-invalid', 'runtime_canary_invalid'],
+  ['retained-runtime-preview-invalid', 'runtime_canary_invalid'],
+  ['retained-runtime-grant-invalid', 'runtime_canary_invalid'],
+  ['retained-runtime-redeem-invalid', 'runtime_canary_invalid'],
+  ['retained-runtime-abort-invalid', 'runtime_canary_invalid'],
+  ['revocation-post-invalid_revision', 'invalid_share_command'],
   ['task-template-missing-field', 'task_template_field_required'],
   ['task-template-unknown-id', 'task_template_id_unknown'],
   ['task-template-unknown-version', 'task_template_version_unsupported'],
@@ -22,6 +29,7 @@ export const localCodes = new Map([
   ['spend-observe-malformed-forbidden', 'forbidden'],
   ['spend-observe-malformed-anonymous', 'not_authenticated'],
   ['admin-admission-ceilings-invalid', 'invalid_request'],
+  ['admin-pending-homes-invalid', 'invalid_request'],
   ['admin-admission-stop-invalid', 'invalid_request'],
   ['admin-admission-resume-invalid', 'invalid_request'],
   ['deliverables-owner-invalid-revision', 'invalid_deliverable_reference'],
@@ -134,6 +142,7 @@ export const localCodes = new Map([
 ]);
 
 const protectedQueries = new Map([
+  ['usage-admin-summary-unknown-query', ['unknown']],
   ['filesystem-tree-reject-unknown-query', ['owner_access']],
   ['filesystem-content-reject-unknown-query', ['owner_access']],
   ['filesystem-download-reject-unknown-query', ['owner_access']],
@@ -352,6 +361,12 @@ export function expectedRequestUrl(fixture: ContractCase): URL {
 }
 
 export function expectedProjection(fixture: ContractCase): unknown {
+  if (fixture.id.startsWith('revocation-success-')) {
+    const body = fixture.response.body as Record<string, unknown> & {
+      revocation: { operation_id: string };
+    };
+    return { ...body, revocation: { operation: body.revocation.operation_id } };
+  }
   if (fixture.operation === 'GET /api/v1/triggers/public/{public_id}/badge.svg') {
     return {
       status: fixture.response.status,
@@ -363,13 +378,14 @@ export function expectedProjection(fixture: ContractCase): unknown {
   if (fixture.operation === 'GET /auth/session' && fixture.response.status === 401) {
     // The wire also advertises silent sign-in for the web client's own
     // browser flow; the SDK's signed-out projection deliberately omits it.
-    assert.deepStrictEqual(fixture.response.body, {
+    const { legal_terms, ...body } = fixture.response.body as Record<string, unknown>;
+    assert.deepStrictEqual(body, {
       authenticated: false,
       silent_sign_in:
         fixture.scenario !== 'auth_anonymous_disabled' &&
         !['auth-silent-suppressed', 'auth-silent-later-logout'].includes(fixture.id),
     });
-    return { authenticated: false };
+    return { authenticated: false, ...(legal_terms === undefined ? {} : { legal_terms }) };
   }
   if (fixture.response.bodyKind === 'sse')
     return (fixture.response.body as { id?: string; data: Record<string, unknown> }[]).map(

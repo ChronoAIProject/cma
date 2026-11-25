@@ -1,5 +1,6 @@
-import type { AgentStatus, SandboxSummary, WorkspaceStatus } from '../api/types';
-import { statusLabel, statusTone, type StatusTone } from '../vocabulary/status';
+import type { AgentStatus, SandboxLifecycle, SandboxSummary, WorkspaceStatus } from '../api/types';
+import { sandboxStatusPresentation, type SandboxStatusObservation } from './presentation';
+import { sandboxHasParkedRuntimeUpdate } from './parkedRuntimeUpdate';
 
 export function transitionRefreshDelay(startedAt: number): number {
   return Date.now() - startedAt < 10_000 ? 250 : 1500;
@@ -19,23 +20,51 @@ export function sandboxRetirementDuringRevive(sandbox: SandboxSummary): boolean 
   );
 }
 
-export function sandboxChildrenReadable(sandbox: SandboxSummary): boolean {
-  return ['active', 'credential_rotating', 'paused', 'pausing', 'reviving', 'rotating'].includes(
-    sandbox.status,
+export interface SandboxRetirementObservation {
+  readonly status?: SandboxSummary['status'];
+  readonly lifecycle?: {
+    readonly result?: Pick<
+      NonNullable<SandboxLifecycle['result']>,
+      'state' | 'code' | 'continuing'
+    >;
+  };
+}
+
+export function sandboxRetirementWaitExceeded(sandbox: SandboxRetirementObservation): boolean {
+  const result = sandbox.lifecycle?.result;
+  return (
+    sandbox.status === 'retiring' &&
+    result?.state === 'recoverable_pending' &&
+    result.code === 'lifecycle_wait_exceeded' &&
+    result.continuing
   );
 }
 
-export function sandboxChildStatus(sandbox: SandboxSummary, status: AgentStatus | WorkspaceStatus) {
+export function sandboxChildrenReadable(sandbox: SandboxSummary): boolean {
+  return [
+    'active',
+    'credential_rotating',
+    'paused',
+    'pausing',
+    'reviving',
+    'rotating',
+    'failed',
+  ].includes(sandbox.status);
+}
+
+export function sandboxChildStatus(
+  sandbox: SandboxStatusObservation,
+  status: AgentStatus | WorkspaceStatus,
+) {
   if (['stopped', 'failed', 'deleted', 'removed', 'removing'].includes(status)) return status;
-  const purpose = sandbox.lifecycle?.operation?.purpose;
-  if (purpose === 'pause') return 'pausing';
-  if (purpose === 'revive') return 'reviving';
-  if (purpose === 'image_rotation') return 'rotating';
-  return ['active', 'credential_rotating'].includes(sandbox.status) ? status : sandbox.status;
+  const parent = sandboxStatusPresentation(sandbox).status;
+  return parent === 'active' || parent === 'credential_rotating' ? status : parent;
 }
 
 export function sandboxUnavailableNotice(sandbox: SandboxSummary): string | undefined {
   if (sandboxChildrenAvailable(sandbox)) return undefined;
+  if (sandbox.status === 'failed')
+    return 'This Sandbox is unavailable. Review the recorded failure below.';
   if (
     sandboxChildrenReadable(sandbox) &&
     (sandbox.lifecycle?.operation !== undefined ||
@@ -50,8 +79,6 @@ export function sandboxUnavailableNotice(sandbox: SandboxSummary): string | unde
     return 'This Sandbox has been deleted. Its runtime is gone; retained history remains read-only.';
   if (sandbox.status === 'retiring')
     return 'This Sandbox is being deleted. Its Workspaces and Agents are unavailable during cleanup.';
-  if (sandbox.status === 'failed')
-    return 'This Sandbox is unavailable. Review the recorded failure below.';
   if (sandbox.status === 'active')
     return 'Sandbox action availability is not reported. Agent conversations and history remain available.';
   return 'Workspaces and Agents will be available when the Sandbox finishes preparation.';
@@ -90,30 +117,17 @@ export function sandboxLifecycleAction(sandbox: SandboxSummary, stale = false) {
 }
 
 export function sandboxLifecycleLabel(sandbox: SandboxSummary): string {
-  if (sandbox.status === 'retiring') return 'Deleting';
-  if (sandbox.status === 'retired') return 'Deleted';
-  if (sandbox.lifecycle?.operation !== undefined) {
-    switch (sandbox.lifecycle.operation.purpose) {
-      case 'pause':
-        return 'Pausing';
-      case 'revive':
-        return 'Resuming';
-      case 'image_rotation':
-        return 'Updating runtime';
-    }
-  }
-  return statusLabel(sandbox.status);
+  return sandboxStatusPresentation(sandbox).label;
 }
 
-/** The tone of the word `sandboxLifecycleLabel` gives: an operation in flight is active. */
-export function sandboxTone(sandbox: SandboxSummary): StatusTone {
-  if (['retiring', 'retired'].includes(sandbox.status)) return statusTone(sandbox.status);
-  if (sandbox.lifecycle?.operation !== undefined) return 'active';
-  return statusTone(sandbox.status);
+export function sandboxTone(sandbox: SandboxSummary) {
+  return sandboxStatusPresentation(sandbox).tone;
 }
 
-export function sandboxRefreshDelay(sandbox: SandboxSummary): number {
-  return sandbox.lifecycle?.checkpoint !== undefined ||
+export function sandboxRefreshDelay(sandbox: SandboxSummary, childrenChanging = false): number {
+  if (sandboxHasParkedRuntimeUpdate(sandbox)) return 5000;
+  return childrenChanging ||
+    sandbox.lifecycle?.checkpoint !== undefined ||
     ['queued', 'updating'].includes(sandbox.runtimeUpdate?.state ?? '') ||
     sandbox.lifecycle?.backgroundSave !== undefined ||
     sandbox.lifecycle?.operation !== undefined ||

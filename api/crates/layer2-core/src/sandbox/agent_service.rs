@@ -1,11 +1,15 @@
 mod binding;
+mod control;
 mod creation;
 mod launch;
+#[path = "owner_agent_restart_service.rs"]
+mod restart;
 mod support;
 use launch::CreationAttribution;
+pub use restart::{AgentRestartControl, AgentRestartObservation, AgentRestartService};
 use support::{
-    control_error, creation_key, profile_error, require, require_launch, runtime_error,
-    store_error, validate_title,
+    control_error, creation_key, profile_error, require, require_launch, store_error,
+    validate_title,
 };
 
 use std::sync::Arc;
@@ -27,12 +31,12 @@ use crate::{
 
 use super::service_trust::{validate_agent_profile, validate_agent_revision};
 use super::store::{
-    AgentAdmission, AgentAdmissionResult, AgentControlStoreError, AgentControlTarget,
-    AgentDeleteRequest, AgentServiceStore, AgentStopRequest, Page, PageRequest, SandboxStoreError,
+    AgentAdmission, AgentAdmissionResult, AgentControlStoreError, AgentServiceStore, Page,
+    PageRequest, SandboxStoreError,
 };
 use super::{
     Agent, AgentLogEntry, AgentOrigin, AgentRuntimeError, AgentRuntimeRegistry, AgentStatus,
-    AgentStopReason, AgentWorkStep, FirstMessageRecord, Sandbox, Workspace, WorkspaceStatus,
+    AgentWorkStep, FirstMessageRecord, Sandbox, Workspace, WorkspaceStatus,
 };
 
 const MAX_TITLE_SCALARS: usize = 64;
@@ -87,6 +91,8 @@ pub enum AgentServiceError {
     Budget(crate::budget::BudgetError),
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
+    #[error("guaranteed model funding is unsupported")]
+    ModelFundingUnsupported,
     #[error("invalid agent request: {0}")]
     InvalidRequest(String),
     #[error("agent data is not usable: {0}")]
@@ -101,6 +107,7 @@ impl AgentServiceError {
             Self::Connection(error) => error.code(),
             Self::Budget(reason) => reason.code(),
             Self::AdmissionPaused => "admission_paused",
+            Self::ModelFundingUnsupported => "model_funding_unsupported",
             Self::Forbidden => "forbidden",
             Self::ProfileNotFound => "agent_profile_not_found",
             Self::WorkspaceNotFound => "workspace_not_found",
@@ -123,7 +130,9 @@ impl AgentServiceError {
     }
 }
 
+#[derive(Clone)]
 pub struct AgentService {
+    model_credit_required: bool,
     connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     store: Arc<dyn AgentServiceStore>,
     profiles: Arc<dyn AgentProfileStore>,
@@ -167,6 +176,7 @@ impl AgentService {
         R: AgentRuntimeRegistry + 'static,
     {
         Arc::new(Self {
+            model_credit_required: false,
             connections: Arc::new(super::FixedSandboxCredentialPrerequisite::Ready),
             store,
             profiles,
@@ -181,12 +191,20 @@ impl AgentService {
         connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            model_credit_required: self.model_credit_required,
             connections,
             store: self.store.clone(),
             profiles: self.profiles.clone(),
             profile_uses: self.profile_uses.clone(),
             runtimes: self.runtimes.clone(),
             runtime_capabilities: self.runtime_capabilities.clone(),
+        })
+    }
+
+    pub fn with_model_credit_required(&self, required: bool) -> Arc<Self> {
+        Arc::new(Self {
+            model_credit_required: required,
+            ..self.clone()
         })
     }
 
@@ -256,14 +274,25 @@ impl AgentService {
             creation_key,
             event_at: now,
         };
+        if self.model_credit_required && admission.first_message.is_some() {
+            return self
+                .store
+                .replay_agent_admission(&admission)
+                .await
+                .map_err(store_error)?
+                .map(|result| result.creation().agent.clone())
+                .ok_or(AgentServiceError::ModelFundingUnsupported);
+        }
         let result = if let Some(initiation) = attribution.initiation {
             self.store
-                .admit_agent_with_trigger_initiator(admission, initiation, reuse_existing)
+                .admit_catalogue_agent_with_trigger_initiator(admission, initiation, reuse_existing)
                 .await
         } else if reuse_existing {
-            self.store.admit_agent_reusing_profile(admission).await
+            self.store
+                .admit_catalogue_agent_reusing_profile(admission)
+                .await
         } else {
-            self.store.admit_agent(admission).await
+            self.store.admit_catalogue_agent(admission).await
         }
         .map_err(store_error)?;
         if let AgentAdmissionResult::Created(creation) = &result {
@@ -304,31 +333,6 @@ impl AgentService {
             .map_err(store_error)
     }
 
-    pub async fn stop(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        reason: AgentStopReason,
-    ) -> Result<Agent, AgentServiceError> {
-        require(caller)?;
-        let agent = self.owned_agent(caller, id).await?;
-        let scheduled = self
-            .store
-            .schedule_agent_stop(AgentStopRequest {
-                target: AgentControlTarget::from(&agent),
-                reason,
-                requested_at: now_rfc3339(),
-            })
-            .await
-            .map(|result| result.into_agent())
-            .map_err(control_error)?;
-        self.runtimes
-            .fence(&scheduled.id, scheduled.work.next_fence)
-            .await
-            .map_err(runtime_error)?;
-        Ok(scheduled)
-    }
-
     pub async fn recover_worktree(
         &self,
         caller: &Caller,
@@ -347,19 +351,6 @@ impl AgentService {
                 now_rfc3339(),
             )
             .await
-            .map_err(control_error)
-    }
-
-    pub async fn delete(&self, caller: &Caller, id: &AgentId) -> Result<Agent, AgentServiceError> {
-        require(caller)?;
-        let agent = self.owned_agent(caller, id).await?;
-        self.store
-            .schedule_agent_delete(AgentDeleteRequest {
-                target: AgentControlTarget::from(&agent),
-                requested_at: now_rfc3339(),
-            })
-            .await
-            .map(|result| result.into_agent())
             .map_err(control_error)
     }
 

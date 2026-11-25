@@ -103,10 +103,19 @@ pub(super) async fn act(
 
 fn error(error: BotError) -> Response {
     let (status, code) = match &error {
+        BotError::AccountDeletionInProgress => {
+            return super::account_deletion_problem(
+                layer2_core::account_deletion::AccountDeletionError::InProgress,
+            )
+        }
         BotError::Forbidden => (StatusCode::FORBIDDEN, "setup_authority_required"),
         BotError::NotFound => (StatusCode::NOT_FOUND, "setup_not_found"),
         BotError::Conflict => (StatusCode::CONFLICT, "setup_changed"),
         BotError::Invalid(_) => (StatusCode::BAD_REQUEST, "invalid_setup"),
+        BotError::ImageSelectionUnsupported => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "bot_image_selection_unsupported",
+        ),
         BotError::ConnectionRequired { .. } => {
             (StatusCode::UNPROCESSABLE_ENTITY, "connection_required")
         }

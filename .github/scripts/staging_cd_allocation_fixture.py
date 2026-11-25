@@ -25,6 +25,8 @@ class AllocationServer(GitHub):
         self.latency, self.active, self.peak = latency, 0, 0
         self.lock = threading.Lock()
         self.collision = self.ambiguous = self.corrupt_readback = False
+        # (returncode, stdout, stderr) of a push the server answers without writing.
+        self.rejection = None
         pending = []
         for index, source in enumerate(self.sources[:-1] if reserved else []):
             for component in components:
@@ -87,6 +89,8 @@ class AllocationServer(GitHub):
             assert args[1] == "push" and "--force" not in args
             self.delay()
             updates = [arg.split(":refs/tags/", 1) for arg in args if ":refs/tags/" in arg]
+            if self.rejection is not None:
+                return subprocess.CompletedProcess(args, *self.rejection)
             if self.collision or any(name in self.refs for _oid, name in updates):
                 return subprocess.CompletedProcess(args, 1, "", "")
             self.refs.update({name: oid for oid, name in updates})

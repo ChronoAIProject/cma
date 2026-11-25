@@ -276,3 +276,112 @@ it('keeps the selected file stable while its save is pending', async () => {
   await waitFor(() => expect(screen.getByRole('button', { name: 'hello.txt' })).toBeEnabled());
   expect(screen.getByRole('textbox', { name: 'Contents of hello.txt' })).toHaveValue('saved draft');
 });
+
+it.each(['../qa2.txt', 'folder/file.txt', 'folder\\file.txt', '.', '..', 'bad\u0001name', '   '])(
+  'rejects invalid names before submit and allows correction: %j',
+  async (name) => {
+    const { client } = fixture();
+    await screen.findByRole('button', { name: 'hello.txt' });
+    await userEvent.click(screen.getByRole('button', { name: 'New file' }));
+    const input = screen.getByRole('textbox', { name: 'File name' });
+    fireEvent.change(input, { target: { value: name } });
+    const submit = screen.getByRole('button', { name: /^Create$/ });
+    expect(submit).toBeDisabled();
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input).toHaveAccessibleDescription(
+      'Enter a file or folder name without path separators.',
+    );
+    fireEvent.submit(submit.closest('form')!);
+    expect(client.write).not.toHaveBeenCalled();
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: 'valid-note.txt' } });
+    expect(submit).toBeEnabled();
+    expect(input).not.toHaveAttribute('aria-invalid', 'true');
+    await userEvent.click(submit);
+    await waitFor(() =>
+      expect(client.write).toHaveBeenCalledExactlyOnceWith(
+        'agent-one',
+        { path: 'valid-note.txt', content_base64: '', directory: false },
+        expect.any(Object),
+      ),
+    );
+  },
+);
+
+it('keeps invalid names disabled after a server rejection without losing the editable name', async () => {
+  const { client } = fixture(false, {
+    write: vi.fn().mockRejectedValue(new AgentFileError('Name already exists.', 409)),
+  });
+  await screen.findByRole('button', { name: 'hello.txt' });
+  await userEvent.click(screen.getByRole('button', { name: 'New folder' }));
+  const input = screen.getByRole('textbox', { name: 'Folder name' });
+  fireEvent.change(input, { target: { value: 'existing' } });
+  await userEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+  await screen.findByText('Name already exists.');
+  expect(input).toHaveValue('existing');
+  fireEvent.change(input, { target: { value: '../invalid' } });
+  expect(screen.getByRole('button', { name: /^Create$/ })).toBeDisabled();
+  fireEvent.submit(input.closest('form')!);
+  expect(client.write).toHaveBeenCalledTimes(1);
+});
+
+it('clears a failed listing alert once refreshing that folder succeeds', async () => {
+  let failing = true;
+  const list = vi.fn(async (_id: string, path: string) => {
+    if (failing) throw new AgentFileError('Files are temporarily unavailable.', 503);
+    return path === '' ? [file] : [];
+  });
+  fixture(false, { list });
+  expect(await screen.findByRole('alert')).toHaveTextContent('temporarily unavailable');
+  failing = false;
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh files' }));
+  await screen.findByRole('button', { name: 'hello.txt' });
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+it('keeps a save failure visible when an unrelated folder refresh succeeds', async () => {
+  const write = vi
+    .fn()
+    .mockRejectedValue(
+      new AgentFileError('The file changed; refresh before saving.', 409, 'file_conflict'),
+    );
+  const { client } = fixture(false, { write });
+  await userEvent.click(await screen.findByRole('button', { name: 'hello.txt' }));
+  const editor = await screen.findByRole('textbox', { name: 'Contents of hello.txt' });
+  fireEvent.change(editor, { target: { value: 'updated' } });
+  await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('file changed');
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh files' }));
+  await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
+  expect(screen.getByRole('alert')).toHaveTextContent('file changed');
+});
+
+it.each([
+  ['a'.repeat(256) + '.txt', 'a'.repeat(251) + '.txt'],
+  ['界'.repeat(86), '界'.repeat(85)],
+])(
+  'refuses a filename over the UTF-8 byte limit and allows the boundary',
+  async (invalid, valid) => {
+    const { client } = fixture();
+    await screen.findByRole('button', { name: 'hello.txt' });
+    await userEvent.click(screen.getByRole('button', { name: 'New file' }));
+    const input = screen.getByRole('textbox', { name: 'File name' });
+    fireEvent.change(input, { target: { value: invalid } });
+    const submit = screen.getByRole('button', { name: /^Create$/ });
+    expect(submit).toBeDisabled();
+    expect(input).toHaveAccessibleDescription(
+      'File and folder names must be at most 255 UTF-8 bytes.',
+    );
+    fireEvent.submit(submit.closest('form')!);
+    expect(client.write).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: valid } });
+    expect(submit).toBeEnabled();
+    await userEvent.click(submit);
+    await waitFor(() =>
+      expect(client.write).toHaveBeenCalledExactlyOnceWith(
+        'agent-one',
+        { path: valid, content_base64: '', directory: false },
+        expect.any(Object),
+      ),
+    );
+  },
+);

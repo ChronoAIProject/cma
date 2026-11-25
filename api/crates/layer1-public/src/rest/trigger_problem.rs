@@ -152,6 +152,12 @@ fn trigger_problem(error: TriggerServiceError) -> ProblemParts {
 
 fn launch_problem(error: LaunchServiceError) -> ProblemParts {
     match error {
+        LaunchServiceError::AccountDeletionInProgress => (
+            StatusCode::FORBIDDEN,
+            "account_deletion_in_progress",
+            "Account deletion is in progress.",
+            vec![],
+        ),
         LaunchServiceError::VisitorQuota { .. } => {
             unreachable!("quota response carries Retry-After above")
         }
@@ -167,7 +173,7 @@ fn launch_problem(error: LaunchServiceError) -> ProblemParts {
         LaunchServiceError::TriggerNotFound => not_found("trigger_not_found", "Trigger"),
         LaunchServiceError::TriggerRetired => conflict(
             "trigger_retired",
-            "This Trigger is retired and no longer accepts launches.",
+            "This Trigger is retired and no longer accepts launches. Choose another Trigger to start a new Launch.",
         ),
         LaunchServiceError::RepeatChoiceRequired { existing } => (
             StatusCode::CONFLICT,
@@ -300,6 +306,11 @@ fn reference_problem(error: TriggerReferenceError) -> ProblemParts {
         TriggerReferenceError::ImageSignInRequired { field } => (
             "trigger_image_sign_in_required",
             "Sign in again to authorize the selected Image Manager image.",
+            field,
+        ),
+        TriggerReferenceError::ImageSelectionUnsupported { field } => (
+            "trigger_image_selection_unsupported",
+            "New custom image selections are unavailable.",
             field,
         ),
     };

@@ -1,4 +1,7 @@
 use super::*;
+
+pub(super) mod measured_usage;
+
 pub(super) fn binding(id: &str, kind: BindingKind, at: u64) -> Binding {
     Binding {
         id: String::new(),

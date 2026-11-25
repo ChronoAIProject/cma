@@ -89,7 +89,7 @@ impl Relay {
                 .await
                 .map_err(|_| ())?
                 .ok_or(())?;
-            return self.destination(id).await;
+            return self.destination(id).await.map_err(|_| ());
         }
         // Epoch zero is a signed claim invitation, never execution authority.
         let token = OwnershipToken {
@@ -183,12 +183,12 @@ impl Relay {
                 axum::http::header::CONTENT_TYPE,
                 axum::http::HeaderValue::from_static("application/json"),
             );
-            let proof = self.authentication.sign(
+            let headers = self.authentication.signed_headers(
                 &self.coordinator.instance_id,
                 &destination.token,
                 &axum::http::Method::POST,
                 &uri,
-                &headers,
+                headers,
                 &body,
             )?;
             let url = format!(
@@ -201,7 +201,6 @@ impl Relay {
                     .client
                     .post(url)
                     .headers(headers)
-                    .header(PROOF, proof)
                     .body(body)
                     .send()
                     .await

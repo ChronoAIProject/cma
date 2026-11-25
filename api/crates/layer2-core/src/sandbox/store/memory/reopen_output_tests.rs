@@ -14,6 +14,7 @@ async fn fixture() -> (ValidationFixture, AgentReopenGuard) {
         crate::rfc3339_at(std::time::SystemTime::now() + std::time::Duration::from_secs(3600));
     let agent = test_agent("agt_reopen_output", AgentStatus::Paused);
     let guard = AgentReopenGuard {
+        owner_restart: None,
         sandbox: SandboxMutationGuard::capture(&parent),
         agent_fence: agent.work.next_fence,
         native_conversation_id: agent.conversation.conversation_id.clone().unwrap(),

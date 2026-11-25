@@ -1,6 +1,7 @@
 name: Release gate
 
-# Additional gates that apply only to a pull request from develop into main.
+# Additional gates that apply only to a release pull request into main, from
+# develop or from a release/<name> branch cut from one develop commit.
 # Everything in ci.yml also runs; this workflow adds the release requirements.
 #
 # The version is not decided here. This gate requires only that the pull
@@ -26,15 +27,45 @@ jobs:
     name: Source branch
     runs-on: ubuntu-latest
     steps:
-      - name: main accepts pull requests only from develop
-        # Bound to the environment rather than interpolated. A branch name is
-        # chosen by whoever opens the pull request, and ${{ }} would splice it
-        # into the shell source before bash ever sees it.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+
+      - name: main accepts pull requests only from develop or a develop release branch
+        # A release branch freezes one develop commit, so the release PR's head
+        # stops moving while the merge queue keeps advancing develop. It must
+        # be an exact develop snapshot: its head is a commit on develop's
+        # first-parent history, which is also what prod-cd requires of the
+        # released commit. Bound to the environment rather than interpolated.
+        # A branch name is chosen by whoever opens the pull request, and ${{ }}
+        # would splice it into the shell source before bash ever sees it.
         env:
           HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          if [ "$HEAD_REF" != "develop" ]; then
-            echo "::error::main only accepts pull requests from develop (got '$HEAD_REF')"
+          set -euo pipefail
+          if [ "$HEAD_REPO" != "$REPOSITORY" ]; then
+            echo "::error::main only accepts release pull requests from this repository"
+            exit 1
+          fi
+          if [ "$HEAD_REF" = "develop" ]; then
+            exit 0
+          fi
+          if ! printf '%s' "$HEAD_REF" | grep -Eqx 'release/[0-9A-Za-z][0-9A-Za-z._-]{0,62}'; then
+            echo "::error::main only accepts pull requests from develop or release/<name> (got '$HEAD_REF')"
+            exit 1
+          fi
+          if ! printf '%s' "$HEAD_SHA" | grep -Eqx '[0-9a-f]{40}'; then
+            echo "::error::invalid release head"
+            exit 1
+          fi
+          # grep -c reads all of rev-list's output; an early-exiting grep -q
+          # would break the pipe and fail it under pipefail.
+          found=$(git rev-list --first-parent origin/develop | grep -cx "$HEAD_SHA" || true)
+          if [ "$found" != "1" ]; then
+            echo "::error::$HEAD_REF must point at a commit on develop's first-parent history; cut it from develop and add no commits"
             exit 1
           fi
 
@@ -42,33 +73,40 @@ jobs:
     name: develop contains main
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
 
-      - name: main is an ancestor of develop
+      - name: main is an ancestor of the release head
         # Every release leaves a merge commit on main that develop does not
         # have, so main ends one commit ahead and the next release PR reads
         # BEHIND. publish.yml now opens the back-merge itself; this says so
         # early and in words when something has gone wrong anyway, rather than
         # letting an author find out from a merge button after every gate has
-        # already run.
+        # already run. The head is the PR's own: develop, or a release branch
+        # cut from it.
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          if git merge-base --is-ancestor origin/main origin/develop; then
+          if ! printf '%s' "$HEAD_SHA" | grep -Eqx '[0-9a-f]{40}'; then
+            echo "::error::invalid release head"
+            exit 1
+          fi
+          if git merge-base --is-ancestor origin/main "$HEAD_SHA"; then
             exit 0
           fi
-          echo "::error::develop does not contain main, so this cannot merge."
+          echo "::error::The release head does not contain main, so this cannot merge."
           echo "::error::Merge origin/main into develop first — it carries no content,"
-          echo "::error::only the merge commit from the last release."
-          git log --oneline origin/develop..origin/main
+          echo "::error::only the merge commit from the last release — then cut the release again."
+          git log --oneline "$HEAD_SHA"..origin/main
           exit 1
 
   release-declaration:
     name: Release declaration
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - name: Exactly one release label declares the bump
         env:
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
@@ -95,17 +133,3 @@ jobs:
         # body after the merge and keeps what it returns.
         run: printf '%s' "$BODY" | .github/release-notes.sh > /dev/null
 
-  no-coauthors:
-    name: Commit hygiene
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - name: No Co-Authored-By trailers
-        run: |
-          base=$(git merge-base origin/main HEAD)
-          if git log "$base"..HEAD --format='%B' | grep -qi '^Co-Authored-By:'; then
-            echo "::error::Co-Authored-By trailers are not permitted"
-            exit 1
-          fi

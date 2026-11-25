@@ -88,6 +88,13 @@ impl RoutedDelivery {
             .custom
             .as_ref()
             .ok_or(ExecutionError::Unsupported)?;
+        let answer_response_id = match effect {
+            CustomStreamEffect::Message { text }
+            | CustomStreamEffect::Completed {
+                final_text: Some(text),
+            } if !text.trim().is_empty() => Some(frame.response_id.as_str()),
+            _ => None,
+        };
         let event =
             body.settlement_event(plan, target, &self.journal.keys, (self.journal.clock)())?;
         let mut evidence = lease
@@ -96,7 +103,11 @@ impl RoutedDelivery {
             .as_ref()
             .and_then(|checkpoint| checkpoint.custom.clone())
             .ok_or(ExecutionError::Corrupt)?;
-        if !evidence.valid_for(&CustomCheckpoint::new(&event, body, effect.webhook())) {
+        if !evidence.valid_for(&CustomCheckpoint::new(
+            &event,
+            &body.delivery.policy.sinks,
+            effect.webhook(),
+        )) {
             return Err(ExecutionError::Corrupt);
         }
         if recovering {
@@ -286,7 +297,8 @@ impl RoutedDelivery {
                             hmac_key_id: String::new(),
                         },
                         None,
-                    ),
+                    )
+                    .with_answer_response(answer_response_id),
                 )
                 .await;
             evidence.webhooks[index].status = WebhookStatus::Settled { outcome };
@@ -304,7 +316,7 @@ impl RoutedDelivery {
             return Ok(FrameDelivery::Unknown);
         }
         self.journal
-            .acknowledge_delivery(lease, &frame.response_id, frame.sequence_number)
+            .acknowledge_frame(plan, target, lease, frame)
             .await?;
         Ok(FrameDelivery::Settled {
             cursor: frame.sequence_number,

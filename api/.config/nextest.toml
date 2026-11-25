@@ -1,0 +1,40 @@
+# Nextest profiles for the CMA workspace. An invocation that selects no profile
+# keeps nextest's built-in defaults.
+experimental = ["wrapper-scripts"]
+
+# Ordinary disposable-Mongo PR partitions (mongo-contract-tests.sh count:i/n,
+# reached through --shard 1/8 ... 8/8) select this profile. Dedicated
+# measurement modes (--scale, --observation-budget, ...) and the isolated shard
+# keep the default profile and stay unbounded.
+#
+# Per-test budget: 22 periods of 60 s = 1320 s. Across six AM-track runs
+# (54 shard jobs, 20 Nov 2026) the slowest ordinary contract without an
+# override took 434 s (access_measurement_large_hierarchy), so the budget keeps
+# 3x headroom and still stops any thirty-minute qualification. The 60 s period
+# keeps nextest's default SLOW cadence.
+#
+# Nextest cannot print custom text on a timeout. A breach appears as
+# "TERMINATING [>1320.000s]" and "TIMEOUT [1320.0..s] ... cma::bin/cma <test>",
+# then "1 timed out" in the summary and the runner's remedy. Do not raise the
+# budget for a long measurement or qualification: move it into a dedicated mode
+# in .github/scripts/mongo-contract-tests.sh (a readonly name, a selection case,
+# the ordinary/all exclusions and an argument) and declare it in
+# .github/scripts/mongo-contract-exceptions.json.
+[profile.mongo-ordinary]
+slow-timeout = { period = "60s", terminate-after = 22 }
+
+# Each nextest run enumerates its binaries again before per-test timers start.
+# Reuse the bounded discovery path for that phase only.
+[scripts.wrapper.mongo-list]
+command = { command-line = "../.github/scripts/mongo-list-guard.py", relative-to = "workspace-root" }
+
+[[profile.mongo-ordinary.scripts]]
+platform = "cfg(unix)"
+list-wrapper = "mongo-list"
+
+# The one existing ordinary contract above the default budget: 567-911 s
+# observed. 46 x 60 s = 2760 s keeps 3x headroom. Overrides record measured
+# existing contracts only; new long work belongs in a dedicated mode.
+[[profile.mongo-ordinary.overrides]]
+filter = "test(=store::usage_reports::tests::range_measurement::retained_ranges_measure_435_members_at_checkpoint_cadence_with_exact_first_pages)"
+slow-timeout = { period = "60s", terminate-after = 46 }

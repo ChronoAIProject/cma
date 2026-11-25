@@ -1,4 +1,4 @@
-import { useFileNavigation } from './useFileNavigation';
+import { useFileNavigation, type FileNavigationMemory } from './useFileNavigation';
 import { FileRoots } from './FilePaths';
 import { absoluteFilePath } from './filePath';
 import { homeFilePath } from '../fileChanges';
@@ -16,7 +16,7 @@ import {
 } from '../../api/agentFiles';
 import { Alert } from '../../ui/Alert';
 import { Button } from '../../ui/Button';
-import { FileCreateForm } from './FileCreateForm';
+import { FileCreateForm, fileNameIssue } from './FileCreateForm';
 import { FileExplorerFrame, FileLocation } from './FileExplorerFrame';
 import { FileToolbar } from './FileToolbar';
 import { FileRail } from './FileRail';
@@ -33,9 +33,11 @@ export function FileExplorer({
   embedded = false,
   active = true,
   initialDirectory: suppliedDirectory,
+  navigationMemory,
   changes,
 }: {
   readonly initialDirectory?: string;
+  readonly navigationMemory?: FileNavigationMemory;
   readonly changes?: ReadonlyMap<string, FileChange>;
   readonly panel?: boolean;
   readonly embedded?: boolean;
@@ -54,18 +56,25 @@ export function FileExplorer({
   const [directories, setDirectories] = useState<ReadonlyMap<string, readonly AgentFileEntry[]>>(
     new Map(),
   );
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const [loading, setLoading] = useState<ReadonlySet<string>>(new Set([initialDirectory]));
+  const [loading, setLoading] = useState<ReadonlySet<string>>(
+    new Set([navigationMemory?.read() ?? initialDirectory]),
+  );
   const [hidden, setHidden] = useState(false);
-  const { initialRoot, rootPath, directory, setRootPath, setDirectory, touch } =
-    useFileNavigation(initialDirectory);
+  const { initialRoot, rootPath, directory, expanded, navigate, setDirectory, touch } =
+    useFileNavigation(initialDirectory, navigationMemory);
   const [selected, setSelected] = useState<AgentFileEntry>();
   const [content, setContent] = useState<AgentFileContent>();
   const [draft, setDraft] = useState<string>();
   const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [denied, setDenied] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setErrorState] = useState<string>();
+  // A later successful listing of the failed folder clears its alert (#2268).
+  const listingFailure = useRef<string | undefined>(undefined);
+  const setError = useCallback((message?: string) => {
+    listingFailure.current = undefined;
+    setErrorState(message);
+  }, []);
   const [notice, setNotice] = useState<string>();
   const [create, setCreate] = useState<'file' | 'directory'>();
   const [name, setName] = useState('');
@@ -106,17 +115,25 @@ export function FileExplorer({
         onAccessChanged?.();
       }
     },
-    [onAccessChanged],
+    [onAccessChanged, setError],
   );
   const load = useCallback(
     async (path: string, signal: AbortSignal) => {
-      if (signal.aborted) return;
+      if (signal.aborted) return false;
       setLoading((value) => new Set([...value, path]));
       try {
         const entries = await client.list(agentId, path, { signal });
-        if (!signal.aborted) setDirectories((value) => new Map(value).set(path, entries));
+        if (!signal.aborted) {
+          setDirectories((value) => new Map(value).set(path, entries));
+          if (listingFailure.current === path) setError(undefined);
+        }
+        return !signal.aborted;
       } catch (cause) {
-        if (!signal.aborted) failure(cause);
+        if (!signal.aborted) {
+          failure(cause);
+          listingFailure.current = path;
+        }
+        return false;
       } finally {
         if (!signal.aborted)
           setLoading((value) => {
@@ -126,26 +143,33 @@ export function FileExplorer({
           });
       }
     },
-    [agentId, client, failure],
+    [agentId, client, failure, setError],
   );
   useEffect(() => {
     if (!active) return;
     const request = new AbortController();
     lifetime.current = request;
     queueMicrotask(() => {
-      if (!request.signal.aborted) void load(initialRoot, request.signal);
+      if (!request.signal.aborted) {
+        void load(initialRoot, request.signal);
+        const remembered = navigationMemory?.read();
+        if (remembered !== undefined && remembered !== initialRoot)
+          void load(remembered, request.signal);
+      }
     });
     return () => {
       request.abort();
       readRequest.current?.abort();
     };
-  }, [load, active, initialRoot]);
+  }, [load, active, initialRoot, navigationMemory]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(undefined), 4000);
     return () => clearTimeout(timer);
   }, [notice]);
 
+  const navigateDirectory = (path: string, root = false) =>
+    navigate(path, root, lifetime.current?.signal, directories.has(path), load);
   const guardDraft = (action: () => void) => {
     if (mutation.current) return;
     touch();
@@ -271,16 +295,10 @@ export function FileExplorer({
     });
   };
   const createFile = () => {
-    if (
-      blocked ||
-      !create ||
-      !name.trim() ||
-      /[/\\]/.test(name) ||
-      [...name].some((character) => character.charCodeAt(0) < 32) ||
-      name === '.' ||
-      name === '..'
-    ) {
-      setError('Enter a file or folder name without path separators.');
+    if (blocked || !create) return;
+    const issue = fileNameIssue(name);
+    if (issue) {
+      setError(issue);
       return;
     }
     const path = (directory ? `${directory}/` : '') + name;
@@ -442,22 +460,9 @@ export function FileExplorer({
           hidden={hidden}
           selected={selected?.path}
           disabled={busy || denied}
-          onRoot={() => {
-            setRootPath('');
-            if (lifetime.current && !directories.has('')) void load('', lifetime.current.signal);
-          }}
+          onRoot={() => void navigateDirectory('', true)}
           onFile={(file) => guardDraft(() => void openFile(file))}
-          onDirectory={(path) => {
-            setDirectory(path);
-            setExpanded((value) => {
-              const next = new Set(value);
-              if (next.has(path)) next.delete(path);
-              else next.add(path);
-              return next;
-            });
-            const signal = lifetime.current?.signal;
-            if (!directories.has(path) && signal) void load(path, signal);
-          }}
+          onDirectory={(path) => void navigateDirectory(path)}
         />
         <FilePreview
           file={selected}

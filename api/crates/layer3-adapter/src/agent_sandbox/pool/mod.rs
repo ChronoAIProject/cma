@@ -12,12 +12,18 @@ mod home_origin;
 mod metric_controller;
 mod native_home;
 mod native_home_recovery;
+mod native_home_snapshots;
 mod native_home_store;
 mod native_proof;
+pub use native_home_snapshots::{
+    NativeHomeSnapshotObservation, NativeHomeSnapshotRequest, NativeHomeSnapshotSource,
+};
 pub use native_home_store::NativeHomeVolumes;
+mod binding_resources;
 mod management;
 mod model;
 mod pod_policy;
+mod startup_observation;
 pub use pod_policy::NativeFsGroupChangePolicy;
 mod reconciliation;
 mod recovery;
@@ -60,6 +66,8 @@ pub struct AgentSandboxPools {
     pools: Api<DynamicObject>,
     claims: Api<DynamicObject>,
     seeds: Api<DynamicObject>,
+    native_snapshots: Api<DynamicObject>,
+    native_snapshot_contents: Api<DynamicObject>,
     members: Api<DynamicObject>,
     pods: Api<DynamicObject>,
     volumes: Api<k8s_openapi::api::core::v1::PersistentVolumeClaim>,
@@ -90,6 +98,21 @@ impl AgentSandboxPools {
                 "VolumeSnapshot",
                 "volumesnapshots",
             ),
+            native_snapshots: resource(
+                client.clone(),
+                &config.namespace,
+                "snapshot.storage.k8s.io",
+                "v1",
+                "VolumeSnapshot",
+                "volumesnapshots",
+            ),
+            native_snapshot_contents: cluster_resource(
+                client.clone(),
+                "snapshot.storage.k8s.io",
+                "v1",
+                "VolumeSnapshotContent",
+                "volumesnapshotcontents",
+            ),
             members: resource(
                 client.clone(),
                 &config.namespace,
@@ -114,6 +137,7 @@ impl AgentSandboxPools {
         if replicas > 1000 {
             return Err(rejected("native warm pool target exceeds its bound"));
         }
+        management::require_canary_target(spec, replicas)?;
         let desired_template = model::template(&self.config, spec)?;
         // Scaling an existing pool down must remain possible after its seed is
         // retired. A zero-sized pool cannot create a Pod/PVC from that seed.
@@ -194,6 +218,19 @@ fn resource(
     Api::namespaced_with(
         client,
         namespace,
+        &ApiResource::from_gvk_with_plural(&GroupVersionKind::gvk(group, version, kind), plural),
+    )
+}
+
+fn cluster_resource(
+    client: Client,
+    group: &str,
+    version: &str,
+    kind: &str,
+    plural: &str,
+) -> Api<DynamicObject> {
+    Api::all_with(
+        client,
         &ApiResource::from_gvk_with_plural(&GroupVersionKind::gvk(group, version, kind), plural),
     )
 }

@@ -1,13 +1,19 @@
 use super::{bounded, Authority, OwnershipError};
 use layer3_adapter::owner_protocol::{
-    OwnershipFailure, OwnershipFailureReason, OwnershipPhase, TransportAuthority, TransportOwner,
+    OwnershipFailure, OwnershipFailureReason, OwnershipPhase, ReceiverCleanup,
+    ReceiverConfirmationCustody, ReceiverRevocation, ReceiverSettlementFailure, TransportAuthority,
+    TransportOwner,
 };
 use layer3_adapter::AdapterError;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-#[path = "receiver_diagnostics.rs"]
-mod diagnostics;
-use diagnostics::{emit, Event};
+use super::receiver_diagnostics::{emit, Event};
+
+#[derive(Clone)]
+pub(super) struct RegisteredReceiver {
+    revocation: Arc<dyn ReceiverRevocation>,
+    confirmation: ReceiverConfirmationCustody,
+}
 
 #[async_trait::async_trait]
 impl TransportAuthority for Authority {
@@ -18,15 +24,51 @@ impl TransportAuthority for Authority {
     }
     fn register_receiver(
         &self,
-        receiver: std::sync::Arc<dyn layer3_adapter::owner_protocol::ReceiverRevocation>,
+        receiver: Arc<dyn ReceiverRevocation>,
     ) -> layer3_adapter::Result<()> {
         let mut receivers = self.receivers.lock().unwrap();
-        if !self.is_current() || receivers.len() >= 64 {
+        if !self.is_current() {
             return Err(stale());
         }
         let identity = receiver.identity();
+        if let Some(registered) = receivers.get_mut(&identity) {
+            // Preserve the captured revoker once we know this receiver may
+            // exist. A later registration cannot replace stronger custody.
+            if registered.confirmation == ReceiverConfirmationCustody::NeverSent {
+                registered.revocation = receiver;
+            }
+        } else {
+            if receivers.len() >= 64 {
+                return Err(stale());
+            }
+            receivers.insert(
+                identity.clone(),
+                RegisteredReceiver {
+                    revocation: receiver,
+                    confirmation: ReceiverConfirmationCustody::NeverSent,
+                },
+            );
+        }
+        if let Some(sandbox_id) = receivers[&identity].revocation.sandbox_id() {
+            self.observe_diagnostic_sandbox(sandbox_id);
+        }
         self.confirmed_receivers.lock().unwrap().remove(&identity);
-        receivers.insert(identity, receiver);
+        Ok(())
+    }
+    fn receiver_observed(&self, identity: &str) {
+        if let Some(receiver) = self.receivers.lock().unwrap().get_mut(identity) {
+            if receiver.confirmation == ReceiverConfirmationCustody::NeverSent {
+                receiver.confirmation = ReceiverConfirmationCustody::ReceiverObserved;
+            }
+        }
+    }
+    fn begin_receiver_confirmation(&self, identity: &str) -> layer3_adapter::Result<()> {
+        let mut receivers = self.receivers.lock().unwrap();
+        if !self.is_current() {
+            return Err(stale());
+        }
+        let receiver = receivers.get_mut(identity).ok_or_else(stale)?;
+        receiver.confirmation = ReceiverConfirmationCustody::PossiblyDelivered;
         Ok(())
     }
     fn receiver_confirmed(&self, identity: &str) {
@@ -76,11 +118,17 @@ impl TransportAuthority for Authority {
             let membership = bounded(store.membership()).await.inspect_err(|error| {
                 self.receiver_error("receiver_membership", error);
             })?;
-            let lease = bounded(store.renew(&self.token))
-                .await
-                .inspect_err(|error| {
-                    self.receiver_error("receiver_store_renew", error);
-                })?;
+            let lease = async {
+                if self.policy == super::MaintenancePolicy::ContainFailures {
+                    self.renew_store_owned().await
+                } else {
+                    bounded(store.renew(&self.token)).await
+                }
+            }
+            .await
+            .inspect_err(|error| {
+                self.receiver_error("receiver_store_renew", error);
+            })?;
             if lease.token != self.token {
                 self.receiver_error("receiver_same_token", &OwnershipError::Stale);
                 return Err(OwnershipError::Stale);
@@ -119,7 +167,11 @@ impl TransportAuthority for Authority {
             return;
         };
         let first = *self.receiver_failure.get_or_init(|| {
-            emit(&self.token, Event::First(failure));
+            emit(
+                &self.token,
+                &self.receiver_correlation(),
+                Event::First(failure),
+            );
             failure
         });
         let mut recording = self
@@ -128,6 +180,7 @@ impl TransportAuthority for Authority {
                 let (finished, receiver) = tokio::sync::watch::channel(false);
                 let store = store.clone();
                 let token = self.token.clone();
+                let fields = self.receiver_correlation();
                 // Expiry or another cancellation can discard this caller. The
                 // bounded diagnostic write owns no execution authority and survives it.
                 tokio::spawn(async move {
@@ -136,7 +189,7 @@ impl TransportAuthority for Authority {
                         Ok(()) => Event::Recorded,
                         Err(error) => Event::Unconfirmed(failure_reason(&error)),
                     };
-                    emit(&token, event);
+                    emit(&token, &fields, event);
                     finished.send_replace(true);
                 });
                 receiver
@@ -161,9 +214,14 @@ impl TransportAuthority for Authority {
 }
 
 impl Authority {
+    pub(super) fn settlement_error(&self) -> Option<OwnershipError> {
+        self.settlement_watch.terminal().map(settlement_error)
+    }
+
     fn receiver_error(&self, stage: &'static str, error: &OwnershipError) {
         emit(
             &self.token,
+            &self.receiver_correlation(),
             Event::Operation {
                 stage,
                 reason: failure_reason(error),
@@ -174,15 +232,108 @@ impl Authority {
     /// Retain every contacted receiver until all revocations succeed. A cancelled
     /// or ambiguous confirmation may have installed authority at the runtime.
     pub async fn revoke_transports(&self) -> Result<(), super::OwnershipError> {
+        self.settle_transports(false).await
+    }
+
+    /// Run after closing local admission, joining owned work, and detaching
+    /// owner sessions. A negative receiver proof does not provide quiescence.
+    pub async fn revoke_transports_after_local_drain(&self) -> Result<(), super::OwnershipError> {
+        self.settle_transports(true).await
+    }
+
+    async fn settle_transports(
+        &self,
+        after_local_drain: bool,
+    ) -> Result<(), super::OwnershipError> {
+        // Close confirmation admission before taking the same mutex used to
+        // record a possible send. A racing send is either captured or refused.
         self.revoke();
-        let receivers: Vec<_> = self.receivers.lock().unwrap().values().cloned().collect();
-        for receiver in receivers {
-            receiver.revoke().await.map_err(|_| {
-                super::OwnershipError::Unavailable("receiving runtime revocation failed".into())
-            })?;
+        if after_local_drain {
+            self.join_local_work().await?;
         }
-        self.receivers.lock().unwrap().clear();
+        let receivers: Vec<_> = self
+            .receivers
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(identity, receiver)| (identity.clone(), receiver.clone()))
+            .collect();
+        for (identity, receiver) in receivers {
+            let result = if self.policy == super::MaintenancePolicy::ContainFailures {
+                let custody = if after_local_drain {
+                    receiver.confirmation
+                } else {
+                    ReceiverConfirmationCustody::PossiblyDelivered
+                };
+                receiver
+                    .revocation
+                    .settle_typed(custody, &self.settlement_watch)
+                    .await
+                    .map_err(|failure| {
+                        self.settlement_watch.record(failure);
+                        settlement_error(failure)
+                    })
+            } else if after_local_drain {
+                receiver
+                    .revocation
+                    .settle(receiver.confirmation)
+                    .await
+                    .map_err(|_| unsettled())
+            } else {
+                receiver
+                    .revocation
+                    .revoke()
+                    .await
+                    .map(|()| ReceiverCleanup::Acknowledged)
+                    .map_err(|_| unsettled())
+            };
+            match result {
+                Ok(ReceiverCleanup::Acknowledged) => {
+                    // Confirmation admission is closed. A matching runtime ACK
+                    // settles this token permanently, even if a sibling or
+                    // durable release still needs another attempt.
+                    self.receivers.lock().unwrap().remove(&identity);
+                    self.confirmed_receivers.lock().unwrap().remove(&identity);
+                }
+                Ok(ReceiverCleanup::NoReceiver)
+                    if receiver.confirmation == ReceiverConfirmationCustody::NeverSent =>
+                {
+                    // Keep only negative evidence in the retry set. Its
+                    // incumbent runtime must still be proven on the next attempt.
+                }
+                Err(error) => {
+                    self.log_receiver_cleanup_failure(&identity, after_local_drain, &error);
+                    return Err(error);
+                }
+                Ok(ReceiverCleanup::NoReceiver) => {
+                    let error = if self.policy == super::MaintenancePolicy::ContainFailures {
+                        self.settlement_watch
+                            .record(ReceiverSettlementFailure::Invalid);
+                        settlement_error(ReceiverSettlementFailure::Invalid)
+                    } else {
+                        unsettled()
+                    };
+                    self.log_receiver_cleanup_failure(&identity, after_local_drain, &error);
+                    return Err(error);
+                }
+            }
+        }
         Ok(())
+    }
+}
+
+fn unsettled() -> OwnershipError {
+    OwnershipError::Unavailable("receiving runtime revocation failed".into())
+}
+
+fn settlement_error(failure: ReceiverSettlementFailure) -> OwnershipError {
+    match failure {
+        ReceiverSettlementFailure::Deadline | ReceiverSettlementFailure::Unavailable => unsettled(),
+        ReceiverSettlementFailure::IncompatibleProtocol => OwnershipError::IncompatibleProtocol,
+        ReceiverSettlementFailure::AuthorityLost => OwnershipError::Stale,
+        ReceiverSettlementFailure::Invalid | ReceiverSettlementFailure::Unclassified => {
+            OwnershipError::Invalid("receiver settlement validation failed".into())
+        }
     }
 }
 
@@ -190,7 +341,7 @@ fn stale() -> AdapterError {
     AdapterError::Rejected("Agent Manager transport ownership is stale or unavailable".into())
 }
 
-fn failure_reason(error: &OwnershipError) -> OwnershipFailureReason {
+pub(super) fn failure_reason(error: &OwnershipError) -> OwnershipFailureReason {
     match error {
         OwnershipError::Unavailable(detail)
             if detail == "ownership operation exceeded its deadline" =>
@@ -202,3 +353,7 @@ fn failure_reason(error: &OwnershipError) -> OwnershipFailureReason {
         OwnershipError::Stale | OwnershipError::Invalid(_) => OwnershipFailureReason::AuthorityLost,
     }
 }
+
+#[cfg(test)]
+#[path = "receiver_custody_tests.rs"]
+mod tests;

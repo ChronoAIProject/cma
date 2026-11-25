@@ -1,5 +1,11 @@
 //! Format selection precedes installation recovery, desktop launch and serving.
+use std::{future::Future, time::Duration};
+
 use super::*;
+
+const DEFAULT_DESKTOP_STARTUP_BUDGET: Duration = Duration::from_secs(30);
+const EXTENDED_DESKTOP_STARTUP_BUDGET: Duration = Duration::from_secs(90);
+const DESKTOP_PROBE_INTERVAL: Duration = Duration::from_millis(100);
 
 struct Prepared {
     boot_id: String,
@@ -60,26 +66,60 @@ impl Supervisor {
     }
 
     pub(super) async fn finish_startup(supervisor: Arc<Self>) -> Result<Arc<Self>> {
+        Self::finish_startup_with_probe(supervisor, || async {
+            tokio::net::TcpStream::connect("127.0.0.1:6080")
+                .await
+                .is_ok()
+        })
+        .await
+    }
+
+    async fn finish_startup_with_probe<Fut: Future<Output = bool>>(
+        supervisor: Arc<Self>,
+        mut connect: impl FnMut() -> Fut,
+    ) -> Result<Arc<Self>> {
         if supervisor.config.machine_included {
-            let ready = async {
-                loop {
-                    if tokio::net::TcpStream::connect("127.0.0.1:6080")
-                        .await
-                        .is_ok()
-                    {
-                        break;
+            let budget = if supervisor.config.extended_desktop_startup {
+                EXTENDED_DESKTOP_STARTUP_BUDGET
+            } else {
+                DEFAULT_DESKTOP_STARTUP_BUDGET
+            };
+            let started = tokio::time::Instant::now();
+            let ready = match &supervisor.desktop_process {
+                #[cfg(target_os = "linux")]
+                Some(crate::desktop_process::DesktopSession::Supervised(desktop)) => {
+                    desktop.ready(budget).await
+                }
+                _ => {
+                    let ready = async {
+                        while !connect().await {
+                            tokio::time::sleep(DESKTOP_PROBE_INTERVAL).await;
+                        }
+                    };
+                    tokio::select! {
+                        biased;
+                        _ = tokio::time::sleep(budget) => false,
+                        _ = ready => true,
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             };
-            tokio::time::timeout(std::time::Duration::from_secs(30), ready)
-                .await
-                .map_err(|_| {
-                    RuntimeError::unavailable(
-                        "desktop_start_failed",
-                        "desktop did not become ready",
-                    )
-                })?;
+            if !ready {
+                tracing::error!(
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "initial desktop did not become ready"
+                );
+                if let Some(desktop) = &supervisor.desktop_process {
+                    desktop.shutdown().await;
+                }
+                return Err(RuntimeError::unavailable(
+                    "desktop_start_failed",
+                    "desktop did not become ready",
+                ));
+            }
+            tracing::info!(
+                elapsed_ms = started.elapsed().as_millis(),
+                "initial desktop ready"
+            );
         }
         supervisor.recover_journals().await?;
         Ok(supervisor)
@@ -133,7 +173,7 @@ impl Supervisor {
         };
         let checkpoint = CheckpointStore::new(&config);
         let desktop_process = if config.machine_included {
-            Some(crate::desktop_process::DesktopProcess::start(&config)?)
+            Some(crate::desktop_process::DesktopSession::start(&config)?)
         } else {
             None
         };
@@ -177,3 +217,11 @@ impl Supervisor {
         }))
     }
 }
+
+#[cfg(test)]
+#[path = "supervisor_startup_tests.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "home_restore_preflight_tests.rs"]
+mod home_restore_preflight_tests;

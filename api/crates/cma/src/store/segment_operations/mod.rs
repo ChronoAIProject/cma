@@ -43,6 +43,7 @@ async fn execute(arguments: &[String]) -> Result<Value> {
     let mut options = ClientOptions::parse(uri)
         .await
         .map_err(|_| "database configuration")?;
+    crate::store::transaction_barrier::bind(&mut options, &name);
     options.server_selection_timeout = Some(Duration::from_secs(5));
     options.connect_timeout = Some(Duration::from_secs(5));
     let client = Client::with_options(options).map_err(|_| "database configuration")?;
@@ -70,6 +71,18 @@ async fn execute(arguments: &[String]) -> Result<Value> {
                 .await
                 .map_err(|_| "gate refused or commit uncertain; inspect the original revision")?;
             serde_json::to_value(status).map_err(|_| "gate status encoding")
+        }
+        Operation::ActiveProof(agent) => {
+            if !crate::store::migrations::agent_log_active_proofs::inspect(&database)
+                .await?
+                .is_empty()
+            {
+                return Err("active log proof preparation requires its completed schema migration");
+            }
+            let revision =
+                super::agent_log_segments::active_proof::prepare(&client, &database, &agent)
+                    .await?;
+            Ok(json!({"operation":"active_proof_prepare","head_revision":revision}))
         }
         Operation::Audit { action, agent, id } => {
             let result = match action {

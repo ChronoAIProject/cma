@@ -1,8 +1,14 @@
 //! The Sandbox -> Workspace -> Worktree -> Agent domain hierarchy.
-
 mod desktop;
+mod runtime_migration_guard;
 pub use desktop::{
-    DesktopAuthorization, DesktopConnection, DesktopError, DesktopFrame, DesktopService,
+    DesktopAdmission, DesktopAuthorization, DesktopConnection, DesktopError, DesktopFrame,
+    DesktopService,
+};
+pub use runtime_migration_guard::{
+    runtime_desktop_activity_snapshot, runtime_desktop_process_incarnation,
+    try_acquire_runtime_migration_guard, RuntimeDesktopActivitySnapshot, RuntimeMigrationBusy,
+    RuntimeMigrationGuard,
 };
 mod admin;
 mod auto_pause_operator;
@@ -25,6 +31,9 @@ pub mod agent_output_index;
 mod agent_preferences;
 mod agent_settings;
 pub mod desktop_creation;
+pub mod task_acceptance;
+#[cfg(test)]
+mod task_acceptance_tests;
 pub mod task_experience;
 pub mod task_template;
 pub use agent_preferences::{AgentInstructionPolicy, AgentPreferences, AgentPreferencesUpdate};
@@ -43,7 +52,9 @@ mod agent_operation_queue;
 mod agent_operation_service;
 mod agent_operation_settlement;
 mod agent_read_types;
+mod agent_reply_preview;
 pub use agent_failure_projection::{public_agent_turn_failure, sanitize_agent_transcript};
+pub use agent_reply_preview::{normalize_reply_preview, AgentReplyPreview, AssistantReplyPreview};
 mod agent_reads;
 pub use admission_checkpoint::AgentLogCheckpoint;
 mod agent_log_projection;
@@ -64,6 +75,8 @@ mod agent_service;
 mod agent_work;
 mod agent_worktree_recovery;
 pub mod answer_deliverables;
+mod owner_agent_restart;
+pub use agent_service::{AgentRestartControl, AgentRestartObservation, AgentRestartService};
 pub mod work_retry;
 pub use agent_worktree_recovery::{
     plan_agent_worktree_recovery, AgentWorktreeRecovery, AgentWorktreeRecoveryContext,
@@ -81,6 +94,7 @@ mod conversation;
 mod conversation_fold;
 mod conversation_observation;
 mod conversation_observation_fold;
+pub mod ingress_ownership;
 pub mod message_feedback;
 pub mod provider_associations;
 pub mod suggestions;
@@ -103,6 +117,7 @@ mod provenance;
 mod provenance_inventory;
 mod provenance_service;
 pub mod retirement_archive;
+pub mod reviewed_retirement;
 pub use provenance::{AgentCreationCategory, AgentCreationOrigin, AgentCreationProvenance};
 pub use provenance_inventory::{
     AgentProvenanceInventoryQuery, AgentProvenanceInventoryRow, AgentProvenanceInventoryService,
@@ -122,12 +137,19 @@ mod first_message_dispatch;
 mod first_message_service;
 pub use failed_provision::SandboxFailedRuntimeProvision;
 mod hierarchy;
+pub mod task_activity;
 mod task_status;
 pub use task_status::AgentTaskStatus;
 mod home;
+pub mod home_backup;
 mod home_native;
 pub use home_native::SandboxNativePool;
 mod home_recovery;
+mod home_restore;
+pub use home_restore::{
+    SandboxHomeRestore, SandboxHomeRestoreAttestation, SandboxHomeRestoreEvidence,
+    SandboxHomeRestoreEvidenceKind, SandboxHomeRestoreReceipt, SandboxSupersededHome,
+};
 mod idle_evidence;
 mod inactivity;
 pub use idle_evidence::agentless_idle_with_children;
@@ -154,11 +176,18 @@ mod retained_reopen;
 mod retained_reopen_service;
 #[cfg(test)]
 mod retained_reopen_tests;
+mod retained_suspended_reopen;
+pub mod turn_timeout;
 pub use retained_reopen::{
-    apply_retained_reopen, RetainedReopenAccepted, RetainedReopenProof, RetainedReopenReceipt,
-    RetainedReopenRequest, RetainedReopenSnapshot, RetainedReopenVerifier,
+    apply_retained_reopen, RetainedReopenAccepted, RetainedReopenHistory, RetainedReopenProof,
+    RetainedReopenReceipt, RetainedReopenReplay, RetainedReopenRequest, RetainedReopenSnapshot,
+    RetainedReopenVerifier,
 };
-pub use retained_reopen_service::{RetainedReopenError, RetainedReopenService};
+pub use retained_reopen_service::{RetainedReopenError, RetainedReopenPath, RetainedReopenService};
+pub use retained_suspended_reopen::{
+    apply_suspended_reopen, RetainedSuspendedReopenProof, RetainedSuspendedReopenReceipt,
+    RetainedSuspendedReopenRequest,
+};
 mod revive;
 mod rotate;
 mod runtime_generation;
@@ -169,6 +198,19 @@ pub use retained_recovery::{
     RetainedRecoveryInspector, RetainedRecoveryService, RetainedRecoverySnapshot,
     RetainedRecoverySource,
 };
+mod runtime_migration;
+pub use runtime_migration::*;
+mod custom_runtime;
+pub use custom_runtime::{
+    SandboxCustomRuntimeMigration, SandboxCustomRuntimeOrigin, SandboxCustomRuntimeState,
+};
+mod retained_runtime_transition;
+pub use retained_runtime_transition::{
+    next_replacement_runtime_generation, RetainedRuntimePolicyBinding, RetainedRuntimeTransition,
+    RetainedRuntimeTransitionRequest,
+};
+mod runtime_image_origin;
+pub use runtime_image_origin::SandboxRuntimeImageOrigin;
 mod runtime_update;
 mod runtime_update_resume;
 pub use runtime_update::{
@@ -253,14 +295,15 @@ pub use agent_read_types::{
     AgentTranscriptMessage, AgentTranscriptRole, AgentTranscriptTurn, AgentTurnOutcome, AgentUsage,
     AgentUsageReading, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
+pub use agent_reads::privacy_export;
 pub use agent_reads::{
     AgentBufferedEventRequest, AgentConfigurationRead, AgentDetailReading,
     AgentEventStreamAuthorization, AgentEventStreamHeader, AgentEventStreamSnapshot,
-    AgentHistoryCursor, AgentHistoryReading, AgentOutputObservation, AgentReadService,
-    AgentReplayEntry, AgentReplayWindow, AgentResponseBinding, AgentRetainedOutput,
-    AgentRetainedOutputAvailability, AgentRetainedOutputPage, AgentSourceReadError,
-    AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
-    RETAINED_OUTPUT_CHUNK_BYTES,
+    AgentHistoryCursor, AgentHistoryReading, AgentOriginalRequest, AgentOutputObservation,
+    AgentReadService, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
+    AgentResponseObservation, AgentRetainedOutput, AgentRetainedOutputAvailability,
+    AgentRetainedOutputPage, AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry,
+    SharedAgentDetail, SharedAgentOrigin, RETAINED_OUTPUT_CHUNK_BYTES,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,
@@ -293,8 +336,9 @@ pub use conversation_recorder::{
     AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
 };
 pub use credential::{
-    SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
-    SandboxServiceGrant, SandboxServiceScopeRevision, SandboxSignInState,
+    InitialServiceConnection, RepositoryCredentialRequirement, SandboxCredentialAuthority,
+    SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt, SandboxServiceGrant,
+    SandboxServiceScopeRevision, SandboxSignInState, ServiceConnectionSelection,
 };
 pub use credential_prerequisite::{
     FixedSandboxCredentialPrerequisite, SandboxCredentialPrerequisite,
@@ -303,7 +347,7 @@ pub use credential_prerequisite::{
 pub use error::SandboxModelError;
 pub use event::{
     AgentAvailableCommand, AgentConfigOption, AgentLogEntry, AgentLogKind, AgentPlanStep,
-    RecordedToolOutput, SandboxEvent, SandboxEventKind,
+    ExternalApprovalResolution, RecordedToolOutput, SandboxEvent, SandboxEventKind,
 };
 pub use execution::ProvisioningExecution;
 pub use first_message::{
@@ -437,20 +481,19 @@ mod workspace_service_tests;
 
 pub mod agent_access;
 pub mod agent_access_tool;
-mod suspended_runtime;
-
 #[cfg(test)]
 mod runtime_update_lifecycle_tests;
+#[cfg(test)]
+mod runtime_update_resume_tests;
 #[cfg(test)]
 mod runtime_update_test_support;
 #[cfg(test)]
 mod runtime_update_tests;
-
-#[cfg(test)]
-mod runtime_update_resume_tests;
+mod suspended_runtime;
 
 #[cfg(test)]
 mod always_on_tests;
 
 mod runtime_capacity;
 pub use runtime_capacity::RuntimeCapacityError;
+pub mod model_credit;

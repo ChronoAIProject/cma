@@ -1,11 +1,13 @@
 """A single public ref advertisement fences automatic deployment receipts."""
+import fnmatch
 import subprocess
 import unittest
 from unittest.mock import Mock
 
 from staging_cd_common import Refusal
 from staging_cd_receipts_tests import fixture_receipt
-from staging_cd_watermark import SUPERSEDED, require_current_versions
+from staging_cd_versions import DEPLOYABLES
+from staging_cd_watermark import SUPERSEDED, SupersededVersions, require_current_versions
 
 
 class WatermarkTests(unittest.TestCase):
@@ -18,10 +20,29 @@ class WatermarkTests(unittest.TestCase):
         runner.assert_called_once()
         self.assertNotIn("GH_TOKEN", runner.call_args.kwargs["env"])
         self.assertNotIn("HOME", runner.call_args.kwargs["env"])
-        for suffix in ("v0.10.2", "pending/v0.10.2"):
-            runner.return_value.stdout = "\n".join([*lines, "b" * 40 + "\trefs/tags/cma-web/" + suffix])
-            with self.assertRaisesRegex(Refusal, SUPERSEDED):
-                require_current_versions(receipts, runner=runner)
+        # Only final tags are read; a pending reservation can never withhold a receipt.
+        self.assertEqual(runner.call_args.args[0][-2:], ["refs/tags/cma-web/v*", "refs/tags/cma-event-gateway/v*"])
+        runner.return_value.stdout = "\n".join([*lines, "b" * 40 + "\trefs/tags/cma-web/v0.10.2"])
+        with self.assertRaisesRegex(Refusal, SUPERSEDED):
+            require_current_versions(receipts, runner=runner)
+
+    def test_every_lane_ignores_a_pending_successor_but_not_a_higher_final(self):
+        receipts = {key: fixture_receipt(component=key) for key in DEPLOYABLES}
+        current = ["refs/tags/" + receipt["tag"] for receipt in receipts.values()]
+
+        def advertise(*names):
+            refs = current + ["refs/tags/" + name for name in names]
+            def runner(args, **_kwargs):
+                lines = ["a" * 40 + "\t" + ref for ref in refs if any(fnmatch.fnmatchcase(ref, p) for p in args)]
+                return subprocess.CompletedProcess(args, 0, "\n".join(lines), "")
+            return runner
+
+        pending = [name + "/pending/v0.10.3" for name in DEPLOYABLES.values()]
+        require_current_versions(receipts, runner=advertise(*pending))
+        for key, name in DEPLOYABLES.items():
+            with self.subTest(component=key), self.assertRaises(SupersededVersions) as error:
+                require_current_versions(receipts, runner=advertise(*pending, name + "/v0.10.2"))
+            self.assertEqual(error.exception.components, {key})
 
     def test_incomplete_malformed_and_failed_reads_cannot_authorize_deployment(self):
         receipts = {"web": fixture_receipt()}

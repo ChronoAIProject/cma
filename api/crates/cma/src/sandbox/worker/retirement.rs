@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
@@ -6,11 +5,12 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Sandbox, SandboxEventKind, SandboxStatus, SandboxWorkStep};
 use layer3_adapter::RuntimeHandle;
 
+use super::super::native_retirement_finalizer::{NativeRetirementFinalizer, RetirementOutcome};
 use super::support::{
     adapter_failure, credential_failure, dependency_failure, operation_id, system_time,
     WorkerFailure,
 };
-use super::SandboxWorker;
+use super::{retirement_credentials::custody_provider_ids, SandboxWorker};
 
 impl SandboxWorker {
     pub(super) async fn stop_agents(
@@ -18,21 +18,25 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if let Err(error) = self.remove_stopped_native_runtime(&mut sandbox).await {
-            return self
-                .retry_failure(sandbox, adapter_failure(error), now)
-                .await;
-        }
-        let runtime = sandbox
-            .runtime
+        let finalizer = self
+            .config
+            .retirement_finalizer
             .as_ref()
-            .map(|binding| RuntimeHandle(binding.runtime_id.clone()));
-        match self
-            .dependencies
-            .agents
-            .stop_live_agents(&sandbox, runtime.as_ref(), &operation_id(&sandbox))
-            .await
+            .filter(|_| NativeRetirementFinalizer::applies(&sandbox));
+        if let Some(finalizer) = finalizer {
+            if finalizer.holds_custody(&sandbox).await? {
+                return self
+                    .finalize_native_retirement(finalizer, sandbox, now)
+                    .await;
+            }
+        }
+        if let Some(failure) = self
+            .remove_stopped_native_runtime(&mut sandbox, now)
+            .await?
         {
+            return self.retry_failure(sandbox, failure, now).await;
+        }
+        match self.request_agent_stop(&sandbox).await {
             Ok(()) => {
                 self.advance(
                     sandbox,
@@ -44,6 +48,16 @@ impl SandboxWorker {
                 )
                 .await
             }
+            Err(super::SandboxDependencyError::AgentsStopping)
+                if finalizer.is_some_and(|finalizer| finalizer.admission_enabled()) =>
+            {
+                self.finalize_native_retirement(
+                    finalizer.expect("selected finalizer"),
+                    sandbox,
+                    now,
+                )
+                .await
+            }
             Err(error) => {
                 self.retry_failure(sandbox, dependency_failure(error), now)
                     .await
@@ -51,76 +65,72 @@ impl SandboxWorker {
         }
     }
 
+    async fn finalize_native_retirement(
+        &self,
+        finalizer: &NativeRetirementFinalizer,
+        mut sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let mut result = finalizer.finalize(&sandbox, &self.config.holder).await;
+        if matches!(result, Ok(RetirementOutcome::GracefulWithCustody)) {
+            if let Err(error) = self.request_agent_stop(&sandbox).await {
+                return self
+                    .retry_failure(sandbox, dependency_failure(error), now)
+                    .await;
+            }
+            let mut cleaned = sandbox.clone();
+            if let Some(failure) = self.prepare_retirement_cleanup(&mut cleaned, now).await? {
+                return self.retry_failure(sandbox, failure, now).await;
+            }
+            sandbox = cleaned;
+            result = finalizer
+                .finish_graceful_stop(&sandbox, &self.config.holder)
+                .await;
+        }
+        let reason = match result {
+            Ok(RetirementOutcome::Settled | RetirementOutcome::Superseded) => return Ok(()),
+            Ok(RetirementOutcome::GracefulPending | RetirementOutcome::GracefulWithCustody) => {
+                "sandbox agents are still stopping"
+            }
+            Ok(RetirementOutcome::ProviderPending(reason)) => reason,
+            Err(SandboxStoreError::Conflict) => "native retirement authority changed",
+            Err(error) => return Err(error),
+        };
+        self.retry_failure(sandbox, WorkerFailure::waiting(reason), now)
+            .await
+    }
+
+    async fn request_agent_stop(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<(), super::SandboxDependencyError> {
+        let runtime = sandbox
+            .runtime
+            .as_ref()
+            .map(|binding| RuntimeHandle(binding.runtime_id.clone()));
+        self.dependencies
+            .agents
+            .stop_live_agents(sandbox, runtime.as_ref(), &operation_id(sandbox))
+            .await
+    }
+
     pub(super) async fn revoke_for_retirement(
         &self,
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if let Err(error) = self
-            .dependencies
-            .credentials
-            .settle_revocations(&sandbox)
-            .await
-        {
-            return self
-                .retry_failure(sandbox, credential_failure(error), now)
-                .await;
+        if let Err(failure) = self.settle_retirement_credentials(&mut sandbox, now).await {
+            return self.retry_failure(sandbox, failure, now).await;
         }
-        let custodied = match self.dependencies.credentials.custodied(&sandbox.id).await {
-            Ok(values) => values,
-            Err(error) => {
-                return self
-                    .retry_failure(sandbox, credential_failure(error), now)
-                    .await
-            }
-        };
-        let custody_ids = match custody_provider_ids(&sandbox, &custodied) {
-            Ok(ids) => ids,
-            Err(failure) => return self.retry_failure(sandbox, failure, now).await,
-        };
-        let mut ids = BTreeSet::new();
-        if let Some(current) = &sandbox.credential.current {
-            ids.insert(current.provider_key_id.clone());
-        }
-        if let Some(pending) = &sandbox.credential.pending {
-            ids.insert(pending.provider_key_id.clone());
-        }
-        ids.extend(custody_ids);
-        let mut failures = Vec::new();
-        for id in ids {
-            let result = self.dependencies.credentials.revoke(&sandbox, &id).await;
-            match result {
-                Ok(()) => {
-                    if let Err(error) = self
-                        .dependencies
-                        .credentials
-                        .forget_provider(&sandbox.id, &id)
-                        .await
-                    {
-                        sandbox.credential.queue_revoke(id, rfc3339_at(now));
-                        failures.push(credential_failure(error));
-                    }
-                }
-                Err(error) => {
-                    sandbox.credential.queue_revoke(id, rfc3339_at(now));
-                    failures.push(credential_failure(error));
-                }
-            }
-        }
-        sandbox.credential.current = None;
-        sandbox.credential.pending = None;
-        sandbox.credential.delivered = false;
-        let event = failures.first().map_or_else(
-            || SandboxEventKind::WorkStepCompleted {
+        self.advance(
+            sandbox,
+            SandboxWorkStep::TeardownRuntime,
+            now,
+            SandboxEventKind::WorkStepCompleted {
                 step: SandboxWorkStep::RevokeRetirementCredentials,
             },
-            |failure| SandboxEventKind::WorkStepFailed {
-                step: SandboxWorkStep::RevokeRetirementCredentials,
-                failure: failure.typed(),
-            },
-        );
-        self.advance(sandbox, SandboxWorkStep::TeardownRuntime, now, event)
-            .await
+        )
+        .await
     }
 
     pub(super) async fn mark_retired(
@@ -144,6 +154,9 @@ impl SandboxWorker {
                     now,
                 )
                 .await;
+        }
+        if let Some(failure) = self.prepare_retirement_cleanup(&mut sandbox, now).await? {
+            return self.retry_failure(sandbox, failure, now).await;
         }
         if let Some(home) = &mut sandbox.lifecycle.home {
             if let Err(error) =
@@ -372,22 +385,4 @@ impl SandboxWorker {
         )
         .await
     }
-}
-
-fn custody_provider_ids(
-    sandbox: &Sandbox,
-    custodied: &[crate::sandbox::credential::CredentialMaterial],
-) -> Result<BTreeSet<String>, WorkerFailure> {
-    if custodied
-        .iter()
-        .any(|material| material.sandbox_id != sandbox.id || material.owner != sandbox.owner)
-    {
-        return Err(WorkerFailure::terminal_security(
-            "credential custody crossed its sandbox boundary",
-        ));
-    }
-    Ok(custodied
-        .iter()
-        .map(|material| material.authority.provider_key_id.clone())
-        .collect())
 }

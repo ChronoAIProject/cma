@@ -13,6 +13,23 @@ pub(crate) fn public_activity(activity: &ChannelActivity) -> ChannelActivity {
         }
         .into(),
     );
+    for consumer in &mut public.consumers {
+        consumer.produced_by = consumer.answer_production_bound();
+        if !consumer.execution_attributions.is_empty() {
+            consumer.execution_reference = consumer
+                .provider
+                .as_deref()
+                .zip(consumer.response_id.as_deref())
+                .and_then(|(provider, response)| {
+                    consumer
+                        .execution_attributions
+                        .iter()
+                        .find(|receipt| receipt.matches(provider, response))
+                })
+                .and_then(super::ExecutionAttribution::public_reference);
+            consumer.execution_attributions.clear();
+        }
+    }
     public
 }
 

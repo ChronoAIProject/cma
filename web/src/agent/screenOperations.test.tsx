@@ -43,7 +43,9 @@ it('separates consecutive screen operations and shows noninteractive description
   );
   expect(timeline.map((item) => item.kind)).toEqual(['tool', 'tools', 'tool']);
   render(<ToolCallGroup group={{ kind: 'tools', id: 'screens', failed: false, items: steps }} />);
-  const toggle = screen.getByRole('button', { name: 'Checked it in Browser · 3 steps 19s' });
+  const toggle = screen.getByRole('button', {
+    name: 'Checked it in Browser · 3 steps Duration unavailable',
+  });
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
   fireEvent.click(toggle);
   const rows = screen.getAllByRole('article');

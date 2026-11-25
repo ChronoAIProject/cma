@@ -3,15 +3,18 @@ import io
 import hashlib
 import json
 import os
+import re
 import tarfile
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import ci_retry
 from staging_cd_build import build, command, identity, inspect, recipe, snapshot
 from staging_cd_build_profile import AM_PROFILE, AM_PROFILE_LABEL, for_source, from_environment
 from staging_cd_common import Refusal
+from staging_cd_publication_diagnostics import ImageCommandRefusal
 from staging_cd_receipts import canonical, IDENTITY_LABEL
 from staging_cd_receipts_tests import fixture_identity
 from staging_cd_receipts_tests import fixture_receipt
@@ -44,6 +47,7 @@ class BuildTests(unittest.TestCase):
             first, _, args = identity(reservation, root)
             self.assertEqual(args["CHRONO_BUILD"], "0.10.1")
             self.assertEqual(args["CHRONO_BUILD_SHA"], "a" * 40)
+            self.assertEqual(args["OS_SECURITY_REFRESH"], "a" * 40, "non-runtime images keep a per-build refresh")
             (root / "web/Dockerfile").write_text("FROM scratch AS runtime\nUSER 101\n")
             with self.assertRaises(Refusal):
                 identity(reservation, root)
@@ -84,6 +88,8 @@ class BuildTests(unittest.TestCase):
                "GITHUB_EVENT_NAME": "push", AM_PROFILE: "0"}
         self.assertEqual(from_environment(env, "am"), "0")
         self.assertEqual(from_environment(env, "eg"), "")
+        with self.assertRaises(Refusal):
+            from_environment({**env, AM_PROFILE: "2"}, "am")
         for key, value in (("GITHUB_REF", "refs/heads/main"), ("GITHUB_EVENT_NAME", "pull_request"),
                            ("GITHUB_REPOSITORY", "someone/fork")):
             with self.subTest(key=key), self.assertRaises(Refusal):
@@ -120,6 +126,17 @@ class BuildTests(unittest.TestCase):
                 self.assertNotIn("GH_TOKEN", child.call_args.kwargs["env"])
                 self.assertNotIn("NYXID_CHRONO_CD_KEY", child.call_args.kwargs["env"])
 
+    def test_failed_commands_mark_only_transport_failures_as_repeatable(self):
+        for stderr, expected in (("read: connection reset by peer", ci_retry.TRANSIENT),
+                                 ("received unexpected HTTP status: 503 Service Unavailable", ci_retry.TRANSIENT),
+                                 ("denied: permission_denied: write_package", ci_retry.PERMANENT),
+                                 ("Dockerfile parse error", ci_retry.PERMANENT)):
+            with self.subTest(stderr=stderr), self.assertRaises(ImageCommandRefusal) as raised:
+                command(["/bin/sh", "-c", 'printf "%s" "$0" >&2; exit 1', stderr], timeout=30)
+            self.assertEqual(ci_retry.classify(raised.exception), expected)
+            # The refusal keeps fixed text; the diagnostic is never part of it.
+            self.assertNotIn(stderr, str(raised.exception))
+
     def test_source_archive_rejects_links_and_parent_traversal(self):
         for name, kind in (("../outside", tarfile.REGTYPE), ("link", tarfile.SYMTYPE)):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
@@ -133,27 +150,56 @@ class BuildTests(unittest.TestCase):
                 with self.assertRaises(Refusal):
                     snapshot(root, "a" * 40, root / "source", runner)
 
-    def test_runtime_exports_bind_fixed_epoch_and_preserve_security_refresh(self):
+    def runtime_source(self, root, component, pin="ARG DEBIAN_SNAPSHOT=20261121T100000Z\n"):
+        self.source(root)
+        project = Path(__file__).resolve().parents[2]
+        for filename in (VERSION_FILE, RECIPE):
+            destination = root / filename
+            destination.parent.mkdir(parents=True)
+            destination.write_bytes((project / filename).read_bytes())
+        dockerfile = root / RECIPE
+        unpinned = re.sub(r"(?m)^\s*ARG\s+DEBIAN_SNAPSHOT\s*=.*\n", "", dockerfile.read_text())
+        dockerfile.write_text(pin + unpinned)
+        manifest = root / ".github/scripts/deployables.json"
+        values = json.loads(manifest.read_text())
+        values["cma-" + component]["dockerfile_sha256"] = hashlib.sha256(dockerfile.read_bytes()).hexdigest()
+        manifest.write_text(json.dumps(values))
+
+    def test_runtime_security_refresh_follows_the_pinned_snapshot_not_the_source(self):
         for component in ("runtime", "runtime-omarchy"):
             with self.subTest(component=component), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                self.source(root)
-                project = Path(__file__).resolve().parents[2]
-                for filename in (VERSION_FILE, RECIPE):
-                    destination = root / filename
-                    destination.parent.mkdir(parents=True)
-                    destination.write_bytes((project / filename).read_bytes())
-                dockerfile = root / RECIPE
-                manifest = root / ".github/scripts/deployables.json"
-                values = json.loads(manifest.read_text())
-                values["cma-" + component]["dockerfile_sha256"] = hashlib.sha256(dockerfile.read_bytes()).hexdigest()
-                manifest.write_text(json.dumps(values))
+                self.runtime_source(root, component)
+                first = next_reservation(component, "a" * 40, "b" * 40, 42, "patch", 1, 1, [], [])
+                second = next_reservation(component, "c" * 40, "d" * 40, 43, "patch", 1, 1, [], [])
+                for reservation in (first, second):
+                    _release, _value, arguments = identity(reservation, root)
+                    self.assertEqual(arguments["OS_SECURITY_REFRESH"], "20261121T100000Z")
+
+    def test_runtime_build_refuses_a_missing_or_ambiguous_snapshot_pin(self):
+        pins = ("", "ARG DEBIAN_SNAPSHOT=latest\n",
+                "ARG DEBIAN_SNAPSHOT=20261121T100000Z\nARG DEBIAN_SNAPSHOT=20261128T100000Z\n")
+        for component in ("runtime", "runtime-omarchy"):
+            for pin in pins:
+                with self.subTest(component=component, pin=pin), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    self.runtime_source(root, component, pin)
+                    reservation = next_reservation(component, "a" * 40, "b" * 40, 42, "patch", 1, 1, [], [])
+                    with self.assertRaisesRegex(Refusal, "DEBIAN_SNAPSHOT"):
+                        identity(reservation, root)
+
+    def test_runtime_exports_bind_fixed_epoch_and_snapshot_security_refresh(self):
+        for component in ("runtime", "runtime-omarchy"):
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.runtime_source(root, component)
                 reservation = next_reservation(component, "a" * 40, "b" * 40, 42, "patch", 1, 1, [], [])
                 def runner(args, **_kwargs):
                     output = args[args.index("--output") + 1]
                     self.assertTrue(output.endswith(",rewrite-timestamp=true"))
                     self.assertIn("SOURCE_DATE_EPOCH=0", args)
-                    self.assertIn("OS_SECURITY_REFRESH=" + reservation["source"], args)
+                    self.assertIn("OS_SECURITY_REFRESH=20261121T100000Z", args)
+                    self.assertNotIn("OS_SECURITY_REFRESH=" + reservation["source"], args)
                     self.assertNotIn("--squash", args)
                     Path(output.split("dest=", 1)[1].split(",")[0]).write_bytes(b"fixture")
                 build(root, reservation, root, runner, source=root)

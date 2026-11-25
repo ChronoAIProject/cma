@@ -36,6 +36,17 @@ pub struct AgentAvailableCommand {
     pub description: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalApprovalResolution {
+    Approved,
+    Denied,
+    Expired,
+    Disconnected,
+    TimedOut,
+    Cancelled,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentLogKind {
@@ -121,6 +132,21 @@ pub enum AgentLogKind {
     ApprovalResolved {
         approval_id: String,
         decision: String,
+    },
+    ExternalApprovalRequested {
+        approval_id: String,
+        provider: String,
+        turn_sequence: u64,
+        revision: u64,
+        waiting_since: String,
+        deadline_at: String,
+    },
+    ExternalApprovalResolved {
+        approval_id: String,
+        provider: String,
+        turn_sequence: u64,
+        revision: u64,
+        resolution: ExternalApprovalResolution,
     },
     OperationDeliveryChanged {
         operation_sequence: u64,
@@ -266,6 +292,11 @@ pub enum SandboxEventKind {
         receipt: Box<super::SandboxUnpublishedRecoveryQuiescence>,
     },
     Revived,
+    HomeRestored {
+        restore_id: String,
+        backup_id: String,
+        restored_to: String,
+    },
     Rotated {
         runtime_version: String,
     },

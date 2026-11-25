@@ -201,7 +201,8 @@ async fn retirement_retains_original_authority_and_requires_current_lease_to_del
                 &ResizeWarmPoolBody {
                     expected_revision: retired.revision as u64,
                     target_replicas: 3
-                }
+                },
+                false
             )
             .await,
         Err(WarmPoolError::Conflict)
@@ -388,5 +389,180 @@ async fn drain_blocks_unowned_prepared_and_legacy_warm_allocations_before_their_
         store.retirement_drain_homes(&old, &image).await.unwrap(),
         Some(vec![])
     );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn frozen_lane_retains_candidate_until_provider_work_settles() {
+    use crate::store::released_runtimes::MongoReleasedRuntimes;
+    use layer2_core::released_runtime::{ReleasedLane, ReleasedLaneRecord};
+    let (database, targets, old, active) = fixture().await;
+    let lanes = MongoReleasedRuntimes::open(&database, "test");
+    lanes.initialize().await.unwrap();
+    let when = layer2_core::now_rfc3339();
+    let first = ReleasedLaneRecord::bootstrap(ReleasedLane::Agent, active.clone(), &when).unwrap();
+    lanes.bootstrap(first.clone()).await.unwrap();
+    let candidate_image = format!("registry.example/runtime@sha256:{}", "c".repeat(64));
+    let preparing = first
+        .enable_following()
+        .unwrap()
+        .observe(candidate_image.clone(), "pending-effect".into(), &when)
+        .unwrap();
+
+    let mut candidate = old;
+    candidate.id = "candidate".into();
+    candidate.activated_at = None;
+    candidate.binding = None;
+    candidate.lease = None;
+    candidate.lease_until = DateTime::from_millis(0);
+    candidate.plan.config_sha256 = "c".repeat(64);
+    candidate.plan.spec.image.uri = candidate_image;
+    let mut session = lanes.session().await.unwrap();
+    targets
+        .prepare_candidate(
+            candidate.clone(),
+            preparing.candidate.as_ref().unwrap(),
+            &mut session,
+        )
+        .await
+        .unwrap();
+    lanes
+        .replace(&first, preparing, Some(&mut session))
+        .await
+        .unwrap();
+    session.commit_transaction().await.unwrap();
+    let claimed = targets.claim_target(&candidate.id).await.unwrap().unwrap();
+    assert!(targets.begin_candidate_effect(&claimed).await.unwrap());
+
+    crate::runtime_pointer::operator::set_following(&lanes, &targets, false)
+        .await
+        .unwrap();
+    let frozen = lanes.load(ReleasedLane::Agent).await.unwrap().unwrap();
+    assert!(frozen.frozen);
+    assert_eq!(frozen.active.image, active);
+    assert!(frozen.candidate.is_some());
+    assert!(!targets.begin_candidate_effect(&claimed).await.unwrap());
+
+    targets.finish(&claimed, false).await.unwrap();
+    database
+        .collection::<Document>(COLLECTION)
+        .update_one(
+            doc! {"_id": &candidate.id},
+            doc! {"$set": {
+                "preparation.effect_until": DateTime::from_millis(0),
+                "reconcile_after": DateTime::from_millis(0),
+            }},
+        )
+        .await
+        .unwrap();
+    // A withheld provider result remains unresolved even after both local time bounds.
+    crate::runtime_pointer::operator::set_following(&lanes, &targets, false)
+        .await
+        .unwrap();
+    assert!(lanes
+        .load(ReleasedLane::Agent)
+        .await
+        .unwrap()
+        .unwrap()
+        .candidate
+        .is_some());
+    let recovery = targets.claim_target(&candidate.id).await.unwrap().unwrap();
+    assert!(targets.candidate_pending(&recovery).await.unwrap());
+    targets.confirm_candidate_barrier(&recovery).await.unwrap();
+    crate::runtime_pointer::operator::set_following(&lanes, &targets, false)
+        .await
+        .unwrap();
+    let confirmed = lanes.load(ReleasedLane::Agent).await.unwrap().unwrap();
+    assert!(confirmed.frozen && confirmed.candidate.is_none());
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn same_image_cold_canary_does_not_block_ordinary_pool_retirement_or_drain() {
+    let (mut sandbox, target, _) = super::eligibility_tests::upgraded();
+    let old_image = target.plan.spec.image.uri.clone();
+    sandbox.runtime.as_mut().unwrap().runtime_version = old_image.clone();
+    sandbox.profile.content.runtime_image = Some(old_image);
+    sandbox.profile.digest =
+        layer2_core::profiles::content_digest(&sandbox.profile.content).unwrap();
+    let (db, store, old, image) = fixture_with_old(target).await;
+    let sandboxes = db.collection::<Document>("sandboxes");
+    let filter = doc! { "_id": sandbox.id.as_str() };
+    let ordinary = crate::store::sandboxes::sandbox_document(&sandbox, 0).unwrap();
+    sandboxes.insert_one(ordinary).await.unwrap();
+    assert_eq!(store.retirement_homes(&old, &image).await.unwrap(), None);
+    assert_eq!(
+        store.retirement_drain_homes(&old, &image).await.unwrap(),
+        Some(vec![sandbox
+            .lifecycle
+            .home
+            .as_ref()
+            .unwrap()
+            .attachment()
+            .unwrap()])
+    );
+
+    let home = sandbox.lifecycle.home.as_mut().unwrap();
+    let native = home.native_pool.as_mut().unwrap();
+    let pool = &mut native.request.pool;
+    pool.spec.cold_canary = true;
+    pool.name = "canary-pool".into();
+    pool.uid = "canary-pool-uid".into();
+    pool.config_sha256 = "c".repeat(64);
+    native.claim.as_mut().unwrap().request = native.request.clone();
+    let receipt = home.receipt.as_mut().unwrap();
+    receipt.native_authority.as_mut().unwrap().claim = native.claim.clone().unwrap();
+    sandbox.validate().unwrap();
+    sandboxes
+        .replace_one(
+            filter.clone(),
+            crate::store::sandboxes::sandbox_document(&sandbox, 0).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.retirement_homes(&old, &image).await.unwrap(),
+        Some(vec![])
+    );
+    assert_eq!(
+        store.retirement_drain_homes(&old, &image).await.unwrap(),
+        Some(vec![])
+    );
+
+    // Without a matching profile pin the cold-pool evidence cannot exclude it.
+    sandbox.profile.content.runtime_image = None;
+    sandbox.profile.digest =
+        layer2_core::profiles::content_digest(&sandbox.profile.content).unwrap();
+    sandboxes
+        .replace_one(
+            filter.clone(),
+            crate::store::sandboxes::sandbox_document(&sandbox, 0).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(store.retirement_homes(&old, &image).await.unwrap(), None);
+    assert_eq!(
+        store.retirement_drain_homes(&old, &image).await.unwrap(),
+        None
+    );
+
+    // Simulate a damaged active row, which the aggregate writer would reject.
+    sandboxes
+        .update_one(
+            filter,
+            doc! { "$unset": { "record.lifecycle.home.receipt": "" } },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.retirement_homes(&old, &image).await,
+        Err(WarmPoolError::Unavailable)
+    ));
+    assert!(matches!(
+        store.retirement_drain_homes(&old, &image).await,
+        Err(WarmPoolError::Unavailable)
+    ));
     db.drop().await.unwrap();
 }

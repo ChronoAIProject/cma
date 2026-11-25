@@ -3,6 +3,7 @@
 use super::{
     custom_delivery::{effect_for, CustomFrame},
     delivery_gate::{CancelSend, DeliveryGate, SEND_WINDOW},
+    delivery_receipts::answer_response_id,
     delivery_state::{DeliveryCheckpoint, DeliveryStatus},
     dispatcher::{admission_error, current_target},
     storage,
@@ -131,48 +132,7 @@ impl RoutedDelivery {
             return Err(ExecutionError::Invalid);
         }
         let effect_hash = bounded_effect_hash(&effect)?;
-        let produced = matches!(frame.event, ResponsesEvent::OutputTextDone { .. })
-            || (matches!(frame.event, ResponsesEvent::Completed { .. })
-                && matches!(
-                    &effect,
-                    ReplayEffect::Reply(_)
-                        | ReplayEffect::Custom(
-                            crate::delivery::local_stream::CustomStreamEffect::Completed {
-                                final_text: Some(_)
-                            }
-                        )
-                ));
-        if produced {
-            self.journal
-                .observe(
-                    &plan.identity,
-                    crate::activity::Change::state(
-                        target.launch.consumer.as_str(),
-                        crate::activity::ConsumerState::Produced,
-                        Some(frame.response_id.clone()),
-                    ),
-                )
-                .await;
-        }
-        let terminal_state = match frame.event {
-            ResponsesEvent::Completed { .. } => Some(crate::activity::ConsumerState::Completed),
-            ResponsesEvent::Failed { .. } | ResponsesEvent::Incomplete { .. } => {
-                Some(crate::activity::ConsumerState::Failed)
-            }
-            _ => None,
-        };
-        if let Some(state) = terminal_state {
-            self.journal
-                .observe(
-                    &plan.identity,
-                    crate::activity::Change::state(
-                        target.launch.consumer.as_str(),
-                        state,
-                        Some(frame.response_id.clone()),
-                    ),
-                )
-                .await;
-        }
+        let answer_response_id = answer_response_id(frame, &effect);
         let custom_effect = effect_for(&body, frame, &effect)?;
         if custom_effect.is_some() && !self.coordinator.supports_custom_stream() {
             return Err(ExecutionError::Unsupported);
@@ -184,10 +144,11 @@ impl RoutedDelivery {
             frame_hash,
             effect_hash,
             status: DeliveryStatus::Intent,
+            execution_attribution: None,
             custom: custom_effect.as_ref().map(|effect| {
                 CustomCheckpoint::new(
                     &super::model::delivery_event(&plan, target),
-                    &body,
+                    &body.delivery.policy.sinks,
                     effect.webhook(),
                 )
             }),
@@ -234,8 +195,12 @@ impl RoutedDelivery {
                             return Ok(FrameDelivery::Unknown);
                         }
                         self.journal
-                            .acknowledge_delivery(lease, &frame.response_id, frame.sequence_number)
+                            .acknowledge_frame(&plan, target, lease, frame)
                             .await?;
+                        if let (Some(id), Some(receipt)) = (answer_response_id, &receipt) {
+                            self.observe_replayed_answer(&plan, target, &body, id, receipt)
+                                .await;
+                        }
                         return Ok(FrameDelivery::Settled {
                             cursor: frame.sequence_number,
                             receipt,
@@ -286,6 +251,49 @@ impl RoutedDelivery {
         }
         let event =
             body.settlement_event(&plan, target, &self.journal.keys, (self.journal.clock)())?;
+        // Only a new, validated frame can establish an exact observation time.
+        let produced = matches!(frame.event, ResponsesEvent::OutputTextDone { .. })
+            || (matches!(frame.event, ResponsesEvent::Completed { .. })
+                && matches!(
+                    &effect,
+                    ReplayEffect::Reply(_)
+                        | ReplayEffect::Custom(
+                            crate::delivery::local_stream::CustomStreamEffect::Completed {
+                                final_text: Some(_)
+                            }
+                        )
+                ));
+        if produced {
+            self.journal
+                .observe(
+                    &plan.identity,
+                    crate::activity::Change::state(
+                        target.launch.consumer.as_str(),
+                        crate::activity::ConsumerState::Produced,
+                        Some(frame.response_id.clone()),
+                    ),
+                )
+                .await;
+        }
+        let terminal_state = match frame.event {
+            ResponsesEvent::Completed { .. } => Some(crate::activity::ConsumerState::Completed),
+            ResponsesEvent::Failed { .. } | ResponsesEvent::Incomplete { .. } => {
+                Some(crate::activity::ConsumerState::Failed)
+            }
+            _ => None,
+        };
+        if let Some(state) = terminal_state {
+            self.journal
+                .observe(
+                    &plan.identity,
+                    crate::activity::Change::state(
+                        target.launch.consumer.as_str(),
+                        state,
+                        Some(frame.response_id.clone()),
+                    ),
+                )
+                .await;
+        }
         if let Some(effect) = &custom_effect {
             let mut next = lease.state.clone();
             next.delivery = Some(checkpoint);
@@ -382,27 +390,19 @@ impl RoutedDelivery {
                     )
                     .with_scope(scope.clone());
                     let cancel_reply = CancelReply(reply_gate.clone());
-                    let send = async {
-                        match body.delivery.default_destination.clone() {
-                            Some(destination) => {
-                                self.coordinator
-                                    .reply_default(
-                                        current,
-                                        event,
-                                        *message,
-                                        reply_gate,
-                                        destination,
-                                        operation.clone(),
-                                    )
-                                    .await
-                            }
-                            None => {
-                                self.coordinator
-                                    .reply(current, event, *message, reply_gate)
-                                    .await
-                            }
-                        }
-                    };
+                    let destination = body
+                        .delivery
+                        .default_destination
+                        .clone()
+                        .map(|destination| (destination, operation.clone()));
+                    let send = self.coordinator.reply_for_response(
+                        current,
+                        event,
+                        *message,
+                        reply_gate,
+                        destination,
+                        answer_response_id.map(str::to_owned),
+                    );
                     let result = scope
                         .run("automatic_reply", tokio::time::timeout(SEND_WINDOW, send))
                         .await?;
@@ -439,7 +439,7 @@ impl RoutedDelivery {
             return Ok(FrameDelivery::Unknown);
         }
         self.journal
-            .acknowledge_delivery(lease, &frame.response_id, frame.sequence_number)
+            .acknowledge_frame(&plan, target, lease, frame)
             .await?;
         Ok(FrameDelivery::Settled {
             cursor: frame.sequence_number,

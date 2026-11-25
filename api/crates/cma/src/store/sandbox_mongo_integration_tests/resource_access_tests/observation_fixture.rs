@@ -5,6 +5,7 @@ pub(super) struct Server {
     pub relay: Arc<Relay>,
     pub updates: Arc<DurableAgentUpdateRecorder>,
     pub observation: Arc<MongoAgentObservation>,
+    pub reads: Arc<AgentReadService>,
     pub stall: Arc<std::sync::atomic::AtomicBool>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -27,10 +28,23 @@ pub(super) async fn servers_with_capacity(
     enabled: bool,
     capacity: crate::config::RelayCapacityConfig,
 ) -> Vec<Server> {
+    start_servers(f, enabled, enabled, capacity).await
+}
+
+async fn start_servers(
+    f: &Fixture,
+    shared_observation: bool,
+    bounded_responses: bool,
+    capacity: crate::config::RelayCapacityConfig,
+) -> Vec<Server> {
     let (auth, identity_server) = identity().await;
-    let source = Arc::new(f.store.clone().with_bounded_response_reads(enabled));
+    let source = Arc::new(
+        f.store
+            .clone()
+            .with_bounded_response_reads(bounded_responses),
+    );
     let native = Arc::new(MongoAgentOwnership::open(&f.client, &f.name).await.unwrap());
-    if enabled {
+    if shared_observation {
         // Paired tests stop their closed-path listeners before opening this
         // cohort. Remove only those disposable fixture membership records.
         f.client
@@ -49,7 +63,7 @@ pub(super) async fn servers_with_capacity(
         let coordinator = OwnershipCoordinator::register(
             native.clone(),
             Member {
-                instance_id: if enabled {
+                instance_id: if shared_observation {
                     format!("observation-{index}")
                 } else {
                     format!("closed-observation-{index}")
@@ -76,7 +90,7 @@ pub(super) async fn servers_with_capacity(
             .with_resource_access(access.clone())
             .with_response_logs(source.response_log_reader());
         let service = AgentObservationService::new(base.clone(), store.clone());
-        let reads = if enabled {
+        let reads = if shared_observation {
             base.with_observation(service.clone())
         } else {
             base
@@ -100,7 +114,7 @@ pub(super) async fn servers_with_capacity(
             )),
             Arc::new(fixture::Authority),
         );
-        if enabled {
+        if shared_observation {
             relay
                 .install_observation(store.clone(), reads.clone(), Some(commands.clone()))
                 .unwrap();
@@ -111,14 +125,14 @@ pub(super) async fn servers_with_capacity(
                 commands.clone(),
                 reads.clone(),
             )
-            .with_paged_events(enabled),
+            .with_paged_events(bounded_responses),
         );
         let v2 = layer1_public::agent_v2::router(
             layer1_public::agent_v2::AgentV2State::new(reads.clone(), commands)
                 .with_updates(updates.clone())
                 .with_event_wake(false, Duration::from_secs(1)),
         );
-        let agui = super::agui_budget_tests::app_with_reads(f, reads, updates.clone());
+        let agui = super::agui_budget_tests::app_with_reads(f, reads.clone(), updates.clone());
         let router = relay.authenticated_routes(v2.merge(agui).merge(responses), replica_auth);
         let stall = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let delay = stall.clone();
@@ -147,6 +161,7 @@ pub(super) async fn servers_with_capacity(
             relay,
             updates,
             observation: store,
+            reads,
             stall,
             tasks: vec![server, heartbeat],
         });
@@ -156,9 +171,17 @@ pub(super) async fn servers_with_capacity(
 }
 
 pub(super) async fn budget_servers(f: &Fixture) -> Vec<Server> {
+    budget_servers_with_observation(f, true).await
+}
+
+pub(super) async fn budget_servers_with_observation(
+    f: &Fixture,
+    shared_observation: bool,
+) -> Vec<Server> {
     // Production admission deadline; exactly 100 slots detects double admission.
-    servers_with_capacity(
+    start_servers(
         f,
+        shared_observation,
         true,
         crate::config::RelayCapacityConfig {
             limit: 100,

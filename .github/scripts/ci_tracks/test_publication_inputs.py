@@ -1,15 +1,46 @@
-"""Publication-only repairs select all active images in PR and cached CD plans."""
+"""Publisher-only repairs select no image; contract evidence selects its group."""
 
 from unittest.mock import patch
 import unittest
 
 import batch_selection
-from deployable_manifest import CURRENT
 from image_inputs import changed_input_maps
+from publication_inputs import CONTRACT_FILES, CONTRACT_IMAGES
 from selection_cache import SelectionCache
 import selection
 import test_batch_selection
 import test_images
+
+PUBLISHER_PATHS = (
+    '.github/scripts/image-content-policy.json',
+    '.github/scripts/image-content-manifest.json',
+    '.github/scripts/image_content_identity.py',
+    '.github/scripts/image_content_policy.py',
+    '.github/scripts/image_scan_evidence.py',
+    '.github/scripts/image_scanner_policy.py',
+    '.github/scripts/image_secret_gate.py',
+    '.github/scripts/image_bundle_contexts.py',
+    '.github/scripts/image_bundle_syntax.cjs',
+    '.github/scripts/image-content-vendor/babel-parser.cjs',
+    '.github/scripts/image-secret-scanner/image_secrets/engine.py',
+    '.github/scripts/image-secret-scanner/SOURCE-MANIFEST.json',
+    '.github/scripts/image-secret-scanner/gitleaks.toml',
+    '.github/image-secret-classifications/packet.json',
+    '.github/scripts/install-image-gitleaks.sh',
+    '.github/scripts/staging_cd_publish.py',
+    '.github/scripts/staging_cd_publication_diagnostics.py',
+    '.github/scripts/staging_cd_build.py',
+    '.github/scripts/staging_cd_build_cache.py',
+    '.github/scripts/staging_cd_cache_compaction.py',
+    '.github/scripts/staging_cd_registry.py',
+    '.github/scripts/staging_cd_contract.py',
+    '.github/scripts/staging_cd_compatibility.py',
+    '.github/scripts/staging_cd_reservations.py',
+    '.github/scripts/api-cargo-cache.py',
+    '.github/scripts/ci_retry.py',
+    '.github/workflows/staging-release.yml',
+    '.github/workflows/staging-cd.yml',
+)
 
 
 class PublicationInputsTests(unittest.TestCase):
@@ -18,36 +49,23 @@ class PublicationInputsTests(unittest.TestCase):
     pin_recipes = test_images.ImageTests.pin_recipes
     selected = test_images.ImageTests.selected
 
-    def test_scanner_policy_resolver_and_publisher_changes_select_all(self):
-        for path in (
-            '.github/scripts/image-content-policy.json',
-            '.github/scripts/image-content-manifest.json',
-            '.github/scripts/image_content_identity.py',
-            '.github/scripts/image_content_policy.py',
-            '.github/scripts/image_scan_evidence.py',
-            '.github/scripts/image_scanner_policy.py',
-            '.github/scripts/image_secret_gate.py',
-            '.github/scripts/image_bundle_contexts.py',
-            '.github/scripts/image_bundle_syntax.cjs',
-            '.github/scripts/image-content-vendor/babel-parser.cjs',
-            '.github/scripts/image-secret-scanner/image_secrets/engine.py',
-            '.github/scripts/image-secret-scanner/SOURCE-MANIFEST.json',
-            '.github/scripts/image-secret-scanner/gitleaks.toml',
-            '.github/image-secret-classifications/packet.json',
-            '.github/scripts/install-image-gitleaks.sh',
-            '.github/scripts/staging_cd_publish.py',
-            '.github/scripts/staging_cd_publication_diagnostics.py',
-            '.github/scripts/staging_cd_build.py',
-            '.github/scripts/staging_cd_build_cache.py',
-            '.github/scripts/staging_cd_registry.py',
-            '.github/scripts/staging_cd_contract.py',
-            '.github/scripts/staging_cd_compatibility.py',
-            'api/crates/layer3-adapter/runtime-versions.json',
-            '.github/scripts/api-cargo-cache.py',
-            '.github/workflows/staging-release.yml',
-        ):
+    def test_scanner_policy_resolver_and_publisher_changes_select_no_image(self):
+        # Rebuilding a lane whose latest final has every input change only
+        # recreates identical bytes. Allocation retries lanes left behind.
+        for path in PUBLISHER_PATHS:
             with self.subTest(path=path):
-                self.assertEqual(self.selected(path), sorted(CURRENT))
+                self.assertEqual(self.selected(path), [])
+        self.assertEqual(self.selected(*PUBLISHER_PATHS), [])
+
+    def test_contract_evidence_selects_exactly_the_contract_group(self):
+        # The fixture's runtime-versions.json is outside every build context,
+        # and the runtime recipe is outside the Agent Manager's. Both still
+        # select the complete group, which a contract transition requires.
+        self.assertEqual(self.selected('api/crates/layer3-adapter/runtime-versions.json'), sorted(CONTRACT_IMAGES))
+        self.assertEqual(self.selected('api/crates/layer4-runtime/Dockerfile'), sorted(CONTRACT_IMAGES))
+        self.assertEqual(self.selected('api/crates/layer3-adapter/runtime-versions.json', 'web/src/main.tsx'),
+                         sorted(CONTRACT_IMAGES | {'cma-web'}))
+        self.assertEqual(len(CONTRACT_FILES), 2)
 
     def test_unrelated_ci_tests_docs_and_similar_paths_do_not_publish(self):
         self.assertEqual(self.selected(
@@ -58,14 +76,15 @@ class PublicationInputsTests(unittest.TestCase):
             '.github/scripts/image_secret_gate_tests.py',
             '.github/scripts/image-manager-mongo-contract.py',
             '.github/workflows/staging-release.yml.notes',
+            'api/crates/layer3-adapter/runtime-versions.json.notes',
             'README.md'), [])
 
-    def test_historical_seven_image_summaries_select_only_current_five(self):
+    def test_historical_seven_image_summaries_select_only_current_contract_group(self):
         from deployable_manifest import RETIRED
         manifest = dict(self.manifest, **{name: {} for name in RETIRED})
         summary = ({name: set() for name in manifest}, manifest)
-        self.assertEqual(changed_input_maps(
-            ['.github/scripts/image_secret_gate.py'], [summary, summary]), sorted(CURRENT))
+        self.assertEqual(changed_input_maps(['.github/scripts/image_secret_gate.py'], [summary, summary]), [])
+        self.assertEqual(changed_input_maps(sorted(CONTRACT_FILES), [summary, summary]), sorted(CONTRACT_IMAGES))
 
 
 class PublicationHistoryTests(unittest.TestCase):
@@ -85,16 +104,19 @@ class PublicationHistoryTests(unittest.TestCase):
         restored = self.commit()
         (self.root / '.github/scripts/image_content_policy.py').unlink()
         deleted = self.commit()
-        revisions = [added, renamed, restored, deleted]
+        self.write('api/crates/layer3-adapter/runtime-versions.json', '{}\n')
+        contract = self.commit()
+        revisions = [added, renamed, restored, deleted, contract]
+        expected = [[], [], [], [], sorted(CONTRACT_IMAGES)]
         cache = SelectionCache(self.root / 'cache', 'e' * 64)
         batch = batch_selection.determine_many(self.root, revisions, cache)
-        for head, actual in zip(revisions, batch):
+        for head, actual, deployables in zip(revisions, batch, expected):
             event = {'pull_request': {'base': {'sha': base}, 'head': {'sha': head}}}
             pull = selection.determine(self.root, event, 'pull_request')
             push = selection.determine(self.root, {'after': head}, 'push')
-            self.assertEqual(pull['deployables'], sorted(CURRENT))
+            self.assertEqual(pull['deployables'], deployables)
             self.assertEqual(push, actual)
-            self.assertEqual(actual['deployables'], sorted(CURRENT))
+            self.assertEqual(actual['deployables'], deployables)
             base = head
         with patch.object(batch_selection, 'summarize', side_effect=AssertionError('must reuse')):
             self.assertEqual(batch_selection.determine_many(self.root, revisions, cache), batch)

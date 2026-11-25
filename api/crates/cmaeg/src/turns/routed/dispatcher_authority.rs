@@ -13,6 +13,19 @@ pub trait Authority: Send + Sync {
         &'a self,
         identity: &'a EventIdentity,
     ) -> BoxFuture<'a, Result<Arc<ResolvedChannel>, ExecutionError>>;
+    fn assigned_channel<'a>(
+        &'a self,
+        current: Arc<ResolvedChannel>,
+        _target: &'a StoredTarget,
+    ) -> BoxFuture<'a, Result<Arc<ResolvedChannel>, ExecutionError>> {
+        Box::pin(async move {
+            if current.definition.secrets.profile_revisions.is_some() {
+                Err(ExecutionError::AuthorityChanged)
+            } else {
+                Ok(current)
+            }
+        })
+    }
     fn native_control<'a>(
         &'a self,
         _current: &'a ResolvedChannel,
@@ -32,6 +45,22 @@ pub trait Authority: Send + Sync {
     }
 }
 impl Authority for ChannelResolver {
+    fn assigned_channel<'a>(
+        &'a self,
+        current: Arc<ResolvedChannel>,
+        target: &'a StoredTarget,
+    ) -> BoxFuture<'a, Result<Arc<ResolvedChannel>, ExecutionError>> {
+        Box::pin(async move {
+            crate::channels::profile_assignment::execution_channel(
+                self,
+                current,
+                &target.launch.consumer,
+                &target.launch.event.conversation_id,
+            )
+            .await
+            .map_err(|_| ExecutionError::AuthorityChanged)
+        })
+    }
     fn native_control<'a>(
         &'a self,
         current: &'a ResolvedChannel,
@@ -91,6 +120,7 @@ pub(super) async fn current_target(
     target: &StoredTarget,
 ) -> Result<Arc<ResolvedChannel>, ExecutionError> {
     let current = authority.current(&plan.identity).await?;
+    let current = authority.assigned_channel(current, target).await?;
     validate_current(&current, plan, target)?;
     authority.native_control(&current, plan, target).await?;
     Ok(current)
@@ -136,8 +166,23 @@ pub(super) fn validate_current(
                     crate::whatsapp::legacy_source(source)
                         == crate::whatsapp::legacy_source(&plan.source)
                 } else if matches!(source, cmaeg_core::channel::Source::Telegram { .. }) {
+                    use crate::ingress::telegram::member_joins;
                     crate::telegram::messaging_source(source)
                         == crate::telegram::messaging_source(&plan.source)
+                        && (!member_joins::is_member_join(&plan.activity)
+                            || member_joins::group_opted_in(source, &plan.activity.conversation.id))
+                } else if matches!(
+                    source,
+                    cmaeg_core::channel::Source::NyxidRelay {
+                        platform: cmaeg_core::channel::Platform::Telegram,
+                        ..
+                    }
+                ) {
+                    use crate::ingress::telegram::member_joins;
+                    member_joins::relay_messaging_source(source)
+                        == member_joins::relay_messaging_source(&plan.source)
+                        && (!member_joins::is_member_join(&plan.activity)
+                            || member_joins::group_opted_in(source, &plan.activity.conversation.id))
                 } else {
                     crate::native_lark::same_messaging_source(source, &plan.source)
                 }
@@ -164,4 +209,67 @@ fn native_lark_control(plan: &AdmittedPlan) -> bool {
         plan.activity.kind,
         cmaeg_core::activity::ActivityKind::Interaction(_)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{super::test_support::*, *};
+    use cmaeg_core::{
+        activity::{ActorKind, ConversationKind},
+        channel::Source,
+    };
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn pending_telegram_member_join_requires_current_consent_for_the_original_group() {
+        let mut activity = fixture::message("");
+        activity.kind = serde_json::from_value(json!({
+            "type": "event",
+            "ce": {
+                "specversion": "1.0", "id": "event-1", "source": "telegram:bot:77",
+                "type": "telegram.group_members_joined", "data": {"members": []},
+            },
+        }))
+        .unwrap();
+        activity.actor.kind = ActorKind::System;
+        activity.actor.id = "telegram:system".into();
+        activity.conversation.kind = ConversationKind::Group;
+        activity.conversation.id = "-100".into();
+        let request = fixture::request(
+            |value| {
+                value["sources"][0]["message_events"] = true.into();
+                value["sources"][0]["member_join_chat_ids"] = json!(["-100", "-101"]);
+                value["sources"][0]["admission"] = json!({
+                    "type": "scoped", "senders": {"type": "open"}, "groups": "all",
+                    "chats": {"type": "allowlist", "ids": ["-100", "-101"]},
+                });
+            },
+            activity,
+        );
+        let setup = Setup::with_request(supported(), request).await;
+        let mut current = setup.current.channel.lock().unwrap().clone();
+        assert!(validate_current(&current, &setup.plan, setup.target()).is_ok());
+        let current = Arc::make_mut(&mut current);
+        let Source::Telegram {
+            member_join_chat_ids,
+            ..
+        } = &mut current.definition.sources[0]
+        else {
+            panic!()
+        };
+        member_join_chat_ids.retain(|chat| chat != "-101");
+        assert!(validate_current(current, &setup.plan, setup.target()).is_ok());
+        let Source::Telegram {
+            member_join_chat_ids,
+            ..
+        } = &mut current.definition.sources[0]
+        else {
+            panic!()
+        };
+        member_join_chat_ids.clear();
+        assert!(matches!(
+            validate_current(current, &setup.plan, setup.target()),
+            Err(ExecutionError::AuthorityChanged)
+        ));
+    }
 }

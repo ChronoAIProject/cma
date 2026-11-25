@@ -8,12 +8,14 @@ import { catalogFailure } from '../profiles/catalogFailure';
 import { useSkillCatalog } from './useSkillCatalog';
 import { isSkillVersion } from '../profiles/validation';
 import { Button } from '../ui/Button';
-import { IconChevronRightOutline14 } from '../ui/icons';
+import { IconChevronRightOutline14, IconWarningOutline16 } from '../ui/icons';
 import { Input } from '../ui/Input';
 import { Picker } from '../ui/Picker';
 import './SkillsSettings.css';
 
 interface SkillsSettingsProps {
+  readonly catalogOpen?: boolean;
+  readonly onClose?: () => void;
   readonly agentId: string;
   readonly viewerId?: string;
   readonly active: boolean;
@@ -24,7 +26,13 @@ export function SkillsSettings(props: SkillsSettingsProps) {
   return <SkillsSettingsForm key={JSON.stringify([props.viewerId, props.agentId])} {...props} />;
 }
 
-function SkillsSettingsForm({ agentId, active, busy }: SkillsSettingsProps) {
+function SkillsSettingsForm({
+  agentId,
+  active,
+  busy,
+  catalogOpen = false,
+  onClose,
+}: SkillsSettingsProps) {
   const client = useCmaClient();
   const catalog = useProfileViewsClient()?.authoring;
   const [saved, setSaved] = useState<AgentSkillsView>();
@@ -212,12 +220,7 @@ function SkillsSettingsForm({ agentId, active, busy }: SkillsSettingsProps) {
           Retry installation
         </button>
       ) : null}
-      {/*
-       * The catalogue is management detail, so it waits behind a closed
-       * disclosure; it still loads while the panel is open because installed
-       * rows borrow its names.
-       */}
-      <details className="agent-skills__add">
+      <details className="agent-skills__add" open={catalogOpen || undefined}>
         <summary>
           Add skills
           <span aria-hidden="true">
@@ -233,6 +236,43 @@ function SkillsSettingsForm({ agentId, active, busy }: SkillsSettingsProps) {
             disabled={!catalogState.searchEnabled}
             onChange={(event) => catalogState.search(event.target.value)}
           />
+          {!catalog ? (
+            <p>The Ornn catalog is unavailable from this connection.</p>
+          ) : catalogLoading ? (
+            <p role="status">Loading available skills…</p>
+          ) : catalogError ? (
+            <div className="agent-skills__catalog-failure" role="alert">
+              <span aria-hidden="true">
+                <IconWarningOutline16 size={24} />
+              </span>
+              <h3>Couldn’t load the skills catalog</h3>
+              <p>{catalogError.message}</p>
+              <div className="agent-skills__catalog-diagnostics">
+                {catalogError.status === undefined ? null : (
+                  <p>HTTP status: {catalogError.status}</p>
+                )}
+                {catalogError.code === undefined ? null : <p>Code: {catalogError.code}</p>}
+                {catalogError.requestId === undefined ? null : (
+                  <p>Request ID: {catalogError.requestId}</p>
+                )}
+              </div>
+              {catalogState.waiting ? (
+                <p role="status">Waiting before another catalog request is allowed.</p>
+              ) : null}
+              {catalogError.retry ? (
+                <Button
+                  variant="primary"
+                  disabled={catalogState.waiting}
+                  onClick={catalogState.retry}
+                >
+                  {catalogState.cursor === undefined ? 'Retry Ornn catalog' : 'Retry skill page'}
+                </Button>
+              ) : null}
+              {onClose ? <Button onClick={onClose}>Cancel</Button> : null}
+            </div>
+          ) : entries.length === 0 ? (
+            <p>No matching Ornn skills.</p>
+          ) : null}
           <ul
             className="agent-skills__entries"
             aria-label="Available Ornn skills"
@@ -296,35 +336,6 @@ function SkillsSettingsForm({ agentId, active, busy }: SkillsSettingsProps) {
               );
             })}
           </ul>
-          {!catalog ? (
-            <p>The Ornn catalog is unavailable from this connection.</p>
-          ) : catalogLoading ? (
-            <p role="status">Loading available skills…</p>
-          ) : catalogError ? (
-            <div className="agent-skills__failure" role="alert">
-              <p>{catalogError.message}</p>
-              {catalogError.status === undefined ? null : <p>HTTP status: {catalogError.status}</p>}
-              {catalogError.code === undefined ? null : <p>Code: {catalogError.code}</p>}
-              {catalogError.requestId === undefined ? null : (
-                <p>Request ID: {catalogError.requestId}</p>
-              )}
-              {catalogState.waiting ? (
-                <p role="status">Waiting before another catalog request is allowed.</p>
-              ) : null}
-              {catalogError.retry ? (
-                <button
-                  type="button"
-                  className="agent-details__link"
-                  disabled={catalogState.waiting}
-                  onClick={catalogState.retry}
-                >
-                  {catalogState.cursor === undefined ? 'Retry Ornn catalog' : 'Retry skill page'}
-                </button>
-              ) : null}
-            </div>
-          ) : entries.length === 0 ? (
-            <p>No matching Ornn skills.</p>
-          ) : null}
           {next ? (
             <button
               type="button"

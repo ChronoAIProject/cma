@@ -8,7 +8,7 @@ use axum::{
 };
 use std::net::SocketAddr;
 
-const DRAIN: &str = "/internal/agent-manager/v1/drain";
+pub(crate) const DRAIN: &str = "/internal/agent-manager/v1/drain";
 
 #[derive(Clone)]
 struct Control {
@@ -45,6 +45,11 @@ async fn admission(State(state): State<Control>, request: Request, next: Next) -
             .is_some_and(|peer| peer.0.ip().is_loopback())
         || request.headers().get_all(PROOF).iter().count() != 1
     {
+        tracing::warn!(
+            status = 403_u16,
+            reason = "invalid_request",
+            "local Agent Manager drain refused"
+        );
         return StatusCode::FORBIDDEN.into_response();
     }
     let proof = request
@@ -59,11 +64,31 @@ async fn admission(State(state): State<Control>, request: Request, next: Next) -
                 .ok()
         });
     if proof.is_none_or(|proof| proof.owner != drain_token() || proof.sender != "prestop") {
+        tracing::warn!(
+            status = 403_u16,
+            reason = "invalid_proof",
+            "local Agent Manager drain refused"
+        );
         return StatusCode::FORBIDDEN.into_response();
     }
-    match state.manager.drain().await {
+    let admission = request
+        .extensions()
+        .get::<crate::startup::Admission>()
+        .cloned();
+    let result = match admission {
+        Some(admission) => admission.drain().await,
+        None => state.manager.drain().await,
+    };
+    match result {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        Err(_) => {
+            tracing::warn!(
+                status = 503_u16,
+                reason = "incomplete_drain",
+                "local Agent Manager drain refused"
+            );
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
     }
 }
 
@@ -89,19 +114,22 @@ pub(crate) async fn prestop(config: &crate::config::Config) -> Result<(), String
     .await
 }
 
-pub(super) async fn drain_local(port: u16, key: ring::hmac::Key) -> Result<(), String> {
-    let authentication = authentication::Authentication::new(key);
+pub(super) fn signed_drain_headers(key: ring::hmac::Key) -> Result<HeaderMap, String> {
     let uri: Uri = DRAIN.parse().unwrap();
-    let proof = authentication
-        .sign(
+    authentication::Authentication::new(key)
+        .signed_headers(
             "prestop",
             &drain_token(),
             &Method::POST,
             &uri,
-            &HeaderMap::new(),
+            HeaderMap::new(),
             &[],
         )
-        .map_err(|_| "cannot sign drain request")?;
+        .map_err(|_| "cannot sign drain request".into())
+}
+
+pub(super) async fn drain_local(port: u16, key: ring::hmac::Key) -> Result<(), String> {
+    let headers = signed_drain_headers(key)?;
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -110,13 +138,20 @@ pub(super) async fn drain_local(port: u16, key: ring::hmac::Key) -> Result<(), S
         .map_err(|_| "cannot construct drain client")?;
     let response = client
         .post(format!("http://127.0.0.1:{port}{DRAIN}"))
-        .header(PROOF, proof)
+        .headers(headers)
         .send()
         .await
         .map_err(|_| "local Agent Manager drain failed")?;
     if response.status() == StatusCode::NO_CONTENT {
         Ok(())
     } else {
-        Err("local Agent Manager rejected drain".into())
+        Err(format!(
+            "local Agent Manager rejected drain (HTTP {})",
+            response.status().as_u16()
+        ))
     }
 }
+
+#[cfg(test)]
+#[path = "control_tests.rs"]
+mod tests;

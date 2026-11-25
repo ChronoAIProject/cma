@@ -14,13 +14,20 @@ from staging_cd_build_cargo_keys import identity
 from staging_cd_build_profile import for_source as source_profile, from_environment
 from staging_cd_common import require
 from staging_cd_cache_context import context
+from staging_cd_cargo_artifact import MAX_BUNDLE_BYTES, MAX_EXPANDED_BYTES
 from staging_cd_reservations import validate_reservation
 
-SCOPES = {"am": "cma-am", "eg": "cma-eg", "web": "cma-web",
+SCOPES = {"am": "cma-cd-am", "eg": "cma-cd-eg", "web": "cma-cd-web",
           "runtime": "cma-runtime", "runtime-omarchy": "cma-runtime-omarchy"}
-# CI's runtime index and the CD runtime index share content-addressed build
-# stages with Omarchy. Keep each publisher's export in its own scope.
-EXTRA_IMPORTS = {"runtime": ("runtime",), "runtime-omarchy": ("cma-runtime", "runtime")}
+# The CI image builds export cma-am, cma-eg, cma-web, runtime and
+# runtime-omarchy (ci-images.yml, ci-omarchy.yml). Keep each publisher's
+# export in its own scope and only read the other's. CD builds from a
+# git-archive snapshot whose file modes differ from CI's checkout, so a shared
+# scope made each writer replace the other's index and cost the next build its
+# dependency stages (cargo-chef install and cook, 5-10 min for AM).
+CI_SCOPES = frozenset({"cma-am", "cma-eg", "cma-web", "runtime", "runtime-omarchy"})
+EXTRA_IMPORTS = {"am": ("cma-am",), "eg": ("cma-eg",), "web": ("cma-web",),
+                 "runtime": ("runtime",), "runtime-omarchy": ("cma-runtime", "runtime")}
 RUNTIME_KEYS = ("ACTIONS_RUNTIME_TOKEN", "ACTIONS_RESULTS_URL")
 
 
@@ -31,6 +38,14 @@ def bridge():
     return module
 
 
+def layer_scope(component, staging_am_opt_level=""):
+    scope = SCOPES[component]
+    if staging_am_opt_level:
+        require(component == "am" and staging_am_opt_level in ("0", "1"), "Invalid staging cache profile")
+        scope += "-staging-opt-" + staging_am_opt_level
+    return scope
+
+
 def layer_options(env, component, *, staging_am_opt_level=""):
     require(env.get("GITHUB_REPOSITORY") == "ChronoAIProject/cma" and component in SCOPES,
             "Build cache repository or component is invalid")
@@ -39,12 +54,10 @@ def layer_options(env, component, *, staging_am_opt_level=""):
     # registry exporter or copy a PR artifact into the development namespace.
     def cache(scope):
         return "type=gha,version=2,scope=" + scope + ",timeout=2m"
-    scope = SCOPES[component]
-    if staging_am_opt_level:
-        require(component == "am" and staging_am_opt_level in ("0", "1"), "Invalid staging cache profile")
-        scope += "-staging-opt-" + staging_am_opt_level
+    scope = layer_scope(component, staging_am_opt_level)
+    imports = () if staging_am_opt_level else EXTRA_IMPORTS.get(component, ())
     args = []
-    for reader in (scope, *EXTRA_IMPORTS.get(component, ())):
+    for reader in (scope, *imports):
         args.extend(("--cache-from", cache(reader)))
     if env.get("GITHUB_EVENT_NAME") == "push" and env.get("GITHUB_REF") == "refs/heads/develop":
         args += ["--cache-to", cache(scope) + ",mode=max,ignore-error=true"]
@@ -66,6 +79,9 @@ class BuildCache:
                     if component in ("am", "eg") else None)
         self.namespace = uuid.uuid4().hex
         self.restore_result = "miss"
+        self.export_reason = None
+        self.export_headroom = None
+        self.export_retained_groups = None
 
     def restore(self):
         self.restore_result = "miss"
@@ -76,10 +92,12 @@ class BuildCache:
             require(self.accepted.is_dir() and not self.accepted.is_symlink(),
                     "Build cache accepted root is invalid")
             tool = bridge()
-            manifest = tool.validate_bundle(self.accepted, self.key.prefix, family=self.key.family)
+            manifest = tool.validate_bundle(self.accepted, self.key.prefix, family=self.key.family,
+                                            max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
             exact = manifest["prefix"] == self.key.prefix
             # A different graph must let Cargo resolve and verify its own registry.
-            tool.transfer("inject" if exact else "inject-target", self.accepted, namespace=self.namespace)
+            tool.transfer("inject" if exact else "inject-target", self.accepted, namespace=self.namespace,
+                          timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES)
             self.restore_result = "hit" if exact else "partial"
         except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError):
             # Extraction can fail after writing some files. Abandon that namespace.
@@ -94,6 +112,12 @@ class BuildCache:
             args += ["--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace]
         return args
 
+    def exports_layers(self):
+        # True exactly when build_options() asks BuildKit to write this scope's
+        # layers. Every other build only imports them, so no save is expected.
+        return bool(self.build_environment()) and "--cache-to" in layer_options(
+            self.env, self.component, staging_am_opt_level=self.staging_am_opt_level)
+
     def build_environment(self):
         # Buildx's cache client needs these; build steps, registry transport and
         # scanners never receive them as build arguments, secrets or mounts.
@@ -102,23 +126,64 @@ class BuildCache:
         return {key: self.env[key] for key in RUNTIME_KEYS}
 
     def export_mounts(self):
-        if self.key is None or self.restore_result == "hit":
+        # Refresh after exact hits too. Restoring the first bundle of the day all
+        # day long made each build recompile everything merged since that seed.
+        self.export_reason = None
+        self.export_headroom = None
+        self.export_retained_groups = None
+        if self.key is None:
             return False
         require(not self.pending.exists(), "Cargo cache export must be fresh")
         try:
             tool = bridge()
-            tool.transfer("extract", self.pending, namespace=self.namespace)
-            tool.seal(self.pending, self.key.prefix, family=self.key.family)
+            tool.transfer("extract", self.pending, namespace=self.namespace,
+                          timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES,
+                          compact_registry=self.component == "am", max_archive=MAX_BUNDLE_BYTES)
+            compacted = self.pending / "compacted"
+            if compacted.exists():
+                groups = int(compacted.read_text())
+                require(0 < groups <= tool.MAX_MEMBERS, "invalid compacted cache group count")
+                self.export_retained_groups = groups
+                compacted.unlink()
+            tool.seal(self.pending, self.key.prefix, family=self.key.family,
+                      max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
+            size = sum((self.pending / name).lstat().st_size for name in ("registry.tar.gz", "target.tar.gz"))
+            self.export_headroom = "low" if size > HEADROOM_WARNING * MAX_BUNDLE_BYTES else "ok"
             if self.accepted.exists():
                 require(not self.accepted.is_symlink(), "Build cache accepted root is invalid")
                 shutil.rmtree(self.accepted)
             self.pending.rename(self.accepted)
             return True
-        except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError):
+        except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError) as error:
+            self.export_reason = withheld_reason(error)
             return False
         finally:
             if self.pending.exists() and not self.pending.is_symlink():
                 shutil.rmtree(self.pending)
+
+
+# Fixed vocabulary only: exception text, paths and sizes never reach the log.
+WITHHELD_REASONS = (("compressed cache exceeds", "oversize-compressed"),
+                    ("expanded cache exceeds", "oversize-expanded"),
+                    ("empty mount", "empty"))
+
+
+def withheld_reason(error):
+    if isinstance(error, subprocess.SubprocessError):
+        return "transfer-failed"
+    if isinstance(error, ValueError):
+        text = str(error)
+        for marker, reason in WITHHELD_REASONS:
+            if marker in text:
+                return reason
+    return "invalid"
+
+
+# BuildKit restores and extracts take about 60-70 s per GiB-sized bundle; a timed
+# out restore silently becomes a cold build, so leave room for 2x growth.
+TRANSFER_SECONDS = 360
+# Warn while there is still room, before a growing bundle starts being withheld.
+HEADROOM_WARNING = 0.75
 
 
 def lookup_key(root, component, env):

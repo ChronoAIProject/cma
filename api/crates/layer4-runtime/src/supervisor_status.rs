@@ -4,6 +4,20 @@ use super::{Phase, Supervisor};
 use crate::failure::{Result, RuntimeError};
 
 impl Supervisor {
+    pub(crate) fn supports_exact_github_credential_route(&self) -> bool {
+        self.config.github_proxy.is_some()
+    }
+
+    pub(crate) fn startup_policy_observation(
+        &self,
+        runtime: RuntimeStatus,
+    ) -> layer3_adapter::RuntimeStartupPolicyObservation {
+        layer3_adapter::RuntimeStartupPolicyObservation {
+            runtime,
+            legacy_journal_recovery_enabled: self.config.legacy_journal_recovery_enabled,
+        }
+    }
+
     pub(crate) async fn ledger_observation(
         &self,
         runtime: RuntimeStatus,
@@ -86,6 +100,9 @@ impl Supervisor {
             // Advertised only by the negotiated HTTP status response. Embedded
             // status in legacy Workspace protocols must retain its original shape.
             agent_resource_preparation: false,
+            agent_process_restart: false,
+            exact_github_credential_route: false,
+            github_repository_scope: false,
             sandbox_id: request.sandbox_id.clone(),
             generation: request.generation,
             home_identity: request.home_identity.clone(),

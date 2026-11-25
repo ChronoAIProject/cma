@@ -17,6 +17,9 @@ pub(super) const COLLECTION: &str = "agent_manager_migrations";
 const LOCK: &str = "runner";
 const LEASE_MS: i64 = 30_000;
 
+mod abort;
+mod completion;
+
 pub(super) struct Identity {
     source: String,
     image: String,
@@ -34,7 +37,8 @@ impl Identity {
             || !image
                 .split_once("@sha256:")
                 .is_some_and(|(repository, digest)| {
-                    repository.ends_with("/cma-api") && hash(digest, 64)
+                    (repository.ends_with("/cma-agent-manager") || repository.ends_with("/cma-api"))
+                        && hash(digest, 64)
                 })
         {
             return Err("apply requires a release build SHA and immutable API image reference");
@@ -104,6 +108,7 @@ impl Ledger {
         {
             validate_lock(&row)?;
         }
+        self.abort_barrier(None).await?;
         Ok(())
     }
 
@@ -174,6 +179,10 @@ impl Ledger {
     }
 
     pub(super) async fn claim(&self, identity: &Identity) -> Result<Lease> {
+        self.claim_inner(identity, None).await
+    }
+
+    async fn claim_inner(&self, identity: &Identity, abort_fence: Option<i64>) -> Result<Lease> {
         let attempt = format!("attempt:{}", uuid::Uuid::new_v4().simple());
         let mut session = self
             .client
@@ -193,6 +202,13 @@ impl Ledger {
             .is_some()
         {
             return Err("unknown migration history; older migrator refused");
+        }
+        if self
+            .abort_barrier(Some(&mut session))
+            .await?
+            .is_some_and(|row| row.get_str("state").ok() != Some("settled"))
+        {
+            return Err(abort::UNSETTLED);
         }
         let manifest = self
             .rows
@@ -233,6 +249,16 @@ impl Ledger {
             .session(&mut session)
             .await
             .map_err(|_| "migration attempt unavailable")?;
+        let lease = Lease {
+            attempt: attempt.clone(),
+            fence,
+        };
+        if let Some(previous_fence) = abort_fence {
+            if previous_fence.checked_add(1) != Some(fence) {
+                return Err("abort predecessor changed; reconcile before retry");
+            }
+            self.register_abort(&lease, &mut session).await?;
+        }
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => (),
             CommitOutcome::Unknown(_) => {
@@ -246,7 +272,7 @@ impl Ledger {
             }
             _ => return Err("migration admission transaction failed"),
         }
-        Ok(Lease { attempt, fence })
+        Ok(lease)
     }
 
     fn owned(lease: &Lease) -> Document {
@@ -265,82 +291,6 @@ impl Ledger {
             .map_err(|_| "migration lease renewal unavailable")?;
         if result.matched_count != 1 {
             return Err("migration lease lost");
-        }
-        Ok(())
-    }
-
-    pub(super) async fn finish(&self, lease: &Lease, outcome: Result<i64>) -> Result<()> {
-        let mut session = self
-            .client
-            .start_session()
-            .await
-            .map_err(|_| "migration session unavailable")?;
-        start_transaction(&mut session)
-            .await
-            .map_err(|_| "migration transaction unavailable")?;
-        let result = self
-            .rows
-            .update_one(
-                Self::owned(lease),
-                vec![doc! {"$set":{"expires_at":"$$NOW"}}],
-            )
-            .session(&mut session)
-            .await
-            .map_err(|_| "migration completion lease unavailable")?;
-        if result.matched_count != 1 {
-            return Err("migration lease lost before completion");
-        }
-        let state = match outcome {
-            Ok(_) => "completed",
-            Err(_) => "failed",
-        };
-        let result = self
-            .rows
-            .update_one(
-                doc! {"_id":&lease.attempt,"schema":1_i64,
-                "kind":"attempt","fence":lease.fence,"outcome":"running",
-                "migration":self.step.id(),"checksum":self.step.checksum()},
-                doc! {"$set":{"outcome":state,"changed":outcome.ok(),"reason":outcome.err()},
-                "$currentDate":{"finished_at":true}},
-            )
-            .session(&mut session)
-            .await
-            .map_err(|_| "migration receipt unavailable")?;
-        if result.matched_count != 1 {
-            return Err("migration attempt drift");
-        }
-        if outcome.is_ok() {
-            let result = self
-                .rows
-                .update_one(
-                    doc! {"_id":self.step.manifest(),"schema":1_i64,
-                    "checksum":self.step.checksum(),"completed":false},
-                    doc! {"$set":{"completed":true,"completion_attempt":&lease.attempt}},
-                )
-                .session(&mut session)
-                .await
-                .map_err(|_| "migration completion unavailable")?;
-            if result.matched_count != 1 {
-                return Err("migration completion drift");
-            }
-        }
-        match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => (),
-            CommitOutcome::Unknown(_) => {
-                let found = self
-                    .read_at(
-                        session.operation_time(),
-                        doc! {"_id":&lease.attempt,
-                        "schema":1_i64,"kind":"attempt","migration":self.step.id(),
-                        "checksum":self.step.checksum(),"fence":lease.fence,
-                        "outcome":state,"changed":outcome.ok(),"reason":outcome.err()},
-                    )
-                    .await?;
-                if found.is_none() {
-                    return Err("migration completion commit unknown; inspect status");
-                }
-            }
-            _ => return Err("migration completion transaction failed"),
         }
         Ok(())
     }
@@ -405,7 +355,12 @@ impl Ledger {
         Ok(
             json!({"migration":self.step.id(),"checksum":self.step.checksum(),
             "completed":self.completed().await?,"recent_attempts":attempts,
-            "history_limit":20,"running_means":"unfinished; may require takeover after lease expiry"}),
+            "history_limit":20,"running_means":"unfinished; takeover requires lease expiry and no unsettled destructive DDL",
+            "destructive_ddl":self.abort_barrier(None).await?.map(|row| json!({
+                "migration":row.get_str("migration").unwrap(), "fence":row.get_i64("fence").unwrap(),
+                "state":row.get_str("state").unwrap(),
+                "recovery_required":row.get_str("state").unwrap() != "settled",
+            }))}),
         )
     }
 }

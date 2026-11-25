@@ -16,9 +16,11 @@ from staging_cd_finalize import finalize
 from staging_cd_finalize_diagnostics import run_finalization
 from staging_cd_github import GitHub
 from staging_cd_history import DevelopHistory
+from image_scanner_policy import MANIFEST_SHA256
 from staging_cd_receipts import published_receipt
 from staging_cd_reservations import Reservations, next_reservation
 from staging_cd_resolve import resolve, verify
+from staging_cd_outcome_tests import legacy
 
 
 class GitPublicationTests(unittest.TestCase):
@@ -38,7 +40,12 @@ class GitPublicationTests(unittest.TestCase):
         self.git("push", str(self.remote), self.source + ":refs/heads/develop")
         self.api = GitHub("fixture", self.runner)
         self.api.request = self.request
-        self.api.history = lambda: DevelopHistory.load(self.request, root=self.work, runner=self.runner)
+        # Each call re-reads develop, but under the client's lock: annotation reads
+        # run on several threads, and concurrent fetches into one work tree race.
+        def history():
+            with self.api._history_lock:
+                return DevelopHistory.load(self.request, root=self.work, runner=self.runner)
+        self.api.history = history
         self.publisher = Reservations(self.api, "fixture", self.work, self.runner)
 
     def git(self, *args, data=None, remote=False):
@@ -73,7 +80,7 @@ class GitPublicationTests(unittest.TestCase):
     def receipt(self, reservation):
         identity = dict(reservation, schema="cma-image-release-v1", build="c" * 64)
         return published_receipt(identity, "sha256:" + "d" * 64, "e" * 64,
-                                 {"detected": 1, "blocking": 0, "advisory": 1, "reviewed": 0, "allowlisted": 0})
+                                 {"detected": 1, "blocking": 0, "advisory": 1, "reviewed": 0, "allowlisted": 0}, scanner_identity=("1.0.4", MANIFEST_SHA256))
 
     def test_new_ref_is_required_and_a_different_owner_loses_the_collision(self):
         value = self.reservation()
@@ -271,17 +278,26 @@ class GitPublicationTests(unittest.TestCase):
             return True
         with contextlib.redirect_stdout(output):
             self.assertEqual(run_finalization(operation), 1)
-        self.assertEqual(output.getvalue(), "FAIL\nFAIL finalize stage=final_verify reason=final_unverified\n")
+        self.assertEqual(legacy(output.getvalue()), "FAIL finalize\nFAIL finalize stage=final_verify reason=final_unverified\n")
         self.assertEqual(self.api.tags.call_count, 5)  # Initial/current-authority reads plus three settlement reads.
         self.assertEqual(self.publisher.sleep.call_count, 2)
         self.assertEqual(self.publisher.list(), [value])
 
     def test_missing_or_superseded_reservation_refuses_before_tag_push_or_readback_retry(self):
         value = self.reservation()
+        finals = []
         for failure in ("missing", "superseded"):
             if failure == "superseded":
                 self.publisher.insert(value)
-                self.publisher.insert(self.reservation(2))
+                newer = self.git("commit-tree", self.tree, "-p", self.source, data="Later release\n")
+                self.git("push", str(self.remote), newer + ":refs/heads/develop")
+                successor = next_reservation("web", newer, self.tree, 43, "patch", 2, 1,
+                                             self.api.tags(), self.publisher.list())
+                self.publisher.insert(successor)
+                # A successor's pending reservation never fences a started build; its final does.
+                self.assertTrue(self.publisher.require_current(value, build_started=True))
+                self.assertTrue(self.publisher.finalize(self.receipt(successor), Mock(return_value=True)))
+                finals.append(self.receipt(successor))
             before = self.publisher.list()
             command = self.publisher.command
             self.publisher.command = Mock(wraps=command)
@@ -293,12 +309,12 @@ class GitPublicationTests(unittest.TestCase):
                 return True
             with contextlib.redirect_stdout(output):
                 self.assertEqual(run_finalization(operation), 1)
-            self.assertEqual(output.getvalue(),
-                             f"FAIL\nFAIL finalize stage=reservation_read reason=reservation_{failure}\n")
+            self.assertEqual(legacy(output.getvalue()),
+                             f"FAIL finalize\nFAIL finalize stage=reservation_read reason=reservation_{failure}\n")
             self.publisher.command.assert_not_called()
             self.publisher.sleep.assert_not_called()
             self.assertEqual(self.publisher.list(), before)
-            self.assertEqual(self.api.tags(), [])
+            self.assertEqual([tag["receipt"] for tag in self.api.tags()], finals)
             self.publisher.command = command
 
     def test_conflicting_or_unreadable_final_is_never_retried(self):
@@ -398,7 +414,7 @@ class GitPublicationTests(unittest.TestCase):
         queue["event_source"] = older
         self.assertEqual(allocate_queue(queue, self.api, self.publisher, 11, 1), {"include": []})
         with self.assertRaisesRegex(Refusal, "superseded and burned"):
-            self.publisher.require_current(pending)
+            self.publisher.require_current(pending, build_started=True)
         with self.assertRaisesRegex(Refusal, "superseded and burned"):
             self.publisher.finalize(self.receipt(pending), registry.exists)
         self.assertEqual(self.publisher.list(), [pending])

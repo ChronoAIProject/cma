@@ -33,6 +33,7 @@ mod prepared_reuse;
 mod request_validation;
 mod reused_connections;
 mod trust;
+mod visitor_allowance;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 const PUBLISHED: &str = "2026-09-05T00:01:00Z";
@@ -388,6 +389,7 @@ async fn authorization_disabled_and_trigger_availability_fail_before_launch_work
     let disabled = fixture.service_with_policy(LaunchPolicy {
         enabled: false,
         orchestration_paused: false,
+        visitor_launches_per_day: 5,
     });
     assert_eq!(
         disabled
@@ -624,6 +626,7 @@ async fn exact_replay_precedes_mutable_launch_dependencies() {
     let disabled_service = disabled.service_with_policy(LaunchPolicy {
         enabled: false,
         orchestration_paused: false,
+        visitor_launches_per_day: 5,
     });
     let replay = disabled_service
         .create_or_resume(
@@ -1704,6 +1707,7 @@ async fn fixture_with_workspace_configuration(
     let policy = Arc::new(LaunchPolicy {
         enabled: true,
         orchestration_paused: false,
+        visitor_launches_per_day: 5,
     });
     let service = LaunchService::new(
         definitions.clone(),
@@ -1950,6 +1954,7 @@ fn agent(profiles: &ResolvedTriggerProfiles, trigger_id: &TriggerId, status: Age
         capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

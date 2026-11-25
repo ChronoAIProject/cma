@@ -1,4 +1,6 @@
 mod binding_fence;
+mod initial_snapshot;
+mod ownership;
 mod publication_fence;
 mod publication_races;
 mod transaction_retries;
@@ -392,6 +394,7 @@ async fn metrics_all_sorts_are_indexed_stable_null_last_and_cursor_bound() {
 }
 
 mod allocated;
+mod allocated_sort;
 mod allocation_cold_range;
 mod allocation_interval;
 pub(super) mod circuit_capture;

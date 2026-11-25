@@ -2,7 +2,7 @@ use super::*;
 use layer3_adapter::sandbox_metrics::{PhysicalSeries, Sample, SourceMetric};
 use std::collections::BTreeMap;
 
-fn binding(kind: BindingKind) -> Binding {
+pub(super) fn binding(kind: BindingKind) -> Binding {
     Binding {
         id: format!("{kind:?}"),
         schema_version: 1,
@@ -231,6 +231,51 @@ fn cursors_bind_every_scope_dimension_and_reject_tampering() {
     assert!(signer
         .decode(&(token + "x"), &scope, "r", "q", c.sort, c.order)
         .is_err());
+}
+
+#[test]
+fn cursors_preserve_exact_fractional_subtotals_at_page_boundaries() {
+    use cursor::*;
+    let signer = CursorSigner::new(&[7; 32]);
+    let scope = Scope {
+        principal: "owner".into(),
+        admin: false,
+    };
+    for subtotal in [
+        0.0_f64,
+        8.165,
+        8.1654,
+        0.46694444444444444,
+        2.334722222222222,
+    ] {
+        for order in [Order::Asc, Order::Desc] {
+            let cursor = Cursor {
+                principal: scope.principal.clone(),
+                admin: false,
+                filter_hash: "query".into(),
+                report_id: "report".into(),
+                sort: Sort::AllocatedCpuCoreHours,
+                order,
+                last_value: subtotal.into(),
+                last_null: false,
+                sandbox_id: "boundary".into(),
+            };
+            let decoded = signer
+                .decode(
+                    &signer.encode(&cursor).unwrap(),
+                    &scope,
+                    "report",
+                    "query",
+                    cursor.sort,
+                    order,
+                )
+                .unwrap();
+            assert_eq!(
+                decoded.last_value.as_f64().unwrap().to_bits(),
+                subtotal.to_bits()
+            );
+        }
+    }
 }
 
 #[test]

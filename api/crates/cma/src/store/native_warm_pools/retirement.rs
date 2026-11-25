@@ -8,7 +8,7 @@ use eligibility::{owned_home, warm_blocks};
 
 const MAX_RECORDS: i64 = 10_000;
 
-fn release_scope(store: &MongoNativeWarmPools, machine: bool) -> Document {
+pub(super) fn release_scope(store: &MongoNativeWarmPools, machine: bool) -> Document {
     let mut scope = store.scope();
     scope.insert(
         "machine",
@@ -116,7 +116,7 @@ async fn authorized(
     if DateTime::now()
         .timestamp_millis()
         .saturating_sub(latest.timestamp_millis())
-        < 120_000
+        < crate::warm_pools::RELEASE_SETTLE.as_millis() as i64
     {
         return Ok(false);
     }
@@ -177,7 +177,20 @@ async fn scan(
     draining: bool,
 ) -> Result<Option<Vec<HomeVolumeAttachment>>, WarmPoolError> {
     if !authorized(store, target, image).await? {
-        return Ok(None);
+        return Ok(deferred(target, "release_settling"));
+    }
+    // Inspect the operation first. If it has finished, the later Sandbox
+    // scan sees any home it created before publishing that outcome.
+    if store.released_lanes.is_some()
+        && crate::store::agent_lifecycle_operations::released::protects_pool(
+            &store.database,
+            target.machine,
+            &target.plan.spec.image.uri,
+        )
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)?
+    {
+        return Ok(deferred(target, "lifecycle_admission"));
     }
     let mut homes = Vec::new();
     for document in documents(store, "sandboxes", doc! {}).await? {
@@ -186,10 +199,10 @@ async fn scan(
         match owned_home(&sandbox, target, image)? {
             eligibility::Owned::Blocked => {
                 if !draining {
-                    return Ok(None);
+                    return Ok(deferred(target, "sandbox_in_use"));
                 }
                 let Some(home) = eligibility::settled_native_home(&sandbox, target)? else {
-                    return Ok(None);
+                    return Ok(deferred(target, "sandbox_unsettled"));
                 };
                 homes.push(home);
             }
@@ -208,7 +221,7 @@ async fn scan(
             .map_err(|_| WarmPoolError::Unavailable)?
         {
             if warm_blocks(&warm, target) {
-                return Ok(None);
+                return Ok(deferred(target, "prepared_reservation"));
             }
         }
     }
@@ -216,16 +229,29 @@ async fn scan(
         let warm = crate::store::warm_sandboxes::read(&document)
             .map_err(|_| WarmPoolError::Unavailable)?;
         if warm_blocks(&warm, target) {
-            return Ok(None);
+            return Ok(deferred(target, "legacy_warm_sandbox"));
         }
     }
     // This runs again after the provider's admission marker. Every allocation
     // persists its reservation before selection/Claim I/O; the fresh scan thus
     // catches work that crossed the earlier selection before the marker.
     if !authorized(store, target, image).await? {
-        return Ok(None);
+        return Ok(deferred(target, "release_settling"));
     }
     Ok(Some(homes))
+}
+
+/// Retirement used to defer silently, leaving obsolete capacity running with
+/// no sign of why. Name the blocking class so a stuck record is diagnosable.
+fn deferred(target: &PoolTarget, reason: &'static str) -> Option<Vec<HomeVolumeAttachment>> {
+    tracing::info!(
+        target: "cma::warm_pools",
+        pool = %target.id,
+        machine = target.machine,
+        reason,
+        "native warm pool retirement deferred"
+    );
+    None
 }
 
 pub(super) async fn begin(
@@ -235,10 +261,17 @@ pub(super) async fn begin(
     if target.retiring {
         return Ok(target.clone());
     }
+    let mut filter = fence(target);
+    filter.insert("preparation", doc! {"$exists": false});
+    filter.insert(
+        "activated_at",
+        mongodb::bson::serialize_to_bson(&target.activated_at)
+            .map_err(|_| WarmPoolError::Unavailable)?,
+    );
     let updated = store
         .targets
         .find_one_and_update(
-            fence(target),
+            filter,
             doc! {
                 "$set":{"retiring":true,"target_replicas":0_i64},"$inc":{"revision":1_i64}
             },

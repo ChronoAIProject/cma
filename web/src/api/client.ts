@@ -30,6 +30,10 @@ import type { ResourceViewsClient } from '../resources/client';
 import type { BotClient } from '../bots/model';
 import type { createAgentTransport } from '../agent/transport/client';
 import type { ConnectionTarget } from '../connections/client';
+import type {
+  RepositoryAccessRefusal,
+  RepositoryScopeRepair,
+} from '../api-client/agents/lifecycle';
 import type { AgentFilesClient } from './agentFiles';
 import type { AgentBrowserClient, AgentBrowserControlClient } from '@cma/client';
 import type { DocumentsClient } from './documents';
@@ -54,6 +58,7 @@ export interface AgentStreamOptions extends ReadOptions {
 
 export interface AgentLifecycleCreateInput {
   readonly name: string;
+  readonly title_mode?: 'automatic' | 'named';
   readonly initial_message?: string;
   readonly template?: import('../api-client/agents/task-template').TaskTemplate;
   readonly desktop?: boolean;
@@ -134,13 +139,19 @@ export interface AgentLifecycleOperationEvent {
 
 export interface AgentLifecycleOperationView {
   readonly id: string;
+  readonly accepted_at?: string;
   readonly status: string;
   readonly phase: string;
   readonly agent_id?: string;
   readonly error?: string;
   readonly failure?: import('@cma/client').AgentLifecycleFailure;
   readonly events: readonly AgentLifecycleOperationEvent[];
-  readonly connection?: { readonly services: readonly string[]; readonly target: ConnectionTarget };
+  readonly connection?: {
+    readonly services: readonly string[];
+    readonly target: ConnectionTarget;
+    readonly repository_access?: RepositoryAccessRefusal;
+    readonly repository_scope_repair?: RepositoryScopeRepair;
+  };
 }
 
 export interface AgentLifecycleConnectionRequired {
@@ -174,6 +185,8 @@ export class AgentLifecycleCreateError extends Error {
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
   readonly usageViews?: import('../usage/client').UsageClient;
+  /** The verified owner's acceptance of the deployment's published terms. */
+  readonly legalConsent?: Pick<Cma['legalConsent'], 'status' | 'accept'>;
   readonly readSuggestedReplies?: (
     agentId: string,
     scope: { readonly turn_sequence: number; readonly answer_sequence: number },
@@ -182,7 +195,8 @@ export interface CmaWebClient {
   readonly deliverables?: Pick<
     Cma['agents'],
     'answerDeliverables' | 'readAnswerDeliverable' | 'downloadAnswerDeliverable'
-  >;
+  > &
+    Partial<Pick<Cma['agents'], 'confirmTaskDelivery'>>;
   readonly readFeedbackDetails?: (
     agentId: string,
     messageId: string,
@@ -231,8 +245,10 @@ export interface CmaWebClient {
   readonly resourceViews?: ResourceViewsClient;
   /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
   readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
+  readonly readTaskTitleModeSupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly taskExperience?: import('@cma/client').TaskExperienceClient;
   readonly readTaskTemplateSupport?: (options?: ReadOptions) => Promise<boolean>;
+  readonly readTaskTemplateV2Support?: (options?: ReadOptions) => Promise<boolean>;
   readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly createAgentLifecycle?: (
     input: AgentLifecycleCreateInput,
@@ -284,13 +300,28 @@ export interface CmaWebClient {
   readAgent(id: string, options?: ReadOptions): Promise<AgentDetail>;
   readAgentEvents(
     id: string,
-    options?: PageOptions<number>,
+    options?: PageOptions<number> & { readonly cache?: 'no-store' },
   ): Promise<ResourcePage<AgentEvent, number>>;
   readonly readRetainedOutput?: (
     id: string,
     options?: import('@cma/client').RetainedOutputOptions,
   ) => Promise<import('@cma/client').RetainedOutputPage>;
-  readAgentTranscript(id: string, options?: ReadOptions): Promise<AgentTranscript>;
+  readonly readAgentReplyPreview?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<import('./replyPreview').ReplyPreview>;
+  readonly readAgentOriginalRequest?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<import('./originalRequest').OriginalRequestRead>;
+  readAgentTranscript(
+    id: string,
+    options?: ReadOptions & {
+      readonly maxPages?: number;
+      readonly maxBytes?: number;
+      readonly cache?: 'no-store';
+    },
+  ): Promise<AgentTranscript>;
   exportAgentHistory(id: string, options?: ReadOptions): Promise<Blob>;
   readAgentUsage(id: string, options?: ReadOptions): Promise<AgentUsage>;
   readAgentResources(id: string, options?: ReadOptions): Promise<AgentResources>;
@@ -335,6 +366,7 @@ export interface CmaWebClient {
   removeWorkspace(id: string, options: CommandOptions): Promise<void>;
   interruptAgent(id: string, options: CommandOptions): Promise<void>;
   stopAgent(id: string, options: CommandOptions): Promise<void>;
+  restartAgent?(id: string, options: CommandOptions): Promise<void>;
   deleteAgent(id: string, options: CommandOptions): Promise<void>;
 }
 

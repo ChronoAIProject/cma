@@ -7,9 +7,23 @@ use crate::{auth::Creator, providers::BindingResponse, records::RecordError};
 use cmaeg_core::{
     channel::{ChannelCreation, ChannelDefinition, ChannelMutationKind, ConformanceLevel},
     ids::{BindingId, RecordId},
-    seal::open_blob,
+    seal::open_retained_channel,
     ValidationError,
 };
+
+pub(crate) const PENDING_DETAIL: &str = "channel_creation_pending: channel setup is incomplete. Complete the original channel creation request with its original record ID and settings, then refresh before editing producers or sending events.";
+
+pub(super) fn require_ready(definition: &ChannelDefinition) -> Result<(), ManagementError> {
+    if definition
+        .creation
+        .as_ref()
+        .is_some_and(|creation| !creation.ready)
+    {
+        tracing::info!("Channel edit refused while original creation is incomplete");
+        return Err(ManagementError::CreationPending);
+    }
+    Ok(())
+}
 
 pub async fn create(
     state: &ManagementState,
@@ -29,7 +43,7 @@ pub async fn create(
     }
     let _guard = state.mutation_guard(record_id.as_str()).await;
     let fingerprint = request.fingerprint();
-    let mut current = match load_record(state, creator, &record_id).await {
+    let mut current = match load_record_for_create(state, creator, &record_id).await {
         Ok(current) => current,
         Err(ManagementError::NotFound) => {
             let binding_id = BindingId::new(format!("bnd_{}", uuid.simple()))
@@ -48,6 +62,14 @@ pub async fn create(
                 state.write_flags(),
             )
             .map_err(ManagementError::Invalid)?;
+            // Nothing is sent for an unknown provider, so its refusal must not
+            // leave a reserved channel behind (#3068).
+            for consumer in definition.consumers() {
+                state
+                    .providers
+                    .require_allowlisted(&consumer.provider.slug)
+                    .map_err(ManagementError::Provider)?;
+            }
             super::github_sources::validate(state, None, &definition).await?;
             super::custom_execution::validate_providers(&state.providers, &definition)?;
             super::custom_execution::validate_media(state, None, &definition)?;
@@ -78,7 +100,7 @@ pub async fn create(
                     }
                 }
                 Err(RecordError::Conflict { .. }) => {
-                    load_record(state, creator, &record_id).await?
+                    load_record_for_create(state, creator, &record_id).await?
                 }
                 Err(error) => return Err(ManagementError::Record(error)),
             }
@@ -256,6 +278,26 @@ pub async fn load_record(
     creator: &Creator,
     id: &RecordId,
 ) -> Result<LoadedChannel, ManagementError> {
+    inspect_record(state, creator, id)
+        .await
+        .map(|(loaded, _)| loaded)
+}
+
+async fn load_record_for_create(
+    state: &ManagementState,
+    creator: &Creator,
+    id: &RecordId,
+) -> Result<LoadedChannel, ManagementError> {
+    let (loaded, retirement) = inspect_record(state, creator, id).await?;
+    super::inspection::require_not_retired(retirement, loaded.record.version)?;
+    Ok(loaded)
+}
+
+async fn inspect_record(
+    state: &ManagementState,
+    creator: &Creator,
+    id: &RecordId,
+) -> Result<(LoadedChannel, Option<u64>), ManagementError> {
     let pointer = channel_pointer(&state.cma_base_url, id).map_err(ManagementError::Invalid)?;
     let record = state
         .records
@@ -265,8 +307,13 @@ pub async fn load_record(
             RecordError::NotFound => ManagementError::NotFound,
             other => ManagementError::Record(other),
         })?;
-    let opened = open_blob(&state.master_keys, &record.blob)
-        .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
+    let (opened, retirement) = open_retained_channel(
+        &state.master_keys,
+        id.as_str(),
+        record.version,
+        &record.blob,
+    )
+    .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
     let definition: ChannelDefinition = serde_json::from_slice(&opened.payload)
         .map_err(|_| ManagementError::Internal("channel definition cannot be read".into()))?;
     if definition.owner.subject != creator.subject
@@ -289,10 +336,13 @@ pub async fn load_record(
     if recovered.payload != pointer {
         return Err(ManagementError::NotFound);
     }
-    Ok(LoadedChannel {
-        channel_id: creation.channel_id.clone(),
-        pointer,
-        definition,
-        record,
-    })
+    Ok((
+        LoadedChannel {
+            channel_id: creation.channel_id.clone(),
+            pointer,
+            definition,
+            record,
+        },
+        retirement,
+    ))
 }

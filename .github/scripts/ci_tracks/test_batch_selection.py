@@ -3,7 +3,9 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
+from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -38,6 +40,10 @@ class BatchTests(unittest.TestCase):
         self.workspace = patch.object(selection, 'workspace', side_effect=lambda tree: Workspace(metadata(tree), tree))
         self.workspace.start()
         self.addCleanup(self.workspace.stop)
+        # Call counts are observed in this process; forked workers keep their own.
+        self.sequential = patch.object(batch_selection, 'workers', return_value=1)
+        self.sequential.start()
+        self.addCleanup(self.sequential.stop)
 
     def git(self, *args):
         return subprocess.check_output(['git', *args], cwd=self.root, stderr=subprocess.PIPE, text=True).strip()
@@ -56,6 +62,21 @@ class BatchTests(unittest.TestCase):
         self.assertIn('cma-web', actual[0]['deployables'])
         self.assertIn('cma-event-gateway', actual[1]['deployables'])
         self.assertIn('cma-web', actual[2]['deployables'])
+
+    def test_parallel_summaries_match_sequential_results_and_cache(self):
+        sequential = batch_selection.determine_many(self.root, self.revisions, parallel=1)
+        for parallel in (2, 4):
+            with self.subTest(parallel=parallel), tempfile.TemporaryDirectory() as directory:
+                cache = SelectionCache(Path(directory), 'a' * 64)
+                self.assertEqual(batch_selection.determine_many(self.root, self.revisions, cache, parallel), sequential)
+                saved = sorted(path.name for path in Path(directory).iterdir())
+                self.assertEqual([name for name in saved if not name.startswith('inputs-')],
+                                 sorted(revision + '.json' for revision in self.revisions))
+                warm = SelectionCache(Path(directory), 'a' * 64)
+                with patch.object(batch_selection, 'summarize', side_effect=AssertionError('must reuse')):
+                    self.assertEqual(batch_selection.determine_many(self.root, self.revisions, warm, parallel),
+                                     sequential)
+                self.assertEqual(warm.hits, len(self.revisions))
 
     def test_batch_rejects_missing_reordered_duplicate_or_invalid_commits(self):
         for revisions in ([], [self.first, self.third], list(reversed(self.revisions)),
@@ -91,6 +112,46 @@ class BatchTests(unittest.TestCase):
         self.assertIn('cma-web', actual[2]['deployables'])
         with patch.object(batch_selection, 'summarize', side_effect=AssertionError('must reuse')):
             self.assertEqual(batch_selection.determine_many(self.root, self.revisions, cache), actual)
+
+    def test_budget_stops_between_snapshots_and_the_next_invocation_continues(self):
+        expected = batch_selection.determine_many(self.root, self.revisions)
+        cache = SelectionCache(self.root / 'cache', 'e' * 64)
+        clock = iter([0.0, 0.0, 5.0])  # Two snapshots start before the deadline at 1.0.
+        with patch.object(batch_selection.time, 'monotonic', side_effect=lambda: next(clock, 9.0)), \
+                self.assertRaises(batch_selection.BudgetExhausted) as stopped:
+            batch_selection.determine_many(self.root, self.revisions, cache, deadline=1.0)
+        # The base and first head were analysed, so only the first comparison is decided.
+        self.assertEqual((stopped.exception.decided, stopped.exception.total), (1, 3))
+        self.assertEqual(sorted(path.name for path in cache.directory.iterdir()),
+                         sorted([self.first + '.json', 'inputs-' + self.base + '.json',
+                                 'inputs-' + self.first + '.json']))
+        resumed = SelectionCache(self.root / 'cache', 'e' * 64)
+        with patch.object(batch_selection, 'summarize', wraps=selection.summarize) as summarize:
+            self.assertEqual(batch_selection.determine_many(self.root, self.revisions, resumed), expected)
+        self.assertEqual((resumed.hits, resumed.input_hits, summarize.call_count), (1, 1, 2))
+
+    def test_stopped_main_prints_only_progress_and_a_distinct_status(self):
+        batch = self.root / 'batch.json'
+        batch.write_text(json.dumps(self.revisions))
+        context = json.dumps({'directory': str(self.root / 'cache'), 'policy': 'e' * 64})
+        for argv, status in ((['batch', str(self.root), str(batch), '0'], 1),
+                             (['batch', str(self.root), str(batch), 'x'], 1),
+                             (['batch', str(self.root), str(batch), '60', 'extra'], 1)):
+            with self.subTest(argv=argv), patch('sys.argv', argv), \
+                    redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(batch_selection.main(), status)
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch('sys.argv', ['batch', str(self.root), str(batch), '60']), \
+                patch.dict('os.environ', CD_SELECTOR_CACHE=context), \
+                patch.object(batch_selection, 'fingerprint', return_value='e' * 64), \
+                patch.object(batch_selection, 'expired', side_effect=[False, True]), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            self.assertEqual(batch_selection.main(), batch_selection.INCOMPLETE)
+        self.assertEqual(stdout.getvalue(), '')
+        stats = json.loads(stderr.getvalue())
+        self.assertEqual((stats['event'], stats['decided'], stats['total']), ('selection-cache', 0, 3))
+        self.assertEqual(set(stats), {'event', 'hits', 'misses', 'input_hits', 'input_misses',
+                                      'elapsed_ms', 'decided', 'total'})
 
     def test_corrupt_record_is_recomputed_without_losing_selection(self):
         cache = SelectionCache(self.root / 'cache', 'e' * 64)

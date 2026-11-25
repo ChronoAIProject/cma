@@ -9,6 +9,7 @@ interface SubmissionOptions {
   readonly authorize?: () => Promise<void>;
   readonly recovery?: RequestRecovery;
   readonly onAccepted: (receipt: V2ResponseReceipt) => void;
+  readonly onRetained?: (key: string) => void;
   /** Correlation only; identity and journal acceptance still follow separately. */
   readonly onReceiptObserved?: (receipt: V2ResponseReceipt) => void;
 }
@@ -22,23 +23,91 @@ export function submitAgentInput(
 ): Promise<void> {
   options.signal?.throwIfAborted();
   const recovering = journal.read()?.state === 'pending';
-  return submit(sdk, journal, journal.retain(input, options.answerContext), options, recovering);
+  const retained = journal.retain(input, options.answerContext);
+  options.onRetained?.(retained.key);
+  if (recovering) {
+    return recoverAgentInput(sdk, journal, options).then((confirmed) => {
+      if (!confirmed) throw unconfirmedInput();
+    });
+  }
+  return submit(sdk, journal, retained, options);
 }
 
 /** Explicit recovery never changes a pending key/body or silently switches to v1. */
-export function recoverAgentInput(
+export async function recoverAgentInput(
   sdk: Cma,
   journal: AgentTransportJournal,
   options: SubmissionOptions,
-): Promise<void> {
+): Promise<boolean> {
   options.signal?.throwIfAborted();
   const retained = journal.read();
-  if (retained === null) return Promise.resolve();
+  if (retained === null) return false;
   if (retained.state === 'accepted') {
     options.onAccepted(retained.receipt);
-    return Promise.resolve();
+    return true;
   }
-  return submit(sdk, journal, retained, options, true);
+  const lookup = async () => {
+    const receipt = await findReceipt(
+      sdk,
+      journal,
+      retained,
+      options.signal,
+      options.recovery?.timeoutMs,
+    );
+    if (!receipt) return false;
+    await options.authorize?.();
+    options.signal?.throwIfAborted();
+    requireRetained(journal, retained);
+    journal.accepted(retained.key, receipt);
+    options.onAccepted(receipt);
+    return true;
+  };
+  return options.recovery ? options.recovery.retry(lookup) : lookup();
+}
+
+function responseBody(input: InputRecord) {
+  return {
+    input: input.input,
+    stream: true as const,
+    ...(input.answerContext ? { answer_context: input.answerContext } : {}),
+  };
+}
+
+function requireRetained(journal: AgentTransportJournal, input: InputRecord) {
+  const retained = journal.read();
+  if (
+    retained?.key !== input.key ||
+    retained.input !== input.input ||
+    retained.answerContext?.turn_sequence !== input.answerContext?.turn_sequence ||
+    retained.answerContext?.answer_sequence !== input.answerContext?.answer_sequence
+  ) {
+    throw new Error('The retained input changed while its receipt was being recovered.');
+  }
+}
+
+async function findReceipt(
+  sdk: Cma,
+  journal: AgentTransportJournal,
+  input: InputRecord,
+  signal?: AbortSignal,
+  timeoutMs?: number,
+) {
+  requireRetained(journal, input);
+  const status = await sdk.responsesV2.findAgentInputReceipt(journal.agentId, responseBody(input), {
+    idempotencyKey: input.key,
+    signal,
+    timeoutMs: timeoutMs ?? 5000,
+  });
+  const receipt = status?.receipt;
+  return receipt?.response_id
+    ? { responseId: receipt.response_id, commandId: receipt.command_id }
+    : undefined;
+}
+
+function unconfirmedInput(): Error {
+  return new Error(
+    'The original message is still awaiting confirmation. Check the pending request again.',
+  );
 }
 
 async function submit(
@@ -46,7 +115,6 @@ async function submit(
   journal: AgentTransportJournal,
   input: InputRecord,
   options: SubmissionOptions,
-  uncertainAdmission: boolean,
 ): Promise<void> {
   const request = new AbortController();
   const abort = () => request.abort(options.signal?.reason);
@@ -55,7 +123,7 @@ async function submit(
   let receiptObserved = false;
   let knownReceipt: V2ResponseReceipt | undefined;
   let confirmationFailure: unknown;
-  let contentionRetries = 0;
+  let uncertainAdmission = false;
   const confirm = async (receipt: V2ResponseReceipt) => {
     try {
       await options.authorize?.();
@@ -64,86 +132,55 @@ async function submit(
       throw error;
     }
     options.signal?.throwIfAborted();
-    requireRetained();
+    requireRetained(journal, input);
     journal.accepted(input.key, receipt);
     options.onAccepted(receipt);
     acknowledged = true;
     request.abort();
   };
-  const requireRetained = () => {
-    const retained = journal.read();
-    if (
-      retained?.state !== 'pending' ||
-      retained.key !== input.key ||
-      retained.input !== input.input ||
-      retained.answerContext?.turn_sequence !== input.answerContext?.turn_sequence ||
-      retained.answerContext?.answer_sequence !== input.answerContext?.answer_sequence
-    )
-      throw new Error('The retained input changed while its receipt was being recovered.');
-  };
   try {
     const send = () =>
-      sdk.responsesV2.createForAgent(
-        journal.agentId,
-        {
-          input: input.input,
-          stream: true,
-          ...(input.answerContext ? { answer_context: input.answerContext } : {}),
+      sdk.responsesV2.createForAgent(journal.agentId, responseBody(input), {
+        idempotencyKey: input.key,
+        signal: request.signal,
+        timeoutMs: options.recovery?.timeoutMs,
+        async onReceipt(receipt) {
+          receiptObserved = true;
+          knownReceipt = receipt;
+          options.onReceiptObserved?.(receipt);
+          // Closing this reader does not cancel an admitted Agent turn. The
+          // independent Agent tail continues tools, approvals, text and Thinking.
+          await confirm(receipt);
         },
-        {
-          idempotencyKey: input.key,
-          signal: request.signal,
-          timeoutMs: options.recovery?.timeoutMs,
-          async onReceipt(receipt) {
-            receiptObserved = true;
-            knownReceipt = receipt;
-            options.onReceiptObserved?.(receipt);
-            // Closing this reader does not cancel an admitted Agent turn. The
-            // independent Agent tail continues tools, approvals, text and Thinking.
-            await confirm(receipt);
-          },
-          onEvent() {},
-        },
-      );
+        onEvent() {},
+      });
     const attemptRequest = async (retry: number) => {
       if (retry > 0) {
-        if (knownReceipt !== undefined) {
-          requireRetained();
-          await confirm(knownReceipt);
-          return;
-        }
+        if (knownReceipt) return confirm(knownReceipt);
         await options.authorize?.();
-        options.signal?.throwIfAborted();
-        requireRetained();
+        request.signal.throwIfAborted();
+        const receipt = await findReceipt(
+          sdk,
+          journal,
+          input,
+          request.signal,
+          options.recovery?.timeoutMs,
+        );
+        if (!receipt) throw unconfirmedInput();
+        await confirm(receipt);
+        return;
       }
-      for (;;) {
-        try {
-          await send();
-          break;
-        } catch (error) {
-          if (confirmationFailure !== undefined) throw confirmationFailure;
-          // A failed POST may already have committed. Later admission refusal
-          // cannot disprove that earlier outcome; retain custody across recovery.
-          uncertainAdmission ||=
-            transientRequestFailure(error) ||
-            (error instanceof ApiError &&
-              error.status === 409 &&
-              error.code === 'agent_command_admission_conflict');
-          // Contention retries also keep the original intent. This code does
-          // not authorize re-keying or treating generic 409 as no admission.
-          if (
-            receiptObserved ||
-            contentionRetries >= 3 ||
-            !(error instanceof ApiError) ||
-            error.status !== 409 ||
-            error.code !== 'agent_command_admission_conflict'
-          )
-            throw error;
-          await retryDelay(50 * 2 ** contentionRetries++, request.signal);
-          await options.authorize?.();
-          request.signal.throwIfAborted();
-          requireRetained();
-        }
+      try {
+        await send();
+      } catch (error) {
+        if (confirmationFailure !== undefined) throw confirmationFailure;
+        // Any retry now looks up this key. Failures after dispatch cannot release custody.
+        uncertainAdmission =
+          transientRequestFailure(error) ||
+          (error instanceof ApiError &&
+            error.status === 409 &&
+            error.code === 'agent_command_admission_conflict');
+        throw error;
       }
     };
     if (options.recovery) await options.recovery.retry(attemptRequest);
@@ -166,20 +203,4 @@ async function submit(
     options.signal?.removeEventListener('abort', abort);
     request.abort();
   }
-}
-
-function retryDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
-  signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    const abort = () => {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', abort);
-      reject(signal.reason);
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', abort);
-      resolve();
-    }, milliseconds);
-    signal.addEventListener('abort', abort, { once: true });
-  });
 }

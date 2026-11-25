@@ -10,7 +10,9 @@ import { scopeValue } from './scope';
 import { SandboxBranch, type TreeExpansion } from './HierarchyTree';
 import { keyboardNavigation } from '../shell/treePresentation';
 import '../shell/Tree.css';
-import { sandboxFilterEmpty, sandboxNavigationGroups } from '../shell/navigationStatuses';
+import { sandboxFilterEmpty, sandboxNavigation } from '../shell/navigationStatuses';
+import { DeletionProgressList } from '../shell/DeletionProgressList';
+import { useTreeFocus } from '../shell/useTreeFocus';
 
 interface Props {
   readonly client: ResourceViewsClient;
@@ -76,6 +78,9 @@ function SandboxTreePage({
     [client, organization, shared, cursor],
   );
   const current = useAuthorizedRead(read);
+  const focus = useTreeFocus();
+  const items = current.state.status === 'ready' ? current.state.value.items : [];
+  const { groups, deleting } = sandboxNavigation(items, (sandbox) => sandbox, statusFilter);
   const accessSummaries = useAccessSummaries(
     client,
     'sandbox',
@@ -83,7 +88,7 @@ function SandboxTreePage({
     scopeValue(organization, shared),
   );
   return (
-    <div className="scoped-navigation__tree resource-tree">
+    <div className="scoped-navigation__tree resource-tree" {...focus}>
       <Button size="sm" onClick={current.reload}>
         {shared === true ? 'Refresh shared Sandboxes' : 'Refresh organization'}
       </Button>
@@ -95,6 +100,10 @@ function SandboxTreePage({
         <p role="alert">{current.state.message}</p>
       ) : (
         <>
+          <DeletionProgressList
+            sandboxes={deleting}
+            onViewStatus={(sandboxId) => onNavigate({ kind: 'sandbox', sandboxId })}
+          />
           {current.state.value.items.length === 0 ? (
             <p>
               {statusFilter !== 'all'
@@ -105,21 +114,11 @@ function SandboxTreePage({
             </p>
           ) : (
             <div>
-              {sandboxNavigationGroups(statusFilter).map(({ id, label }) => (
+              {groups.map(({ id, label, items }) => (
                 <SandboxGroup
-                  key={label}
+                  key={id}
                   label={label}
-                  items={
-                    current.state.status === 'ready'
-                      ? current.state.value.items.filter(
-                          (sandbox) =>
-                            sandbox.status !== 'retired' &&
-                            (statusFilter === 'all' || sandbox.status === statusFilter) &&
-                            (statusFilter !== 'all' ||
-                              (sandbox.status === 'paused') === (id === 'paused')),
-                        )
-                      : []
-                  }
+                  items={items}
                   client={client}
                   expansion={expansion}
                   route={route}

@@ -19,6 +19,7 @@ struct State {
 
 pub struct MemoryOwnershipStore {
     started: Instant,
+    fixed_time_ms: Option<i64>,
     state: Arc<Mutex<State>>,
     partitioned: AtomicBool,
     diagnostics_enabled: AtomicBool,
@@ -28,6 +29,7 @@ impl Default for MemoryOwnershipStore {
     fn default() -> Self {
         Self {
             started: Instant::now(),
+            fixed_time_ms: None,
             state: Arc::default(),
             partitioned: AtomicBool::new(false),
             diagnostics_enabled: AtomicBool::new(true),
@@ -36,6 +38,13 @@ impl Default for MemoryOwnershipStore {
 }
 
 impl MemoryOwnershipStore {
+    pub fn at_fixed_time(now_ms: i64) -> Self {
+        Self {
+            fixed_time_ms: Some(now_ms),
+            ..Self::default()
+        }
+    }
+
     pub fn enable_receiver_diagnostics(&self, enabled: bool) {
         self.diagnostics_enabled.store(enabled, Ordering::Release);
     }
@@ -46,6 +55,7 @@ impl MemoryOwnershipStore {
     pub fn client(&self) -> Arc<Self> {
         Arc::new(Self {
             started: self.started,
+            fixed_time_ms: self.fixed_time_ms,
             state: self.state.clone(),
             partitioned: AtomicBool::new(false),
             diagnostics_enabled: AtomicBool::new(true),
@@ -57,7 +67,8 @@ impl MemoryOwnershipStore {
     }
 
     fn now(&self) -> i64 {
-        self.started.elapsed().as_millis() as i64 + 1
+        self.fixed_time_ms
+            .unwrap_or_else(|| self.started.elapsed().as_millis() as i64 + 1)
     }
 
     fn accessible(&self) -> Result<(), OwnershipError> {
@@ -174,7 +185,12 @@ impl OwnershipStore for MemoryOwnershipStore {
             return Ok((lease.token.instance_id == instance).then(|| lease.clone()));
         }
         let membership = self.snapshot(&state);
-        if candidates(id, &membership, None)?
+        let previous_member = state
+            .owners
+            .get(id)
+            .and_then(|(_, lease)| lease.as_ref())
+            .map(|lease| lease.token.instance_id.as_str());
+        if candidates(id, &membership, previous_member)?
             .first()
             .is_none_or(|member| member.instance_id != instance)
         {

@@ -4,6 +4,9 @@
 //! Mongo, returns an operation id, and lets a leased worker drive the
 //! user-facing provisioning stages. The record is reclaimed on process restart.
 
+#[path = "agent_lifecycle_submission.rs"]
+mod submission;
+
 use async_trait::async_trait;
 use layer1_public::rest::{
     AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleOperationReadError,
@@ -54,15 +57,20 @@ pub(crate) use tasks::{DrainTimeout as LifecycleDrainTimeout, TaskScope as Lifec
 #[path = "agent_lifecycle_workspace.rs"]
 mod workspace;
 
+#[cfg(test)]
+pub(crate) use workspace::tests::fixture::creation_test_router;
+
 #[path = "agent_lifecycle_admission.rs"]
 mod admission;
 #[path = "agent_lifecycle_desktop.rs"]
 mod desktop;
 #[path = "agent_lifecycle_image.rs"]
 mod image;
+mod repository_preflight;
+pub(crate) mod runtime_canary;
 #[path = "agent_lifecycle_policy.rs"]
 mod task_policy;
-pub(crate) use image::{ImageManagerResolver, ImageResolver};
+pub(crate) use image::{valid_immutable_image, ImageManagerResolver, ImageResolver};
 #[path = "agent_lifecycle_validation.rs"]
 pub(crate) mod validation;
 use validation::{
@@ -70,7 +78,7 @@ use validation::{
     workspace_error,
 };
 
-pub(crate) use profiles::prepared_default_agent_profile;
+pub(crate) use profiles::{canary_sandbox_content, prepared_default_agent_profile};
 
 pub(crate) struct InlineAgentLifecycle {
     sandbox: Arc<SandboxService>,
@@ -83,17 +91,29 @@ pub(crate) struct InlineAgentLifecycle {
     bounds: ProfileCapacityBounds,
     capacity: layer3_adapter::SandboxCapacity,
     machine_sandbox_image: Option<String>,
+    /// When set, the machine image is this source's release at admission.
+    released: OnceLock<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
     operations: Arc<MongoAgentLifecycleStore>,
     native_prepared: Option<Arc<crate::store::MongoSandboxStore>>,
     desktop: Option<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>>,
     self_ref: OnceLock<Weak<Self>>,
     task_experience: OnceLock<Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>>,
+    session_guidance: OnceLock<&'static str>,
     failure_metadata_enabled: OnceLock<bool>,
+    repository_preflight: OnceLock<Arc<dyn repository_preflight::RepositoryReadiness>>,
+    managed_repository_preflight: OnceLock<bool>,
+    managed_repository_broker: OnceLock<Arc<crate::trigger::CmaServiceConnectionBroker>>,
+    managed_repository_runtime_images: OnceLock<(String, Vec<String>)>,
+    public_repository_images: OnceLock<std::collections::BTreeSet<String>>,
+    public_repository_writer: OnceLock<bool>,
+    #[cfg(test)]
+    public_repository_probe: OnceLock<Arc<dyn repository_preflight::PublicRepositoryReadiness>>,
     worker_slots: Arc<tokio::sync::Semaphore>,
     tasks: LifecycleDrain,
 }
 
 struct ProvisionInput {
+    creation_fence: Option<layer2_core::sandbox::store::CreationFence>,
     behavior: LifecycleBehavior,
     first_message: Option<String>,
     request: AgentLifecycleCreateRequest,
@@ -106,6 +126,8 @@ struct ProvisionInput {
     existing_sandbox_id: Option<String>,
     existing_agent_id: Option<String>,
     actor: Option<layer2_core::resource_access::ResourceActor>,
+    canary_profiles: Option<crate::store::CanaryProfiles>,
+    repository_access_pin: Option<crate::store::RepositoryAccessPin>,
 }
 
 impl InlineAgentLifecycle {
@@ -137,12 +159,22 @@ impl InlineAgentLifecycle {
             bounds,
             capacity,
             machine_sandbox_image,
+            released: OnceLock::new(),
             operations,
             native_prepared,
             desktop,
             self_ref: OnceLock::new(),
             task_experience: OnceLock::new(),
+            session_guidance: OnceLock::new(),
             failure_metadata_enabled: OnceLock::new(),
+            repository_preflight: OnceLock::new(),
+            managed_repository_preflight: OnceLock::new(),
+            managed_repository_broker: OnceLock::new(),
+            managed_repository_runtime_images: OnceLock::new(),
+            public_repository_images: OnceLock::new(),
+            public_repository_writer: OnceLock::new(),
+            #[cfg(test)]
+            public_repository_probe: OnceLock::new(),
             worker_slots: Arc::new(tokio::sync::Semaphore::new(crate::store::DISCOVERY_BATCH)),
             tasks: LifecycleDrain::new(crate::store::DISCOVERY_BATCH + 1),
         });
@@ -150,23 +182,11 @@ impl InlineAgentLifecycle {
         instance
     }
 
-    fn authority(
-        &self,
-        caller: &Caller,
-        context: Option<&CallerContext>,
-    ) -> Result<BotOwnerAuthority, AgentLifecycleProvisioningError> {
-        let context = context.ok_or(AgentLifecycleProvisioningError::Forbidden)?;
-        if context.caller.subject != caller.subject || !context.validate_principal() {
-            return Err(AgentLifecycleProvisioningError::Forbidden);
-        }
-        BotOwnerAuthority::new(
-            context.clone(),
-            ResourceOwner::Person {
-                subject: caller.subject.clone(),
-            },
-            None,
-        )
-        .map_err(|_| AgentLifecycleProvisioningError::Forbidden)
+    pub(crate) fn with_session_guidance(self: Arc<Self>, v4: bool, v5: bool) -> Arc<Self> {
+        self.session_guidance
+            .set(guidance::admission_instructions(v4, v5))
+            .expect("session guidance writer is configured once before use");
+        self
     }
 
     async fn provision(
@@ -181,6 +201,7 @@ impl InlineAgentLifecycle {
             return self.provision_in_workspace(caller, &input).await;
         }
         let ProvisionInput {
+            creation_fence,
             behavior,
             first_message,
             request,
@@ -193,6 +214,8 @@ impl InlineAgentLifecycle {
             existing_sandbox_id,
             existing_agent_id,
             actor,
+            canary_profiles,
+            repository_access_pin,
         } = input;
         let profile_started = tokio::time::Instant::now();
         let profile_result = profiles::create_profiles(
@@ -205,6 +228,7 @@ impl InlineAgentLifecycle {
             limits,
             behavior,
             sandbox_availability,
+            &lease.id,
         )
         .await;
         tracing::info!(
@@ -215,6 +239,17 @@ impl InlineAgentLifecycle {
             "inline Agent lifecycle preparation phase completed"
         );
         let (agent_revision, workspace_profile, sandbox_profile) = profile_result?;
+        if let Some(expected) = canary_profiles {
+            if expected.agent.id != agent_revision.profile_id
+                || expected.agent.revision != agent_revision.revision
+                || expected.workspace != workspace_profile
+                || expected.sandbox != sandbox_profile
+            {
+                return Err(AgentLifecycleProvisioningError::Conflict(
+                    "The canary profiles do not match the admitted operation.".into(),
+                ));
+            }
+        }
         self.progress(
             &lease,
             "sandbox_ready",
@@ -226,12 +261,14 @@ impl InlineAgentLifecycle {
             SandboxId(id)
         } else {
             let admission_started = tokio::time::Instant::now();
-            let admission_result = validation::create_sandbox(
+            let admission_result = admission::create_sandbox_with_fence(
                 self.sandbox.as_ref(),
                 caller,
                 sandbox_profile.clone(),
                 &request.name,
-                &lease.id,
+                &lease,
+                creation_fence,
+                repository_access_pin.map(|pin| pin.connection),
             )
             .await;
             tracing::info!(
@@ -241,31 +278,8 @@ impl InlineAgentLifecycle {
                 success = admission_result.is_ok(),
                 "inline Agent lifecycle preparation phase completed"
             );
-            let sandbox = match admission_result {
-                Ok(value) => value,
-                Err(SandboxServiceError::ConnectionsRequired { services }) => {
-                    return Err(AgentLifecycleProvisioningError::ConnectionRequired {
-                        services: services
-                            .into_iter()
-                            .map(|service| service.to_string())
-                            .collect(),
-                        connection_target: json!({
-                            "type":"sandbox_profile",
-                            "profile":{"id":sandbox_profile.id.to_string(),"revision":sandbox_profile.revision}
-                        }),
-                    });
-                }
-                Err(SandboxServiceError::CredentialSetupRequired) => {
-                    return Err(AgentLifecycleProvisioningError::ConnectionRequired {
-                        services: vec!["cma-credentials".into()],
-                        connection_target: json!({
-                            "type":"sandbox_profile",
-                            "profile":{"id":sandbox_profile.id.to_string(),"revision":sandbox_profile.revision}
-                        }),
-                    });
-                }
-                Err(error) => return Err(sandbox_error(error)),
-            };
+            let sandbox = admission_result
+                .map_err(|error| admission::sandbox_admission_error(error, &sandbox_profile))?;
             self.operations
                 .mark_sandbox(&lease, sandbox.id.as_str())
                 .await
@@ -282,8 +296,7 @@ impl InlineAgentLifecycle {
         };
         // Prepared sessions are adopted only after owner credentials and parent readiness.
         // WaitForWorkspace remains effect-free for ordinary cold admission.
-        let early_admission =
-            behavior == LifecycleBehavior::PromptRepository && !has_prepared_hierarchy;
+        let early_admission = behavior.uses_repository_profile() && !has_prepared_hierarchy;
         let workspace_id = if early_admission {
             self.reserve_bootstrap_workspace(
                 caller,
@@ -317,7 +330,7 @@ impl InlineAgentLifecycle {
                             agent_revision.profile_id.clone(),
                             agent_revision.revision,
                         ),
-                        title: Some(request.name.clone()),
+                        title: validation::initial_title(&request),
                         first_message,
                         origin: AgentOrigin::Lifecycle {
                             operation_id: lease.id.clone(),
@@ -393,108 +406,34 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
         request: AgentLifecycleCreateRequest,
         idempotency_key: &str,
     ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
-        if self.tasks.is_closed() {
-            return Err(AgentLifecycleProvisioningError::Unavailable);
-        }
-        validate_request(&request)?;
-        caller
-            .authorization
-            .allows(Capability::UseOwnSandboxes)
-            .then_some(())
-            .ok_or(AgentLifecycleProvisioningError::Forbidden)?;
-        if request.workspace_id.is_none()
-            && request.sandbox_id.is_none()
-            && !caller.authorization.allows(Capability::CreateSandbox)
-        {
-            return Err(AgentLifecycleProvisioningError::Forbidden);
-        }
-        let _authority = self.authority(caller, context)?;
-        // Machine allocation remains cohort-gated when an old operation is replayed.
-        // Recheck before resume_connection/spawn_worker can resume provisioning.
-        if request.machine_included {
-            self.require_task_experience(caller, &request)?;
-        }
-        if let Some(receipt) = self
-            .replay_receipt(caller, &request, idempotency_key)
-            .await?
-        {
-            return Ok(receipt);
-        }
-        self.require_task_experience(caller, &request)?;
-        if request.sandbox_id.is_some() {
-            self.contextual_sandbox(caller, context.map(|context| &context.actor), &request)
-                .await?;
-        }
-        if request.workspace_id.is_some() {
-            self.contextual_workspace(caller, context.map(|context| &context.actor), &request)
-                .await?;
-        }
-        let profile = request.profile.clone().unwrap_or_default();
-        agent_content(&guidance::profile_with_instructions(
-            profile.clone(),
-            Some(guidance::managed_v3()),
-        ))?;
-        services(&profile.permissions)?;
-        if request.machine_included && request.image.is_some() {
-            return Err(AgentLifecycleProvisioningError::Invalid(
-                "Machine Included selects the deployment desktop image and cannot be combined with an explicit image".into(),
-            ));
-        }
-        if let Some(receipt) = self
-            .check_capacity(caller, &request, idempotency_key)
-            .await?
-        {
-            return Ok(receipt);
-        }
-        // Resolve the delegated Image Manager reference before persisting the
-        // operation. The durable worker then needs no secret after admission.
-        let resolved_image = match &request.image {
-            Some(image) => Some(
-                self.image_resolver
-                    .resolve(delegated_credential, image)
-                    .await?,
-            ),
-            None if request.machine_included => self
-                .machine_sandbox_image
-                .clone()
-                .ok_or_else(|| {
-                    AgentLifecycleProvisioningError::Invalid(
-                        "Machine Included is not available in this deployment".into(),
-                    )
-                })
-                .map(Some)?,
-            None => None,
-        };
-        let resolved_image = self
-            .resolve_desktop_image(caller, context, &request, resolved_image)
-            .await?;
-        let input = LifecycleInput {
-            behavior: LifecycleBehavior::PromptRepository,
-            managed_agent_instructions: Some(guidance::managed_v3().into()),
-            setup_message: Some(validation::setup_message(&request)),
+        self.submit(
+            caller,
+            context,
+            delegated_credential,
             request,
-            resolved_image,
-            capacity: Some(self.capacity),
-            sandbox_availability: layer2_core::profiles::SandboxProfileAvailability {
-                always_keep_alive: true,
-                ..Default::default()
-            },
-            capabilities: caller.authorization.iter().collect(),
-            actor: context.map(|context| context.actor.clone()),
-        };
-        let operation = self
-            .operations
-            .create(&caller.subject, idempotency_key, input)
-            .await
-            .map_err(validation::creation_error)?;
-        let operation_id = match operation {
-            CreateResult::Created(id) => id,
-            CreateResult::Existing(record) => record.id.clone(),
-        };
-        self.spawn_worker(operation_id.clone());
-        Ok(AgentLifecycleCreateReceipt {
-            id: operation_id,
-            status: "provisioning".into(),
-        })
+            idempotency_key,
+            None,
+        )
+        .await
+    }
+
+    async fn create_with_submission(
+        &self,
+        caller: &Caller,
+        context: Option<&CallerContext>,
+        delegated_credential: Option<&str>,
+        request: AgentLifecycleCreateRequest,
+        idempotency_key: &str,
+        submission: layer1_public::rest::creation_outcomes::Submission,
+    ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
+        self.submit(
+            caller,
+            context,
+            delegated_credential,
+            request,
+            idempotency_key,
+            Some(submission),
+        )
+        .await
     }
 }

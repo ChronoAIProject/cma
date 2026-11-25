@@ -9,6 +9,7 @@ AM_RECIPE = "api/crates/cma/Dockerfile"
 
 def from_environment(env, component):
     level = env.get(AM_PROFILE, "") if component == "am" else ""
+    require(level in ("", "0", "1"), "AM staging optimization level must be empty, 0 or 1")
     if level:
         require(env.get("GITHUB_REPOSITORY") == REPOSITORY
                 and env.get("GITHUB_REF") == "refs/heads/develop"

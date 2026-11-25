@@ -35,6 +35,8 @@ const OBSERVATIONS: [(&str, &str, &str); 8] = [
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn default_progress_pairs_preserve_eight_events_with_ten_mongo_commands() {
     let fixture = Fixture::new().await;
+    let accepted = fixture.read().await.created_at;
+    fixture.probe.take_commands();
     for observations in [
         &OBSERVATIONS[..1],
         &OBSERVATIONS[1..3],
@@ -77,6 +79,10 @@ async fn default_progress_pairs_preserve_eight_events_with_ten_mongo_commands() 
         );
     }
     let record = fixture.read().await;
+    assert_eq!(
+        record.view().accepted_at,
+        Some(accepted.try_to_rfc3339_string().unwrap())
+    );
     assert_eq!(record.status, "running");
     assert_eq!(record.phase, "agent_startup");
     assert_eq!(record.events.len(), 8);
@@ -101,6 +107,7 @@ async fn default_progress_pairs_preserve_eight_events_with_ten_mongo_commands() 
             .unwrap();
     }
     let replay = fixture.read().await;
+    assert_eq!(replay.view().accepted_at, record.view().accepted_at);
     assert_eq!(serde_json::to_value(replay.events).unwrap(), before);
     assert_eq!(replay.phase, "agent_startup");
     assert!(fixture

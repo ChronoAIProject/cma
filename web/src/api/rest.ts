@@ -1,7 +1,7 @@
 import { createUsageClient } from '../usage/client';
 import {
-  ApiError,
   ProtocolError,
+  TransportError,
   agentLifecycleFailure,
   type AgentLifecycleFailure,
   type Cma,
@@ -30,6 +30,10 @@ import { messageFeedbackClient } from './rest/messageFeedback';
 import { agentFilesClient } from './rest/agentFiles';
 import { documentsClient } from './rest/documents';
 import { computerClient } from './rest/computer';
+import { exportRawHistory } from './rest/history';
+import { readReplyPreview } from './rest/replyPreview';
+import { readOriginalRequest } from './rest/originalRequest';
+import { BusinessReadError, readBusinessProblem } from './rest/businessReadProblem';
 
 /** The write succeeded; a failed detail read must not release its command key. */
 export class CreatedResourceReadError extends Error {
@@ -77,8 +81,9 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
   };
   return {
     usageViews: createUsageClient(sdk),
+    legalConsent: sdk.legalConsent,
     deliverables: sdk.agents,
-    documents: documentsClient(),
+    documents: documentsClient(sdk.documents),
     browser: sdk.agentBrowser,
     browserControl: computer.browserControl,
     taskExperience: sdk.taskExperience,
@@ -116,8 +121,12 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     resourceViews: sdk,
     readTaskTemplateSupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-templates-v1'] === true,
+    readTaskTemplateV2Support: async (options) =>
+      (await sdk.readOpenApi(options))['x-cma-task-templates-v2'] === true,
     readTaskRepositorySupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-repository'] === true,
+    readTaskTitleModeSupport: async (options) =>
+      (await sdk.readOpenApi(options))['x-cma-agent-title-mode'] === true,
     readTaskCreationSupport: async (options) => {
       const document = await sdk.readOpenApi(options);
       const components = document.components as
@@ -202,23 +211,43 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
           cache: 'no-store',
           signal: options?.signal,
         },
-      );
+      ).catch((error: unknown) => {
+        options?.signal?.throwIfAborted();
+        if (error instanceof TypeError)
+          throw new TransportError('Agent lifecycle status could not be reached.', {
+            cause: error,
+          });
+        throw error;
+      });
       if (!response.ok)
-        throw new ApiError(
-          response.status,
-          `Agent lifecycle status failed (${String(response.status)}).`,
-        );
-      const value = (await response.json()) as AgentLifecycleOperationView;
+        throw new BusinessReadError(await readBusinessProblem(response, options?.signal));
+      const value = (await response.json().catch((error: unknown) => {
+        options?.signal?.throwIfAborted();
+        if (error instanceof SyntaxError)
+          throw new ProtocolError('Agent Manager returned an invalid lifecycle operation.');
+        if (error instanceof TypeError)
+          throw new TransportError('Agent lifecycle status could not be read.', { cause: error });
+        throw error;
+      })) as AgentLifecycleOperationView;
       if (
+        !value ||
+        typeof value !== 'object' ||
         value.id !== operationId ||
+        (value.accepted_at !== undefined &&
+          (typeof value.accepted_at !== 'string' ||
+            !Number.isFinite(Date.parse(value.accepted_at)))) ||
         !['queued', 'running', 'waiting_for_connection', 'succeeded', 'failed'].includes(
           value.status,
         ) ||
         typeof value.phase !== 'string' ||
         !Array.isArray(value.events) ||
         (value.connection !== undefined &&
-          (!Array.isArray(value.connection.services) ||
+          (!value.connection ||
+            typeof value.connection !== 'object' ||
+            !Array.isArray(value.connection.services) ||
             !value.connection.services.every((service) => typeof service === 'string') ||
+            (value.connection.repository_access !== undefined &&
+              value.connection.repository_access !== 'verification_unavailable') ||
             !isConnectionTarget(value.connection.target))) ||
         (value.status === 'waiting_for_connection' && value.connection === undefined) ||
         (value.status === 'succeeded' && (typeof value.agent_id !== 'string' || !value.agent_id))
@@ -266,6 +295,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       const page = await sdk.agents.events(id, {
         after: options?.cursor,
         signal: options?.signal,
+        ...(options?.cache === undefined ? {} : { cache: options.cache }),
         toolOutput: true,
       });
       return {
@@ -279,6 +309,8 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       };
     },
     readRetainedOutput: (id, options) => sdk.agents.retainedOutput(id, options),
+    readAgentReplyPreview: (id, options) => readReplyPreview(sdk, id, options),
+    readAgentOriginalRequest: (id, options) => readOriginalRequest(sdk, id, options),
     readAgentTranscript: async (id, options) => {
       const value = await sdk.agents.transcript(id, options);
       return {
@@ -300,20 +332,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         })),
       };
     },
-    exportAgentHistory: async (id, options) => {
-      const response = await sdk.config.fetch(
-        `${sdk.config.baseUrl}/api/v1/agents/${encodeURIComponent(id)}/history`,
-        {
-          credentials: sdk.config.cookies ? 'include' : 'omit',
-          cache: 'no-store',
-          signal: options?.signal,
-        },
-      );
-      if (!response.ok) {
-        throw new ProtocolError(`Agent history export failed (${String(response.status)}).`);
-      }
-      return response.blob();
-    },
+    exportAgentHistory: (id, options) => exportRawHistory(sdk, id, options),
     readAgentUsage: async (id, options) => {
       const value = await sdk.agents.usage(id, options);
       return {
@@ -422,6 +441,9 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     },
     interruptAgent: (id, options) => sdk.agents.interrupt(id, options),
     stopAgent: (id, options) => sdk.agents.stop(id, {}, options),
+    restartAgent: async (id, options) => {
+      await sdk.agents.restart(id, options);
+    },
     deleteAgent: (id, options) => sdk.agents.delete(id, options),
   };
 }

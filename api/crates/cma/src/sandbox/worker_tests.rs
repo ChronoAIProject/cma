@@ -3,9 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use layer2_core::profiles::store::{
-    InMemoryProfileStore, SandboxProfileStore as _, WorkspaceProfileStore as _,
-};
+use layer2_core::profiles::store::{InMemoryProfileStore, WorkspaceProfileStore as _};
 use layer2_core::profiles::{
     AgentProvider, EnvironmentVariable, ModelAccess, ProfileCapacityBounds, ProfileVisibility,
     SandboxProfile, SandboxProfileContent, SandboxProfileRef, WorkspaceLocation, WorkspaceProfile,
@@ -48,6 +46,7 @@ mod checkpoint_lease_tests;
 mod checkpoint_maintenance_tests;
 mod execution_tests;
 mod funding_tests;
+mod home_restore_reader_tests;
 mod home_tests;
 mod hot_scope_tests;
 mod lifecycle_failure_clock_tests;
@@ -57,6 +56,8 @@ mod lifecycle_queue_tests;
 mod lifecycle_recovery_tests;
 mod native_pool_tests;
 mod native_suspension_tests;
+pub(crate) use native_suspension_tests::exercise_native_retirement_finality;
+pub(crate) use native_suspension_tests::exercise_runtime_update_reopen_http;
 mod owned_reopen_tests;
 mod pause_cancellation_tests;
 mod provided_credential_tests;
@@ -79,7 +80,7 @@ fn runtime_image() -> String {
 }
 
 #[derive(Clone, Default)]
-struct ActionLog(Arc<Mutex<Vec<String>>>);
+pub(crate) struct ActionLog(Arc<Mutex<Vec<String>>>);
 
 impl ActionLog {
     fn push(&self, action: impl Into<String>) {
@@ -111,13 +112,17 @@ impl SandboxPolicySource for MutablePolicy {
 }
 
 mod credential_fixture;
+pub(crate) use credential_fixture::MemoryCredentials;
 use credential_fixture::*;
 mod harness;
 use harness::*;
+pub(crate) use harness::{AgentStopRecorder, WorkspaceRecorder};
 mod profile_fixtures;
+pub(crate) use profile_fixtures::seed_sandbox_profile_with_capacity;
 use profile_fixtures::*;
 mod base_creation;
 mod base_credential_rotation;
 mod base_failures;
 mod base_lease;
 mod base_retirement;
+mod retirement_credentials_tests;

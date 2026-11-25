@@ -1,6 +1,7 @@
 //! Exact period admission over its stored accounting layout. Owner and platform
 //! liability changes share the caller's transaction (contract section 4).
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::admission::{AdmissionCause, AdmissionCeilings};
 use layer2_core::budget::{
     BudgetError, BudgetPolicy, Closure, OperatorAdmissionState, PlatformBudgetPolicy,
@@ -57,20 +58,12 @@ pub(super) async fn fence_settings(
     counter: &str,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
-    // A real write also fences activation against previously disabled admissions.
-    // The additive fence is outside the strict settings record.
-    let result = settings
-        .update_one(
-            doc! {"_id": "platform", "document_schema_version": DOCUMENT_SCHEMA_VERSION},
-            doc! {"$inc": {counter: 1_i64}},
-        )
-        .session(&mut *session)
+    crate::store::settings_barrier::increment(settings, counter, session)
         .await
-        .map_err(ApplyError::Driver)?;
-    if result.matched_count != 1 {
-        return Err(domain(BudgetError::Unavailable));
-    }
-    Ok(())
+        .map_err(|error| match error {
+            crate::store::settings_barrier::Error::Driver(error) => ApplyError::Driver(error),
+            crate::store::settings_barrier::Error::Unreadable => domain(BudgetError::Unavailable),
+        })
 }
 
 /// Zero-liability commitments: a plain read inside the session snapshot, with
@@ -348,46 +341,17 @@ pub(in crate::store) async fn require_open(
     .await
 }
 
-/// Retained-home admission reuses the same settings read as spend and stop
-/// checks. No additional settings command is needed when ceilings are unset.
-pub(in crate::store) async fn require_open_with_ceilings(
-    store: &MongoSandboxStore,
-    now: u64,
-    cause: AdmissionCause,
-    session: &mut ClientSession,
-) -> Result<Result<AdmissionCeilings, ()>, ApplyError> {
-    require_open_read_with_ceilings(
-        &store.budget_settings,
-        &store.model_budget,
-        now,
-        cause,
-        store.platform_counter_shards,
-        session,
-    )
-    .await
-}
-
-pub(in crate::store) async fn require_open_with_collections_and_ceilings(
+/// Count-bearing admissions use the same protected document for every cap.
+pub(in crate::store) async fn require_open_protected(
     settings: &Collection<Document>,
     rows: &Collection<Document>,
-    now: u64,
-    cause: AdmissionCause,
-    session: &mut ClientSession,
-) -> Result<Result<AdmissionCeilings, ()>, ApplyError> {
-    require_open_read_with_ceilings(settings, rows, now, cause, false, session).await
-}
-
-async fn require_open_read_with_ceilings(
-    settings: &Collection<Document>,
-    rows: &Collection<Document>,
+    protected: &crate::store::settings_barrier::ProtectedSettings,
     now: u64,
     cause: AdmissionCause,
     batched: bool,
     session: &mut ClientSession,
 ) -> Result<Result<AdmissionCeilings, ()>, ApplyError> {
-    let Some(snapshot) = read_snapshot(settings, None, session).await? else {
-        return Ok(Ok(AdmissionCeilings::default()));
-    };
+    let snapshot = snapshot(protected.document(), None).map_err(domain)?;
     require_snapshot_spend_open(settings, rows, &snapshot, now, batched, session).await?;
     require_operator_open(&snapshot, cause)?;
     Ok(snapshot.ceilings)
@@ -429,7 +393,7 @@ async fn refuse(
     refusal: Refusal,
     session: &mut ClientSession,
 ) -> ApplyError {
-    if let Err(error) = session.abort_transaction().await {
+    if let Err(error) = session.abort_guarded().await {
         tracing::warn!(event = "platform_spend_refusal_abort", error = %error,
             "could not confirm admission abort; closure persistence deferred");
         return domain(refusal.reason);

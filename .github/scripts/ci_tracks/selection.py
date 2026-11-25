@@ -15,6 +15,16 @@ from git_comparison import check_sha, comparison_details, git
 from policy import Workspace, select
 from uncertainty import SelectionIntegrityError, conservative, unknown_paths
 
+APPROVAL_CONTRACT_INPUTS = frozenset({
+    'web/vite.config.ts', 'web/tsconfig.json', 'web/package.json', 'web/package-lock.json',
+    '.github/workflows/ci-approval-contract.yml', '.github/workflows/ci-rust-archive.yml',
+    '.github/scripts/backend-nextest.sh',
+})
+APPROVAL_CONTRACT_DIRECTORIES = (
+    'web/src/api-client/', 'web/src/api/', 'web/src/agent/', 'web/src/test/', 'web/build/',
+    '.github/actions/rust-archive/',
+)
+
 
 def comparison(root, event, event_name):
     base, head, _reason = comparison_details(root, event, event_name)
@@ -103,19 +113,55 @@ def analyze(paths, snapshots):
     return analyze_summaries(paths, summaries)
 
 
-def determine(root, event, event_name):
+def determine(root, event, event_name, *, release=False):
     base, head, reason = comparison_details(root, event, event_name)
     fallback = recipes(root)
     with snapshot(root, head) as new:
         current = summarize(new, fallback)
+    previous = None
+    if not reason:
+        try:
+            with snapshot(root, base) as old:
+                previous = summarize(old, fallback)
+        except (ValueError, KeyError, OSError, subprocess.SubprocessError):
+            # A develop-to-main release compares against the previous release,
+            # which can predate the current ownership policy and recipes. That
+            # base cannot narrow a full-CI release, so failing to model it is
+            # uncertainty and selects every deployable. The head stays strict,
+            # and any other comparison still fails closed.
+            if not release:
+                raise
+            reason = 'release-base-unmodeled'
     if reason:
         result = conservative(NAMES, reason, current[0])
     else:
         paths = changed_paths(root, base, head)
-        with snapshot(root, base) as old:
-            previous = summarize(old, fallback)
         result = analyze_summaries(paths, [previous, current])
     result.update(base=base, head=head)
+    return result
+
+
+def determine_ci(root, event, event_name, repository):
+    from ci_events import VERIFICATION_EVENTS, full_ci_required, verification_head
+
+    full = full_ci_required(event, event_name, repository)
+    if event_name in VERIFICATION_EVENTS:
+        result = determine(root, {'after': verification_head()}, 'push')
+    else:
+        result = determine(root, event, event_name, release=full and event_name == 'pull_request')
+    if full:
+        with snapshot(root, result['head']) as tree:
+            coverage = select([], workspace(tree), force_all=True)
+        for key in ('repo', 'am', 'eg', 'web', 'am_packages', 'eg_packages'):
+            result[key] = coverage[key]
+        result['test_tracks'] = {key: result[key] for key in ('repo', 'am', 'eg', 'web')}
+        result['reasons'] = sorted(set(result['reasons']) | {'full-ci-event'})
+    # A Web consumer change can require the shared Rust test archive without
+    # changing Agent Manager's product test or image scope.
+    result['approval_contract'] = result['am'] or any(
+        path in APPROVAL_CONTRACT_INPUTS or path.startswith(APPROVAL_CONTRACT_DIRECTORIES)
+        for path in changed_paths(root, result['base'], result['head'])
+    )
     return result
 
 
@@ -124,10 +170,14 @@ def main():
     parser.add_argument('--root', type=Path, default=Path.cwd())
     parser.add_argument('--event', type=Path, default=os.environ.get('GITHUB_EVENT_PATH'))
     parser.add_argument('--event-name', default=os.environ.get('GITHUB_EVENT_NAME'))
+    parser.add_argument('--ci', action='store_true', help='enforce CI event and full coverage policy')
     args = parser.parse_args()
     try:
         event = json.loads(args.event.read_text()) if args.event else {}
-        result = determine(args.root.resolve(), event, args.event_name)
+        if args.ci:
+            result = determine_ci(args.root.resolve(), event, args.event_name, os.environ['GITHUB_REPOSITORY'])
+        else:
+            result = determine(args.root.resolve(), event, args.event_name)
     except (KeyError, TypeError, ValueError, subprocess.SubprocessError, OSError):
         # An image-analysis failure must never become a successful empty list.
         # Suppress subprocess output, which may contain arbitrary PR content.
@@ -136,7 +186,11 @@ def main():
     print(json.dumps(result, sort_keys=True))
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
-            for key in ('repo', 'am', 'eg', 'web', 'am_packages', 'eg_packages', 'test_tracks', 'deployables', 'base', 'head', 'reasons'):
+            keys = ('repo', 'am', 'eg', 'web', 'am_packages', 'eg_packages', 'test_tracks',
+                    'deployables', 'base', 'head', 'reasons')
+            if args.ci:
+                keys += ('approval_contract',)
+            for key in keys:
                 value = result[key] if isinstance(result[key], str) else json.dumps(result[key], separators=(',', ':'))
                 output.write(f"{key}={value}\n")
     return 0

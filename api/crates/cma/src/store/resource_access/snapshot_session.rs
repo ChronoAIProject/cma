@@ -1,5 +1,6 @@
 //! Hold one authorization snapshot without changing its validation or retry budget.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::resource_access::{
     ResourceAccessSnapshot, ResourceAccessStoreError, ResourceTarget,
 };
@@ -38,7 +39,7 @@ pub(super) async fn read(
             snapshot::read_with_concern(store, target, &mut session, snapshot_session).await;
         // Reads have no commit receipt to reconcile. Preserve the read result
         // if transaction cleanup fails; the driver still owns session cleanup.
-        if !snapshot_session && session.abort_transaction().await.is_err() {
+        if !snapshot_session && session.abort_guarded().await.is_err() {
             tracing::warn!(parent: None, "authorization read transaction cleanup failed");
         }
         match result {

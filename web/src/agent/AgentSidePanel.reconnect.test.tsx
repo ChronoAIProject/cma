@@ -168,3 +168,45 @@ it('retains desktop takeover through history loading and revokes it when the con
   expect(connections[0]!.viewOnly).toBe(true);
   view.unmount();
 });
+
+it('restarts the exhausted embedded desktop only on explicit Reconnect and returns to view-only', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, 'random').mockReturnValue(0);
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const sdk = createClient({ baseUrl: 'https://fixture.invalid' });
+  const discover = vi
+    .spyOn(sdk.agents, 'desktop')
+    .mockRejectedValue(new ApiError(503, 'Synthetic failure'));
+  const client = agentClient({ resourceViews: sdk });
+  const view = render(
+    <CmaClientProvider client={client}>
+      <AgentSidePanel
+        agentId="agt_1"
+        viewerId="owner"
+        shared={false}
+        panel="browser"
+        detail={{ ...AGENT_DETAIL, desktop: true }}
+        conversation={conversationFromTranscript({ agentId: 'agt_1', throughSeq: 0, turns: [] })}
+        onClose={vi.fn()}
+        onAccessChanged={vi.fn()}
+        publicationScope={new ArtifactPublicationScope()}
+      />
+    </CmaClientProvider>,
+  );
+  await act(() => vi.advanceTimersByTimeAsync(300_000));
+  expect(discover).toHaveBeenCalledTimes(14);
+  expect(screen.getByRole('region', { name: 'Machine desktop' })).toHaveTextContent(
+    'Could not reconnect automatically.',
+  );
+  expect(screen.getByRole('button', { name: 'Take control' })).toBeDisabled();
+  discover.mockResolvedValue({ websocket_url: '/api/v1/agents/agt_1/desktop/ws' });
+  fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+  await act(() => vi.advanceTimersByTimeAsync(999));
+  expect(discover).toHaveBeenCalledTimes(14);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(discover).toHaveBeenCalledTimes(15);
+  act(() => connections[0]!.dispatchEvent(new Event('connect')));
+  expect(screen.getByRole('button', { name: 'Take control' })).toBeEnabled();
+  expect(connections[0]!.viewOnly).toBe(true);
+  view.unmount();
+});

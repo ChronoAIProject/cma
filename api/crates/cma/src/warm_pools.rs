@@ -1,5 +1,5 @@
 //! Operator-owned native pool targets; Kubernetes observations never replace durable authority.
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use layer1_public::rest::admin::warm_pools::{
@@ -14,12 +14,15 @@ use layer3_adapter::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod candidate;
 mod current;
 mod defaults;
+mod released;
 mod retirement;
-mod startup;
+pub(crate) mod startup;
 mod supervision;
 mod telemetry;
+mod view;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PoolTarget {
@@ -46,49 +49,35 @@ pub(crate) struct PoolTarget {
     pub lease: Option<String>,
     pub lease_until: mongodb::bson::DateTime,
     pub reconcile_after: mongodb::bson::DateTime,
+    /// The operator's desired machine count, written by a resize of the
+    /// current machine plan and inherited by the next machine release.
+    /// Retirement zeroes `target_replicas` but keeps this record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_replicas: Option<OperatorReplicas>,
 }
 
-impl PoolTarget {
-    pub fn view(&self, live: Option<&NativePoolStatus>, available: bool) -> WarmPoolView {
-        let exact = live.filter(|status| self.binding.as_ref() == Some(&status.binding));
-        let observed = exact.is_some_and(|status| {
-            status.observed && status.desired_replicas == self.target_replicas
-        });
-        let ready = exact
-            .filter(|_| observed)
-            .map(|status| status.ready_replicas);
-        let status = if !available || self.error.is_some() {
-            "unavailable"
-        } else if self.applied_revision != self.revision || !observed {
-            "pending"
-        } else if self.target_replicas == 0 && ready == Some(0) {
-            "disabled"
-        } else if ready.is_some_and(|count| count >= self.target_replicas) {
-            "ready"
-        } else {
-            "pending"
-        };
-        WarmPoolView {
-            id: self.id.clone(),
-            revision: self.revision as u64,
-            image: self.plan.spec.image.uri.clone(),
-            config_sha256: self.plan.config_sha256.clone(),
-            cpu_millis: self.plan.spec.cpu_millis,
-            memory_mib: self.plan.spec.memory_mib,
-            target_replicas: self.target_replicas,
-            ready_replicas: ready,
-            observed,
-            status: status.into(),
-            resource_name: self.binding.as_ref().map(|binding| binding.name.clone()),
-            error: self.error.clone().or_else(|| {
-                (!available).then(|| "Native warm pool inventory is unavailable.".into())
-            }),
-        }
-    }
+/// One operator decision about machine capacity; `at` orders decisions
+/// across releases, including retired tombstones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct OperatorReplicas {
+    pub replicas: u32,
+    pub at: mongodb::bson::DateTime,
 }
 
 #[async_trait]
 pub(crate) trait PoolTargetStore: Send + Sync {
+    async fn candidate_protected(&self, _target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        Ok(false)
+    }
+    async fn begin_candidate_effect(&self, _target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        Ok(false)
+    }
+    async fn candidate_pending(&self, _target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        Ok(false)
+    }
+    async fn confirm_candidate_barrier(&self, _target: &PoolTarget) -> Result<(), WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
     async fn activate(&self, _id: &str) -> Result<(), WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
@@ -115,13 +104,27 @@ pub(crate) trait PoolTargetStore: Send + Sync {
     async fn list(&self) -> Result<Vec<PoolTarget>, WarmPoolError>;
     async fn find(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError>;
     async fn insert(&self, target: PoolTarget) -> Result<PoolTarget, WarmPoolError>;
+    /// `operator_choice` also records the count as the operator's desired
+    /// machine count, in the same fenced write.
     async fn resize(
         &self,
         id: &str,
         body: &ResizeWarmPoolBody,
+        operator_choice: bool,
     ) -> Result<PoolTarget, WarmPoolError>;
+    /// The newest recorded operator machine decision, retired targets included.
+    async fn latest_machine_operator_replicas(
+        &self,
+    ) -> Result<Option<OperatorReplicas>, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
     async fn claim(&self) -> Result<Option<PoolTarget>, WarmPoolError>;
     async fn claim_target(&self, _id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
+    /// Lease one target by id for retirement, including one already marked
+    /// retiring by an earlier deferred attempt. Never claims a retired target.
+    async fn claim_retirement(&self, _id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
     async fn bind(
@@ -135,37 +138,27 @@ pub(crate) trait PoolTargetStore: Send + Sync {
 /// Build metadata for the deployment-owned pinned CMA runtime, never a user image.
 /// Both cold allocation and administrated warm pools use this same contract.
 pub(crate) fn deployment_image(uri: String) -> RuntimeImage {
-    RuntimeImage {
-        uri,
-        labels: BTreeMap::from([
-            (
-                layer3_adapter::RUNTIME_CONTRACT_LABEL.into(),
-                layer3_adapter::RUNTIME_CONTRACT_VERSION.to_string(),
-            ),
-            (
-                layer3_adapter::runtime_bootstrap::RUNTIME_BOOTSTRAP_LABEL.into(),
-                "1".into(),
-            ),
-            (
-                layer3_adapter::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
-                "2".into(),
-            ),
-        ]),
-    }
+    layer3_adapter::released_image(uri)
 }
 
 const SYSTEM_ACTOR: &str = "cma-system";
+/// How long after the newest release older pools of the same kind wait before
+/// retiring, so rollout and bounded pre-selection work can settle. Startup
+/// readiness waits longer than this, because on a full node pool the new
+/// default can only become ready after older spare capacity drains.
+pub(crate) const RELEASE_SETTLE: Duration = Duration::from_secs(120);
 
 #[derive(Clone)]
 pub(crate) struct NativeWarmPools {
     store: Arc<dyn PoolTargetStore>,
     adapter: Arc<dyn SandboxAdapter>,
-    image: RuntimeImage,
+    released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
     home: Option<HomeVolumePolicy>,
     default_capacity: layer3_adapter::SandboxCapacity,
     default_target: u32,
-    machine: Option<(RuntimeImage, u32)>,
+    machine_target: u32,
     target_fencing: bool,
+    allow_empty_startup: bool,
 }
 
 impl NativeWarmPools {
@@ -178,15 +171,17 @@ impl NativeWarmPools {
         default_target: u32,
         machine: Option<(String, u32)>,
     ) -> Arc<Self> {
+        let (released, machine_target) = released::pinned(image, machine);
         Arc::new(Self {
             store,
             adapter,
-            image: deployment_image(image),
+            released,
             home,
             default_capacity,
             default_target,
-            machine: machine.map(|(image, target)| (deployment_image(image), target)),
+            machine_target,
             target_fencing: false,
+            allow_empty_startup: false,
         })
         .with_target_fencing(false)
     }
@@ -204,23 +199,22 @@ impl NativeWarmPools {
         let Some(target) = self.store.claim().await? else {
             return Ok(false);
         };
-        if target.retiring || !self.current_plan(&target)? {
+        if target.retiring {
             return self.retire_claimed(provider, target).await;
         }
-        reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing).await
-    }
-
-    fn default_config_sha256(&self) -> Option<String> {
-        default_config_sha256(
-            self.adapter.native_pools(),
-            &self.image,
-            self.home.as_ref(),
-            &self.default_capacity,
-        )
+        if !self.current_plan(&target)? {
+            if !self.store.candidate_protected(&target).await? {
+                return self.retire_claimed(provider, target).await;
+            }
+            return self.reconcile_candidate(provider, target).await;
+        }
+        reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing)
+            .await
+            .map(|_| true)
     }
 }
 
-fn default_config_sha256(
+pub(super) fn default_config_sha256(
     provider: Option<&dyn layer3_adapter::agent_sandbox::NativePoolControl>,
     image: &RuntimeImage,
     home: Option<&HomeVolumePolicy>,
@@ -228,6 +222,7 @@ fn default_config_sha256(
 ) -> Option<String> {
     provider?
         .plan(&NativePoolSpec {
+            cold_canary: false,
             image: image.clone(),
             cpu_millis: capacity.cpu_millis,
             memory_mib: capacity.memory_mib,
@@ -241,6 +236,8 @@ fn default_config_sha256(
 impl WarmPoolAdministration for NativeWarmPools {
     async fn list(&self, caller: &Caller) -> Result<WarmPoolList, WarmPoolError> {
         authorize(caller)?;
+        let released = self.released_images();
+        let default_config_sha256 = self.default_config_sha256(&released.agent);
         let targets = self.store.list().await?;
         let inventory = match self.adapter.native_pools() {
             Some(provider) if self.home.is_some() => {
@@ -263,11 +260,12 @@ impl WarmPoolAdministration for NativeWarmPools {
                     target.view(status, available)
                 })
                 .collect(),
-            default_image: self.image.uri.clone(),
+            default_image: released.agent.uri,
             default_cpu_millis: self.default_capacity.cpu_millis,
             default_memory_mib: self.default_capacity.memory_mib,
-            default_config_sha256: self.default_config_sha256(),
+            default_config_sha256,
             available,
+            machine_image: released.machine.map(|(image, _)| image.uri),
         })
     }
 
@@ -297,7 +295,8 @@ impl WarmPoolAdministration for NativeWarmPools {
             .ok_or(WarmPoolError::Unavailable)?;
         let plan = provider
             .plan(&NativePoolSpec {
-                image: self.image.clone(),
+                cold_canary: false,
+                image: self.released_images().agent,
                 cpu_millis: body.cpu_millis,
                 memory_mib: body.memory_mib,
                 home: self.home.clone().ok_or(WarmPoolError::Unavailable)?,
@@ -321,6 +320,7 @@ impl WarmPoolAdministration for NativeWarmPools {
             lease: None,
             lease_until: mongodb::bson::DateTime::from_millis(0),
             reconcile_after: mongodb::bson::DateTime::from_millis(0),
+            operator_replicas: None,
         };
         let target = replay(self.store.insert(target).await?, &body)?;
         Ok(target.view(None, true))
@@ -339,13 +339,21 @@ impl WarmPoolAdministration for NativeWarmPools {
         {
             return Err(WarmPoolError::Invalid);
         }
-        if body.target_replicas > 0 {
+        // Only a resize of the current machine plan is the operator's desired
+        // machine count; zeroing superseded capacity merely drains it.
+        let operator_choice = if body.target_replicas > 0 {
             let target = self.store.find(id).await?.ok_or(WarmPoolError::NotFound)?;
             if !self.current_plan(&target)? {
                 return Err(WarmPoolError::Conflict);
             }
-        }
-        let target = self.store.resize(id, &body).await?;
+            target.machine
+        } else {
+            match self.store.find(id).await? {
+                Some(target) => target.machine && matches!(self.current_plan(&target), Ok(true)),
+                None => false,
+            }
+        };
+        let target = self.store.resize(id, &body, operator_choice).await?;
         Ok(target.view(None, true))
     }
 }
@@ -376,6 +384,7 @@ fn default_target(plan: NativePoolConfiguration, requested: ConfigureWarmPoolBod
         lease: None,
         lease_until: mongodb::bson::DateTime::from_millis(0),
         reconcile_after: mongodb::bson::DateTime::from_millis(0),
+        operator_replicas: None,
     }
 }
 
@@ -403,7 +412,24 @@ async fn reconcile_one(
     let Some(target) = store.claim().await? else {
         return Ok(false);
     };
-    reconcile_claimed(store, provider, target, false).await
+    reconcile_claimed(store, provider, target, false)
+        .await
+        .map(|_| true)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PoolApply {
+    Settled,
+    ConfigurationDrift,
+}
+
+fn provider_apply_error(error: layer3_adapter::AdapterError) -> WarmPoolError {
+    match error {
+        layer3_adapter::AdapterError::NativePoolConfigurationDrift => {
+            WarmPoolError::ProviderConfigurationDrift
+        }
+        _ => WarmPoolError::Unavailable,
+    }
 }
 
 async fn reconcile_claimed(
@@ -411,7 +437,7 @@ async fn reconcile_claimed(
     provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
     mut target: PoolTarget,
     target_fencing: bool,
-) -> Result<bool, WarmPoolError> {
+) -> Result<PoolApply, WarmPoolError> {
     if target.retiring {
         return Err(WarmPoolError::Conflict);
     }
@@ -440,14 +466,18 @@ async fn reconcile_claimed(
         } else {
             provider.resize(binding, target.target_replicas).await
         }
-        .map_err(|_| WarmPoolError::Unavailable)?;
+        .map_err(provider_apply_error)?;
         Ok::<(), WarmPoolError>(())
     };
-    let success = matches!(
-        tokio::time::timeout(Duration::from_secs(30), result).await,
-        Ok(Ok(()))
-    );
+    let result = tokio::time::timeout(Duration::from_secs(30), result).await;
+    let success = matches!(result, Ok(Ok(())));
     store.finish(&target, success).await?;
     telemetry::applied(&target, success);
-    Ok(true)
+    Ok(
+        if matches!(result, Ok(Err(WarmPoolError::ProviderConfigurationDrift))) {
+            PoolApply::ConfigurationDrift
+        } else {
+            PoolApply::Settled
+        },
+    )
 }

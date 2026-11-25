@@ -11,8 +11,8 @@ use mongodb::{Collection, IndexModel};
 
 use super::agent_title_state::{initial_title_fields, preserve_title_fields, record_title_value};
 use super::sandbox_mongo::{
-    i64_field_matches, is_duplicate_key, record_bson, require_version, signed,
-    string_field_matches, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
+    i64_field_matches, record_bson, require_version, signed, string_field_matches,
+    MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 
 mod save;
@@ -192,6 +192,14 @@ pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError
     .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
     super::agent_log_segments::validate_identity(document, &agent)?;
     super::trigger_first_messages::hydrate(document, &mut agent)?;
+    if let Some(timeout) = &agent.conversation.turn_timeout {
+        timeout
+            .validate()
+            .map_err(|_| SandboxStoreError::Corrupt("invalid turn policy".into()))?;
+        if !timeout.binding().matches_incarnation(&agent) {
+            return Err(SandboxStoreError::Conflict);
+        }
+    }
     agent
         .validate_worktree_recoveries()
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
@@ -315,27 +323,31 @@ impl AgentStore for MongoSandboxStore {
         {
             return Err(SandboxStoreError::Duplicate);
         }
-        self.agents
-            .insert_one(agent_document(&agent)?)
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                if is_duplicate_key(&error) {
-                    SandboxStoreError::Duplicate
-                } else {
-                    SandboxStoreError::Unavailable(error.to_string())
-                }
-            })
+        super::native_retirement_action::insert_child(
+            self,
+            &self.agents,
+            &agent.sandbox_id,
+            agent_document(&agent)?,
+        )
+        .await
     }
 
     async fn get_agent(&self, id: &AgentId) -> Result<Option<Agent>, SandboxStoreError> {
-        self.agents
+        let agent = self
+            .agents
             .find_one(doc! { "_id": id.as_str() })
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
             .as_ref()
             .map(read_agent)
-            .transpose()
+            .transpose()?;
+        if let Some(agent) = &agent {
+            layer2_core::agent_ownership::receiver_diagnostics::observe_agent_sandbox(
+                &agent.id,
+                &agent.sandbox_id,
+            );
+        }
+        Ok(agent)
     }
 
     async fn save_agent(

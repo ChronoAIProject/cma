@@ -1,10 +1,38 @@
 import { ApiError } from '@cma/client';
+import type { AgentUpdateReason } from '../api/rest/agentUpdateProblem';
 import { readRetryDelay } from './transport/readRetry';
 
 export interface SettingsFailure {
-  readonly kind: 'invalid' | 'denied' | 'conflict' | 'retry';
+  readonly kind: 'invalid' | 'denied' | 'conflict' | 'unknown_conflict' | 'retry';
   readonly message: string;
   readonly retryAfterMs: number;
+}
+
+const recordedConflict = {
+  dispatch_in_progress:
+    'A dispatch was in progress when this update was refused. Wait for it to settle, then refresh before applying again.',
+  dispatch_recovery_required:
+    'A prior dispatch needed recovery when this update was refused. Refresh after it has been reconciled.',
+  stale_revision: 'Preferences changed before this update. Refresh preferences, then apply again.',
+  admission_conflict: 'The Agent changed during the update. Refresh before applying again.',
+  agent_not_idle:
+    'The Agent was not ready for this change. Wait until it is ready, then refresh before applying again.',
+} satisfies Partial<Record<AgentUpdateReason, string>>;
+
+function recordedConflictMessage(error: ApiError): string | undefined {
+  const reason = error.extensions.settings_update_reason;
+  if (error.code === 'agent_not_ready' && reason === 'agent_not_idle')
+    return recordedConflict.agent_not_idle;
+  if (error.code !== 'agent_operation_in_flight') return undefined;
+  switch (reason) {
+    case 'dispatch_in_progress':
+    case 'dispatch_recovery_required':
+    case 'stale_revision':
+    case 'admission_conflict':
+      return recordedConflict[reason];
+    default:
+      return undefined;
+  }
 }
 
 export function settingsFailure(error: unknown, reading = false): SettingsFailure {
@@ -37,13 +65,16 @@ export function settingsFailure(error: unknown, reading = false): SettingsFailur
       retryAfterMs,
       message: 'The update outcome is unconfirmed. Retry the same request to check it.',
     };
-  if (status === 409)
-    return {
-      kind: 'conflict',
-      retryAfterMs,
-      message:
-        'The Agent state changed or an update is in progress. Refresh the current settings, then apply your changes again.',
-    };
+  if (!reading && error instanceof ApiError && status === 409) {
+    const message = recordedConflictMessage(error);
+    return message
+      ? { kind: 'conflict', retryAfterMs, message }
+      : {
+          kind: 'unknown_conflict',
+          retryAfterMs,
+          message: 'The update outcome is unconfirmed. Refresh, then retry the same request.',
+        };
+  }
   if (status === 400 || status === 422)
     return {
       kind: 'invalid',
@@ -57,6 +88,18 @@ export function settingsFailure(error: unknown, reading = false): SettingsFailur
       message:
         'Too many requests. Your changes are kept. Retry the same request when the wait ends.',
     };
+  if (
+    !reading &&
+    status === 503 &&
+    error instanceof ApiError &&
+    error.code === 'agent_owner_unavailable'
+  )
+    return {
+      kind: 'retry',
+      retryAfterMs,
+      message:
+        'Agent Manager could not confirm the update with the server responsible for this Agent. Your changes are kept. Retry the same request when the connection recovers.',
+    };
   return {
     kind: 'retry',
     retryAfterMs,
@@ -68,16 +111,19 @@ export function settingsFailure(error: unknown, reading = false): SettingsFailur
 
 export function settingsWriteFailure(error: unknown, unresolved: boolean) {
   const failure = settingsFailure(error);
-  const rejected = failure.kind === 'invalid' || failure.kind === 'conflict';
-  // A refusal can precede command lookup; access can also fail after execution.
-  // Neither settles an earlier uncertain outcome.
+  // An endpoint's typed pre-write refusal is recorded under the exact key.
+  // Generic validation or access errors can be returned before receipt lookup.
+  const rejected = failure.kind === 'conflict' || (!unresolved && failure.kind === 'invalid');
   return {
     ...failure,
-    outcome: !unresolved && rejected ? ('rejected' as const) : ('unconfirmed' as const),
+    outcome: rejected ? ('rejected' as const) : ('unconfirmed' as const),
     refreshRequired:
-      failure.kind === 'denied' || failure.kind === 'conflict' || (unresolved && rejected),
+      failure.kind === 'denied' ||
+      failure.kind === 'conflict' ||
+      failure.kind === 'unknown_conflict' ||
+      (unresolved && failure.kind === 'invalid'),
     message:
-      unresolved && rejected
+      unresolved && failure.kind === 'invalid'
         ? 'This attempt was refused, but the earlier update is still unconfirmed. Refresh current settings, then retry the same request.'
         : failure.message,
   };

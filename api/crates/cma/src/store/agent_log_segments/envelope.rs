@@ -3,6 +3,7 @@ use mongodb::bson::{Bson, Document};
 
 use super::{corrupt, digest, FORMAT};
 
+/// Accepts only the Agent document schema versions this reader understands.
 pub(in crate::store) fn require_agent_version(document: &Document) -> Result<(), String> {
     match document.get("document_schema_version") {
         Some(Bson::Int64(1 | 2) | Bson::Int32(1 | 2)) => Ok(()),
@@ -20,6 +21,7 @@ pub(in crate::store) fn read_format(
         Some(Bson::Int32(v)) => i64::from(*v),
         _ => return Err(corrupt()),
     };
+    // Version 1 documents predate segmented logs and must not carry log fields.
     if version == 1 {
         if [
             "agent_log_format",
@@ -51,6 +53,7 @@ pub(in crate::store) fn read_format(
     Ok(Some((incarnation, revision)))
 }
 
+/// Rejects a segmented document whose log incarnation belongs to another Agent.
 pub(in crate::store) fn validate_identity(
     document: &Document,
     agent: &layer2_core::sandbox::Agent,

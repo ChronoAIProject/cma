@@ -105,6 +105,8 @@ impl Default for SandboxPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxServiceError {
+    #[error("account deletion is in progress")]
+    AccountDeletionInProgress,
     #[error("renewable Sandbox credential setup is required")]
     CredentialSetupRequired,
     #[error("required connections have not been verified")]
@@ -150,6 +152,7 @@ pub enum SandboxServiceError {
 impl SandboxServiceError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::AccountDeletionInProgress => "account_deletion_in_progress",
             Self::CredentialSetupRequired => "sandbox_credential_setup_required",
             Self::ConnectionsRequired { .. } => "connections_required",
             Self::Forbidden => "forbidden",
@@ -368,6 +371,7 @@ impl SandboxService {
             .store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: expected,
                 sandbox: Box::new(sandbox.clone()),
                 event_at: now,
@@ -435,6 +439,9 @@ pub(super) fn policy_error(error: StoreError) -> SandboxServiceError {
 
 pub(super) fn store_error(error: SandboxStoreError) -> SandboxServiceError {
     match error {
+        SandboxStoreError::AccountDeletionInProgress => {
+            SandboxServiceError::AccountDeletionInProgress
+        }
         SandboxStoreError::NotFound => SandboxServiceError::NotFound,
         SandboxStoreError::Duplicate => SandboxServiceError::NameConflict,
         SandboxStoreError::LimitReached { limit, live } => {

@@ -30,6 +30,7 @@ pub(super) async fn named_fixture(count: i64, database: Option<&str>, id: &str) 
     let db = client.database(&name);
     schema::migrate(&db).await.unwrap();
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;
     let (mut agent, mut head, mut state) = writer_projection::tests::opened();
     agent.id = layer2_core::AgentId(id.into());
     agent.creation_key = format!("manual:{id}");
@@ -169,6 +170,7 @@ impl Fixture {
             before: self.head.clone(),
             batch,
             plan,
+            active_proof: None,
             delta,
             evidence: Vec::new(),
             receipt,

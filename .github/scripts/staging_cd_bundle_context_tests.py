@@ -28,7 +28,7 @@ def item(payload, path=PATH, candidate=CANDIDATE, **changes):
 
 
 def catalog(candidate=CANDIDATE):
-    return {"schema": "cma-image-content-policy-v2", "scanner_version": "1.0.3", "gitleaks_version": "8.30.1",
+    return {"schema": "cma-image-content-policy-v2", "scanner_version": "1.0.4", "gitleaks_version": "8.30.1",
             "allowlist_sha256": "a" * 64, "gitleaks_rules_sha256": "b" * 64, "entries": [],
             "bundle_candidates": [{"component": "web", "asset_prefix": prefix, "chunk": CHUNK,
                                    "rule": RULE, "candidate_sha256": digest(candidate.encode()),

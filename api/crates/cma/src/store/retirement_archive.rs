@@ -6,6 +6,7 @@ use super::{
     sandboxes::read_sandbox,
 };
 use crate::retirement_archive::{Request, Result, REFUSED};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::{
     retirement_archive::{RetirementArchiveReceipt, RetirementArchiveRequirement},
     Sandbox, SandboxStatus,
@@ -22,9 +23,13 @@ mod completion;
 mod export;
 mod schema;
 pub(crate) use export::capture;
+#[cfg(test)]
+pub(crate) use schema::manifest_collections;
 pub(crate) use schema::{matches_current, schema_sha256, validate_manifest_census};
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(super) use tests::{prepare_source, verify_legal_consent_census};
 const ORIGINAL: &str = "retirement_archive_original_v1";
 const MANIFEST: &str = "retirement_archive_manifest_v1";
 const RESTORE: &str = "retirement_archive_restore_v1";
@@ -74,7 +79,7 @@ impl ArchiveStore {
         start_transaction(&mut session).await.map_err(|_| REFUSED)?;
         let result = self.admit_in(&mut session, request, bytes).await;
         if result.is_err() {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return result;
         }
         self.commit_or_reconcile(session, request, bytes, None)
@@ -244,6 +249,9 @@ impl ArchiveStore {
         mut next: Sandbox,
         mut fields: Document,
     ) -> Result<()> {
+        if current.contains_key("usage_capture_fence_v1") {
+            return Err(REFUSED);
+        }
         let revision = next.revision;
         next.revision = revision.checked_add(1).ok_or(REFUSED)?;
         next.updated_at = layer2_core::now_rfc3339();
@@ -280,6 +288,7 @@ impl ArchiveStore {
             super::sandbox_usage::UsageObservation::Lifecycle,
         )
         .await
+        .map(|_| ())
         .map_err(|_| REFUSED)
     }
     async fn commit_or_reconcile(

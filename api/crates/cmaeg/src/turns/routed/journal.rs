@@ -2,6 +2,7 @@ use super::{model::*, storage};
 use crate::{
     ingress::routing_store::{AdmittedPlan, StoredTarget},
     records::RecordClient,
+    turns::execution_receipt::ExecutionVerifiers,
 };
 use cmaeg_core::seal::MasterKeyRing;
 use std::{
@@ -11,8 +12,10 @@ use std::{
 
 #[derive(Clone)]
 pub struct Journal {
+    pub(super) start_measurement: Option<crate::telemetry::provider_start::Measurement>,
     pub(super) partitions: Option<crate::replicas::partition::Partitions>,
     pub(super) activity: Option<Arc<crate::activity::ActivityStore>>,
+    pub(super) execution_verifiers: Arc<ExecutionVerifiers>,
     pub(super) records: RecordClient,
     pub(super) keys: Arc<MasterKeyRing>,
     pub(super) clock: Arc<dyn Fn() -> i64 + Send + Sync>,
@@ -36,7 +39,9 @@ impl Journal {
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
             partitions: None,
+            start_measurement: None,
             activity: None,
+            execution_verifiers: Arc::default(),
             records: records.interactions(),
             keys,
             clock: Arc::new(|| {
@@ -289,7 +294,11 @@ impl Journal {
                 durable_cursor: *durable_cursor,
             },
         )
-        .await
+        .await?;
+        if let Some(measurement) = &self.start_measurement {
+            measurement.completed(&lease.state.root);
+        }
+        Ok(())
     }
 }
 
@@ -324,6 +333,14 @@ pub(super) fn validate(
             _ => return Err(ExecutionError::Corrupt),
         };
         if &checkpoint.response_id != response
+            || checkpoint
+                .execution_attribution
+                .as_ref()
+                .is_some_and(|attribution| {
+                    !checkpoint.terminal
+                        || !checkpoint.status.settled()
+                        || !attribution.matches(target.launch.provider.slug.as_str(), response)
+                })
             || [&checkpoint.frame_hash, &checkpoint.effect_hash]
                 .iter()
                 .any(|hash| hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()))

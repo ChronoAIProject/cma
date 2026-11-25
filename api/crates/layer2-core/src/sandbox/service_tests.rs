@@ -24,6 +24,8 @@ use super::service::{DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS, DEFAULT_RETENTION_G
 use super::*;
 use tokio::sync::Notify;
 
+#[path = "service_creation_tests.rs"]
+mod creation_tests;
 #[path = "service_credential_tests.rs"]
 mod credential_prerequisite_tests;
 #[path = "service_lifecycle_tests.rs"]
@@ -53,6 +55,7 @@ impl SandboxPolicySource for UnavailablePolicy {
 #[derive(Default)]
 struct RacingStore {
     inner: InMemorySandboxStore,
+    admitted_classes: Mutex<Vec<crate::sandbox::store::SandboxLimitClass>>,
     block_next_commit: AtomicBool,
     commit_entered: Notify,
     release_commit: Notify,
@@ -357,6 +360,10 @@ impl SandboxAdmissionStore for RacingStore {
         &self,
         admission: SandboxAdmission,
     ) -> Result<crate::sandbox::store::SandboxAdmissionResult, SandboxStoreError> {
+        self.admitted_classes
+            .lock()
+            .unwrap()
+            .push(admission.limit_class);
         self.inner.admit_sandbox(admission).await
     }
 }
@@ -839,208 +846,6 @@ async fn private_foreign_and_retired_profiles_are_hidden() {
             SandboxServiceError::ProfileNotFound
         );
     }
-}
-
-#[tokio::test]
-async fn create_uses_origin_specific_capabilities_and_limits() {
-    let profiles = Arc::new(InMemoryProfileStore::default());
-    let reference = publish(
-        &profiles,
-        profile(
-            "sbp_origin",
-            "owner",
-            "origin",
-            ProfileVisibility::Private,
-            false,
-        ),
-    )
-    .await;
-
-    let manual_store = Arc::new(InMemorySandboxStore::default());
-    let manual_service = SandboxService::new(
-        manual_store,
-        profiles.clone(),
-        policy(3, 1),
-        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
-    );
-    let manual = caller(
-        "owner",
-        [Capability::CreateSandbox, Capability::UseOwnSandboxes],
-    );
-    let mut rejected_trigger = request(reference.clone());
-    rejected_trigger.origin = SandboxOrigin::Trigger {
-        launch_id: "launch-rejected-public".into(),
-    };
-    assert_eq!(
-        manual_service
-            .create(&manual, rejected_trigger.clone())
-            .await
-            .unwrap_err(),
-        SandboxServiceError::InvalidOrigin
-    );
-    assert_eq!(
-        manual_service
-            .create_for_launch(
-                &manual,
-                Capability::CreateSandbox,
-                request(reference.clone()),
-            )
-            .await
-            .unwrap_err(),
-        SandboxServiceError::InvalidOrigin
-    );
-    assert_eq!(
-        manual_service
-            .create_for_launch(
-                &manual,
-                Capability::LaunchTriggers,
-                rejected_trigger.clone(),
-            )
-            .await
-            .unwrap_err(),
-        SandboxServiceError::Forbidden
-    );
-    assert_eq!(
-        manual_service
-            .create_for_launch(
-                &manual,
-                Capability::UseOwnSandboxes,
-                rejected_trigger.clone(),
-            )
-            .await
-            .unwrap_err(),
-        SandboxServiceError::Forbidden
-    );
-    rejected_trigger.origin = SandboxOrigin::Trigger {
-        launch_id: "launch\ninvalid".into(),
-    };
-    assert_eq!(
-        manual_service
-            .create_for_launch(&manual, Capability::CreateSandbox, rejected_trigger.clone(),)
-            .await
-            .unwrap_err(),
-        SandboxServiceError::InvalidOrigin
-    );
-    assert_eq!(
-        manual_service
-            .create_for_launch(
-                &caller("owner", []),
-                Capability::LaunchTriggers,
-                rejected_trigger,
-            )
-            .await
-            .unwrap_err(),
-        SandboxServiceError::Forbidden
-    );
-    for _ in 0..2 {
-        manual_service
-            .create(&manual, request(reference.clone()))
-            .await
-            .unwrap();
-    }
-    let mut trigger_request = request(reference.clone());
-    trigger_request.origin = SandboxOrigin::Trigger {
-        launch_id: "launch-owner".into(),
-    };
-    let owner_launch = manual_service
-        .create_for_launch(&manual, Capability::CreateSandbox, trigger_request.clone())
-        .await
-        .unwrap();
-    assert_eq!(
-        manual_service
-            .create_for_launch(&manual, Capability::CreateSandbox, trigger_request)
-            .await
-            .unwrap(),
-        owner_launch
-    );
-    assert_eq!(
-        manual_service
-            .create(&manual, request(reference.clone()))
-            .await
-            .unwrap_err(),
-        SandboxServiceError::SandboxLimitReached { limit: 3, live: 3 }
-    );
-    let visitor_store = Arc::new(InMemorySandboxStore::default());
-    let visitor_service = SandboxService::new(
-        visitor_store,
-        profiles.clone(),
-        policy(3, 1),
-        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
-    );
-    let launcher = caller("owner", [Capability::LaunchTriggers]);
-    let mut trigger_request = request(reference.clone());
-    trigger_request.origin = SandboxOrigin::Trigger {
-        launch_id: "launch-1".into(),
-    };
-    let visitor_launch = visitor_service
-        .create_for_launch(
-            &launcher,
-            Capability::LaunchTriggers,
-            trigger_request.clone(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        visitor_service
-            .create_for_launch(
-                &launcher,
-                Capability::LaunchTriggers,
-                trigger_request.clone(),
-            )
-            .await
-            .unwrap(),
-        visitor_launch
-    );
-    trigger_request.origin = SandboxOrigin::Trigger {
-        launch_id: "launch-2".into(),
-    };
-    assert_eq!(
-        visitor_service
-            .create_for_launch(&launcher, Capability::LaunchTriggers, trigger_request)
-            .await
-            .unwrap_err(),
-        SandboxServiceError::SandboxLimitReached { limit: 1, live: 1 }
-    );
-    assert_eq!(
-        visitor_service
-            .create(&launcher, request(reference.clone()))
-            .await
-            .unwrap_err(),
-        SandboxServiceError::Forbidden
-    );
-
-    let dual_service = SandboxService::new(
-        Arc::new(InMemorySandboxStore::default()),
-        profiles,
-        policy(2, 1),
-        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
-    );
-    let dual = caller(
-        "owner",
-        [Capability::CreateSandbox, Capability::LaunchTriggers],
-    );
-    let launch = |launch_id: &str| {
-        let mut create = request(reference.clone());
-        create.origin = SandboxOrigin::Trigger {
-            launch_id: launch_id.into(),
-        };
-        create
-    };
-    dual_service
-        .create_for_launch(&dual, Capability::LaunchTriggers, launch("launch-dual-1"))
-        .await
-        .unwrap();
-    assert_eq!(
-        dual_service
-            .create_for_launch(&dual, Capability::LaunchTriggers, launch("launch-dual-2"))
-            .await
-            .unwrap_err(),
-        SandboxServiceError::SandboxLimitReached { limit: 1, live: 1 }
-    );
-    dual_service
-        .create_for_launch(&dual, Capability::CreateSandbox, launch("launch-dual-2"))
-        .await
-        .unwrap();
 }
 
 #[tokio::test]
@@ -1956,6 +1761,7 @@ async fn lease_takeover_fences_a_stale_worker_commit() {
             .commit(
                 crate::sandbox::store::SandboxTransaction::SaveSandboxAndAppend {
                     command_revival: None,
+                    released_runtime: None,
                     expected_revision: stale_revision,
                     sandbox: Box::new(first),
                     event_at: LATER.into(),

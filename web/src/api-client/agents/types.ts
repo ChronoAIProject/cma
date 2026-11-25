@@ -1,4 +1,5 @@
 import { retainedOutputAvailability } from '../agents/retained-output.js';
+import { taskAcceptance } from '../task-acceptance.js';
 import {
   agentStatus,
   failure,
@@ -82,7 +83,12 @@ export const agentSandbox = object({
   id: text,
   name: text,
   status: sandboxStatus,
-  profile: instanceProfileReference,
+  profile: object({
+    id: text,
+    revision: positiveInteger,
+    digest: text,
+    readable: optional(boolean),
+  }),
 });
 export type AgentSandbox = Output<typeof agentSandbox>;
 export const agentRuntimeMetadata = object({
@@ -113,6 +119,7 @@ export const agentSummary = object({
 });
 export type AgentSummary = Output<typeof agentSummary>;
 export const agent = object({
+  task_acceptance: optional(taskAcceptance),
   callback_url: optional(nullable(text)),
   runtime_metadata: optional(agentRuntimeMetadata),
   owner_title: optional(text),
@@ -131,6 +138,7 @@ export const agent = object({
   first_message: optional(firstMessageState),
   failure: optional(failure),
   stop_reason: optional(text),
+  restart_available: optional(boolean),
   created_at: text,
   updated_at: text,
   ready_at: optional(text),

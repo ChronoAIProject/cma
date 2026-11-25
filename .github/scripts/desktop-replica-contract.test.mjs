@@ -19,8 +19,8 @@ selected(inventory, 'layer4-runtime', [child])
 print(json.dumps({'parents': parents, 'child': child}))
 `, new URL('desktop-replica-contract.py', import.meta.url).pathname], {encoding: 'utf8'});
   const {parents, child} = JSON.parse(result);
-  assert.equal(parents.length, 4);
-  assert.equal(new Set(parents).size, 4);
+  assert.equal(parents.length, 5);
+  assert.equal(new Set(parents).size, 5);
   assert.equal(child, 'link::desktop::tests::child_fixture::desktop_receiver_child');
 });
 
@@ -45,4 +45,20 @@ for fault in ['missing', 'extra', 'unignored', 'duplicate', 'relative', 'absent'
 print('7 refused')
 `, new URL('desktop-replica-contract.py', import.meta.url).pathname], {encoding: 'utf8'});
   assert.equal(result.trim(), '7 refused');
+});
+
+import {fixture, measurementOutput} from './desktop-replica-fixture.test-helpers.mjs';
+
+test('a collected failed public sample cannot produce a qualification success', () => {
+  const output = measurementOutput('one', false, ({samples}) => { samples[7].outcome = 'attempt_deadline'; });
+  const f = fixture({output});
+  try {
+    const result = f.run();
+    assert.notEqual(result.status, 0, `failed sample was accepted: ${result.stdout}\n${result.stderr}`);
+    assert.match(f.read('contracts.log'), /attempt_deadline/);
+    const receipt = JSON.parse(f.read('receipt.json'));
+    assert.equal(receipt.first_attempt_exit_code, 0);
+    assert.equal(receipt.collection, 'completed');
+    assert.match(receipt.errors.join(' '), /non-ok samples/);
+  } finally { f.close(); }
 });

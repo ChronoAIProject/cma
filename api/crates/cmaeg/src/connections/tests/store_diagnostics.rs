@@ -37,6 +37,7 @@ pub(super) async fn telegram(State(peer): State<Arc<Peer>>) -> Response {
 pub(super) async fn creator(headers: HeaderMap) -> Response {
     let (subject, kind) = match headers.get("authorization").and_then(|v| v.to_str().ok()) {
         Some("Bearer fixture-person-bearer") => ("fixture-owner-private", "person"),
+        Some("Bearer fixture-alice-bearer") => ("alice", "person"),
         Some("Bearer fixture-organization-bearer") => ("fixture-owner-private", "org"),
         Some("Bearer fixture-foreign-bearer") => ("fixture-other-owner", "person"),
         _ => return StatusCode::UNAUTHORIZED.into_response(),
@@ -381,4 +382,44 @@ async fn mongo_driver_failure_uses_actual_backend_without_legacy_fallback() {
     assert_eq!(fixture.peer.auth_calls.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.peer.telegram_calls.load(Ordering::SeqCst), 0);
     client.shutdown().await;
+}
+
+#[tokio::test]
+async fn another_stores_records_in_the_connection_kind_do_not_fail_the_list() {
+    let fixture = Fixture::new().await;
+    let foreign = ready(&fixture).await;
+    let kept = ready(&fixture).await;
+    // Discord inbox, reaction and fence state share this record kind and owner,
+    // sealed the same way but without the connection store's tag.
+    let blob = STANDARD.encode(
+        cmaeg_core::seal::seal_connection(
+            &fixture.keys,
+            &foreign.id,
+            json!({"inbox": {"message_id": "m1"}, "retained_until": 1})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap(),
+    );
+    fixture
+        .peer
+        .rows
+        .lock()
+        .unwrap()
+        .get_mut(&foreign.id)
+        .unwrap()
+        .blob = blob;
+    let (status, body, logs) = list_response(&fixture, owner("fixture-owner-private", false)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let refs = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["connection_ref"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(refs, vec![kept.id.clone()]);
+    assert!(
+        logs.events(&fixture).is_empty(),
+        "foreign records are not decode failures"
+    );
 }
