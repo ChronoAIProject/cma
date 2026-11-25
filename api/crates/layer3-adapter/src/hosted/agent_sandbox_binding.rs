@@ -31,6 +31,28 @@ impl Assignment {
 }
 
 impl AgentSandboxBackend {
+    pub(super) async fn bind(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        if let Some(until) = request.funded_until {
+            self.client
+                .set_runtime_deadline(handle, request, until)
+                .await?;
+        }
+        let mut timing = crate::agent_sandbox::provision_timing::ProvisionTiming::new();
+        let pod = self.client.wait_ready_for_create(handle).await?;
+        timing.completed("wait_ready");
+        if let Some(until) = request.funded_until {
+            // Readiness can consume the remaining window; never bind expired work.
+            crate::agent_sandbox::funding::deadline(until)?;
+        }
+        let result = self.assign_and_bind(handle, &pod, request).await;
+        timing.completed("assign_and_bind");
+        result
+    }
+
     pub(super) fn acknowledged_assignment(
         &self,
         handle: &RuntimeHandle,
@@ -47,6 +69,30 @@ impl AgentSandboxBackend {
     pub(super) fn forget_assignment(&self, handle: &RuntimeHandle) {
         self.assignments.lock().unwrap().remove(handle);
         self.startup_breaker.reset(handle);
+    }
+
+    /// Adopts a native VCT runtime from its persisted home attachment rather
+    /// than rediscovering that home through Kubernetes reads.
+    pub(super) async fn adopt_persisted_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        let object = timed(
+            Stage::NativeIdentity,
+            self.client
+                .validate_native_request_with_home(handle, request, home),
+        )
+        .await?;
+        self.bind_adopted(handle, request, &object).await?;
+        // Binding may wait or deliver bootstrap. Its earlier observation cannot
+        // authorize the returned runtime after either boundary completes.
+        timed(
+            Stage::NativeIdentity,
+            self.refreshed_adoption_observation(handle, request, Some(home)),
+        )
+        .await
     }
 
     pub(super) async fn bind_adopted(

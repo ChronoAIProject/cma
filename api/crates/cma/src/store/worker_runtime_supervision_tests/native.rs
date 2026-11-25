@@ -92,7 +92,8 @@ impl Native {
             exchange(RequestFrame::Credential(CredentialFrame {
                 operation_id: "proof-install".into(),
                 value: RuntimeCredential::new(format!("local-proof-{}", uuid::Uuid::new_v4())),
-                custody_generation: Some(1)
+                custody_generation: Some(1),
+                github_route: None,
             }))
             .await
             .unwrap(),

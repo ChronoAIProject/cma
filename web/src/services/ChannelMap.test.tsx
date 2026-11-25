@@ -212,6 +212,24 @@ it('retains targeted consumer test outcomes when switching nodes without duplica
     '/api/event-gateway/v1/channels/channel/consumers/reviewer/test',
   );
 });
+it('shows a completed NyxBot test separately from the provider response', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ first_text: 'nyxbot', accepted_after_ms: 42 })),
+      ),
+  );
+  render(<ChannelNodeTests channelId="channel" selection={{ kind: 'channel' }} denied={vi.fn()} />);
+  await userEvent.click(screen.getByRole('button', { name: 'Send test event' }));
+  const status = await screen.findByRole('status');
+  expect(within(status).getByText('Test turn completed')).toBeVisible();
+  expect(within(status).getByText('Accepted after 42 ms.')).toBeVisible();
+  expect(within(status).getByText('Provider response')).toBeVisible();
+  expect(within(status).getByText('nyxbot')).toBeVisible();
+});
+
 it('keeps lost outcomes unknown and reports denied tests without automatic retries', async () => {
   const fetcher = vi
     .fn()

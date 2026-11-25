@@ -11,6 +11,20 @@ use cmaeg_core::{
     ValidationError,
 };
 
+pub(crate) const PENDING_DETAIL: &str = "channel_creation_pending: channel setup is incomplete. Complete the original channel creation request with its original record ID and settings, then refresh before editing producers or sending events.";
+
+pub(super) fn require_ready(definition: &ChannelDefinition) -> Result<(), ManagementError> {
+    if definition
+        .creation
+        .as_ref()
+        .is_some_and(|creation| !creation.ready)
+    {
+        tracing::info!("Channel edit refused while original creation is incomplete");
+        return Err(ManagementError::CreationPending);
+    }
+    Ok(())
+}
+
 pub async fn create(
     state: &ManagementState,
     creator: &Creator,
@@ -48,6 +62,14 @@ pub async fn create(
                 state.write_flags(),
             )
             .map_err(ManagementError::Invalid)?;
+            // Nothing is sent for an unknown provider, so its refusal must not
+            // leave a reserved channel behind (#3068).
+            for consumer in definition.consumers() {
+                state
+                    .providers
+                    .require_allowlisted(&consumer.provider.slug)
+                    .map_err(ManagementError::Provider)?;
+            }
             super::github_sources::validate(state, None, &definition).await?;
             super::custom_execution::validate_providers(&state.providers, &definition)?;
             super::custom_execution::validate_media(state, None, &definition)?;

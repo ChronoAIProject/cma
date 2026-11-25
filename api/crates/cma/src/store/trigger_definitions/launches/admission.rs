@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::trigger_domain::{
     Launch, LaunchAdmission, LaunchAdmissionPolicy, LaunchAdmissionResult, LaunchEvent,
     LaunchState, LaunchStoreError,
@@ -87,24 +88,24 @@ pub(super) async fn admit(
         .await
         {
             Ok(Attempt::Existing(existing)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return retried_result(attempt, replay(*existing, &launch));
             }
             Ok(Attempt::Created(receipt)) => *receipt,
             Err(AttemptError::Retry(reason)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(reason.into());
                 continue;
             }
             Err(AttemptError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(AttemptError::Driver(error))
                 if is_transient(&error) || is_duplicate_key(&error) =>
             {
                 let duplicate = is_duplicate_key(&error);
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if duplicate {
                     if let Some(result) = classify_duplicate(store, &launch).await? {
                         return retried_result(attempt, result);
@@ -114,7 +115,7 @@ pub(super) async fn admit(
                 continue;
             }
             Err(AttemptError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(unavailable(error));
             }
         };

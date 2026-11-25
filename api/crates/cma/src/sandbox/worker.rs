@@ -23,7 +23,7 @@ mod execute;
 mod home;
 mod initial_runtime;
 mod install_failure;
-mod lifecycle;
+pub(super) mod lifecycle;
 mod provision_timing;
 mod provisioning;
 mod retained_retirement;
@@ -102,11 +102,15 @@ pub(crate) struct SandboxWorkerConfig {
     pub renewable_work: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
+    pub reopen_output_refusal_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
+    /// Fixed default for fixtures composed without a released authority.
     pub runtime_version: String,
+    /// The process's released default for new provisioning, when composed.
+    pub released: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
     pub lease_duration: Duration,
     pub retry_delay: Duration,
     pub policy: Arc<dyn SandboxPolicySource>,
@@ -135,10 +139,12 @@ impl SandboxWorkerConfig {
             home_policy: None,
             work_retry_policy_enabled: false,
             native_create_retry_enabled: false,
+            reopen_output_refusal_enabled: false,
             execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
             runtime_version: runtime_version.into(),
+            released: None,
             lease_duration: DEFAULT_LEASE,
             retry_delay: DEFAULT_RETRY,
             policy,
@@ -167,6 +173,45 @@ impl SandboxWorkerConfig {
         self
     }
 
+    /// Share the process's released-default authority instead of a fixed pin.
+    pub(crate) fn with_released_runtime(
+        mut self,
+        released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+    ) -> Self {
+        self.released = Some(released);
+        self
+    }
+
+    /// One release for an operation, when this worker has a released authority.
+    pub(crate) fn release(&self) -> Option<layer3_adapter::ReleasedRuntime> {
+        self.released.as_ref().map(|released| released.snapshot())
+    }
+
+    /// One release for a provisioning: the snapshot that renders it and the
+    /// version recorded for `spec`, which keeps any image it already names.
+    pub(crate) fn release_for(
+        &self,
+        spec: &layer3_adapter::SandboxSpec,
+    ) -> (Option<layer3_adapter::ReleasedRuntime>, String) {
+        let released = self.release();
+        let version = spec
+            .runtime_image
+            .clone()
+            .unwrap_or_else(|| self.default_version(released.as_ref()));
+        (released, version)
+    }
+
+    /// The agent-lane default named by `release`, or the fixed fixture default.
+    pub(crate) fn default_version(
+        &self,
+        release: Option<&layer3_adapter::ReleasedRuntime>,
+    ) -> String {
+        release.map_or_else(
+            || self.runtime_version.clone(),
+            |released| released.agent.clone(),
+        )
+    }
+
     pub fn with_home_policy(mut self, policy: Option<layer3_adapter::HomeVolumePolicy>) -> Self {
         self.home_policy = policy;
         self
@@ -189,7 +234,7 @@ pub(crate) struct SandboxWorker {
     funding: Arc<dyn SandboxFundingAdapter>,
     reopen_relay: std::sync::OnceLock<std::sync::Weak<crate::agent_manager::relay::Relay>>,
     reopen_agents: std::sync::OnceLock<Arc<dyn layer2_core::sandbox::store::AgentStore>>,
-    reopen_gate: tokio::sync::Mutex<()>,
+    reopen_gates: std::sync::Mutex<lifecycle::ReopenGates>,
     pending_reopens: std::sync::Mutex<
         std::collections::BTreeMap<layer2_core::AgentId, lifecycle::PendingReopen>,
     >,
@@ -216,7 +261,7 @@ impl SandboxWorker {
             funding,
             reopen_relay: std::sync::OnceLock::new(),
             reopen_agents: std::sync::OnceLock::new(),
-            reopen_gate: tokio::sync::Mutex::new(()),
+            reopen_gates: std::sync::Mutex::default(),
             pending_reopens: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         })
     }
@@ -336,6 +381,16 @@ impl SandboxWorker {
             }
         }
         Ok(true)
+    }
+
+    #[cfg(test)]
+    pub(super) async fn resume_claim_for_test(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        layer2_core::agent_ownership::transport_observation_scope(self.run_claimed(sandbox, now, 0))
+            .await
     }
 
     /// A finished attempt must not leave its long capture lease blocking a retry

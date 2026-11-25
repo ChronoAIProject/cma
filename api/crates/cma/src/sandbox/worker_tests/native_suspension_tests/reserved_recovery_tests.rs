@@ -87,6 +87,7 @@ async fn reserved_provider_generation_recovers_same_home_after_lost_suspend_and_
             snapshot,
             proof: proof.clone(),
             target_runtime_version: TARGET.into(),
+            released_runtime: None,
             automatic: false,
             requested_at: rfc3339_at(now),
         })

@@ -115,6 +115,7 @@ pub(super) fn retired_sandbox(id: &str) -> Sandbox {
 pub(super) fn credential(sandbox_id: &str, plaintext: &str) -> CredentialMaterial {
     CredentialMaterial {
         source: Default::default(),
+        github_route: None,
         sandbox_id: SandboxId(sandbox_id.into()),
         owner: SubjectId("owner".into()),
         authority: SandboxCredentialAuthority {
@@ -129,7 +130,7 @@ pub(super) fn credential(sandbox_id: &str, plaintext: &str) -> CredentialMateria
     }
 }
 
-pub(super) fn encryption_key() -> AuthEncryptionKey {
+pub(in crate::store) fn encryption_key() -> AuthEncryptionKey {
     AuthEncryptionKey::from_base64("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
         .expect("test encryption key")
 }
@@ -216,6 +217,7 @@ pub(super) fn worktree_and_agent(sandbox_id: &SandboxId) -> (Worktree, Agent) {
         ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),
@@ -285,7 +287,7 @@ pub(super) fn workspace_admission(workspace: Workspace) -> WorkspaceAdmission {
     }
 }
 
-pub(super) fn ready_workspace(parent: &Sandbox, id: &str, name: &str) -> Workspace {
+pub(in crate::store) fn ready_workspace(parent: &Sandbox, id: &str, name: &str) -> Workspace {
     let mut workspace = workspace(parent, id, name);
     workspace.resolved_commit = Some("a".repeat(40));
     workspace.status = WorkspaceStatus::Ready;
@@ -423,7 +425,10 @@ pub(super) async fn replace_worktree_fixture(store: &MongoSandboxStore, worktree
     assert_eq!(result.matched_count, 1);
 }
 
-pub(super) async fn ready_conversation_fixture(store: &MongoSandboxStore, suffix: &str) -> Agent {
+pub(in crate::store) async fn ready_conversation_fixture(
+    store: &MongoSandboxStore,
+    suffix: &str,
+) -> Agent {
     let (_, mut worktree, claimed) = claimed_agent_work_fixture(store, suffix).await;
     let conversation_id = format!("conversation-{suffix}");
     let claimed = ready_publication_claim(claimed, &conversation_id);

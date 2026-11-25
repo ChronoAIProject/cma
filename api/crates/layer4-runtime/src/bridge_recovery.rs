@@ -68,8 +68,11 @@ impl Bridge {
         let observed = observation.lock().await;
         if observed.pending_output
             || observed.revision != *revision
-            || self.retained_output.recovery_boundary().await.as_ref()
-                != Some(&proof.confirmation.output)
+            || self
+                .retained_output
+                .recovery_evidence()
+                .await
+                .is_none_or(|evidence| evidence.boundary != proof.confirmation.output)
         {
             tracing::debug!("capacity recovery proof changed before attachment");
             return false;
@@ -113,9 +116,10 @@ impl Bridge {
             .ok_or(CapacityRecoveryError::StateUnconfirmed)?;
         let output = self
             .retained_output
-            .recovery_boundary()
+            .recovery_evidence()
             .await
-            .ok_or(CapacityRecoveryError::OutputUnconfirmed)?;
+            .ok_or(CapacityRecoveryError::OutputUnconfirmed)?
+            .boundary;
         let confirmation = CapacityRecoveryConfirmation {
             request: request.clone(),
             native_state,

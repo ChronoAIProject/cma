@@ -55,7 +55,7 @@ const document = (letter: string, title: string): DocumentView => ({
 const change = (value: string) =>
   fireEvent.change(screen.getByRole('searchbox'), { target: { value } });
 const mount = (api: DocumentsClient) =>
-  render(<DocumentRegistry client={api} canCreate onNavigate={vi.fn()} />);
+  render(<DocumentRegistry client={api} viewer="owner" canCreate onNavigate={vi.fn()} />);
 
 for (const populated of [false, true]) {
   it.each(scopes)(

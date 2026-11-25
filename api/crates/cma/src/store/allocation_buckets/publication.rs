@@ -106,44 +106,8 @@ impl ReportingStore {
                 .map_err(unavailable)?
             {
                 let old = DayBucket::read(&existing)?;
-                if old.owner != bucket.owner
-                    || old.created_at != bucket.created_at
-                    || old.tracking_started_at != bucket.tracking_started_at
-                    || old.revision > bucket.revision
-                    || old.last_observed_at > bucket.last_observed_at
-                    || old.source_seq > bucket.source_seq
-                    || old.source_revision > bucket.source_revision
-                {
-                    return Err(MetricsError::Unavailable);
-                }
-                let baseline_matches =
-                    old.baseline_matches(bucket.revision, bucket.complete_lifecycle)?;
-                if baseline_matches && old.total.range.to > bucket.total.range.to {
-                    // A concurrent lane has already prepared more coverage.
-                    // Keep it; the reader still verifies its captured revision.
+                if !old.may_replace(bucket, &existing, &document)? {
                     continue;
-                }
-                if old.revision == bucket.revision
-                    && (old.source_seq != bucket.source_seq
-                        || old.source_revision != bucket.source_revision
-                        || old.allocation != bucket.allocation
-                        || old.last_observed_at != bucket.last_observed_at
-                        || (old.total.range == bucket.total.range
-                            && existing.get("content_sha256") != document.get("content_sha256")))
-                {
-                    return Err(MetricsError::Unavailable);
-                }
-                if old.revision == bucket.revision
-                    && old
-                        .boundary
-                        .as_ref()
-                        .zip(bucket.boundary.as_ref())
-                        .is_some_and(|(prior, next)| {
-                            prior.queried_to > next.queried_to
-                                || (prior.queried_to == next.queried_to && prior != next)
-                        })
-                {
-                    return Err(MetricsError::Unavailable);
                 }
             }
             document.insert("publication_lane", lease.lane.key());

@@ -16,7 +16,7 @@ use super::work_tests::{claim_request, live_request};
 use super::*;
 
 #[path = "resource_execution_tests.rs"]
-mod resource_execution;
+pub(in crate::store::sandbox_mongo_integration_tests) mod resource_execution;
 
 #[path = "capacity_execution_tests.rs"]
 mod capacity_execution;
@@ -41,12 +41,15 @@ mod bounded_fixtures;
 mod bounded_message_tests;
 mod bounded_read_proof_tests;
 mod bounded_receipt_tests;
+mod cancel_wake_tests;
 mod fleet_activation_tests;
 mod legacy_session_ceilings_tests;
 mod operator_stop_execution_tests;
 mod ownership_tests;
 mod session_ceilings_tests;
+mod stale_turn_tests;
 mod supervision_tests;
+mod turn_timeout_tests;
 
 struct Authority(Mutex<Result<Caller, CommandAuthorizationError>>);
 #[async_trait::async_trait]
@@ -211,6 +214,37 @@ async fn composed_with_input_history(
         (store, agent)
     };
     let store = Arc::new(store);
+    let (execution, authority, sends) =
+        command_execution(&store, &agent, credentials, input.map(|(sender, _)| sender));
+    (store, agent, parent, execution, authority, sends)
+}
+
+pub(in crate::store) fn fixture_command_execution(
+    store: &Arc<MongoSandboxStore>,
+    agent: &Agent,
+) -> (
+    Arc<crate::commands::ResourceCommandExecution>,
+    Arc<AtomicUsize>,
+) {
+    let (execution, _, sends) = command_execution(
+        store,
+        agent,
+        Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+        None,
+    );
+    (execution, sends)
+}
+
+fn command_execution(
+    store: &Arc<MongoSandboxStore>,
+    agent: &Agent,
+    credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    input: Option<ConversationInputSender>,
+) -> (
+    Arc<crate::commands::ResourceCommandExecution>,
+    Arc<Authority>,
+    Arc<AtomicUsize>,
+) {
     let caller = Caller::new(
         agent.owner.clone(),
         Authorization::new([Capability::UseOwnSandboxes]),
@@ -218,7 +252,6 @@ async fn composed_with_input_history(
     let authority = Arc::new(Authority(Mutex::new(Ok(caller))));
     let sends = Arc::new(AtomicUsize::new(0));
     let sent = sends.clone();
-    let input = input.map(|(sender, _)| sender);
     let runtime = Arc::new(Runtime(ConversationInputSender::spawn(4, move |message| {
         sent.fetch_add(1, Ordering::SeqCst);
         let input = input.clone();
@@ -256,7 +289,7 @@ async fn composed_with_input_history(
             .with_connections(credentials),
         context,
     });
-    (store, agent, parent, execution, authority, sends)
+    (execution, authority, sends)
 }
 
 #[tokio::test]
@@ -439,6 +472,9 @@ async fn replaced_control_turn_has_typed_refusal_before_runtime_or_lifecycle_wor
 mod binding_execution;
 
 mod operation_lookup_tests;
+
+#[path = "runtime_loss_budget_tests.rs"]
+mod runtime_loss_budget;
 
 #[path = "budget_execution_tests.rs"]
 mod budget_execution;

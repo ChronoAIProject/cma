@@ -1,0 +1,8 @@
+CMA
+Copyright 2026 ChronoAIProject and contributors.
+
+This source release is distributed under the Apache License, Version 2.0.
+Third-party components retain their own licenses and notices. The reproducible
+source inventory under .github/scripts/license-inventory/ identifies dependency
+metadata and potential notice obligations; it does not replace the exact license
+texts required for a selected distribution.

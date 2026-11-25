@@ -19,6 +19,7 @@ const LEASE_END: &str = "2026-09-05T00:01:00Z";
 mod capacity_tests;
 mod prepared_open_ready_tests;
 mod prepared_pair_tests;
+mod process_cleanup_tests;
 mod retired_runtime_tests;
 mod sign_in_tests;
 mod startup_failure_tests;
@@ -438,6 +439,64 @@ fn startup_failure_preserves_debt_and_requires_matching_failure_evidence() {
 }
 
 #[test]
+fn owner_stop_settlement_interrupts_only_the_captured_turn() {
+    let (mut current, worktree) = claimed(
+        AgentWorkStep::PublishStopped,
+        AgentStatus::Working,
+        WorktreeStatus::Ready,
+    );
+    current.requested_stop_reason = Some(AgentStopReason::Owner);
+    add_startup_receipts(&mut current);
+    current.conversation.active_turn = Some(2);
+    current
+        .work
+        .receipts
+        .push(receipt(&current, AgentWorkStep::CloseProcess));
+
+    let mut stopped = current.clone();
+    let interrupted = stopped.settle_owner_stop_turn().unwrap();
+    assert_eq!(
+        interrupted,
+        AgentLogKind::TurnInterrupted { turn_sequence: 2 }
+    );
+    assert_eq!(stopped.settle_owner_stop_turn(), None);
+    stopped
+        .work
+        .advance("worker", fence(&current), AgentWorkStep::None, AT.into())
+        .unwrap();
+    stopped
+        .transition(
+            AgentStatus::Stopped,
+            AT.into(),
+            Some(AgentStopReason::Owner),
+        )
+        .unwrap();
+    let proposal = publication(
+        &current,
+        stopped,
+        vec![
+            interrupted,
+            AgentLogKind::Stopped {
+                reason: "owner".into(),
+            },
+        ],
+        Some(SandboxEventKind::AgentStatusChanged {
+            agent_id: current.id.clone(),
+            from: AgentStatus::Working,
+            to: AgentStatus::Stopped,
+        }),
+        None,
+    );
+    assert_valid(&current, &worktree, &proposal);
+    let mut wrong_turn = proposal.clone();
+    wrong_turn.agent_logs[0] = AgentLogKind::TurnInterrupted { turn_sequence: 3 };
+    assert_conflict(&current, &worktree, &wrong_turn);
+    let mut stale = current.clone();
+    stale.conversation.active_turn = None;
+    assert_conflict(&stale, &worktree, &proposal);
+}
+
+#[test]
 fn stop_and_delete_publications_consume_only_their_exact_terminal_state() {
     let (mut stopping, ready_worktree) = claimed(
         AgentWorkStep::PublishStopped,
@@ -771,6 +830,7 @@ fn claimed(
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

@@ -48,6 +48,7 @@ use super::live_agents::{
 pub(crate) mod context_overlap_fixture;
 mod fixture_store;
 use fixture_store::FixtureStore;
+mod active_recovery_tests;
 mod cleanup_contention_tests;
 mod cleanup_scheduling_tests;
 mod connection_contention_tests;
@@ -181,6 +182,7 @@ impl<S: FixtureStore> Harness<S> {
                     operation_id: "credential-1".into(),
                     value: RuntimeCredential::new("opaque-sandbox-key"),
                     custody_generation: Some(3),
+                    github_route: None,
                 },
             )
             .await

@@ -1,7 +1,8 @@
 import { chooseOptionValue } from '../test/select';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { ImageManagerRetirement } from '../services/ImageManagerRetirement';
 import {
   listAgentImages,
   resolveAgentImage,
@@ -19,11 +20,21 @@ vi.mock('../create/imageCatalog', () => ({
 beforeEach(() => {
   vi.mocked(listAgentImages).mockResolvedValue([{ id: 'img_custom', name: 'Custom runtime' }]);
 });
-function show() {
+afterEach(() => vi.unstubAllGlobals());
+
+function show(retainedImage?: ResolvedAgentImage) {
   const content = blankContent();
-  const document = { ...draft, draft: { ...content, presentation: draft.draft.presentation } };
+  const inline = content.target.inline;
+  const target =
+    retainedImage === undefined || inline === undefined
+      ? content.target
+      : { ...content.target, inline: { ...inline, image: retainedImage } };
+  const document = {
+    ...draft,
+    draft: { ...content, target, presentation: draft.draft.presentation },
+  };
   const fixture = publisherFixture(document);
-  render(
+  const wizard = (
     <TriggerWizard
       client={fixture.client}
       document={document}
@@ -31,10 +42,80 @@ function show() {
       onPublished={vi.fn()}
       onLock={vi.fn()}
       onSaved={vi.fn()}
-    />,
+    />
+  );
+  render(
+    retainedImage === undefined ? (
+      wizard
+    ) : (
+      <ImageManagerRetirement>{wizard}</ImageManagerRetirement>
+    ),
   );
   return fixture;
 }
+
+it('edits a retained Trigger image without requesting the retired catalog', async () => {
+  vi.mocked(listAgentImages).mockClear();
+  const fetcher = vi.fn().mockResolvedValue(new Response('true'));
+  vi.stubGlobal('fetch', fetcher);
+  const retained = {
+    id: 'img_custom',
+    version: 'build_one',
+    reference: `registry.example/runtime@sha256:${'a'.repeat(64)}`,
+  };
+  const fixture = show(retained);
+  const user = userEvent.setup();
+  await user.type(await screen.findByRole('textbox', { name: 'Model' }), 'edited-model');
+  expect(screen.queryByRole('button', { name: 'Image' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Save draft' }));
+  await waitFor(() => expect(fixture.triggers.save).toHaveBeenCalledOnce());
+  expect(fixture.triggers.save.mock.calls[0]?.[1].content.target.inline).toMatchObject({
+    image: retained,
+    agent: { model: 'edited-model' },
+  });
+  expect(listAgentImages).not.toHaveBeenCalled();
+  expect(fetcher).toHaveBeenCalledOnce();
+});
+
+it('keeps the resolved image when an edit lands before the resolution renders', async () => {
+  let finish!: (image: ResolvedAgentImage) => void;
+  vi.mocked(resolveAgentImage).mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const fixture = show();
+  const user = userEvent.setup();
+  await waitFor(() => expect(vi.mocked(listAgentImages)).toHaveBeenCalled());
+  const image = screen.getByRole('button', { name: 'Image' });
+  await waitFor(() => expect(image).toBeEnabled());
+  await chooseOptionValue(user, image, 'img_custom');
+  const model = screen.getByRole('textbox', { name: 'Model' });
+  await waitFor(() => expect(model).toBeEnabled());
+  const resolved = {
+    id: 'img_custom',
+    version: 'build_one',
+    reference: `registry.example/runtime@sha256:${'b'.repeat(64)}`,
+  };
+  // The resolution's update is queued before React re-renders; an edit handled
+  // in that window still holds the pre-resolution target and must not drop it.
+  await act(async () => {
+    finish(resolved);
+    await Promise.resolve();
+    await Promise.resolve();
+    fireEvent.change(model, { target: { value: 'late-model' } });
+  });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
+  await user.click(screen.getByRole('button', { name: 'Next' }));
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(await screen.findByRole('radiogroup', { name: 'sandbox reuse' })).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Save draft' }));
+  await waitFor(() => expect(fixture.triggers.save).toHaveBeenCalledOnce());
+  expect(fixture.triggers.save.mock.calls[0]?.[1].content.target.inline).toMatchObject({
+    image: resolved,
+    agent: { model: 'late-model' },
+  });
+});
 
 it('waits for the selected image and preserves edits made while its immutable version resolves', async () => {
   let finish!: (image: ResolvedAgentImage) => void;

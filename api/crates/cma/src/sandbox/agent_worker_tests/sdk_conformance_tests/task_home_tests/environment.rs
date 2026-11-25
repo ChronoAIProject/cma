@@ -152,7 +152,7 @@ pub(super) async fn initial_task_environment(
         None
     };
     let connection = RepositoryConnection::new();
-    let (service, lifecycle) = router_with_support(
+    let (service, lifecycle) = fixture_with_support(
         harness.store.clone(),
         harness.registry.clone(),
         &database,
@@ -167,6 +167,8 @@ pub(super) async fn initial_task_environment(
         },
     )
     .await;
+    let lifecycle_drain = lifecycle.drain_handle();
+    lifecycle.resume_pending();
     let (provider, provider_task) = identity_provider().await;
     let credentials = ManagedSandboxCredentials::new(
         Arc::new(KeyIssuer::new(
@@ -284,7 +286,7 @@ pub(super) async fn initial_task_environment(
         )
         .await;
         provider_task.abort();
-        lifecycle.drain(Duration::from_secs(5)).await.unwrap();
+        lifecycle_drain.drain(Duration::from_secs(5)).await.unwrap();
         database.drop().await.unwrap();
         return;
     }
@@ -395,7 +397,7 @@ pub(super) async fn initial_task_environment(
             .await;
         }
         provider_task.abort();
-        lifecycle.drain(Duration::from_secs(5)).await.unwrap();
+        lifecycle_drain.drain(Duration::from_secs(5)).await.unwrap();
         database.drop().await.unwrap();
         return;
     }
@@ -493,6 +495,6 @@ pub(super) async fn initial_task_environment(
         server.abort();
     }
     provider_task.abort();
-    lifecycle.drain(Duration::from_secs(5)).await.unwrap();
+    lifecycle_drain.drain(Duration::from_secs(5)).await.unwrap();
     database.drop().await.unwrap();
 }

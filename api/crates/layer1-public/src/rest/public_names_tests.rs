@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
 };
@@ -14,6 +14,7 @@ use layer2_core::{
 #[derive(Default)]
 pub(crate) struct Names {
     pub calls: AtomicUsize,
+    pub(crate) searches_enabled: AtomicBool,
     identities: Mutex<BTreeMap<String, PublicIdentity>>,
 }
 
@@ -69,8 +70,33 @@ impl UserDirectoryStore for Names {
             }))
     }
 
-    async fn list(&self, _: &DirectoryQuery) -> Result<Page<RegisteredUser>, StoreError> {
-        panic!("resource names must not enumerate the user directory")
+    async fn list(&self, query: &DirectoryQuery) -> Result<Page<RegisteredUser>, StoreError> {
+        assert!(
+            self.searches_enabled.load(Ordering::SeqCst),
+            "resource name enrichment must not enumerate the user directory"
+        );
+        let text = query.text.as_ref().expect("bounded search").to_lowercase();
+        let rows = self
+            .identities
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|identity| {
+                identity.subject.0.to_lowercase().contains(&text)
+                    || identity
+                        .display_name
+                        .as_ref()
+                        .is_some_and(|name| name.to_lowercase().contains(&text))
+            })
+            .take(query.page.limit as usize)
+            .cloned()
+            .map(|identity| RegisteredUser {
+                identity,
+                first_seen_at: "2026-09-09T00:00:00Z".into(),
+                last_seen_at: "2026-09-09T00:00:00Z".into(),
+            })
+            .collect();
+        Ok(Page::new(rows, None))
     }
 }
 

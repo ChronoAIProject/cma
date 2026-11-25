@@ -59,6 +59,7 @@ pub mod render;
 pub(crate) mod retained_receipt;
 pub mod router;
 mod send;
+pub(crate) mod side_messages;
 mod split_text;
 mod step;
 pub mod sync;

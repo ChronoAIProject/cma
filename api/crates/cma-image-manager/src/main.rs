@@ -3,6 +3,7 @@ use cma_image_manager::{
     auth::NyxIdAuth,
     cloud::{CloudBuild, Executor},
     http::{self, App},
+    model::ImageRegistry,
     schema,
     store::Store,
     worker,
@@ -65,24 +66,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/image-manager",
         &std::fs::read(required(CMA_IM_COOKIE_KEY_FILE)?)?,
     )?);
+    let registry = ImageRegistry::parse(required(CMA_IM_IMAGE_REGISTRY)?)?;
     let executor: Executor = Arc::new(CloudBuild::new(
-        "example-project-02".into(),
-        "asia-northeast1".into(),
+        required(CMA_IM_BUILD_PROJECT)?,
+        required(CMA_IM_BUILD_LOCATION)?,
         required(CMA_IM_BUILD_SERVICE_ACCOUNT)?,
         required(CMA_IM_BUILDER_IMAGE)?,
+        registry.clone(),
         std::env::var(CMA_IM_GOOGLE_TOKEN_FILE)
             .ok()
             .filter(|s| !s.is_empty())
             .map(Into::into),
     )?);
+    tracing::info!("image build destination configuration validated");
     let worker_store = store.clone();
     let worker_executor = executor.clone();
     let worker = tokio::spawn(async move {
+        let mut worker = worker::Worker::default();
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            if worker::tick(&worker_store, &worker_executor).await.is_err() {
+            if worker.tick(&worker_store, &worker_executor).await.is_err() {
                 tracing::warn!("image build worker dependency unavailable");
             }
         }
@@ -99,6 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     store,
                     auth,
                     executor,
+                    registry,
                 }))
                 .merge(browser.routes()),
             )

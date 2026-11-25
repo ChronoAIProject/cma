@@ -186,10 +186,10 @@ async fn closed_incomplete_history_converges_across_source_checkpoints() {
         .unwrap()
         .unwrap();
     let bucket = DayBucket::read(&document).unwrap();
-    assert!(!bucket.total.projection.period.complete);
-    assert_eq!(bucket.total.projection.period.unknown_seconds, HOUR);
+    assert!(!bucket.total().projection.period.complete);
+    assert_eq!(bucket.total().projection.period.unknown_seconds, HOUR);
     assert_projection(
-        &bucket.total.projection,
+        &bucket.total().projection,
         &allocation::project(&s, &[interval], Range { from, to: today }),
     );
     store.db.drop().await.unwrap();

@@ -17,6 +17,8 @@ struct Exchange {
 
 struct Peer {
     proxy: Router,
+    origin: String,
+    credential: CredentialHolder,
     inbox: mpsc::Receiver<Exchange>,
     count: Arc<AtomicUsize>,
     server: tokio::task::JoinHandle<()>,
@@ -40,11 +42,9 @@ impl Peer {
             }
         }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let target = TargetBase::parse(&format!(
-            "http://{}/api/v1/proxy/s/chrono-llm-public",
-            listener.local_addr().unwrap()
-        ))
-        .unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let target =
+            TargetBase::parse(&format!("{origin}/api/v1/proxy/s/chrono-llm-public")).unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let credential = CredentialHolder::new();
         credential
@@ -52,11 +52,14 @@ impl Peer {
                 operation_id: "contract-install".into(),
                 value: RuntimeCredential::new("contract-scoped-fixture"),
                 custody_generation: Some(1),
+                github_route: None,
             })
             .await
             .unwrap();
         Self {
-            proxy: proxy_router(target, credential, None, true, false),
+            proxy: proxy_router(target, credential.clone(), None, true, false),
+            origin,
+            credential,
             inbox,
             count,
             server,
@@ -64,20 +67,27 @@ impl Peer {
     }
 
     fn send(&self) -> tokio::task::JoinHandle<Response> {
+        self.send_request(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/responses")
+                .header(header::AUTHORIZATION, "Bearer caller-fixture")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"model":"fixture","input":"synthetic"}"#))
+                .unwrap(),
+        )
+    }
+
+    fn send_request(&self, request: Request) -> tokio::task::JoinHandle<Response> {
         let app = self.proxy.clone();
-        tokio::spawn(async move {
-            app.oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/responses")
-                    .header(header::AUTHORIZATION, "Bearer caller-fixture")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"model":"fixture","input":"synthetic"}"#))
-                    .unwrap(),
-            )
+        tokio::spawn(async move { app.oneshot(request).await.unwrap() })
+    }
+
+    async fn stop(mut self) {
+        self.server.abort();
+        assert!((&mut self.server)
             .await
-            .unwrap()
-        })
+            .is_err_and(|error| error.is_cancelled()));
     }
 
     async fn next(&mut self) -> Exchange {
@@ -216,3 +226,10 @@ async fn accepted_stream_stall_ends_with_a_body_error_not_fabricated_success_or_
     assert_deadline(deadline);
     peer.assert_no_retry().await;
 }
+
+#[path = "upstream_nyxid_contract_tests/h2_peer.rs"]
+mod h2_peer;
+#[path = "upstream_nyxid_contract_tests/h2_tests.rs"]
+mod h2_tests;
+#[path = "upstream_nyxid_contract_tests/route_tests.rs"]
+mod route_tests;

@@ -1,12 +1,14 @@
 use super::*;
-use crate::{desktop_ownership::DesktopOwnedRuntime, Result};
+use crate::{desktop_ownership::DesktopOwnedRuntime, stale_turn::StaleTurnProducer, Result};
 
 #[async_trait::async_trait]
 impl SandboxAdapter for HostedAdapter {
+    fn stale_turn_producer(&self, handle: &RuntimeHandle) -> Option<&dyn StaleTurnProducer> {
+        self.backend.stale_turn_producer(handle)
+    }
     fn startup_binding_headroom(&self, handles: &[RuntimeHandle]) -> Option<usize> {
         self.backend.startup_binding_headroom(handles)
     }
-
     fn desktop_ownership(&self, handle: &RuntimeHandle) -> Option<&dyn DesktopOwnedRuntime> {
         self.backend.desktop_ownership(handle)
     }
@@ -63,9 +65,7 @@ impl SandboxAdapter for HostedAdapter {
         runtime: &RuntimeProvisionRequest,
         home: &crate::HomeVolumeRequest,
     ) -> Result<crate::HomeVolumeRequest> {
-        let rendered = self
-            .deployment
-            .render_runtime(&runtime.spec, runtime.generation)?;
+        let rendered = self.deployment.render_request(runtime)?;
         self.backend.reserve_home_request(&rendered, home).await
     }
     fn verify_retained_home_route(
@@ -139,6 +139,9 @@ impl SandboxAdapter for HostedAdapter {
     async fn verify_suspended_runtime(&self, request: &RuntimeAdoptionRequest) -> Result<()> {
         self.suspend_exact(request, true).await
     }
+    fn retained_startup_policy(&self) -> Option<&dyn crate::RetainedStartupPolicyControl> {
+        Some(self)
+    }
     async fn resume_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
@@ -172,8 +175,12 @@ impl SandboxAdapter for HostedAdapter {
     }
 
     async fn provision_runtime(&self, request: &RuntimeProvisionRequest) -> Result<RuntimeHandle> {
-        self.provision_exact(&request.spec, request.generation, request.funded_until)
-            .await
+        self.provision_exact(
+            &request.released_spec(),
+            request.generation,
+            request.funded_until,
+        )
+        .await
     }
 
     async fn runtime_termination(
