@@ -268,7 +268,7 @@ impl DocumentService {
         key: &str,
         command: &Command,
         record: &mut StoredDocument,
-    ) -> Result<(DocumentMutation, Option<DocumentSourceReservation>), DocumentError> {
+    ) -> Result<(DocumentMutation, Option<DocumentSourceWrite>), DocumentError> {
         let mut comment = None;
         let mut link = None;
         let mut source = None;
@@ -287,9 +287,9 @@ impl DocumentService {
                             markdown.as_bytes(),
                         )
                         .await?;
-                    object = uploaded.object_key();
-                    record.metadata.sha256 = uploaded.sha256.clone();
-                    record.metadata.size_bytes = uploaded.bytes;
+                    object = uploaded.source.object_key();
+                    record.metadata.sha256 = uploaded.source.sha256.clone();
+                    record.metadata.size_bytes = uploaded.source.bytes;
                     source = Some(uploaded);
                 }
                 if let Some(title) = &body.title {

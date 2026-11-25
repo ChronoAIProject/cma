@@ -9,6 +9,7 @@ pub(crate) const COLLECTION: &str = "cma_document_artifacts";
 #[derive(Clone)]
 pub struct MongoDocumentStore {
     pub(super) rows: Collection<Document>,
+    generation_writes: bool,
     source_commits: bool,
 }
 impl MongoDocumentStore {
@@ -21,6 +22,7 @@ impl MongoDocumentStore {
             enabled,
         )
         .with_required_baseline(self.source_commits)
+        .with_generation_writes(self.generation_writes)
     }
     pub(crate) fn with_source_commits(&self, enabled: bool) -> Self {
         Self {
@@ -28,9 +30,14 @@ impl MongoDocumentStore {
             ..self.clone()
         }
     }
+    pub(crate) fn with_generation_writes(mut self, enabled: bool) -> Self {
+        self.generation_writes = enabled;
+        self
+    }
     pub fn new(database: Database) -> Self {
         Self {
             source_commits: false,
+            generation_writes: false,
             rows: database.collection_with_options(
                 COLLECTION,
                 mongodb::options::CollectionOptions::builder()
@@ -96,9 +103,9 @@ impl DocumentStore for MongoDocumentStore {
     async fn insert_source(
         &self,
         record: &StoredDocument,
-        source: &DocumentSourceReservation,
+        source: &DocumentSourceWrite,
     ) -> Result<bool, DocumentError> {
-        if !self.source_commits {
+        if !self.source_commits && source.fence.is_none() {
             return self.insert(record).await;
         }
         super::source_commit::publish(self, record, source, None).await
@@ -139,10 +146,10 @@ impl DocumentStore for MongoDocumentStore {
         &self,
         expected: u64,
         record: &StoredDocument,
-        source: &DocumentSourceReservation,
+        source: &DocumentSourceWrite,
         receipt_key: &str,
     ) -> Result<bool, DocumentError> {
-        if !self.source_commits {
+        if !self.source_commits && source.fence.is_none() {
             return self.compare_exchange(expected, record).await;
         }
         super::source_commit::publish(self, record, source, Some((expected, receipt_key))).await

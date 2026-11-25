@@ -91,8 +91,8 @@ impl DocumentService {
             title: body.title.clone(),
             revision: 1,
             source_revision: 1,
-            sha256: source.sha256.clone(),
-            size_bytes: source.bytes,
+            sha256: source.source.sha256.clone(),
+            size_bytes: source.source.bytes,
             created_at: now.clone(),
             updated_at: now.clone(),
             origin_agent_id: body.origin_agent_id,
@@ -110,7 +110,7 @@ impl DocumentService {
                     created_at: now,
                     author_subject: caller.subject.to_string(),
                 },
-                object_key: source.object_key(),
+                object_key: source.source.object_key(),
             }],
             metadata: metadata.clone(),
             shares: vec![],
@@ -330,19 +330,21 @@ impl DocumentService {
         owner: &str,
         id: &str,
         bytes: &[u8],
-    ) -> Result<DocumentSourceReservation, DocumentError> {
+    ) -> Result<DocumentSourceWrite, DocumentError> {
         let source = DocumentSourceReservation::new(owner, id, bytes);
         source.validate()?;
-        if let Some(quota) = &self.quota {
-            quota.reserve(&source).await?;
-        }
+        let fence = match &self.quota {
+            Some(quota) => quota.reserve_source(&source).await?,
+            None => None,
+        };
+        let write = DocumentSourceWrite { source, fence };
         tokio::time::timeout(
             Duration::from_secs(15),
-            self.blobs.put(&source.object_key(), bytes.to_vec()),
+            self.blobs.put_source(&write, bytes.to_vec()),
         )
         .await
         .map_err(|_| DocumentError::Unavailable)??;
-        Ok(source)
+        Ok(write)
     }
 }
 pub(super) fn access(

@@ -3,7 +3,7 @@
 //! fence. Neither a storage URL nor a machine credential is returned to users.
 use crate::config::DocumentStorageConfig;
 use layer2_core::document_artifacts::{
-    digest, DocumentBlobStore, DocumentError, MAX_DOCUMENT_BYTES,
+    digest, DocumentBlobStore, DocumentError, DocumentSourceWrite, MAX_DOCUMENT_BYTES,
 };
 use reqwest::{Client, Method, Response, StatusCode};
 use serde::Deserialize;
@@ -21,6 +21,20 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 const GET_TRANSPORT_ATTEMPTS: usize = 2;
 const MIN_RETRY_BUDGET: Duration = Duration::from_secs(3);
+
+fn storage_objects_url(config: &DocumentStorageConfig) -> Result<url::Url, String> {
+    let mut objects = url::Url::parse(&config.platform_origin)
+        .map_err(|_| "document storage origin is invalid")?;
+    objects.set_path(&format!(
+        "/api/v1/proxy/s/chrono-storage-service/api/buckets/{}/objects",
+        config.bucket
+    ));
+    Ok(objects)
+}
+
+pub(crate) fn namespace_sha256(config: &DocumentStorageConfig) -> Result<String, String> {
+    Ok(digest(storage_objects_url(config)?.as_str().as_bytes()))
+}
 
 pub(crate) struct StorageDocuments {
     http: Client,
@@ -71,22 +85,25 @@ impl StorageDocuments {
             legacy_token: Default::default(),
         }))
     }
-    fn object_url(&self, key: &str, write: Option<&str>) -> Result<url::Url, DocumentError> {
+    fn object_url(&self, key: &str, write: Option<(&str, u64)>) -> Result<url::Url, DocumentError> {
         if !valid_key(key) {
             return Err(DocumentError::Invalid);
         }
-        let suffix = if write.is_some() { "" } else { "/download" };
-        let mut url = url::Url::parse(&format!(
-            "{}/api/v1/proxy/s/chrono-storage-service/api/buckets/{}/objects{suffix}",
-            self.config.platform_origin, self.config.bucket
-        ))
-        .map_err(|_| DocumentError::Unavailable)?;
+        let mut url = storage_objects_url(&self.config).map_err(|_| DocumentError::Unavailable)?;
+        if write.is_none() {
+            url.path_segments_mut()
+                .map_err(|_| DocumentError::Unavailable)?
+                .push("download");
+        }
         url.query_pairs_mut().append_pair("key", key);
-        if let Some(sha) = write {
+        if let Some((sha, generation)) = write {
             url.query_pairs_mut()
                 .append_pair("contentType", "text/markdown; charset=utf-8")
-                .append_pair("mutationGeneration", "1")
+                .append_pair("mutationGeneration", &generation.to_string())
                 .append_pair("contentSha256", sha);
+            if generation > 1 {
+                url.query_pairs_mut().append_pair("allowRecreate", "true");
+            }
         }
         Ok(url)
     }
@@ -152,6 +169,7 @@ impl StorageDocuments {
         &self,
         key: &str,
         bytes: Vec<u8>,
+        generation: u64,
         deadline: Instant,
     ) -> Result<(), DocumentError> {
         if bytes.is_empty() || bytes.len() > MAX_DOCUMENT_BYTES {
@@ -166,7 +184,7 @@ impl StorageDocuments {
         let response = self
             .send(
                 Method::POST,
-                self.object_url(key, Some(&sha))?,
+                self.object_url(key, Some((&sha, generation)))?,
                 Some(bytes),
                 &mut replayed,
                 deadline,
@@ -179,7 +197,7 @@ impl StorageDocuments {
         for (field, matches) in [
             ("key", receipt.data.key == key),
             ("length", receipt.data.content_length == size),
-            ("generation", receipt.data.generation == 1),
+            ("generation", receipt.data.generation == generation),
             ("digest", receipt.data.digest == sha),
             ("fence", receipt.data.fence_version == 1),
         ] {
@@ -227,18 +245,36 @@ impl StorageDocuments {
         }
         Err(DocumentError::Unavailable)
     }
+
+    async fn put_at_generation(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+        generation: u64,
+    ) -> Result<(), DocumentError> {
+        if self.read_only {
+            return Err(DocumentError::Invalid);
+        }
+        let deadline = Instant::now() + OPERATION_TIMEOUT;
+        tokio::time::timeout_at(deadline, self.put_object(key, bytes, generation, deadline))
+            .await
+            .map_err(|_| DocumentError::Unavailable)?
+    }
 }
 
 #[async_trait::async_trait]
 impl DocumentBlobStore for StorageDocuments {
     async fn put(&self, key: &str, bytes: Vec<u8>) -> Result<(), DocumentError> {
-        if self.read_only {
-            return Err(DocumentError::Invalid);
-        }
-        let deadline = Instant::now() + OPERATION_TIMEOUT;
-        tokio::time::timeout_at(deadline, self.put_object(key, bytes, deadline))
+        self.put_at_generation(key, bytes, 1).await
+    }
+
+    async fn put_source(
+        &self,
+        write: &DocumentSourceWrite,
+        bytes: Vec<u8>,
+    ) -> Result<(), DocumentError> {
+        self.put_at_generation(&write.source.object_key(), bytes, write.generation())
             .await
-            .map_err(|_| DocumentError::Unavailable)?
     }
 
     async fn get(&self, key: &str) -> Result<Vec<u8>, DocumentError> {

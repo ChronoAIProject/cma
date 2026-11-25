@@ -117,6 +117,49 @@ async fn delete_absent_key_is_success() {
 }
 
 #[tokio::test]
+async fn fenced_deletion_requires_confirmation_for_the_exact_key_and_generation() {
+    let mut peer = Peer::start().await;
+    let client = client(&peer, true);
+    let key = failure_tests::key();
+    for (index, status) in [404, 200, 200].into_iter().enumerate() {
+        let namespace = client.namespace_sha256();
+        let client = client.clone();
+        let request_key = key.clone();
+        let task = tokio::spawn(async move { client.delete_fenced(&request_key, 3).await });
+        if index == 0 {
+            authorize(&mut peer).await;
+        }
+        let request = peer.next().await;
+        assert_eq!(request.method, Method::DELETE);
+        let query: std::collections::BTreeMap<_, _> =
+            url::form_urlencoded::parse(request.uri.query().unwrap().as_bytes())
+                .into_owned()
+                .collect();
+        assert_eq!(query["key"], key);
+        assert_eq!(query["mutationGeneration"], "3");
+        if status == 404 {
+            request.respond(status, "");
+            assert_eq!(
+                finish(task).await.unwrap_err().error,
+                DocumentError::Unavailable
+            );
+        } else {
+            let generation = if index == 1 { 2 } else { 3 };
+            request.json(json!({ "data": { "deleted": true, "generation": generation,
+                "fenceVersion": 1, "key": key }, "error": null }));
+            if index == 1 {
+                assert_eq!(
+                    finish(task).await.unwrap_err().error,
+                    DocumentError::Corrupt
+                );
+            } else {
+                assert!(finish(task).await.unwrap().matches(&key, 3, &namespace));
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn delete_treats_only_200_and_204_as_deleted() {
     let mut peer = Peer::start().await;
     let client = client(&peer, true);
@@ -320,48 +363,5 @@ async fn maintenance_replays_unauthorized_at_most_once_without_transport_retries
             );
             assert_eq!(peer.count(), if status == 401 { 4 } else { 2 });
         }
-    }
-}
-
-#[tokio::test]
-async fn fenced_delete_requires_the_exact_durable_generation_receipt() {
-    for (status, body, expected) in [
-        (
-            200,
-            json!({"data":{"deleted":true,"generation":2,"fenceVersion":1},"error":null}),
-            Ok(()),
-        ),
-        (
-            200,
-            json!({"data":{"deleted":true,"generation":3,"fenceVersion":1},"error":null}),
-            Err(DocumentError::Corrupt),
-        ),
-        (
-            404,
-            json!({"error":{"code":"OBJECT_NOT_FOUND"}}),
-            Err(DocumentError::Unavailable),
-        ),
-    ] {
-        let mut peer = Peer::start().await;
-        let client = client(&peer, true);
-        let task = tokio::spawn(async move {
-            client
-                .delete_fenced(&failure_tests::key(), 2)
-                .await
-                .map_err(|failure| failure.error)
-        });
-        authorize(&mut peer).await;
-        let request = peer.next().await;
-        assert_eq!(request.method, Method::DELETE);
-        let query: std::collections::BTreeMap<_, _> =
-            url::form_urlencoded::parse(request.uri.query().unwrap().as_bytes())
-                .into_owned()
-                .collect();
-        assert_eq!(
-            query.get("mutationGeneration").map(String::as_str),
-            Some("2")
-        );
-        request.respond(status, body.to_string());
-        assert_eq!(finish(task).await, expected);
     }
 }

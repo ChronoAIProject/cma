@@ -62,7 +62,7 @@ pub(super) fn obligation_id(owner_hash: &str, document_id: &str) -> String {
     format!("deletion:{owner_hash}:{document_id}")
 }
 
-fn obligation(
+pub(super) fn obligation(
     tombstone: &DocumentTombstone,
     activation: &Document,
 ) -> Result<Document, DocumentError> {

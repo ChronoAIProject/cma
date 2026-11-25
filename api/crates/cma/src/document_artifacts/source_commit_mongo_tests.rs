@@ -374,7 +374,9 @@ async fn document_quota_source_commits_recover_the_winning_attempt_timestamps() 
     let owner = owner();
     starts.lock().unwrap().clear();
     let created = service.create(&owner, "create", create()).await.unwrap();
-    assert_eq!(*starts.lock().unwrap(), ["update", "find"]);
+    // Reservation reads the durable generation gate before publication opens
+    // its own read-first transaction.
+    assert_eq!(*starts.lock().unwrap(), ["find", "find"]);
     let mut alternate = store.get(&created.id).await.unwrap().unwrap();
     let timestamp = "2026-01-01T00:00:00Z";
     alternate.metadata.created_at = timestamp.into();
@@ -400,7 +402,7 @@ async fn document_quota_source_commits_recover_the_winning_attempt_timestamps() 
         .update(&owner, &created.id, "edit", body.clone())
         .await
         .unwrap();
-    assert_eq!(*starts.lock().unwrap(), ["update", "find"]);
+    assert_eq!(*starts.lock().unwrap(), ["find", "find"]);
     let mut alternate = store.get(&created.id).await.unwrap().unwrap();
     alternate.metadata.updated_at = timestamp.into();
     alternate.revisions.last_mut().unwrap().metadata.created_at = timestamp.into();

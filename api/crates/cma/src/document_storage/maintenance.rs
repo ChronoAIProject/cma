@@ -14,6 +14,9 @@ use std::{
 };
 use tokio::time::Instant;
 
+mod fenced;
+pub(crate) use fenced::ConfirmedDeletion;
+
 // Provisional E1 scope names; storage-owner confirmation and NyxID grants are pending.
 const MAINTENANCE_SCOPE: &str = "proxy object:read object:list object:delete";
 const MAX_LIST_BYTES: usize = 256 * 1024;
@@ -38,11 +41,7 @@ impl StorageMaintenance {
             .map_err(|_| "document maintenance HTTP client could not be built")?;
         let origin = url::Url::parse(&config.platform_origin)
             .map_err(|_| "document maintenance origin is invalid")?;
-        let mut objects = origin.clone();
-        objects.set_path(&format!(
-            "/api/v1/proxy/s/chrono-storage-service/api/buckets/{}/objects",
-            config.bucket
-        ));
+        let objects = super::storage_objects_url(&config)?;
         let token = StorageToken::new(
             http.clone(),
             origin,
@@ -56,6 +55,10 @@ impl StorageMaintenance {
             enabled,
             token,
         }))
+    }
+
+    pub(crate) fn namespace_sha256(&self) -> String {
+        layer2_core::document_artifacts::digest(self.objects.as_str().as_bytes())
     }
 
     async fn send(
@@ -101,45 +104,6 @@ impl StorageMaintenance {
             StatusCode::NOT_FOUND => Ok(BlobDeletion::Absent),
             _ => Err(unavailable(&response)),
         }
-    }
-
-    /// The provider's fenced DELETE replays the exact generation after a lost
-    /// reply. An ordinary 404 is insufficient to prove a durable fence.
-    pub(crate) async fn delete_fenced(
-        &self,
-        key: &str,
-        generation: u64,
-    ) -> Result<(), BlobMaintenanceError> {
-        if !self.enabled {
-            return Err(DocumentError::Unavailable.into());
-        }
-        if !valid_key(key) || generation == 0 || generation > i64::MAX as u64 {
-            return Err(DocumentError::Invalid.into());
-        }
-        let deadline = Instant::now() + OPERATION_TIMEOUT;
-        tokio::time::timeout_at(deadline, async {
-            let mut url = self.objects.clone();
-            url.query_pairs_mut()
-                .append_pair("key", key)
-                .append_pair("mutationGeneration", &generation.to_string());
-            let response = self.send(Method::DELETE, url, deadline).await?;
-            if response.status() != StatusCode::OK {
-                return Err(unavailable(&response));
-            }
-            let reply: FencedDeleteReply =
-                serde_json::from_slice(&bounded(response, 16 * 1024).await?)
-                    .map_err(|_| DocumentError::Corrupt)?;
-            if reply.error.is_some()
-                || !reply.data.deleted
-                || reply.data.generation != generation
-                || reply.data.fence_version != 1
-            {
-                return Err(DocumentError::Corrupt.into());
-            }
-            Ok(())
-        })
-        .await
-        .map_err(|_| BlobMaintenanceError::from(DocumentError::Unavailable))?
     }
 
     async fn list_objects(
@@ -220,19 +184,6 @@ impl DocumentBlobMaintenance for StorageMaintenance {
     fn deletion_supported(&self) -> bool {
         self.enabled
     }
-}
-
-#[derive(Deserialize)]
-struct FencedDeleteReply {
-    data: FencedDeleteData,
-    error: Option<serde_json::Value>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct FencedDeleteData {
-    deleted: bool,
-    generation: u64,
-    fence_version: u64,
 }
 
 #[derive(Deserialize)]

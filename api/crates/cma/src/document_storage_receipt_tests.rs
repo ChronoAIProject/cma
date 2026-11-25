@@ -1,6 +1,7 @@
 use super::failure_tests::{authorize, client, key, operation};
 use super::*;
 use crate::dependency_test_support::{finish, Peer};
+use layer2_core::document_artifacts::{DocumentSourceFence, DocumentSourceReservation};
 use serde_json::json;
 
 #[derive(Clone, Default)]
@@ -19,6 +20,38 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogOutput {
     fn make_writer(&'a self) -> Self {
         self.clone()
     }
+}
+
+#[tokio::test]
+async fn recreating_a_source_sends_the_reserved_generation_and_explicit_opt_in() {
+    let mut peer = Peer::start().await;
+    let client = client(&peer);
+    let source = DocumentSourceReservation {
+        owner_hash: digest(b"owner"),
+        document_id: "doc_00000000000000000000000000000001".into(),
+        sha256: digest(b"fixture"),
+        bytes: 7,
+    };
+    let key = source.object_key();
+    let write = DocumentSourceWrite {
+        source,
+        fence: Some(DocumentSourceFence::new(3, digest(b"reservation")).unwrap()),
+    };
+    let task = tokio::spawn(async move { client.put_source(&write, b"fixture".to_vec()).await });
+    authorize(&mut peer).await;
+    let request = peer.next().await;
+    let query: std::collections::BTreeMap<_, _> =
+        url::form_urlencoded::parse(request.uri.query().unwrap().as_bytes())
+            .into_owned()
+            .collect();
+    assert_eq!(query["key"], key);
+    assert_eq!(query["mutationGeneration"], "3");
+    assert_eq!(query["allowRecreate"], "true");
+    request.json(
+        json!({ "data": { "key":key, "contentLength":7, "generation":3,
+        "digest":digest(b"fixture"), "fenceVersion":1 } }),
+    );
+    finish(task).await.unwrap();
 }
 
 #[tokio::test]

@@ -276,7 +276,7 @@ pub trait DocumentStore: Send + Sync {
     async fn insert_source(
         &self,
         record: &StoredDocument,
-        _source: &super::DocumentSourceReservation,
+        _source: &super::DocumentSourceWrite,
     ) -> Result<bool, DocumentError> {
         self.insert(record).await
     }
@@ -292,7 +292,7 @@ pub trait DocumentStore: Send + Sync {
         &self,
         expected_revision: u64,
         record: &StoredDocument,
-        _source: &super::DocumentSourceReservation,
+        _source: &super::DocumentSourceWrite,
         _receipt_key: &str,
     ) -> Result<bool, DocumentError> {
         self.compare_exchange(expected_revision, record).await
@@ -318,6 +318,16 @@ pub trait DocumentStore: Send + Sync {
 pub trait DocumentBlobStore: Send + Sync {
     /// Write immutable content at the server-generated content-addressed key.
     async fn put(&self, key: &str, bytes: Vec<u8>) -> Result<(), DocumentError>;
+    async fn put_source(
+        &self,
+        write: &super::DocumentSourceWrite,
+        bytes: Vec<u8>,
+    ) -> Result<(), DocumentError> {
+        if write.generation() != 1 {
+            return Err(DocumentError::Unavailable);
+        }
+        self.put(&write.source.object_key(), bytes).await
+    }
     /// Implementations must bound reads at MAX_DOCUMENT_BYTES and never follow caller URLs.
     async fn get(&self, key: &str) -> Result<Vec<u8>, DocumentError>;
 }
