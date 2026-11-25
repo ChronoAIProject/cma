@@ -115,12 +115,13 @@ export function AgentCommandNotices({
   readonly unavailable: boolean;
   readonly starting: boolean;
 }) {
+  const pendingMessage = controller.initialSendPending ? undefined : controller.pendingMessage;
   return (
     <>
-      {controller.pendingMessage === undefined && !controller.pendingControl ? null : (
+      {pendingMessage === undefined && !controller.pendingControl ? null : (
         <PendingRequestPanel
-          key={controller.pendingMessage}
-          controller={controller}
+          key={pendingMessage}
+          controller={{ ...controller, pendingMessage }}
           unavailable={unavailable}
           starting={starting}
         />
