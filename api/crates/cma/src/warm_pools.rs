@@ -24,7 +24,7 @@ mod released;
 mod retirement;
 pub(crate) mod startup;
 mod supervision;
-mod telemetry;
+pub(crate) mod telemetry;
 mod view;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -424,6 +424,7 @@ async fn reconcile_one(
 enum PoolApply {
     Settled,
     ConfigurationDrift,
+    Failed,
 }
 
 fn provider_apply_error(error: layer3_adapter::AdapterError) -> WarmPoolError {
@@ -479,8 +480,10 @@ async fn reconcile_claimed(
     Ok(
         if matches!(result, Ok(Err(WarmPoolError::ProviderConfigurationDrift))) {
             PoolApply::ConfigurationDrift
-        } else {
+        } else if success {
             PoolApply::Settled
+        } else {
+            PoolApply::Failed
         },
     )
 }
