@@ -5,7 +5,7 @@ import { useAgentController } from './controller';
 import { AGENT_DETAIL, agentClient } from '../test/agent';
 import { workspaceFixture } from '../test/hierarchy';
 import type { AgentDetail } from '../api/types';
-import { harness } from './transport/controller.fixture';
+import { binding, harness } from './transport/controller.fixture';
 import { IdentityChangedError } from './transport/identity';
 
 function deferred<T>() {
@@ -29,6 +29,11 @@ it('coalesces five refreshes into two authorized reads without replacing v2 hist
   const readWorkspace = vi.spyOn(h.client, 'readWorkspace');
   const view = renderHook(() => useAgentController(h.client, 'agt_1'));
   await waitFor(() => expect(h.streaming).toBe(true));
+  // Consume a live frame after the stream's approval projection has been applied.
+  await act(async () => h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding));
+  await waitFor(() =>
+    expect(view.result.current.state).toMatchObject({ conversation: { activeRunId: '1' } }),
+  );
   const before = view.result.current.state;
   expect(before.status).toBe('ready');
   if (before.status !== 'ready') throw new Error('Expected ready fixture');

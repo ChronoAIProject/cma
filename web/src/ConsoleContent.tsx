@@ -302,6 +302,7 @@ export function ConsoleContent({
         capabilities={user.capabilities}
         bindingDiagnostics={user.bindingDiagnostics === true}
         principal={usagePrincipal}
+        bindingDiagnostics={user.bindingDiagnostics === true}
       />
     ) : route.kind === 'triggers' || route.kind === 'trigger' || route.kind === 'trigger_embed' ? (
       publisher !== undefined && !user.visitor && user.capabilities.includes('publish_triggers') ? (
