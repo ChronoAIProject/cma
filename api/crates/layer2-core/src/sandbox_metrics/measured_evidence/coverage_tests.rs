@@ -363,3 +363,48 @@ fn singleton_competing_pvc_observation_refuses_an_interior_estimate() {
     assert_eq!(unresolved.measurement_status, MeasurementStatus::Pending);
     assert_eq!(unresolved.quantity, None);
 }
+
+#[test]
+fn later_foreign_pvc_observations_cannot_change_the_original_owners_estimate() {
+    let primary = binding(BindingKind::Home);
+    let mut former = primary.clone();
+    former.id = "former-home".into();
+    former.pvc_uid = "transferred-pvc".into();
+    former.valid_until = Some(50);
+    former.observed_at = 50;
+    let mut raw = [
+        (300_000, 10.0),
+        (360_000, 10.0),
+        (480_000, 30.0),
+        (540_000, 30.0),
+    ]
+    .into_iter()
+    .map(|(time, value)| sample(&primary, SourceMetric::PvcUsed, time, value))
+    .collect::<Vec<_>>();
+    raw.push(sample(&former, SourceMetric::PvcUsed, 20_000, 5.0));
+    let events = [event(1, 0, 540, allocation(false), allocation(false))];
+    let cutoff = 480_000 + LATE_GRACE_MS;
+    let baseline = settle(&raw, &events, 300_000, 540_000, cutoff);
+    assert_eq!(
+        baseline
+            .iter()
+            .find(|row| row.metric == SourceMetric::PvcUsed && row.from_ms == 360_000)
+            .unwrap()
+            .measurement_status,
+        MeasurementStatus::Estimated
+    );
+    for owner in ["owner-b", "owner-a"] {
+        let mut foreign = former.clone();
+        foreign.id = format!("later-home-{owner}");
+        foreign.owner_subject = owner.into();
+        foreign.sandbox_id = "another-sandbox".into();
+        foreign.valid_from = 50;
+        foreign.valid_until = Some(600);
+        foreign.observed_at = 600;
+        raw.push(sample(&foreign, SourceMetric::PvcUsed, 100_000, 5.0));
+        assert_eq!(settle(&raw, &events, 300_000, 540_000, cutoff), baseline);
+        raw.push(sample(&foreign, SourceMetric::PvcUsed, 420_000, 5.0));
+        assert_eq!(settle(&raw, &events, 300_000, 540_000, cutoff), baseline);
+        raw.truncate(raw.len() - 2);
+    }
+}

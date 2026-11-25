@@ -281,6 +281,7 @@ fn candidates(
             metric: group[0].observation().metric,
             timestamps_ms: group
                 .iter()
+                .filter(|sample| owned(sample))
                 .map(|sample| sample.observation().timestamp_ms)
                 .collect(),
         });
