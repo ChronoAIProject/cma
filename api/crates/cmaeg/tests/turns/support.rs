@@ -35,9 +35,19 @@ pub struct Fixture {
 }
 impl Fixture {
     pub async fn new(fake_config: FakeProviderConfig, config: TurnConfig, capacity: usize) -> Self {
+        let recovery = fake_config.recovery_status.is_some();
         let fake = FakeProvider::start(fake_config).await;
         // Two slugs on one fake, so a channel can be rebound to `nyxbot`.
-        let entry = |slug: &str| json!({"slug":slug,"base_url":fake.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":capacity});
+        let entry = |slug: &str| {
+            let mut entry = json!({"slug":slug,"base_url":fake.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":capacity});
+            if recovery {
+                entry["paths"]["recovery"] = json!({
+                    "response":"/api/v2/responses/{response_id}",
+                    "events":"/api/v2/responses/{response_id}/events"
+                });
+            }
+            entry
+        };
         let registry =
             ProviderRegistry::parse(&json!([entry("cma_codex"), entry("nyxbot")]).to_string())
                 .unwrap();

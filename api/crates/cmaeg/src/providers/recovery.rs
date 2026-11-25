@@ -50,6 +50,67 @@ pub struct RecoveryStream {
     pub events: mpsc::Receiver<Result<RecoveryEvent, ProviderError>>,
 }
 
+pub(crate) struct AcceptedRecovery {
+    key: Secret,
+    metadata: BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for AcceptedRecovery {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AcceptedRecovery")
+            .finish_non_exhaustive()
+    }
+}
+
+impl AcceptedRecovery {
+    pub(super) fn new(key: Secret, metadata: BTreeMap<String, String>) -> Self {
+        Self { key, metadata }
+    }
+
+    pub(crate) async fn completed(
+        &self,
+        providers: &ProviderClient,
+        provider: &ProviderSlug,
+        response_id: &str,
+        native_agent_id: Option<String>,
+    ) -> Result<Option<ResponsesEvent>, ProviderError> {
+        let mut identity = RecoveryIdentity {
+            response_id: response_id.to_owned(),
+            native_agent_id,
+            metadata: self.metadata.clone(),
+        };
+        let snapshot = providers
+            .response_snapshot(provider, &identity, &self.key)
+            .await?;
+        match snapshot.response["status"].as_str() {
+            Some("completed") => {
+                return Ok(Some(ResponsesEvent::Completed {
+                    response: snapshot.response,
+                    matching_response_identity: true,
+                }));
+            }
+            Some("queued" | "in_progress") => (),
+            _ => return Ok(None),
+        }
+        identity.native_agent_id = Some(snapshot.native_agent_id);
+        // Recover only the terminal observation. The delivery worker may have
+        // already published individual message or tool frames from the live turn.
+        let mut replay = providers
+            .replay_response(provider, &identity, None, &self.key)
+            .await?;
+        while let Some(frame) = replay.events.recv().await {
+            let event = frame?.event;
+            match event {
+                ResponsesEvent::Completed { .. } => return Ok(Some(event)),
+                ResponsesEvent::Failed { .. } | ResponsesEvent::Incomplete { .. } => break,
+                _ => (),
+            }
+        }
+        Ok(None)
+    }
+}
+
 impl ProviderClient {
     pub fn supports_response_replay(&self, provider: &ProviderSlug) -> Result<bool, ProviderError> {
         Ok(self.handle(provider)?.entry.paths.recovery.is_some())

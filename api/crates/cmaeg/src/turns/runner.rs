@@ -107,8 +107,9 @@ impl TurnRunner {
             Ok(consumer) => consumer,
             Err(error) => return self.unserved(turn, sender, error),
         };
-        let provider = consumer.provider.slug.to_string();
-        let mut observation = Operation::new(names::TURN_DURATION, names::PROVIDER, &provider);
+        let provider = &consumer.provider.slug;
+        let mut observation =
+            Operation::new(names::TURN_DURATION, names::PROVIDER, provider.as_str());
         let deadline = turn.received_at + self.config.turn_timeout;
         let audience = Audience::of(&consumer, &self.media_tool_providers);
         // One nonce per turn: busy retries resend this exact input under the
@@ -164,15 +165,16 @@ impl TurnRunner {
                 .map(Some);
                 return Ok(custom_replay::answer(replay, &mut admitted).unwrap());
             }
-            let stream = started
-                .map_err(|failure| super::refusal::classify_start_failure(&provider, failure))?;
+            let stream = started.map_err(|failure| {
+                super::refusal::classify_start_failure(provider.as_str(), failure)
+            })?;
             consume::consume(
                 stream,
                 turn.clone(),
-                &provider,
+                provider,
                 &*self.delivery,
                 self.activity.as_ref(),
-                self.providers.execution_verifiers.verifier(&provider),
+                self.providers.as_ref(),
                 &mut admitted,
             )
             .await
@@ -185,7 +187,7 @@ impl TurnRunner {
             Ok(Ok(outcome)) => {
                 observation.finish(outcome);
                 if !matches!(outcome, "completed" | "replayed" | "refused") {
-                    provider_error(&provider, outcome);
+                    provider_error(provider.as_str(), outcome);
                 }
                 return;
             }
@@ -195,7 +197,7 @@ impl TurnRunner {
             }
         };
         observation.finish(error.detail);
-        provider_error(&provider, error.detail);
+        provider_error(provider.as_str(), error.detail);
         if let Some(sender) = admitted.take() {
             let mut problem = Problem::new(error.code, error.status, error.detail);
             if let Some(upstream) = error.upstream {

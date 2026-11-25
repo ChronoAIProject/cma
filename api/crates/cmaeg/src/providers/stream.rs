@@ -28,8 +28,8 @@ pub(super) async fn forward_turn(
         };
         let frame = match frame {
             Ok(frame) => frame,
-            Err(_) => {
-                tracing::warn!("provider SSE parser stopped");
+            Err(error) => {
+                tracing::warn!(kind = error.kind(), "provider SSE parser stopped");
                 break;
             }
         };
