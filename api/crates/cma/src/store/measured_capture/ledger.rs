@@ -12,6 +12,7 @@ use layer2_core::{
 };
 use mongodb::{
     bson::{doc, Document},
+    options::ReadConcern,
     ClientSession, Collection, Database,
 };
 use serde::{Deserialize, Serialize};
@@ -167,6 +168,7 @@ impl MeasuredLedger {
             .sort(doc! {"revision":1})
             .limit((MAX_REVISIONS + 1) as i64)
             .max_time(Duration::from_secs(10))
+            .read_concern(ReadConcern::snapshot())
             .session(&mut *session)
             .await
             .map_err(|_| CaptureError::Unavailable)?;
@@ -212,6 +214,7 @@ impl MeasuredLedger {
             .database
             .collection::<Document>(sandbox_usage::STATES)
             .find_one(doc! {"_id":&scope.sandbox_id})
+            .read_concern(ReadConcern::snapshot())
             .session(&mut *session)
             .await
             .map_err(|_| CaptureError::Unavailable)?
@@ -296,6 +299,7 @@ impl MeasuredLedger {
             .database
             .collection::<Document>(sandbox_usage::EVENTS)
             .find_one(doc! {"_id":id})
+            .read_concern(ReadConcern::snapshot())
             .session(&mut *session)
             .await
             .map_err(|_| CaptureError::Unavailable)?
