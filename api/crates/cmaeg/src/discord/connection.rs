@@ -6,8 +6,8 @@ use super::{
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::watch;
 
-/// Each cleanup step makes a few individually bounded store calls. A step that
-/// still cannot finish leaves the lease to expire; the supervisor never waits.
+/// Cleanup makes a few individually bounded store calls. An unconfirmed write
+/// leaves the persisted lease in charge of when another worker can acquire it.
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl DurableJournal {
@@ -53,15 +53,17 @@ impl DurableJournal {
             Err(error) => self.status.failure((*error).into()),
             _ => {}
         }
-        if result.as_ref().is_ok_and(|end| end.checkpoint.is_none())
-            && !bounded(self.discard_checkpoint()).await
-        {
-            self.status.cleanup_failed();
-        }
         // A missing close acknowledgement retains the lease until expiry.
         // Failed connection setup has never sent Identify and owns no socket.
         let closed = result.as_ref().map_or(true, |end| end.transport_closed);
-        let released = closed && bounded(self.release()).await;
+        let released = match &result {
+            Ok(end) if end.checkpoint.is_none() => {
+                // The checkpoint and lease must change together on a confirmed close.
+                let discarded = bounded(self.discard_checkpoint(closed)).await;
+                closed && discarded
+            }
+            _ => closed && bounded(self.release()).await,
+        };
         if !closed {
             tracing::warn!("native Discord close unconfirmed; retaining source lease until expiry");
         }

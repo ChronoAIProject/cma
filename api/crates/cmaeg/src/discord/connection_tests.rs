@@ -1,9 +1,47 @@
 use super::super::{
     journal::DurableJournal, journal_fixture::*, journal_model::Lease, status::StatusRegistry,
-    Checkpoint, EndReason, GatewayEnd,
+    Checkpoint, Dispatch, EndReason, GatewayEnd, GatewayError, NativeDiscordJournal,
 };
+use serde_json::json;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{watch, Notify};
+
+async fn save_session(journal: &DurableJournal) -> Checkpoint {
+    let ready = Dispatch {
+        name: "READY".into(),
+        sequence: 7,
+        data: json!({
+            "session_id": "fixture-session",
+            "resume_gateway_url": "wss://gateway.discord.gg/",
+            "user": {"id": "77", "bot": true},
+        }),
+    };
+    let checkpoint = super::super::protocol::checkpoint(None, &ready, "77").unwrap();
+    journal.authorize_connection(None).await.unwrap();
+    journal.admit(&checkpoint, &ready).await.unwrap();
+    checkpoint
+}
+
+async fn invalid_session(journal: &DurableJournal, closed: bool) -> GatewayEnd {
+    let (stop, _stopped) = watch::channel(false);
+    let (_shutdown, shutdown) = watch::channel(false);
+    journal
+        .supervise_connection(
+            async {
+                Ok(GatewayEnd {
+                    reason: EndReason::InvalidSession,
+                    checkpoint: None,
+                    retry_after: Duration::from_secs(5),
+                    transport_closed: closed,
+                })
+            },
+            stop,
+            shutdown,
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap()
+}
 
 // Discord's op 7 reconnect can arrive while a lease renewal is inside the store.
 // That renewal holds the journal's serial guard; cleanup must still finish.
@@ -20,18 +58,16 @@ async fn reconnect_during_renewal_still_releases_the_lease_and_returns() {
     )
     .await
     .unwrap();
+    let checkpoint = save_session(&journal).await;
     let entered = Arc::new(Notify::new());
     let held = Arc::new(Notify::new());
     *f.memory.channel_gate.lock().unwrap() = Some((entered.clone(), held.clone()));
+    let expected = checkpoint.clone();
     let connection = async move {
         entered.notified().await;
         Ok(GatewayEnd {
             reason: EndReason::Reconnect,
-            checkpoint: Some(Checkpoint {
-                session_id: "fixture-session".into(),
-                resume_url: "wss://gateway-us-east1-b.discord.gg".into(),
-                sequence: 7,
-            }),
+            checkpoint: Some(expected),
             retry_after: Duration::from_secs(5),
             transport_closed: true,
         })
@@ -56,7 +92,9 @@ async fn reconnect_during_renewal_still_releases_the_lease_and_returns() {
         .unwrap()
         .unwrap();
     assert_eq!(lease.lease_until, 0, "the next attempt can take the lease");
-    assert!(lease.checkpoint.is_none() || lease.checkpoint == end.checkpoint);
+    assert_eq!(lease.checkpoint, Some(checkpoint.clone()));
+    let successor = f.acquire().await.unwrap();
+    assert_eq!(successor.checkpoint().await.unwrap(), Some(checkpoint));
     let view = statuses.view(&f.record, None);
     assert_eq!(view.lease, "released");
     assert_eq!(view.outcome, super::super::status::Outcome::Pending);
@@ -64,4 +102,84 @@ async fn reconnect_during_renewal_still_releases_the_lease_and_returns() {
         view.last_failure_code,
         Some(super::super::status::FailureCode::Reconnect)
     );
+}
+
+#[tokio::test]
+async fn invalid_session_clear_timeout_keeps_the_lease_until_cleanup_is_confirmed() {
+    let f = Fixture::new().await;
+    let journal = f.acquire().await.unwrap();
+    let checkpoint = save_session(&journal).await;
+    let entered = Arc::new(Notify::new());
+    let held = Arc::new(Notify::new());
+    *f.memory.next_write_gate.lock().unwrap() = Some((entered.clone(), held.clone()));
+    let cleanup = invalid_session(&journal, true);
+    tokio::pin!(cleanup);
+    tokio::select! {
+        _ = entered.notified() => {}
+        _ = &mut cleanup => panic!("cleanup returned before attempting the fenced write"),
+    }
+    tokio::time::pause();
+    tokio::time::advance(super::CLEANUP_TIMEOUT).await;
+    tokio::time::resume();
+    assert_eq!(cleanup.await.reason, EndReason::InvalidSession);
+
+    // The stalled write has not applied. A second release must not expose this checkpoint.
+    assert_eq!(journal.checkpoint().await.unwrap(), Some(checkpoint));
+    assert!(matches!(f.acquire().await, Err(GatewayError::Authority)));
+    held.notify_one();
+}
+
+#[tokio::test]
+async fn confirmed_invalid_session_releases_without_a_checkpoint_even_if_ack_is_lost() {
+    for lose_ack in [false, true] {
+        let f = Fixture::new().await;
+        let journal = f.acquire().await.unwrap();
+        let checkpoint = save_session(&journal).await;
+        let (_, version) = f
+            .store
+            .load::<Lease>(&journal.id, false)
+            .await
+            .unwrap()
+            .unwrap();
+        if lose_ack {
+            f.fail(&journal.id, true);
+        }
+        assert_eq!(
+            invalid_session(&journal, true).await.reason,
+            EndReason::InvalidSession
+        );
+        let (lease, released_version) = f
+            .store
+            .load::<Lease>(&journal.id, false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(released_version, version + 1);
+        assert_eq!(lease.lease_until, 0);
+        assert_eq!(lease.checkpoint, None);
+
+        let successor = f.acquire().await.unwrap();
+        assert_eq!(successor.checkpoint().await.unwrap(), None);
+        assert_eq!(
+            successor.authorize_connection(Some(&checkpoint)).await,
+            Err(GatewayError::Authority)
+        );
+        f.advance(5_001);
+        successor.authorize_connection(None).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn unconfirmed_invalid_session_discards_the_checkpoint_and_retains_the_lease() {
+    let f = Fixture::new().await;
+    let journal = f.acquire().await.unwrap();
+    save_session(&journal).await;
+    assert_eq!(
+        invalid_session(&journal, false).await.reason,
+        EndReason::InvalidSession
+    );
+    assert_eq!(journal.checkpoint().await.unwrap(), None);
+    assert!(matches!(f.acquire().await, Err(GatewayError::Authority)));
+    f.advance(30_001);
+    assert_eq!(f.acquire().await.unwrap().checkpoint().await.unwrap(), None);
 }

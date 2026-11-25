@@ -50,6 +50,7 @@ pub struct Memory {
     pub fault: Mutex<Option<(String, bool)>>,
     pub on_saved: Mutex<Option<OnSaved>>,
     pub channel_gate: Mutex<Option<ChannelGate>>,
+    pub next_write_gate: Mutex<Option<ChannelGate>>,
 }
 pub struct Fixture {
     pub memory: Arc<Memory>,
@@ -97,6 +98,7 @@ impl Fixture {
             fault: Mutex::new(None),
             on_saved: Mutex::new(None),
             channel_gate: Mutex::new(None),
+            next_write_gate: Mutex::new(None),
             discord_channels: Mutex::default(),
             channel_calls: Mutex::default(),
             channel_status: Mutex::new(StatusCode::OK),
@@ -271,6 +273,11 @@ async fn save(
     Path(id): Path<String>,
     Json(input): Json<Value>,
 ) -> Response {
+    let gate = state.next_write_gate.lock().unwrap().take();
+    if let Some((entered, held)) = gate {
+        entered.notify_one();
+        held.notified().await;
+    }
     let fault = {
         let mut slot = state.fault.lock().unwrap();
         if slot.as_ref().is_some_and(|(target, _)| target == &id) {
