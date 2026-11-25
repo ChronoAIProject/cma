@@ -101,7 +101,9 @@ pub async fn create(
             expected: 0,
             actual: Some(current.record.version),
         })?;
-    if creation.fingerprint != fingerprint {
+    if creation.fingerprint != fingerprint
+        || unready_retirement_version(&current.definition).is_some()
+    {
         return Err(ManagementError::Conflict {
             expected: 0,
             actual: Some(current.record.version),

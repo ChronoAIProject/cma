@@ -39,6 +39,9 @@ enum ManagedRecord {
         address: Box<RecordedAddress>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pending_operation: Option<RecordedOperation>,
+        /// Expected version for the retained Delete intent of a retired incomplete channel.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        retirement_expected_version: Option<u64>,
     },
     Invalid,
 }
@@ -138,6 +141,7 @@ fn project(
                 .mutation
                 .as_ref()
                 .map(|mutation| mutation.operation.into()),
+            retirement_expected_version: management::unready_retirement_version(definition),
         }
     } else {
         ManagedRecord::Invalid

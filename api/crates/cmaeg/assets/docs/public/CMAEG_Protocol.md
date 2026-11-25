@@ -279,6 +279,18 @@ prior provider mutation was reconciled; a successful PUT does. Separately,
 re-encrypts the record with the current gateway master key. Rekey is an operator
 operation, not agent-key rotation; retain keys needed for old channel pointers.
 
+An owner can retire an incomplete channel with
+`DELETE /v1/channels/{channel_id}?expected_version=N&retire_unready=true`.
+Use the storage version from the channel record management read for the initial
+request. HTTP 202 confirms the channel is retired and provider cleanup is
+pending. The original create cannot activate it, and event intake stays closed.
+The request preserves the provider binding and any outstanding effect. It can
+be used while the provider or its credentials are unavailable.
+Repeat the same retirement request to recover a lost response. Stale versions
+and channels whose creation is complete are refused. Use the reported
+`retirement_expected_version` for a later ordinary DELETE. An unresolved
+provider effect requires reconciliation before cleanup can continue.
+
 ### Flow H — Replica restart and recovery boundaries
 
 ```mermaid
@@ -841,6 +853,8 @@ level, and these independent states:
   issued, and an unverifiable ID is withheld.
 - Optional `pending_operation`: one of `create`, `update`, `delete`,
   `audit_routing`, or `audit_attachments`. Other operation details are withheld.
+- Optional `retirement_expected_version`: the admitted version for an explicit
+  retirement of an incomplete channel. Provider cleanup is pending.
 
 An owned, decoded definition that fails validation returns only
 `{"record_id":"<record>","version":1,"record":{"state":"invalid"}}`.

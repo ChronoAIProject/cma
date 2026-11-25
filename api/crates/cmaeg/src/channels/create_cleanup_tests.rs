@@ -1,10 +1,12 @@
 //! A refused create leaves no channel; a refused release is typed and retained.
 use super::{
     management::{self, ManagementError},
-    mutation_fixture::{owner, Fixture},
+    mutation_fixture::{owner, wait, Fixture},
 };
 use crate::providers::ProviderError;
 use axum::http::StatusCode;
+use cmaeg_core::ids::RecordId;
+use std::sync::atomic::Ordering;
 
 #[tokio::test]
 async fn an_unlisted_provider_is_refused_before_any_channel_is_reserved() {
@@ -108,5 +110,212 @@ async fn a_release_reported_absent_or_unavailable_keeps_its_existing_outcome() {
             );
             assert!(retained);
         }
+    }
+}
+
+#[tokio::test]
+async fn retirement_holds_an_incomplete_channel_across_instances_and_lost_ack() {
+    for custody in [false, true] {
+        let fixture = Fixture::new(false, custody).await;
+        let state = fixture.state().await;
+        let other = fixture.state().await;
+        let creator = owner("alice", false);
+        let body = fixture.body();
+        let record_id = RecordId::new(body["record_id"].as_str().unwrap()).unwrap();
+        *fixture.peer.refuse_bind.lock().unwrap() = Some(StatusCode::BAD_REQUEST);
+        assert!(management::create(
+            &state,
+            &creator,
+            serde_json::from_value(body.clone()).unwrap()
+        )
+        .await
+        .is_err());
+        let original = super::creation::load_record(&state, &creator, &record_id)
+            .await
+            .unwrap();
+        let version = original.record.version;
+        let id = &original.channel_id;
+        let original_effect = original
+            .definition
+            .mutation
+            .as_ref()
+            .and_then(|mutation| mutation.effect.clone());
+        assert!(matches!(
+            management::retire_unready(&state, &owner("bob", false), id, version).await,
+            Err(ManagementError::NotFound)
+        ));
+        assert!(matches!(
+            management::retire_unready(&state, &creator, id, version + 1).await,
+            Err(ManagementError::Conflict { .. })
+        ));
+        assert_eq!(
+            management::load(&other, &creator, id)
+                .await
+                .unwrap()
+                .record
+                .version,
+            original.record.version
+        );
+
+        fixture
+            .peer
+            .lose_ack
+            .store(original.record.version, Ordering::SeqCst);
+        management::retire_unready(&state, &creator, id, version)
+            .await
+            .unwrap();
+        let retired = management::load(&other, &creator, id).await.unwrap();
+        assert_eq!(
+            management::unready_retirement_version(&retired.definition),
+            Some(version)
+        );
+        assert!(!retired.definition.creation.as_ref().unwrap().ready);
+        let retained_effect = retired
+            .definition
+            .mutation
+            .as_ref()
+            .unwrap()
+            .effect
+            .as_deref();
+        assert_eq!(
+            retained_effect,
+            original_effect.as_deref().or(Some("unconfirmed_create"))
+        );
+        assert_eq!(retired.record.version, original.record.version + 1);
+        management::retire_unready(&other, &creator, id, version)
+            .await
+            .unwrap();
+        *fixture.peer.refuse_bind.lock().unwrap() = None;
+        assert!(matches!(
+            management::create(&other, &creator, serde_json::from_value(body).unwrap()).await,
+            Err(ManagementError::Conflict { .. })
+        ));
+        assert_eq!(
+            management::load(&state, &creator, id)
+                .await
+                .unwrap()
+                .record
+                .version,
+            retired.record.version
+        );
+        assert_eq!(fixture.peer.calls.lock().unwrap().as_slice(), ["PUT"]);
+        assert!(fixture.peer.bound.lock().unwrap().is_empty());
+        assert!(matches!(
+            management::delete(&other, &creator, id, version).await,
+            Err(ManagementError::Conflict { .. })
+        ));
+        assert_eq!(fixture.peer.calls.lock().unwrap().as_slice(), ["PUT"]);
+    }
+}
+
+#[tokio::test]
+async fn retirement_refuses_a_ready_channel_without_touching_its_binding_or_record() {
+    let fixture = Fixture::new(false, false).await;
+    let state = fixture.state().await;
+    let creator = owner("alice", false);
+    let ready = management::create(
+        &state,
+        &creator,
+        serde_json::from_value(fixture.body()).unwrap(),
+    )
+    .await
+    .unwrap();
+    let before = management::load(&state, &creator, &ready.channel_id)
+        .await
+        .unwrap();
+    assert!(matches!(
+        management::retire_unready(&state, &creator, &ready.channel_id, ready.version).await,
+        Err(ManagementError::Invalid(_))
+    ));
+    let after = management::load(&state, &creator, &ready.channel_id)
+        .await
+        .unwrap();
+    assert_eq!(after.record.version, ready.version);
+    assert!(
+        after.record.blob == before.record.blob,
+        "ready record was rewritten"
+    );
+    assert_eq!(fixture.peer.calls.lock().unwrap().as_slice(), ["PUT"]);
+    assert_eq!(fixture.peer.bound.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn incomplete_channel_can_retire_after_its_provider_credential_is_lost() {
+    let fixture = Fixture::new(false, false).await;
+    let state = fixture.state().await;
+    let creator = owner("alice", false);
+    let body = fixture.body();
+    let record_id = RecordId::new(body["record_id"].as_str().unwrap()).unwrap();
+    *fixture.peer.refuse_bind.lock().unwrap() = Some(StatusCode::BAD_REQUEST);
+    assert!(
+        management::create(&state, &creator, serde_json::from_value(body).unwrap())
+            .await
+            .is_err()
+    );
+    let mut pending = super::creation::load_record(&state, &creator, &record_id)
+        .await
+        .unwrap();
+    pending.definition.secrets.provider_credential = None;
+    let blob = management::seal_definition(&state.master_keys, &pending.definition).unwrap();
+    let version = state
+        .records
+        .put(&record_id, "alice", &blob, Some(pending.record.version))
+        .await
+        .unwrap();
+    let id = &pending.channel_id;
+    assert!(matches!(
+        management::delete(&state, &creator, id, version).await,
+        Err(ManagementError::Provider(ProviderError::Unavailable(_)))
+    ));
+    management::retire_unready(&state, &creator, id, version)
+        .await
+        .unwrap();
+    let retired = management::load(&state, &creator, id).await.unwrap();
+    assert_eq!(
+        management::unready_retirement_version(&retired.definition),
+        Some(version)
+    );
+    assert_eq!(fixture.peer.calls.lock().unwrap().as_slice(), ["PUT"]);
+}
+
+#[tokio::test]
+async fn bind_started_before_retirement_cannot_publish_readiness() {
+    for custody in [false, true] {
+        let fixture = Fixture::new(false, custody).await;
+        let caller = fixture.state().await;
+        let other = fixture.state().await;
+        let creator = owner("alice", false);
+        let body = fixture.body();
+        let record_id = RecordId::new(body["record_id"].as_str().unwrap()).unwrap();
+        fixture.peer.pause.store(true, Ordering::SeqCst);
+        let request = serde_json::from_value(body).unwrap();
+        let create = tokio::spawn(async move {
+            management::create(&caller, &owner("alice", false), request).await
+        });
+        wait(&fixture.peer.started).await;
+
+        let pending = super::creation::load_record(&other, &creator, &record_id)
+            .await
+            .unwrap();
+        management::retire_unready(
+            &other,
+            &creator,
+            &pending.channel_id,
+            pending.record.version,
+        )
+        .await
+        .unwrap();
+        fixture.peer.resume.notify_one();
+        assert!(create.await.unwrap().is_err());
+        let retired = management::load(&other, &creator, &pending.channel_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            management::unready_retirement_version(&retired.definition),
+            Some(pending.record.version)
+        );
+        assert!(!retired.definition.creation.as_ref().unwrap().ready);
+        assert_eq!(fixture.peer.calls.lock().unwrap().as_slice(), ["PUT"]);
+        assert_eq!(fixture.peer.bound.lock().unwrap().len(), 1);
     }
 }

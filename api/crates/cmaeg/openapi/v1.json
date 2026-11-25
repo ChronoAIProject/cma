@@ -5073,6 +5073,15 @@
               "provider": {
                 "$ref": "#/components/schemas/ManagedProvider"
               },
+              "retirement_expected_version": {
+                "description": "Expected version for the retained Delete intent of a retired incomplete channel.",
+                "format": "int64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
               "state": {
                 "enum": [
                   "valid"
@@ -11333,9 +11342,21 @@
               "minimum": 0,
               "type": "integer"
             }
+          },
+          {
+            "description": "Retain the provider cleanup intent for an incomplete channel.",
+            "in": "query",
+            "name": "retire_unready",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
+          "202": {
+            "description": "Incomplete channel retired, provider cleanup pending"
+          },
           "204": {
             "description": ""
           },

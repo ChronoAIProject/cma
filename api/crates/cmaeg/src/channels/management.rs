@@ -4,6 +4,7 @@ use super::definition::{
     validate_update_request, ChannelCreateRequest, ChannelUpdateRequest, SourceRequest,
 };
 pub use super::lifecycle::{delete, rekey};
+pub(crate) use super::lifecycle::{retire_unready, unready_retirement_version};
 pub use super::state::{
     CreatedChannel, LoadedChannel, ManagementError, ManagementState, RecordedChannel,
 };

@@ -41,6 +41,7 @@ pub(super) struct Peer {
     pub lose_ack: Arc<AtomicU64>,
     /// Answer every binding DELETE with this definite refusal.
     pub refuse_delete: Arc<Mutex<Option<(StatusCode, &'static str)>>>,
+    pub refuse_bind: Arc<Mutex<Option<StatusCode>>>,
 }
 pub(super) struct Fixture {
     pub peer: Peer,
@@ -163,6 +164,8 @@ async fn provider(
         if let Some((status, code)) = *peer.refuse_delete.lock().unwrap() {
             return (status, Json(json!({"code": code}))).into_response();
         }
+    } else if let Some(status) = *peer.refuse_bind.lock().unwrap() {
+        return (status, Json(json!({"code": "invalid_binding"}))).into_response();
     }
     let value = body.map(|Json(value)| value).unwrap_or(Value::Null);
     if peer.pause.swap(false, Ordering::SeqCst) {
