@@ -5,5 +5,8 @@ mod store {
 }
 
 pub use store::usage_reports::{
-    chart_documents, decode, encode, expires, read_series, unavailable,
+    chart_documents, decode, encode, expires, read_owner_page, read_row, read_row_page,
+    read_series, unavailable, validate_owner_page,
 };
+
+pub mod metric_rollups;

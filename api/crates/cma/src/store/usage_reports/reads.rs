@@ -2,8 +2,7 @@ use super::*;
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::{
-    cursor::Cursor, MetricsStore, Order, PageQuery, Report, ReportQuery, Row, Rows, Scope, Series,
-    SeriesQuery,
+    MetricsStore, PageQuery, Report, ReportQuery, Row, Rows, Scope, Series, SeriesQuery,
 };
 
 #[async_trait]
@@ -154,104 +153,21 @@ impl MetricsStore for ReportingStore {
     }
     async fn page(&self, report: &Report, query: PageQuery) -> Result<Rows> {
         let _timer = self.time_read("report_page")?;
-        let limit = query.validate(report.scope.admin)?;
-        let hash = layer2_core::sandbox_metrics::query_hash(
-            &report.scope,
-            &report.query,
-            report.as_of / 60,
-        )?;
-        let mut filter = doc! {"report_id":&report.report_id};
-        let value_key = format!("sorts.{}", query.sort.key());
-        let null_key = format!("nulls.{}", query.sort.key());
-        let direction = if query.order == Order::Asc { 1 } else { -1 };
-        let compare = if direction == 1 { "$gt" } else { "$lt" };
-        if let Some(token) = &query.cursor {
-            let c = self.signer.decode(
-                token,
-                &report.scope,
-                &report.report_id,
-                &hash,
-                query.sort,
-                query.order,
-            )?;
-            let id_after = doc! {"sandbox_id":{compare:&c.sandbox_id}};
-            if c.last_null {
-                filter.insert(&null_key, true);
-                filter.extend(id_after);
-            } else {
-                let last = mongodb::bson::serialize_to_bson(&c.last_value).map_err(unavailable)?;
-                filter.insert(
-                    "$or",
-                    vec![
-                        doc! {&null_key:true},
-                        doc! {&null_key:false,&value_key:{compare:last.clone()}},
-                        doc! {&null_key:false,&value_key:last,"sandbox_id":{compare:&c.sandbox_id}},
-                    ],
-                );
-            }
-        }
-        let mut cursor = self
-            .collection(ROWS)
-            .find(filter)
-            .sort(doc! {&null_key:1,&value_key:direction,"sandbox_id":direction})
-            .limit(i64::from(limit) + 1)
-            .batch_size(u32::from(limit) + 1)
-            .max_time(DB_DEADLINE)
-            .await
-            .map_err(unavailable)?;
-        let mut docs = Vec::new();
-        while let Some(d) = cursor.try_next().await.map_err(unavailable)? {
-            docs.push(d);
-        }
-        let next = if docs.len() > limit as usize {
-            docs.pop();
-            let d = docs.last().ok_or(MetricsError::Unavailable)?;
-            let last = d
-                .get_document("sorts")
-                .map_err(unavailable)?
-                .get(query.sort.key())
-                .ok_or(MetricsError::Unavailable)?
-                .clone();
-            Some(
-                self.signer.encode(&Cursor {
-                    principal: report.scope.principal.clone(),
-                    admin: report.scope.admin,
-                    filter_hash: hash,
-                    report_id: report.report_id.clone(),
-                    sort: query.sort,
-                    order: query.order,
-                    last_value: mongodb::bson::deserialize_from_bson(last).map_err(unavailable)?,
-                    last_null: d
-                        .get_document("nulls")
-                        .map_err(unavailable)?
-                        .get_bool(query.sort.key())
-                        .map_err(unavailable)?,
-                    sandbox_id: d.get_str("sandbox_id").map_err(unavailable)?.into(),
-                })?,
-            )
-        } else {
-            None
-        };
-        let mut items: Vec<Row> = docs.iter().map(decode).collect::<Result<_>>()?;
-        self.hydrate_owner_names(items.iter_mut().map(|row| &mut row.owner).collect())
+        let mut page = cma_am_reporting::read_row_page(
+            self.collection(ROWS),
+            &self.signer,
+            report,
+            query,
+            DB_DEADLINE,
+        )
+        .await?;
+        self.hydrate_owner_names(page.items.iter_mut().map(|row| &mut row.owner).collect())
             .await?;
-        Ok(Rows {
-            items,
-            next,
-            report_id: report.report_id.clone(),
-            as_of: report.as_of,
-            total_count: report.summary.as_ref().map_or(0, |s| s.sandbox_count),
-        })
+        Ok(page)
     }
     async fn detail(&self, report: &Report, id: &str) -> Result<Row> {
-        let d = self
-            .collection(ROWS)
-            .find_one(doc! {"report_id":&report.report_id,"sandbox_id":id})
-            .max_time(DB_DEADLINE)
-            .await
-            .map_err(unavailable)?
-            .ok_or(MetricsError::NotFound)?;
-        let mut row: Row = decode(&d)?;
+        let mut row =
+            cma_am_reporting::read_row(self.collection(ROWS), report, id, DB_DEADLINE).await?;
         self.hydrate_owner_names(vec![&mut row.owner]).await?;
         Ok(row)
     }
