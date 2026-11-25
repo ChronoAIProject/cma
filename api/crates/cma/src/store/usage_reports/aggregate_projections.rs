@@ -1,11 +1,15 @@
 use super::*;
 use crate::store::{migrations::usage_projections, transaction_scope as tx};
 use cma_am_reporting::{build_chart_projections, ProjectionBatch};
+use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::Report;
+use mongodb::bson::RawDocumentBuf;
+use sha2::{Digest, Sha256};
 use std::time::Instant;
 
 pub(super) const COLLECTION: &str = usage_projections::COLLECTION;
 pub(super) const GENERATION_FIELD: &str = "projection_generation";
+pub(super) const MANIFEST_FIELD: &str = "projection_manifest";
 const MAX_PROJECTION_BYTES: usize = 32 * 1024 * 1024;
 
 impl ReportingStore {
@@ -37,8 +41,13 @@ impl ReportingStore {
             None => Ok(None),
             Some(value) => {
                 let generation = job.get_i64("generation").map_err(unavailable)?;
-                if value.as_i64() != Some(generation) {
+                if value.as_i64() != Some(generation) || job.get_document(MANIFEST_FIELD).is_err() {
                     return Err(MetricsError::Unavailable);
+                }
+                if !job.contains_key("kind") {
+                    // Ordinary reports also need full source membership once
+                    // independently persisted aggregates can outlive a row.
+                    self.retained_counts(report, &job).await?;
                 }
                 Ok(Some(generation))
             }
@@ -104,19 +113,69 @@ impl ReportingStore {
             self.build_owner_allocation_projections(report, &base, &mut batch, deadline)
                 .await?;
         }
+        self.build_contributors(report, &base, &mut batch, deadline)
+            .await?;
         Ok(batch)
     }
 
-    async fn persist_projections(
+    async fn build_contributors(
+        &self,
+        report: &Report,
+        base: &Document,
+        batch: &mut ProjectionBatch,
+        deadline: Instant,
+    ) -> Result<()> {
+        let mut cursor = self
+            .collection(ROWS)
+            .aggregate([
+                doc! {"$match":{"report_id":&report.report_id}},
+                doc! {"$group":{"_id":"$owner"}},
+            ])
+            .max_time(DB_DEADLINE)
+            .await
+            .map_err(unavailable)?;
+        while let Some(row) = cursor.try_next().await.map_err(unavailable)? {
+            if Instant::now() >= deadline {
+                return Err(MetricsError::Busy);
+            }
+            let owner = row.get_str("_id").map_err(unavailable)?;
+            let mut membership = base.clone();
+            // Evidence of contribution must survive independently scheduled TTL
+            // deletion of source rows and result pages.
+            membership.remove("expires_at");
+            membership.extend(
+                doc! {"kind":"contributor","series":owner,"contributor":owner,
+                "metric":0_i64,"chunk":0_i64},
+            );
+            batch.push(membership)?;
+        }
+        Ok(())
+    }
+
+    fn projection_manifest(
+        lease: &ReportLease,
+        documents: &[RawDocumentBuf],
+        bytes: i64,
+    ) -> Document {
+        let mut digest = Sha256::new();
+        for document in documents {
+            digest.update(document.as_bytes());
+        }
+        doc! {"version":1_i64,"generation":lease.generation,"chunks":documents.len() as i64,
+        "bytes":bytes,"sha256":format!("{:x}",digest.finalize())}
+    }
+
+    pub(super) async fn persist_projections(
         &self,
         lease: &ReportLease,
-        documents: &[mongodb::bson::RawDocumentBuf],
+        documents: &[RawDocumentBuf],
         bytes: i64,
     ) -> Result<bool> {
-        tx::run(
+        let manifest = Self::projection_manifest(lease, documents, bytes);
+        let result = tx::run(
             &self.client,
-            (self, lease, documents, bytes),
-            |&(store, lease, documents, bytes), session| {
+            (self, lease, documents, bytes, &manifest),
+            |&(store, lease, documents, bytes, manifest), session| {
                 Box::pin(async move {
                     let fence = lease.fence();
                     let has_budget = doc! {"$and":[fence.clone(),{
@@ -129,7 +188,8 @@ impl ReportingStore {
                         .update_one(
                             has_budget,
                             doc! {"$inc":{"bytes":bytes},
-                            "$set":{GENERATION_FIELD:lease.generation}},
+                            "$set":{GENERATION_FIELD:lease.generation,MANIFEST_FIELD:manifest,
+                                "expires_at":mongodb::bson::Bson::Null}},
                         )
                         .session(&mut *session)
                         .await
@@ -142,14 +202,21 @@ impl ReportingStore {
                             .await
                             .map_err(tx::mongo)?
                             .ok_or(MetricsError::Unavailable)?;
-                        if current.contains_key(GENERATION_FIELD) {
-                            return Err(MetricsError::Unavailable.into());
-                        }
-                        return Ok(false);
+                        return match current.get(GENERATION_FIELD) {
+                            None => Ok(false),
+                            Some(value)
+                                if value.as_i64() == Some(lease.generation)
+                                    && current.get_document(MANIFEST_FIELD).ok()
+                                        == Some(manifest) =>
+                            {
+                                Ok(true)
+                            }
+                            Some(_) => Err(MetricsError::Unavailable.into()),
+                        };
                     }
                     store
                         .collection(COLLECTION)
-                        .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+                        .clone_with_type::<RawDocumentBuf>()
                         .insert_many(documents)
                         .session(&mut *session)
                         .await
@@ -158,6 +225,23 @@ impl ReportingStore {
                 })
             },
         )
-        .await
+        .await;
+        if !matches!(result, Err(MetricsError::Unavailable)) {
+            return result;
+        }
+        // An acknowledged marker and its pages are one commit. Read the exact
+        // manifest from the original fenced job before accepting an uncertain reply.
+        let current = crate::store::durability::majority_collection::<Document>(&self.db, JOBS)
+            .find_one(lease.fence())
+            .max_time(DB_DEADLINE)
+            .await
+            .map_err(unavailable)?;
+        if current.as_ref().is_some_and(|job| {
+            job.get_i64(GENERATION_FIELD).ok() == Some(lease.generation)
+                && job.get_document(MANIFEST_FIELD).ok() == Some(&manifest)
+        }) {
+            return Ok(true);
+        }
+        result
     }
 }

@@ -71,7 +71,7 @@ impl ReportingStore {
         if store
             .collection(JOBS)
             .update_one(lease.fence(), doc! {"$set":{"bytes":0_i64,"row_count":0_i64,"chart_count":0_i64,"record":encode(&lease.report)?,"logical_expires_at":lease.report.expires_at as i64,"expires_at":if lease.view.is_some() { mongodb::bson::Bson::Null } else { expires(lease.report.expires_at+86_400).into() }},
-                "$unset":{aggregate_projections::GENERATION_FIELD:""}})
+                "$unset":{aggregate_projections::GENERATION_FIELD:"",aggregate_projections::MANIFEST_FIELD:""}})
             .session(&mut *session)
             .await
             .map_err(tx::mongo)?
@@ -107,24 +107,26 @@ impl ReportingStore {
             if !self.retire_expired_report(&d).await? {
                 continue;
             }
-            let projections = d
-                .contains_key(aggregate_projections::GENERATION_FIELD)
-                .then_some(aggregate_projections::COLLECTION);
-            for collection in [ROWS, CHARTS].into_iter().chain(projections) {
-                let result=self.db.run_command(doc! {"delete":collection,"deletes":[{"q":{"report_id":id},"limit":0}],"maxTimeMS":2000_i64})
-                    .await.map_err(unavailable)?;
-                if result.get_array("writeErrors").is_ok_and(|v| !v.is_empty())
-                    || result.contains_key("writeConcernError")
-                {
-                    return Err(MetricsError::Unavailable);
-                }
+            let projected = d.contains_key(aggregate_projections::GENERATION_FIELD);
+            for collection in [ROWS, CHARTS] {
+                self.delete_report_cache(collection, doc! {"report_id":id})
+                    .await?;
             }
-            // Admission never releases a byte reservation before cache data
-            // has been removed, even when the asynchronous TTL monitor lags.
+            if projected {
+                // Maintain contributor discovery until all derived pages are gone.
+                self.delete_report_cache(
+                    aggregate_projections::COLLECTION,
+                    doc! {"report_id":id,"kind":{"$ne":"contributor"}},
+                )
+                .await?;
+                self.delete_report_cache(
+                    aggregate_projections::COLLECTION,
+                    doc! {"report_id":id,"kind":"contributor"},
+                )
+                .await?;
+            }
             let mut released = doc! {"reserved":false,"bytes":0_i64};
-            if d.get_str("kind").ok() == Some(views::VIEW_KIND) {
-                // A retained reservation has no parent TTL until acknowledged
-                // child deletion; independent TTL lag cannot undercharge bytes.
+            if projected || d.get_str("kind").ok() == Some(views::VIEW_KIND) {
                 released.insert("expires_at", expires(at + 60));
             }
             self.collection(JOBS)
@@ -135,6 +137,23 @@ impl ReportingStore {
                 )
                 .await
                 .map_err(unavailable)?;
+        }
+        Ok(())
+    }
+
+    async fn delete_report_cache(&self, collection: &str, filter: Document) -> Result<()> {
+        let result = self
+            .db
+            .run_command(doc! {"delete":collection,
+            "deletes":[{"q":filter,"limit":0}],"maxTimeMS":2000_i64})
+            .await
+            .map_err(unavailable)?;
+        if result
+            .get_array("writeErrors")
+            .is_ok_and(|errors| !errors.is_empty())
+            || result.contains_key("writeConcernError")
+        {
+            return Err(MetricsError::Unavailable);
         }
         Ok(())
     }

@@ -2,6 +2,7 @@ use super::charts::{fold_sandbox_series, merge_buckets, ranked_series};
 use super::*;
 use layer2_core::sandbox_metrics::{series::Bucket, Metric, Point, Report};
 use mongodb::bson::RawDocumentBuf;
+use sha2::{Digest, Sha256};
 use std::{collections::HashMap, time::Instant};
 
 pub(super) const MAX_TOP: usize = 20;
@@ -57,7 +58,19 @@ impl ProjectionBatch {
     }
 
     pub fn push(&mut self, mut document: Document) -> Result<()> {
-        document.insert("_id", mongodb::bson::oid::ObjectId::new());
+        let kind = document.get_str("kind").map_err(unavailable)?;
+        let prefix = if kind == "contributor" { "z" } else { "p" };
+        let key = doc! {
+            "report_id":document.get_str("report_id").map_err(unavailable)?,
+            "generation":document.get_i64("generation").map_err(unavailable)?,
+            "kind":kind,
+            "metric":document.get_i64("metric").map_err(unavailable)?,
+            "series":document.get_str("series").map_err(unavailable)?,
+            "chunk":document.get_i64("chunk").map_err(unavailable)?,
+        };
+        let bytes = mongodb::bson::serialize_to_vec(&key).map_err(unavailable)?;
+        let id = format!("{prefix}:{:x}", Sha256::digest(bytes));
+        document.insert("_id", id);
         let document = RawDocumentBuf::try_from(&document).map_err(unavailable)?;
         self.remaining_bytes = self
             .remaining_bytes
@@ -67,7 +80,9 @@ impl ProjectionBatch {
         Ok(())
     }
 
-    pub fn into_documents(self) -> Vec<RawDocumentBuf> {
+    pub fn into_documents(mut self) -> Vec<RawDocumentBuf> {
+        self.documents
+            .sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
         self.documents
     }
 }

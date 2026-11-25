@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 pub(in crate::store) const COLLECTION: &str = "sandbox_usage_report_projections_v1";
 pub(super) const ID: &str = "am-usage-report-projections-v1";
-pub(super) const INDEX_COUNT: i64 = 3;
+pub(super) const INDEX_COUNT: i64 = 4;
 
 pub(super) fn checksum() -> String {
     let mut hash = Sha256::new();
@@ -24,6 +24,7 @@ fn indexes() -> [Document; INDEX_COUNT as usize] {
         doc! {"name":"usage_projection_key_v1","unique":true,
         "key":{"report_id":1,"generation":1,"kind":1,"metric":1,"series":1,"chunk":1}},
         doc! {"name":"usage_projection_erasure_v1","key":{"report_id":1,"_id":1}},
+        doc! {"name":"usage_projection_contributor_v1","key":{"contributor":1,"_id":1}},
         doc! {"name":"usage_projection_expiry_v1","key":{"expires_at":1},"expireAfterSeconds":0},
     ]
 }

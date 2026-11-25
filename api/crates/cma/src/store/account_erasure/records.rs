@@ -129,7 +129,11 @@ async fn run(
     if contexts.len() != targets.len() {
         *contexts = context::load_cohort_with_receipt(db, targets, &receipt).await?;
     }
-    let mut expanded = false;
+    let mut expanded = if receipt.usage_projections_absent {
+        false
+    } else {
+        super::history::discover_usage_projections(db, contexts).await?
+    };
     for context in contexts.iter_mut() {
         let target = targets
             .iter()
