@@ -47,6 +47,7 @@
           "runtime_version": "runtime-v2",
           "runtime_update": {
             "current_version": "runtime-v2",
+            "image_origin": "managed_agent",
             "latest_version": "runtime-v2",
             "update_available": false,
             "state": "up_to_date",
@@ -113,6 +114,7 @@
           "runtime_version": "runtime-v2",
           "runtime_update": {
             "current_version": "runtime-v2",
+            "image_origin": "managed_agent",
             "latest_version": "runtime-v2",
             "update_available": false,
             "state": "up_to_date",

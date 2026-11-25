@@ -199,10 +199,14 @@ class VersionLabelContractTests(unittest.TestCase):
         push = {'repository': {'full_name': self.repository}, 'ref': 'refs/heads/develop',
                 'before': 'a' * 40, 'after': 'b' * 40, 'deleted': False}
         self.event_path.write_text(json.dumps(push))
-        environment = dict(self.environment, GITHUB_EVENT_NAME='push', DEPLOYABLES='[]')
+        environment = dict(
+            self.environment, GITHUB_EVENT_NAME='push', GITHUB_REF='refs/heads/develop',
+            GITHUB_SHA='b' * 40, DEPLOYABLES='[]',
+        )
         for changes, expected in [({}, 0), ({'SELECTOR_RESULT': 'failure'}, 1),
                                    ({'SELECTOR_RESULT': 'skipped'}, 1), ({'DEPLOYABLES': 'null'}, 1),
-                                   ({'DEPLOYABLES': '["unknown"]'}, 1), ({'GITHUB_EVENT_NAME': 'schedule'}, 1),
+                                   ({'DEPLOYABLES': '["unknown"]'}, 1), ({'GITHUB_EVENT_NAME': 'workflow_run'}, 1),
+                                   ({'GITHUB_EVENT_NAME': 'schedule', 'GITHUB_REF': 'refs/heads/main'}, 1),
                                    ({'GITHUB_REPOSITORY': 'other/repository'}, 1)]:
             with self.subTest(changes=changes), patch.dict(os.environ, dict(environment, **changes)), \
                     patch.object(version_label.subprocess, 'run') as request, redirect_stdout(io.StringIO()):

@@ -45,6 +45,7 @@ pub struct Authority {
     pub token: OwnershipToken,
     pub(super) policy: super::MaintenancePolicy,
     pub(super) settlement_watch: layer3_adapter::owner_protocol::ReceiverSettlementWatch,
+    // Diagnostic lineage only. Ownership fences use the token and receiver settlement.
     pub(super) sandbox_sha256: std::sync::OnceLock<String>,
     pub(super) retiring: AtomicBool,
     pub(super) receiver_failure:

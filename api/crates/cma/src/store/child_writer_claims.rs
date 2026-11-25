@@ -281,6 +281,8 @@ async fn apply(
     } else {
         None
     };
+    use super::agent_inspection_park::{self, ClaimPark};
+    let mut consumed_park = None;
     let mut filter = if let (ChildWriterClaim::Agent(agent), Some(current_row)) =
         (claim, current_agent_row.as_ref())
     {
@@ -320,6 +322,21 @@ async fn apply(
             || current.conversation.last_seq != agent.conversation.last_seq
         {
             return Err(ClaimError::domain(SandboxStoreError::Conflict));
+        }
+        match agent_inspection_park::for_claim(
+            store,
+            current_row,
+            &current,
+            &parent,
+            agent,
+            session,
+        )
+        .await
+        .map_err(ClaimError::domain)?
+        {
+            ClaimPark::Hold => return Ok(false),
+            ClaimPark::Proceed => {}
+            ClaimPark::Retry(marker) => consumed_park = Some(marker),
         }
         diagnostics.phase = "child_validation";
         super::agent_log_segments::ordinary::source(store, &current, current_row, session)
@@ -374,6 +391,23 @@ async fn apply(
         filter = super::work_schema::query(doc! {"$and":[filter, acquisition]});
     }
     let mut fields = claim.fields().map_err(ClaimError::domain)?;
+    if store.agent_inspection_parking && matches!(claim, ChildWriterClaim::Agent(_)) {
+        let proof = if let Some(marker) = consumed_park {
+            let get = |field| {
+                marker.get(field).cloned().ok_or_else(|| {
+                    ClaimError::domain(SandboxStoreError::Corrupt(
+                        "inspection claim proof missing".into(),
+                    ))
+                })
+            };
+            let proof = doc! {"id": get("id")?, "binding": get("binding")?};
+            fields.insert(agent_inspection_park::FIELD, marker);
+            mongodb::bson::Bson::Document(proof)
+        } else {
+            mongodb::bson::Bson::Null
+        };
+        fields.insert(agent_inspection_park::CLAIM_PROOF, proof);
+    }
     if let ChildWriterClaim::Agent(agent) = claim {
         store
             .agent_work_owner_fields(&agent.id, &mut fields)

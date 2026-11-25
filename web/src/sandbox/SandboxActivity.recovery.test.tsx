@@ -23,6 +23,12 @@ const recovery = [
   { type: 'work_step_completed', step: { kind: 'run_lifecycle_operation' } },
   { type: 'status_changed', from: 'rotating', to: 'active' },
   { type: 'rotated', runtime_version: 'runtime-next' },
+  {
+    type: 'home_restored',
+    restore_id: 'restore-fixture',
+    backup_id: 'backup-fixture',
+    restored_to: at,
+  },
 ];
 const page = recovery.map((kind, index) => ({
   sandbox_id: 'sbx_1',
@@ -62,7 +68,8 @@ it('reads the complete recovery history through the real decoder after every rem
     expect(screen.getByText('Runtime recovery prepared')).toBeVisible();
     expect(screen.getByText('Sandbox operation stage: needs attention')).toBeVisible();
     expect(screen.getByText('Sandbox updated')).toBeVisible();
-    expect(screen.getAllByRole('listitem')).toHaveLength(6);
+    expect(screen.getByText('Sandbox home restored')).toBeVisible();
+    expect(screen.getAllByRole('listitem')).toHaveLength(7);
     expect(screen.queryByText('No activity recorded yet.')).not.toBeInTheDocument();
     expect(view.container).not.toHaveTextContent(
       /private|runtime-fixture|home-fixture|conversation-fixture/,
@@ -90,12 +97,12 @@ it('keeps valid activity visible when a later recovery page is malformed', async
   transport.reply(page);
   transport.reply([]);
   transport.reply([
-    { ...page[0], seq: 7, kind: { type: 'runtime_recovery_quiesced', receipt: null } },
+    { ...page[0], seq: 8, kind: { type: 'runtime_recovery_quiesced', receipt: null } },
   ]);
   render(<SandboxActivity client={createRestWebClient(transport.sdk)} sandboxId="sbx_1" />);
   await act(async () => {});
   expect(screen.getByText('Sandbox updated')).toBeVisible();
   await act(() => vi.advanceTimersByTimeAsync(1500));
   expect(screen.getByText('Activity updates interrupted. Reconnecting.')).toBeVisible();
-  expect(screen.getAllByRole('listitem')).toHaveLength(6);
+  expect(screen.getAllByRole('listitem')).toHaveLength(7);
 });

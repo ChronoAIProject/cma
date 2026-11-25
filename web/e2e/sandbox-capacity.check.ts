@@ -260,12 +260,13 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   await expect.poll(retainedDeletion).toEqual(acceptedDeletion);
   await page.goto('/');
   await expect(capacity.getByText('Environment limit reached')).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Deletion request', exact: true })).toHaveText(
-    /Deleting 1 environment/,
-  );
-  await expect(
-    page.getByRole('button', { name: 'View deletion status', exact: true }),
-  ).toBeEnabled();
+  await expect(page.getByRole('region', { name: 'Deletion request', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'View deletion status', exact: true }).click();
+  const progress = page.getByRole('dialog', { name: 'Deletion progress', exact: true });
+  await expect(progress.getByRole('listitem')).toHaveCount(1);
+  await expect(progress.getByRole('code')).toHaveText(acceptedDeletion.action.sandboxId);
+  await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(await retainedDeletion()).toEqual(acceptedDeletion);
   await expect(page.getByLabel('Your task')).toHaveValue('Use the next available environment');

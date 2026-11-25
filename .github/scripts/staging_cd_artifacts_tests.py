@@ -165,7 +165,10 @@ class ArtifactTests(unittest.TestCase):
         metadata.pop("buildFingerprint")
         with tempfile.TemporaryDirectory() as directory:
             runner = Mock()
-            self.assertIsNone(try_reuse(expected, Path(directory), api, "fixture", download, runner))
+            misses = []
+            self.assertIsNone(try_reuse(expected, Path(directory), api, "fixture", download, runner,
+                                        on_miss=misses.append))
+            self.assertEqual(misses, ["manifest:buildFingerprint"])
             runner.assert_not_called()
             self.assertFalse((Path(directory) / "qualified.docker.tar.gz").exists())
 

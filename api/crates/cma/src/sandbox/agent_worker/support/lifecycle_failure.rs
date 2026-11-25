@@ -50,6 +50,9 @@ impl AgentWorker {
         now: SystemTime,
         parents: Option<PublicationParents>,
     ) -> Result<(), SandboxStoreError> {
+        if failure.class == super::super::inspection_park::INSPECTION_HANDOFF {
+            return Err(SandboxStoreError::Conflict);
+        }
         super::super::ledger_telemetry::observe(&failure);
         if agent.work.step == AgentWorkStep::PublishConnection {
             self.retry_connection_failure(&agent, failure, now).await

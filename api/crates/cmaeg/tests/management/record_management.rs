@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 mod address;
 #[path = "record_management/boundaries.rs"]
 mod boundaries;
+#[path = "record_management/retirement.rs"]
+mod retirement;
 #[path = "record_management/support.rs"]
 mod support;
 use support::*;
