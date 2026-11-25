@@ -13,7 +13,7 @@ use cmaeg::{
     ingress::launch::{LaunchOutcome, TurnLauncher},
     turns::outcomes::TurnOutcome,
 };
-use cmaeg_core::channel::Sink;
+use cmaeg_core::channel::{Secret, Sink};
 use futures_util::future::BoxFuture;
 use reqwest::{header::HeaderMap, Url};
 use serde_json::json;
@@ -45,6 +45,11 @@ async fn recovered_webhook_rechecks_current_sink_after_dns_before_post() {
             url: "https://result.example/hook".into(),
             hmac_key_id: "key-1".into(),
         }];
+        channel
+            .definition
+            .secrets
+            .hmac_secrets
+            .push(("key-1".into(), Secret::new("test-signing-value")));
         fixture.channel = Arc::new(channel);
         *fixture.recovery_channel.0.lock().unwrap() = Some(fixture.channel.clone());
         assert!(matches!(
