@@ -91,3 +91,78 @@ pub(in crate::store::sandbox_credentials) async fn retain_retirement(
     .await;
     transactions::finish(&mut session, outcome).await
 }
+
+/// A provider result that returns after the retirement handoff may add only
+/// revoke-only authority. The immutable marker replaces the stale issuance
+/// claim as the receipt's destination, never as delivery authority.
+pub(in crate::store::sandbox_credentials) async fn retain_late_result(
+    store: &MongoSandboxCredentialStore,
+    sandbox: &Sandbox,
+    intent: &CredentialIssuance,
+    material: &CredentialMaterial,
+) -> Result<bool, CredentialCustodyError> {
+    validate(intent)?;
+    super::super::validate_material(material).map_err(custody_store_error)?;
+    let original = sandbox.work.lease.as_ref().ok_or_else(corrupt)?;
+    if intent.state != IssuanceState::Unknown
+        || intent.generation != 1
+        || !matches!(intent.identity, IssuanceIdentity::Prepared { .. })
+        || original.holder != intent.original_holder
+        || original.fence != intent.original_fence
+        || sandbox.id != intent.sandbox_id
+        || sandbox.owner != intent.owner
+        || material.sandbox_id != intent.sandbox_id
+        || material.owner != intent.owner
+        || material.authority.generation != intent.generation
+        || material.authority.issued_at != intent.created_at
+        || !material.source.is_managed()
+        || !material.matches_connection(sandbox)
+    {
+        return Err(corrupt());
+    }
+    let mut frozen = mongodb::bson::serialize_to_document(intent).map_err(|_| corrupt())?;
+    frozen.remove("next_check_at");
+    let authority = mongodb::bson::serialize_to_bson(&material.authority).map_err(|_| corrupt())?;
+    let mut exact = doc! {
+        "_id": intent.sandbox_id.as_str(),
+        "document_schema_version": 1_i64,
+        "retirement_custody.version": 1_i64,
+        "retirement_custody.state": "pending",
+        "retirement_custody.reason": "initial_issuance_unresolved",
+        "retirement_custody.issuance": &frozen,
+    };
+    for (field, value) in frozen {
+        exact.insert(format!("record.{field}"), value);
+    }
+    let mut write_filter = exact.clone();
+    write_filter.insert(
+        "$or",
+        vec![
+            doc! {"retirement_custody.late_provider_authority":{"$exists":false}},
+            doc! {"retirement_custody.late_provider_authority":&authority},
+        ],
+    );
+    let updated = store
+        .intents
+        .update_one(
+            write_filter,
+            doc! {"$set":{"retirement_custody.late_provider_authority":&authority}},
+        )
+        .await
+        .map_err(unavailable)?;
+    if updated.matched_count == 1 {
+        return Ok(true);
+    }
+    // Absence of the marker supplies no provider finality. A conflicting
+    // authoritative receipt cannot replace the frozen responsibility.
+    if store
+        .intents
+        .find_one(exact)
+        .await
+        .map_err(unavailable)?
+        .is_some()
+    {
+        return Err(corrupt());
+    }
+    Ok(false)
+}

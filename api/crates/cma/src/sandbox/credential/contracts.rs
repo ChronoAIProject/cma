@@ -141,6 +141,19 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
         ))
     }
 
+    /// Retain only the non-secret authority of a late mint in a committed
+    /// retirement obligation. True means the result cannot be delivered.
+    async fn retain_late_retirement_result(
+        &self,
+        _sandbox: &Sandbox,
+        _intent: &super::CredentialIssuance,
+        _material: &CredentialMaterial,
+    ) -> Result<bool, CredentialCustodyError> {
+        Err(CredentialCustodyError::Unavailable(
+            "late retirement custody is not supported".into(),
+        ))
+    }
+
     /// Retain supplied material only. Managed material requires an issuance intent
     /// and current work authority through `accept_issuance`.
     async fn insert(&self, material: CredentialMaterial) -> Result<(), CredentialCustodyError>;

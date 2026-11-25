@@ -203,6 +203,8 @@ async fn retirement_retains_exact_initial_issuance_for_revoke_only_custody() {
             if enabled && provenance_allowed {
                 let row = row.unwrap();
                 let marker = row.get_document("retirement_custody").unwrap();
+                // The provider result was lost before the marker existed.
+                assert!(!marker.contains_key("late_provider_authority"));
                 assert_eq!(
                     marker.get_str("reason").unwrap(),
                     "initial_issuance_unresolved"

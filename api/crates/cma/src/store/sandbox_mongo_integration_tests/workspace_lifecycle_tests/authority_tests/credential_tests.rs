@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 mod acknowledgements;
+mod late_retirement_tests;
 mod legacy_admission_tests;
 mod legacy_tests;
 mod observation_tests;

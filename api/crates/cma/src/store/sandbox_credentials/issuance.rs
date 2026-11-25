@@ -12,7 +12,7 @@ pub(in crate::store) const COLLECTION: &str = "sandbox_credential_issuance";
 pub(in crate::store) mod legacy;
 mod retirement;
 mod transactions;
-pub(super) use retirement::retain_retirement;
+pub(super) use retirement::{retain_late_result, retain_retirement};
 
 fn document(intent: &CredentialIssuance) -> Result<Document, CredentialCustodyError> {
     validate(intent)?;

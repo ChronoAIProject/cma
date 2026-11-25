@@ -226,6 +226,17 @@ impl ManagedSandboxCredentials {
             Err(error) => {
                 tracing::warn!(sandbox_id = %sandbox.id, error = %error,
                     "credential result persistence requires exact reconciliation");
+                // A committed retirement marker owns this returned result.
+                // Preserve its provider authority for revoke-only work; never
+                // return delivery material from that branch.
+                if self
+                    .custody
+                    .retain_late_retirement_result(sandbox, &intent, &material)
+                    .await
+                    .is_ok_and(|retained| retained)
+                {
+                    return Err(CredentialError::Uncertain);
+                }
                 // This is read-only exact-result reconciliation. It never
                 // invokes mint or revokes a possibly committed accepted result.
                 let stored = self.material(&sandbox.id, generation).await?;
