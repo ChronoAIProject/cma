@@ -1,6 +1,7 @@
 """Exercise deterministic Web asset overlays without Docker or registry writes."""
 
 import gzip
+from dataclasses import replace
 import io
 import json
 from pathlib import Path
@@ -172,6 +173,9 @@ class WebOverlayTests(unittest.TestCase):
             assemble(self.incumbent, wrong, [], self.root, max_files=16, max_bytes=512)
         with self.assertRaisesRegex(Refusal, "approved budget"):
             assemble(self.incumbent, self.candidate, [self.first], self.root, max_files=3, max_bytes=512)
+        with self.assertRaisesRegex(Refusal, "differs from its finalized catalog"):
+            retained = replace(self.first, catalog_sha256="b" * 64)
+            assemble(self.incumbent, self.candidate, [retained], self.root, max_files=16, max_bytes=512)
 
     def test_whiteout_refused_as_ambiguous_approved_overlay(self):
         extra = tarfile.TarInfo("usr/share/nginx/current/.wh.assets")

@@ -1,7 +1,7 @@
 """Validate the Web asset continuity proof carried by an immutable release."""
 
 from staging_cd_common import matches, require
-from staging_cd_receipts import sha256
+from staging_cd_receipts import sha256, validate_receipt
 from staging_cd_versions import version_tuple
 
 
@@ -101,3 +101,29 @@ def validate_proof(proof, continuity, identity, promote_image, promote_archive):
     require(overlays["prepare"]["layer_digest"] == overlays["promote"]["layer_digest"]
             and overlays["promote"]["archive_sha256"] == promote_archive,
             "Web continuity publication archive or shared layer differs")
+
+
+def retained_inputs(incumbent, finalized, *, allow_bootstrap=False):
+    """Resolve raw lineage for a settled serving image against verified final Web tags."""
+    matches_serving = []
+    for receipt in finalized:
+        validate_receipt(receipt)
+        require(receipt["identity"]["component"] == "web", "Web continuity lineage includes a different component")
+        promote = receipt["repository"] + "@" + receipt["digest"]
+        continuity = receipt.get("asset_continuity")
+        if promote == incumbent["image"]:
+            base = continuity["candidate_base_image"] if continuity else promote
+            expected = {"image": promote, "base_image": base, "source_sha": receipt["source"],
+                        "version": receipt["identity"]["version"]}
+        elif continuity and continuity["prepare_image"] == incumbent["image"]:
+            expected = dict(continuity["incumbent"], image=continuity["prepare_image"])
+        else:
+            continue
+        require(expected == incumbent, "Serving Web identity differs from its finalized lineage")
+        matches_serving.append(receipt.get("asset_proof"))
+    require(len(matches_serving) == 1, "Serving Web image has no unique finalized lineage")
+    [proof] = matches_serving
+    if proof is None:
+        require(allow_bootstrap is True, "An unprotected Web image cannot supply retained lineage")
+        return []
+    return [dict(row) for row in proof["inputs"] if row["image"] != incumbent["base_image"]]

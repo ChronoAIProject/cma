@@ -15,7 +15,7 @@ from staging_cd_receipts import annotation, canonical, parse_annotation, publish
 from staging_cd_receipts_tests import fixture_receipt, fixture_tag
 from staging_cd_resolve import verify
 from staging_cd_set import private_document, release_set, verify_set
-from staging_cd_web_continuity import PROOF_SCHEMA, binding
+from staging_cd_web_continuity import PROOF_SCHEMA, binding, retained_inputs
 
 
 REPOSITORY = "ghcr.io/chronoaiproject/cma-web"
@@ -218,3 +218,24 @@ class WebContinuityTests(unittest.TestCase):
                 continuity = dict(self.continuity, proof_sha256=sha256(proof))
                 with self.assertRaises(Refusal):
                     self.publish(self.original, asset_continuity=continuity, asset_proof=proof)
+
+    def test_next_successor_keeps_earlier_exposure_across_promote_or_rollback(self):
+        promoted = {"image": REPOSITORY + "@" + self.receipt["digest"],
+                    "base_image": self.continuity["candidate_base_image"], "source_sha": self.receipt["source"],
+                    "version": self.receipt["identity"]["version"]}
+        after_rollback = dict(self.continuity["incumbent"], image=self.continuity["prepare_image"])
+        retained_first = self.proof["inputs"][2]
+        self.assertEqual(retained_inputs(promoted, [self.receipt]), [self.proof["inputs"][0], retained_first])
+        self.assertEqual(retained_inputs(after_rollback, [self.receipt]), [self.proof["inputs"][1], retained_first])
+        with self.assertRaisesRegex(Refusal, "differs from its finalized lineage"):
+            retained_inputs(dict(after_rollback, base_image=self.continuity["candidate_base_image"]), [self.receipt])
+
+    def test_legacy_raw_preimage_requires_bootstrap_and_full_identity(self):
+        legacy = {"image": REPOSITORY + "@" + self.original["digest"],
+                  "base_image": REPOSITORY + "@" + self.original["digest"], "source_sha": self.original["source"],
+                  "version": self.original["identity"]["version"]}
+        self.assertEqual(retained_inputs(legacy, [self.original], allow_bootstrap=True), [])
+        with self.assertRaisesRegex(Refusal, "unprotected Web image"):
+            retained_inputs(legacy, [self.original])
+        with self.assertRaisesRegex(Refusal, "no unique finalized lineage"):
+            retained_inputs(legacy, [self.original, self.original], allow_bootstrap=True)

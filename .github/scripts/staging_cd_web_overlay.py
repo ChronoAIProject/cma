@@ -46,6 +46,7 @@ class WebArchive:
     digest: str
     source: str
     version: str
+    catalog_sha256: str | None = None
 
 
 def hashed(data):
@@ -231,9 +232,12 @@ def assemble(incumbent, candidate, retained, directory, *, max_files, max_bytes)
             kind, images = reader.images()
             image = validate_base(kind, images, expected)
             assets, sentinel = read_current(reader, image, read_path, read_json, expected, max_bytes)
+            catalog_digest = hashed(catalog_bytes(assets))
+            require(expected.catalog_sha256 is None or expected.catalog_sha256 == catalog_digest,
+                    "Web asset base differs from its finalized catalog")
             total = add_assets(union, assets, total, max_files=max_files, max_bytes=max_bytes)
             inputs.append({"image": REPOSITORY + "@" + expected.digest, "source_sha": expected.source,
-                           "version": expected.version, "catalog_sha256": hashed(catalog_bytes(assets))})
+                           "version": expected.version, "catalog_sha256": catalog_digest})
             if expected in (incumbent, candidate):
                 raw = reader.read("blobs/sha256/" + expected.digest[7:])
                 base_images[expected] = (read_json(raw), image, reader)
