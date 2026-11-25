@@ -63,28 +63,33 @@ pub fn into_domain(error: ErrorKind) -> MetricsError {
 type SessionOperation =
     for<'a> fn(&'a mut ClientSession) -> BoxFuture<'a, mongodb::error::Result<()>>;
 
+#[derive(Clone, Copy)]
+pub struct Policy {
+    pub open: SessionOperation,
+    pub commit: SessionOperation,
+    pub abort: SessionOperation,
+    pub backoff: fn(usize) -> BoxFuture<'static, ()>,
+}
+
 // Context borrows share the session borrow's lifetime; retries cannot retain
 // cursors or mutable observations from an earlier attempt.
 pub async fn run<T: Send + 'static, C: Sync, F>(
     client: &Client,
     context: C,
     mut body: F,
-    open: SessionOperation,
-    commit: SessionOperation,
-    abort: SessionOperation,
-    backoff: fn(usize) -> BoxFuture<'static, ()>,
+    policy: Policy,
 ) -> std::result::Result<T, MetricsError>
 where
     F: for<'a> FnMut(&'a C, &'a mut ClientSession) -> BoxFuture<'a, Result<T>>,
 {
     for attempt in 0..ATTEMPTS {
-        backoff(attempt).await;
+        (policy.backoff)(attempt).await;
         let mut session = client
             .start_session()
             .await
             .map_err(super::usage_reports::unavailable)?;
         let result = match session.start_transaction().await {
-            Ok(()) => match open(&mut session).await {
+            Ok(()) => match (policy.open)(&mut session).await {
                 Ok(()) => body(&context, &mut session).await,
                 Err(error) => Err(mongo(error)),
             },
@@ -94,7 +99,7 @@ where
         // Own that terminal operation so caller cancellation cannot strand a
         // server transaction that session drop would no longer abort.
         let finished = tokio::spawn(
-            async move { finish_session(&mut session, result, commit, abort, backoff).await }
+            async move { finish_session(&mut session, result, policy).await }
                 .with_current_subscriber(),
         )
         .await
@@ -112,16 +117,14 @@ where
 pub async fn finish_session<T>(
     session: &mut ClientSession,
     result: Result<T>,
-    commit: SessionOperation,
-    abort: SessionOperation,
-    backoff: fn(usize) -> BoxFuture<'static, ()>,
+    policy: Policy,
 ) -> Result<T> {
     let mut terminal = SessionTerminal {
         session,
-        commit,
-        abort,
+        commit: policy.commit,
+        abort: policy.abort,
     };
-    finish(&mut terminal, result, backoff).await
+    finish(&mut terminal, result, policy.backoff).await
 }
 
 #[async_trait::async_trait]

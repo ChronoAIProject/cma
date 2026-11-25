@@ -1,10 +1,13 @@
 //! Scheduling tokens belong to one attempt, never to a long-lived process.
-use super::*;
+use super::{now, CONTROL};
+use crate::{pool::DB_DEADLINE, transaction_scope as tx, unavailable, ReportingStore};
+use layer2_core::sandbox_metrics::{MetricsError, Result};
+use mongodb::bson::{doc, Document};
 
 impl ReportingStore {
     /// Acquire an expired slot with a fresh holder. This is not a renewal API:
     /// repeated calls with a live holder cannot admit overlapping work.
-    pub(crate) async fn lease(&self, key: &str, holder: &str, seconds: u64) -> Result<bool> {
+    pub async fn lease(&self, key: &str, holder: &str, seconds: u64) -> Result<bool> {
         let seconds = i64::try_from(seconds).map_err(|_| MetricsError::Unavailable)?;
         if key.is_empty()
             || holder.is_empty()
@@ -28,7 +31,7 @@ impl ReportingStore {
         Ok(result.is_some())
     }
 
-    pub(crate) async fn release(&self, key: &str, holder: &str) -> Result<()> {
+    pub async fn release(&self, key: &str, holder: &str) -> Result<()> {
         let result = self
             .collection(CONTROL)
             .update_one(fence(key, holder), doc! {"$set":{"lease_until":0_i64}})
@@ -43,12 +46,12 @@ impl ReportingStore {
     /// A real write in the mapping transaction makes takeover conflict with
     /// every earlier observation, including an unchanged assignment. Keep this
     /// internal counter separate from the public mapping revision.
-    pub(crate) async fn fence_control_transaction(
+    pub async fn fence_control_transaction(
         &self,
         key: &str,
         holder: &str,
         session: &mut mongodb::ClientSession,
-    ) -> crate::store::transaction_scope::Result<()> {
+    ) -> tx::Result<()> {
         let mut filter = fence(key, holder);
         filter.insert(
             "$or",
@@ -63,7 +66,7 @@ impl ReportingStore {
             .update_one(filter, doc! {"$inc":{"control_write_fence":1_i64}})
             .session(session)
             .await
-            .map_err(crate::store::transaction_scope::mongo)?
+            .map_err(tx::mongo)?
             .matched_count;
         if changed != 1 {
             return Err(MetricsError::Unavailable.into());
@@ -72,11 +75,11 @@ impl ReportingStore {
     }
 }
 
-pub(super) fn fence(key: &str, holder: &str) -> Document {
+pub fn fence(key: &str, holder: &str) -> Document {
     doc! {"_id":key,"holder":holder,
     "$expr":{"$gt":["$lease_until",server_seconds()]}}
 }
 
-fn server_seconds() -> Document {
+pub(super) fn server_seconds() -> Document {
     doc! {"$toLong":{"$divide":[{"$toLong":"$$NOW"},1000_i64]}}
 }

@@ -3,7 +3,6 @@ mod admission;
 mod allocation_deadline;
 pub(super) use allocation_deadline::{allocation_operation, ALLOCATION_DB_DEADLINE};
 mod budget;
-mod control;
 mod controlled_updates;
 mod diagnostics;
 mod initial_snapshot;
@@ -13,7 +12,6 @@ mod options;
 mod owner_allocation;
 mod owner_names;
 mod owners;
-mod ownership;
 mod progress;
 pub(crate) use progress::Progress;
 mod reads;
@@ -24,7 +22,7 @@ mod view_authority;
 mod view_finish;
 mod views;
 mod work;
-pub(crate) use cma_am_reporting::{chart_documents, unavailable};
+pub(crate) use cma_am_reporting::{chart_documents, now, unavailable};
 pub(super) use cma_am_reporting::{decode, encode, expires};
 pub(crate) use views::ViewLease;
 pub(crate) use work::ReportLease;
@@ -38,10 +36,9 @@ use mongodb::options::ClientOptions;
 use mongodb::Client;
 use std::{sync::Arc, time::Duration};
 
-pub(crate) const JOBS: &str = "sandbox_usage_reports";
+pub(crate) use cma_am_reporting::{CONTROL, JOBS};
 pub(crate) const ROWS: &str = "sandbox_usage_report_rows";
 pub(crate) const CHARTS: &str = "sandbox_usage_report_charts";
-pub(crate) const CONTROL: &str = "sandbox_usage_report_control";
 #[cfg(test)]
 use cma_am_reporting::pool::configure_pool;
 pub(super) use cma_am_reporting::pool::DB_DEADLINE;
@@ -79,6 +76,7 @@ impl ReportingStore {
             .map_err(tx::into_domain)
     }
 
+    #[cfg(test)]
     pub(super) async fn bulk_updates_in_session(
         &self,
         collection: &str,
@@ -130,7 +128,12 @@ impl ReportingStore {
         );
         let store = Arc::new(Self {
             budgets,
-            persistence: cma_am_reporting::ReportingStore::new(client, db, key),
+            persistence: cma_am_reporting::ReportingStore::new(
+                client,
+                db,
+                key,
+                tx::REPORTING_POLICY,
+            ),
             circuit,
             notifications: Arc::default(),
             view_policy: Arc::default(),
@@ -143,12 +146,6 @@ impl ReportingStore {
     }
 }
 
-pub(crate) fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
 #[cfg(test)]
 mod tests;
 
