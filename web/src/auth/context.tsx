@@ -18,7 +18,12 @@ import { retainAgentDraftOwner } from '../agent/draftIdentity';
 import { clearAgentTransport } from '../agent/transport/journal';
 import { retainPreparationDraftOwner } from '../preparation/preparationDraftIdentity';
 import { releaseNavigationGuard } from '../routing/navigationGuard';
-import { readSignOutNotice, SIGN_OUT_NOTICE_KEY } from './signOutNotice';
+import {
+  isSignOutNotice,
+  openSignOutChannel,
+  readSignOutNotice,
+  SIGN_OUT_NOTICE_KEY,
+} from './signOutNotice';
 
 /**
  * Wires an AuthProvider into React. Components consume `useAuth()` and never
@@ -68,6 +73,11 @@ function clearSignedOutTab() {
   }
 }
 
+function hasNewSignOut(previous: string | null): boolean {
+  const notice = readSignOutNotice();
+  return notice !== null && notice !== previous;
+}
+
 interface AuthProviderProps {
   readonly provider: AuthProvider;
   readonly children: ReactNode;
@@ -100,7 +110,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     // Guards against a resolved promise landing after unmount, which React 19
     // StrictMode makes routine by running effects twice in development.
     let live = true;
-    let inFlight = false;
+    let inFlight: number | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let failures = 0;
     let retryNotBefore = 0;
@@ -110,6 +120,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     let pendingRefresh = false;
     let leaving: ReturnType<typeof setTimeout> | undefined;
     signOutNotice.current = readSignOutNotice();
+    const seenNotices = new Set([signOutNotice.current]);
+    const channel = openSignOutChannel();
 
     suspendRecoveryRef.current = () => {
       suspended = true;
@@ -129,10 +141,9 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         suspended = false;
       };
     };
-    const observeSignOut = (synchronous = false) => {
-      const notice = readSignOutNotice();
-      if (notice === null || notice === signOutNotice.current) return;
-      signOutNotice.current = notice;
+    const receiveSignOut = (notice: string, synchronous: boolean) => {
+      if (seenNotices.has(notice)) return;
+      seenNotices.add(notice);
       const invalidate = () => {
         currentRead.current++;
         suspendRecoveryRef.current();
@@ -146,15 +157,24 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
       if (synchronous) flushSync(invalidate);
       else invalidate();
     };
-    const restore = () => observeSignOut(true);
+    const observeSignOut = (synchronous = false) => {
+      const notice = readSignOutNotice();
+      if (notice === null) return;
+      signOutNotice.current = notice;
+      receiveSignOut(notice, synchronous);
+    };
     const storage = (event: StorageEvent) => {
-      if (event.key === SIGN_OUT_NOTICE_KEY) restore();
+      if (event.key === SIGN_OUT_NOTICE_KEY) observeSignOut(true);
+    };
+    const broadcast = ({ data }: MessageEvent<unknown>) => {
+      observeSignOut(true);
+      if (isSignOutNotice(data)) receiveSignOut(data, true);
     };
     const refresh = (mayNavigate = false) => {
       if (!live) return;
       observeSignOut();
       if (signedOut.current || suspended || leaving !== undefined) return;
-      if (inFlight) {
+      if (inFlight !== undefined) {
         pendingRefresh = true;
         return;
       }
@@ -167,9 +187,9 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         );
         return;
       }
-      inFlight = true;
       allowSessionReads(false);
       const version = ++currentRead.current;
+      inFlight = version;
       let canFollowUp = false;
       void provider
         .current()
@@ -243,7 +263,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
           }
         })
         .finally(() => {
-          inFlight = false;
+          if (inFlight !== version) return;
+          inFlight = undefined;
           const followUp = pendingNavigation || (pendingRefresh && canFollowUp);
           const navigate = pendingNavigation;
           pendingNavigation = false;
@@ -254,9 +275,9 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     const backgroundRefresh = () => refresh();
     refreshRef.current = backgroundRefresh;
     const navigation = () => {
-      restore();
+      observeSignOut(true);
       if (last.status !== 'anonymous') return;
-      if (inFlight) {
+      if (inFlight !== undefined) {
         pendingNavigation = true;
         return;
       }
@@ -264,11 +285,36 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     };
     const visible = () => {
       if (document.visibilityState !== 'hidden') {
-        restore();
+        observeSignOut(true);
         refresh();
       }
     };
+    const hideCachedPage = (event: PageTransitionEvent) => {
+      if (!event.persisted || signedOut.current) return;
+      flushSync(() => {
+        if (!suspended) currentRead.current++;
+        inFlight = undefined;
+        clearTimeout(timer);
+        clearTimeout(leaving);
+        leaving = undefined;
+        pendingRefresh = false;
+        pendingNavigation = false;
+        last = { status: 'checking' };
+        allowSessionReads(false);
+        setOutage(undefined);
+        setState(last);
+      });
+    };
+    const restore = (event: PageTransitionEvent) => {
+      observeSignOut(true);
+      if (event.persisted && !signedOut.current) {
+        hideCachedPage(event);
+        refresh();
+      }
+    };
+    channel?.addEventListener('message', broadcast);
     window.addEventListener('storage', storage);
+    window.addEventListener('pagehide', hideCachedPage);
     window.addEventListener('pageshow', restore);
     refresh(true);
     window.addEventListener('popstate', navigation);
@@ -286,7 +332,9 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
       clearTimeout(leaving);
       refreshRef.current = () => {};
       suspendRecoveryRef.current = () => () => {};
+      channel?.close();
       window.removeEventListener('storage', storage);
+      window.removeEventListener('pagehide', hideCachedPage);
       window.removeEventListener('pageshow', restore);
       window.removeEventListener('popstate', navigation);
       window.removeEventListener('cma:navigate', navigation);
@@ -313,11 +361,9 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
           returnTo = routePath(current);
         }
         await provider.signIn(returnTo, options);
-        if (version !== currentRead.current || readSignOutNotice() !== signOutNotice.current)
-          return;
+        if (version !== currentRead.current || hasNewSignOut(signOutNotice.current)) return;
         next = await provider.current();
-        if (version !== currentRead.current || readSignOutNotice() !== signOutNotice.current)
-          return;
+        if (version !== currentRead.current || hasNewSignOut(signOutNotice.current)) return;
         if (next.status === 'authenticated') {
           signedOut.current = false;
           setExplicitlySignedOut(false);

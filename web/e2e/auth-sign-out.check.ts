@@ -88,9 +88,10 @@ test('LOCAL sign-out hides protected views in sibling tabs and fences late ident
       await route.fulfill({ status: 303, headers: { location: '/' } });
     });
     // Model a suspended page that misses the live storage event.
-    await shared.addInitScript(() =>
-      window.addEventListener('storage', (event) => event.stopImmediatePropagation(), true),
-    );
+    await shared.addInitScript(() => {
+      Object.defineProperty(window, 'BroadcastChannel', { value: undefined });
+      window.addEventListener('storage', (event) => event.stopImmediatePropagation(), true);
+    });
     await files.route('**/api/v1/agents/agt_contract/files/tree**', (route) =>
       route.fulfill({
         json: {

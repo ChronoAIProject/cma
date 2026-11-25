@@ -24,6 +24,12 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
+function opaqueRedirect(): Response {
+  const response = new Response();
+  Object.defineProperty(response, 'type', { value: 'opaqueredirect' });
+  return response;
+}
+
 describe('handleFor', () => {
   it('prefers the account name the person chose', () => {
     expect(handleFor('76fe9d91', 'Shining Wang', 'shining@aelf.io')).toBe('Shining Wang');
@@ -302,14 +308,16 @@ describe('silent sign-in', () => {
   it('publishes confirmed server logout before navigating and suppresses silent sign-in', async () => {
     const { assign } = stubLocation('/agent-manager');
     const provider = await anonymous();
-    stubFetch(() => {
+    stubFetch((url) => {
       expect(localStorage.getItem(SIGN_OUT_NOTICE_KEY)).toBeNull();
-      return jsonResponse(200, {});
+      return url === '/auth/logout'
+        ? opaqueRedirect()
+        : jsonResponse(401, { authenticated: false, silent_sign_in: false });
     });
     await provider.signOut();
     expect(fetch).toHaveBeenCalledWith(
       '/auth/logout',
-      expect.objectContaining({ mode: 'same-origin' }),
+      expect.objectContaining({ mode: 'same-origin', redirect: 'manual' }),
     );
     expect(localStorage.getItem(SIGN_OUT_NOTICE_KEY)).toMatch(/^[0-9a-f-]{36}$/);
     expect(assign).toHaveBeenCalledWith('/');
@@ -321,6 +329,20 @@ describe('silent sign-in', () => {
     const provider = await anonymous();
     stubFetch(() => jsonResponse(503, {}));
     await expect(provider.signOut()).rejects.toThrow('Sign-out did not complete');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(SIGN_OUT_NOTICE_KEY)).toBeNull();
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [200, { authenticated: true }],
+    [401, { authenticated: false, silent_sign_in: true }],
+    [401, { code: 'unexpected_response' }],
+    [503, { code: 'store_failed' }],
+  ])('requires a signed-out session result after a redirect (%s, %j)', async (status, body) => {
+    const { assign } = stubLocation('/agent-manager');
+    stubFetch((url) => (url === '/auth/logout' ? opaqueRedirect() : jsonResponse(status, body)));
+    await expect(createNyxidAuthProvider().signOut()).rejects.toThrow('Sign-out did not complete');
     expect(localStorage.getItem(SIGN_OUT_NOTICE_KEY)).toBeNull();
     expect(assign).not.toHaveBeenCalled();
   });

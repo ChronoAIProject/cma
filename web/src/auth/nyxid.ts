@@ -312,13 +312,21 @@ export function createNyxidAuthProvider(): AuthProvider {
     },
 
     async signOut(): Promise<void> {
-      const response = await fetch(LOGOUT_ENDPOINT, {
+      const request: RequestInit = {
         credentials: 'same-origin',
         mode: 'same-origin',
         cache: 'no-store',
+        redirect: 'manual',
         signal: AbortSignal.timeout(IDENTITY_TIMEOUT_MS),
-      });
-      if (!response.ok) throw new Error('Sign-out did not complete. Please try again.');
+      };
+      const failed = new Error('Sign-out did not complete. Please try again.');
+      const response = await fetch(LOGOUT_ENDPOINT, request);
+      if (response.type !== 'opaqueredirect') throw failed;
+      // Fetch hides the redirect status. Confirm the cleared session before requesting the landing page.
+      const identity = await fetch(IDENTITY_ENDPOINT, request);
+      if (identity.status !== 401) throw failed;
+      const body: IdentityResponse | null = await identity.json().catch(() => null);
+      if (body?.authenticated !== false || body.silent_sign_in === true) throw failed;
       remember(() => {
         sessionStorage.setItem(SILENT_ATTEMPT_KEY, '1');
         return true;
