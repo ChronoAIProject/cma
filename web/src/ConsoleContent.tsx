@@ -294,10 +294,7 @@ export function ConsoleContent({
       />
     ) : route.kind === 'event_worker_profiles' ||
       route.kind === 'event_worker_profile' ||
-      route.kind === 'profiles' ||
-      route.kind === 'profile' ? (
-      <LegacyProfileNotice />
-    ) : route.kind === 'marketplace' || route.kind === 'marketplace_profile' ? (
+      ['profiles', 'profile', 'marketplace', 'marketplace_profile'].includes(route.kind) ? (
       <LegacyProfileNotice />
     ) : route.kind === 'operations' ? (
       <OperationsRoute

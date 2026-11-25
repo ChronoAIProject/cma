@@ -28,6 +28,8 @@ pub(super) const OUTSIDE_MANIFEST: &[&str] = &[
     crate::store::migrations::measured_index::PROJECTIONS,
     crate::store::migrations::measured_index::MANIFESTS,
     crate::store::migrations::measured_index::BATCHES,
+    // Reconstructible proof over segmented source bytes. Segmented heads already refuse legacy archives.
+    crate::store::agent_log_segments::active_proof::COLLECTION,
 ];
 pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("account_deletions", Independent),
