@@ -12,8 +12,8 @@ ENGINES = {"chromium", "firefox", "webkit"}
 CHECK_KINDS = {"ci", "fixture", "browser"}
 
 
-def fields(value, expected, message):
-    require(isinstance(value, dict) and set(value) == set(expected), message)
+def has_exact_fields(value, expected):
+    return isinstance(value, dict) and set(value) == set(expected)
 
 
 def hash_value(value):
@@ -35,25 +35,28 @@ def asset_map(value):
 
 def check_web_assets(freeze, references, files):
     reviewed = freeze["web_assets"]
-    fields(reviewed, {"previous_source", "previous_digest", "previous_manifest_sha256",
-                      "candidate_manifest_sha256"}, "Frozen Web asset inventory is malformed")
+    require(has_exact_fields(reviewed, {
+        "previous_source", "previous_digest", "previous_manifest_sha256", "candidate_manifest_sha256",
+    }), "Frozen Web asset inventory is malformed")
     require(matches(r"[0-9a-f]{40}", reviewed["previous_source"])
             and matches(r"sha256:[0-9a-f]{64}", reviewed["previous_digest"]),
             "Previous Web identity is malformed")
-    fields(references, {"previous", "current", "serving"}, "Web asset evidence is incomplete")
+    require(has_exact_fields(references, {"previous", "current", "serving"}),
+            "Web asset evidence is incomplete")
     previous, current, serving = (files.json(references[key]) for key in ("previous", "current", "serving"))
     require(references["previous"]["sha256"] == reviewed["previous_manifest_sha256"]
             and references["current"]["sha256"] == reviewed["candidate_manifest_sha256"],
             "Web asset manifest differs from freeze")
     for row in (previous, current):
-        fields(row, {"source", "digest", "assets"}, "Web manifest is malformed")
+        require(has_exact_fields(row, {"source", "digest", "assets"}), "Web manifest is malformed")
         asset_map(row["assets"])
     expected = freeze["components"]["web"]
     require((previous["source"], previous["digest"]) == (reviewed["previous_source"], reviewed["previous_digest"]),
             "Previous Web artifact differs")
     require((current["source"], current["digest"]) == (expected["source"], expected["digest"]),
             "Current Web artifact differs")
-    fields(serving, {"source", "digest", "assets"}, "Serving Web inventory is malformed")
+    require(has_exact_fields(serving, {"source", "digest", "assets"}),
+            "Serving Web inventory is malformed")
     require((serving["source"], serving["digest"]) == (current["source"], current["digest"]),
             "Serving Web artifact differs")
     combined = asset_map(serving["assets"])
@@ -68,13 +71,14 @@ def validate_checks(required, previous):
             "Required qualification inventory is missing")
     for name, row in required.items():
         require(matches(r"[a-z][a-z0-9_-]{0,95}", name), "Qualification name is malformed")
-        fields(row, {"kind", "minimum_samples", "inheritance"}, "Required qualification is malformed")
+        require(has_exact_fields(row, {"kind", "minimum_samples", "inheritance"}),
+                "Required qualification is malformed")
         require(row["kind"] in CHECK_KINDS and type(row["minimum_samples"]) is int
                 and row["minimum_samples"] > 0, "Qualification scope is malformed")
         inheritance = row["inheritance"]
         if inheritance is not None:
-            fields(inheritance, {"candidate_sha256", "source", "impact_sha256"},
-                   "Evidence inheritance decision is malformed")
+            require(has_exact_fields(inheritance, {"candidate_sha256", "source", "impact_sha256"}),
+                    "Evidence inheritance decision is malformed")
             require(previous is not None and inheritance["candidate_sha256"] == previous
                     and matches(r"[0-9a-f]{40}", inheritance["source"])
                     and hash_value(inheritance["impact_sha256"]), "Evidence inheritance is unpinned")
@@ -92,16 +96,18 @@ def common_observation(row, candidate, environment, samples):
 
 def check_gate_observations(freeze, candidate_sha, observations, files, observed_at):
     required = freeze["checks"]
-    fields(observations, required, "Required CI or fixture evidence is missing")
+    require(has_exact_fields(observations, required), "Required CI or fixture evidence is missing")
     browsers = {}
     run_ids = set()
     for name, rule in required.items():
         item = observations[name]
-        fields(item, {"result", "impact"}, "Qualification reference is malformed")
+        require(has_exact_fields(item, {"result", "impact"}),
+                "Qualification reference is malformed")
         row = files.json(item["result"])
-        fields(row, {"name", "kind", "candidate_sha256", "environment", "started_at", "finished_at",
-                     "samples", "status", "attempt", "cancelled", "outcome"},
-               "Qualification result is malformed")
+        require(has_exact_fields(row, {
+            "name", "kind", "candidate_sha256", "environment", "started_at", "finished_at",
+            "samples", "status", "attempt", "cancelled", "outcome",
+        }), "Qualification result is malformed")
         require(row["name"] == name and row["kind"] == rule["kind"], "Qualification result identity differs")
         inheritance = rule["inheritance"]
         if inheritance is None:
@@ -119,21 +125,23 @@ def check_gate_observations(freeze, candidate_sha, observations, files, observed
         require(timestamp(row["finished_at"]) <= observed_at, "Qualification result postdates observation")
         outcome = row["outcome"]
         if rule["kind"] == "ci":
-            fields(outcome, {"run_id", "head_sha", "conclusion"}, "CI result is malformed")
+            require(has_exact_fields(outcome, {"run_id", "head_sha", "conclusion"}),
+                    "CI result is malformed")
             require(type(outcome["run_id"]) is int and outcome["run_id"] > 0
                     and outcome["head_sha"] == source and outcome["conclusion"] == "success",
                     "Required CI did not pass for the bound source")
             run_ids.add(outcome["run_id"])
         elif rule["kind"] == "browser":
-            fields(outcome, {"engine", "asset_404", "blank_pages", "duplicate_commands", "lost_drafts"},
-                   "Browser result is malformed")
+            require(has_exact_fields(outcome, {"engine", "asset_404", "blank_pages", "duplicate_commands", "lost_drafts"}),
+                    "Browser result is malformed")
             engine = outcome["engine"]
             require(engine in ENGINES and all(type(outcome[key]) is int and outcome[key] == 0
                                                for key in set(outcome) - {"engine"}),
                     "Retained-tab browser qualification failed")
             browsers[engine] = browsers.get(engine, 0) + row["samples"]
         else:
-            fields(outcome, {"passed", "failures"}, "Fixture outcome is malformed")
+            require(has_exact_fields(outcome, {"passed", "failures"}),
+                    "Fixture outcome is malformed")
             require(outcome["passed"] is True and type(outcome["failures"]) is int and outcome["failures"] == 0,
                     "Required fixture did not pass")
     require(set(browsers) == ENGINES and all(samples >= 20 for samples in browsers.values()),
@@ -143,10 +151,10 @@ def check_gate_observations(freeze, candidate_sha, observations, files, observed
 
 def verify_matrix(freeze, refs, files, candidate, repair, observed_at):
     reviewed = freeze["matrix"]
-    fields(reviewed, {"source_inventory_sha256", "shape_inventory_sha256", "plan_sha256", "bindings_sha256"},
-           "Frozen reader matrix identity is malformed")
-    fields(refs, {"source_inventory", "shape_inventory", "plan", "bindings", "evidence"},
-           "Reader matrix is incomplete")
+    require(has_exact_fields(reviewed, {"source_inventory_sha256", "shape_inventory_sha256", "plan_sha256", "bindings_sha256"}),
+            "Frozen reader matrix identity is malformed")
+    require(has_exact_fields(refs, {"source_inventory", "shape_inventory", "plan", "bindings", "evidence"}),
+            "Reader matrix is incomplete")
     for key, expected in reviewed.items():
         require(hash_value(expected) and refs[key.removesuffix("_sha256")]["sha256"] == expected,
                 "Reviewed reader matrix inventory differs")
@@ -194,18 +202,20 @@ def verify_matrix(freeze, refs, files, candidate, repair, observed_at):
 def recovery_observations(row, files):
     execution = files.json(row["execution"])
     execution_fields = {"run_id", "candidate_sha256", "environment", "repair", "started_at", "finished_at", "kind"}
-    fields(execution, execution_fields, "Independent recovery execution is malformed")
+    require(has_exact_fields(execution, execution_fields),
+            "Independent recovery execution is malformed")
     require(execution == {key: row[key] for key in execution_fields},
             "Recovery execution differs from its summary")
     failure = files.json(row["failure"])
     failure_fields = {"run_id", "candidate_sha256", "environment", "failure_id", "first_failure_at", "observed"}
-    fields(failure, failure_fields, "Independent failure observation is malformed")
+    require(has_exact_fields(failure, failure_fields),
+            "Independent failure observation is malformed")
     require(all(failure[key] == row[key] for key in ("run_id", "candidate_sha256", "environment", "first_failure_at"))
             and hash_value(failure["failure_id"]) and failure["observed"] is True,
             "Recovery failure differs from its execution")
     trace = files.json(row["probe_trace"])
-    fields(trace, {"run_id", "candidate_sha256", "environment", "failure_id", "probes"},
-           "Independent probe trace is malformed")
+    require(has_exact_fields(trace, {"run_id", "candidate_sha256", "environment", "failure_id", "probes"}),
+            "Independent probe trace is malformed")
     require(all(trace[key] == failure[key] for key in ("run_id", "candidate_sha256", "environment", "failure_id")),
             "Recovery probes belong to another failure")
     return failure["failure_id"], trace["probes"]
@@ -218,11 +228,12 @@ def check_recoveries(freeze, candidate_sha, references, files, repair, observed_
     initial = 0
     for reference in references:
         row = files.json(reference)
-        fields(row, {"run_id", "candidate_sha256", "environment", "started_at", "finished_at", "samples",
-                     "status", "attempt", "cancelled", "kind", "repair", "first_failure_at", "execution",
-                     "failure", "probe_trace", "retained_before", "retained_after", "database_rollback",
-                     "history_rewritten", "home_deleted", "asset_404", "new_turn_available"},
-               "Recovery result is malformed")
+        require(has_exact_fields(row, {
+            "run_id", "candidate_sha256", "environment", "started_at", "finished_at", "samples",
+            "status", "attempt", "cancelled", "kind", "repair", "first_failure_at", "execution",
+            "failure", "probe_trace", "retained_before", "retained_after", "database_rollback",
+            "history_rewritten", "home_deleted", "asset_404", "new_turn_available",
+        }), "Recovery result is malformed")
         common_observation(row, candidate_sha, freeze["environment"], 1)
         require(hash_value(row["run_id"]) and row["run_id"] not in run_ids,
                 "Recovery executions must be distinct")
@@ -251,7 +262,7 @@ def check_recoveries(freeze, candidate_sha, references, files, repair, observed_
                 "Stable recovery probe window is missing")
         observed = []
         for probe in probes:
-            fields(probe, {"at", "ready"}, "Recovery probe is malformed")
+            require(has_exact_fields(probe, {"at", "ready"}), "Recovery probe is malformed")
             require(probe["ready"] is True, "Recovery probe window was interrupted")
             observed.append(timestamp(probe["at"]))
         # Deduplicate the observed trace itself, independent of wrapper IDs,
@@ -264,7 +275,8 @@ def check_recoveries(freeze, candidate_sha, references, files, repair, observed_
                 and all(timedelta(0) < later - earlier <= timedelta(seconds=30)
                         for earlier, later in zip(observed, observed[1:])),
                 "Five continuous minutes of stable probes are unproven")
-        fields(row["retained_before"], {"database", "history", "homes"}, "Retained recovery state is incomplete")
+        require(has_exact_fields(row["retained_before"], {"database", "history", "homes"}),
+                "Retained recovery state is incomplete")
         require(all(hash_value(value) for value in row["retained_before"].values())
                 and row["retained_after"] == row["retained_before"]
                 and row["database_rollback"] is False and row["history_rewritten"] is False
