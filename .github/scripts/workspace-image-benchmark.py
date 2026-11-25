@@ -43,17 +43,23 @@ def git(*args, input=None, env=None):
     return result.stdout.decode().strip()
 
 
-def edited_revision(seed, component, index, *, library=False):
+def edited_revision(seed, component, index, *, probe):
     file = "main.rs"
-    marker = b"fn main() {"
-    replacement = marker + b'''
+    if probe == "baseline":
+        marker = b"fn main() {"
+        replacement = marker + b'''
     if std::env::args_os().nth(1).is_some_and(|arg| arg == "--workspace-cache-probe") {
-        println!("workspace-probe:{}:{}", env!("CHRONO_BUILD_SHA"), env!("CHRONO_BUILD"));
+        println!("workspace-probe:baseline:{}:{}", env!("CHRONO_BUILD_SHA"), env!("CHRONO_BUILD"));
         return;
     }
 '''
-    if library:
+    elif probe == "entrypoint":
+        marker = b"workspace-probe:baseline:"
+        replacement = b"workspace-probe:entrypoint:"
+    elif probe == "library":
         file, marker, replacement, _, _ = LIBRARY_EDITS[component]
+    else:
+        raise ValueError("Unknown benchmark probe")
     path = f"api/crates/{BINARIES[component]}/src/{file}"
     source = run(["git", "show", f"{seed}:{path}"]).stdout
     if source.count(marker) != 1:
@@ -167,22 +173,23 @@ def seal_seed(tool, bundle, builder, reserved, source, receipt):
     return key
 
 
-def verify_image(archive, component, revision, version, *, library=False):
+def verify_image(archive, component, revision, version, *, probe):
     name = "cma-workspace-probe:" + secrets.token_hex(8)
     run(["skopeo", "copy", f"oci-archive:{archive}", f"docker-daemon:{name}"], timeout=180)
     try:
-        argument = LIBRARY_EDITS[component][3] if library else "--workspace-cache-probe"
         command = ["docker", "run", "--rm", "--network", "none", "--entrypoint",
-                   f"/usr/local/bin/{BINARIES[component]}", name, argument]
-        output = run(command, timeout=30).stdout.decode().strip()
-        if library:
-            value = json.loads(output)
-            for field in LIBRARY_EDITS[component][4]:
+                   f"/usr/local/bin/{BINARIES[component]}", name]
+        identity = run([*command, "--workspace-cache-probe"], timeout=30).stdout.decode().strip()
+        expected_probe = "entrypoint" if probe == "entrypoint" else "baseline"
+        if identity != f"workspace-probe:{expected_probe}:{revision}:{version}":
+            raise ValueError("The executable did not contain the expected probe and release identity")
+        if probe == "library":
+            _, _, _, argument, fields = LIBRARY_EDITS[component]
+            value = json.loads(run([*command, argument], timeout=30).stdout)
+            for field in fields:
                 value = value[field]
             if value != LIBRARY_PROBE:
                 raise ValueError("The warm executable did not contain the library edit")
-        elif output != f"workspace-probe:{revision}:{version}":
-            raise ValueError("The warm executable did not contain the one-file edit and current release identity")
     finally:
         run(["docker", "image", "rm", name])
 
@@ -198,7 +205,8 @@ def measure_warm(tool, key, work, component, reserved, case, result, *, seed="se
         archive, result[case] = measure(builder, reserved, work / case)
         result[case]["restore_seconds"] = restore
         result[case]["restore_and_image_seconds"] = round(restore + result[case]["seconds"], 3)
-        verify_image(archive, component, reserved["source"], reserved["version"], library=case != "warm")
+        verify_image(archive, component, reserved["source"], reserved["version"],
+                     probe="entrypoint" if case == "warm" else "library")
         archive.unlink()
         if export:
             result[export] = {}
@@ -211,22 +219,24 @@ def main():
     parser.add_argument("component", choices=sorted(BINARIES))
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
-    seed = git("rev-parse", "HEAD")
-    cold_request = reservation(args.component, seed)
+    selected_head = git("rev-parse", "HEAD")
     tool = bridge()
-    result = {"component": args.component, "source": seed, "runner_cpu_count": os.cpu_count()}
+    result = {"component": args.component, "source": selected_head, "runner_cpu_count": os.cpu_count()}
     try:
         with tempfile.TemporaryDirectory(prefix="workspace-bench-") as temporary:
             work = Path(temporary)
+            seed = edited_revision(selected_head, args.component, work / "index", probe="baseline")
+            cold_request = reservation(args.component, seed)
             with Builder(work / "layers", True) as builder:
                 archive, result["cold"] = measure(builder, cold_request, work / "cold")
+                verify_image(archive, args.component, seed, cold_request["version"], probe="baseline")
                 archive.unlink()
                 result["seed"] = {}
                 key = seal_seed(tool, work / "seed", builder, cold_request, work / "cold/source", result["seed"])
-            warm = edited_revision(seed, args.component, work / "index")
+            warm = edited_revision(seed, args.component, work / "index", probe="entrypoint")
             warm_request = reservation(args.component, warm, [cold_request])
             measure_warm(tool, key, work, args.component, warm_request, "warm", result)
-            library = edited_revision(seed, args.component, work / "index", library=True)
+            library = edited_revision(seed, args.component, work / "index", probe="library")
             library_request = reservation(args.component, library, [cold_request])
             library_key = measure_warm(tool, key, work, args.component, library_request,
                                        "warm_library", result, export="library_seed")

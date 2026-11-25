@@ -321,5 +321,33 @@ fn main() {
         self.assertFalse(saved.exists())
 
 
+class ImageProofTests(unittest.TestCase):
+    def test_library_proof_rejects_the_previous_release_stamp(self):
+        benchmark_path = ROOT / ".github/scripts/workspace-image-benchmark.py"
+        spec = importlib.util.spec_from_file_location("image_benchmark", benchmark_path)
+        benchmark = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(benchmark)
+        revision = "a" * 40
+        for component, library_output in (
+            ("am", {"schema": benchmark.LIBRARY_PROBE}),
+            ("eg", {"info": {"title": benchmark.LIBRARY_PROBE}}),
+        ):
+            with self.subTest(component=component):
+                for version in ("1.2.3", "1.2.4"):
+                    def runner(args, **_):
+                        if args[-1] == "--workspace-cache-probe":
+                            output = f"workspace-probe:baseline:{revision}:{version}".encode()
+                        else:
+                            output = json.dumps(library_output).encode()
+                        return subprocess.CompletedProcess(args, 0, output, b"")
+
+                    with patch.object(benchmark, "run", runner):
+                        if version == "1.2.3":
+                            with self.assertRaisesRegex(ValueError, "expected probe and release identity"):
+                                benchmark.verify_image(Path("fixture"), component, revision, "1.2.4", probe="library")
+                        else:
+                            benchmark.verify_image(Path("fixture"), component, revision, "1.2.4", probe="library")
+
+
 if __name__ == "__main__":
     unittest.main()
