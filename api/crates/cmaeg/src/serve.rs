@@ -5,14 +5,14 @@ use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 
 use crate::{
     connections, console, delivery, http, ingress, interactions, media, providers,
-    router_with_state, service_auth, telegram, telemetry, tools, turns, Config,
-    REQUEST_BODY_LIMIT_BYTES,
+    router_with_state, service_auth, telemetry, tools, turns, Config, REQUEST_BODY_LIMIT_BYTES,
 };
 
 /// Compose CMAEG from `config` and run it until a process termination signal arrives.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn serve(
     mut config: Config,
+    build: Option<http::readiness::ReleaseBuild>,
     complete_replies: bool,
     commonmark_relay: crate::config::CommonmarkRelay,
     native_media: bool,
@@ -66,16 +66,12 @@ pub(crate) async fn serve(
         config.channel_cache.clone(),
         observers.index.clone(),
     );
+    state.readiness = state.readiness.with_build(build);
     if config.turns.provider_execution_attribution_enabled {
         state.activity = Arc::new((*state.activity).clone().with_execution_attribution(true));
     }
     activity::configure(&mut state, &mut observers).await?;
-    let telegram = Arc::new(telegram::TelegramClient::production(
-        config.delivery.reply_timeout,
-    )?);
-    state.telegram = Some(telegram.clone());
-    state.media_enabled = config.media.enabled;
-    let whatsapp_forms_ready = source_settings::configure(&config, &mut state).await?;
+    let (telegram, whatsapp_forms_ready) = source_settings::configure(&config, &mut state).await?;
     state.outbound_messages_writes_enabled = config.outbound_messages_writes_enabled;
     state.outbound_relay = Some(
         delivery::relay_client::RelayClient::new(

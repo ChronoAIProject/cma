@@ -53,8 +53,13 @@ def render(dockerfile):
         raise ValueError("missing build, media-self-test or runtime stage")
     build, media, runtime = (source[name] for name in ("build", "media-self-test", "runtime"))
     require_once(build, "FROM rust:1.96.1-alpine AS build")
-    require_once(build, "    cargo build --release --locked --bin cmaeg \\")
-    require_once(build, "    && cp /build/target/release/cmaeg /out/cmaeg")
+    # Accept the historical recipe and the equivalent guarded Cargo invocation.
+    cargo_build = "cargo build --release --locked --bin cmaeg \\"
+    if len(re.findall(r"(?m)^    (?:&& )?" + re.escape(cargo_build) + r"$", build)) != 1:
+        raise ValueError("missing or changed release instruction: " + cargo_build)
+    copy = "    && cp /build/target/release/cmaeg /out/cmaeg"
+    if len(re.findall(r"(?m)^" + re.escape(copy) + r"(?: \\)?$", build)) != 1:
+        raise ValueError("missing or changed release instruction: " + copy)
     if "zig" in build.lower():
         raise ValueError("local release requires the official Alpine Cargo build")
     require_once(build, STRIP_BINARY)

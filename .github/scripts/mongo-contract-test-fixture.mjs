@@ -89,7 +89,7 @@ if (command === 'cargo') {
     if (scenario === 'list-omitted-module') testcases['new_module::mongo_contract'] = {ignored:true, 'filter-match':{status:'mismatch'}};
     if (scenario === 'list-selected-helper') testcases['sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child']['filter-match'].status = 'matches';
     if (scenario === 'list-stale-exception') delete testcases['sandbox::agent_worker_tests::sdk_conformance_tests::official_responses_sdk_server'];
-    const suites = {'cma::bin/cma':{'package-name':'cma', 'binary-name':'cma', kind:'bin', testcases}};
+    const suites = {cma:{'package-name':'cma', 'binary-name':'cma', kind:'lib', testcases}};
     if (scenario === 'list-duplicate-scale') suites.duplicate = {testcases:{[${JSON.stringify(scaleTest)}]:testcases[${JSON.stringify(scaleTest)}]}};
     if (scenario === 'list-duplicate-owner') suites.duplicate = {testcases:{[${JSON.stringify(ownerTest)}]:testcases[${JSON.stringify(ownerTest)}]}};
     if (scenario === 'list-duplicate-audit') suites.duplicate = {testcases:{[${JSON.stringify(auditTest)}]:testcases[${JSON.stringify(auditTest)}]}};

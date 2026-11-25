@@ -63,8 +63,8 @@ fn is_release_version(version: &str) -> bool {
 
 pub(super) fn router() -> Router {
     routes(BuildInfo::from_stamp(
-        option_env!("CHRONO_BUILD"),
-        option_env!("CHRONO_BUILD_SHA"),
+        crate::build_stamp().0,
+        crate::build_stamp().1,
     ))
 }
 
@@ -167,10 +167,7 @@ mod tests {
     async fn agent_manager_health_router_serves_the_compiled_build_stamp_without_store_readiness() {
         let (_sender, store) = tokio::sync::watch::channel(None);
         let response = get(super::super::routes(store, None)).await;
-        let expected = match BuildInfo::from_stamp(
-            option_env!("CHRONO_BUILD"),
-            option_env!("CHRONO_BUILD_SHA"),
-        ) {
+        let expected = match BuildInfo::from_stamp(crate::build_stamp().0, crate::build_stamp().1) {
             Some(stamp) => (
                 StatusCode::OK,
                 json!({ "version": stamp.version, "source_sha": stamp.source_sha }),
