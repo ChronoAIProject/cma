@@ -21,7 +21,7 @@ mod released;
 mod retirement;
 pub(crate) mod startup;
 mod supervision;
-mod telemetry;
+pub(crate) mod telemetry;
 mod view;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

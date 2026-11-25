@@ -184,6 +184,81 @@ async fn empty_startup_requires_opt_in_exact_admission_and_fresh_durable_target(
         .unwrap()
         .is_none());
 
+    assert!(matches!(
+        await_ready_with_fencing(
+            &*store,
+            &planner,
+            &original.plan,
+            tokio::time::Instant::now() + limit,
+            policy,
+            None,
+            None,
+        )
+        .await,
+        Err(WarmPoolError::Unavailable)
+    ));
+    for missing in [true, false] {
+        let rows = if missing {
+            vec![]
+        } else {
+            let mut duplicate = original.clone();
+            duplicate.id = "duplicate-target".into();
+            vec![original.clone(), duplicate]
+        };
+        *store.rows.lock().unwrap() = rows;
+        assert!(matches!(
+            enabled
+                .await_default_ready_until(Some(&Admission::new()))
+                .await,
+            Err(WarmPoolError::Unavailable)
+        ));
+        *store.rows.lock().unwrap() = vec![original.clone()];
+    }
+
+    for failed in [&store.claim_error, planner.inventory_error.as_ref()] {
+        failed.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            enabled
+                .await_default_ready_until(Some(&Admission::new()))
+                .await,
+            Err(WarmPoolError::Unavailable)
+        ));
+        assert!(!failed.load(Ordering::SeqCst));
+    }
+
+    for case in ["resize", "drain", "read_failed", "timeout"] {
+        let (entered, receiving) = tokio::sync::oneshot::channel();
+        let (release, held) = tokio::sync::oneshot::channel();
+        let mut release = Some(release);
+        *store.find_gate.lock().unwrap() = Some((entered, held));
+        let admission = Admission::new();
+        let started = tokio::time::Instant::now();
+        let (result, ()) =
+            tokio::join!(enabled.await_default_ready_until(Some(&admission)), async {
+                receiving.await.unwrap();
+                match case {
+                    "resize" => {
+                        store.rows.lock().unwrap()[0].revision += 1;
+                        release.take().unwrap().send(true).unwrap();
+                    }
+                    "drain" => admission.close(),
+                    "read_failed" => release.take().unwrap().send(false).unwrap(),
+                    _ => {}
+                }
+            },);
+        if case == "drain" {
+            assert!(matches!(result, Ok(WarmPoolStartup::Stopping)));
+        } else {
+            assert!(
+                matches!(result, Err(WarmPoolError::Unavailable)),
+                "{case}: {result:?}"
+            );
+        }
+        let expected = if case == "timeout" { 248 } else { 240 };
+        assert_eq!(started.elapsed(), Duration::from_secs(expected), "{case}");
+        store.rows.lock().unwrap()[0] = original.clone();
+    }
+
     planner.retiring.store(true, Ordering::SeqCst);
     assert!(matches!(
         await_ready_with_fencing(

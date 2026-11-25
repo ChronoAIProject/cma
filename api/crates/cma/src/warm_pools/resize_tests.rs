@@ -267,11 +267,18 @@ async fn enabled_target_fencing_never_falls_back_to_an_unversioned_provider() {
 }
 
 /// Several durable targets with the Mongo store's id, plan and fence rules.
+type FindGate = (
+    tokio::sync::oneshot::Sender<()>,
+    tokio::sync::oneshot::Receiver<bool>,
+);
+
 #[derive(Default)]
 pub(super) struct Targets {
     pub(super) rows: Mutex<Vec<PoolTarget>>,
     pub(super) claims: Mutex<Vec<String>>,
     pub(super) find_error: AtomicBool,
+    pub(super) claim_error: AtomicBool,
+    pub(super) find_gate: Mutex<Option<FindGate>>,
     clock: std::sync::atomic::AtomicI64,
 }
 
@@ -306,6 +313,13 @@ impl PoolTargetStore for Targets {
         Ok(rows.iter().filter(|row| !row.retired).cloned().collect())
     }
     async fn find(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
+        let gate = self.find_gate.lock().unwrap().take();
+        if let Some((entered, release)) = gate {
+            entered.send(()).unwrap();
+            if !matches!(release.await, Ok(true)) {
+                return Err(WarmPoolError::Unavailable);
+            }
+        }
         let mut rows = self.rows.lock().unwrap();
         if let (true, Some(row)) = (
             self.find_error.swap(false, Ordering::SeqCst),
@@ -374,6 +388,9 @@ impl PoolTargetStore for Targets {
     }
     async fn claim_target(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
         self.claims.lock().unwrap().push(id.into());
+        if self.claim_error.swap(false, Ordering::SeqCst) {
+            return Err(WarmPoolError::Unavailable);
+        }
         Ok(None)
     }
     async fn claim_retirement(&self, _: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
@@ -392,6 +409,7 @@ impl PoolTargetStore for Targets {
 pub(super) struct Planner {
     pub(super) inventory: Arc<Mutex<Vec<NativePoolStatus>>>,
     pub(super) retiring: Arc<AtomicBool>,
+    pub(super) inventory_error: Arc<AtomicBool>,
 }
 
 impl Planner {
@@ -428,6 +446,11 @@ impl NativePoolControl for Planner {
         unreachable!("seeding and startup never configure an unawaited pool")
     }
     async fn inventory(&self) -> layer3_adapter::Result<Vec<NativePoolStatus>> {
+        if self.inventory_error.swap(false, Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::Unavailable(
+                "synthetic read failure".into(),
+            ));
+        }
         Ok(self.inventory.lock().unwrap().clone())
     }
     async fn observe_admitting_pool(
