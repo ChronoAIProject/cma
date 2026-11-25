@@ -132,7 +132,7 @@ async fn verified_retirement_refuses_changed_authority_without_provider_writes()
 }
 
 #[tokio::test]
-async fn fresh_finality_waits_for_owned_pods_and_cancellation_never_writes() {
+async fn fresh_finality_waits_for_owned_pods_regardless_of_tracking_label() {
     let (fixture, home, request, handle) = bound(true).await;
     let runtime = client(&fixture, false);
     runtime
@@ -140,26 +140,31 @@ async fn fresh_finality_waits_for_owned_pods_and_cancellation_never_writes() {
         .await
         .unwrap();
     let path = "/api/v1/namespaces/cma-test/pods/retiring-original";
-    fixture.state.lock().unwrap().rows.insert(path.into(), json!({
-        "apiVersion":"v1", "kind":"Pod", "metadata":{
-            "name":"retiring-original", "namespace":"cma-test", "uid":"original-pod",
-            "deletionTimestamp":"2026-01-01T00:00:00Z",
-            "labels":{super::super::super::pods::TRACKING_LABEL:super::super::super::pods::name_hash("warm-member")},
-            "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":"warm-member","uid":"member-uid","controller":true}]}}));
-    fixture.state.lock().unwrap().calls.clear();
-    assert!(tokio::time::timeout(
-        Duration::from_millis(80),
-        runtime.verify_retired(&handle, &home)
-    )
-    .await
-    .is_err());
-    assert!(fixture
-        .state
-        .lock()
-        .unwrap()
-        .calls
-        .iter()
-        .all(|(c, _)| c.starts_with("GET ")));
+    let tracking = super::super::super::pods::TRACKING_LABEL;
+    for labels in [
+        json!({}),
+        json!({tracking: "changed"}),
+        json!({tracking: super::super::super::pods::name_hash("warm-member")}),
+    ] {
+        fixture.state.lock().unwrap().rows.insert(path.into(), json!({
+            "apiVersion":"v1", "kind":"Pod", "metadata":{
+                "name":"retiring-original", "namespace":"cma-test", "uid":"original-pod",
+                "deletionTimestamp":"2026-01-01T00:00:00Z",
+                "labels":labels,
+                "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":"warm-member","uid":"member-uid","controller":true}]
+            }
+        }));
+        fixture.state.lock().unwrap().calls.clear();
+        assert!(tokio::time::timeout(
+            Duration::from_millis(80),
+            runtime.verify_retired(&handle, &home)
+        )
+        .await
+        .is_err());
+        let state = fixture.state.lock().unwrap();
+        assert!(state.calls.iter().any(|(call, _)| call.ends_with("/pods")));
+        assert!(state.calls.iter().all(|(call, _)| call.starts_with("GET ")));
+    }
     fixture.state.lock().unwrap().rows.remove(path);
     runtime.verify_retired(&handle, &home).await.unwrap();
 }
@@ -319,4 +324,61 @@ async fn finality_rejects_replacements_and_incomplete_observations() {
             .iter()
             .all(|(c, _)| c.starts_with("GET ")));
     }
+}
+
+#[tokio::test]
+async fn finality_checks_owned_pods_on_later_pages() {
+    let (fixture, home, request, handle) = bound(true).await;
+    let runtime = client(&fixture, false);
+    runtime
+        .retire_verified(&handle, &request, &home, None)
+        .await
+        .unwrap();
+
+    let pods = "/api/v1/namespaces/cma-test/pods";
+    let pod = json!({
+        "apiVersion":"v1", "kind":"Pod", "metadata":{
+            "name":"survivor", "namespace":"cma-test", "uid":"survivor-uid",
+            "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox",
+                "name":"warm-member","uid":"member-uid","controller":true}]
+        }
+    });
+    let page = json!({
+        "apiVersion":"v1", "kind":"PodList",
+        "metadata":{"resourceVersion":"100"}, "items":[]
+    });
+    let mut first = page.clone();
+    first["metadata"]["continue"] = json!("next");
+    let mut second = page;
+    second["items"] = json!([pod.clone()]);
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.calls.clear();
+        state.rows.insert(format!("{pods}/survivor"), pod);
+        state
+            .read_replies
+            .extend([(pods.into(), 200, first), (pods.into(), 200, second)]);
+    }
+
+    let second_page = fixture.gate(format!("GET {pods}"), None);
+    let probe = runtime.verify_retired(&handle, &home);
+    tokio::pin!(probe);
+    tokio::select! {
+        result = &mut probe => panic!("finality resolved before the Pod inventory: {result:?}"),
+        result = tokio::time::timeout(Duration::from_secs(5), second_page.entered.notified()) => result.unwrap(),
+    }
+    second_page.release.notify_one();
+    assert!(tokio::time::timeout(Duration::from_millis(200), &mut probe)
+        .await
+        .is_err());
+    {
+        let mut state = fixture.state.lock().unwrap();
+        assert!(state.read_replies.is_empty());
+        assert!(state.calls.iter().all(|(call, _)| call.starts_with("GET ")));
+        state.rows.remove(&format!("{pods}/survivor"));
+    }
+    tokio::time::timeout(Duration::from_secs(5), probe)
+        .await
+        .unwrap()
+        .unwrap();
 }
