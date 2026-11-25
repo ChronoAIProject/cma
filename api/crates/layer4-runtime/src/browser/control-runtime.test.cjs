@@ -135,8 +135,12 @@ test('invalid navigation gives the Agent a recovery path and an unavailable brow
   const navigate = url => run(process.execPath, [join(__dirname, 'command.cjs'), 'navigate', url], {
     env: { ...process.env, CMA_BROWSER_SOCKET: join(browser.directory, 'browser.sock') },
   });
+  const overEnvelopeLimit = 'http://127.0.0.1/' + 'a'.repeat(16384);
+  const refused = await browser.agent('/navigate', { url: overEnvelopeLimit });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.error, 'browser_navigation_invalid');
   for (const url of ['file:///workspace/preview.html', 'not-a-url', 'https://user:placeholder@example.test/',
-    'http://127.0.0.1/' + 'a'.repeat(8192)]) {
+    'http://127.0.0.1/' + 'a'.repeat(8192), overEnvelopeLimit]) {
     await assert.rejects(navigate(url), error => {
       assert.equal(error.code, 1);
       const result = JSON.parse(error.stdout);

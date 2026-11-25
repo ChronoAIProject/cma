@@ -209,7 +209,10 @@ const agent = createServer(async (request, response) => {
     let body = '';
     for await (const chunk of request) {
       body += chunk;
-      if (body.length > 16384) throw new Error('Navigation too large');
+      if (body.length > 16384) {
+        if (request.url === '/navigate') throw refused('browser_navigation_invalid');
+        throw new Error('Browser input too large');
+      }
     }
     const value = JSON.parse(body);
     const result = await serialized(() => {
