@@ -135,6 +135,59 @@ async fn projected_reports_preserve_series_owner_pages_and_fail_closed() {
         assert_eq!(count, 22);
     }
 
+    let prefix = format!("/api/v1/admin/usage/metrics/reports/{}", report.report_id);
+    for suffix in ["/series?metric=cpu", "/owner-allocations?metric=cpu"] {
+        let path = format!("{prefix}{suffix}");
+        for (caller, admin, expected) in [
+            ("operator", true, 200),
+            ("another-operator", true, 404),
+            ("operator", false, 403),
+        ] {
+            assert_eq!(
+                super::allocated::request(
+                    &store,
+                    "GET",
+                    &path,
+                    caller,
+                    admin,
+                    serde_json::Value::Null,
+                )
+                .await
+                .0,
+                expected,
+            );
+        }
+    }
+    store
+        .collection("sandboxes")
+        .insert_one(doc! {
+            "_id":states[0].sandbox_id.as_str(),"owner":"changed-owner"
+        })
+        .await
+        .unwrap();
+    for suffix in ["/series?metric=cpu", "/owner-allocations?metric=cpu"] {
+        assert_eq!(
+            super::allocated::request(
+                &store,
+                "GET",
+                &format!("{prefix}{suffix}"),
+                "operator",
+                true,
+                serde_json::Value::Null,
+            )
+            .await
+            .0,
+            404,
+        );
+    }
+    store
+        .collection("sandboxes")
+        .delete_one(doc! {
+            "_id":states[0].sandbox_id.as_str()
+        })
+        .await
+        .unwrap();
+
     let removed = store
         .collection(COLLECTION)
         .delete_many(doc! {
