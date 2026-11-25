@@ -174,9 +174,8 @@ impl ControlPlaneComposition {
             manager.register_lifecycle(lifecycle_drain.clone())?;
         }
         inline_lifecycle.resume_pending();
-        let projections = projections
-            .with_lifecycle(inline_lifecycle.clone())
-            .with_lifecycle_operations(inline_lifecycle);
+        let projections = projections.with_lifecycle(inline_lifecycle.clone());
+        let projections = projections.with_lifecycle_operations(inline_lifecycle);
         let bindings = bindings::BindingComposition::new(
             &stores,
             layer2_core::sandbox::binding::BindingResources {
