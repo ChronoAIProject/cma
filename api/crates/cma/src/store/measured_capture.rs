@@ -98,9 +98,8 @@ impl MeasuredCapture {
         payload: &str,
     ) -> Result<Capture, CaptureError> {
         let physical = observation.physical_sample_id();
-        // Indexed custody writes one authenticated generation root. Retry only
-        // confirmed aborted transactions, with jitter to let competing writers
-        // complete within the existing whole-capture deadline.
+        // Indexed writers may compete on a shard or capacity record. Retry
+        // confirmed aborted transactions only, within the capture deadline.
         let attempts = if self.indexed.is_some() {
             INDEXED_ATTEMPTS
         } else {

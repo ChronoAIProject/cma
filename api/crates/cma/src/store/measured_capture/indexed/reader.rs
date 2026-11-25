@@ -1,8 +1,8 @@
 //! Verify the complete expected leaf set independently of the projection query.
-use super::{model::*, store_error, IndexedCustody};
+use super::{model::*, store_error, ActiveGeneration, IndexedCustody, TransactionError};
 use crate::store::measured_capture::{
     preview::{retain, Position, MAX_ROWS},
-    sample_id, CaptureError, TransactionError,
+    sample_id, CaptureError,
 };
 use layer2_core::sandbox_metrics::measured_evidence::{
     batch::EvidenceScope, coverage::SUPPORT_WINDOW_MS,
@@ -14,7 +14,14 @@ use std::{
 };
 
 const MAX_READ_BYTES: usize = 16 * 1024 * 1024;
-type Positions = BTreeMap<String, Position>;
+pub(super) type Positions = BTreeMap<String, Position>;
+
+pub(super) struct BucketQuery<'a> {
+    pub generation: u64,
+    pub hour: u64,
+    pub series: &'a str,
+    pub leaves: BTreeMap<String, String>,
+}
 
 impl IndexedCustody {
     pub(in crate::store::measured_capture) async fn verify_reconciled(
@@ -22,30 +29,18 @@ impl IndexedCustody {
         original: &mongodb::bson::Document,
         session: &mut ClientSession,
     ) -> Result<(), CaptureError> {
-        let root = self.root(session, true).await.map_err(store_error)?;
-        if root.phase != Phase::Ready {
-            return Err(CaptureError::Unavailable);
-        }
-        let expected = Projection::from_source(root.generation, original)?;
-        let directory = self
-            .read_hour(&root, expected.hour(), session)
+        let root = self
+            .active_generation(session, true)
             .await
             .map_err(store_error)?;
+        let expected = Projection::from_source(ready_number(&root)?, original)?;
         let rows = self
-            .read_bucket(
-                &root,
-                expected.hour(),
-                &expected.keys.physical_series_id,
-                &directory,
-                session,
-                &mut (0, 0),
-            )
+            .read_point_bucket(&root, &expected, session, &mut (0, 0))
             .await
             .map_err(store_error)?;
-        if !rows
-            .iter()
-            .any(|(projection, source)| projection == &expected && source == original)
-        {
+        if !rows.iter().any(|(projection, source)| {
+            projection.source_row_id == expected.source_row_id && source == original
+        }) {
             return Err(CaptureError::Corrupt);
         }
         Ok(())
@@ -77,10 +72,11 @@ impl IndexedCustody {
         to: u64,
         session: &mut ClientSession,
     ) -> Result<Positions, CaptureError> {
-        let root = self.root(session, true).await.map_err(store_error)?;
-        if root.phase != Phase::Ready {
-            return Err(CaptureError::Unavailable);
-        }
+        let root = self
+            .active_generation(session, true)
+            .await
+            .map_err(store_error)?;
+        let generation = ready_number(&root)?;
         let original = self
             .originals
             .find_one(doc! {"_id": sample_id(anchor)})
@@ -89,7 +85,7 @@ impl IndexedCustody {
             .await
             .map_err(|_| CaptureError::Unavailable)?
             .ok_or(CaptureError::Unavailable)?;
-        let projection = Projection::from_source(root.generation, &original)?;
+        let projection = Projection::from_source(generation, &original)?;
         let mut positions = self
             .read_range(
                 from,
@@ -103,20 +99,9 @@ impl IndexedCustody {
         // The anchor may be outside the preview. Verify its entire bucket before
         // using its physical identity, including any competing attribution.
         if !positions.contains_key(anchor) {
-            let directory = self
-                .read_hour(&root, projection.hour(), session)
-                .await
-                .map_err(store_error)?;
             let mut budget = (0, 0);
             for (point, row) in self
-                .read_bucket(
-                    &root,
-                    projection.hour(),
-                    &projection.keys.physical_series_id,
-                    &directory,
-                    session,
-                    &mut budget,
-                )
+                .read_point_bucket(&root, &projection, session, &mut budget)
                 .await
                 .map_err(store_error)?
             {
@@ -142,10 +127,16 @@ impl IndexedCustody {
         if from > to || to - from > 900_000 + 2 * SUPPORT_WINDOW_MS {
             return Err(CaptureError::Unavailable.into());
         }
-        let root = self.root(session, true).await?;
-        if root.phase != Phase::Ready {
-            return Err(CaptureError::Unavailable.into());
-        }
+        let generation = self.active_generation(session, true).await?;
+        ready_number(&generation)?;
+        let root = match generation {
+            ActiveGeneration::Legacy(root) => root,
+            ActiveGeneration::Sharded(root) => {
+                return self
+                    .read_sharded_range(&root, from..=to, scope, series, session)
+                    .await;
+            }
+        };
         let mut hours = BTreeMap::new();
         let mut selected = BTreeSet::new();
         if let Some(series) = series {
@@ -175,6 +166,28 @@ impl IndexedCustody {
             }
         }
         Ok(positions)
+    }
+
+    async fn read_point_bucket(
+        &self,
+        root: &ActiveGeneration,
+        point: &Projection,
+        session: &mut ClientSession,
+        budget: &mut (usize, usize),
+    ) -> Result<Vec<(Projection, mongodb::bson::Document)>, TransactionError> {
+        let hour = point.hour();
+        let series = &point.keys.physical_series_id;
+        match root {
+            ActiveGeneration::Legacy(root) => {
+                let directory = self.read_hour(root, hour, session).await?;
+                self.read_bucket(root, hour, series, &directory, session, budget)
+                    .await
+            }
+            ActiveGeneration::Sharded(root) => {
+                self.read_sharded_point_bucket(root, hour, series, session, budget)
+                    .await
+            }
+        }
     }
 
     pub(super) async fn read_hour(
@@ -228,46 +241,84 @@ impl IndexedCustody {
                 session,
             )
             .await?;
-        if expected.leaves.len() > MAX_SERIES_HOUR_ROWS {
+        self.read_verified_bucket(
+            BucketQuery {
+                generation: root.generation,
+                hour,
+                series,
+                leaves: expected.leaves,
+            },
+            |projection| {
+                Ok(projection.permit_segment.is_none()
+                    && directory
+                        .scopes
+                        .get(&projection.scope()?)
+                        .is_some_and(|set| set.contains(series)))
+            },
+            session,
+            budget,
+        )
+        .await
+    }
+
+    pub(super) async fn read_verified_bucket(
+        &self,
+        query: BucketQuery<'_>,
+        verified_scope: impl Fn(&Projection) -> Result<bool, CaptureError>,
+        session: &mut ClientSession,
+        budget: &mut (usize, usize),
+    ) -> Result<Vec<(Projection, mongodb::bson::Document)>, TransactionError> {
+        if query.leaves.len() > MAX_SERIES_HOUR_ROWS {
             return Err(CaptureError::Corrupt.into());
         }
         let mut cursor = self
             .projections
             .find(doc! {
-                "generation": signed(root.generation)?, "hour": signed(hour)?, "series": series,
+                "generation": signed(query.generation)?, "hour": signed(query.hour)?, "series": query.series,
             })
             .sort(doc! {"timestamp_ms":1, "source_row_id":1})
-            .limit((expected.leaves.len() + 1) as i64)
+            .limit((query.leaves.len() + 1) as i64)
             .max_time(Duration::from_secs(10))
             .read_concern(ReadConcern::snapshot())
             .session(&mut *session)
             .await?;
-        let mut remaining = expected.leaves;
-        let mut result = Vec::new();
+        let mut remaining = query.leaves;
+        let mut projections = Vec::new();
         while let Some(row) = cursor.next(&mut *session).await.transpose()? {
             let projection = Projection::decode(&row)?;
-            if projection.generation != root.generation
-                || projection.hour() != hour
-                || projection.keys.physical_series_id != series
+            if projection.generation != query.generation
+                || projection.hour() != query.hour
+                || projection.keys.physical_series_id != query.series
                 || remaining.remove(&projection.source_row_id) != Some(projection.leaf()?)
-                || !directory
-                    .scopes
-                    .get(&projection.scope()?)
-                    .is_some_and(|set| set.contains(series))
+                || !verified_scope(&projection)?
             {
                 return Err(CaptureError::Corrupt.into());
             }
-            let source = self
-                .originals
-                .find_one(doc! {"_id": &projection.source_row_id})
-                .read_concern(ReadConcern::snapshot())
-                .session(&mut *session)
-                .await?
-                .ok_or(CaptureError::Corrupt)?;
-            if Projection::from_source(root.generation, &source)? != projection {
-                return Err(CaptureError::Corrupt.into());
-            }
             budget.0 += 1;
+            if budget.0 > MAX_ROWS {
+                return Err(CaptureError::Unavailable.into());
+            }
+            projections.push(projection);
+        }
+        if !remaining.is_empty() {
+            return Err(CaptureError::Corrupt.into());
+        }
+        if projections.is_empty() {
+            return Ok(Vec::new());
+        }
+        let source_ids: Vec<_> = projections
+            .iter()
+            .map(|row| row.source_row_id.as_str())
+            .collect();
+        let mut cursor = self
+            .originals
+            .find(doc! {"_id": {"$in": source_ids}})
+            .read_concern(ReadConcern::snapshot())
+            .max_time(Duration::from_secs(10))
+            .session(&mut *session)
+            .await?;
+        let mut originals = BTreeMap::new();
+        while let Some(source) = cursor.next(&mut *session).await.transpose()? {
             budget.1 = budget
                 .1
                 .checked_add(
@@ -277,14 +328,37 @@ impl IndexedCustody {
                         .len(),
                 )
                 .ok_or(CaptureError::Unavailable)?;
-            if budget.0 > MAX_ROWS || budget.1 > MAX_READ_BYTES {
+            if budget.1 > MAX_READ_BYTES {
                 return Err(CaptureError::Unavailable.into());
             }
-            result.push((projection, source));
+            let id = source.get_str("_id").map_err(|_| CaptureError::Corrupt)?;
+            if originals.insert(id.to_owned(), source).is_some() {
+                return Err(CaptureError::Corrupt.into());
+            }
         }
-        if !remaining.is_empty() {
+        if originals.len() != projections.len() {
             return Err(CaptureError::Corrupt.into());
         }
-        Ok(result)
+        projections
+            .into_iter()
+            .map(|projection| {
+                let source = originals
+                    .remove(&projection.source_row_id)
+                    .ok_or(CaptureError::Corrupt)?;
+                projection.verify_source(&source)?;
+                Ok((projection, source))
+            })
+            .collect()
     }
+}
+
+fn ready_number(root: &ActiveGeneration) -> Result<u64, CaptureError> {
+    let (number, phase) = match root {
+        ActiveGeneration::Legacy(root) => (root.generation, root.phase),
+        ActiveGeneration::Sharded(root) => (root.generation, root.phase),
+    };
+    if phase != Phase::Ready {
+        return Err(CaptureError::Unavailable);
+    }
+    Ok(number)
 }

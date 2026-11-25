@@ -7,9 +7,20 @@ use serde::{de::DeserializeOwned, Serialize};
 mod backfill;
 mod model;
 mod reader;
+mod sharded_backfill;
+mod sharded_capacity;
+mod sharded_certify;
+mod sharded_generation;
+mod sharded_reader;
+mod sharded_writer;
 mod writer;
 
 use crate::store::migrations::measured_index::{MANIFESTS, PROJECTIONS};
+
+enum ActiveGeneration {
+    Legacy(model::Generation),
+    Sharded(sharded_generation::ShardedGeneration),
+}
 
 #[derive(Clone)]
 pub(super) struct IndexedCustody {
@@ -38,11 +49,15 @@ impl IndexedCustody {
         &self,
         session: &mut ClientSession,
     ) -> Result<u64, TransactionError> {
-        let root = self.root(session, false).await?;
-        if root.phase != model::Phase::Ready {
-            return Err(CaptureError::Unavailable.into());
+        let (generation, phase) = match self.active_generation(session, false).await? {
+            ActiveGeneration::Legacy(root) => (root.generation, root.phase),
+            ActiveGeneration::Sharded(root) => (root.generation, root.phase),
+        };
+        if phase == model::Phase::Ready {
+            Ok(generation)
+        } else {
+            Err(CaptureError::Unavailable.into())
         }
-        Ok(root.generation)
     }
 
     async fn root(
@@ -50,6 +65,17 @@ impl IndexedCustody {
         session: &mut ClientSession,
         snapshot: bool,
     ) -> Result<model::Generation, TransactionError> {
+        match self.active_generation(session, snapshot).await? {
+            ActiveGeneration::Legacy(root) => Ok(root),
+            ActiveGeneration::Sharded(_) => Err(CaptureError::Unavailable.into()),
+        }
+    }
+
+    async fn active_generation(
+        &self,
+        session: &mut ClientSession,
+        snapshot: bool,
+    ) -> Result<ActiveGeneration, TransactionError> {
         let mut action = self.manifests.find_one(doc! {"_id": model::ROOT_ID});
         if snapshot {
             action = action.read_concern(ReadConcern::snapshot());
@@ -63,12 +89,42 @@ impl IndexedCustody {
                 .map_err(|_| CaptureError::Corrupt)?,
         )
         .map_err(|_| CaptureError::Corrupt)?;
-        let root: model::Generation = model::open(&row, model::ROOT_ID, generation, None)?;
-        root.validate()?;
-        if root.generation != generation || root.writer_floor_sha256 != self.writer_floor {
-            return Err(CaptureError::Unavailable.into());
+        match row
+            .get_i64("schema_version")
+            .map_err(|_| CaptureError::Corrupt)?
+        {
+            1 => {
+                let root: model::Generation = model::open(&row, model::ROOT_ID, generation, None)?;
+                root.validate()?;
+                self.verify_epoch(generation, root.generation, &root.writer_floor_sha256)?;
+                Ok(ActiveGeneration::Legacy(root))
+            }
+            sharded_generation::VERSION => {
+                let root: sharded_generation::ShardedGeneration = model::open_versioned(
+                    &row,
+                    model::ROOT_ID,
+                    generation,
+                    sharded_generation::VERSION,
+                    None,
+                )?;
+                root.validate()?;
+                self.verify_epoch(generation, root.generation, &root.writer_floor_sha256)?;
+                Ok(ActiveGeneration::Sharded(root))
+            }
+            _ => Err(CaptureError::Corrupt.into()),
         }
-        Ok(root)
+    }
+
+    fn verify_epoch(
+        &self,
+        envelope: u64,
+        payload: u64,
+        writer_floor: &str,
+    ) -> Result<(), CaptureError> {
+        if envelope != payload || writer_floor != self.writer_floor {
+            return Err(CaptureError::Unavailable);
+        }
+        Ok(())
     }
 
     async fn manifest<T: Serialize + DeserializeOwned + Default>(
@@ -99,12 +155,25 @@ impl IndexedCustody {
         value: &T,
         session: &mut ClientSession,
     ) -> Result<String, TransactionError> {
-        let row = model::sealed(id, generation, value)?;
+        self.write_manifest(id, generation, 1, previous, value, session)
+            .await
+    }
+
+    async fn write_manifest<T: Serialize>(
+        &self,
+        id: &str,
+        generation: u64,
+        version: i64,
+        previous: Option<&str>,
+        value: &T,
+        session: &mut ClientSession,
+    ) -> Result<String, TransactionError> {
+        let row = model::sealed_versioned(id, generation, version, value)?;
         let digest = model::digest(value)?;
         match previous {
             Some(previous) => {
                 let result = self.manifests.replace_one(
-                    doc! {"_id": id, "generation": model::signed(generation)?, "payload_sha256": previous},
+                    doc! {"_id": id, "generation": model::signed(generation)?, "schema_version": version, "payload_sha256": previous},
                     row,
                 ).session(session).await?;
                 if result.matched_count != 1 {

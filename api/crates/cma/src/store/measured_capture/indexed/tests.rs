@@ -23,6 +23,9 @@ use mongodb::{
     Client, Database,
 };
 
+#[path = "sharded_mongo_tests.rs"]
+mod sharded_mongo_tests;
+
 fn observation(binding: &Binding, timestamp: u64, value: f64) -> MeasuredObservation {
     let selection = Selection {
         cluster: binding.cluster.clone(),

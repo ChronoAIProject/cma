@@ -1,5 +1,5 @@
 //! Resume a paused backfill, then independently certify source and manifest custody.
-use super::{model::*, store_error, IndexedCustody};
+use super::{model::*, store_error, ActiveGeneration, IndexedCustody};
 use crate::store::{
     measured_capture::{CaptureError, TransactionError},
     sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome},
@@ -12,10 +12,11 @@ use std::{
     time::Duration,
 };
 
-const BACKFILL_ROWS: i64 = 32;
+pub(super) const BACKFILL_ROWS: i64 = 32;
 
 impl IndexedCustody {
-    pub(in crate::store::measured_capture) async fn begin(&self) -> Result<(), CaptureError> {
+    #[cfg(test)]
+    pub(super) async fn begin(&self) -> Result<(), CaptureError> {
         let root = Generation::new(1, self.writer_floor.clone())?;
         let document = sealed(ROOT_ID, root.generation, &root)?;
         let _ = self.manifests.insert_one(document).await;
@@ -60,7 +61,12 @@ impl IndexedCustody {
         &self,
         session: &mut ClientSession,
     ) -> Result<(u64, bool), TransactionError> {
-        let mut root = self.root(session, false).await?;
+        let mut root = match self.active_generation(session, false).await? {
+            ActiveGeneration::Legacy(root) => root,
+            ActiveGeneration::Sharded(root) => {
+                return self.advance_sharded(root, session).await;
+            }
+        };
         if root.phase == Phase::Ready {
             return Ok((root.rows, true));
         }
@@ -103,7 +109,16 @@ impl IndexedCustody {
             .snapshot(true)
             .await
             .map_err(|_| CaptureError::Unavailable)?;
-        let root = self.root(&mut snapshot, true).await.map_err(store_error)?;
+        let root = match self
+            .active_generation(&mut snapshot, true)
+            .await
+            .map_err(store_error)?
+        {
+            ActiveGeneration::Legacy(root) => root,
+            ActiveGeneration::Sharded(root) => {
+                return self.certify_sharded(root, &mut snapshot).await;
+            }
+        };
         if root.phase == Phase::Ready {
             return root.certification.ok_or(CaptureError::Corrupt);
         }
