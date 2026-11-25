@@ -17,7 +17,9 @@ const MAX_RECEIVER_ID_BYTES: usize = 512;
 // Reserve the runtime, the two Pod identities, the owner tuple and BSON overhead.
 const OBSERVATION_RESERVE: usize = 2 * 1024;
 
+mod consumption;
 mod transactions;
+pub(crate) use consumption::{CapturedRetirementObservation, RetirementCaptureConsumer};
 const CONFLICT: SandboxStoreError = SandboxStoreError::Conflict;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -119,7 +119,7 @@ impl RetirementRecords for MongoSandboxStore {
         parent: &Sandbox,
         action: &RetirementAction,
     ) -> Result<(), SandboxStoreError> {
-        transact(self, parent, None, Some(action)).await
+        transact(self, parent, None, Some(action), None).await
     }
     async fn transition(
         &self,
@@ -139,7 +139,7 @@ impl RetirementRecords for MongoSandboxStore {
         if !valid {
             return Err(SandboxStoreError::Conflict);
         }
-        transact(self, parent, Some(previous), next).await
+        transact(self, parent, Some(previous), next, None).await
     }
     async fn settle(
         &self,
@@ -361,11 +361,12 @@ async fn transact(
     parent: &Sandbox,
     previous: Option<&RetirementAction>,
     next: Option<&RetirementAction>,
+    captured: Option<&capture::CapturedRetirementObservation>,
 ) -> Result<(), SandboxStoreError> {
     WorkAuthority::current()?;
     for _ in 0..TRANSACTION_ATTEMPTS {
         let mut session = store.client.start_session().await.map_err(unavailable)?;
-        let result = transaction(store, parent, previous, next, &mut session).await;
+        let result = transaction(store, parent, previous, next, captured, &mut session).await;
         match result {
             Ok(()) => {}
             Err(LifecycleLoadError::Driver(error)) if retryable_body_error(&error) => {
@@ -404,6 +405,7 @@ async fn transaction(
     parent: &Sandbox,
     previous: Option<&RetirementAction>,
     next: Option<&RetirementAction>,
+    captured: Option<&capture::CapturedRetirementObservation>,
     session: &mut ClientSession,
 ) -> Result<(), LifecycleLoadError> {
     use LifecycleLoadError::{Domain, Driver};
@@ -436,12 +438,18 @@ async fn transaction(
         let agents = load_sandbox_agents(store, &parent.id, session).await?;
         if !action.matches(parent)
             || (first
+                && captured.is_none()
                 && observation_from(&row).map_err(Domain)?.as_ref() != Some(&action.observation))
             || (first && writer_fences(&row).map_err(Domain)? != action.writer_fences)
             || (first && participants(parent, &agents).map_err(Domain)? != action.children)
             || (!first && !action.covers(parent, &agents).map_err(Domain)?)
         {
             return Err(Domain(SandboxStoreError::Conflict));
+        }
+        if let Some(captured) = captured {
+            captured
+                .fence_admission(store, &row, &current, &agents, action, session)
+                .await?;
         }
     }
     filter.insert(

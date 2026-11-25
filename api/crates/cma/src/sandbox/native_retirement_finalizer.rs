@@ -13,7 +13,7 @@ use layer2_core::{rfc3339_at, seconds_from_rfc3339};
 use layer3_adapter::{AdapterError, RuntimeAdoptionRequest, RuntimeRetirement, SandboxAdapter};
 
 use crate::store::native_retirement_action::{
-    RetirementAction, RetirementPhase, RetirementRecords,
+    capture::RetirementCaptureConsumer, RetirementAction, RetirementPhase, RetirementRecords,
 };
 
 trait RetirementStore:
@@ -40,6 +40,7 @@ pub(crate) struct NativeRetirementFinalizer {
     clock: Arc<dyn Fn() -> SystemTime + Send + Sync>,
     records: Arc<dyn RetirementRecords>,
     admit: bool,
+    capture: Option<Arc<dyn RetirementCaptureConsumer>>,
 }
 
 impl NativeRetirementFinalizer {
@@ -59,8 +60,18 @@ impl NativeRetirementFinalizer {
             deployment,
             records,
             admit,
+            capture: None,
             clock: Arc::new(SystemTime::now),
         }
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "capture admission is wired by the rollout slice")
+    )]
+    pub(crate) fn with_capture(mut self, capture: Arc<dyn RetirementCaptureConsumer>) -> Self {
+        self.capture = Some(capture);
+        self
     }
 
     #[cfg(test)]
@@ -316,22 +327,44 @@ impl NativeRetirementFinalizer {
         provider: &dyn RuntimeRetirement,
         request: &RuntimeAdoptionRequest,
     ) -> Result<Option<RetirementAction>, SandboxStoreError> {
-        let Some((observation, fences)) = self
-            .records
-            .observation(&sandbox.id)
-            .await?
-            .filter(|(observation, _)| observation.matches(sandbox))
-        else {
-            return Ok(None);
+        let legacy = if self.capture.is_none() {
+            let Some(observed) = self
+                .records
+                .observation(&sandbox.id)
+                .await?
+                .filter(|(observation, _)| observation.matches(sandbox))
+            else {
+                return Ok(None);
+            };
+            Some(observed)
+        } else {
+            None
         };
         let children = super::live_agent_stopper::retirement_agents(self.store.as_ref(), sandbox)
             .await
             .map_err(|_| SandboxStoreError::Conflict)?;
+        let captured = match &self.capture {
+            Some(capture) => {
+                let Some(observed) = capture.observed(sandbox, &children).await? else {
+                    return Ok(None);
+                };
+                Some((capture, observed))
+            }
+            None => None,
+        };
+        let (observation, fences) = captured
+            .as_ref()
+            .map(|(_, observed)| observed.observation())
+            .or(legacy)
+            .ok_or(SandboxStoreError::Conflict)?;
         let action = RetirementAction::new(sandbox, observation, &children, fences)?;
         if probe(provider, request, &action).await != Some(true) {
             return Ok(None);
         }
-        self.records.admit(sandbox, &action).await?;
+        match captured {
+            Some((capture, observed)) => capture.admit(sandbox, &action, &observed).await?,
+            None => self.records.admit(sandbox, &action).await?,
+        }
         Ok(Some(action))
     }
 

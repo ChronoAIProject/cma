@@ -435,3 +435,11 @@ async fn retirement_capture_proves_lost_observation_acknowledgement() {
     assert_eq!(phase(&f.parent_row().await), "observed");
     f.cleanup().await;
 }
+
+mod consumption;
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn recovered_dispatch_resumes_graceful_stop_through_capture_outage() {
+    super::super::faults::recovered_dispatch_resumes_graceful_stop().await;
+}
