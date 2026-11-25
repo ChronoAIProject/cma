@@ -105,3 +105,35 @@ it('retains shared tasks on a transient refresh failure, disables stale navigati
   await user.click(screen.getByRole('link', { name: /^Shared research/ }));
   expect(onNavigate).toHaveBeenCalledWith({ kind: 'agent', agentId: 'agt_shared_task' });
 });
+
+it('uses the authorized detail title even when the inventory retains a creation placeholder', async () => {
+  let title: string | undefined = 'Current shared title';
+  const client = createClient({
+    baseUrl: 'https://fixture.invalid',
+    fetch: async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/api/v1/agents/provenance')
+        return Response.json({ items: [{ ...task, title: 'New Agent' }] });
+      if (path === '/api/v1/agents/agt_shared_task')
+        return Response.json({
+          access: 'shared',
+          id: task.agent_id,
+          status: task.status,
+          title,
+          created_at: task.created_at,
+          updated_at: task.updated_at,
+        });
+      return Response.json({ code: 'not_found' }, { status: 404 });
+    },
+  });
+  const user = userEvent.setup();
+  render(<SharedAgentNavigation client={client} onNavigate={vi.fn()} />);
+  expect(await screen.findByRole('treeitem', { name: /^Current shared title/ })).toBeVisible();
+  title = 'Renamed shared title';
+  await user.click(screen.getByRole('button', { name: 'Refresh Agents' }));
+  expect(await screen.findByRole('treeitem', { name: /^Renamed shared title/ })).toBeVisible();
+  title = undefined;
+  await user.click(screen.getByRole('button', { name: 'Refresh Agents' }));
+  expect(await screen.findByRole('treeitem', { name: /^Untitled task/ })).toBeVisible();
+  expect(screen.queryByText('New Agent')).not.toBeInTheDocument();
+});
