@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 import staging_cd_publish
 import staging_cd_produce
 
+from staging_cd_build_cargo_keys import CargoKey
 from staging_cd_common import Refusal
 from staging_cd_release_archive import ARCHIVE, MANIFEST, load, path_for, seal
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt
@@ -54,9 +55,12 @@ class ArchiveHandoffTests(unittest.TestCase):
             producer_authority = stack.enter_context(patch.object(staging_cd_produce, "Reservations")).return_value
             publisher_authority = stack.enter_context(patch.object(staging_cd_publish, "Reservations")).return_value
             stack.enter_context(patch.object(staging_cd_publish, "Registry"))
-            cache = stack.enter_context(patch.object(staging_cd_produce, "BuildCache")).return_value
-            cache.key = None
+            cache = Mock(key=CargoKey("cma-cd-cargo-v4-am-" + "e" * 64 + "-", "f" * 64),
+                         namespace="a" * 32, restore_result="hit", export_headroom=None, export_retained_groups=None)
             cache.exports_layers.return_value = True
+            cache.export_mounts.return_value = True
+            for module in (staging_cd_produce, staging_cd_publish):
+                stack.enter_context(patch.object(module, "BuildCache", return_value=cache))
             stack.enter_context(patch.object(staging_cd_publish, "identity", return_value=(identity, None, None)))
 
             def build(_root, _reservation, directory, *, progress, **_kwargs):
@@ -74,6 +78,9 @@ class ArchiveHandoffTests(unittest.TestCase):
             self.assertEqual((root / "output").read_text(), "prepared=true\n")
             producer_authority.require_current.assert_called_once_with(reservation, build_started=False)
             self.assertEqual(staging_cd_publish.main(), 0)
+            self.assertIn("build-cache-artifact=" + cache.key.family.removesuffix("-") + "\n",
+                          (root / "output").read_text())
+            cache.export_mounts.assert_called_once()
             self.assertEqual(output.getvalue().count("CACHE-SAVE cache=build-layers component=am"), 1)
             self.assertIn("result=not-saved reason=read-only", output.getvalue())
             self.assertIn("::warning title=Build cache not saved", output.getvalue())
