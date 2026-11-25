@@ -149,17 +149,17 @@ function streams(rows, samples, failed) {
   return { churn: states.reduce((total, row) => total + row.churn, 0), eventHashes };
 }
 
-function checkInfrastructure(evidence, failed) {
+function checkInfrastructure(evidence, failed, blocked) {
   const bounded = (samples, limit, percentile = 1, inclusive = true) => {
-    check(positiveSamples(samples), 'infrastructure_samples_missing', true);
+    check(positiveSamples(samples), 'infrastructure_samples_missing');
     const sorted = [...samples].sort((a, b) => a - b);
     const observed = sorted[Math.ceil(sorted.length * percentile) - 1];
     failure(inclusive ? observed <= limit : observed < limit, failed, 'infrastructure_threshold_exceeded');
   };
   check(Array.isArray(evidence.am) && evidence.am.length > 0 && isHash(evidence.resourcesHash),
-    'resource_evidence_missing', true);
+    'resource_evidence_missing');
   for (const replica of evidence.am) {
-    check(isHash(replica.replicaHash), 'replica_identity_missing', true);
+    check(isHash(replica.replicaHash), 'replica_identity_missing');
     bounded(replica.idleCpu, 0.40);
     bounded(replica.steadyCpu, 0.60, 0.95);
     bounded(replica.burstCpu, 0.75, 0.95);
@@ -168,20 +168,23 @@ function checkInfrastructure(evidence, failed) {
   }
   const mongo = evidence.mongo;
   check(mongo && Array.isArray(mongo.servers) && mongo.servers.length > 0 && positiveSamples(mongo.atlasHeadroom),
-    'mongo_evidence_missing', true);
+    'mongo_evidence_missing');
   failure(Math.min(...mongo.atlasHeadroom) >= 0.30, failed, 'atlas_headroom_below_floor');
   for (const server of mongo.servers) {
-    check(isHash(server.serverHash) && positiveSamples(server.checkoutMs), 'mongo_checkout_evidence_missing', true);
+    check(isHash(server.serverHash) && positiveSamples(server.checkoutMs), 'mongo_checkout_evidence_missing');
     bounded(server.checkoutMs, 1000, 1, false);
     bounded(server.checkoutMs, 25, 0.95, false);
-    check(server.checkoutMs.length >= 1000, 'mongo_p99_sample_floor', true);
-    bounded(server.checkoutMs, 100, 0.99, false);
+    if (server.checkoutMs.length < 1000) {
+      blocked.push(`mongo/checkout/${server.serverHash}`);
+    } else {
+      bounded(server.checkoutMs, 100, 0.99, false);
+    }
     bounded(server.occupancy, 0.70, 0.95);
   }
   check(Array.isArray(evidence.egressPools) && evidence.egressPools.length > 0
-    && isHash(evidence.nPlusOneHash), 'placement_evidence_missing', true);
+    && isHash(evidence.nPlusOneHash), 'placement_evidence_missing');
   for (const pool of evidence.egressPools) {
-    check(isHash(pool.poolHash), 'egress_pool_identity_missing', true);
+    check(isHash(pool.poolHash), 'egress_pool_identity_missing');
     bounded(pool.cpuWithPending, 0.70);
     bounded(pool.memoryWithPending, 0.70);
     failure(pool.largestNodeLossPlaceable === true, failed, 'n_plus_one_not_placeable');
@@ -200,22 +203,28 @@ export function scoreCapacity(captures) {
     const [header] = rows;
     const start = rows.find((row) => row.type === 'start');
     const complete = rows.at(-1);
-    check(header?.type === 'run' && start && complete?.type === 'end' && complete.ms >= end,
-      'complete_load_window_required', true);
+    check(header?.type === 'run' && start, 'load_window_not_started', true);
+    check(complete?.type === 'end' && complete.ms >= end, 'complete_load_window_required');
     check(isHash(header.reservation?.manifestHash) && workloadShape(header) === header.reservation.manifestHash,
       'sample_shape_evidence_invalid', true);
+    const { cohortHash, placementHash, runtimeMappingHash, manifestHash } = header.reservation;
+    check([cohortHash, placementHash, runtimeMappingHash].every(isHash)
+      && header.users.every((user) => isHash(user.subjectHash)), 'qualified_sample_cohort_missing');
     check(evidence?.run === header.run && evidence.startUtc === start.utc && evidence.endUtc === complete.utc
       && evidence.sourceSha === header.candidate.sourceSha && evidence.imageDigest === header.candidate.imageDigest
-      && evidence.cohortHash === header.reservation.cohortHash && isHash(evidence.evidenceHash),
-    'evidence_run_candidate_or_window_mismatch', true);
+      && evidence.cohortHash === cohortHash && evidence.placementHash === placementHash
+      && evidence.runtimeMappingHash === runtimeMappingHash && isHash(evidence.evidenceHash),
+    'evidence_run_candidate_or_window_mismatch');
     check(!runIds.has(header.run), 'capture_reused', true);
     runIds.add(header.run);
-    shape ??= header.reservation.manifestHash;
-    check(shape === header.reservation.manifestHash, 'sample_shape_changed', true);
+    const qualifiedShape = hash(JSON.stringify([manifestHash, cohortHash, placementHash, runtimeMappingHash,
+      header.reservation.verifiedK, header.users.map((user) => user.subjectHash)]));
+    shape ??= qualifiedShape;
+    check(shape === qualifiedShape, 'sample_shape_changed', true);
     const work = workload(rows, header, samples, failed);
     const live = streams(rows, samples, failed);
     const oracle = evidence.oracle;
-    reconcile(oracle);
+    reconcile(oracle, { missingIsBlocked: false });
     const commandHashes = new Map(work.admitted.map((row) => [row.commandHash, row]));
     failure(commandHashes.size === work.admitted.length && oracle.commands.length === commandHashes.size
       && new Set(work.admitted.map((row) => row.responseHash)).size === work.admitted.length,
@@ -230,7 +239,7 @@ export function scoreCapacity(captures) {
       }
     }
     check(evidence.streams?.complete === true && isHash(evidence.streams.cursorEvidenceHash)
-      && Array.isArray(evidence.streams.expectedEventHashes), 'independent_stream_evidence_missing', true);
+      && Array.isArray(evidence.streams.expectedEventHashes), 'independent_stream_evidence_missing');
     const expectedEvents = new Set(evidence.streams.expectedEventHashes);
     failure(expectedEvents.size > 0 && expectedEvents.size === evidence.streams.expectedEventHashes.length
       && expectedEvents.size === live.eventHashes.length
@@ -239,14 +248,14 @@ export function scoreCapacity(captures) {
       .reduce((n, [, value]) => n + value.admitted, 0);
     check(isHash(evidence.provider?.quotaEvidenceHash) && isHash(evidence.provider?.creditEvidenceHash)
       && isHash(evidence.provider?.latencyEvidenceHash) && evidence.provider?.healthyQuota === true
-      && evidence.provider?.fundedAdmitted === fundedCount, 'funded_provider_evidence_missing', true);
+      && evidence.provider?.fundedAdmitted === fundedCount, 'funded_provider_evidence_missing');
     check(isHash(evidence.faultEvidenceHash) && Array.isArray(evidence.faults)
       && evidence.faults.every((row) => finite(row.injectedAtMs) && finite(row.recoveredAtMs)
-        && row.recoveredAtMs >= row.injectedAtMs && isHash(row.userOutcomeHash)), 'fault_timeline_missing', true);
+        && row.recoveredAtMs >= row.injectedAtMs && isHash(row.userOutcomeHash)), 'fault_timeline_missing');
     check(isHash(evidence.cleanupEvidenceHash) && evidence.cleanupComplete === true,
-      'fixture_cleanup_evidence_missing', true);
+      'fixture_cleanup_evidence_missing');
     failure(complete.unresolvedOwners === 0, failed, 'unresolved_owners');
-    checkInfrastructure(evidence, failed);
+    checkInfrastructure(evidence, failed, blocked);
     runs.push({ run: header.run, startUtc: start.utc, endUtc: complete.utc, candidate: header.candidate,
       users: header.users.length, peakStreams: header.users.length, ...work.counts,
       requests: work.requests, providers: work.providerCounts, streamChurn: live.churn,
@@ -267,5 +276,5 @@ export function scoreCapacity(captures) {
     }
   }
   return { schema: 'cma-lc01-score-v1', status: failed.length ? 'FAIL' : blocked.length ? 'BLOCKED' : 'PASS',
-    runs, strata, failures: [...new Set(failed)], insufficientSamples: blocked };
+    runs, strata, failures: [...new Set(failed)], insufficientSamples: [...new Set(blocked)] };
 }
