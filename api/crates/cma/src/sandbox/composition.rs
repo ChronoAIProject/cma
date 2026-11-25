@@ -70,6 +70,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub defer_foreign_reconciliation: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
     pub sandbox_binding_hold_metrics: bool,
+    pub startup_native_home_hold_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -166,6 +167,7 @@ impl SandboxLifecycleComposition {
         ))
         .with_background_resumption(config.sandbox_reconciliation_reserved_lane)
         .with_binding_hold_metrics(config.sandbox_binding_hold_metrics)
+        .with_startup_native_home_hold(config.startup_native_home_hold_enabled)
         .with_runtime_loss_bounded_proof(config.runtime_loss_bounded_proof_enabled)
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_released_runtime(config.released.clone())
