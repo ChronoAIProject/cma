@@ -280,7 +280,7 @@ def main():
                                 cache.namespace = prepared.cache_namespace
                         else:
                             archive = try_reuse(release, directory, api, env.get("GH_TOKEN"),
-                                                on_miss=reuse_misses.append)
+                                                on_miss=reuse_misses.append, source_root=source)
                             qualified = archive is not None
                     if archive is None:
                         if env.get("CD_BUILD_CACHE") == "enabled":
