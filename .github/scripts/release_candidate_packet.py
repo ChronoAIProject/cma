@@ -115,16 +115,17 @@ def local_git(*args, root):
     return result.stdout.strip()
 
 
-def verify_source_history(candidate, receipts, root):
-    require(local_git("rev-parse", "--is-shallow-repository", root=root) == "false",
+def verify_source_history(head, receipts, root):
+    require(source_value(head) and local_git("rev-parse", "--is-shallow-repository", root=root) == "false",
             "Candidate source history is incomplete")
-    history = DevelopHistory(candidate, local_git("rev-list", "--first-parent", candidate,
-                                                  root=root).splitlines())
+    history = DevelopHistory(head, local_git("rev-list", "--first-parent", head,
+                                             root=root).splitlines())
     for receipt in receipts:
         identity = receipt["identity"]
         history.position(identity["source"])
         require(local_git("rev-parse", identity["source"] + "^{tree}", root=root) == identity["tree"],
                 "Publication source tree differs")
+    return history
 
 
 def verify_publications(freeze, publications, observed, root):
@@ -153,7 +154,11 @@ def verify_publications(freeze, publications, observed, root):
     require(repair["identity"]["component"] == "am" and freeze["repair"] == component_identity(repair),
             "Compatible repair publication identity differs")
     require(compatibility(repair) == next(iter(contract)), "Compatible repair runtime contract differs")
-    verify_source_history(freeze["source"], [*receipts.values(), repair], root)
+    verify_source_history(freeze["source"], receipts.values(), root)
+    # The independently approved repair may be a successor of the serving
+    # candidate. Its pinned publication lineage must include both sources.
+    repair_history = verify_source_history(freeze["repair_lineage_head"], [repair], root)
+    repair_history.position(freeze["source"])
     return artifact(receipts["am"]), artifact(repair), dict(zip(VERSIONS, next(iter(contract))))
 
 
@@ -162,13 +167,13 @@ def verify_packet(freeze_bytes, freeze_sha, publications, observation, files, ro
             "Freeze differs from the independently supplied hash")
     freeze = decode(freeze_bytes)
     fields(freeze, {"schema", "source", "environment", "frozen_at", "components", "state", "repair",
-                    "web_assets", "matrix", "checks", "previous_candidate_sha256"},
+                    "repair_lineage_head", "web_assets", "matrix", "checks", "previous_candidate_sha256"},
            "Frozen candidate inventory is malformed")
     require(freeze["schema"] == SCHEMA and source_value(freeze["source"])
             and hash_value(freeze["environment"]), "Frozen candidate identity is malformed")
     frozen_at = timestamp(freeze["frozen_at"])
     candidate_sha = sha256({key: freeze[key] for key in ("source", "environment", "components", "state",
-                                                         "repair", "web_assets", "matrix")})
+                                                         "repair", "repair_lineage_head", "web_assets", "matrix")})
     previous = freeze["previous_candidate_sha256"]
     require(previous is None or (hash_value(previous) and previous != candidate_sha),
             "Previous freeze identity is malformed")

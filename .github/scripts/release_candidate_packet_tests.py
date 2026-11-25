@@ -31,7 +31,7 @@ def git(root, *args):
 
 
 class Packet:
-    def __init__(self, root):
+    def __init__(self, root, *, successor_repair=False):
         self.root = root
         self.repository = root / "repository"
         self.repository.mkdir()
@@ -43,19 +43,25 @@ class Packet:
             "commit", "--allow-empty", "-qm", "candidate")
         source = git(self.repository, "rev-parse", "HEAD")
         tree = git(self.repository, "rev-parse", "HEAD^{tree}")
+        repair_source = old
+        repair_head = source
+        if successor_repair:
+            git(self.repository, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                "commit", "--allow-empty", "-qm", "repair")
+            repair_source = repair_head = git(self.repository, "rev-parse", "HEAD")
         self.evidence = root / "evidence"
         self.evidence.mkdir()
         receipts = {}
         for component in sorted(TARGETS):
             factory = fixture_runtime_receipt if component.startswith("runtime") else fixture_receipt
             receipts[component] = factory(component=component, source=source, tree=tree, build=sha256(component))
-        repair = fixture_receipt(component="am", source=old, tree=tree, build=sha256("repair"))
+        repair = fixture_receipt(component="am", source=repair_source, tree=tree, build=sha256("repair"))
         repair["digest"] = "sha256:" + sha256("repair-image")
         self.publications = {"schema": "cma-release-publications-v1", "components": receipts, "repair": repair}
         self.freeze = {
             "schema": "cma-release-candidate-v1", "source": source, "environment": sha256("environment"),
             "frozen_at": time_at(100), "components": {k: component_identity(v) for k, v in receipts.items()},
-            "repair": component_identity(repair), "state": {},
+            "repair": component_identity(repair), "repair_lineage_head": repair_head, "state": {},
             "previous_candidate_sha256": None, "checks": {},
         }
         observed_components = {key: {"identity": component_identity(receipt),
@@ -87,7 +93,9 @@ class Packet:
         self.freeze["web_assets"] = {"previous_source": old, "previous_digest": previous["digest"],
             "previous_manifest_sha256": self.observation["web_assets"]["previous"]["sha256"],
             "candidate_manifest_sha256": self.observation["web_assets"]["current"]["sha256"]}
-        self.matrix(artifact(receipts["am"]), artifact(repair), tree)
+        historical = (artifact(fixture_receipt(component="am", source=old, tree=tree, build=sha256("historical")))
+                      if successor_repair else artifact(repair))
+        self.matrix(artifact(receipts["am"]), historical, artifact(repair), tree)
         checks = [("required-ci", "ci", 1, {"run_id": 101, "head_sha": source, "conclusion": "success"}),
                   ("retained-fixture", "fixture", 2, {"passed": True, "failures": 0})]
         checks += [(engine, "browser", 20, {"engine": engine, "asset_404": 0, "blank_pages": 0,
@@ -107,13 +115,13 @@ class Packet:
                        repair=artifact(repair), started_at=time_at(start), first_failure_at=time_at(start + 1),
                        finished_at=time_at(start + 8), retained_before=state_hashes, retained_after=state_hashes,
                        database_rollback=False, history_rewritten=False, home_deleted=False,
-                       asset_404=0, new_turn_available=True,
-                       probes=[{"at": time_at(start + 2 + offset / 2), "ready": True} for offset in range(11)])
-            self.observation["recoveries"].append(self.ref("recovery/" + str(index) + ".json", row))
+                       asset_404=0, new_turn_available=True)
+            probes = [{"at": time_at(start + 2 + offset / 2), "ready": True} for offset in range(11)]
+            self.observation["recoveries"].append(self.recovery(index, row, sha256("failure-" + str(index)), probes))
 
     def candidate_sha(self):
         return sha256({key: self.freeze[key] for key in ("source", "environment", "components", "state",
-                                                        "repair", "web_assets", "matrix")})
+                                                        "repair", "repair_lineage_head", "web_assets", "matrix")})
 
     def common(self, samples):
         return {"candidate_sha256": self.candidate_sha(), "environment": self.freeze["environment"],
@@ -128,9 +136,22 @@ class Packet:
         mutate(previous)
         reference.update(self.ref(reference["path"], previous))
 
-    def matrix(self, candidate, repair, tree):
+    def recovery(self, index, row, failure_id, probes):
+        execution = {key: row[key] for key in ("run_id", "candidate_sha256", "environment", "repair",
+                                                 "started_at", "finished_at", "kind")}
+        failure = {key: row[key] for key in ("run_id", "candidate_sha256", "environment", "first_failure_at")}
+        failure.update(failure_id=failure_id, observed=True)
+        trace = {key: failure[key] for key in ("run_id", "candidate_sha256", "environment", "failure_id")}
+        trace["probes"] = probes
+        prefix = "recovery/" + str(index)
+        row.update(execution=self.ref(prefix + "-execution.json", execution),
+                   failure=self.ref(prefix + "-failure.json", failure),
+                   probe_trace=self.ref(prefix + "-probes.json", trace))
+        return self.ref(prefix + ".json", row)
+
+    def matrix(self, candidate, historical, repair, tree):
         sources = {"schema": "cma-reader-writer-source-inventory-v1",
-                   "old": {"source": repair["source"], "tree": tree},
+                   "old": {"source": historical["source"], "tree": tree},
                    "new": {"source": candidate["source"], "tree": tree},
                    "collections": [{"name": "sample", "old": {"role": "runtime"}, "new": {"role": "runtime"}}]}
         source_ref = self.ref("matrix/source.json", sources)
@@ -142,9 +163,9 @@ class Packet:
                                       {"role": "new", "policies": ["disabled", "enabled"]}]}]}]}
         inventory_ref = self.ref("matrix/inventory.json", inventory)
         readers = [{"id": role, "role": role, "artifact": item} for role, item in
-                   (("historical", repair), ("current", repair), ("candidate", candidate), ("recovery", repair))]
+                   (("historical", historical), ("current", historical), ("candidate", candidate), ("recovery", repair))]
         fixtures = [{"id": policy, "sha256": sha256(policy), "policy": policy,
-                     "writer": repair if policy == "retained" else candidate}
+                     "writer": historical if policy == "retained" else candidate}
                     for policy in ("retained", "disabled", "enabled")]
         cells = [{"id": reader["id"] + "-" + fixture["id"], "reader": reader["id"],
                   "fixture": fixture["id"], "expectation": "accept"} for reader in readers for fixture in fixtures]
@@ -244,6 +265,36 @@ class ReleaseCandidateTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             self.packet.verify()
 
+    def test_refuses_same_failure_and_probes_in_distinct_wrappers(self):
+        packet = self.packet
+        first = json.loads((packet.evidence / packet.observation["recoveries"][0]["path"]).read_bytes())
+        failure = json.loads((packet.evidence / first["failure"]["path"]).read_bytes())
+        trace = json.loads((packet.evidence / first["probe_trace"]["path"]).read_bytes())
+        wrapper = copy.deepcopy(first)
+        wrapper.update(run_id=sha256("other-wrapper"), started_at=time_at(9), finished_at=time_at(19))
+        packet.observation["recoveries"][1] = packet.recovery(1, wrapper, failure["failure_id"], trace["probes"])
+        with self.assertRaises(Refusal):
+            packet.verify()
+        # Even separately relabelled fault evidence cannot reuse the same
+        # observed probe times as another rehearsal.
+        wrapper["first_failure_at"] = time_at(11.5)
+        packet.observation["recoveries"][1] = packet.recovery(1, wrapper, sha256("different-label"), trace["probes"])
+        with self.assertRaises(Refusal):
+            packet.verify()
+
+    def test_successor_repair_is_bound_to_its_own_publication_lineage_and_real_matrix(self):
+        root = Path(self.temp.name) / "successor"
+        root.mkdir()
+        packet = Packet(root, successor_repair=True)
+        self.assertNotEqual(packet.freeze["source"], packet.freeze["repair"]["source"])
+        result = packet.verify()
+        self.assertEqual(result["reader_matrix"]["cells"], 12)
+        self.assertEqual(result["recovery_rehearsals"]["initial_qualifications"], 2)
+        packet.freeze["repair_lineage_head"] = packet.freeze["source"]
+        packet.observation["candidate_sha256"] = packet.candidate_sha()
+        with self.assertRaises(Refusal):
+            packet.verify()
+
     def test_refuses_cancelled_required_ci(self):
         self.mutation("cancelled", self.packet.observation["checks"]["required-ci"]["result"],
                       lambda row: row.update(cancelled=True))
@@ -254,15 +305,24 @@ class ReleaseCandidateTests(unittest.TestCase):
             self.packet.verify()
 
     def test_refuses_recovery_window_shortfall(self):
-        self.mutation("probe gap", self.packet.observation["recoveries"][0],
-                      lambda row: row["probes"].pop(3))
+        packet = self.packet
+        ref = packet.observation["recoveries"][0]
+        row = json.loads((packet.evidence / ref["path"]).read_bytes())
+        packet.replace(row["probe_trace"], lambda trace: trace["probes"].pop(3))
+        ref.update(packet.ref(ref["path"], row))
+        with self.assertRaises(Refusal):
+            packet.verify()
 
     def test_refuses_frozen_recheck_as_initial_qualification(self):
-        def change(row):
-            row["kind"] = "frozen_recheck"
-            row["started_at"], row["first_failure_at"], row["finished_at"] = time_at(101), time_at(102), time_at(109)
-            row["probes"] = [{"at": time_at(103 + offset / 2), "ready": True} for offset in range(11)]
-        self.mutation("recheck", self.packet.observation["recoveries"][1], change)
+        packet = self.packet
+        ref = packet.observation["recoveries"][1]
+        row = json.loads((packet.evidence / ref["path"]).read_bytes())
+        row["kind"] = "frozen_recheck"
+        row["started_at"], row["first_failure_at"], row["finished_at"] = time_at(101), time_at(102), time_at(109)
+        probes = [{"at": time_at(103 + offset / 2), "ready": True} for offset in range(11)]
+        packet.observation["recoveries"][1] = packet.recovery(1, row, sha256("recheck-failure"), probes)
+        with self.assertRaises(Refusal):
+            packet.verify()
 
     def test_refuses_configuration_drift_and_wrong_frozen_hash(self):
         self.mutation("flags", self.packet.observation["state"]["flags"], lambda row: row.update(example=True))

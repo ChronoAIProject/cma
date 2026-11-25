@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 
 from staging_cd_common import matches, require
+from staging_cd_receipts import sha256
 
 ENGINES = {"chromium", "firefox", "webkit"}
 CHECK_KINDS = {"ci", "fixture", "browser"}
@@ -190,35 +191,62 @@ def verify_matrix(freeze, refs, files, candidate, repair, observed_at):
         return json.loads(result.stdout)
 
 
+def recovery_observations(row, files):
+    execution = files.json(row["execution"])
+    execution_fields = {"run_id", "candidate_sha256", "environment", "repair", "started_at", "finished_at", "kind"}
+    fields(execution, execution_fields, "Independent recovery execution is malformed")
+    require(execution == {key: row[key] for key in execution_fields},
+            "Recovery execution differs from its summary")
+    failure = files.json(row["failure"])
+    failure_fields = {"run_id", "candidate_sha256", "environment", "failure_id", "first_failure_at", "observed"}
+    fields(failure, failure_fields, "Independent failure observation is malformed")
+    require(all(failure[key] == row[key] for key in ("run_id", "candidate_sha256", "environment", "first_failure_at"))
+            and hash_value(failure["failure_id"]) and failure["observed"] is True,
+            "Recovery failure differs from its execution")
+    trace = files.json(row["probe_trace"])
+    fields(trace, {"run_id", "candidate_sha256", "environment", "failure_id", "probes"},
+           "Independent probe trace is malformed")
+    require(all(trace[key] == failure[key] for key in ("run_id", "candidate_sha256", "environment", "failure_id")),
+            "Recovery probes belong to another failure")
+    return failure["failure_id"], trace["probes"]
+
+
 def check_recoveries(freeze, candidate_sha, references, files, repair, observed_at):
     require(isinstance(references, list) and len(references) >= 2 and len(references) <= 16,
             "Two distinct compatible recovery rehearsals are required")
-    run_ids, raw_hashes, windows = set(), set(), set()
+    run_ids, raw_hashes, failure_ids, failure_times, probe_hashes = set(), set(), set(), set(), set()
     initial = 0
     for reference in references:
         row = files.json(reference)
         fields(row, {"run_id", "candidate_sha256", "environment", "started_at", "finished_at", "samples",
-                     "status", "attempt", "cancelled", "kind", "repair", "first_failure_at", "probes",
-                     "retained_before", "retained_after", "database_rollback", "history_rewritten",
-                     "home_deleted", "asset_404", "new_turn_available"}, "Recovery result is malformed")
+                     "status", "attempt", "cancelled", "kind", "repair", "first_failure_at", "execution",
+                     "failure", "probe_trace", "retained_before", "retained_after", "database_rollback",
+                     "history_rewritten", "home_deleted", "asset_404", "new_turn_available"},
+               "Recovery result is malformed")
         common_observation(row, candidate_sha, freeze["environment"], 1)
-        require(hash_value(row["run_id"]) and row["run_id"] not in run_ids
-                and reference["sha256"] not in raw_hashes, "Recovery rehearsals must be distinct")
+        require(hash_value(row["run_id"]) and row["run_id"] not in run_ids,
+                "Recovery executions must be distinct")
         run_ids.add(row["run_id"])
-        raw_hashes.add(reference["sha256"])
+        references_for_run = [reference, row["execution"], row["failure"], row["probe_trace"]]
+        hashes = {item["sha256"] for item in references_for_run}
+        require(len(hashes) == len(references_for_run) and not raw_hashes & hashes,
+                "Recovery evidence was reused across rehearsals")
+        raw_hashes.update(hashes)
         require(row["kind"] in ("initial_qualification", "frozen_recheck")
                 and row["repair"] == repair, "Recovery uses an unreviewed executable")
         start, failure, finish = map(timestamp, (row["started_at"], row["first_failure_at"], row["finished_at"]))
         require(start <= failure <= finish <= observed_at and finish - failure <= timedelta(minutes=30),
                 "Compatible recovery exceeded thirty minutes or postdates observation")
-        require((start, failure, finish) not in windows, "Recovery rehearsal window was duplicated")
-        windows.add((start, failure, finish))
+        failure_id, probes = recovery_observations(row, files)
+        require(failure_id not in failure_ids and failure not in failure_times,
+                "Recovery failure was observed more than once")
+        failure_ids.add(failure_id)
+        failure_times.add(failure)
         if row["kind"] == "initial_qualification":
             require(finish <= timestamp(freeze["frozen_at"]), "Initial qualification must precede freeze")
             initial += 1
         else:
             require(start >= timestamp(freeze["frozen_at"]), "Frozen recheck predates freeze")
-        probes = row["probes"]
         require(isinstance(probes, list) and len(probes) >= 2 and len(probes) <= 10000,
                 "Stable recovery probe window is missing")
         observed = []
@@ -226,6 +254,11 @@ def check_recoveries(freeze, candidate_sha, references, files, repair, observed_
             fields(probe, {"at", "ready"}, "Recovery probe is malformed")
             require(probe["ready"] is True, "Recovery probe window was interrupted")
             observed.append(timestamp(probe["at"]))
+        # Deduplicate the observed trace itself, independent of wrapper IDs,
+        # JSON formatting, or equivalent timestamp representations.
+        trace_hash = sha256([instant.isoformat() for instant in observed])
+        require(trace_hash not in probe_hashes, "Recovery probe trace was reused")
+        probe_hashes.add(trace_hash)
         require(failure <= observed[0] <= observed[-1] <= finish
                 and observed[-1] - observed[0] >= timedelta(minutes=5)
                 and all(timedelta(0) < later - earlier <= timedelta(seconds=30)
