@@ -489,7 +489,6 @@ mod runtime_update_test_support;
 #[cfg(test)]
 mod runtime_update_tests;
 mod suspended_runtime;
-
 #[cfg(test)]
 mod runtime_update_resume_tests;
 
