@@ -22,6 +22,7 @@ use crate::{
         intents::IntentReceipt,
         side_messages::SideMessageDelivery,
     },
+    turns::routed::RoutedToolReplies,
 };
 
 const TOOL: &str = "sendSideMessage";
@@ -45,7 +46,8 @@ impl ToolsState {
         text: String,
     ) -> Result<IntentReceipt, Problem> {
         super::validate_reply_key(Some(request_id))?;
-        let (channel, mut event) = self.side_message_context(caller, reference).await?;
+        let (channel, original_event) = self.side_message_context(caller, reference).await?;
+        let mut event = original_event.clone();
         side_destination(&channel, &event.reply)?;
         if text.trim().is_empty() {
             return Err(Problem::new(
@@ -100,12 +102,13 @@ impl ToolsState {
             receipts::Admission::Claimed(claim) => claim,
             receipts::Admission::Replay(receipt) => return Ok(receipt),
         };
-        let gate = SideMessageGate {
-            resolver: self.resolver.clone(),
-            channel: channel.clone(),
-            event: event.clone(),
+        let gate = SideMessageGate::new(
+            self.resolver.clone(),
+            channel.clone(),
+            original_event,
             caller,
-        };
+            self.routed_replies.clone(),
+        );
         let receipt = delivery.send(&channel, &event, &message, &gate).await;
         store.finish(claim, &receipt).await?;
         Ok(receipt)
@@ -129,6 +132,12 @@ impl ToolsState {
                 403,
                 "side_message_revoked",
             ));
+        }
+        if let Some(routed) = &self.routed_replies {
+            routed
+                .authorize_side_message(caller, &event)
+                .await
+                .map_err(super::routed_reply_error)?;
         }
         Ok((current, event))
     }
@@ -177,11 +186,32 @@ fn side_destination(channel: &ResolvedChannel, reply: &ReplyAddress) -> Result<(
     destination(channel, reply)
 }
 
-struct SideMessageGate {
+pub(crate) struct SideMessageGate {
     resolver: ChannelResolver,
     channel: Arc<ResolvedChannel>,
     event: EventRefPayload,
     caller: AgentCaller,
+    routed: Option<Arc<RoutedToolReplies>>,
+    deadline: tokio::time::Instant,
+}
+
+impl SideMessageGate {
+    pub(crate) fn new(
+        resolver: ChannelResolver,
+        channel: Arc<ResolvedChannel>,
+        event: EventRefPayload,
+        caller: AgentCaller,
+        routed: Option<Arc<RoutedToolReplies>>,
+    ) -> Self {
+        Self {
+            resolver,
+            channel,
+            event,
+            caller,
+            routed,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(20),
+        }
+    }
 }
 
 impl SendGate for SideMessageGate {
@@ -190,7 +220,8 @@ impl SendGate for SideMessageGate {
     }
 
     fn commit(&self) -> bool {
-        time::OffsetDateTime::now_utc().unix_timestamp() < self.event.expires_at
+        tokio::time::Instant::now() < self.deadline
+            && time::OffsetDateTime::now_utc().unix_timestamp() < self.event.expires_at
     }
 
     fn attempt(&self) -> BoxFuture<'_, Result<AttemptPermit, GateRefusal>> {
@@ -199,22 +230,37 @@ impl SendGate for SideMessageGate {
                 reason: "side_message_authority_changed",
                 retry_after: None,
             };
-            let current = self
-                .resolver
-                .resolve_current(self.event.channel_id.as_str())
+            let verify = async {
+                let current = self
+                    .resolver
+                    .resolve_current(self.event.channel_id.as_str())
+                    .await
+                    .map_err(|_| refuse)?;
+                if !self.commit()
+                    || current.version != self.channel.version
+                    || current.pointer.record_id != self.event.record_id
+                    || owner(self.caller, &current, self.event.consumer.as_ref(), TOOL).is_err()
+                    || side_destination(&current, &self.event.reply).is_err()
+                {
+                    return Err(refuse);
+                }
+                if let Some(routed) = &self.routed {
+                    routed
+                        .authorize_side_message(self.caller, &self.event)
+                        .await
+                        .map_err(|_| refuse)?;
+                }
+                Ok(AttemptPermit::empty())
+            };
+            tokio::time::timeout_at(self.deadline, verify)
                 .await
-                .map_err(|_| refuse)?;
-            if !self.commit()
-                || current.version != self.channel.version
-                || current.pointer.record_id != self.event.record_id
-                || owner(self.caller, &current, self.event.consumer.as_ref(), TOOL).is_err()
-                || side_destination(&current, &self.event.reply).is_err()
-            {
-                return Err(refuse);
-            }
-            Ok(AttemptPermit::empty())
+                .unwrap_or(Err(refuse))
         })
     }
 
     fn progress(&self) {}
+
+    fn transport_deadline(&self) -> Option<tokio::time::Instant> {
+        Some(self.deadline)
+    }
 }

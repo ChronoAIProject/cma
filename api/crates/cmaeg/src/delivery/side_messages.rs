@@ -1,5 +1,5 @@
 //! Bounded side-message transport with independent route pacing.
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use cmaeg_core::{message::OutboundMessage, seal::EventRefPayload};
 use tokio::sync::Semaphore;
@@ -52,16 +52,6 @@ impl SideMessageDelivery {
             first_send_done: true,
             gate,
         };
-        match tokio::time::timeout(
-            Duration::from_secs(20),
-            self.sender.reply(&context, event, message),
-        )
-        .await
-        {
-            Ok((receipt, _)) => receipt,
-            Err(_) => receipt_for(DeliveryOutcome::Unknown {
-                reason: "side_message_delivery_timeout".into(),
-            }),
-        }
+        self.sender.reply(&context, event, message).await.0
     }
 }

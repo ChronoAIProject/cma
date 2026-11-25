@@ -256,7 +256,11 @@ impl App {
     }
 
     pub fn side_messages(&self) -> crate::delivery::side_messages::SideMessageDelivery {
-        self.engine.as_ref().unwrap().side_messages()
+        self.engine
+            .as_ref()
+            .unwrap()
+            .side_messages_if(true)
+            .unwrap()
     }
 
     pub async fn target(&self) -> ReplyTargetRef {

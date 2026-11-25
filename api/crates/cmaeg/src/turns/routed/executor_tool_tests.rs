@@ -203,3 +203,153 @@ async fn event_side_message_receipt_never_suppresses_the_restarted_executor_answ
         assert!(rx.try_recv().is_err());
     }
 }
+
+#[tokio::test]
+async fn event_side_message_routed_authority_refuses_waiting_send_after_quarantine_or_rebind() {
+    use crate::{
+        channels::resolver::ChannelResolver,
+        delivery::{engine::DeliveryEngine, relay_client::RelayClient},
+        ingress::routing_store::test_server::{Row, Server},
+        telegram::media_fixture::Fixture,
+        tools::side_messages::SideMessageGate,
+    };
+    use cmaeg_core::{ids::ConversationId, seal::seal_blob};
+    use std::time::Duration;
+
+    for quarantine in [false, true] {
+        let channel_store = Server::start().await;
+        let mut request = fixture::request(
+            |value| {
+                value["record_id"] = uuid::Uuid::new_v4().to_string().into();
+                value["routing"]["default_targets"] = serde_json::json!(["default"]);
+                value["secrets"]["telegram_bot_token"] = "77:fixture".into();
+            },
+            fixture::message("original"),
+        );
+        let keys = Arc::new(fixture::keys());
+        let channel = Arc::make_mut(&mut request.channel);
+        channel.pointer.record_url = channel_store
+            .records
+            .record_url(channel.pointer.record_id.as_str())
+            .unwrap()
+            .to_string();
+        channel.id = channel.pointer.seal_id(&keys).unwrap();
+        let channel_id = channel.id.clone();
+        let record_id = channel.pointer.record_id.clone();
+        let conversation_id = ConversationId::derive(
+            &keys,
+            &channel_id,
+            1,
+            &request
+                .activity
+                .partition_key(&channel.definition.partition),
+        );
+        channel_store.memory.channels.lock().unwrap().insert(
+            channel.pointer.record_id.to_string(),
+            Row {
+                owner: channel.definition.owner.subject.clone(),
+                blob: seal_blob(
+                    &keys,
+                    channel.definition.to_blob_json().to_string().as_bytes(),
+                )
+                .unwrap(),
+                expiry: i64::MAX,
+                version: 1,
+            },
+        );
+        request.conversation_id = conversation_id.clone();
+        fixture::rewrite_ref(&mut request, |event| {
+            event.channel_id = channel_id.clone();
+            event.record_id = record_id;
+            event.conversation_id = conversation_id;
+        });
+        let resolver = ChannelResolver::new(
+            Arc::new(channel_store.records.clone()),
+            keys.clone(),
+            Default::default(),
+        );
+        request.channel = resolver.resolve_current(channel_id.as_str()).await.unwrap();
+        let setup = Setup::with_request(supported(), request).await;
+        let lease = super::delivery_tests::accepted(&setup).await;
+        let payload = event(&setup.journal().body(&lease).await.unwrap());
+        let channel = setup.current.channel.lock().unwrap().clone();
+        let caller = AgentCaller {
+            key_hash: *channel
+                .consumer_key_hash(payload.consumer.as_ref())
+                .unwrap(),
+        };
+        let (routed, _) = lane(&setup);
+        let tools = Arc::new(routed.tool_replies());
+        tools
+            .authorize_side_message(caller, &payload)
+            .await
+            .unwrap();
+
+        let platform = Fixture::new().await;
+        let relay = RelayClient::new("http://127.0.0.1:1", Duration::from_secs(1))
+            .unwrap()
+            .with_telegram(platform.api.clone());
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        let engine = DeliveryEngine::start(
+            rx,
+            keys,
+            relay,
+            crate::DeliveryConfig::default(),
+            crate::turns::TurnTracker::new(Default::default()),
+            crate::delivery::custom::CustomDelivery::new(
+                "https://gateway.example".into(),
+                Arc::default(),
+            ),
+        );
+        let delivery = engine.side_messages_if(true).unwrap();
+        let gate = SideMessageGate::new(
+            resolver,
+            channel.clone(),
+            payload.clone(),
+            caller,
+            Some(tools.clone()),
+        );
+        let message: cmaeg_core::message::OutboundMessage =
+            serde_json::from_value(serde_json::json!({"text":"progress"})).unwrap();
+        let mut send = Box::pin(delivery.send(&channel, &payload, &message, &gate));
+        assert!(futures_util::poll!(&mut send).is_pending());
+        if quarantine {
+            let saved = super::quarantine::Quarantine {
+                kind: super::quarantine::KIND.into(),
+                target: setup.target().id.clone(),
+                root: setup.plan.admission_id.clone(),
+                owner: setup.plan.identity.owner.clone(),
+                request_hash: setup.plan.request_hash.clone(),
+                retained_until: setup.plan.retained_until,
+                audit: "fixture-audit".into(),
+                rollback_safe_after: payload
+                    .expires_at
+                    .saturating_add(cmaeg_core::seal::REPLY_TARGET_TTL),
+            };
+            setup
+                .journal()
+                .write(
+                    &super::quarantine::id(&saved.target),
+                    &saved.owner,
+                    saved.retained_until,
+                    &saved,
+                    None,
+                )
+                .await
+                .unwrap();
+            assert!(matches!(
+                tools.authorize_side_message(caller, &payload).await,
+                Err(ExecutionError::Abandoned)
+            ));
+        } else {
+            let mut current = setup.current.channel.lock().unwrap();
+            let current = Arc::make_mut(&mut current);
+            current.definition.provider.binding_id = "replacement-binding".parse().unwrap();
+        }
+        let result = send.await;
+        assert!(
+            matches!(result.delivery, DeliveryOutcome::Rejected { ref reason } if reason == "side_message_authority_changed")
+        );
+        assert!(platform.calls().is_empty());
+    }
+}

@@ -145,7 +145,7 @@ async fn event_side_message_pending_relay_send_leaves_live_answer_and_reply_toke
         tracker,
         sender.custom,
     );
-    let delivery = engine.side_messages();
+    let delivery = engine.side_messages_if(true).unwrap();
     let notice = message("side notice".into());
     let mut side = Box::pin(delivery.send(&channel, &event, &notice, &Ungated));
     tokio::select! {

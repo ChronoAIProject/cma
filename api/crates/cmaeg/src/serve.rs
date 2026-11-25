@@ -4,7 +4,7 @@ use tokio::sync::oneshot;
 use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 
 use crate::{
-    connections, console, delivery, http, ingress, interactions, mcp, media, providers,
+    connections, console, delivery, http, ingress, interactions, media, providers,
     router_with_state, service_auth, telegram, telemetry, tools, turns, Config,
     REQUEST_BODY_LIMIT_BYTES,
 };
@@ -418,6 +418,7 @@ pub(crate) async fn serve(
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();
+    let side_messages = delivery_engine.side_messages_if(config.event_side_messages_enabled);
     let mut router = router_with_state(state)
         .merge(drain_control.router(replicas.enabled))
         .merge(replica_routes)
@@ -434,14 +435,7 @@ pub(crate) async fn serve(
         .merge(http::whatsapp::router(ingress.clone()))
         .merge(http::telegram::router(ingress.clone()))
         .merge(http::callbacks::router(ingress))
-        .merge(http::tools::router_with_side_messages(
-            tools_state.clone(),
-            config
-                .event_side_messages_enabled
-                .then(|| delivery_engine.side_messages()),
-        ))
-        .merge(http::media::router(tools_state.clone()))
-        .merge(mcp::router(tools_state))
+        .merge(http::tools::gateway_router(tools_state, side_messages))
         .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
         .layer(CatchPanicLayer::custom(http::problems::panic_response));
     if let Some(browser) = browser {

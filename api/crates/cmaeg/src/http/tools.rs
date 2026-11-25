@@ -33,6 +33,15 @@ pub fn router(state: ToolsState) -> Router {
     router_with_side_messages(state, None)
 }
 
+pub(crate) fn gateway_router(
+    state: ToolsState,
+    side_messages: Option<crate::delivery::side_messages::SideMessageDelivery>,
+) -> Router {
+    router_with_side_messages(state.clone(), side_messages)
+        .merge(super::media::router(state.clone()))
+        .merge(crate::mcp::router(state))
+}
+
 pub(crate) fn router_with_side_messages(
     state: ToolsState,
     side_messages: Option<crate::delivery::side_messages::SideMessageDelivery>,

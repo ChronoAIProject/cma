@@ -80,8 +80,11 @@ impl DeliveryEngine {
             sender,
         }
     }
-    pub(crate) fn side_messages(&self) -> super::side_messages::SideMessageDelivery {
-        super::side_messages::SideMessageDelivery::new(&self.sender)
+    pub(crate) fn side_messages_if(
+        &self,
+        enabled: bool,
+    ) -> Option<super::side_messages::SideMessageDelivery> {
+        enabled.then(|| super::side_messages::SideMessageDelivery::new(&self.sender))
     }
 
     pub async fn drain(mut self, deadline: Instant) -> bool {

@@ -25,6 +25,24 @@ pub trait SendGate: Send + Sync {
     fn attempt<'a>(&'a self) -> BoxFuture<'a, Result<AttemptPermit, GateRefusal>>;
     /// Stamps the send's slot as making progress.
     fn progress(&self);
+
+    /// Deadline for transport and pacing, when the caller supplies one.
+    fn transport_deadline(&self) -> Option<tokio::time::Instant> {
+        None
+    }
+}
+
+pub(super) async fn within_deadline<T>(
+    gate: &dyn SendGate,
+    work: impl std::future::Future<Output = T>,
+    on_timeout: T,
+) -> T {
+    match gate.transport_deadline() {
+        Some(deadline) => tokio::time::timeout_at(deadline, work)
+            .await
+            .unwrap_or(on_timeout),
+        None => work.await,
+    }
 }
 
 /// Why a gate refused a send. The send ends with this refusal's outcome.
