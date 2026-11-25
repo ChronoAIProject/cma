@@ -138,7 +138,10 @@ async fn sealed_default_additional_and_pending_credentials_are_registered_and_ne
         &serde_json::to_vec(&definition.to_blob_json()).unwrap(),
     )
     .unwrap();
-    tracking.record_blob(&blob).await.unwrap();
+    tracking
+        .record_blob(definition.record_id.as_str(), 1, &blob)
+        .await
+        .unwrap();
     assert_eq!(memory.known.lock().unwrap().len(), 3);
     let retired = crate::channels::definition::hash_secret(&fixture::agent_key(fixture::NYX));
     assert!(memory.was_worker(&retired).await.unwrap());
@@ -147,7 +150,10 @@ async fn sealed_default_additional_and_pending_credentials_are_registered_and_ne
     changed["secrets"]["consumer_keys"] = serde_json::json!([]);
     let changed = fixture::definition(changed);
     let blob = seal_blob(&keys, &serde_json::to_vec(&changed.to_blob_json()).unwrap()).unwrap();
-    tracking.record_blob(&blob).await.unwrap();
+    tracking
+        .record_blob(changed.record_id.as_str(), 2, &blob)
+        .await
+        .unwrap();
     assert!(memory.was_worker(&retired).await.unwrap());
     assert_eq!(memory.known.lock().unwrap().len(), 3);
 }

@@ -41,6 +41,20 @@ export const RecordedOperationSchema = enumeration(
 );
 export type RecordedOperation = Output<typeof RecordedOperationSchema>;
 
+export const LegacyRetirementStateSchema = enumeration(
+  'available',
+  'blocked_missing_credential',
+  'pending',
+  'cleanup_unconfirmed',
+);
+export type LegacyRetirementState = Output<typeof LegacyRetirementStateSchema>;
+
+export const LegacyRetirementSchema = object({
+  expected_version: integer,
+  state: LegacyRetirementStateSchema,
+});
+export type LegacyRetirement = Output<typeof LegacyRetirementSchema>;
+
 export const ManagedRecordSchema = tagged(
   {
     valid: object({
@@ -51,6 +65,7 @@ export const ManagedRecordSchema = tagged(
       creation: RecordedCreationSchema,
       address: RecordedAddressSchema,
       pending_operation: optional(nullable(RecordedOperationSchema)),
+      retirement: optional(nullable(LegacyRetirementSchema)),
     }),
     invalid: object({ state: enumeration('invalid') }),
   },

@@ -127,7 +127,12 @@ async fn backfill(db: &Database, tracking: &WorkerCredentials) -> Result<(), Rec
             let blob = row
                 .get_binary_generic("blob")
                 .map_err(|_| RecordError::Malformed("invalid channel record blob".into()))?;
-            tracking.record_blob(blob).await?;
+            let version = row
+                .get_i64("version")
+                .ok()
+                .and_then(|version| u64::try_from(version).ok())
+                .ok_or_else(|| RecordError::Malformed("invalid channel record version".into()))?;
+            tracking.record_blob(id, version, blob).await?;
             after = Some(id.to_owned());
         }
     }

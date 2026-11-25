@@ -182,6 +182,15 @@ impl AgentWorker {
             counts.foreign_ownership_deferred += 1;
             return Ok(());
         }
+        if self
+            .dependencies
+            .store
+            .agent_inspection_parked(&candidate.agent_id)
+            .await?
+        {
+            counts.ownership_skipped += 1;
+            return Ok(());
+        }
         counts.ownership_attempted += 1;
         let Some(authority) = coordinator
             .acquire(&candidate.agent_id)

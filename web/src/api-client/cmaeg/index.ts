@@ -153,6 +153,13 @@ export class Cmaeg {
   getChannelRecordManagement(recordId: string, options?: ChannelRecordManagementOptions) {
     return this.#channels.getChannelRecordManagement(recordId, options);
   }
+  retireLegacyChannelRecord(
+    recordId: string,
+    expectedVersion: number,
+    options?: ChannelRecordManagementOptions,
+  ) {
+    return this.#channels.retireLegacyChannelRecord(recordId, expectedVersion, options);
+  }
   updateChannel(id: string, body: ChannelUpdateRequest, options?: OperationOptions) {
     return this.#channels.updateChannel(id, body, options);
   }

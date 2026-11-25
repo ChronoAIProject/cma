@@ -38,38 +38,38 @@ fn refused(result: Result<(), RecordError>) -> String {
 fn disabled_gate_refuses_a_new_github_source_and_admits_other_channels() {
     let gate = ImportGate::new(false, Some(keys()));
     assert_eq!(
-        refused(gate.check_new_channel(&sealed(true))),
+        refused(gate.check_new_channel("", 1, &sealed(true))),
         GITHUB_IMPORT_DISABLED
     );
-    gate.check_new_channel(&sealed(false)).unwrap();
+    gate.check_new_channel("", 1, &sealed(false)).unwrap();
 }
 
 #[test]
 fn enabled_gate_admits_github_sources_without_opening_the_row() {
     let gate = ImportGate::new(true, None);
-    gate.check_new_channel(&sealed(true)).unwrap();
-    gate.check_new_channel(b"opaque").unwrap();
+    gate.check_new_channel("", 1, &sealed(true)).unwrap();
+    gate.check_new_channel("", 1, b"opaque").unwrap();
 }
 
 #[test]
 fn disabled_gate_fails_closed_without_keys_or_with_an_unreadable_row() {
     assert_eq!(
-        refused(ImportGate::new(false, None).check_new_channel(&sealed(false))),
+        refused(ImportGate::new(false, None).check_new_channel("", 1, &sealed(false))),
         GITHUB_IMPORT_KEYS_REQUIRED
     );
     let gate = ImportGate::new(false, Some(keys()));
     assert_eq!(
-        refused(gate.check_new_channel(b"opaque")),
+        refused(gate.check_new_channel("", 1, b"opaque")),
         GITHUB_IMPORT_UNREADABLE
     );
     let foreign = MasterKeyRing::parse(&format!("2:{}", STANDARD.encode([9; 32]))).unwrap();
     assert_eq!(
-        refused(ImportGate::new(false, Some(foreign)).check_new_channel(&sealed(true))),
+        refused(ImportGate::new(false, Some(foreign)).check_new_channel("", 1, &sealed(true))),
         GITHUB_IMPORT_UNREADABLE
     );
     let plain = seal_blob(&keys(), b"not a channel definition").unwrap();
     assert_eq!(
-        refused(gate.check_new_channel(&plain)),
+        refused(gate.check_new_channel("", 1, &plain)),
         GITHUB_IMPORT_UNREADABLE
     );
 }

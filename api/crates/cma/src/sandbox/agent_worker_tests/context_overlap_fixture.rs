@@ -40,3 +40,12 @@ pub(in crate::sandbox) async fn unbound_worker() -> (Arc<AgentWorker>, Agent) {
     harness.store.save_sandbox(expected, sandbox).await.unwrap();
     (harness.worker, agent)
 }
+
+/// Run the real inspection path against an intentionally absent runtime.
+pub(crate) async fn missing_runtime(step: AgentWorkStep) -> (Arc<AgentWorker>, Agent) {
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let mut agent = harness.admit("inspection-diagnostics", vec![]).await;
+    agent.work.step = step;
+    harness.adapter.teardown(&harness.runtime).await.unwrap();
+    (harness.worker, agent)
+}

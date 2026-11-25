@@ -1,7 +1,7 @@
 //! Reconcile durable webhook retirement before releasing channel reservations.
 use super::{model::*, webhook, ConnectionService, Error};
 use crate::{channels::management::ManagementState, records::RecordError};
-use cmaeg_core::{channel::ChannelDefinition, seal::open_blob};
+use cmaeg_core::{channel::ChannelDefinition, seal::open_retained_channel};
 
 async fn channel_exists(state: &ManagementState, record: &Connection) -> Result<bool, Error> {
     let Some(id) = &record.channel_record else {
@@ -16,11 +16,10 @@ async fn channel_exists(state: &ManagementState, record: &Connection) -> Result<
         Err(RecordError::NotFound) => return Ok(false),
         Err(_) => return Err(Error::Unavailable),
     };
-    let bytes = open_blob(&state.master_keys, &value.blob)
-        .map_err(|_| Error::Unavailable)?
-        .payload;
+    let (opened, _) = open_retained_channel(&state.master_keys, id, value.version, &value.blob)
+        .map_err(|_| Error::Unavailable)?;
     let definition: ChannelDefinition =
-        serde_json::from_slice(&bytes).map_err(|_| Error::Unavailable)?;
+        serde_json::from_slice(&opened.payload).map_err(|_| Error::Unavailable)?;
     Ok(definition.connection_ref.as_deref() == Some(&record.id))
 }
 

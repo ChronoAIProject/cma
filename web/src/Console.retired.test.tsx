@@ -62,12 +62,16 @@ it('projects the authorized selected retired Agent despite an empty hierarchy an
   expect(group.querySelector('.character-avatar')).toHaveAttribute('data-motion', 'still');
   expect(screen.getByText('No other agents to show.')).toBeVisible();
   expect(restoreDeletions('owner')).toEqual([sibling]);
+  expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Environments' }));
   expect(screen.getByRole('region', { name: 'Deletion request' })).toHaveTextContent(
     '1 deletion request · 1 unconfirmed',
   );
   expect(
     screen.getByText('1 deletions need checking').closest('.manager-navigation__list'),
   ).toBeNull();
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Tasks' }));
+  expect(screen.getByRole('group', { name: 'Retired' })).toBeVisible();
   view.rerender(draw({ route: { kind: 'home' } }));
   expect(screen.queryByRole('group', { name: 'Retired' })).not.toBeInTheDocument();
   expect(restoreDeletions('owner')).toEqual([sibling]);
