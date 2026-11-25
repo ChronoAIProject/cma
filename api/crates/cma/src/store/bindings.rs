@@ -25,6 +25,7 @@ mod commands;
 mod conversations;
 mod custody;
 mod key_classification;
+mod profile_transfer;
 mod reprovision;
 mod reset;
 #[cfg(test)]
@@ -98,6 +99,17 @@ impl BindingCollections {
 
 #[async_trait::async_trait]
 impl BindingStore for MongoSandboxStore {
+    async fn transfer_profile_conversation(
+        &self,
+        request: layer2_core::sandbox::binding::ProfileTransferRequest,
+        enabled: bool,
+    ) -> Result<
+        layer2_core::sandbox::binding::ProfileTransferReceipt,
+        layer2_core::sandbox::binding::BindingError,
+    > {
+        self.transfer_conversation(request, enabled).await
+    }
+
     async fn conversation_reset_state(
         &self,
         binding: &str,

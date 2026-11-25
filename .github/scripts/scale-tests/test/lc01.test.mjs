@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { CapacityClient, consumeEvents } from '../lib/lc01-client.mjs';
 import { hash } from '../lib/checks.mjs';
 import { end, loadPlan, protocols, steadyEnd, steadyStart, turnFixture, validateConfig, workloadShape } from '../lib/lc01-plan.mjs';
@@ -176,9 +181,9 @@ test('checks the served revision before opening any fixture or emitting the star
   }
 });
 
-function capture() {
+function capture(run = 'example') {
   const fixture = config();
-  const rows = [{ type: 'run', run: 'example', ...fixture }, { type: 'start', utc: 'start' }];
+  const rows = [{ type: 'run', run, ...fixture }, { type: 'start', utc: 'start' }];
   rows[0].reservation.manifestHash = workloadShape(fixture);
   const oracle = [];
   const expectedEventHashes = [];
@@ -192,11 +197,11 @@ function capture() {
     } else if (kind === 'disconnect') {
       rows.push({ type: 'stream_close', user, cursor: 2, ms: at, reason: 'scheduled' });
     } else if (kind === 'turn') {
-      const commandHash = hash(`command/${user}/${at}`);
-      const responseHash = hash(`response/${user}/${at}`);
+      const commandHash = hash(`${run}/command/${user}/${at}`);
+      const responseHash = hash(`${run}/response/${user}/${at}`);
       const position = { user, at, protocol };
       rows.push({ type: 'offered', ...position }, { type: 'admitted', ...position, headersMs: 10,
-        commandHash, responseHash, keyHash: hash(`key/${user}/${at}`) },
+        commandHash, responseHash, keyHash: hash(`${run}/key/${user}/${at}`) },
       { type: 'terminal', ...position, state: 'completed', responseHash, elapsedMs: 15_000 },
       { type: 'file_verified', ...position, ok: true });
       oracle.push({ commandHash, responseHash, nativeToPublicMs: 100, accepted: true, executions: 1,
@@ -211,13 +216,16 @@ function capture() {
   return {
     rows,
     evidence: {
-      run: 'example', startUtc: 'start', endUtc: 'end', sourceSha, imageDigest, cohortHash: proof, evidenceHash: proof,
+      run, startUtc: 'start', endUtc: 'end', sourceSha, imageDigest, cohortHash: proof, evidenceHash: proof,
+      placementHash: proof, runtimeMappingHash: proof,
       oracle: { independent: true, complete: true, evidenceHash: proof, commands: oracle,
         acceptedHashes: oracle.map((row) => row.commandHash) },
       streams: { complete: true, cursorEvidenceHash: proof, expectedEventHashes },
       provider: { quotaEvidenceHash: proof, creditEvidenceHash: proof, latencyEvidenceHash: proof,
         healthyQuota: true, fundedAdmitted },
       faults: [], faultEvidenceHash: proof, cleanupComplete: true, cleanupEvidenceHash: proof, resourcesHash: proof,
+      memberInventory: { run, startUtc: 'start', endUtc: 'end', sourceSha, imageDigest, independent: true,
+        evidenceHash: proof, amReplicaHashes: [proof], mongoServerHashes: [proof], egressPoolHashes: [proof] },
       am: [{ replicaHash: proof, idleCpu: [0.2], steadyCpu: [0.4], burstCpu: [0.5], memory: [0.5], throttle: [0] }],
       mongo: { atlasHeadroom: [0.5, 0.5, 0.5], servers: [{ serverHash: proof, occupancy: [0.3],
         checkoutMs: Array(1000).fill(10) }] },
@@ -249,4 +257,106 @@ test('rejects shifted observation windows and detects missing effects and sequen
   const score = scoreCapacity([sequence]);
   assert.equal(score.status, 'FAIL');
   assert.ok(score.failures.includes('stream_replay_or_sequence_gap'));
+});
+
+test('only combines supplemental captures from the same qualified cohort and deployment', () => {
+  const first = capture('first');
+  const supplemental = capture('supplemental');
+  const stratum = 'read/public/burst';
+  assert.equal(scoreCapacity([first]).strata[stratum].n, 300);
+  assert.equal(scoreCapacity([first, supplemental]).strata[stratum].n, 600);
+  for (const field of ['cohortHash', 'placementHash', 'runtimeMappingHash']) {
+    const different = capture('different');
+    const other = hash(field);
+    different.rows[0].reservation[field] = other;
+    different.evidence[field] = other;
+    const score = scoreCapacity([different]);
+    assert.equal(score.status, 'BLOCKED');
+    assert.ok(score.insufficientSamples.includes(stratum));
+    assert.throws(() => scoreCapacity([first, different]), /sample_shape_changed/);
+  }
+});
+
+test('insufficient Mongo checkout samples do not hide missing measurements or observed failures', () => {
+  const sample = capture();
+  const [server] = sample.evidence.mongo.servers;
+  server.checkoutMs = [10];
+  const score = scoreCapacity([sample]);
+  assert.equal(score.status, 'BLOCKED');
+  assert.ok(score.insufficientSamples.includes(`mongo/checkout/${server.serverHash}`));
+  server.checkoutMs = [1200];
+  assert.equal(scoreCapacity([sample]).status, 'FAIL');
+  delete server.occupancy;
+  assert.throws(() => scoreCapacity([sample]), { code: 'infrastructure_samples_missing', blocked: false });
+});
+
+test('rejects an admission already counted under a different run ID', () => {
+  const first = capture('first');
+  const supplemental = capture('supplemental');
+  const original = first.evidence.oracle.commands[0];
+  const repeat = supplemental.evidence.oracle.commands[0];
+  const row = supplemental.rows.find((entry) => entry.type === 'admitted' && entry.commandHash === repeat.commandHash);
+  supplemental.evidence.oracle.acceptedHashes[0] = original.commandHash;
+  repeat.commandHash = original.commandHash;
+  row.commandHash = original.commandHash;
+  assert.equal(scoreCapacity([supplemental]).status, 'BLOCKED');
+  assert.throws(() => scoreCapacity([first, supplemental]), { code: 'admission_identity_reused', blocked: false });
+});
+
+test('pools Mongo checkout latency by server across comparable captures', () => {
+  const first = capture('first');
+  const second = capture('second');
+  first.evidence.mongo.servers[0].checkoutMs = Array(600).fill(10);
+  second.evidence.mongo.servers[0].checkoutMs = Array(600).fill(12);
+  const stratum = `mongo/checkout/${proof}`;
+  const combined = scoreCapacity([first, second]);
+  assert.equal(combined.insufficientSamples.includes(stratum), false);
+  assert.equal(combined.strata[stratum].n, 1200);
+  assert.equal(combined.strata[stratum].max, 12);
+  assert.equal(combined.strata[stratum].p99, 12);
+
+  const other = hash('other server');
+  second.evidence.mongo.servers[0].serverHash = other;
+  second.evidence.memberInventory.mongoServerHashes = [other];
+  const separate = scoreCapacity([first, second]);
+  assert.deepEqual(separate.strata[stratum], { n: 600, max: 10 });
+  assert.deepEqual(separate.strata[`mongo/checkout/${other}`], { n: 600, max: 12 });
+  assert.ok(separate.insufficientSamples.includes(stratum));
+  assert.ok(separate.insufficientSamples.includes(`mongo/checkout/${other}`));
+});
+
+test('exports failed JSON and JUnit for completed runs with unknown telemetry or provider credit', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'cma-lc01-score-'));
+  t.after(() => rm(directory, { recursive: true }));
+  const sample = capture();
+  const cli = fileURLToPath(new URL('../lc01.mjs', import.meta.url));
+  const raw = join(directory, 'capture.ndjson');
+  await writeFile(raw, sample.rows.map((row) => JSON.stringify(row)).join('\n'));
+  const { am, ...withoutAM } = sample.evidence;
+  assert.ok(am.length > 0);
+  const { creditEvidenceHash, ...withoutCredit } = sample.evidence.provider;
+  assert.ok(creditEvidenceHash);
+  const fixtures = [
+    ['resource_evidence_missing', withoutAM],
+    ['funded_provider_evidence_missing', { ...sample.evidence, provider: withoutCredit }],
+    ['am_replica_inventory_mismatch', { ...sample.evidence,
+      memberInventory: { ...sample.evidence.memberInventory, amReplicaHashes: [proof, hash('missing replica')] } }],
+    ['mongo_server_inventory_mismatch', { ...sample.evidence,
+      memberInventory: { ...sample.evidence.memberInventory, mongoServerHashes: [proof, hash('missing server')] } }],
+    ['egress_pool_inventory_mismatch', { ...sample.evidence,
+      memberInventory: { ...sample.evidence.memberInventory, egressPoolHashes: [proof, hash('missing pool')] } }],
+  ];
+  for (const [code, evidence] of fixtures) {
+    const proofFile = join(directory, `${code}.observations.json`);
+    const report = join(directory, `${code}.json`);
+    const junit = join(directory, `${code}.xml`);
+    await writeFile(proofFile, JSON.stringify(evidence));
+    const run = spawnSync(process.execPath, [cli, 'score', report, junit, raw, proofFile], { encoding: 'utf8' });
+    assert.equal(run.status, 2, run.stderr);
+    assert.equal(JSON.parse(await readFile(report, 'utf8')).status, 'FAIL');
+    assert.equal(JSON.parse(await readFile(report, 'utf8')).code, code);
+    const xml = await readFile(junit, 'utf8');
+    assert.match(xml, /failures="1" skipped="0"/);
+    assert.match(xml, /<failure /);
+  }
 });

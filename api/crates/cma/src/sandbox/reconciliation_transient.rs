@@ -16,11 +16,21 @@ tokio::task_local! {
 pub(super) enum StartupFailure {
     Unavailable,
     NativeHomeIdentity,
+    NativePoolConfigurationDrift,
+    NativePoolDefinitionAbsent,
 }
 
 pub(super) fn provider_error(error: AdapterError) -> SandboxStoreError {
-    let failure =
-        matches!(error, AdapterError::Unavailable(_)).then_some(StartupFailure::Unavailable);
+    let failure = match error {
+        AdapterError::Unavailable(_) => Some(StartupFailure::Unavailable),
+        AdapterError::NativePoolConfigurationDrift => {
+            Some(StartupFailure::NativePoolConfigurationDrift)
+        }
+        AdapterError::NativePoolDefinitionAbsent { .. } => {
+            Some(StartupFailure::NativePoolDefinitionAbsent)
+        }
+        _ => None,
+    };
     record(error, failure)
 }
 

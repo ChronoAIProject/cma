@@ -392,6 +392,9 @@ impl PoolTargetStore for Targets {
 pub(super) struct Planner {
     pub(super) inventory: Arc<Mutex<Vec<NativePoolStatus>>>,
     pub(super) retiring: Arc<AtomicBool>,
+    pub(super) inventory_drift: Arc<AtomicBool>,
+    pub(super) bound_drift: Arc<AtomicBool>,
+    pub(super) superseded_target: Arc<AtomicBool>,
 }
 
 impl Planner {
@@ -428,16 +431,29 @@ impl NativePoolControl for Planner {
         unreachable!("seeding and startup never configure an unawaited pool")
     }
     async fn inventory(&self) -> layer3_adapter::Result<Vec<NativePoolStatus>> {
+        if self.inventory_drift.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::NativePoolConfigurationDrift);
+        }
         Ok(self.inventory.lock().unwrap().clone())
     }
     async fn observe_admitting_pool(
         &self,
         binding: &NativePoolBinding,
+        _: &layer3_adapter::agent_sandbox::NativePoolTarget,
+        fenced: bool,
     ) -> layer3_adapter::Result<NativePoolStatus> {
+        if fenced && self.superseded_target.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::Rejected(
+                "superseded target".into(),
+            ));
+        }
         if self.retiring.load(Ordering::SeqCst) {
             return Err(layer3_adapter::AdapterError::Rejected(
                 "retiring pool".into(),
             ));
+        }
+        if self.bound_drift.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::NativePoolConfigurationDrift);
         }
         self.inventory
             .lock()
