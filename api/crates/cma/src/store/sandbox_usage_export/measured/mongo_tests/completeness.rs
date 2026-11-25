@@ -64,7 +64,7 @@ async fn completeness_retained_repair_publishes_successor_outside_replay_horizon
             Basis::Measured,
         )
         .await
-        .unwrap()
+        .unwrap_or_else(|_| panic!("read measured completeness statement"))
         .unwrap();
     assert_eq!(current.revision.0, 2);
     let mut simulated = f.lease().await;
@@ -95,7 +95,7 @@ async fn completeness_retained_repair_publishes_successor_outside_replay_horizon
         .store
         .retained_statement(&mut session, &f.stream.id, f.minute, Basis::Measured)
         .await
-        .unwrap()
+        .unwrap_or_else(|_| panic!("read repaired completeness statement"))
         .unwrap();
     assert_eq!(repaired.revision.0, 3);
     assert_ne!(repaired.facts, current.facts);
