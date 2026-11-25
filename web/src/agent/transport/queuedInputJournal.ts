@@ -70,8 +70,16 @@ export class QueuedInputJournal {
   }
 
   read(): readonly QueuedInputIntent[] {
+    return this.readEntries(this.key);
+  }
+
+  unappliedEdits(): readonly QueuedInputIntent[] {
+    return this.readEntries(`${this.key}:unapplied`);
+  }
+
+  private readEntries(key: string): readonly QueuedInputIntent[] {
     this.current();
-    const source = this.storage.getItem(this.key);
+    const source = this.storage.getItem(key);
     if (source === null) return [];
     const value: unknown = JSON.parse(source);
     if (!Array.isArray(value)) throw new Error('Your queued requests could not be recovered.');
@@ -99,14 +107,29 @@ export class QueuedInputJournal {
     return this.read().find((entry) => entry.key === intent.key)!;
   }
 
-  settle(intent: QueuedInputIntent): void {
+  settle(intent: QueuedInputIntent, keepDraft = false): void {
     const entries = this.read();
     const previous = entries.find((entry) => entry.responseId === intent.responseId);
     if (previous?.key !== intent.key)
       throw new Error('The queued receipt changed request identity.');
+    if (keepDraft) {
+      const drafts = this.unappliedEdits().filter(
+        (entry) => entry.responseId !== intent.responseId,
+      );
+      // Preserve the text before clearing recovery so storage failure leaves the exact request.
+      this.storage.setItem(`${this.key}:unapplied`, JSON.stringify([...drafts, previous]));
+    }
     this.storage.setItem(
       this.key,
       JSON.stringify(entries.filter((entry) => entry.key !== intent.key)),
+    );
+  }
+
+  dismissUnappliedEdit(key: string): void {
+    const drafts = this.unappliedEdits();
+    this.storage.setItem(
+      `${this.key}:unapplied`,
+      JSON.stringify(drafts.filter((entry) => entry.key !== key)),
     );
   }
 }

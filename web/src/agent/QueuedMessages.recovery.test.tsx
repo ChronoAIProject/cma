@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
-import { QueuedMessages, type QueuedMessageItem } from './QueuedMessages';
+import { QueuedMessages, UnappliedQueuedEdits, type QueuedMessageItem } from './QueuedMessages';
 import { attachmentMarker } from './attachments';
 
 const text = `Revised instruction\n保留原文${attachmentMarker}${JSON.stringify([
@@ -83,3 +83,35 @@ it.each([false, true])(
     copy.mockRestore();
   },
 );
+
+it('keeps an unapplied edit copyable without locking the current queue row', async () => {
+  const user = userEvent.setup();
+  const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+  const onDismiss = vi.fn();
+  const save = vi.fn().mockResolvedValue(undefined);
+  const recover = vi.fn();
+  render(
+    <>
+      <QueuedMessages
+        items={[{ ...pending, revision: 8, input: 'Current message', needsRecovery: false }]}
+        onEdit={save}
+        onRemove={vi.fn()}
+        onRecover={recover}
+      />
+      <UnappliedQueuedEdits drafts={[{ key: 'original-key', text }]} onDismiss={onDismiss} />
+    </>,
+  );
+  const draft = within(screen.getByRole('region', { name: 'Unapplied queued edits' }));
+  expect(draft.getByRole('textbox', { name: 'Unapplied edit' })).toHaveValue(text);
+  expect(draft.getByText('The queued message changed', { exact: false })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Recover request' })).toBeNull();
+  await user.click(draft.getByRole('button', { name: 'Copy edit' }));
+  expect(copy).toHaveBeenCalledExactlyOnceWith(text);
+  await user.click(screen.getByRole('button', { name: 'Edit queued message content' }));
+  expect(screen.getByRole('textbox', { name: 'Queued message' })).toHaveValue('Current message');
+  await user.click(draft.getByRole('button', { name: 'Dismiss draft' }));
+  expect(onDismiss).toHaveBeenCalledExactlyOnceWith('original-key');
+  expect(save).not.toHaveBeenCalled();
+  expect(recover).not.toHaveBeenCalled();
+  copy.mockRestore();
+});
