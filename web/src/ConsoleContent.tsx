@@ -30,10 +30,9 @@ import { CharacterColorContext } from './character/characterColor';
 import { SandboxPage } from './sandbox/SandboxPage';
 import { useResourceActions } from './ResourceActions';
 import { Button } from './ui/Button';
-import { Alert } from './ui/Alert';
 import { consoleLinks } from './ConsoleLinks';
 import { ShellCommandMenu } from './shell/ShellCommandMenu';
-import { ConsoleActionError, NotFoundView, UnavailableView } from './ConsoleViews';
+import { ConsoleNotices, NotFoundView, UnavailableView } from './ConsoleViews';
 import { ConsoleLanding } from './ConsoleLanding';
 import { consoleCreationAccess } from './ConsoleCreationAccess';
 import { useDocumentTitle } from './ui/useDocumentTitle';
@@ -104,23 +103,8 @@ export function ConsoleContent({
     accessUncertain: agentAccessUncertain,
     shared,
     personalAgentId,
+    fileDownload,
   } = useConsoleAgentAccess(client, selectedAgent, user.id, authEpoch);
-  const downloadScope = useMemo(
-    () => ({ client, selectedAgent, subject: user.id, authEpoch }),
-    [client, selectedAgent, user.id, authEpoch],
-  );
-  const [downloadDenial, setDownloadDenial] = useState<{
-    scope: typeof downloadScope;
-    message: string;
-  }>();
-  const reloadAgentAccess = agentAccess.reload;
-  const onFileAccessChanged = useCallback(
-    (message?: string) => {
-      if (message) setDownloadDenial({ scope: downloadScope, message });
-      reloadAgentAccess();
-    },
-    [downloadScope, reloadAgentAccess],
-  );
   const accessUncertain = useIdentityUncertain() || agentAccessUncertain;
   const selectedRetired =
     personalAgentId === selectedAgent && !accessUncertain ? observedRetired : undefined;
@@ -393,7 +377,7 @@ export function ConsoleContent({
               conversation={ready?.conversation}
               observation={computerObservation}
               onClose={() => setPanel(undefined)}
-              onAccessChanged={onFileAccessChanged}
+              onAccessChanged={fileDownload.onAccessChanged}
               publicationScope={artifactPublicationScope}
               historyLoading={ready?.historyLoading || !!ready?.historyUnavailable}
               controlReady={agent.controlBaselineReady}
@@ -506,19 +490,7 @@ export function ConsoleContent({
                 View deletion status
               </Button>
             ) : null}
-            <ConsoleActionError error={actions.error} />
-            {downloadDenial?.scope === downloadScope ? (
-              <Alert
-                tone="error"
-                actions={
-                  <Button size="sm" onClick={() => setDownloadDenial(undefined)}>
-                    Dismiss
-                  </Button>
-                }
-              >
-                {downloadDenial.message}
-              </Alert>
-            ) : null}
+            <ConsoleNotices error={actions.error} fileDownload={fileDownload} />
             {content}
           </main>
         }

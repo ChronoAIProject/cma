@@ -190,10 +190,7 @@ it.each([
   [404, 'resource_not_found', 'File access is no longer available.'],
   [503, 'file_unavailable', 'Download failed. Try downloading the file again.'],
 ])('decodes a file download refusal with HTTP %i', async (status, code, message) => {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async () => Response.json({ code }, { status })),
-  );
+  vi.stubGlobal('fetch', async () => Response.json({ code }, { status }));
   await expect(agentFilesClient().download('agent', 'a.txt')).rejects.toMatchObject({
     status,
     code,
@@ -202,12 +199,8 @@ it.each([
 });
 
 it('rejects HTML at the file download endpoint without accepting redirects', async () => {
-  const fetcher = vi.fn(
-    async () =>
-      new Response('<html>Sign in</html>', {
-        headers: { 'content-type': 'text/html' },
-      }),
-  );
+  const headers = { 'content-type': 'text/html' };
+  const fetcher = vi.fn(async () => new Response('<html>Sign in</html>', { headers }));
   vi.stubGlobal('fetch', fetcher);
   await expect(agentFilesClient().download('agent', 'a.txt')).rejects.toMatchObject({
     code: 'invalid_file_download',

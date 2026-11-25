@@ -4,6 +4,7 @@ import { absoluteFilePath } from './filePath';
 import { homeFilePath } from '../fileChanges';
 import { ChangedFiles } from './ChangedFiles';
 import type { FileChange } from '../fileChanges';
+import { saveAgentDownload } from '../saveDelivery';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AgentFileError,
@@ -244,17 +245,7 @@ export function FileExplorer({
       try {
         const blob = await client.download(agentId, file.path, { signal });
         signal.throwIfAborted();
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        try {
-          anchor.href = url;
-          anchor.download = file.name;
-          document.body.append(anchor);
-          anchor.click();
-        } finally {
-          anchor.remove();
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-        }
+        saveAgentDownload(blob, file.name);
       } finally {
         setDownloading(false);
         if (signal.aborted) setError('Download was interrupted. Try downloading the file again.');
