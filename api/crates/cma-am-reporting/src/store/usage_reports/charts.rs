@@ -97,6 +97,38 @@ pub async fn read_series(
     query: SeriesQuery,
     db_deadline: Duration,
 ) -> Result<Series> {
+    read_series_with_budget(
+        collection,
+        report,
+        query,
+        db_deadline,
+        Duration::from_secs(5),
+    )
+    .await
+}
+
+#[cfg(feature = "test-support")]
+pub async fn read_reference_series(
+    collection: Collection<Document>,
+    report: &Report,
+    query: SeriesQuery,
+) -> Result<Series> {
+    let budget = Duration::from_secs(90);
+    tokio::time::timeout(
+        budget,
+        read_series_with_budget(collection, report, query, budget, budget),
+    )
+    .await
+    .map_err(|_| MetricsError::Busy)?
+}
+
+async fn read_series_with_budget(
+    collection: Collection<Document>,
+    report: &Report,
+    query: SeriesQuery,
+    db_deadline: Duration,
+    fold_budget: Duration,
+) -> Result<Series> {
     let top = query.validate(report.scope.admin)?;
     let field = if query.group_by == GroupBy::Owner {
         "owner"
@@ -122,7 +154,7 @@ pub async fn read_series(
         .await
         .map_err(unavailable)?;
     let mut grouped = BTreeMap::<String, Vec<Bucket>>::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + fold_budget;
     fold_sandbox_series(
         cursor,
         report,

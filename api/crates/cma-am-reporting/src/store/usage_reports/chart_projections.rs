@@ -143,7 +143,42 @@ pub async fn build_ranked_projections(
     db_deadline: Duration,
     deadline: Instant,
 ) -> Result<()> {
+    build_ranked_with_batch(collection, report, base, batch, db_deadline, deadline, 100).await
+}
+
+#[cfg(feature = "test-support")]
+pub async fn benchmark_ranked_projections(
+    collection: &Collection<Document>,
+    report: &Report,
+    base: &Document,
+    batch: &mut ProjectionBatch,
+    deadline: Instant,
+    batch_size: u32,
+) -> Result<()> {
+    let db_deadline = crate::pool::DB_DEADLINE;
+    build_ranked_with_batch(
+        collection,
+        report,
+        base,
+        batch,
+        db_deadline,
+        deadline,
+        batch_size,
+    )
+    .await
+}
+
+async fn build_ranked_with_batch(
+    collection: &Collection<Document>,
+    report: &Report,
+    base: &Document,
+    batch: &mut ProjectionBatch,
+    db_deadline: Duration,
+    deadline: Instant,
+    batch_size: u32,
+) -> Result<()> {
     for metric in [Metric::Cpu, Metric::Memory, Metric::Disk] {
+        let rank_started = Instant::now();
         let top_sandboxes = ranked_series(
             collection,
             report,
@@ -158,16 +193,20 @@ pub async fn build_ranked_projections(
         } else {
             Vec::new()
         };
+        let rank_ms = rank_started.elapsed().as_millis() as u64;
+        tracing::info!(target: "cma::store::usage_reports::budget", stage = "ranked_projection_rank",
+            metric = ?metric, batch_size, rank_ms);
+        let fold_started = Instant::now();
         let mut sandbox_remaining = RankedBuckets::new(top_sandboxes.clone());
         let mut owner_remaining = RankedBuckets::new(top_owners.clone());
         let cursor = collection
             .find(doc! {"report_id":&report.report_id,"metric":metric.index() as i64})
             .sort(doc! {"sandbox_id":1,"chunk":1})
-            .batch_size(100)
+            .batch_size(batch_size)
             .max_time(db_deadline)
             .await
             .map_err(unavailable)?;
-        fold_sandbox_series(
+        let result = fold_sandbox_series(
             cursor,
             report,
             metric,
@@ -180,7 +219,11 @@ pub async fn build_ranked_projections(
                 Ok(())
             },
         )
-        .await?;
+        .await;
+        tracing::info!(target: "cma::store::usage_reports::budget", stage = "ranked_projection_fold",
+            metric = ?metric, batch_size, rank_ms, fold_ms = fold_started.elapsed().as_millis() as u64,
+            result = ?result);
+        result?;
         let mut base = base.clone();
         base.insert("metric", metric.index() as i64);
         append_ranked(

@@ -60,3 +60,9 @@ pub fn decode<T: DeserializeOwned>(document: &Document) -> Result<T> {
 pub fn expires(at: u64) -> mongodb::bson::DateTime {
     mongodb::bson::DateTime::from_millis((at * 1000) as i64)
 }
+
+#[cfg(feature = "test-support")]
+pub use charts::read_reference_series;
+
+#[cfg(feature = "test-support")]
+pub use chart_projections::benchmark_ranked_projections;

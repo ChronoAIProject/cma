@@ -20,3 +20,9 @@ pub mod pool;
 pub mod usage_rollups;
 
 pub use store::{allocation_buckets, mongo::ReportingStore, transaction_scope};
+
+#[cfg(feature = "test-support")]
+pub use store::usage_reports::read_reference_series;
+
+#[cfg(feature = "test-support")]
+pub use store::usage_reports::benchmark_ranked_projections;

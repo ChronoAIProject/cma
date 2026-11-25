@@ -10,24 +10,29 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-async fn counted_store() -> (Arc<ReportingStore>, Arc<AtomicUsize>) {
+async fn counted_store() -> (Arc<ReportingStore>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
     let original = fixture().await;
     let commands = Arc::new(AtomicUsize::new(0));
     let counter = commands.clone();
+    let get_mores = Arc::new(AtomicUsize::new(0));
+    let get_more_counter = get_mores.clone();
     let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
     configure_pool(&mut options, 4);
     options.command_event_handler = Some(EventHandler::callback(move |event| {
-        if let CommandEvent::Started(_) = event {
+        if let CommandEvent::Started(event) = event {
             counter.fetch_add(1, Ordering::Relaxed);
+            if event.command_name == "getMore" {
+                get_more_counter.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }));
     let mut store = (*original).clone();
     store.persistence = store
         .persistence
         .with_client(Client::with_options(options).unwrap());
-    (Arc::new(store), commands)
+    (Arc::new(store), commands, get_mores)
 }
 
 fn chart_buckets(range: Range, step: u64, member: usize, dense: bool) -> Vec<Bucket> {
@@ -57,9 +62,87 @@ fn chart_buckets(range: Range, step: u64, member: usize, dense: bool) -> Vec<Buc
         .collect()
 }
 
+fn initial_projection() -> InitialProjection {
+    InitialProjection {
+        total_metrics: vec![Metric::Cpu, Metric::Memory, Metric::Disk],
+        ..Default::default()
+    }
+}
+
+fn route_query(route: &str, metric: Metric) -> SeriesQuery {
+    SeriesQuery {
+        metric,
+        group_by: if route == "total" {
+            GroupBy::Total
+        } else {
+            GroupBy::Owner
+        },
+        top: (route == "top").then_some(10),
+        series_id: (route == "explicit_owner").then(|| "owner-0001".into()),
+    }
+}
+
+async fn legacy_reference(
+    store: &Arc<ReportingStore>,
+    caller: &Caller,
+    report: &Report,
+    route: &str,
+) -> Result<Vec<u8>> {
+    let service = MetricsService::new(store.clone());
+    if route == "initial" {
+        let projection = initial_projection();
+        let rows = service
+            .page(
+                caller,
+                true,
+                &report.report_id,
+                PageQuery {
+                    limit: Some(projection.first_page.limit),
+                    sort: projection.first_page.sort,
+                    order: projection.first_page.order,
+                    cursor: None,
+                },
+                now(),
+            )
+            .await?;
+        let mut charts = Vec::new();
+        for &metric in &projection.total_metrics {
+            charts.push(
+                cma_am_reporting::read_reference_series(
+                    store.collection(CHARTS),
+                    report,
+                    route_query("total", metric),
+                )
+                .await?,
+            );
+        }
+        let response = InitialReport {
+            report: report.clone(),
+            initial: Some(InitialData {
+                projection,
+                rows,
+                charts,
+            }),
+        };
+        Ok(serde_json::to_vec(&response).unwrap())
+    } else {
+        let response = cma_am_reporting::read_reference_series(
+            store.collection(CHARTS),
+            report,
+            route_query(route, Metric::Cpu),
+        )
+        .await?;
+        Ok(serde_json::to_vec(&response).unwrap())
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
+    let _ = tracing_subscriber::fmt()
+        .with_test_writer()
+        .with_max_level(tracing::Level::INFO)
+        .try_init();
     let mut failures = Vec::new();
     for (members, dense) in [(64, false), (64, true), (20_001, false), (20_001, true)] {
         for (window, seconds, step) in [
@@ -67,7 +150,7 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
             ("7d", 604_800, 600),
             ("30d", 2_592_000, 3600),
         ] {
-            let (legacy, commands) = counted_store().await;
+            let (legacy, commands, get_mores) = counted_store().await;
             let store = legacy.with_view_policy(ViewPolicy {
                 aggregate_projections_enabled: true,
                 view_scopes: vec![WarmScope {
@@ -257,6 +340,15 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
                 .unwrap()
                 .unwrap();
             let projected = after.contains_key("projection_generation");
+            let families: Vec<_> = after
+                .get_document("projection_manifest")
+                .ok()
+                .and_then(|manifest| manifest.get_array("families").ok())
+                .into_iter()
+                .flatten()
+                .map(|family| family.as_document().unwrap().get_str("kind").unwrap())
+                .collect();
+            eprintln!("projection_scale families window={window} members={members} dense={dense} published={families:?}");
             eprintln!("projection_scale build window={window} members={members} dense={dense} projected={projected} generation_ms={generation_ms} commands={generation_commands} projection_bytes={} outcome={projection:?}", after.get_i64("bytes").unwrap()-before.get_i64("bytes").unwrap());
             projection.unwrap();
             store.finish_report(&lease, report, true).await.unwrap();
@@ -274,20 +366,23 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
                     let service = MetricsService::new(reader.clone());
                     commands.store(0, Ordering::Relaxed);
                     let started = Instant::now();
+                    let family = match route {
+                        "initial" | "total" => "chart_total",
+                        "top" => "chart_owner",
+                        "explicit_owner" => "chart_explicit_owner",
+                        "allocation" => "owner_allocation",
+                        _ => unreachable!(),
+                    };
+                    let source = if enabled && families.contains(&family) {
+                        "projection"
+                    } else {
+                        "legacy"
+                    };
                     let result = match route {
                         "initial" => service
-                            .initial_report(
-                                &caller,
-                                true,
-                                report_id,
-                                InitialProjection {
-                                    total_metrics: vec![Metric::Cpu, Metric::Memory, Metric::Disk],
-                                    ..Default::default()
-                                },
-                                now(),
-                            )
+                            .initial_report(&caller, true, report_id, initial_projection(), now())
                             .await
-                            .map(|value| serde_json::to_value(value).unwrap()),
+                            .map(|value| serde_json::to_vec(&value).unwrap()),
                         "allocation" => service
                             .owner_allocations(
                                 &caller,
@@ -300,44 +395,80 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
                                 now(),
                             )
                             .await
-                            .map(|value| serde_json::to_value(value).unwrap()),
+                            .map(|value| serde_json::to_vec(&value).unwrap()),
                         _ => {
-                            let query = SeriesQuery {
-                                metric: Metric::Cpu,
-                                group_by: if route == "total" {
-                                    GroupBy::Total
-                                } else {
-                                    GroupBy::Owner
-                                },
-                                top: if route == "top" { Some(10) } else { None },
-                                series_id: if route == "explicit_owner" {
-                                    Some("owner-0001".into())
-                                } else {
-                                    None
-                                },
-                            };
+                            let query = route_query(route, Metric::Cpu);
                             service
                                 .series(&caller, true, report_id, query, now())
                                 .await
-                                .map(|value| serde_json::to_value(value).unwrap())
+                                .map(|value| serde_json::to_vec(&value).unwrap())
                         }
                     };
                     let elapsed = started.elapsed();
-                    let bytes = result
-                        .as_ref()
-                        .ok()
-                        .map_or(0, |body| serde_json::to_vec(body).unwrap().len());
+                    let bytes = result.as_ref().ok().map_or(0, Vec::len);
                     let error = result.as_ref().err();
-                    eprintln!("projection_scale read window={window} members={members} dense={dense} projected={projected} enabled={enabled} route={route} error={error:?} read_us={} commands={} response_bytes={bytes}", elapsed.as_micros(), commands.load(Ordering::Relaxed));
+                    eprintln!("projection_scale read window={window} members={members} dense={dense} projected={projected} enabled={enabled} route={route} source={source} error={error:?} read_us={} commands={} response_bytes={bytes}", elapsed.as_micros(), commands.load(Ordering::Relaxed));
                     match result {
                         Ok(value) if enabled => {
-                            match baseline.take() {
-                                Some(previous) if previous == value => {}
-                                _ => failures.push(format!("response parity window={window} members={members} dense={dense} route={route}")),
+                            if baseline.take().as_ref() != Some(&value) {
+                                failures.push(format!("response byte parity window={window} members={members} dense={dense} route={route}"));
                             }
                         }
-                        Ok(value) => baseline = Some(value),
+                        Ok(value) => {
+                            if members == 64 && matches!(route, "initial" | "total" | "top") {
+                                let reference = legacy_reference(&legacy, &caller, &report, route).await
+                                    .expect("small reference must complete");
+                                assert_eq!(reference, value, "small fixture reference differs from public response");
+                            }
+                            baseline = Some(value);
+                        }
+                        Err(MetricsError::Busy) if !enabled && members == 20_001 && !dense
+                            && matches!(route, "initial" | "total" | "top") => {
+                            let reference_started = Instant::now();
+                            commands.store(0, Ordering::Relaxed);
+                            let reference = legacy_reference(&legacy, &caller, &report, route).await
+                                .expect("large reference must complete");
+                            eprintln!("projection_scale reference window={window} members={members} route={route} elapsed_ms={} commands={} response_bytes={}", reference_started.elapsed().as_millis(), commands.load(Ordering::Relaxed), reference.len());
+                            baseline = Some(reference);
+                        }
                         Err(error) => failures.push(format!("authorized read failed window={window} members={members} dense={dense} enabled={enabled} route={route}: {error:?}")),
+                    }
+                }
+            }
+            if members == 20_001 && !dense {
+                let base = doc! {"report_id":report_id,"generation":lease.generation,
+                "document_schema_version":1_i64,"expires_at":expires(report.expires_at + 60)};
+                let charts = store.collection(CHARTS);
+                let mut completed = None;
+                for size in [100, 1000] {
+                    commands.store(0, Ordering::Relaxed);
+                    get_mores.store(0, Ordering::Relaxed);
+                    let started = Instant::now();
+                    let mut batch = cma_am_reporting::ProjectionBatch::new(32 * 1024 * 1024);
+                    let deadline = started + Duration::from_secs(10);
+                    let outcome = tokio::time::timeout_at(
+                        tokio::time::Instant::from_std(deadline),
+                        cma_am_reporting::benchmark_ranked_projections(
+                            &charts, &report, &base, &mut batch, deadline, size,
+                        ),
+                    )
+                    .await
+                    .unwrap_or(Err(MetricsError::Busy));
+                    let documents = batch.into_documents();
+                    let bytes = documents
+                        .iter()
+                        .map(|doc| doc.as_bytes().len())
+                        .sum::<usize>();
+                    eprintln!("projection_scale batch window={window} size={size} result={outcome:?} elapsed_ms={} commands={} get_mores={} scratch_chunks={} scratch_bytes={bytes}", started.elapsed().as_millis(), commands.load(Ordering::Relaxed), get_mores.load(Ordering::Relaxed), documents.len());
+                    assert!(matches!(outcome, Ok(()) | Err(MetricsError::Busy)));
+                    if outcome.is_ok() {
+                        if let Some(previous) = completed.as_ref() {
+                            assert_eq!(
+                                previous, &documents,
+                                "batching changed stored projection bytes"
+                            );
+                        }
+                        completed = Some(documents);
                     }
                 }
             }
