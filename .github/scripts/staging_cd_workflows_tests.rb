@@ -188,7 +188,7 @@ class StagingWorkflowTest < Minitest::Test
     epoch = workflow('staging-web-continuity-epoch')
     raw, protected_job = %w[raw protected].map { |id| wrapper.fetch('jobs').fetch(id) }
     observer, release, promote = %w[observe release promote].map { |id| epoch.fetch('jobs').fetch(id) }
-    refute raw.key?('concurrency')
+    assert_equal 'cma-staging-web-release', raw.dig('concurrency', 'group')
     refute raw.key?('secrets')
     refute raw.key?('environment')
     assert_equal 'raw', protected_job['needs']
@@ -206,6 +206,13 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 'release', promote['needs']
     assert_equal "needs.release.outputs.finalized == 'success'", promote['if']
     assert_equal 'web', promote.dig('with', 'lane')
+    staging = workflow('staging-cd').fetch('jobs')
+    entry = staging.fetch('protected_web')
+    assert_equal 'Publish protected Web', entry['name']
+    assert_match(/\Avars\.CMA_STAGING_WEB_CONTINUITY == 'true' && /, entry['if'])
+    %w[release_web promote_web].each do |job|
+      assert_match(/\Avars\.CMA_STAGING_WEB_CONTINUITY != 'true' && /, staging.fetch(job)['if'])
+    end
   end
 
   def test_credentials_and_write_permissions_cannot_reach_build_or_redeploy
@@ -244,7 +251,8 @@ class StagingWorkflowTest < Minitest::Test
     assert_empty requirements.fetch('env', {})
     %w[staging-cd staging-release staging-promote redeploy-staging].each do |name|
       workflow(name)['jobs'].each_value do |job|
-        if %w[./.github/workflows/staging-promote.yml ./.github/workflows/staging-deploy.yml].include?(job['uses'])
+        if %w[./.github/workflows/staging-promote.yml ./.github/workflows/staging-deploy.yml
+              ./.github/workflows/staging-web-continuity.yml].include?(job['uses'])
           job = job.reject { |field, _| field == 'secrets' }
         end
         %w[NYXID_CHRONO_CD_KEY CD_NYXID_CLIENT_ID CD_NYXID_CLIENT_SECRET].each { |field| refute_includes job.to_s, field }
@@ -256,7 +264,7 @@ class StagingWorkflowTest < Minitest::Test
   def test_secret_forwarding_is_explicit_at_each_promotion_hop
     keys = %w[CMA_INFRA_APP_PRIVATE_KEY CD_NYXID_CLIENT_ID CD_NYXID_CLIENT_SECRET]
     expected = keys.to_h { |key| [key, "${{ secrets.#{key} }}"] }
-    %w[staging-promote staging-deploy].each do |name|
+    %w[staging-promote staging-deploy staging-web-continuity staging-web-continuity-epoch].each do |name|
       config = workflow(name)
       assert_equal keys.to_h { |key| [key, {'required' => true}] }, (config['on'] || config[true])['workflow_call']['secrets']
       reads = config.fetch('jobs').to_s.scan(/secrets\.([A-Za-z0-9_]+)/).flatten.uniq.sort
@@ -465,10 +473,16 @@ class StagingWorkflowTest < Minitest::Test
     assert_includes release.dig('jobs', 'finalize', 'if'), "needs.publish.outputs.disposition == ''"
     report = workflow('staging-cd').dig('jobs', 'recheck', 'steps').last.fetch('env')
     refute report.key?('CD_AM_DISPOSITION')
-    %w[web am eg runtime runtime_omarchy].each do |key|
+    %w[am eg runtime runtime_omarchy].each do |key|
       assert_equal "${{ needs.release_#{key}.outputs.disposition }}", report["CD_DISPOSITION_#{key.upcase}"]
       assert_equal "${{ needs.release_#{key}.outputs.finalized }}", report["CD_FINALIZED_#{key.upcase}"]
     end
+    %w[disposition finalized].each do |field|
+      expression = report["CD_#{field.upcase}_WEB"]
+      assert_includes expression, "true' && toJSON(needs.protected_web.outputs.#{field})"
+      assert_includes expression, "|| toJSON(needs.release_web.outputs.#{field})"
+    end
+    assert_includes report['CD_PROMOTE_WEB'], 'needs.protected_web.outputs.promotion'
   end
 
   def test_each_package_write_grant_delegates_only_to_the_publisher
@@ -482,7 +496,7 @@ class StagingWorkflowTest < Minitest::Test
       assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
       job['uses'] = original
     end
-    %w[staging-web-continuity staging-web-continuity-epoch].zip(%w[protected release]).each do |workflow, id|
+    %w[staging-cd staging-web-continuity staging-web-continuity-epoch].zip(%w[protected_web protected release]).each do |workflow, id|
       job = inputs[workflow]['jobs'][id]
       original = job['uses']
       job['uses'] = './.github/workflows/staging-promote.yml'
@@ -589,8 +603,8 @@ class StagingWorkflowTest < Minitest::Test
   def test_publication_signal_waits_for_every_publisher_and_isolates_dispatch_credentials
     jobs = workflow('staging-cd')['jobs']
     signal = jobs.fetch('publication_signal')
-    publishers = %w[web am eg runtime runtime_omarchy]
-    assert_equal ['allocate', *publishers.map { |name| "release_#{name}" }], signal['needs']
+    publishers = %w[am eg runtime runtime_omarchy]
+    assert_equal ['allocate', 'release_web', 'protected_web', *publishers.map { |name| "release_#{name}" }], signal['needs']
     assert_includes signal['if'], "vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true'"
     assert_equal({ 'contents' => 'read', 'actions' => 'read' }, signal['permissions'])
     refute signal.key?('environment')
@@ -600,6 +614,10 @@ class StagingWorkflowTest < Minitest::Test
       assert_equal "$" + "{{ needs.release_#{name}.outputs.finalized }}", verify['env']["CD_FINALIZED_#{name.upcase}"]
       assert_equal "$" + "{{ needs.release_#{name}.result }}", verify['env']["CD_PUBLISH_#{name.upcase}"]
     end
+    assert_includes verify['env']['CD_FINALIZED_WEB'], 'toJSON(needs.protected_web.outputs.finalized)'
+    assert_includes verify['env']['CD_FINALIZED_WEB'], 'toJSON(needs.release_web.outputs.finalized)'
+    assert_includes verify['env']['CD_PUBLISH_WEB'], 'needs.protected_web.outputs.publish_result'
+    assert_includes verify['env']['CD_PUBLISH_WEB'], '|| needs.release_web.result'
     assert_equal '${{ runner.temp }}/publication-signal.json', retain['with']['path']
     assert_equal 'error', retain['with']['if-no-files-found']
     refute signal['steps'][0...-1].to_s.include?('secrets.')

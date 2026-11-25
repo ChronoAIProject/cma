@@ -31,8 +31,12 @@ on:
     outputs:
       finalized:
         value: ${{ jobs.release.outputs.finalized }}
-      component_result:
-        value: ${{ jobs.promote.outputs.component_result }}
+      publish_result:
+        value: ${{ jobs.release.result }}
+      disposition:
+        value: ${{ jobs.release.outputs.disposition }}
+      promotion:
+        value: ${{ toJSON(jobs.promote) }}
 
 permissions:
   contents: read

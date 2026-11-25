@@ -6,7 +6,9 @@ from unittest.mock import Mock, patch
 
 from staging_cd_allocate import allocate_queue
 from staging_cd_common import Refusal
-from staging_cd_promotion import PAGE_SIZE, PREFIX, available_proofs, inventory, proof, snapshot
+from staging_cd_promotion import (
+    PAGE_SIZE, PREFIX, PROTECTED_WEB_JOB, WEB_OBSERVER_JOB, available_proofs, inventory, proof, push_scope, snapshot,
+)
 from staging_cd_queue_tests import FIRST, SECOND, THIRD
 from staging_cd_history import DevelopHistory
 from staging_cd_receipts_tests import fixture_receipt, fixture_tag
@@ -106,6 +108,16 @@ class PromotionTests(unittest.TestCase):
         self.assertEqual(self.plan(), [])
         self.writer(3, name="Promote web / Deploy admitted components again / Deploy set", stamp=self.stamp)
         self.assertEqual(self.plan(), [])
+
+    def test_protected_web_writer_counts_and_its_read_only_observer_preserves_prior_proof(self):
+        writer = " / Deploy admitted components / Deploy set"
+        self.writer(1, name=PROTECTED_WEB_JOB + "Promote web" + writer, stamp=self.stamp)
+        self.writer(2, name=WEB_OBSERVER_JOB, status="in_progress")
+        self.assertEqual(self.plan(), [])
+        self.assertEqual(snapshot(self.read, ENVIRONMENT).running, set())
+        self.assertEqual(push_scope(PROTECTED_WEB_JOB + "Promote web" + writer), {"web"})
+        self.assertIsNone(push_scope(PROTECTED_WEB_JOB + "Promote eg" + writer))
+        self.assertIsNone(push_scope(WEB_OBSERVER_JOB))
 
     def test_observation_failures_schedule_existing_finals_without_conveying_authority(self):
         for result in (None, OSError("unavailable")):

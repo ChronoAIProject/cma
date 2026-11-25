@@ -28,8 +28,12 @@ on:
     outputs:
       finalized:
         value: ${{ jobs.protected.outputs.finalized }}
-      component_result:
-        value: ${{ jobs.protected.outputs.component_result }}
+      publish_result:
+        value: ${{ jobs.protected.outputs.publish_result }}
+      disposition:
+        value: ${{ jobs.protected.outputs.disposition }}
+      promotion:
+        value: ${{ jobs.protected.outputs.promotion }}
 
 permissions:
   contents: read
@@ -38,6 +42,10 @@ jobs:
   raw:
     name: Prepare raw Web archive
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'
+    concurrency:
+      group: cma-staging-web-release
+      queue: max
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     permissions:
