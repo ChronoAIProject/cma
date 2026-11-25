@@ -279,8 +279,14 @@ fn on_text(shape: &Envelope) -> Envelope {
     envelope
 }
 
+#[test]
+fn nyxid_telegram_media_is_refused_as_unsupported_not_rejected() {
+    run_isolated("nyxid_shapes::nyxid_telegram_media_is_refused_as_unsupported_not_rejected_child");
+}
+
 #[tokio::test]
-async fn nyxid_telegram_media_is_refused_as_unsupported_not_rejected() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn nyxid_telegram_media_is_refused_as_unsupported_not_rejected_child() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let fixture = Fixture::new(|_| {}, Default::default()).await;
     for (shape, envelope) in telegram_shapes() {
@@ -295,16 +301,30 @@ async fn nyxid_telegram_media_is_refused_as_unsupported_not_rejected() {
     }
 }
 
+#[test]
+fn nyxid_lark_media_is_refused_as_unsupported_not_rejected() {
+    run_isolated("nyxid_shapes::nyxid_lark_media_is_refused_as_unsupported_not_rejected_child");
+}
+
 #[tokio::test]
-async fn nyxid_lark_media_is_refused_as_unsupported_not_rejected() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn nyxid_lark_media_is_refused_as_unsupported_not_rejected_child() {
     let fixture = Fixture::on("lark", |_| {}, Default::default()).await;
     for (shape, envelope) in lark_shapes() {
         refused_media(&fixture, &envelope, shape).await;
     }
 }
 
+#[test]
+fn sender_controlled_attachment_facts_never_reject_the_callback() {
+    run_isolated(
+        "nyxid_shapes::sender_controlled_attachment_facts_never_reject_the_callback_child",
+    );
+}
+
 #[tokio::test]
-async fn sender_controlled_attachment_facts_never_reject_the_callback() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn sender_controlled_attachment_facts_never_reject_the_callback_child() {
     let fixture = Fixture::new(|_| {}, Default::default()).await;
     let edit = |change: &dyn Fn(&mut Value)| {
         let mut envelope = telegram_document();
@@ -377,8 +397,14 @@ async fn a_null_attachment_list_is_a_text_message() {
     );
 }
 
+#[test]
+fn repaired_attachment_facts_are_counted_by_field() {
+    run_isolated("nyxid_shapes::repaired_attachment_facts_are_counted_by_field_child");
+}
+
 #[tokio::test]
-async fn repaired_attachment_facts_are_counted_by_field() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn repaired_attachment_facts_are_counted_by_field_child() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let fixture = Fixture::new(|_| {}, Default::default()).await;
     let mut envelope = telegram_document();
@@ -440,8 +466,16 @@ fn named(first: &str, last: Option<&str>) -> Envelope {
     envelope
 }
 
+#[test]
+fn oversized_and_control_only_display_names_are_repaired_not_rejected() {
+    run_isolated(
+        "nyxid_shapes::oversized_and_control_only_display_names_are_repaired_not_rejected_child",
+    );
+}
+
 #[tokio::test]
-async fn oversized_and_control_only_display_names_are_repaired_not_rejected() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn oversized_and_control_only_display_names_are_repaired_not_rejected_child() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let fixture = Fixture::new(|_| {}, Default::default()).await;
     let cjk = named(&"名".repeat(64), Some(&"姓".repeat(64)));
