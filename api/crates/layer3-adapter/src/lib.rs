@@ -18,7 +18,7 @@ pub mod binding_diagnostics;
 mod browser;
 mod browser_control;
 pub mod file_read_diagnostics;
-pub mod file_read_retry;
+pub mod file_receiver_retry;
 pub mod permanent_custody;
 pub mod stale_turn;
 pub use browser::{

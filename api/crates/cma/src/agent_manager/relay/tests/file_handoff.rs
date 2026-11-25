@@ -22,6 +22,8 @@ use std::sync::{
 mod home;
 #[path = "file_handoff/runtime.rs"]
 mod runtime;
+#[path = "file_handoff/traces.rs"]
+mod traces;
 #[path = "file_handoff/withdrawal.rs"]
 mod withdrawal;
 #[path = "file_handoff/writes.rs"]
@@ -139,7 +141,7 @@ impl PeerProbe {
                 self.writes.fetch_add(1, SeqCst);
                 // Even a peer that erroneously marks an ambiguous write must
                 // not cause the ingress to replay that mutation.
-                file_read::refusal(Refusal::AuthorityChanged)
+                file_read::refusal(None, Refusal::AuthorityChanged)
             }
         }
     }
@@ -150,6 +152,7 @@ struct Replica {
     runtime: Arc<Files>,
     probe: Arc<PeerProbe>,
     admission: crate::startup::Admission,
+    relay_log: traces::RelayLog,
 }
 
 impl Replica {
@@ -221,7 +224,9 @@ impl Replica {
             }));
         let admission = crate::startup::Admission::new();
         assert!(admission.open());
-        let router = admission.wrap(crate::with_request_context(router), Some(relay.clone()));
+        let relay_log = traces::RelayLog::default();
+        let router = relay_log
+            .observe(admission.wrap(crate::with_request_context(router), Some(relay.clone())));
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         Self {
             instance: Instance {
@@ -234,6 +239,7 @@ impl Replica {
             runtime,
             probe,
             admission,
+            relay_log,
         }
     }
 }
@@ -341,6 +347,12 @@ async fn ready_agent_file_reads_survive_owner_admission_closing() {
     );
     let during = reads(peer, &agent.id, "while_owner_drains").await;
     assert_reads(&during);
+    peer.relay_log.assert_correlated(
+        &owner.relay_log,
+        "read",
+        "peer_owner_handoff",
+        StatusCode::OK,
+    );
     assert_eq!(peer.runtime.reads.load(SeqCst), 4);
     assert_eq!(owner.runtime.reads.load(SeqCst), 4);
     assert_eq!(owner.probe.requests.load(SeqCst), 7);
