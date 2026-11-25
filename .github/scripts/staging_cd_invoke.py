@@ -275,7 +275,7 @@ def deploy(env, masker, script_reader=private_script, runner=None,
                     on_overtaken(selected_keys)
                 if not receipts:
                     return group_outcome
-            request = private_document(release_set(receipts))
+            request = private_document(release_set(receipts), target=target)
             with path.open("x", encoding="utf-8") as stream:
                 os.chmod(path, 0o600)
                 stream.write(canonical(request))
