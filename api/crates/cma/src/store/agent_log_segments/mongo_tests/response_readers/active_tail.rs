@@ -163,6 +163,12 @@ async fn run(case: fixture::Case, round: usize, append: bool) -> Vec<u8> {
             assert!(measured.consumed_source[2] >= 200);
             assert_eq!(measured.consumed_source[1], 0);
             assert!(measured.docs_examined > 0 && measured.keys_examined > 0);
+            assert!(
+                measured.docs_examined <= 250,
+                "200-entry sealed page examined {} documents in {}",
+                measured.docs_examined,
+                case.name
+            );
             assert_no_writes(&measured);
             serde_json::to_vec(&[actual, page].concat()).unwrap()
         }
