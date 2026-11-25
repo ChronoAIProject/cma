@@ -190,10 +190,7 @@ for (const scenario of [
     // before the reopened status dialog observes retirement.
     await page.goto('/agent-manager');
     await page.reload();
-    await page
-      .getByRole('region', { name: 'Deletion request', exact: true })
-      .getByRole('button', { name: 'View status', exact: true })
-      .click();
+    await page.getByRole('button', { name: 'View deletion status', exact: true }).click();
     const reopen = page.getByRole('button', { name: /View Sandbox deletion status/ });
     await expect(reopen).toBeEnabled();
     if (detailFirst) await page.clock.pauseAt(new Date(Date.now() + 500));
