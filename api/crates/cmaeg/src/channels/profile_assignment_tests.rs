@@ -11,7 +11,7 @@ async fn first_assignment_commits_only_with_the_accepted_event_and_channel_versi
     let store = Store::new(left.clone(), fixture.keys()).unwrap();
     let peer = Store::new(right.clone(), fixture.keys()).unwrap();
     let request = crate::ingress::routing_plan::fixture::request(
-        |_| {},
+        |value| value["record_id"] = uuid::Uuid::new_v4().to_string().into(),
         crate::ingress::routing_plan::fixture::message("assignment"),
     );
     let mut channel = (*request.channel).clone();
@@ -52,7 +52,7 @@ async fn first_assignment_commits_only_with_the_accepted_event_and_channel_versi
     let expiry = time::OffsetDateTime::now_utc().unix_timestamp() + 600;
     assert!(left
         .put_profile_admission(
-            "fixture-refused",
+            &uuid::Uuid::new_v4().to_string(),
             &channel.definition.owner.subject,
             b"fixture",
             expiry,
@@ -79,9 +79,11 @@ async fn first_assignment_commits_only_with_the_accepted_event_and_channel_versi
     let a = admission(first);
     let b = admission(second);
     let owner = &channel.definition.owner.subject;
+    let first_id = uuid::Uuid::new_v4().to_string();
+    let second_id = uuid::Uuid::new_v4().to_string();
     let (one, two) = tokio::join!(
-        left.put_profile_admission("fixture-first", owner, b"fixture", expiry, &a, &[], None),
-        right.put_profile_admission("fixture-second", owner, b"fixture", expiry, &b, &[], None)
+        left.put_profile_admission(&first_id, owner, b"fixture", expiry, &a, &[], None),
+        right.put_profile_admission(&second_id, owner, b"fixture", expiry, &b, &[], None)
     );
     assert_eq!(usize::from(one.is_ok()) + usize::from(two.is_ok()), 1);
     let (retained, version) = peer.read::<Assignment>(&id, false).await.unwrap().unwrap();
@@ -108,7 +110,7 @@ async fn first_assignment_commits_only_with_the_accepted_event_and_channel_versi
     .unwrap();
     assert!(right
         .put_profile_admission(
-            "fixture-stale-assignment",
+            &uuid::Uuid::new_v4().to_string(),
             owner,
             b"fixture",
             expiry,
@@ -143,7 +145,11 @@ async fn profile_baseline_fences_legacy_roots_and_pins_prebaseline_admissions() 
         PlanStore::new(left.clone(), keys.clone()).with_clock(Arc::new(|| ingress::NOW));
     let right_plans =
         PlanStore::new(right.clone(), keys.clone()).with_clock(Arc::new(|| ingress::NOW));
-    let mut request = ingress::request(|_| {}, ingress::message("old admission"));
+    let record_id = uuid::Uuid::new_v4().to_string();
+    let mut request = ingress::request(
+        |value| value["record_id"] = record_id.clone().into(),
+        ingress::message("old admission"),
+    );
     let mut current = (*request.channel).clone();
     assert!(requires_guard(&current.definition, true));
     assert!(current.definition.secrets.profile_revisions.is_none());
@@ -173,7 +179,10 @@ async fn profile_baseline_fences_legacy_roots_and_pins_prebaseline_admissions() 
     assert_eq!(old.targets[0].launch.provider, old_binding);
     let mut next_activity = ingress::message("later admission");
     next_activity.event_id = EventId::new("event-next").unwrap();
-    let mut delayed = ingress::request(|_| {}, next_activity);
+    let mut delayed = ingress::request(
+        |value| value["record_id"] = record_id.clone().into(),
+        next_activity,
+    );
     delayed.channel = Arc::new(current.clone());
     let plan = ingress::routed(&delayed);
     let mut stale = Candidate::prepare(&delayed, &plan, b"later", &keys, ingress::NOW).unwrap();
