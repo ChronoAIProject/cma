@@ -6,7 +6,10 @@ fn sealed_revision_history_retains_original_provider_and_credential() {
     let mut channel: ChannelDefinition =
         serde_json::from_str(include_str!("fixtures/channel.json")).unwrap();
     channel.profile_digest = channel.profile.digest();
-    channel.secrets.hmac_secrets.push(("key-1".into(), Secret::new("synthetic-hmac")));
+    channel
+        .secrets
+        .hmac_secrets
+        .push(("key-1".into(), Secret::new("synthetic-hmac")));
     channel.validate().unwrap();
     let original = channel.clone();
     let old_key = Secret::new("synthetic-retained-key");
