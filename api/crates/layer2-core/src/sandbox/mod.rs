@@ -1,5 +1,4 @@
 //! The Sandbox -> Workspace -> Worktree -> Agent domain hierarchy.
-
 mod desktop;
 mod runtime_migration_guard;
 pub use desktop::{
@@ -76,6 +75,8 @@ mod agent_service;
 mod agent_work;
 mod agent_worktree_recovery;
 pub mod answer_deliverables;
+mod owner_agent_restart;
+pub use agent_service::{AgentRestartControl, AgentRestartObservation, AgentRestartService};
 pub mod work_retry;
 pub use agent_worktree_recovery::{
     plan_agent_worktree_recovery, AgentWorktreeRecovery, AgentWorktreeRecoveryContext,
@@ -116,6 +117,7 @@ mod provenance;
 mod provenance_inventory;
 mod provenance_service;
 pub mod retirement_archive;
+pub mod reviewed_retirement;
 pub use provenance::{AgentCreationCategory, AgentCreationOrigin, AgentCreationProvenance};
 pub use provenance_inventory::{
     AgentProvenanceInventoryQuery, AgentProvenanceInventoryRow, AgentProvenanceInventoryService,
@@ -207,6 +209,8 @@ pub use retained_runtime_transition::{
     next_replacement_runtime_generation, RetainedRuntimePolicyBinding, RetainedRuntimeTransition,
     RetainedRuntimeTransitionRequest,
 };
+mod runtime_image_origin;
+pub use runtime_image_origin::SandboxRuntimeImageOrigin;
 mod runtime_update;
 mod runtime_update_resume;
 pub use runtime_update::{
@@ -297,9 +301,9 @@ pub use agent_reads::{
     AgentEventStreamAuthorization, AgentEventStreamHeader, AgentEventStreamSnapshot,
     AgentHistoryCursor, AgentHistoryReading, AgentOriginalRequest, AgentOutputObservation,
     AgentReadService, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
-    AgentRetainedOutput, AgentRetainedOutputAvailability, AgentRetainedOutputPage,
-    AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail,
-    SharedAgentOrigin, RETAINED_OUTPUT_CHUNK_BYTES,
+    AgentResponseObservation, AgentRetainedOutput, AgentRetainedOutputAvailability,
+    AgentRetainedOutputPage, AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry,
+    SharedAgentDetail, SharedAgentOrigin, RETAINED_OUTPUT_CHUNK_BYTES,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,
@@ -332,9 +336,9 @@ pub use conversation_recorder::{
     AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
 };
 pub use credential::{
-    SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
-    SandboxServiceGrant, SandboxServiceScopeRevision, SandboxSignInState,
-    ServiceConnectionSelection,
+    InitialServiceConnection, RepositoryCredentialRequirement, SandboxCredentialAuthority,
+    SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt, SandboxServiceGrant,
+    SandboxServiceScopeRevision, SandboxSignInState, ServiceConnectionSelection,
 };
 pub use credential_prerequisite::{
     FixedSandboxCredentialPrerequisite, SandboxCredentialPrerequisite,
@@ -477,17 +481,15 @@ mod workspace_service_tests;
 
 pub mod agent_access;
 pub mod agent_access_tool;
-mod suspended_runtime;
-
 #[cfg(test)]
 mod runtime_update_lifecycle_tests;
+#[cfg(test)]
+mod runtime_update_resume_tests;
 #[cfg(test)]
 mod runtime_update_test_support;
 #[cfg(test)]
 mod runtime_update_tests;
-
-#[cfg(test)]
-mod runtime_update_resume_tests;
+mod suspended_runtime;
 
 #[cfg(test)]
 mod always_on_tests;

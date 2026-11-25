@@ -68,9 +68,7 @@ impl MongoRecords {
         {
             return Err(RecordError::Rejected("invalid Channel reservation".into()));
         }
-        if let Some(tracking) = &self.worker_credentials {
-            tracking.record_blob(blob).await?;
-        }
+        let initial_version = 1_u32;
         let channel = Record {
             id: identity.record.into(),
             owner: identity.subject.into(),
@@ -78,12 +76,17 @@ impl MongoRecords {
                 subtype: BinarySubtype::Generic,
                 bytes: blob.to_vec(),
             },
-            version: 1,
+            version: i64::from(initial_version),
             schema_version: 1,
             guard_revision: 1,
             replica: None,
             expires_at: None,
         };
+        if let Some(tracking) = &self.worker_credentials {
+            tracking
+                .record_blob(&channel.id, u64::from(initial_version), blob)
+                .await?;
+        }
         let result = tokio::time::timeout(TRANSACTION_TIMEOUT, async {
             let mut session = self.db.client().start_session().await?;
             session
@@ -104,7 +107,7 @@ impl MongoRecords {
                                 claim_connection(db, identity, connection, session).await?;
                             }
                             records.insert_one(*channel).session(session).await?;
-                            Ok(1)
+                            Ok(u64::from(initial_version))
                         }
                         .boxed()
                     },

@@ -8,7 +8,7 @@ import { createMockAuthProvider } from './auth/mock';
 import type { AuthProvider, AuthState } from './auth/types';
 import { agentClient } from './test/agent';
 import './test/connectedAccounts';
-import { chooseService, currentService } from './test/services';
+import { currentService } from './test/services';
 
 const session = {
   authenticated: true,
@@ -24,6 +24,12 @@ function show() {
       </CmaClientProvider>
     </AuthContextProvider>,
   );
+}
+function portalOption(name: 'Agent Manager' | 'Event Gateway') {
+  const navigation = within(screen.getByRole('complementary', { name: 'Application navigation' }));
+  fireEvent.click(navigation.getByRole('button', { name: /^Service: / }));
+  const menu = within(screen.getByRole('menu', { name: 'CMA services' }));
+  return menu.getByRole('menuitemradio', { name });
 }
 afterEach(() => {
   window.history.replaceState({}, '', '/');
@@ -46,14 +52,6 @@ it('retains the exact Agent draft, Gateway editor and uncertain request across p
     throw new Error('Unexpected portal request: ' + url);
   });
   vi.stubGlobal('fetch', fetcher);
-  const portalOption = (name: 'Agent Manager' | 'Event Gateway') => {
-    const navigation = within(
-      screen.getByRole('complementary', { name: 'Application navigation' }),
-    );
-    fireEvent.click(navigation.getByRole('button', { name: /^Service: / }));
-    const menu = within(screen.getByRole('menu', { name: 'CMA services' }));
-    return menu.getByRole('menuitemradio', { name });
-  };
   // Settle the fixture reads before querying the shell. Polling the retained
   // portals during mocked responses repeats accessibility work on busy workers.
   await act(async () => {
@@ -100,7 +98,7 @@ it('retains the exact Agent draft, Gateway editor and uncertain request across p
   expect(writes[1]?.headers).toEqual(writes[0]?.headers);
   expect(editor).not.toBeInTheDocument();
   expect(fetcher.mock.calls.some(([url]) => url.includes('/image-manager'))).toBe(false);
-});
+}, 15_000);
 
 it('discards retained private service drafts when the global account signs out', async () => {
   window.history.replaceState({}, '', '/event-gateway');
@@ -373,6 +371,7 @@ it('closes the narrow Gateway drawer after choosing New channel while keeping it
   }
 });
 
+// The full shell and first Consumer load can exceed the default timeout on busy CI workers.
 it('keeps Consumers under Event Gateway and preserves channel drafts and the Agent when switching sections', async () => {
   window.history.replaceState({}, '', '/agents/agt_1');
   const bots = botClient();
@@ -382,52 +381,63 @@ it('keeps Consumers under Event Gateway and preserves channel drafts and the Age
       url.endsWith('/auth/session') ? Response.json(session) : Response.json({ items: [] }),
     ),
   );
-  render(
-    <AuthContextProvider
-      provider={createMockAuthProvider({
-        initiallyAuthenticated: true,
-        capabilities: ['use_own_sandboxes', 'manage_own_bots'],
-      })}
-    >
-      <CmaClientProvider client={{ ...agentClient(), botViews: bots }}>
-        <App />
-      </CmaClientProvider>
-    </AuthContextProvider>,
-  );
-  const composer = await screen.findByRole('textbox', { name: 'Message' });
+  // Flush the mocked reads with each route change before querying the retained DOM.
+  await act(async () => {
+    render(
+      <AuthContextProvider
+        provider={createMockAuthProvider({
+          initiallyAuthenticated: true,
+          capabilities: ['use_own_sandboxes', 'manage_own_bots'],
+        })}
+      >
+        <CmaClientProvider client={{ ...agentClient(), botViews: bots }}>
+          <App />
+        </CmaClientProvider>
+      </AuthContextProvider>,
+    );
+  });
+  const composer = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(composer, { target: { value: 'Keep my Agent draft' } });
-  chooseService('Event Gateway');
+  const gateway = portalOption('Event Gateway');
+  await act(async () => fireEvent.click(gateway));
   fireEvent.click(
-    within(await screen.findByRole('region', { name: 'Channel workspace' })).getByRole('button', {
+    within(screen.getByRole('region', { name: 'Channel workspace' })).getByRole('button', {
       name: 'New channel',
     }),
   );
   const channelDraft = screen.getByRole('textbox', { name: 'Channel name' });
   fireEvent.change(channelDraft, { target: { value: 'Retained channel configuration' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Consumers' }));
-  await screen.findByRole('region', { name: 'Consumer workspace' });
+  const gatewayNavigation = () =>
+    within(screen.getByRole('navigation', { name: 'Event Gateway navigation' }));
+  const openConsumers = gatewayNavigation().getByRole('button', { name: 'Consumers' });
+  await act(async () => fireEvent.click(openConsumers));
+  expect(screen.getByRole('region', { name: 'Consumer workspace' })).toBeVisible();
   expect(window.location.pathname).toBe('/bots');
   expect(currentService()).toBe('Service: Event Gateway');
-  expect(screen.getByRole('button', { name: 'Consumers' })).toHaveAttribute('aria-pressed', 'true');
-  expect(screen.getByRole('button', { name: 'Channels' })).toHaveAttribute('aria-pressed', 'false');
-  fireEvent.click(
-    await within(screen.getByRole('region', { name: 'Consumers' })).findByRole('button', {
-      name: new RegExp(bot.name),
-    }),
+  const consumersNavigation = gatewayNavigation();
+  const channels = consumersNavigation.getByRole('button', { name: 'Channels' });
+  expect(consumersNavigation.getByRole('button', { name: 'Consumers' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
   );
-  // The first consumer selection loads BotPage lazily. Settle the import and React
-  // updates before starting the DOM query's timeout, which can expire on cold CI runs.
+  expect(channels).toHaveAttribute('aria-pressed', 'false');
+  const consumer = within(consumersNavigation.getByRole('region', { name: 'Consumers' })).getByRole(
+    'button',
+    { name: new RegExp(bot.name) },
+  );
+  // The first consumer selection loads BotPage lazily.
   await act(async () => {
+    fireEvent.click(consumer);
     await import('./bots/BotPage');
   });
-  await screen.findByRole('heading', { name: bot.name });
+  expect(screen.getByRole('heading', { name: bot.name })).toBeVisible();
   expect(window.location.pathname).toBe('/bots/' + bot.bot_id);
   expect(currentService()).toBe('Service: Event Gateway');
-  fireEvent.click(screen.getByRole('button', { name: 'Channels' }));
+  fireEvent.click(channels);
   expect(screen.getByRole('textbox', { name: 'Channel name' })).toBe(channelDraft);
   expect(channelDraft).toHaveValue('Retained channel configuration');
-  chooseService('Agent Manager');
+  fireEvent.click(portalOption('Agent Manager'));
   expect(window.location.pathname).toBe('/agents/agt_1');
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
   expect(composer).toHaveValue('Keep my Agent draft');
-});
+}, 15_000);

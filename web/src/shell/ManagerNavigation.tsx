@@ -5,13 +5,14 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
   type Ref,
 } from 'react';
 import { RetiredAgentRow } from './PersonalAgentTree';
 import { DeletionProgressList } from './DeletionProgressList';
 import { runtimeAttention, type RuntimeAttention } from './runtimeAttention';
 import { SkeletonRows } from '../ui/Skeleton';
-import type { AgentDetail } from '../api/types';
+import type { AgentDetail, SandboxSummary } from '../api/types';
 import type { AppRoute } from '../routing/routes';
 import type { ResourceViewsClient } from '../resources/client';
 import {
@@ -88,6 +89,7 @@ function ViewerNavigation({
   deletingSandboxIds,
   onScope,
   onViewDeletion,
+  deletionNotice,
   onNavigate,
   onRestoreTaskRoute = onNavigate,
   onAgentIntent,
@@ -117,6 +119,7 @@ function ViewerNavigation({
   readonly deletingSandboxIds: ReadonlySet<string>;
   readonly onScope: (scope: string) => void;
   readonly onViewDeletion: (id: string) => void;
+  readonly deletionNotice?: ReactNode;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onRestoreTaskRoute?: (route: AppRoute) => void;
   readonly onAgentIntent?: (agentId: string, active: boolean) => void;
@@ -231,7 +234,8 @@ function ViewerNavigation({
     });
   const deletions = new Map<
     string,
-    { id: string; name: string; status?: AgentDetail['sandbox']['status']; unknown?: boolean }
+    Pick<SandboxSummary, 'id' | 'name'> &
+      Partial<Pick<SandboxSummary, 'status' | 'lifecycle'>> & { unknown?: boolean }
   >();
   if (scope === '') {
     for (const id of deletingSandboxIds) deletions.set(id, { id, name: 'Environment' });
@@ -245,6 +249,7 @@ function ViewerNavigation({
             id: sandbox.id,
             name: sandbox.name,
             status: sandbox.status,
+            lifecycle: navigation.refreshError ? undefined : sandbox.lifecycle,
             unknown: sandbox.status === 'retiring' ? false : deletions.get(sandbox.id)?.unknown,
           });
         if (
@@ -384,6 +389,7 @@ function ViewerNavigation({
           Filters apply now but cannot be remembered after refresh.
         </p>
       ) : null}
+      {view === 'sandbox' && !sidebar?.collapsed ? deletionNotice : null}
       <div
         ref={scrollport}
         className="manager-navigation__list"

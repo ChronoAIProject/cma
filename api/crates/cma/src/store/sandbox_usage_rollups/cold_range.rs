@@ -51,27 +51,19 @@ impl ReportingStore {
                     break;
                 }
                 let document = cursor.deserialize_current().map_err(unavailable)?;
-                let rollup: Rollup = decode(&document)?;
-                let Some(slice) = slices
-                    .iter()
-                    .find(|slice| slice.from == rollup.range.from && slice.to == rollup.range.to)
+                let Some((slice, state, projection)) =
+                    match_cached_rollup(&document, states, &slices)?
                 else {
                     continue;
                 };
-                let Some(state) = states
-                    .iter()
-                    .find(|state| valid_rollup(state, *slice, slice.from / DAY * DAY, &rollup))
-                else {
-                    continue;
-                };
-                if !budget.admit(state, *slice, &rollup.projection)? {
+                if !budget.admit(state, slice, &projection)? {
                     phases.outcome = "output_cap";
                     return Ok(None);
                 }
                 prepared
                     .entry(slice.from)
                     .or_default()
-                    .insert(state.sandbox_id.to_string(), rollup.projection);
+                    .insert(state.sandbox_id.to_string(), projection);
                 cached.insert((slice.from, state.sandbox_id.to_string()));
             }
             Ok(Some((prepared, cached, budget)))

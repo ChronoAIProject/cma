@@ -66,30 +66,8 @@ impl OwnershipCoordinator {
         {
             return Ok(None);
         }
-        let operation = {
-            let mut owned = self.owned.lock().unwrap();
-            let member_until = self.member_deadline.lock().unwrap();
-            if Instant::now() >= *member_until
-                || self.is_draining()
-                || *self.failed.borrow()
-                || self.skipped_heartbeats.load(Ordering::Acquire) > 0
-            {
-                return Ok(None);
-            }
-            if let Some(old) = &old {
-                if owned.get(id).is_none_or(|slot| !slot.owns(old)) {
-                    return Ok(None);
-                }
-            } else if !owned.contains_key(id) && owned.len() >= self.capacity {
-                return Ok(None);
-            }
-            // The bounded slot exists before its independently owned store task
-            // can issue a write. Shutdown observes both under this same lock.
-            let slot = owned.entry(id.clone()).or_default();
-            let operation =
-                LeaseWrite::acquisition(self.store.clone(), id.clone(), self.instance_id.clone());
-            slot.acquisition = Some(operation.clone());
-            operation
+        let Some(operation) = self.start_acquisition(id, old.as_ref()) else {
+            return Ok(None);
         };
         self.join_acquisition(
             id,
@@ -101,7 +79,36 @@ impl OwnershipCoordinator {
         .await
     }
 
-    async fn join_acquisition(
+    pub(super) fn start_acquisition(
+        &self,
+        id: &AgentId,
+        old: Option<&Arc<Authority>>,
+    ) -> Option<Arc<LeaseWrite>> {
+        let mut owned = self.owned.lock().unwrap();
+        let member_until = self.member_deadline.lock().unwrap();
+        if Instant::now() >= *member_until
+            || self.is_draining()
+            || *self.failed.borrow()
+            || self.skipped_heartbeats.load(Ordering::Acquire) > 0
+        {
+            return None;
+        }
+        if let Some(old) = old {
+            if owned.get(id).is_none_or(|slot| !slot.owns(old)) {
+                return None;
+            }
+        } else if !owned.contains_key(id) && owned.len() >= self.capacity {
+            return None;
+        }
+        // Keep custody before the store task can issue a write.
+        let slot = owned.entry(id.clone()).or_default();
+        let operation =
+            LeaseWrite::acquisition(self.store.clone(), id.clone(), self.instance_id.clone());
+        slot.acquisition = Some(operation.clone());
+        Some(operation)
+    }
+
+    pub(super) async fn join_acquisition(
         &self,
         id: &AgentId,
         operation: &Arc<LeaseWrite>,
@@ -111,11 +118,32 @@ impl OwnershipCoordinator {
     ) -> Result<Option<Arc<Authority>>, OwnershipError> {
         let outcome = match operation.join_until(until).await {
             Ok(outcome) => outcome,
-            Err(OwnershipError::Unavailable(_)) => return Ok(None),
+            Err(OwnershipError::Unavailable(_)) if self.contains_failures() => return Ok(None),
             Err(error) => return Err(error),
         };
+        // A waiter may run out of time without dropping the store task. Only
+        // reconcile an uncertain result after that task has actually stopped.
+        let outcome = self.reconcile_acquisition(id, outcome, until).await?;
         self.join_replaced_renewal(id, &outcome, until).await?;
         self.apply_acquisition(id, operation, outcome, completion, may_publish)
+    }
+
+    pub(super) async fn reconcile_acquisition(
+        &self,
+        id: &AgentId,
+        outcome: WriteOutcome,
+        until: Instant,
+    ) -> Result<WriteOutcome, OwnershipError> {
+        if matches!(outcome, WriteOutcome::Uncertain(_)) {
+            let token = retirement::stage(
+                until,
+                self.store.reconcile_acquisition(id, &self.instance_id),
+            )
+            .await?;
+            Ok(WriteOutcome::ReconciledAcquisition(token))
+        } else {
+            Ok(outcome)
+        }
     }
 
     pub(super) async fn join_replaced_renewal(
@@ -124,22 +152,28 @@ impl OwnershipCoordinator {
         outcome: &WriteOutcome,
         until: Instant,
     ) -> Result<(), OwnershipError> {
-        let WriteOutcome::Acquired {
-            started,
-            now_ms,
-            lease: Some(lease),
-        } = outcome
-        else {
-            return Ok(());
+        let token = match outcome {
+            WriteOutcome::Acquired {
+                lease: Some(lease),
+                started,
+                now_ms,
+            } => {
+                self.acquired_deadline(id, lease, *started, *now_ms)?;
+                &lease.token
+            }
+            WriteOutcome::ReconciledAcquisition(Some(token)) => {
+                self.validate_acquisition_token(id, token)?;
+                token
+            }
+            _ => return Ok(()),
         };
-        self.acquired_deadline(id, lease, *started, *now_ms)?;
         let old = self
             .owned
             .lock()
             .unwrap()
             .get(id)
             .and_then(|slot| slot.authority.clone());
-        if let Some(old) = old.filter(|old| lease.token.epoch > old.token.epoch) {
+        if let Some(old) = old.filter(|old| token.epoch > old.token.epoch) {
             // The validated higher epoch fences any old write. Observe the
             // actual task's termination before removing its custody slot.
             old.abort_renewal_until(until).await?;
@@ -154,15 +188,7 @@ impl OwnershipCoordinator {
         started: Instant,
         now_ms: i64,
     ) -> Result<Instant, OwnershipError> {
-        if lease.token.agent_id != *id
-            || lease.token.instance_id != self.instance_id
-            || lease.token.protocol != PROTOCOL_VERSION
-            || lease.token.epoch == 0
-        {
-            return Err(OwnershipError::Invalid(
-                "acquisition returned an invalid token".into(),
-            ));
-        }
+        self.validate_acquisition_token(id, &lease.token)?;
         let duration = lease
             .expires_at_ms
             .checked_sub(now_ms)
@@ -173,6 +199,24 @@ impl OwnershipCoordinator {
         started
             .checked_add(Duration::from_millis(duration as u64))
             .ok_or_else(|| OwnershipError::Invalid("acquisition duration overflow".into()))
+    }
+
+    fn validate_acquisition_token(
+        &self,
+        id: &AgentId,
+        token: &OwnershipToken,
+    ) -> Result<(), OwnershipError> {
+        if token.agent_id != *id
+            || token.instance_id != self.instance_id
+            || token.protocol != PROTOCOL_VERSION
+            || token.epoch == 0
+        {
+            Err(OwnershipError::Invalid(
+                "acquisition returned an invalid token".into(),
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     pub(super) fn apply_acquisition(
@@ -192,23 +236,28 @@ impl OwnershipCoordinator {
                     .is_some_and(|current| Arc::ptr_eq(current, operation))
             })
             .ok_or(OwnershipError::Stale)?;
-        let (started, now_ms, lease) = match outcome {
+        let acquisition = match outcome {
             WriteOutcome::Acquired {
                 started,
                 now_ms,
                 lease,
-            } => (started, now_ms, lease),
+            } => lease
+                .map(|lease| {
+                    let until = self.acquired_deadline(id, &lease, started, now_ms)?;
+                    Ok((lease.token, Some(until)))
+                })
+                .transpose()?,
+            WriteOutcome::ReconciledAcquisition(token) => token.map(|token| (token, None)),
             WriteOutcome::NotIssued(error) => {
                 slot.acquisition = None;
                 if slot.authority.is_none() {
                     owned.remove(id);
                 }
                 return match error {
-                    OwnershipError::Unavailable(_) => Ok(None),
+                    OwnershipError::Unavailable(_) if self.contains_failures() => Ok(None),
                     error => Err(error),
                 };
             }
-            WriteOutcome::Uncertain(OwnershipError::Unavailable(_)) => return Ok(None),
             WriteOutcome::Uncertain(error) => return Err(error),
             WriteOutcome::Renewed(_) | WriteOutcome::RenewalRefused(_) => {
                 return Err(OwnershipError::Invalid(
@@ -216,7 +265,7 @@ impl OwnershipCoordinator {
                 ))
             }
         };
-        let Some(lease) = lease else {
+        let Some((token, until)) = acquisition else {
             slot.acquisition = None;
             if slot.authority.is_none()
                 || completion
@@ -227,46 +276,41 @@ impl OwnershipCoordinator {
             }
             return Ok(None);
         };
-        let until = self.acquired_deadline(id, &lease, started, now_ms)?;
         if slot
             .authority
             .as_ref()
-            .is_some_and(|old| lease.token.epoch <= old.token.epoch)
+            .is_some_and(|old| token.epoch <= old.token.epoch)
         {
             slot.acquisition = None;
             return Ok(None);
         }
-        if completion.as_ref().is_some_and(|state| matches!(state.settlement, Some(Settlement::Superseded { newer_epoch }) if newer_epoch > lease.token.epoch)) {
+        if completion.as_ref().is_some_and(|state| matches!(state.settlement, Some(Settlement::Superseded { newer_epoch }) if newer_epoch > token.epoch)) {
             owned.remove(id);
             return Ok(None);
         }
         let member_until = self.member_deadline.lock().unwrap();
-        let publish = may_publish
-            && Instant::now() < until
-            && Instant::now() < *member_until
-            && !self.is_draining()
-            && !*self.failed.borrow()
-            && self.skipped_heartbeats.load(Ordering::Acquire) == 0;
-        let authority = if publish {
-            Authority::with_store_policy(
-                lease.token.clone(),
-                until,
-                self.store.clone(),
-                self.policy,
-            )
+        let publish_until = until.filter(|until| {
+            may_publish
+                && Instant::now() < *until
+                && Instant::now() < *member_until
+                && !self.is_draining()
+                && !*self.failed.borrow()
+                && self.skipped_heartbeats.load(Ordering::Acquire) == 0
+        });
+        let epoch = token.epoch;
+        let authority = if let Some(until) = publish_until {
+            Authority::with_store_policy(token, until, self.store.clone(), self.policy)
         } else {
-            Authority::unpublished(lease.token.clone(), self.store.clone())
+            Authority::unpublished(token, self.store.clone(), self.policy)
         };
         if let Some(state) = completion {
             if state.settlement.is_none() {
-                state.settlement = Some(Settlement::Superseded {
-                    newer_epoch: lease.token.epoch,
-                });
+                state.settlement = Some(Settlement::Superseded { newer_epoch: epoch });
             }
             self.cleanup_pacing.receiver_cleanup_completed(id);
         }
         slot.authority = Some(authority.clone());
         slot.acquisition = None;
-        Ok(publish.then_some(authority))
+        Ok(publish_until.map(|_| authority))
     }
 }

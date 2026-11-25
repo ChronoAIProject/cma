@@ -114,6 +114,13 @@ pub(crate) fn cma_record_origin_aliases() -> Result<Vec<String>, ConfigError> {
 }
 
 /// Enable only after quiescing every mutation source and upgrading all writers.
+pub(crate) fn channel_cancel_create_enabled() -> Result<bool, ConfigError> {
+    routing::write_flag("CMAEG_CHANNEL_CANCEL_CREATE_ENABLED")
+}
+pub(crate) fn channel_create_fence_required() -> Result<bool, ConfigError> {
+    routing::write_flag("CMAEG_CHANNEL_CREATE_FENCE_REQUIRED")
+}
+
 pub(crate) fn channel_mutation_custody_enabled() -> Result<bool, ConfigError> {
     super::routing::write_flag("CMAEG_CHANNEL_MUTATION_CUSTODY_ENABLED")
 }

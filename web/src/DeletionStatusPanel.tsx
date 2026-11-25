@@ -73,13 +73,15 @@ export function DeletionStatusPanel({
           ? 'Submitting'
           : observation?.failure
             ? 'Cleanup needs attention'
-            : observation?.inProgress
-              ? 'Deleting'
-              : request.accepted
-                ? 'Deletion requested'
-                : !unknownDelete && request.stop?.phase === 'accepted'
-                  ? 'Stopping'
-                  : 'Request unconfirmed';
+            : observation?.retirementDelayed
+              ? 'Cleanup taking longer'
+              : observation?.inProgress
+                ? 'Deleting'
+                : request.accepted
+                  ? 'Deletion requested'
+                  : !unknownDelete && request.stop?.phase === 'accepted'
+                    ? 'Stopping'
+                    : 'Request unconfirmed';
   return (
     <section className="deletion-status" aria-label="Deletion status">
       <span className="deletion-status__badge" data-complete={complete}>
@@ -127,6 +129,12 @@ export function DeletionStatusPanel({
         <p>
           Deleting — still uses one Sandbox slot. The slot becomes available when deletion is
           confirmed.
+        </p>
+      ) : null}
+      {!complete && !readError && observation?.retirementDelayed ? (
+        <p>
+          The Sandbox has exceeded its expected deletion time. Cleanup is still pending. Keep
+          checking this request for confirmation.
         </p>
       ) : null}
       {complete ? (

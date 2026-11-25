@@ -81,6 +81,7 @@ import {
 } from './agents/provenance.js';
 import { readAgentEvents } from './agents/events.js';
 import {
+  cancelAgentLifecycle,
   createAgentLifecycle,
   readAgentLifecycle,
   recoverAgentWorktree,
@@ -250,6 +251,11 @@ export class Agents extends AgentDeliverables {
     return readAgentLifecycle(this.config, id, options);
   }
 
+  /** Cancel an owner-scoped lifecycle operation before Sandbox allocation. */
+  cancelLifecycle(id: string, options: OperationOptions = {}) {
+    return cancelAgentLifecycle(this.config, id, options);
+  }
+
   /** Legacy Bridge usage projection; provider admissions require providerAssociations(). */
   channelUsage(id: string, options: OperationOptions = {}) {
     return readAgentChannelUsage(this.config, id, options);
@@ -401,6 +407,15 @@ export class Agents extends AgentDeliverables {
 
   stop(id: string, body: StopAgentRequest, options: CommandOptions) {
     return this.operate(id, '/stop', 'POST', options, input(stopAgentRequest, body));
+  }
+
+  restart(id: string, options: CommandOptions) {
+    return read(
+      this.config,
+      `/api/v1/agents/${segment(id)}/restart`,
+      object({ agent_id: text, worktree_id: text, operation_id: text, accepted_at: text }),
+      { ...command(options), method: 'POST', expectedStatus: 202 },
+    );
   }
 
   delete(id: string, options: CommandOptions) {

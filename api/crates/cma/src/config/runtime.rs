@@ -47,6 +47,7 @@ pub(crate) struct RuntimeConfig {
     pub agent_sandbox_connection: Option<layer3_adapter::agent_sandbox::RemoteKubernetesConfig>,
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
     pub legacy_receiver_image: Option<layer3_adapter::hosted::LegacyReceiverImage>,
+    pub stale_turn_runtime_digest: Option<String>,
     pub allocate_agent_sandbox: bool,
     pub native_prepared_target: u8,
     pub native_machine_prepared_target: u8,
@@ -58,6 +59,7 @@ pub(crate) struct RuntimeConfig {
     pub sandbox_base_url: String,
     pub sandbox_api_key: String,
     pub sandbox_image: String,
+    pub github_repository_runtime_images: Vec<String>,
     /// Optional immutable image used when an Agent explicitly requests a
     /// desktop machine. Keeping this separate from the default image prevents
     /// ordinary Agent creation from silently changing its runtime.
@@ -284,6 +286,15 @@ impl RuntimeConfig {
         }
 
         let legacy_receiver_image = super::agent_sandbox::legacy_receiver_image(lookup)?;
+        let stale_turn_runtime_digest = lookup("CHRONO_STALE_TURN_RUNTIME_DIGEST")?;
+        if let Some(digest) = &stale_turn_runtime_digest {
+            if !digest
+                .strip_prefix("sha256:")
+                .is_some_and(layer3_adapter::runtime_ledger_maintenance::valid_sha256)
+            {
+                return Err("CHRONO_STALE_TURN_RUNTIME_DIGEST must name a SHA-256 digest".into());
+            }
+        }
         let runtime_pointer = crate::runtime_pointer::RuntimePointerConfig::from_lookup(
             lookup,
             machine_sandbox_image.is_some(),
@@ -301,6 +312,17 @@ impl RuntimeConfig {
                     .into(),
             );
         }
+        let github_repository_runtime_images = lookup("CHRONO_GITHUB_REPOSITORY_RUNTIME_IMAGES")?
+            .map(|images| {
+                images
+                    .split(',')
+                    .map(|image| {
+                        parse_pinned_image("CHRONO_GITHUB_REPOSITORY_RUNTIME_IMAGES", image)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
         Ok(Self {
             capacity: super::runtime_capacity::from_lookup(lookup)?,
             migration: super::runtime_migration::RuntimeMigrationConfig::from_lookup(lookup)?,
@@ -308,6 +330,7 @@ impl RuntimeConfig {
             agent_sandbox_connection,
             agent_sandbox_runtime_transport,
             legacy_receiver_image,
+            stale_turn_runtime_digest,
             allocate_agent_sandbox,
             native_prepared_target,
             native_machine_prepared_target,
@@ -317,6 +340,7 @@ impl RuntimeConfig {
             sandbox_base_url,
             sandbox_api_key,
             sandbox_image,
+            github_repository_runtime_images,
             machine_sandbox_image,
             runtime_pointer,
             runtime_canary_releases,

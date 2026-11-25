@@ -156,6 +156,46 @@ function ownerPage(client: ReturnType<typeof agentClient>, busy = false) {
 }
 
 it.each([
+  'Wait for the current Sandbox operation to finish.',
+  'Runtime updates are blocked by the Sandbox failure. Open Technical details for the reported failure.',
+])(
+  'shows the reported failure and disables updates when a newer runtime is available (%s)',
+  async (blockedReason) => {
+    const updateSandboxRuntime = vi.fn();
+    render(
+      ownerPage(
+        agentClient({
+          readSandbox: async () => ({
+            ...sandboxFixture('failed'),
+            owner: 'owner',
+            failure: { class: 'terminal_validation', detail: 'Synthetic failure' },
+            runtimeUpdate: { ...update, canUpdate: false, blockedReason },
+          }),
+          updateSandboxRuntime,
+        }),
+      ),
+    );
+    expect(await screen.findByText('Your sandbox needs attention.')).toBeVisible();
+    const runtime = screen.getByRole('region', { name: 'Runtime' });
+    expect(runtime).toHaveTextContent('Runtime update unavailable');
+    expect(runtime).toHaveTextContent('A newer managed runtime version is available.');
+    expect(runtime).not.toHaveTextContent('Update now');
+    expect(runtime).not.toHaveTextContent('Wait for the current Sandbox operation to finish.');
+    const action = screen.getByRole('button', { name: 'Update runtime' });
+    expect(action).toBeDisabled();
+    expect(action).toHaveAccessibleDescription(
+      'Runtime updates are blocked by the Sandbox failure. Open Technical details for the reported failure.',
+    );
+    fireEvent.click(action);
+    expect(updateSandboxRuntime).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('Technical details', { selector: 'summary' }));
+    expect(screen.getByText('Unavailable while the Sandbox needs attention')).toBeVisible();
+    expect(screen.getByText(update.currentVersion!)).toBeVisible();
+    expect(screen.getByText(update.latestVersion)).toBeVisible();
+  },
+);
+
+it.each([
   ['active', currentRuntime, 'Runtime updated', 'done'],
   ['active', { ...currentRuntime, currentVersion: null }, 'Runtime version unconfirmed', 'neutral'],
   [

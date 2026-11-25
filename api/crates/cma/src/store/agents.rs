@@ -333,13 +333,21 @@ impl AgentStore for MongoSandboxStore {
     }
 
     async fn get_agent(&self, id: &AgentId) -> Result<Option<Agent>, SandboxStoreError> {
-        self.agents
+        let agent = self
+            .agents
             .find_one(doc! { "_id": id.as_str() })
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
             .as_ref()
             .map(read_agent)
-            .transpose()
+            .transpose()?;
+        if let Some(agent) = &agent {
+            layer2_core::agent_ownership::receiver_diagnostics::observe_agent_sandbox(
+                &agent.id,
+                &agent.sandbox_id,
+            );
+        }
+        Ok(agent)
     }
 
     async fn save_agent(

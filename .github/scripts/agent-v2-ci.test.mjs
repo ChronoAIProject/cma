@@ -28,7 +28,9 @@ function verify(job, suite) {
   const matches = suite.match(/testMatch:\s*\[([^\]]*)\]/)?.[1];
   for (const file of [
     "agent-v2.check.ts",
+    "agent-draft-identity-refresh.check.ts",
     "agent-v2-queued.check.ts",
+    "agent-v2-queued-edit.check.ts",
     "agent-v2-composer.check.ts",
     "agent-terminal-recovery.check.ts",
   ])

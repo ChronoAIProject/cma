@@ -12,15 +12,12 @@ class StagingWorkflowTest < Minitest::Test
     YAML.load_file(File.join(ROOT, 'workflows', name + '.yml'))
   end
 
-  def test_planner_reads_controller_outcomes_and_only_the_controller_can_emit_the_proof
+  def test_allocator_reads_controller_outcomes_and_only_the_controller_can_emit_the_proof
     jobs = workflow('staging-cd')['jobs']
-    plan = jobs.fetch('plan')
-    assert_equal 'read', plan.dig('permissions', 'deployments')
-    evidence = plan['steps'].find { |step| step['id'] == 'promotions' }
-    assert_equal 'python3 -B .github/scripts/staging_cd_promotion.py', evidence['run']
-    assert_equal '${{ steps.promotions.outputs.verified }}', plan.dig('outputs', 'controller_proofs')
+    refute jobs.fetch('plan').fetch('permissions').key?('deployments')
+    assert_equal 'read', jobs.fetch('allocate').dig('permissions', 'deployments')
     allocate = jobs['allocate']['steps'].find { |step| step['id'] == 'allocate' }
-    assert_equal '${{ needs.plan.outputs.controller_proofs }}', allocate.dig('env', 'CD_CONTROLLER_PROOFS')
+    assert_equal 'chrono-ai-staging', allocate.dig('env', 'CD_STAGING_ENVIRONMENT')
     steps = workflow('staging-deploy')['jobs']['deploy']['steps']
     writer = steps.index { |step| step['id'] == 'coordinate' }
     proof = steps.index { |step| step['name'] == 'Verified staging receipts ${{ steps.coordinate.outputs.controller_proof }}' }
@@ -104,8 +101,17 @@ class StagingWorkflowTest < Minitest::Test
         refute_nil bound, "#{name}: step without a bound: #{label}"
         assert_operator bound.to_i, :<, limit, "#{name}: #{label} may use the whole job"
       end
-      setup = job['steps'].reject { |s| s['name'] == 'Build once, scan every layer, and publish exact bytes' }
+      release_steps = %w[producer publication]
+      setup = job['steps'].reject { |step| release_steps.include?(step['id']) }
       assert setup.all? { |s| s['timeout-minutes'].to_i <= 15 }, "#{name}: setup and upload steps must fail within 15 minutes"
+      next unless name == 'publish'
+
+      producer, publication = release_steps.map { |id| job['steps'].find { |step| step['id'] == id } }
+      assert_equal 'python3 -B .github/scripts/staging_cd_produce.py', producer.fetch('run')
+      assert_includes producer.fetch('if'), "vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true'"
+      assert_operator producer.fetch('timeout-minutes'), :<=, 240
+      assert_operator job['steps'].index(producer), :<, job['steps'].index(publication)
+      assert_equal '${{ steps.producer.outputs.prepared }}', publication.fetch('env').fetch('CD_PREPARED_ARCHIVE')
     end
     transport = File.read(File.join(ROOT, 'scripts/staging_cd_transport.sh'))
     %w[Acquire::http::Timeout DPkg::Lock::Timeout].each { |option| assert_includes transport, option }
@@ -331,6 +337,22 @@ class StagingWorkflowTest < Minitest::Test
     admit = promote['jobs']['admit']
     assert_equal '${{ steps.set.outputs.disposition }}', admit.dig('outputs', 'disposition')
     assert_equal 'automatic', admit['steps'].find { |step| step['id'] == 'set' }.dig('env', 'CD_RESOLVE_MODE')
+  end
+
+  def test_only_the_locked_staging_promotion_admission_reads_prior_proofs
+    callers = workflow('staging-cd')['jobs'].values.select { |job| job['uses'] == './.github/workflows/staging-promote.yml' }
+    assert_equal 6, callers.length
+    callers.each do |job|
+      assert_equal 'cma-staging-deploy-set', job.dig('concurrency', 'group')
+      assert_equal 'read', job.dig('permissions', 'deployments')
+    end
+    promote = workflow('staging-promote')
+    %w[admit readmit].each do |job|
+      admission = promote['jobs'].fetch(job)
+      assert_equal 'read', admission.dig('permissions', 'deployments')
+      assert_equal 'chrono-ai-staging', admission['steps'].find { |step| step['id'] == 'set' }.dig('env', 'CD_STAGING_ENVIRONMENT')
+    end
+    %w[deploy redeploy].each { |job| refute promote['jobs'][job]['permissions'].key?('deployments') }
   end
 
   def test_one_automatic_retry_re_admits_after_a_transient_refusal_and_its_outcome_counts
@@ -697,7 +719,9 @@ class StagingWorkflowTest < Minitest::Test
   }.freeze
   # Optional steps whose failure only costs time; publication decides the outcome later.
   OPTIONAL = ['Expose cache runtime to the Buildx client', 'Check release ownership',
-              'Restore compatible Cargo mounts', 'Retain accepted Cargo mounts'].freeze
+              'Restore compatible Cargo mounts', 'Retain accepted Cargo mounts',
+              'Restore bounded layer archive', 'Validate restored layer archive',
+              'Seal accepted layer archive', 'Retain sealed layer archive for admission'].freeze
 
   def test_safe_actions_repeat_once_and_only_the_repeat_can_fail_the_job
     optional = []
@@ -777,10 +801,10 @@ class StagingWorkflowTest < Minitest::Test
     end
     assert_equal false, job['steps'].first.dig('with', 'persist-credentials')
     assert_equal ['python3 -B .github/scripts/staging_cd_catch_up.py'], job['steps'].map { |step| step['run'] }.compact
-    # The check judges finals by the same controller outcomes the planner reads.
-    planner = staging.dig('jobs', 'plan', 'steps').find { |step| step['id'] == 'promotions' }
+    # The check judges finals by the same controller outcomes the allocator reads.
+    allocate = staging.dig('jobs', 'allocate', 'steps').find { |step| step['id'] == 'allocate' }
     assert_equal({ 'GH_TOKEN' => '${{ github.token }}',
-                   'CD_STAGING_ENVIRONMENT' => planner.dig('env', 'CD_STAGING_ENVIRONMENT') }, job['steps'].last['env'])
+                   'CD_STAGING_ENVIRONMENT' => allocate.dig('env', 'CD_STAGING_ENVIRONMENT') }, job['steps'].last['env'])
   end
 
   def test_catch_up_reads_the_plan_job_and_its_transient_gate_by_their_exact_names
@@ -869,7 +893,6 @@ class StagingWorkflowTest < Minitest::Test
     select = steps.index { |step| step['id'] == 'plan' }
     gate = steps.index { |step| step['name'] == 'Require a complete release plan' }
     proof = steps.index { |step| step['name'] == 'Require a provable release plan' }
-    promotions = steps.index { |step| step['id'] == 'promotions' }
     assert_operator prepare, :<, restore
     assert_operator restore, :<, select
     assert_operator select, :<, save
@@ -878,7 +901,6 @@ class StagingWorkflowTest < Minitest::Test
     # and a later step's failure cannot discard them.
     assert_operator save, :<, gate
     assert_operator gate, :<, proof
-    assert_operator proof, :<, promotions
     # Exactly one gate fails a stopped plan: the first only for a transient
     # stop, which catch-up may re-run; each names its reason.
     assert_equal "steps.plan.outputs.complete != 'true' && steps.plan.outputs.transient == 'true'", steps[gate]['if']

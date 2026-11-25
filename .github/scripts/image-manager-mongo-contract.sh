@@ -97,6 +97,8 @@ contract_nextest eg run \
   -E 'package(=cmaeg) and test(=worker_credentials::mongo::integration_tests::worker_history_cross_client_visibility_append_only_grants_and_cutover_barrier)' \
   --run-ignored only --test-threads 1
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(=channels::create_cleanup_tests::retirement_at_the_record_limit_preserves_tracked_worker_credentials)'
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~whatsapp_retention_on_real_mongo)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=mongo_isolation)'
@@ -172,3 +174,8 @@ CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
 
 contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure)'
+
+CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
+  CMA_TEST_CMA_EXECUTABLE="${CARGO_TARGET_DIR:-$PWD/target}/debug/cma" \
+  contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma) and test(=store::agent_log_segments::active_proof::prepare::tests::active_proof_operator_cli_uses_generated_isolated_role)'

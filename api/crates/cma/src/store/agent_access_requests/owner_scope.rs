@@ -142,6 +142,7 @@ impl MongoSandboxStore {
                     command_key_hash: key_hash.clone(),
                     services: services.clone(),
                     connection: None,
+                    connection_binding: None,
                     authorization: authorization.clone(),
                 }),
                 lease: None,

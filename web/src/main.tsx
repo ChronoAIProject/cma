@@ -16,7 +16,6 @@ import { createCreationClient } from './api/creation';
 import { createOperatorClient } from './operator/client';
 import { createTriggerPublisherClient } from './trigger-publisher/client';
 import { createPublicClient } from './public/client';
-import { clearAgentTransport } from './agent/transport/journal';
 import { prepareHistoryDocument } from './routing/historyDocument';
 import { ImageManagerRetirement } from './services/ImageManagerRetirement';
 
@@ -39,13 +38,6 @@ if (!container) {
  */
 if (prepareHistoryDocument()) {
   const identityProvider = createNyxidAuthProvider();
-  const authProvider = {
-    ...identityProvider,
-    async signOut() {
-      await identityProvider.signOut();
-      clearAgentTransport(sessionStorage);
-    },
-  };
   const sdk = createClient();
   const client = createRestWebClient(sdk, {
     storage: sessionStorage,
@@ -69,7 +61,7 @@ if (prepareHistoryDocument()) {
     },
   }).render(
     <StrictMode>
-      <AuthContextProvider provider={authProvider}>
+      <AuthContextProvider provider={identityProvider}>
         <CmaClientProvider
           client={client}
           profiles={profiles}

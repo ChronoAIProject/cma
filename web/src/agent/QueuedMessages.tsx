@@ -268,18 +268,68 @@ function QueueRow({
 }
 
 function PendingQueuedEdit({ text }: { readonly text: string }) {
+  return (
+    <SavedQueuedEdit
+      text={text}
+      label="Edit awaiting confirmation"
+      description="The edit is saved in this browser. It has not been confirmed."
+    />
+  );
+}
+
+export function UnappliedQueuedEdits({
+  drafts,
+  onDismiss,
+  canUse,
+}: {
+  readonly drafts: readonly { key: string; text: string }[];
+  readonly onDismiss?: (key: string) => void;
+  readonly canUse?: () => boolean;
+}) {
+  if (!drafts.length) return null;
+  return (
+    <section aria-label="Unapplied queued edits">
+      {drafts.map(({ key, text }) => (
+        <SavedQueuedEdit
+          key={key}
+          text={text}
+          label="Unapplied edit"
+          description="The queued message changed before this edit could be applied. Copy your draft to use it again."
+          onDismiss={onDismiss && (() => onDismiss(key))}
+          canUse={canUse}
+        />
+      ))}
+    </section>
+  );
+}
+
+function SavedQueuedEdit({
+  text,
+  label,
+  description,
+  onDismiss,
+  canUse,
+}: {
+  readonly text: string;
+  readonly label: string;
+  readonly description: string;
+  readonly onDismiss?: () => void;
+  readonly canUse?: () => boolean;
+}) {
   const [copy, setCopy] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
+  const [dismissFailed, setDismissFailed] = useState(false);
   return (
     <div className="queued-message__editor-frame queued-message-editor">
       <label>
-        Edit awaiting confirmation
+        {label}
         <textarea readOnly value={text} rows={3} />
       </label>
-      <p>The edit is saved in this browser. It has not been confirmed.</p>
+      <p>{description}</p>
       <Button
         size="sm"
         disabled={copy === 'copying'}
         onClick={async () => {
+          if (canUse?.() === false) return;
           setCopy('copying');
           try {
             await navigator.clipboard.writeText(text);
@@ -291,10 +341,26 @@ function PendingQueuedEdit({ text }: { readonly text: string }) {
       >
         Copy edit
       </Button>
+      {onDismiss ? (
+        <Button
+          size="sm"
+          onClick={() => {
+            if (canUse?.() === false) return;
+            try {
+              onDismiss();
+            } catch {
+              setDismissFailed(true);
+            }
+          }}
+        >
+          Dismiss draft
+        </Button>
+      ) : null}
       {copy === 'copied' ? <p role="status">Edit copied.</p> : null}
       {copy === 'failed' ? (
         <p role="status">Copy was unavailable. Select and copy the edit above.</p>
       ) : null}
+      {dismissFailed ? <p role="status">The draft could not be dismissed.</p> : null}
     </div>
   );
 }

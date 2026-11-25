@@ -620,22 +620,22 @@ class UnprovenFinalTests(unittest.TestCase):
         develop.complete(801)  # Admission failed before any staging writer started.
         self.assertEqual(decide(develop)[::2], ("rerun", [("web", "undeployed-final")]))
         develop.deploy(801, "web")
-        # Twelve newer writers push the web proof out of the listing; it is not behind.
+        # The web proof is on an older page than the newer Gateway writers.
         develop.finalize(develop.push({"eg"})["eg"])
         for _ in range(catch_up_window()):
             develop.deploy(802, "eg")
         develop.complete(802)
         self.assertEqual(decide(develop), ("nothing-behind", None, []))
-        # A final published after the oldest listed writer has had no writer at all.
+        # The newly published final does not match the older controller proof.
         develop.finalize(develop.push({"web"})["web"])
         develop.complete(803)
-        self.assertEqual(decide(develop)[::2], ("rerun", [("web", "undeployed-final")]))
+        self.assertEqual(decide(develop)[::2], ("rerun", [("web", "unproven-final")]))
         self.assertEqual(develop.posts, [])
 
 
 def catch_up_window():
-    from staging_cd_promotion import LIMIT
-    return LIMIT
+    from staging_cd_promotion import PAGE_SIZE
+    return PAGE_SIZE
 
 
 class EntryTests(unittest.TestCase):
@@ -772,10 +772,12 @@ class EntryTests(unittest.TestCase):
         with patch.object(catch_up, "read_snapshot", return_value="outcome") as read:
             self.assertEqual(catch_up.controller_reader(env)(), "outcome")
         read.assert_called_once_with("fixture", ENVIRONMENT, seconds=catch_up.CONTROLLER_SECONDS)
-        # The planner keeps its own shorter budget.
-        with patch("staging_cd_promotion.AllocationIO") as io, patch("staging_cd_promotion.snapshot"):
+        # Allocation keeps its shorter budget and leaves time to recheck the fence.
+        with patch("staging_cd_promotion.AllocationIO") as io, patch("staging_cd_promotion.GitHub"), \
+                patch("staging_cd_promotion.snapshot") as snapshot:
             catch_up.read_snapshot("fixture", ENVIRONMENT)
-        io.assert_called_once_with(seconds=10)
+            snapshot.call_args.kwargs["fence_request"]("deployments")
+        self.assertEqual([call.kwargs["seconds"] for call in io.call_args_list], [8, 2])
 
     def test_a_stopped_plan_re_run_names_its_run_and_attempt_and_only_named_decisions_re_run(self):
         run = {"id": 802, "run_attempt": 1}

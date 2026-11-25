@@ -129,6 +129,8 @@ def build(root, reservation, directory, runner=command, *, source=None, cache=No
         options["env"] = cache.build_environment()
     runner([*args, str(source)], timeout=14400, **options)
     require(archive.is_file(), "Native build produced no image archive")
+    if cache is not None:
+        cache.record_layer_replay(reservation)
     return archive, release
 
 

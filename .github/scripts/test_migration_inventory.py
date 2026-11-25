@@ -83,6 +83,42 @@ class MigrationInventoryTests(unittest.TestCase):
         self.assertEqual(definition["sha256"], inventory.digest(
             self.git.files[NEW]["document_artifacts/quota.rs"].encode()))
 
+    def test_reporting_crate_reexports_preserve_the_original_collection_roles(self):
+        files = self.git.files[NEW]
+        root = inventory.EXTERNAL_ROOTS["cma_am_reporting"]
+        files[root + "lib.rs"] = "pub mod usage; pub use store::{allocation_buckets, ReportingStore};"
+        files[root + "usage.rs"] = 'pub const COLLECTION: &str = "sandbox_usage";'
+        files[root + "store/allocation_buckets.rs"] = 'pub const QUOTA_COLLECTION: &str = "document_quotas";'
+        files["store/usage.rs"] = "use cma_am_reporting::usage; pub use usage::{Reading, COLLECTION};"
+        files["document_artifacts/mod.rs"] = "pub use cma_am_reporting::allocation_buckets::QUOTA_COLLECTION;"
+        rows = {row["name"]: row for row in inventory.compare(self.source(OLD), self.source())["collections"]}
+        for name in ("sandbox_usage", "document_quotas"):
+            with self.subTest(name=name):
+                self.assertEqual(rows[name]["new"]["role"], rows[name]["old"]["role"])
+                self.assertTrue(rows[name]["new"]["definition"]["path"].startswith(root))
+        del files[root + "store/allocation_buckets.rs"]
+        with self.assertRaisesRegex(ValueError, "missing source module"):
+            self.source().collections()
+
+    def test_nested_test_import_does_not_replace_a_registry_binding(self):
+        files = self.git.files[NEW]
+        files["store/isolation.rs"] = """
+use super::usage;
+const COLLECTIONS: &[&str] = &[usage::COLLECTION];
+const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
+const NOTE: &str = r#"the delimiter { is part of a string"#;
+/* Block comment with a nested /* } */ brace. */
+#[cfg(test)]
+mod tests {
+use crate::fixtures::usage;
+}
+"""
+        files["fixtures/usage.rs"] = 'const COLLECTION: &str = "fixture_usage";'
+        rows = self.source().collections()
+        self.assertNotIn("fixture_usage", rows)
+        definition = rows["sandbox_usage"]["definition"]
+        self.assertEqual(definition["path"], inventory.ROOT + "store/usage.rs")
+
     def test_added_and_removed_collections_are_retained_in_both_direction_plan(self):
         self.git.files[NEW]["store/usage.rs"] = 'const COLLECTION: &str = "new_usage";'
         rows = {r["name"]: r for r in inventory.compare(self.source(OLD), self.source())["collections"]}

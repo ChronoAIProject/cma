@@ -3,6 +3,36 @@ use std::sync::Arc;
 
 use crate::{config::Config, store::MongoStores, warm_pools::NativeWarmPools};
 
+pub(super) fn image_manager_resolver(
+    config: &Config,
+) -> Result<Arc<crate::agent_lifecycle::ImageManagerResolver>, String> {
+    crate::agent_lifecycle::ImageManagerResolver::new(
+        config.image_manager_base_url.clone(),
+        config.features.image_manager_retirement,
+    )
+}
+
+pub(super) fn configure_inline_lifecycle(
+    config: &Config,
+    stores: &MongoStores,
+    lifecycle: Arc<crate::agent_lifecycle::InlineAgentLifecycle>,
+    broker: Arc<crate::trigger::CmaServiceConnectionBroker>,
+) -> Arc<crate::agent_lifecycle::InlineAgentLifecycle> {
+    lifecycle
+        .with_released_runtime(stores.released_runtime.clone())
+        .with_task_experience(config.task_experience.clone())
+        .with_session_guidance(
+            config.features.session_guidance_v4,
+            config.features.session_guidance_v5,
+        )
+        .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
+        .with_repository_preflight_config(config, broker)
+        .with_public_repository_images(
+            config.public_repository_verified_runtime_images.clone(),
+            config.public_repository_snapshot_enabled,
+        )
+}
+
 pub(super) fn worker_observations(
     config: &Config,
     stores: &MongoStores,
@@ -60,6 +90,7 @@ impl RuntimeServices {
                 .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
         )
         .with_target_fencing(config.agent_manager_replicas.is_some())
+        .with_empty_pool_startup(config.features.am_empty_warm_pool_startup)
         .with_released_runtime(stores.released_runtime.clone());
         let pointer = crate::runtime_pointer::RuntimePointerController::compose(
             config,
@@ -158,6 +189,7 @@ pub(super) fn lifecycle_config(
             .is_some_and(|replicas| replicas.defer_foreign_reconciliation),
         sandbox_reconciliation_reserved_lane: config.features.sandbox_reconciliation_reserved_lane,
         sandbox_binding_hold_metrics: config.features.sandbox_binding_hold_metrics,
+        startup_native_home_hold_enabled: config.features.startup_native_home_hold_enabled,
         home_policy: config
             .runtime
             .home_policy

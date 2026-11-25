@@ -98,6 +98,7 @@ const events: Readonly<Record<string, string>> = {
   runtime_recovery_admitted: 'Runtime recovery requested',
   runtime_recovery_quiesced: 'Runtime recovery prepared',
   revived: 'Sandbox resumed',
+  home_restored: 'Sandbox home restored',
   rotated: 'Sandbox updated',
   failed: 'Sandbox needs attention',
 };

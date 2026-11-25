@@ -441,6 +441,9 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     },
     interruptAgent: (id, options) => sdk.agents.interrupt(id, options),
     stopAgent: (id, options) => sdk.agents.stop(id, {}, options),
+    restartAgent: async (id, options) => {
+      await sdk.agents.restart(id, options);
+    },
     deleteAgent: (id, options) => sdk.agents.delete(id, options),
   };
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::sandbox::SandboxOrigin;
 
 pub(super) fn workspace(
     sandbox: &Sandbox,
@@ -15,10 +16,36 @@ pub(super) fn workspace(
         .workspace_name()
         .map_err(|error| WorkspaceServiceError::InvalidProfile(error.to_string()))?;
     let source = match &revision.content.location {
-        WorkspaceLocation::RepositorySnapshot { url, reference } => {
+        WorkspaceLocation::RepositorySnapshot { url, reference, .. } => {
             WorkspaceSource::RepositorySnapshot {
                 url: url.clone(),
                 reference: reference.clone(),
+                source_commit: None,
+            }
+        }
+        WorkspaceLocation::PublicRepositorySnapshot {
+            url,
+            commit,
+            operation_id,
+        } => {
+            if origin != (WorkspaceOrigin::SandboxProfile { index: 0 })
+                || sandbox.origin
+                    != (SandboxOrigin::Lifecycle {
+                        operation_id: operation_id.clone(),
+                    })
+                || sandbox.profile.content.workspace_profiles.as_slice()
+                    != [WorkspaceProfileRef {
+                        id: revision.profile_id.clone(),
+                        revision: revision.revision,
+                    }]
+            {
+                return Err(WorkspaceServiceError::InvalidProfile(
+                    "public repository source belongs to its original lifecycle allocation".into(),
+                ));
+            }
+            WorkspaceSource::PublicRepositorySnapshot {
+                url: url.clone(),
+                commit: commit.clone(),
                 source_commit: None,
             }
         }

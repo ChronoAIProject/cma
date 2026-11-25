@@ -238,6 +238,7 @@ it('preserves template fields on a capability read failure without enabling subm
         readTaskTemplateSupport: async () => {
           throw new Error('Read failed');
         },
+        readTaskTemplateV2Support: async () => false,
         createAgentLifecycle: create,
       })}
       viewerId="owner"

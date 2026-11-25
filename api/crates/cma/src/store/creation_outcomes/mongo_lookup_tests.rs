@@ -123,12 +123,22 @@ async fn closed_miss_uses_one_read_only_snapshot_with_point_reads() {
 #[tokio::test]
 #[ignore = "requires disposable CHRONO_TEST_MONGODB_URI"]
 async fn opaque_lifecycle_key_requires_original_wire_evidence_and_exact_new_origin() {
+    exercise_opaque_lifecycle_lookup(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable CHRONO_TEST_MONGODB_URI"]
+async fn opaque_lifecycle_lookup_reads_a_managed_desktop_envelope() {
+    exercise_opaque_lifecycle_lookup(true).await;
+}
+
+async fn exercise_opaque_lifecycle_lookup(desktop: bool) {
     let (store, reader, today) = fixture().await;
     let owner = SubjectId::new("owner");
     let operations = crate::store::MongoAgentLifecycleStore::open(&store.database)
         .await
         .unwrap();
-    let sandbox_store =
+    let mut sandbox_store =
         crate::store::MongoSandboxStore::open(store.database.client(), store.database.name())
             .await
             .unwrap();
@@ -140,7 +150,7 @@ async fn opaque_lifecycle_key_requires_original_wire_evidence_and_exact_new_orig
         &"b".repeat(32),
     );
     request.idempotency_key = "opaque-wire-fixture".into();
-    let input = crate::store::LifecycleInput {
+    let mut input = crate::store::LifecycleInput {
         behavior: Default::default(),
         managed_agent_instructions: None,
         setup_message: None,
@@ -151,6 +161,15 @@ async fn opaque_lifecycle_key_requires_original_wire_evidence_and_exact_new_orig
         capabilities: vec![layer2_core::Capability::UseOwnSandboxes],
         actor: None,
     };
+    if desktop {
+        sandbox_store.runtime_image_origin_enabled = true;
+        input.behavior = crate::store::LifecycleBehavior::PromptRepository;
+        input.request.desktop = true;
+        input.resolved_image = Some(format!(
+            "registry.example/runtime@sha256:{}",
+            "a".repeat(64)
+        ));
+    }
     let crate::store::CreateResult::Created(id) = operations
         .create_with_submission(
             &owner,
@@ -185,14 +204,39 @@ async fn opaque_lifecycle_key_requires_original_wire_evidence_and_exact_new_orig
     candidate.origin = layer2_core::sandbox::SandboxOrigin::Lifecycle {
         operation_id: id.clone(),
     };
+    if desktop {
+        let key = format!("agent-manager:{}:sandbox", request.idempotency_key);
+        candidate.profile.id =
+            layer2_core::profiles::private_sandbox_profile_id(&owner, &key).unwrap();
+        candidate
+            .profile
+            .content
+            .runtime_image
+            .clone_from(&input.resolved_image);
+        candidate.profile.digest =
+            layer2_core::profiles::content_digest(&candidate.profile.content).unwrap();
+    }
+    let claimed = operations.claim(&id).await.unwrap().unwrap();
+    let lease = claimed.lease().unwrap();
     let admission = SandboxAdmission::new(
         candidate,
         SandboxAdmissionName::Allocate("trigger-research".into()),
         10,
         layer2_core::now_rfc3339(),
     )
-    .unwrap();
+    .unwrap()
+    .with_lifecycle_lease(&lease.token);
     sandbox_store.admit_sandbox(admission).await.unwrap();
+    let row = sandbox_store
+        .sandboxes
+        .find_one(doc! {"_id":"sbx_wire_fixture"})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.get_i64("document_schema_version").unwrap(),
+        if desktop { 6 } else { 1 }
+    );
     assert!(matches!(reader.lookup(&original, &request).await.unwrap(),
         Outcome::Created { sandbox_id, operation_id: Some(operation), .. } if sandbox_id == "sbx_wire_fixture" && operation == id));
 

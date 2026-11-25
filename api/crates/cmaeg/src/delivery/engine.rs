@@ -21,6 +21,7 @@ pub const WORKERS: usize = 8;
 pub struct DeliveryEngine {
     stop: Option<oneshot::Sender<()>>,
     task: JoinHandle<()>,
+    sender: Arc<Sender>,
 }
 impl Drop for DeliveryEngine {
     fn drop(&mut self) {
@@ -66,12 +67,26 @@ impl DeliveryEngine {
             observer,
         });
         let (stop, stopping) = oneshot::channel();
-        let task = tokio::spawn(run(receiver.into(), stopping, sender, config, tracker));
+        let task = tokio::spawn(run(
+            receiver.into(),
+            stopping,
+            sender.clone(),
+            config,
+            tracker,
+        ));
         Self {
             stop: Some(stop),
             task,
+            sender,
         }
     }
+    pub(crate) fn side_messages_if(
+        &self,
+        enabled: bool,
+    ) -> Option<super::side_messages::SideMessageDelivery> {
+        enabled.then(|| super::side_messages::SideMessageDelivery::new(&self.sender))
+    }
+
     pub async fn drain(mut self, deadline: Instant) -> bool {
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());

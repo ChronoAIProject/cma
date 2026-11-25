@@ -14,6 +14,7 @@ mod agent_access_cases;
 mod agent_cases;
 mod agent_customization_cases;
 mod agent_event_cases;
+mod agent_restart_cases;
 mod agent_worktree_recovery_cases;
 mod artifact_cases;
 mod attachment_cases;
@@ -180,6 +181,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = agent_restart_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = creation_outcome_cases::scenario(name) {
         return scenario;
     }

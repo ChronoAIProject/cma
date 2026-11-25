@@ -2,6 +2,7 @@
 require 'date'
 require 'json'
 require_relative 'omarchy-ci-contract'
+require_relative 'key-provider-ci-contract'
 require_relative 'ci-track-security-validation'
 
 def require_check(value, message)
@@ -25,10 +26,19 @@ def require_pinned_actions(steps, actions, parents = [])
   end
 end
 
+STAGING_IMAGE_FALLBACK = "steps.staging-image.outputs.adopted != 'true'"
+STAGING_READ_ONLY = {'contents' => 'read', 'actions' => 'read', 'issues' => 'read'}.freeze
+
+
 def check_component_cache_writers(documents)
   develop = "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
   writer = "${{ #{develop} }}"
-  images = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
+  image_job = documents.fetch('ci-images').fetch('jobs').fetch('images')
+  group = "${{ #{develop} && format('cma-develop-ci-image-{0}', matrix.component) || " \
+    "format('ci-image-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.component) }}"
+  require_check(image_job['concurrency'] == {'group' => group, 'queue' => 'max', 'cancel-in-progress' => false},
+    'develop image jobs must queue per component without cancelling active writers')
+  images = image_job.fetch('steps')
   node_setup = ->(s) { s.fetch('uses', '').start_with?('actions/setup-node@') }
   image_nodes = images.select(&node_setup)
   require_check(!image_nodes.empty? && image_nodes.all? { |s|
@@ -36,11 +46,11 @@ def check_component_cache_writers(documents)
   }, 'image Node setup must disable automatic and explicit dependency caching')
   scope = "matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component"
   builds = images.select { |s| s.fetch('uses', '').start_with?('docker/build-push-action@') }
-  require_check(builds.size == 2 && builds.all? { |s| s.dig('with', 'cache-from') == "type=gha,version=2,scope=${{ #{scope} }}" },
-    'both image builds must restore the component cache')
+  bounded = "${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}"
+  require_check(builds.size == 2 && builds.all? { |s| s.dig('with', 'cache-from').to_s.lines.map(&:strip) ==
+    ["type=gha,version=2,scope=${{ #{scope} }}", bounded] }, 'both image builds must restore validated component caches')
   exports = builds.map { |s| s.dig('with', 'cache-to') }.compact
-  require_check(exports == ["${{ #{develop} && format('type=gha,version=2,mode=max,ignore-error=true,scope={0}', #{scope}) || '' }}"],
-    'image layers may be exported only on develop pushes, and a failed export must never fail the build')
+  require_check(exports.empty?, 'CI image builds must not publish unbounded layers')
   {'docker/setup-qemu-action' => 'cache-image', 'docker/setup-buildx-action' => 'cache-binary',
    'aquasecurity/trivy-action' => 'cache'}.each do |action, option|
     step = images.find { |s| s.fetch('uses', '').start_with?(action + '@') }
@@ -52,7 +62,7 @@ def check_component_cache_writers(documents)
     web_nodes.first.dig('with', 'cache') == "${{ #{develop} && 'npm' || '' }}", 'setup-node may save a PR cache')
   writers = (images + web).select { |s| s.fetch('uses', '').match?(%r{\Aactions/cache(?:/save)?@}) }
   require_check(writers.size == 1 && writers.first['uses'].start_with?('actions/cache/save@') &&
-    writers.first['if'] == "success() && #{develop} && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'",
+    writers.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (success() && #{develop} && matrix.component == 'api' && vars.CMA_LAYER_CACHE_WRITER_FLOOR != 'true' && steps.api-cargo-cache-export.outputs.ready == 'true')",
     'only the accepted develop Cargo archive may be saved')
   restore = 'actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830'
   npm = {'path' => '${{ steps.npm-cache.outputs.directory }}',
@@ -82,14 +92,37 @@ def check_merge_group_artifacts(documents)
     steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
     names.each do |name|
       found = steps.select { |s| s['name'] == name }
-      require_check(found.length == 1 && found.first['if'] == MERGE_GROUP_EXPORT && !found.first.key?('continue-on-error'),
+      require_check(found.length == 1 && found.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (#{MERGE_GROUP_EXPORT})" && !found.first.key?('continue-on-error'),
         "#{name} must retain push, same-repository PR and merge-group images only")
     end
   end
   images = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
   prepare = images.select { |s| s['name'] == 'Prepare API Cargo cache identity' }
-  require_check(prepare.length == 1 && prepare.first['if'] == API_CACHE_READERS,
+  require_check(prepare.length == 1 && prepare.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (#{API_CACHE_READERS})",
     'queue entries may restore, never save, the develop API Cargo archive')
+end
+
+def check_staging_image_adoption(documents)
+  develop = "vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true' && github.event_name == 'push' && " \
+    "github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma' && "
+  inputs = {
+    'ci-images' => ['images', '${{ matrix.component }}',
+      "((matrix.component == 'api' && contains(fromJSON(inputs.changed_deployables), 'cma-agent-manager')) || (matrix.component == 'runtime' && contains(fromJSON(inputs.changed_deployables), 'cma-runtime')))"],
+    'ci-omarchy' => ['omarchy', 'runtime-omarchy', "(inputs.staging_lane_changed || github.workflow == 'Runtime Omarchy')"]
+  }
+  inputs.each do |file, (job, component, changed)|
+    steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
+    adopters = steps.select { |step| step['id'] == 'staging-image' }
+    require_check(adopters.length == 1, "#{file} must have one staging-image loader")
+    loader = adopters.first
+    require_check(loader['if'].gsub(/\s+/, ' ').strip == develop + changed &&
+      loader['env'] == {'IMAGE_COMPONENT' => component, 'GH_TOKEN' => '${{ github.token }}'} &&
+      loader['timeout-minutes'] == 32 && loader['run'] == 'python3 -B .github/scripts/ci_staging_image.py' &&
+      !loader.key?('continue-on-error'), "#{file} may adopt only changed develop images with bounded read authority")
+    builds = steps.select { |step| step.fetch('uses', '').start_with?('docker/build-push-action@') }
+    require_check(!builds.empty? && builds.all? { |step| step['if'] == STAGING_IMAGE_FALLBACK &&
+      steps.index(loader) < steps.index(step) }, "#{file} builds from source only when there is no verified adoption")
+  end
 end
 
 # Only the read-only CI workflow may run on merge-queue refs: publication and
@@ -101,7 +134,7 @@ def check_merge_group_triggers(workflows)
   end
   require_check(queued.keys == ['ci'], 'only CI may run on merge groups')
   ci = queued.fetch('ci')
-  require_check(ci['permissions'] == {'contents' => 'read', 'issues' => 'read'} &&
+  require_check(ci['permissions'] == STAGING_READ_ONLY &&
     ci.fetch('jobs').values.all? { |job| job.fetch('permissions', {}).values.all? { |grant| grant == 'read' } },
     'merge-group CI must remain read-only')
 end
@@ -221,37 +254,44 @@ def check_version_label(workflow)
 end
 
 def validate(documents, actions)
+  KeyProviderCIContract.check(documents)
   require_repo_secret_shards(documents)
   require_runtime_inventory(documents)
   require_image_secret_scan(documents)
   require_runtime_vulnerability_gate(documents)
   check_component_cache_writers(documents)
   check_merge_group_artifacts(documents)
+  check_staging_image_adoption(documents)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
-  require_check(events.keys.sort == %w[merge_group push], 'post-merge CI must cover pushes and retained merge-group events')
+  require_check(events.keys.sort == %w[merge_group push schedule workflow_dispatch], 'post-merge CI must cover pushes and verification events')
+  require_check(events['schedule'] == [{'cron' => '17 */2 * * *'}] && events['workflow_dispatch'] == {},
+    'develop verification must use the scheduled or manually selected GitHub revision')
   require_check(events['push'] == {'branches' => ['develop', 'tl/release/**']}, 'CI push must cover develop and isolated candidates without path filters')
   # Without a branch or path filter every queue entry creates the required
   # checks; a non-develop queue is refused by the selector, not left pending.
   require_check(events['merge_group'] == {'types' => ['checks_requested']}, 'CI must report on every merge group')
   # Read-only: issues is read for the runtime vulnerability gate's tracking-issue age.
-  require_check(ci['permissions'] == {'contents' => 'read', 'issues' => 'read'}, 'CI permissions must remain read-only')
+  require_check(ci['permissions'] == STAGING_READ_ONLY, 'CI permissions must remain read-only')
   %w[ci-images ci-omarchy].each do |called|
-    require_check(documents.fetch(called)['permissions'] == {'contents' => 'read', 'issues' => 'read'},
+    require_check(documents.fetch(called)['permissions'] == STAGING_READ_ONLY,
                   "#{called} permissions must remain read-only and within the caller's")
   end
   # Queue entries run on refs/heads/gh-readonly-queue/develop/pr-N-SHA: their
   # own ref, so a PR (refs/pull/N/merge) or develop push run never cancels one.
-  # Develop pushes write the caches PRs restore, so they finish instead of
-  # being cancelled; every other ref still cancels its superseded run.
-  require_check(ci['concurrency'] == {'group' => 'ci-${{ github.workflow }}-${{ github.ref }}',
-    'cancel-in-progress' => "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"},
-    'CI concurrency must remain per ref and keep develop cache writers running')
+  verification = "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'verification-' || ''"
+  require_check(ci['concurrency'] == {
+    'group' => "ci-${{ github.workflow }}-${{ #{verification} }}${{ github.ref }}",
+    'cancel-in-progress' => "${{ github.ref != 'refs/heads/develop' }}"},
+    'CI must protect active develop runs and isolate verification from pushes')
   jobs = ci.fetch('jobs')
+  verification_ref = "(github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop'"
+  require_check(%w[changes repo].all? { |name| jobs.fetch(name)['if'] == verification_ref },
+    'off-develop verification may not start selection or repo checks')
   require_check(jobs.keys.none? { |key| key.start_with?('trigger-') }, 'Trigger job retained')
   required = {
     'gate-repo' => ['CI / Repo', %w[changes repo version-label]],
-    'gate-am' => ['CI / Agent Manager', %w[changes rust-test-build am am-images runtime-images omarchy]],
+    'gate-am' => ['CI / Agent Manager', %w[changes rust-test-build approval-contract am am-images runtime-images omarchy]],
     'gate-eg' => ['CI / Event Gateway', %w[changes rust-test-build eg eg-images runtime-images omarchy]],
     'gate-web' => ['CI / Web', %w[changes web web-images]]
   }
@@ -284,7 +324,9 @@ def validate(documents, actions)
       gate.fetch('steps').last.fetch('run') == "python3 -B .github/scripts/ci_tracks/gate.py #{track} --split",
       'product result must use its original required context and check every prerequisite')
     if %w[am eg].include?(track)
-      require_check(track_jobs.fetch('rust-test-build')['if'] == "needs.changes.outputs.#{track} == 'true'",
+      archive_condition = "needs.changes.outputs.#{track} == 'true'"
+      archive_condition += " || needs.changes.outputs.approval_contract == 'true'" if track == 'am'
+      require_check(track_jobs.fetch('rust-test-build')['if'] == archive_condition,
         'each Rust product archive must be built in its own selected workflow')
     end
     if track == 'am'
@@ -295,7 +337,7 @@ def validate(documents, actions)
     end
   end
   select_workflow = documents.fetch('ci-track-selection')
-  require_check(select_workflow.fetch('jobs').fetch('changes') == jobs.fetch('changes'),
+  require_check(select_workflow.fetch('jobs').fetch('changes') == jobs.fetch('changes').reject { |key, _| key == 'if' },
     'pull requests and post-merge CI must use identical selection')
   %w[ci ci-pr-repo].each { |workflow| check_version_label(documents.fetch(workflow)) }
   selector = jobs.fetch('changes').fetch('steps').find { |step| step['id'] == 'select' }
@@ -310,10 +352,34 @@ def validate(documents, actions)
     require_check(jobs.fetch(track)['with'] == {'track' => track, 'packages' => "${{ needs.changes.outputs.#{track}_packages }}"},
       'selected Rust packages must reach the test workflow')
   end
-  %w[deployables test_tracks].each { |key| require_check(jobs.fetch('changes').fetch('outputs').key?(key), 'shared selector output absent') }
-  %w[runtime-images omarchy rust-test-build].each do |key|
+  %w[deployables test_tracks approval_contract].each do |key|
+    require_check(jobs.fetch('changes').fetch('outputs').key?(key), 'shared selector output absent')
+    if key == 'approval_contract'
+      require_check(select_workflow.dig('on', 'workflow_call', 'outputs', key, 'value') == '${{ jobs.changes.outputs.approval_contract }}' ||
+        select_workflow.dig(true, 'workflow_call', 'outputs', key, 'value') == '${{ jobs.changes.outputs.approval_contract }}',
+        'PR selection must expose the approval contract decision')
+    end
+  end
+  %w[runtime-images omarchy].each do |key|
     require_check(jobs.fetch(key).fetch('if') == "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'", 'shared Rust prerequisite selection differs')
   end
+  require_check(jobs.fetch('rust-test-build').fetch('if') ==
+    "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true' || needs.changes.outputs.approval_contract == 'true'",
+    'approval contract must select the shared Rust test archive')
+  [jobs, documents.fetch('ci-pr-am').fetch('jobs')].each do |workflow_jobs|
+    contract = workflow_jobs.fetch('approval-contract')
+    require_check(contract.fetch('needs') == %w[changes rust-test-build] &&
+      contract['uses'] == './.github/workflows/ci-approval-contract.yml' &&
+      contract['if'] == "needs.changes.outputs.approval_contract == 'true'" &&
+      contract['permissions'] == {'contents' => 'read', 'actions' => 'read'} &&
+      !contract.key?('continue-on-error'), 'approval contract must run once against the selected archive')
+  end
+  contract = documents.fetch('ci-approval-contract').fetch('jobs').fetch('contract')
+  step = contract.fetch('steps').last
+  require_check(contract.fetch('env')['CMA_NEXTEST_REUSE'] == '1' &&
+    contract.fetch('steps').any? { |s| s['uses'] == './.github/actions/rust-archive' } &&
+    step['working-directory'] == 'web' && step['run'] == "npm ci\nnpm run test:approval-contract\n" &&
+    !step.key?('if') && !step.key?('continue-on-error'), 'archived producer-to-Web test required')
   rust = documents.fetch('ci-rust').fetch('jobs')
   require_check(rust.fetch('tests').fetch('strategy') == {'fail-fast' => false, 'matrix' => {'shard' => [1, 2, 3]}}, 'three test shards required')
   require_check(rust.fetch('result').fetch('if') == 'always()', 'reusable failure propagation missing')
@@ -344,9 +410,19 @@ def validate(documents, actions)
   require_check(rust['mongo-harness']['steps'].last['run'].include?('node --test .github/scripts/mongo-contract-tests.test.mjs') &&
     rust['mongo-harness']['steps'].last['run'].include?('python3 -B .github/scripts/mongo-contract-shards-tests.py'), 'Mongo regressions omitted')
   timing = rust.fetch('timing').fetch('steps')
-  ['Image normalization budgets', 'Gateway socket latency budget', 'Enforce the production budgets (one retry)'].each do |name|
+  ['Image normalization budgets', 'Gateway socket latency budget', 'Enforce Gateway latency budgets'].each do |name|
     require_check(timing.find { |s| s['name'] == name }&.fetch('if') == "inputs.track == 'eg'", 'Gateway timing ownership differs')
   end
+  budget = timing.select { |s| s['name'] == 'Enforce Gateway latency budgets' }
+  require_check(budget.size == 1 && budget[0]['run'] == 'python3 -B ../.github/scripts/eg-latency-check.py' &&
+    !budget[0].key?('continue-on-error'), 'Gateway latency must retain its first invocation result')
+  regressions = timing.select { |s| s['run'] == 'ruby ../.github/scripts/eg-latency-check-tests.rb' }
+  require_check(regressions.size == 1 && regressions[0]['if'] == "inputs.track == 'eg'" &&
+    !regressions[0].key?('continue-on-error'), 'Gateway latency runner regressions must execute')
+  reports = timing.select { |s| s.dig('with', 'name').to_s.start_with?('cmaeg-latency-') }
+  require_check(reports.size == 1 && reports[0]['if'] == "always() && inputs.track == 'eg'" &&
+    reports[0].dig('with', 'path') == 'api/target/cmaeg-latency-results/' && reports[0].dig('with', 'if-no-files-found') == 'error' &&
+    reports[0].dig('with', 'name') == 'cmaeg-latency-${{ github.run_id }}-${{ github.run_attempt }}', 'Gateway attempt reports must be retained')
   allocator_selector = 'package(=cma) and binary(=allocator_cli) and test(=actual_api_allocator_completes_without_configuration)'
   allocator = timing.select { |s| s.fetch('run', '').include?(allocator_selector) }
   require_check(allocator.length == 1 && allocator[0]['if'] == "inputs.track == 'am'" &&
@@ -395,7 +471,7 @@ def check_os_refresh(steps, label)
   builds = steps.select { |s| s.fetch('uses', '').start_with?('docker/build-push-action@') }
   args = builds.map { |b| b.fetch('with').fetch('build-args', '').lines.map(&:strip).grep(/\AOS_SECURITY_REFRESH=/) }
   require_check(key && key['run'].to_s.start_with?('python3 .github/scripts/os_refresh_key.py ') &&
-    !key.key?('if') && !key.key?('continue-on-error') && !builds.empty? &&
+    key['if'] == STAGING_IMAGE_FALLBACK && !key.key?('continue-on-error') && !builds.empty? &&
     args.all? { |a| a == ['OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}'] } &&
     steps.index(key) < steps.index(builds.first),
     "#{label} image builds must take OS_SECURITY_REFRESH from the snapshot-aware refresh key")
@@ -407,12 +483,10 @@ def check_omarchy_archive(steps)
   epochs = build.fetch('build-args', '').lines.map(&:strip).grep(/\ASOURCE_DATE_EPOCH=/)
   require_check(build['outputs'] == 'type=docker,rewrite-timestamp=true' && epochs == ['SOURCE_DATE_EPOCH=0'],
     'Omarchy must rewrite layer timestamps to the fixed epoch')
-  save = steps.find { |s| s['name'] == 'Save qualified Omarchy layer cache' }
   storage = {'path' => OmarchyCIContract::CACHE_PATH, 'key' => OmarchyCIContract::CACHE_KEY}
-  require_check(restore && !restore.key?('if') && restore['uses'].start_with?('actions/cache/restore@') &&
+  require_check(restore && restore['if'] == STAGING_IMAGE_FALLBACK && restore['uses'].start_with?('actions/cache/restore@') &&
     restore['with'] == storage.merge('fail-on-cache-miss' => false), 'PRs must restore only an exact Omarchy archive')
   hit = "steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true'"
-  writer = OmarchyCIContract::CACHE_WRITE
   protected_cache = "${{ #{OmarchyCIContract::DEVELOP_PUSH} }}"
   {'actions/setup-node' => ['package-manager-cache', false],
    'docker/setup-buildx-action' => ['cache-binary', protected_cache],
@@ -425,11 +499,10 @@ def check_omarchy_archive(steps)
   require_check(db && db['uses'].start_with?('actions/cache/restore@') &&
     db['if'] == "github.event_name != 'push' || github.ref != 'refs/heads/develop'" &&
     db.dig('with', 'restore-keys') == 'cache-trivy-', 'Omarchy PR scans must restore the Trivy database')
-  require_check(build['cache-from'].to_s.strip == "${{ #{hit} && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}",
+  bounded = "${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}"
+  require_check(build['cache-from'].to_s.lines.map(&:strip) == ["${{ #{hit} && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}", bounded],
     'a partial restore must build Omarchy cold')
-  require_check(build['cache-to'] == "${{ #{writer} && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}",
-    'Omarchy may export new layers only on a develop push with a cache miss')
+  require_check(!build.key?('cache-to'), 'Omarchy layers use the bounded publication archive')
   writers = steps.select { |s| s.fetch('uses', '').match?(%r{\Aactions/cache(?:/save)?@}) }
-  require_check(save && writers == [save] && save['uses'].start_with?('actions/cache/save@') && save['with'] == storage &&
-    save['if'] == "success() && #{writer}" && steps.last == save, 'only a qualified develop push may save the Omarchy archive')
+  require_check(writers.empty?, 'Omarchy CI may only restore its layer archive')
 end

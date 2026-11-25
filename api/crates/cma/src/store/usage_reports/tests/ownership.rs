@@ -168,7 +168,7 @@ async fn live_ownership_twenty_thousand_members_keep_two_indexed_joins_and_narro
                 .unwrap();
         }
     }
-    let pipeline = super::super::ownership::pipeline(report);
+    let pipeline = cma_am_reporting::report_membership_pipeline(report, ledger);
     let explanation = store
         .db
         .run_command(doc! {
@@ -229,7 +229,7 @@ async fn live_ownership_twenty_thousand_members_keep_two_indexed_joins_and_narro
         .unwrap();
     let failures: Vec<_> = store
         .collection(ROWS)
-        .aggregate(super::super::ownership::pipeline(report))
+        .aggregate(cma_am_reporting::report_membership_pipeline(report, ledger))
         .await
         .unwrap()
         .try_collect()

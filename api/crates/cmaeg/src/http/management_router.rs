@@ -60,12 +60,13 @@ pub fn management_router(state: ManagementState) -> Router {
         )
         .route(
             "/v1/channel-records/{record_id}/management",
-            get(http::record_management::read),
+            get(http::record_management::read).delete(http::record_management::retire),
         )
         .route(
             "/v1/channels/{channel_id}",
             get(get_channel).put(update_channel).delete(delete_channel),
         )
+        .merge(http::profile_revisions::routes())
         .route("/v1/channels/{channel_id}/test", post(test_channel))
         .route(
             "/v1/channels/{channel_id}/sources/{source_index}/test",

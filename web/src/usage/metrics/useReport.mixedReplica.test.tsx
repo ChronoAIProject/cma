@@ -13,8 +13,19 @@ const id = 'umr_00000000000000000000000000000001';
 const owner = { principal: 'owner-1', cacheKey: 'mixed-replica-owner' };
 const flush = () => act(async () => {});
 const advance = (ms: number) => act(async () => vi.advanceTimersByTimeAsync(ms));
+const missingRoute = () =>
+  Response.json(
+    {
+      type: 'https://spec.chrono-ai.fun/cma/1.0/problems/not-found',
+      title: 'not found',
+      status: 404,
+      detail: 'No REST route matches this request path.',
+      code: 'not_found',
+    },
+    { status: 404, headers: { 'Content-Type': 'application/problem+json' } },
+  );
 
-function setup(admin = true, range: '24h' | '1h' = '24h', absence = 501) {
+function setup(admin = true, range: '24h' | '1h' = '24h', absence = 501, initialStart?: Response) {
   vi.useFakeTimers();
   vi.setSystemTime(asOf * 1000);
   vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -63,11 +74,15 @@ function setup(admin = true, range: '24h' | '1h' = '24h', absence = 501) {
     calls.push({ path, method: options?.method ?? 'GET', at: Date.now() });
     if (path === `${base}/initial/reports/${id}`) return initialRead();
     if (path === `${base}/reports/${id}`) return legacyRead();
-    if (path === `${base}/initial/view` || path === `${base}/initial/reports`)
-      return Response.json(path.endsWith('/view') ? { view: view(pending) } : { report: pending }, {
-        status: 202,
-        headers: { 'Retry-After': '2' },
-      });
+    if (path === `${base}/initial/view` || path === `${base}/initial/reports`) {
+      return (
+        initialStart ??
+        Response.json(path.endsWith('/view') ? { view: view(pending) } : { report: pending }, {
+          status: 202,
+          headers: { 'Retry-After': '2' },
+        })
+      );
+    }
     if (path === `${base}/view` || path === `${base}/reports`) {
       const replacement = { ...ready, report_id: 'umr_00000000000000000000000000000002' };
       return Response.json(path.endsWith('/view') ? view(replacement) : replacement);
@@ -84,6 +99,29 @@ function setup(admin = true, range: '24h' | '1h' = '24h', absence = 501) {
     calls.filter(({ path }) => path.endsWith('/view') || path.endsWith('/reports'));
   return { hook, ready, pending, base, calls, admissions, initialRead, legacyRead };
 }
+
+it.each(['1h', '24h'] as const)(
+  'starts one legacy request when the old REST router rejects the %s initial route',
+  async (range) => {
+    const { hook, base, admissions } = setup(false, range, 501, missingRoute());
+    await flush();
+    expect(hook.result.current.report?.status).toBe('ready');
+    const suffix = range === '1h' ? '/reports' : '/view';
+    expect(admissions().map(({ path, method }) => [method, path])).toEqual([
+      ['POST', base + '/initial' + suffix],
+      [range === '1h' ? 'POST' : 'GET', base + suffix],
+    ]);
+  },
+);
+
+it('reads the admitted ID through the legacy route after a REST router refusal', async () => {
+  const { hook, initialRead, legacyRead, admissions } = setup(false, '1h');
+  initialRead.mockImplementation(async () => missingRoute());
+  await advance(2000);
+  expect(hook.result.current.report?.report_id).toBe(id);
+  expect(legacyRead).toHaveBeenCalledOnce();
+  expect(admissions()).toHaveLength(1);
+});
 
 it.each(
   [false, true].flatMap((admin) =>
@@ -147,7 +185,17 @@ it.each([
   [200, 'malformed_success'],
 ])('does not fall back from an admitted initial report after %s %s', async (status, code) => {
   const { hook, initialRead, legacyRead, admissions } = setup();
-  initialRead.mockResolvedValue(Response.json({ status, title: 'Refused', code }, { status }));
+  initialRead.mockResolvedValue(
+    Response.json(
+      {
+        status,
+        title: 'Refused',
+        code,
+        type: `https://spec.chrono-ai.fun/cma/1.0/problems/${code}`,
+      },
+      { status },
+    ),
+  );
   await advance(2000);
   expect(hook.result.current.error).toBeDefined();
   expect(hook.result.current.report).toBeUndefined();

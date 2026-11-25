@@ -75,6 +75,26 @@ impl AgentLifecycleProvisioner for Lifecycle {
 }
 #[async_trait::async_trait]
 impl AgentLifecycleOperationReader for Lifecycle {
+    async fn cancel_unallocated(
+        &self,
+        caller: &Caller,
+        id: &str,
+    ) -> Result<AgentLifecycleOperationView, AgentLifecycleOperationReadError> {
+        if self.0 == "forbidden" {
+            return Err(AgentLifecycleOperationReadError::Forbidden);
+        }
+        if self.0 == "allocated" {
+            return Err(AgentLifecycleOperationReadError::Conflict(
+                "Creation is already allocated".into(),
+            ));
+        }
+        let mut view = self.read(caller, id).await?;
+        view.status = "failed".into();
+        view.phase = "failed".into();
+        view.error = Some("Creation cancelled before Sandbox allocation".into());
+        view.connection = None;
+        Ok(view)
+    }
     async fn read(
         &self,
         _: &Caller,
@@ -103,6 +123,7 @@ impl AgentLifecycleOperationReader for Lifecycle {
             }],
             connection: Some(AgentLifecycleConnectionRequired {
                 repository_access: None,
+                repository_scope_repair: None,
                 services: vec!["api-github".into()],
                 target: serde_json::json!({"type":"sandbox_profile","profile":{"id":"internal-sandbox","revision":1}}),
             }),

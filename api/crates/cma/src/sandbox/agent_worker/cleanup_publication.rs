@@ -9,7 +9,7 @@ use layer2_core::sandbox::store::{
 };
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentStopReason, AgentWorkStep, SandboxEventKind,
-    SandboxStatus, WorkspaceStatus, WorktreeStatus,
+    WorktreeStatus,
 };
 use std::time::SystemTime;
 
@@ -30,51 +30,17 @@ impl AgentWorker {
         {
             return None;
         }
-        let native = self.dependencies.adapter.runtime_recovery()?;
-        let opened = agent
-            .work
-            .receipts
-            .iter()
-            .find(|receipt| receipt.step == AgentWorkStep::OpenConversation)?;
-        let closed = agent
-            .work
-            .receipts
-            .iter()
-            .find(|receipt| receipt.step == AgentWorkStep::CloseProcess)?;
         let context = self.cleanup_context(agent).await.ok()?;
-        if context.sandbox.status != SandboxStatus::Active
-            || context.sandbox.lifecycle.operation.is_some()
-            || context.workspace.status != WorkspaceStatus::Ready
-            || context.worktree.status != WorktreeStatus::Ready
-        {
-            return None;
-        }
-        let status = self
-            .dependencies
-            .adapter
-            .runtime_status(&context.runtime)
-            .await
-            .ok()?;
-        let binding = context.sandbox.runtime.as_ref()?;
-        if binding.boot_id.as_ref() != Some(&status.boot_id)
-            || !context.sandbox.runtime_process_matches(&status).ok()?
-        {
-            return None;
-        }
-        let proof = layer3_adapter::wire::AgentProcessCloseProof {
-            runtime: status.restart_runtime().ok()?,
-            close: layer3_adapter::AgentCloseRequest {
-                operation_id: closed.operation_id.clone(),
-                request_sha256: closed.request_sha256.clone(),
-                agent_id: layer3_adapter::AgentSlot::new(agent.id.as_str()),
-            },
-            open_request_sha256: opened.request_sha256.clone(),
-            worktree_path: context.worktree.path.clone(),
-        };
-        native
-            .prove_agent_process_closed(&context.runtime, &proof)
-            .await
-            .ok()?;
+        crate::sandbox::agent_process_proof::prove_closed(
+            self.dependencies.adapter.as_ref(),
+            agent,
+            &context.sandbox,
+            &context.workspace,
+            &context.worktree,
+            &context.runtime,
+        )
+        .await
+        .ok()?;
         Some(context.publication_parents())
     }
 

@@ -40,6 +40,20 @@ impl VerificationFailure {
         Self { error, cause }
     }
 
+    /// Preserve known local capacity in the consumer's request context before
+    /// the existing coarse provider projection records its fallback category.
+    pub(super) fn record_local_cause(&self) {
+        use layer2_core::dependency_diagnostics::{Dependency, Failure, Reason};
+        if !matches!(self.error, ProviderVerificationError::Rejected(_))
+            && matches!(
+                self.cause,
+                VerificationCause::Capacity | VerificationCause::FenceCapacity
+            )
+        {
+            Failure::new(Dependency::Local, Reason::Capacity).record();
+        }
+    }
+
     pub(super) fn reason(&self) -> &'static str {
         match self.cause {
             VerificationCause::Provider => match &self.error {

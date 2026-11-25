@@ -173,7 +173,7 @@ pub async fn stream(
                     if current != creator {
                         return None;
                     }
-                    management::load(&state, &creator, &id).await.ok()?;
+                    management::inspect(&state, &creator, &id).await.ok()?;
                     state
                         .activity
                         .latest_if_changed(
@@ -232,13 +232,15 @@ pub(super) async fn owned(
     creator: &Creator,
     id: &cmaeg_core::ids::ChannelId,
 ) -> Result<management::LoadedChannel, ManagementError> {
-    tokio::time::timeout(Duration::from_secs(3), management::load(state, creator, id))
-        .await
-        .unwrap_or_else(|_| {
-            Err(ManagementError::Record(
-                crate::records::RecordError::Unavailable(
-                    "channel activity authorization timed out".into(),
-                ),
-            ))
-        })
+    let (channel, _) = tokio::time::timeout(
+        Duration::from_secs(3),
+        management::inspect(state, creator, id),
+    )
+    .await
+    .map_err(|_| {
+        ManagementError::Record(crate::records::RecordError::Unavailable(
+            "channel activity authorization timed out".into(),
+        ))
+    })??;
+    Ok(channel)
 }

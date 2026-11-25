@@ -91,6 +91,13 @@ export class LocalAgentV2 {
     );
   }
 
+  async routeSignOut(page: Page, onSignOut: () => void) {
+    await page.route(`${this.baseURL}/auth/logout`, (route) => {
+      onSignOut();
+      return route.fulfill({ status: 303, headers: { location: '/' } });
+    });
+  }
+
   async close(page: Page) {
     await page.close();
     for (const stream of this.streams) stream.destroy();

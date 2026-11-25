@@ -428,6 +428,7 @@ dependencies = [
  "cma-allocator-qualification",
  "cma-am-auth",
  "cma-am-mongo-primitives",
+ "cma-am-reporting",
  "cma-qualification",
  "cma-service-auth",
  "cmaeg",
@@ -491,6 +492,22 @@ version = "0.1.0"
 dependencies = [
  "bson",
  "serde",
+]
+
+[[package]]
+name = "cma-am-reporting"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "layer2-core",
+ "mongodb",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2271,6 +2288,8 @@ dependencies = [
  "layer3-adapter",
  "metrics",
  "moka",
+ "num-bigint",
+ "num-rational",
  "quick-xml",
  "ring",
  "serde",

@@ -48,6 +48,9 @@ pub struct SandboxCustomRuntimeState {
 impl SandboxCustomRuntimeOrigin {
     pub fn capture(sandbox: &Sandbox) -> Result<Self, SandboxModelError> {
         sandbox.validate()?;
+        if sandbox.has_managed_runtime_image() {
+            return Err(invalid());
+        }
         let origin = Self {
             sandbox_id: sandbox.id.clone(),
             owner: sandbox.owner.clone(),
@@ -76,6 +79,9 @@ impl Sandbox {
     /// Callers handling persisted data must validate before using this fallback.
     /// A migration never rewrites the immutable profile's original custom pin.
     pub fn effective_custom_runtime_image(&self) -> Option<&str> {
+        if self.has_managed_desktop_image() {
+            return None;
+        }
         self.lifecycle
             .custom_runtime
             .as_ref()
@@ -88,6 +94,12 @@ impl Sandbox {
     /// changing the permanent pin or treating a queued target as source authority.
     pub fn custom_runtime_image_for_binding(&self) -> Result<Option<&str>, SandboxModelError> {
         self.validate_custom_runtime()?;
+        if self.has_managed_desktop_image() {
+            return Ok(self
+                .retained_runtime_binding()
+                .map(|binding| binding.runtime_version.as_str())
+                .or(self.profile.content.runtime_image.as_deref()));
+        }
         let Some(state) = self.lifecycle.custom_runtime.as_ref() else {
             return Ok(self.profile.content.runtime_image.as_deref());
         };
@@ -99,7 +111,7 @@ impl Sandbox {
     }
 
     pub(super) fn validate_custom_rotation(&self, target: &str) -> Result<(), SandboxModelError> {
-        if self.profile.content.runtime_image.is_none() {
+        if self.has_managed_runtime_image() {
             return Ok(());
         }
         self.validate_custom_runtime()?;

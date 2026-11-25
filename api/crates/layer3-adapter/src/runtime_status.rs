@@ -65,6 +65,8 @@ pub struct RuntimeStatus {
     /// The identified supervisor can install a generation-bound GitHub route.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exact_github_credential_route: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub github_repository_scope: bool,
     pub sandbox_id: String,
     pub generation: u64,
     pub home_identity: String,

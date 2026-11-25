@@ -102,6 +102,7 @@ impl Supervisor {
             agent_resource_preparation: false,
             agent_process_restart: false,
             exact_github_credential_route: false,
+            github_repository_scope: false,
             sandbox_id: request.sandbox_id.clone(),
             generation: request.generation,
             home_identity: request.home_identity.clone(),

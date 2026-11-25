@@ -1,4 +1,4 @@
-import { ProtocolError } from '../errors.js';
+import { ProtocolError, TransportError } from '../errors.js';
 import { MAX_AGENT_BYTES } from './schema.js';
 
 /** Bound raw bytes before UTF-8 decoding and parser buffering can accumulate an incomplete frame. */
@@ -30,6 +30,6 @@ export class AgentFrameBound {
     }
   }
   finish() {
-    if (this.frameContent) throw new ProtocolError('Agent stream closed inside a frame');
+    if (this.frameContent) throw new TransportError('Agent stream closed inside a frame');
   }
 }

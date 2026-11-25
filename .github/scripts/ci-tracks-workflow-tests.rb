@@ -234,6 +234,10 @@ mutations = [
   ->(d) { d['ci-rust']['jobs']['timing']['steps'] << d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }.dup },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['continue-on-error'] = true },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['run'].sub!('--test-threads 1', '--test-threads 2') },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'Enforce Gateway latency budgets' }['run'] += ' || true' },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'Enforce Gateway latency budgets' }['continue-on-error'] = true },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].reject! { |s| s['name'] == 'Gateway latency runner regressions' } },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s.dig('with', 'name').to_s.start_with?('cmaeg-latency-') }['with']['path'] = 'api/target/cmaeg-latency.txt' },
   ->(d) { d['ci'][true].delete('merge_group') },
   ->(d) { d['ci'][true]['merge_group']['types'] = ['destroyed'] },
   ->(d) { d['ci'][true]['merge_group']['branches'] = ['main'] },
@@ -247,17 +251,25 @@ mutations = [
   ->(d) { d['ci-repo']['jobs']['structure']['steps'].reject! { |s| s['name'] == 'Synthetic authority and observer regressions' } },
   ->(d) { d['ci-repo']['jobs']['structure']['if'] = 'false' },
   ->(d) { d['ci-repo']['jobs']['structure']['continue-on-error'] = true },
-  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-to') }['with']['cache-to'].sub!("|| ''", "|| 'type=gha'") },
-  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-to') }['with']['cache-to'].sub!('ignore-error=true,', '') },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-from') }['with']['cache-to'] = 'type=gha,mode=max' },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-from') }['with']['cache-from'].sub!("steps.layer-validate.outcome == 'success'", 'true') },
   ->(d) { d['ci-web']['jobs']['web']['steps'].find { |s| s['name'] == 'Restore npm download cache' }['uses'] = 'actions/cache@v4' },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Restore Trivy databases' }['with'].delete('restore-keys') },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['with'].delete('cache') },
   ->(d) { d['ci'][true].delete('push') },
+  ->(d) { d['ci'][true].delete('schedule') },
+  ->(d) { d['ci'][true]['workflow_dispatch'] = {'inputs' => {'commit' => {'type' => 'string'}}} },
   ->(d) { d['ci'][true]['push']['paths'] = ['web/**'] },
   ->(d) { d['ci-pr-repo'][true]['pull_request']['branches'].delete('main') },
   ->(d) { d['ci'][true]['push']['branches'].delete('tl/release/**') },
   ->(d) { d['ci'][true]['push']['branches'] << '**' },
-  ->(d) { d['ci']['concurrency']['group'] = 'ci-shared' },
+  ->(d) { d['ci']['concurrency']['group'] = 'ci-${{ github.workflow }}-${{ github.ref }}' },
+  # A suffix lets a dispatch at tl/release/v1 share the push group for tl/release/v1-verification.
+  ->(d) { d['ci']['concurrency']['group'] = "ci-${{ github.workflow }}-${{ github.ref }}${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '-verification' || '' }}" },
+  ->(d) { d['ci']['jobs']['repo'].delete('if') },
+  ->(d) { d['ci']['jobs']['changes'].delete('if') },
+  ->(d) { d['ci-images']['jobs']['images']['concurrency']['group'] = 'cma-develop-cache-readers' },
+  ->(d) { d['ci-images']['jobs']['images']['concurrency']['cancel-in-progress'] = true },
   ->(d) { d['ci']['jobs']['changes']['steps'].last['run'] = 'python3 -B .github/scripts/ci_tracks/selection.py' },
   ->(d) { d['ci']['jobs']['am']['if'] = 'false' },
   ->(d) { d['ci']['jobs']['eg']['if'] = 'false' },
@@ -303,8 +315,8 @@ mutations = [
   ->(d) { d['ci-rust']['jobs']['mongo-shards']['steps'].first['uses'] = 'actions/checkout@v5' },
   ->(d) { d['ci-rust']['jobs']['mongo-eg']['steps'].last['run'] = 'true' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Scan tested Omarchy image' }['with'].delete('cache') },
-  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].last['if'] = "success() && (#{OmarchyCIContract::CACHE_MISS})" },
-  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['cache-to'].sub!(OmarchyCIContract::CACHE_WRITE, OmarchyCIContract::CACHE_MISS) },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'] << {'uses' => 'actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830'} },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['cache-to'] = 'type=local,mode=min,dest=/tmp/omarchy' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['outputs'] = 'type=docker' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['build-args'].sub!('SOURCE_DATE_EPOCH=0', 'SOURCE_DATE_EPOCH=1') },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-cache-restore' }['if'] = "github.event_name == 'push'" },
@@ -421,7 +433,7 @@ mutations.concat([
   ->(d) { repo_jobs.call(d)['result']['needs'].delete('scanner-tests') },
   ->(d) { repo_jobs.call(d)['result']['steps'].last['run'] = 'true' }
 ])
-mutations.each do |mutate|
+(mutations + KeyProviderCIContract.mutations).each do |mutate|
   copy = Marshal.load(Marshal.dump(documents))
   mutate.call(copy)
   begin

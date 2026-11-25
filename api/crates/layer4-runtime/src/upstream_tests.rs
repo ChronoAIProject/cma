@@ -1,6 +1,7 @@
 use layer3_adapter::{CredentialFrame, RuntimeCredential};
 
 use super::*;
+use axum::http::HeaderMap;
 
 #[tokio::test]
 async fn model_credit_required_refuses_before_the_upstream_write() {
@@ -145,6 +146,7 @@ async fn model_proxy_strips_provider_routing_authority_before_upstream() {
         target: TargetBase::parse(&origin).unwrap(),
         credential,
         client: reqwest::Client::new(),
+        github_client: None,
         allowed_host: None,
         model_proxy: true,
         model_credit_required: false,
@@ -265,6 +267,117 @@ async fn only_model_proxy_repairs_tool_free_compaction_and_keeps_credential_boun
             assert!(response_body.contains("response protection is unavailable"));
             assert_eq!(received, original);
         }
+    }
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn selected_github_write_preserves_the_provider_scope_decision() {
+    use axum::{extract::OriginalUri, routing::post};
+    use layer3_adapter::{GithubCredentialRoute, GithubRepositoryScope, GithubRepositoryScopeNeed};
+    use tower::ServiceExt as _;
+
+    const SELECTED: &str = "05ceabf7-ad92-42d0-9be7-047aa3f869e7";
+    const REPAIR: &str = "https://console.example.test/keys/05ceabf7-ad92-42d0-9be7-047aa3f869e7";
+    const INDEPENDENT: &str = r#"{"message":"Forbidden","errors":[{"code":"branch_protection"}]}"#;
+    const RATE_LIMIT: &str = r#"{"message":"You have exceeded a secondary rate limit"}"#;
+    const SSO: &str = r#"{"message":"Forbidden"}"#;
+
+    let typed_refusal = serde_json::json!({
+        "code": "insufficient_scope",
+        "status": 403,
+        "detail": "public_repo",
+        "message": "GitHub connection requires public_repo for this repository write",
+        "connection_id": SELECTED,
+        "remediation_url": REPAIR,
+    })
+    .to_string();
+    let provider_typed_refusal = typed_refusal.clone();
+    let provider = Router::new().route(
+        "/api/v1/proxy/catalog/repos/example/project/git/refs",
+        post(move |OriginalUri(uri): OriginalUri, headers: HeaderMap| {
+            let typed_refusal = provider_typed_refusal.clone();
+            async move {
+                assert_eq!(headers[header::AUTHORIZATION], "Bearer proxy-fixture");
+                let query: Vec<_> =
+                    url::form_urlencoded::parse(uri.query().unwrap().as_bytes()).collect();
+                assert_eq!(query.len(), 2);
+                assert_eq!(query[1].0, "_nyxid_via");
+                assert_eq!(query[1].1, SELECTED);
+                let (body, content_type) = match query[0].1.as_ref() {
+                    "scope" => (typed_refusal, "application/problem+json"),
+                    "branch" => (INDEPENDENT.into(), "application/json"),
+                    "rate" => (RATE_LIMIT.into(), "application/json"),
+                    "sso" => (SSO.into(), "application/json"),
+                    other => panic!("unexpected fixture {other}"),
+                };
+                Response::builder()
+                    .status(StatusCode::FORBIDDEN)
+                    .header(header::CONTENT_TYPE, content_type)
+                    .header("x-oauth-scopes", "read:user")
+                    .header("x-accepted-oauth-scopes", "public_repo, repo")
+                    .header("x-github-request-id", "fixture")
+                    .header("x-ratelimit-remaining", "97")
+                    .body(Body::from(body))
+                    .unwrap()
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target = TargetBase::parse(&format!(
+        "http://{}/api/v1/proxy/s/api-github",
+        listener.local_addr().unwrap()
+    ))
+    .unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, provider).await.unwrap() });
+    let credential = CredentialHolder::new();
+    credential
+        .install(&CredentialFrame {
+            operation_id: "github-fixture".into(),
+            value: RuntimeCredential::new("proxy-fixture"),
+            custody_generation: Some(1),
+            github_route: Some(GithubCredentialRoute {
+                service_id: SELECTED.into(),
+                catalog_id: "catalog".into(),
+                other_services: vec![],
+                repository_scope: Some(GithubRepositoryScope {
+                    repository: "example/project".into(),
+                    required_scope: GithubRepositoryScopeNeed::PublicRepo,
+                    manage_url: REPAIR.into(),
+                }),
+            }),
+        })
+        .await
+        .unwrap();
+    let proxy = router(target, credential, Some("api.github.com"));
+    for (case, expected, content_type) in [
+        ("scope", typed_refusal.as_str(), "application/problem+json"),
+        ("branch", INDEPENDENT, "application/json"),
+        ("rate", RATE_LIMIT, "application/json"),
+        ("sso", SSO, "application/json"),
+    ] {
+        let response = proxy
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/repos/example/project/git/refs?case={case}"))
+                    .header(header::HOST, "api.github.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], content_type);
+        assert_eq!(response.headers()["x-oauth-scopes"], "read:user");
+        assert_eq!(
+            axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap(),
+            expected
+        );
     }
     server.abort();
     let _ = server.await;

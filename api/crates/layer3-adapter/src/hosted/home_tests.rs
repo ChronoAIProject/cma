@@ -239,6 +239,7 @@ async fn retained_runtime_without_github_route_support_receives_no_new_credentia
         github_route: Some(crate::GithubCredentialRoute {
             service_id: "repository-connection".into(),
             catalog_id: "github-catalog".into(),
+            repository_scope: None,
             other_services: Vec::new(),
         }),
     };

@@ -71,7 +71,7 @@ pub(super) async fn drain_while<T>(
     .map_err(|_| AdapterError::Unavailable("reopen output lifecycle lease expired".into()))?
 }
 
-pub(super) async fn drain<T>(
+pub(in crate::sandbox) async fn drain<T>(
     operation: impl Future<Output = layer3_adapter::Result<T>>,
     receiver: &mut mpsc::Receiver<ConversationUpdate>,
     recorder: &dyn AgentUpdateRecorder,

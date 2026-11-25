@@ -44,7 +44,8 @@ pub(crate) async fn prepare(
     let git = GitRunner::new(allow_local_git);
     let resolved_commit = async {
         match &request.source {
-            WorkspaceSource::RepositorySnapshot { .. } => {
+            WorkspaceSource::RepositorySnapshot { .. }
+            | WorkspaceSource::PublicRepositorySnapshot { .. } => {
                 return Err(RuntimeError::rejected(
                     "repository_connection_required",
                     "source snapshots require the credentialed workspace preparation path",

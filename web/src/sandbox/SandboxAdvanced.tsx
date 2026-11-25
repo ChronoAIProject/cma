@@ -78,6 +78,7 @@ export function SandboxAdvanced({
           sandboxId={sandbox.id}
           runtimeVersion={sandbox.runtimeVersion}
           update={sandbox.runtimeUpdate}
+          sandboxStatus={sandbox.status}
           copyable
         />
         {operation === undefined ? null : (

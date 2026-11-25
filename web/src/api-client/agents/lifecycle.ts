@@ -19,6 +19,11 @@ import {
   type Output,
 } from '../schema.js';
 
+export const githubRepositoryNeed = enumeration(
+  'public_repository_write',
+  'private_repository_read',
+);
+
 export const agentLifecycleCreateRequest = object({
   name: text,
   title_mode: optional(enumeration('automatic', 'named')),
@@ -29,7 +34,14 @@ export const agentLifecycleCreateRequest = object({
   workspace_id: optional(text),
   sandbox_id: optional(text),
   image: optional(object({ id: text, version: optional(text) })),
-  repository: optional(object({ url: text, ref: optional(text) })),
+  repository: optional(
+    object({
+      url: text,
+      ref: optional(text),
+      operation: optional(githubRepositoryNeed),
+      connection_id: optional(text),
+    }),
+  ),
   profile: optional(
     object({
       model: optional(text),
@@ -79,8 +91,23 @@ export const agentLifecycleFailure = object({
 });
 export type AgentLifecycleFailure = Output<typeof agentLifecycleFailure>;
 
-export const repositoryAccessRefusal = enumeration('verification_unavailable');
+export const repositoryAccessRefusal = enumeration(
+  'verification_unavailable',
+  'insufficient_scope',
+  'missing_connection',
+  'repository_unavailable',
+  'reference_unavailable',
+  'runtime_unsupported',
+);
 export type RepositoryAccessRefusal = Output<typeof repositoryAccessRefusal>;
+
+const repositoryScopeRepair = object({
+  connection_id: text,
+  operation: githubRepositoryNeed,
+  required_scope: enumeration('public_repo', 'repo'),
+  manage_url: text,
+});
+export type RepositoryScopeRepair = Output<typeof repositoryScopeRepair>;
 
 export const agentLifecycleOperation = object({
   callback_url: optional(nullable(text)),
@@ -101,6 +128,7 @@ export const agentLifecycleOperation = object({
       services: array(text),
       target: agentLifecycleConnectionTarget,
       repository_access: optional(repositoryAccessRefusal),
+      repository_scope_repair: optional(repositoryScopeRepair),
     }),
   ),
 });
@@ -126,6 +154,22 @@ export function readAgentLifecycle(config: ResolvedConfig, id: string, options: 
     `/api/v1/agent-lifecycle/${segment(id)}`,
     identity(agentLifecycleOperation, id),
     options,
+  );
+}
+
+export function cancelAgentLifecycle(
+  config: ResolvedConfig,
+  id: string,
+  options: OperationOptions,
+) {
+  return read(
+    config,
+    `/api/v1/agent-lifecycle/${segment(id)}/cancel`,
+    identity(agentLifecycleOperation, id),
+    {
+      ...options,
+      method: 'POST',
+    },
   );
 }
 

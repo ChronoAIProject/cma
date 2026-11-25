@@ -7,6 +7,7 @@ use layer2_core::sandbox_metrics::{
     },
     Range,
 };
+use mongodb::ClientSession;
 use mongodb::{
     bson::doc,
     options::{Hint, ReadConcern},
@@ -14,11 +15,11 @@ use mongodb::{
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, time::Duration};
 
-const MAX_ROWS: usize = 16_384;
+pub(super) const MAX_ROWS: usize = 16_384;
 const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Default)]
-struct Position {
+pub(super) struct Position {
     sample: Option<RetainedObservation>,
     conflicts: Vec<RetainedObservation>,
 }
@@ -48,6 +49,29 @@ impl MeasuredCapture {
             .snapshot(true)
             .await
             .map_err(|_| CaptureError::Unavailable)?;
+        let positions = match &self.indexed {
+            Some(indexed) => {
+                indexed
+                    .read_anchor(anchor, from_ms, to_ms, &mut session)
+                    .await?
+            }
+            None => self.read_positions(&mut session, row_limit).await?,
+        };
+        let snapshot = session.snapshot_time().ok_or(CaptureError::Unavailable)?;
+        let intervals = normalize(&positions, anchor, from_ms..to_ms)?;
+        Ok(json!({
+            "snapshot": {"seconds": snapshot.time, "increment": snapshot.increment},
+            "from_ms": from_ms,
+            "to_ms": to_ms,
+            "intervals": intervals.iter().map(encode_interval).collect::<Vec<_>>(),
+            "status": if intervals.is_empty() { "no_interval_coverage" } else { "preview" },
+        }))
+    }
+    pub(super) async fn read_positions(
+        &self,
+        session: &mut ClientSession,
+        row_limit: usize,
+    ) -> Result<BTreeMap<String, Position>, CaptureError> {
         let mut cursor = self
             .rows
             .find(doc! {})
@@ -57,10 +81,10 @@ impl MeasuredCapture {
             .batch_size(64)
             .max_time(Duration::from_secs(15))
             .read_concern(ReadConcern::snapshot())
-            .session(&mut session)
+            .session(&mut *session)
             .await
             .map_err(|_| CaptureError::Unavailable)?;
-        let mut stream = cursor.stream(&mut session);
+        let mut stream = cursor.stream(&mut *session);
         let mut positions = BTreeMap::new();
         let mut count = 0;
         let mut payload_bytes = 0;
@@ -78,19 +102,14 @@ impl MeasuredCapture {
             retain(&mut positions, &row)?;
         }
         drop(stream);
-        let snapshot = session.snapshot_time().ok_or(CaptureError::Unavailable)?;
-        let intervals = normalize(&positions, anchor, from_ms..to_ms)?;
-        Ok(json!({
-            "snapshot": {"seconds": snapshot.time, "increment": snapshot.increment},
-            "from_ms": from_ms,
-            "to_ms": to_ms,
-            "intervals": intervals.iter().map(encode_interval).collect::<Vec<_>>(),
-            "status": if intervals.is_empty() { "no_interval_coverage" } else { "preview" },
-        }))
+        Ok(positions)
     }
 }
 
-fn retain(positions: &mut BTreeMap<String, Position>, row: &Document) -> Result<(), CaptureError> {
+pub(super) fn retain(
+    positions: &mut BTreeMap<String, Position>,
+    row: &Document,
+) -> Result<(), CaptureError> {
     let physical = row
         .get_str("physical_sample_id")
         .map_err(|_| CaptureError::Corrupt)?;
@@ -120,12 +139,7 @@ fn normalize(
         .ok_or(CaptureError::Unavailable)?;
     let mut selected = Vec::new();
     for position in positions.values() {
-        let sample = position.sample.as_ref().ok_or(CaptureError::Corrupt)?;
-        if position.conflicts.iter().any(|other| {
-            sample.verify_retained_replay(other) != Err(EvidenceError::ConflictingObservation)
-        }) {
-            return Err(CaptureError::Corrupt);
-        }
+        let sample = valid_position(position)?;
         if window.contains(&sample.timestamp_ms())
             && anchor
                 .shares_physical_series(sample)
@@ -139,6 +153,32 @@ fn normalize(
         }
     }
     normalize_series(&selected).map_err(|_| CaptureError::Corrupt)
+}
+
+fn valid_position(position: &Position) -> Result<&RetainedObservation, CaptureError> {
+    let sample = position.sample.as_ref().ok_or(CaptureError::Corrupt)?;
+    if position.conflicts.iter().any(|other| {
+        sample.verify_retained_replay(other) != Err(EvidenceError::ConflictingObservation)
+    }) {
+        return Err(CaptureError::Corrupt);
+    }
+    Ok(sample)
+}
+
+pub(super) fn custody_samples(
+    positions: &BTreeMap<String, Position>,
+) -> Result<Vec<CustodySample<'_>>, CaptureError> {
+    positions
+        .values()
+        .map(|position| {
+            let sample = valid_position(position)?;
+            Ok(if position.conflicts.is_empty() {
+                CustodySample::Undisputed(sample)
+            } else {
+                CustodySample::Disputed(sample)
+            })
+        })
+        .collect()
 }
 
 fn encode_interval(interval: &MeasuredInterval) -> Value {

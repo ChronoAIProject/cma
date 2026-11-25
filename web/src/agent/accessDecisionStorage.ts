@@ -1,9 +1,14 @@
-import { validAccessServices } from './accessRequests';
+import {
+  validAccessServices,
+  validGithubConnectionApproval,
+  type GithubConnectionApproval,
+} from './accessRequests';
 
 export interface AccessDecision {
   readonly key: string;
   readonly action: 'approve' | 'deny';
   readonly services: readonly string[];
+  readonly githubConnection?: GithubConnectionApproval;
 }
 export function accessDecisionStorageKey(owner: string, agentId: string, requestId: string) {
   return `cma:agent-access:${JSON.stringify([location.origin, owner, agentId, requestId])}`;
@@ -26,7 +31,9 @@ export function loadAccessDecision(
       !['approve', 'deny'].includes(intent.action) ||
       !Array.isArray(intent.services) ||
       (intent.action === 'approve' && !validAccessServices(intent.services)) ||
-      (intent.action === 'deny' && intent.services.length !== 0)
+      (intent.action === 'deny' && intent.services.length !== 0) ||
+      (intent.githubConnection !== undefined &&
+        (intent.action !== 'approve' || !validGithubConnectionApproval(intent.githubConnection)))
     )
       throw new Error();
     return { intent };

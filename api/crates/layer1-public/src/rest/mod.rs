@@ -66,6 +66,7 @@ mod agent_worktree_recovery;
 mod dependency_diagnostics;
 mod message_feedback;
 mod message_feedback_reasons;
+mod owner_agent_restart;
 mod suggestion_shapes;
 mod suggestions;
 pub use agent_channel_usage::agent_channel_usage_router;
@@ -181,6 +182,7 @@ pub(crate) mod instances_problem;
 mod instances_tests;
 mod launch_events;
 mod launch_quota;
+mod launch_subject;
 mod launches;
 mod public_names;
 mod sandbox_always_on;
@@ -212,7 +214,7 @@ pub use agent_lifecycle::{
     AgentLifecycleOperationReadError, AgentLifecycleOperationReader, AgentLifecycleOperationView,
     AgentLifecyclePermissions, AgentLifecycleProfile, AgentLifecycleProvisioner,
     AgentLifecycleProvisioningError, AgentLifecycleRepository, AgentLifecycleSkill,
-    AgentLifecycleTitleMode, RepositoryAccessRefusal,
+    AgentLifecycleTitleMode, GitHubRepositoryNeed, RepositoryAccessRefusal, RepositoryScopeRepair,
 };
 pub use agent_source::agent_source_router;
 pub use agents::{

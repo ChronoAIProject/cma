@@ -58,7 +58,7 @@ describe('public visitor admission', () => {
       placement_id: route.placementId,
     });
     const test = setup(auth(signedIn), client);
-    await waitFor(() => expect(test.client.requests.createOrResume).toHaveBeenCalledOnce());
+    await waitFor(() => expect(test.client.requests.createOrResumeBound).toHaveBeenCalledOnce());
     expect(client.requests.entryIntent).toHaveBeenCalledOnce();
     expect(test.navigate).toHaveBeenCalledWith(
       { kind: 'launch', launchId: PUBLIC_RECORD.id },
@@ -78,7 +78,7 @@ describe('public visitor admission', () => {
       placement_id: route.placementId,
     });
     const test = setup(auth({ status: 'anonymous' }, signedIn), client);
-    await waitFor(() => expect(client.requests.createOrResume).toHaveBeenCalledOnce());
+    await waitFor(() => expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce());
     expect(test.provider.signIn).toHaveBeenCalledOnce();
     expect(test.provider.signIn).toHaveBeenCalledWith(path, undefined);
     expect(client.requests.entryIntent).toHaveBeenCalledOnce();
@@ -95,7 +95,7 @@ describe('public visitor admission', () => {
       vi.mocked(client.requests.entryIntent).mockResolvedValue(entry);
       setup(auth(signedIn), client);
       await waitFor(() => expect(client.requests.entryIntent).toHaveBeenCalledOnce());
-      expect(client.requests.createOrResume).not.toHaveBeenCalled();
+      expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
       expect(await screen.findByRole('button', { name: 'Open in CMA' })).toBeInTheDocument();
     },
   );
@@ -113,13 +113,13 @@ describe('public visitor admission', () => {
     setup(auth(signedIn), client);
     expect(await screen.findByRole('button', { name: 'Open in CMA' })).toBeInTheDocument();
     expect(client.requests.entryIntent).not.toHaveBeenCalled();
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
   });
 
   it('does not start work from a GET or a signed-in session without a button intent', async () => {
     const test = setup();
     expect(await screen.findByRole('heading', { name: PUBLIC_PREVIEW.title })).toBeInTheDocument();
-    expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(test.client.requests.createOrResumeBound).not.toHaveBeenCalled();
   });
 
   it('saves explicit anonymous intent, signs in, and continues once with the exact body and key', async () => {
@@ -140,8 +140,8 @@ describe('public visitor admission', () => {
     const test = setup(auth({ status: 'anonymous' }, signedIn));
     await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
     expect(test.provider.signIn).toHaveBeenCalledWith(path, undefined);
-    await waitFor(() => expect(test.client.requests.createOrResume).toHaveBeenCalledOnce());
-    expect(test.client.requests.createOrResume).toHaveBeenCalledWith(
+    await waitFor(() => expect(test.client.requests.createOrResumeBound).toHaveBeenCalledOnce());
+    expect(test.client.requests.createOrResumeBound).toHaveBeenCalledWith(
       'public-example',
       {
         placement_id: 'plc_readme',
@@ -149,7 +149,7 @@ describe('public visitor admission', () => {
         start_if_ready: true,
         choice: undefined,
       },
-      { idempotencyKey: expect.any(String) },
+      { idempotencyKey: expect.any(String), expectedSubject: PUBLIC_USER.id },
     );
     expect(test.navigate).toHaveBeenCalledWith(
       { kind: 'launch', launchId: PUBLIC_RECORD.id },
@@ -183,23 +183,28 @@ describe('public visitor admission', () => {
     expect(test.provider.signIn).toHaveBeenCalledWith(path, { screen: 'register' });
     expect(readIntent(path)).toMatchObject({ submitted: false, publicId: route.publicId });
     expect(screen.getByText('Ask your project owner for an invitation.')).toBeInTheDocument();
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
   });
 
   it('returns from OAuth with a saved intent and makes only one POST under StrictMode', async () => {
     const intent = createIntent(route);
     const test = setup();
-    await waitFor(() => expect(test.client.requests.createOrResume).toHaveBeenCalledOnce());
-    expect(test.client.requests.createOrResume).toHaveBeenCalledWith(route.publicId, intent.body, {
-      idempotencyKey: intent.key,
-    });
+    await waitFor(() => expect(test.client.requests.createOrResumeBound).toHaveBeenCalledOnce());
+    expect(test.client.requests.createOrResumeBound).toHaveBeenCalledWith(
+      route.publicId,
+      intent.body,
+      {
+        idempotencyKey: intent.key,
+        expectedSubject: PUBLIC_USER.id,
+      },
+    );
   });
 
   it('clears the saved intent after a settled quota refusal and starts again with a fresh key', async () => {
     const resetAt = '2026-11-13T00:00:00Z';
     const intent = createIntent(route);
     const client = publicClient();
-    vi.mocked(client.requests.createOrResume)
+    vi.mocked(client.requests.createOrResumeBound)
       .mockRejectedValueOnce(
         new ApiError(429, 'unsafe Launch resource_quota', 'resource_quota', undefined, undefined, {
           resource: 'visitor_launches',
@@ -218,12 +223,12 @@ describe('public visitor admission', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(formatted);
     expect(readIntent(path)).toBeUndefined();
-    expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+    expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
     expect(test.navigate).not.toHaveBeenCalled();
 
     await test.user.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(test.navigate).toHaveBeenCalled());
-    const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+    const calls = vi.mocked(client.requests.createOrResumeBound).mock.calls;
     expect(calls).toHaveLength(2);
     expect(calls[0]?.[2].idempotencyKey).toBe(intent.key);
     expect(calls[1]?.[2].idempotencyKey).not.toBe(intent.key);
@@ -232,7 +237,7 @@ describe('public visitor admission', () => {
 
   it('discards a credential recovery intent after a settled quota refusal without automatically resubmitting', async () => {
     const client = publicClient();
-    vi.mocked(client.requests.createOrResume)
+    vi.mocked(client.requests.createOrResumeBound)
       .mockRejectedValueOnce(
         new ApiError(409, 'Sign in again.', 'sandbox_credential_setup_required'),
       )
@@ -267,18 +272,18 @@ describe('public visitor admission', () => {
     await test.user.click(await screen.findByRole('button', { name: 'Sign in to CMA' }));
     await test.user.click(screen.getByRole('button', { name: 'Check signed-in account' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Open in CMA' })).toBeEnabled());
-    expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+    expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
 
     await test.user.click(screen.getByRole('button', { name: 'Open in CMA' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('daily allowance');
     expect(readIntent(path)).toBeUndefined();
     await act(async () => undefined);
-    expect(client.requests.createOrResume).toHaveBeenCalledTimes(2);
+    expect(client.requests.createOrResumeBound).toHaveBeenCalledTimes(2);
     expect(test.navigate).not.toHaveBeenCalled();
 
     await test.user.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(test.navigate).toHaveBeenCalledOnce());
-    const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+    const calls = vi.mocked(client.requests.createOrResumeBound).mock.calls;
     expect(calls).toHaveLength(3);
     expect(calls[1]?.[2].idempotencyKey).not.toBe(calls[0]?.[2].idempotencyKey);
     expect(calls[2]?.[2].idempotencyKey).not.toBe(calls[1]?.[2].idempotencyKey);
@@ -299,7 +304,7 @@ describe('public visitor admission', () => {
         settleEntry = resolve;
       });
       vi.mocked(client.requests.entryIntent).mockReturnValue(entry);
-      vi.mocked(client.requests.createOrResume)
+      vi.mocked(client.requests.createOrResumeBound)
         .mockRejectedValueOnce(
           new ApiError(429, 'Daily allowance used.', 'resource_quota', undefined, undefined, {
             resource: 'visitor_launches',
@@ -315,13 +320,13 @@ describe('public visitor admission', () => {
 
       expect(await screen.findByRole('alert')).toHaveTextContent('daily allowance');
       await act(async () => settleEntry({ accepted: true, placement_id: route.placementId }));
-      expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+      expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
       expect(readIntent(path)).toBeUndefined();
       expect(test.navigate).not.toHaveBeenCalled();
 
       await test.user.click(screen.getByRole('button', { name: 'Try again' }));
       await waitFor(() => expect(test.navigate).toHaveBeenCalledOnce());
-      const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+      const calls = vi.mocked(client.requests.createOrResumeBound).mock.calls;
       expect(calls).toHaveLength(2);
       expect(calls[1]?.[2].idempotencyKey).not.toBe(calls[0]?.[2].idempotencyKey);
     },
@@ -338,7 +343,7 @@ describe('public visitor admission', () => {
     async (status, code, extensions) => {
       const intent = createIntent(route);
       const client = publicClient();
-      vi.mocked(client.requests.createOrResume)
+      vi.mocked(client.requests.createOrResumeBound)
         .mockRejectedValueOnce(
           new ApiError(status, 'Unknown', code, undefined, undefined, extensions),
         )
@@ -356,7 +361,7 @@ describe('public visitor admission', () => {
 
       await test.user.click(screen.getByRole('button', { name: 'Try again' }));
       await waitFor(() => expect(test.navigate).toHaveBeenCalled());
-      const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+      const calls = vi.mocked(client.requests.createOrResumeBound).mock.calls;
       expect(calls).toHaveLength(2);
       expect(calls[1]).toEqual(calls[0]);
     },
@@ -366,7 +371,7 @@ describe('public visitor admission', () => {
     'submits the explicit repeat %s choice with a fresh key',
     async (choice) => {
       const client = publicClient();
-      vi.mocked(client.requests.createOrResume)
+      vi.mocked(client.requests.createOrResumeBound)
         .mockRejectedValueOnce(
           new ApiError(409, 'Choose', 'trigger_repeat_choice_required', undefined, undefined, {
             existing: {
@@ -386,7 +391,7 @@ describe('public visitor admission', () => {
         }),
       );
       await waitFor(() => expect(test.navigate).toHaveBeenCalled());
-      const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+      const calls = vi.mocked(client.requests.createOrResumeBound).mock.calls;
       expect(calls).toHaveLength(2);
       expect(calls[1]?.[1].choice).toBe(choice);
       expect(calls[1]?.[2].idempotencyKey).not.toBe(calls[0]?.[2].idempotencyKey);
@@ -397,7 +402,7 @@ describe('public visitor admission', () => {
     'preserves body and key after uncertain admission %s',
     async (code) => {
       const client = publicClient();
-      vi.mocked(client.requests.createOrResume)
+      vi.mocked(client.requests.createOrResumeBound)
         .mockRejectedValueOnce(
           code === 'transport' ? new Error('offline') : new ApiError(409, 'Unknown', code),
         )
@@ -406,7 +411,7 @@ describe('public visitor admission', () => {
       await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
       await test.user.click(await screen.findByRole('button', { name: 'Try again' }));
       await waitFor(() => expect(test.navigate).toHaveBeenCalled());
-      const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+      const calls = vi.mocked(client.requests.createOrResumeBound).mock.calls;
       expect(calls[1]).toEqual(calls[0]);
     },
   );
@@ -423,7 +428,7 @@ describe('public visitor admission', () => {
       await screen.findByText('This agent is no longer available from this page.'),
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open in CMA' })).not.toBeInTheDocument();
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
   });
 
   it("does not auto-start expired intent or another viewer's submitted intent", async () => {
@@ -435,6 +440,6 @@ describe('public visitor admission', () => {
     const test = setup();
     await screen.findByRole('heading', { name: PUBLIC_PREVIEW.title });
     await act(async () => undefined);
-    expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(test.client.requests.createOrResumeBound).not.toHaveBeenCalled();
   });
 });

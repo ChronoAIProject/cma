@@ -86,7 +86,10 @@ function publication(entry, proof, journal, visitor, managed) {
   owned(journal, proof.run, 'sandboxes', launch.sandboxId, visitor);
   owned(journal, proof.run, 'agents', launch.agentId, visitor);
   assert.equal(entry.commands.length, 1);
-  command(entry.commands[0], `/api/v1/triggers/public/${entry.publicId}/launches`);
+  const launchPath = entry.commands[0].path;
+  assert.ok(['v1', 'v2'].some((version) =>
+    launchPath === `/api/${version}/triggers/public/${entry.publicId}/launches`));
+  command(entry.commands[0], launchPath);
   const before = stats(entry.stats.before, entry.placementId);
   const after = stats(entry.stats.after, entry.placementId);
   for (let index = 0; index < before.length; index++)

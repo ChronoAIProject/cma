@@ -56,6 +56,7 @@ pub struct ManagementState {
     /// Providers whose existing-Agent original-media continuation path is ready.
     pub custom_existing_agent_media_providers: BTreeSet<String>,
     pub multi_consumer_writes_enabled: bool,
+    pub profile_revisions_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
     pub lark_resource_writes_enabled: bool,
@@ -219,6 +220,7 @@ impl ManagementState {
             custom_durable_execution_enabled: false,
             custom_existing_agent_media_providers: BTreeSet::new(),
             multi_consumer_writes_enabled: false,
+            profile_revisions_enabled: false,
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,
             lark_resource_writes_enabled: false,
@@ -283,6 +285,7 @@ pub enum ManagementError {
     Provider(ProviderError),
     Record(RecordError),
     NotFound,
+    CreationPending,
     Conflict {
         expected: u64,
         actual: Option<u64>,
@@ -304,6 +307,7 @@ impl fmt::Display for ManagementError {
             Self::Provider(error) => write!(formatter, "{error}"),
             Self::Record(error) => write!(formatter, "{error}"),
             Self::NotFound => formatter.write_str("channel was not found"),
+            Self::CreationPending => formatter.write_str(super::creation::PENDING_DETAIL),
             Self::Conflict { expected, actual } => {
                 write!(
                     formatter,
@@ -361,6 +365,8 @@ pub struct RecordedChannel {
     pub version: u64,
     /// The sealed record's size, against CMA's 64 KiB record limit.
     pub record_bytes: usize,
+    /// The admitted version of an owner-retired incomplete channel.
+    pub retirement_expected_version: Option<u64>,
     /// Whether the definition passes this image's reader rules.
     pub valid: bool,
 }

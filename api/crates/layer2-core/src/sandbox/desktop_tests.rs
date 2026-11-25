@@ -20,7 +20,15 @@ async fn desktop_fixture(
     bound: bool,
     agent_status: AgentStatus,
 ) -> DesktopService {
-    let store = Arc::new(store::InMemorySandboxStore::default());
+    desktop_service(
+        desktop_sandbox(machine, status, bound),
+        isolated,
+        agent_status,
+    )
+    .await
+}
+
+fn desktop_sandbox(machine: bool, status: SandboxStatus, bound: bool) -> Sandbox {
     let mut root = sandbox();
     root.status = status;
     if machine {
@@ -40,6 +48,18 @@ async fn desktop_fixture(
         provision_generation: Some(1),
         bound_at: NOW.into(),
     });
+    if bound {
+        root.lifecycle.runtime_generation_high_water = 1;
+    }
+    root
+}
+
+async fn desktop_service(
+    root: Sandbox,
+    isolated: bool,
+    agent_status: AgentStatus,
+) -> DesktopService {
+    let store = Arc::new(store::InMemorySandboxStore::default());
     store.create_sandbox(root).await.unwrap();
     store.create_workspace(workspace()).await.unwrap();
     store.create_worktree(worktree()).await.unwrap();

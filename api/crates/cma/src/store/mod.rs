@@ -24,6 +24,7 @@ mod agent_control_store;
 mod agent_control_transaction;
 mod agent_conversation_store;
 mod agent_failure_pacing;
+pub(crate) mod agent_inspection_park;
 mod agent_lifecycle_operations;
 pub(crate) use agent_lifecycle_operations::released::managed_lifecycle_release_lane;
 mod agent_log;
@@ -76,6 +77,7 @@ pub(crate) mod bots;
 #[cfg(test)]
 mod bots_mongo_integration_tests;
 mod budget;
+pub(crate) use budget::inventory as turn_budget_inventory;
 mod channel_storage_retention;
 mod checkpoint_capture;
 mod checkpoint_objects;
@@ -207,6 +209,7 @@ mod settings_barrier;
 pub(crate) mod settings_defaults;
 mod shared_child_capacity;
 mod suggestions;
+pub(crate) mod task_audit;
 mod trigger_definitions;
 mod trigger_first_messages;
 mod warm_sandboxes;
@@ -238,7 +241,8 @@ pub(crate) use agent_lifecycle_operations::canary_key;
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
     CanaryProfiles, CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput,
-    LifecycleLease, MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
+    LifecycleLease, MongoAgentLifecycleStore, PublicRepositoryPin, RepositoryAccessPin,
+    DISCOVERY_BATCH, HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};

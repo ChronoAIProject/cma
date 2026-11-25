@@ -117,8 +117,8 @@ function TaskHomeContent({
   const canCreate = Boolean(viewerId && (workspaceId || sandboxId || canCreateSandbox));
   const machineIncludedAvailable = Boolean(viewerId && !contextual && canCreateSandbox);
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
-  const connections = useConnectionGate(Boolean(viewerId), client);
   const { intent, operation } = lifecycle;
+  const connections = useConnectionGate(!!viewerId, client, undefined, !!intent?.body.repository);
   const preparationDraft = usePreparationDraft(
     client,
     viewerId && intent
@@ -441,7 +441,7 @@ function TaskHomeContent({
       {viewerId && lifecycle.connection?.repository_access ? (
         <RepositoryConnectionRepair
           owner={viewerId}
-          target={lifecycle.connection.target}
+          {...lifecycle.connection}
           pending={lifecycle.pending || lifecycle.blocked}
           onRecheck={() => void lifecycle.submit()}
         />

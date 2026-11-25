@@ -48,6 +48,7 @@ pub(super) async fn advance_agent(
             .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
     };
     owner_stop::fence_live_lease(&mut filter, mutation);
+    restart_ready::fence_live_lease(&mut filter, current);
     let advanced = store
         .agents
         .update_one(filter, doc! { "$set": fields })

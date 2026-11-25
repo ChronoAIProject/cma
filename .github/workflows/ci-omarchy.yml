@@ -1,6 +1,10 @@
 name: "Runtime Omarchy"
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      staging_lane_changed:
+        default: false
+        type: boolean
   push:
     branches: [develop]
     # Keep this list aligned with the pinned dependency stage, which defines the archive key.
@@ -26,6 +30,7 @@ on:
       - api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch
 permissions:
   contents: "read"
+  actions: "read"
   issues: "read"
 jobs:
   omarchy:
@@ -38,6 +43,7 @@ jobs:
     timeout-minutes: 150
     permissions:
       contents: "read"
+      actions: "read"
       issues: "read"
     steps:
       -
@@ -89,15 +95,30 @@ jobs:
         with:
           cache-binary: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
       -
+        name: "Load the exact finalized staging image"
+        id: staging-image
+        if: >-
+          vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true' && github.event_name == 'push' &&
+          github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma' &&
+          (inputs.staging_lane_changed || github.workflow == 'Runtime Omarchy')
+        timeout-minutes: 32
+        env:
+          IMAGE_COMPONENT: "runtime-omarchy"
+          GH_TOKEN: ${{ github.token }}
+        run: "python3 -B .github/scripts/ci_staging_image.py"
+      -
         name: "Set immutable Omarchy image version"
+        if: "steps.staging-image.outputs.adopted != 'true'"
         id: "identity"
         run: "echo \"version=git-${GITHUB_SHA:0:12}\" >> \"$GITHUB_OUTPUT\""
       -
         name: "Identify pinned Omarchy dependency cache"
+        if: "steps.staging-image.outputs.adopted != 'true'"
         id: "cache"
         run: "python3 .github/scripts/omarchy-cache-key.py \"$RUNNER_TEMP/omarchy-evidence/cache-inputs.json\" >> \"$GITHUB_OUTPUT\""
       -
         name: "Restore complete Omarchy layer cache"
+        if: "steps.staging-image.outputs.adopted != 'true'"
         id: "omarchy-cache-restore"
         uses: "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830"
         timeout-minutes: 5
@@ -108,14 +129,35 @@ jobs:
           fail-on-cache-miss: false
       -
         name: "Discard incomplete Omarchy cache restore"
-        if: "steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true'"
+        if: "steps.staging-image.outputs.adopted != 'true' && (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true')"
         run: "rm -rf \"$RUNNER_TEMP/omarchy-layer-cache\""
       -
         name: "Resolve OS security refresh key"
+        if: "steps.staging-image.outputs.adopted != 'true'"
         id: "os-refresh"
         run: "python3 .github/scripts/os_refresh_key.py runtime-omarchy api/crates/layer4-runtime/Dockerfile \"${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\" >> \"$GITHUB_OUTPUT\""
+      - name: Restore bounded layer archive
+        id: layer-restore
+        if: steps.staging-image.outputs.adopted != 'true' && vars.CMA_BOUNDED_LAYER_CACHE == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ${{ runner.temp }}/cma-layer-cache/archive.tar
+            ${{ runner.temp }}/cma-layer-cache/replay.json
+          key: cma-layer-archive-v1-runtime-omarchy--${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: cma-layer-archive-v1-runtime-omarchy--
+          fail-on-cache-miss: false
+      - name: Validate restored layer archive
+        id: layer-validate
+        if: steps.layer-restore.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: python3 -B .github/scripts/buildkit_cache_archive.py restore "$RUNNER_TEMP/cma-layer-cache/restored" "$RUNNER_TEMP/cma-layer-cache/archive.tar"
       -
         name: "Build current-source Omarchy image"
+        if: "steps.staging-image.outputs.adopted != 'true'"
         id: "build"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
         with:
@@ -136,7 +178,7 @@ jobs:
             SOURCE_DATE_EPOCH=0
           cache-from: |
             ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
-          cache-to: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true') && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}"
+            ${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}
       -
         name: "Release Omarchy build cache before image checks"
         run: |
@@ -233,7 +275,7 @@ jobs:
         run: "python3 -B .github/scripts/image_vulnerability_gate.py --component runtime-omarchy --report \"$RUNNER_TEMP/omarchy-evidence/vulnerabilities.json\" --base \"$BASE_SHA\""
       -
         name: "Retain Omarchy image evidence"
-        if: "always() && steps.build.outcome == 'success'"
+        if: "always() && (steps.build.outcome == 'success' || steps.staging-image.outputs.adopted == 'true')"
         uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
         with:
           name: "omarchy-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}"
@@ -242,7 +284,7 @@ jobs:
           retention-days: 90
       -
         name: "Export tested Omarchy image"
-        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "steps.staging-image.outputs.adopted != 'true' && (success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository))"
         timeout-minutes: 31
         env:
           OMARCHY_SCAN_STARTED: "${{ steps.omarchy-scan-start.outputs.ready }}"
@@ -255,7 +297,7 @@ jobs:
           fi
       -
         name: "Retain tested Omarchy image"
-        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "steps.staging-image.outputs.adopted != 'true' && (success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository))"
         timeout-minutes: 10
         uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
         with:
@@ -264,12 +306,3 @@ jobs:
           if-no-files-found: "error"
           compression-level: 0
           retention-days: 1
-      -
-        name: "Save qualified Omarchy layer cache"
-        if: "success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true')"
-        uses: "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830"
-        timeout-minutes: 5
-        continue-on-error: true
-        with:
-          path: "${{ runner.temp }}/omarchy-layer-cache"
-          key: "omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}"

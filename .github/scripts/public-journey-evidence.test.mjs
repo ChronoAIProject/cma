@@ -4,6 +4,31 @@ import { validateCampaign, requiredCases } from './staging-authority.mjs';
 import { currentJourneyCases } from './public-journey-evidence.mjs';
 import { campaignFixture } from './public-journey-evidence.fixture.mjs';
 
+for (const version of ['v1', 'v2']) test(`audits exact ${version} Launch routes for both journeys`, () => {
+  const { results, journal } = campaignFixture(requiredCases);
+  for (const row of results.cases) {
+    const entries = row.proof?.publications ?? (row.proof?.bootstrap ? [row.proof.bootstrap] : []);
+    for (const entry of entries)
+      entry.commands[0].path = `/api/${version}/triggers/public/${entry.publicId}/launches`;
+  }
+  validateCampaign(results, journal);
+});
+
+for (const [name, change] of [
+  ['unsupported version', (command, id) => { command.path = `/api/v3/triggers/public/${id}/launches`; }],
+  ['foreign public id', (command) => { command.path = '/api/v2/triggers/public/foreign/launches'; }],
+  ['extra suffix', (command) => { command.path += '/extra'; }],
+  ['query', (command) => { command.path += '?ignored=true'; }],
+  ['read method', (command) => { command.method = 'GET'; }],
+  ['missing key hash', (command) => { delete command.keyHash; }],
+]) test(`bound Launch route still rejects ${name}`, () => {
+  const { results, journal } = campaignFixture(requiredCases);
+  const entry = results.cases.find((row) => row.case === currentJourneyCases.j5).proof.publications[0];
+  entry.commands[0].path = `/api/v2/triggers/public/${entry.publicId}/launches`;
+  change(entry.commands[0], entry.publicId);
+  assert.throws(() => validateCampaign(results, journal));
+});
+
 test('current campaign has 33 distinct cases including independent historical compatibility', () => {
   assert.equal(requiredCases.length, 33);
   assert.equal(new Set(requiredCases).size, 33);

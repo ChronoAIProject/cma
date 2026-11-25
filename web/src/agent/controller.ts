@@ -4,7 +4,7 @@ import {
   useHistoryRetry,
   retainCurrentMetadata,
 } from './historyPublication';
-import { controlBaselineReady, responseControlAvailability } from './controlReadiness';
+import * as controlReadiness from './controlReadiness';
 import { observeRead } from './transport/readObserver';
 import { retrySchedule } from './transport/readRetry';
 import { useAgentTitle } from './useAgentTitle';
@@ -28,6 +28,7 @@ import {
 } from './transport/approvalProjectionObserver';
 import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
+import { lifecycleCommands } from './lifecycleCommands';
 import { useAgentActionError, useAgentIdentityChange } from './actionError';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedInputs } from './transport/queuedInputsStatus';
@@ -253,7 +254,7 @@ export function useAgentController(
   const historyLoading =
     state.status === 'ready' && state.detail.id === agentId && state.historyLoading === true;
   const historyIncomplete = historyLoading || historyUnavailable;
-  const controlReady = controlBaselineReady(state, agentId, suspended);
+  const controlReady = controlReadiness.controlBaselineReady(state, agentId, suspended);
   const v2 =
     !suspended && state.status === 'ready' && state.detail.id === agentId ? state.v2 : undefined;
   useHistoryRetry({
@@ -378,7 +379,7 @@ export function useAgentController(
     };
   }, [agentId, client, options.viewerId, suspended]);
   const applyAgentTitle = useAgentTitle(agentId, setState);
-  const { run, command, recoverPending } = useAgentActions({
+  const { run, command, recoverPending, initialSend } = useAgentActions({
     agentId: suspended ? undefined : agentId,
     client,
     historyIncomplete: historyIncomplete || suspended,
@@ -426,24 +427,14 @@ export function useAgentController(
       ? state.conversation.messages
       : undefined,
   );
-  const interruptTurn = (strict: boolean) =>
-    command(
-      'interrupt',
-      (id, key, signal) => client.interruptAgent(id, { idempotencyKey: key, signal }),
-      strict,
-    );
   return {
     retained,
     ...retainedInputs,
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
     controlNotice,
     controlBaselineReady: controlReady,
-    responseControls: responseControlAvailability(state, agentId, suspended),
-    controlsUnavailable:
-      suspended ||
-      (v2 !== undefined &&
-        state.status === 'ready' &&
-        state.conversation.responseBinding === undefined),
+    responseControls: controlReadiness.responseControlAvailability(state, agentId, suspended),
+    controlsUnavailable: controlReadiness.controlsUnavailable(state, v2 !== undefined, suspended),
     recoverPending: v2 === undefined && legacy === undefined ? undefined : recoverPending,
     state: presented,
     inputAvailability: accessCheckedInputAvailability(inputAvailability, suspended),
@@ -452,6 +443,7 @@ export function useAgentController(
       : resourceAvailability,
     progressObservation,
     pending,
+    initialSendPending: pending === 'send' && initialSend,
     actionError: actionError ?? streamError,
     reload,
     refreshDetail,
@@ -473,13 +465,6 @@ export function useAgentController(
         : (content, onAccepted, onReceiptObserved, onRefused, onOrdinaryInput) =>
             run(content, onAccepted, onReceiptObserved, onRefused, 'interrupt', onOrdinaryInput),
     approve: (approvalId, decision) => run({ id: approvalId, decision }),
-    interruptForControl: () => interruptTurn(true),
-    interrupt: () => interruptTurn(false),
-    stop: () =>
-      command('stop', (id, key, signal) => client.stopAgent(id, { idempotencyKey: key, signal })),
-    delete: () =>
-      command('delete', (id, key, signal) =>
-        client.deleteAgent(id, { idempotencyKey: key, signal }),
-      ),
+    ...lifecycleCommands(client, command),
   };
 }

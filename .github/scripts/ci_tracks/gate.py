@@ -11,7 +11,7 @@ from version_label import deployables
 
 EXPECTED = {
     "repo": {"repo", "version-label"},
-    "am": {"rust-test-build", "am", "am-images", "runtime-images", "omarchy"},
+    "am": {"rust-test-build", "am", "am-images", "runtime-images", "omarchy", "approval-contract"},
     "eg": {"rust-test-build", "eg", "eg-images", "runtime-images", "omarchy"},
     "web": {"web", "web-images"},
 }
@@ -50,10 +50,23 @@ def evaluate(track, needs, *, full=False, split=False):
     selected = outputs.get(track)
     if selected not in {"true", "false"} or (track == "repo" and selected != "true"):
         raise ValueError("invalid track selection")
+    contract_required = False
+    if track == "am":
+        approval_contract = outputs.get("approval_contract")
+        if approval_contract not in {"true", "false"} or (tracks["am"] and approval_contract != "true"):
+            raise ValueError("invalid approval contract selection")
+        contract_required = approval_contract == "true"
+        if needs["approval-contract"].get("result") != ("success" if contract_required else "skipped"):
+            raise ValueError("approval contract did not reach its expected state")
+        if contract_required and needs["rust-test-build"].get("result") != "success":
+            raise ValueError("approval contract requires the Rust test archive")
+        expected = expected - {"approval-contract"}
     if split:
         # The Agent Manager workflow owns the runtime checks for either Rust
         # product. An EG-only change still needs both runtime images to pass.
         required = expected if selected == "true" else set()
+        if contract_required:
+            required = required | {"rust-test-build"}
         if track == "am" and tracks["eg"]:
             required = required | RUNTIME
         failed = {
@@ -71,7 +84,7 @@ def evaluate(track, needs, *, full=False, split=False):
         own_jobs = expected - {"rust-test-build", "runtime-images", "omarchy"}
         if any(needs[job].get("result") != "skipped" for job in own_jobs):
             raise ValueError("unselected track has unexpected job results")
-        return "skipped-by-path"
+        return "passed" if contract_required else "skipped-by-path"
     failed = {job: needs[job].get("result", "missing") for job in expected
               if needs[job].get("result") != "success"}
     if failed:

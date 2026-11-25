@@ -219,6 +219,11 @@ impl BindingAttempt<'_> {
         self.complete = true;
     }
 
+    pub(super) fn refused(mut self) {
+        self.holds.failed(&self.id, "refused");
+        self.complete = true;
+    }
+
     /// Retain protection after a transient runtime failure at startup. The
     /// background sweep retries it with fresh reads under the same fences.
     pub(super) fn unavailable(mut self) {

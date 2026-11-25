@@ -5083,6 +5083,32 @@
         ],
         "type": "string"
       },
+      "LegacyRetirement": {
+        "properties": {
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/LegacyRetirementState"
+          }
+        },
+        "required": [
+          "expected_version",
+          "state"
+        ],
+        "type": "object"
+      },
+      "LegacyRetirementState": {
+        "enum": [
+          "available",
+          "blocked_missing_credential",
+          "pending",
+          "cleanup_unconfirmed"
+        ],
+        "type": "string"
+      },
       "ManageThreadRequest": {
         "additionalProperties": false,
         "properties": {
@@ -5148,6 +5174,25 @@
               },
               "provider": {
                 "$ref": "#/components/schemas/ManagedProvider"
+              },
+              "retirement": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LegacyRetirement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "retirement_expected_version": {
+                "description": "Expected version for the retained Delete intent of a retired incomplete channel.",
+                "format": "int64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
               },
               "state": {
                 "enum": [
@@ -8324,6 +8369,29 @@
         "description": "A secret that only appears in the encrypted channel blob.",
         "type": "string"
       },
+      "SideMessageBody": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
+      "SideMessageCapability": {
+        "properties": {
+          "available": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "type": "object"
+      },
       "Sink": {
         "oneOf": [
           {
@@ -11251,6 +11319,64 @@
       }
     },
     "/channel-records/{record_id}/management": {
+      "delete": {
+        "operationId": "retireLegacyChannelRecord",
+        "parameters": [
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      },
       "get": {
         "operationId": "getChannelRecordManagement",
         "parameters": [
@@ -11466,9 +11592,21 @@
               "minimum": 0,
               "type": "integer"
             }
+          },
+          {
+            "description": "Retain the provider cleanup intent for an incomplete channel.",
+            "in": "query",
+            "name": "retire_unready",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
+          "202": {
+            "description": "Incomplete channel retired, provider cleanup pending"
+          },
           "204": {
             "description": ""
           },
@@ -13501,6 +13639,112 @@
         ],
         "tags": [
           "provider integration"
+        ]
+      }
+    },
+    "/events/{event_ref}/side-messages": {
+      "get": {
+        "operationId": "getSideMessageCapability",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SideMessageCapability"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      },
+      "post": {
+        "operationId": "sendSideMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SideMessageBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
         ]
       }
     },

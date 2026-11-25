@@ -29,6 +29,7 @@ import { setupEnvironmentRoute } from './setupEnvironment';
 import { agentOriginEntries, useAgentSource } from './source';
 import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
 import { AgentInputQueue } from './AgentInputQueue';
+import type { AgentTransportJournal } from './transport/journal';
 import { agentAttachmentUploader } from './attachmentUpload';
 import { AgentAccessRequests } from './AccessRequestDialog';
 import { useAgentConnectionReadiness } from './connectionReadiness';
@@ -39,6 +40,7 @@ import { usePreparedConfiguration } from './preparedConfiguration';
 import { messageSubmission } from './messageSubmission';
 import { useFirstTextSend } from './useFirstTextSend';
 import { composerInputAvailability } from './composerPresentation';
+import { turnRetryAvailable } from './turnRetryAvailability';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -90,6 +92,26 @@ export function ActiveAgentSurface({
     !readOnly && (state.status === 'ready' || (accessAuthorized && state.status !== 'error')),
   );
   const verified = connection.verified;
+  // A settled draft is local to this owner and Agent. Connection readiness
+  // governs message admission, while the journal's current epoch governs the
+  // display of the already saved local text.
+  let draftJournal: AgentTransportJournal | undefined;
+  if (
+    accessAuthorized &&
+    !connection.ownerMismatch &&
+    !readOnly &&
+    viewerId !== undefined &&
+    state.status === 'ready' &&
+    state.detail.id === agentId &&
+    state.v2?.owner === viewerId &&
+    state.v2.journal.agentId === agentId
+  ) {
+    try {
+      if (state.v2.journal.selected() === 'responses_v2') draftJournal = state.v2.journal;
+    } catch {
+      // An unavailable or superseded journal cannot supply a visible draft.
+    }
+  }
   const connectionError = connection.error;
   const connections = useConnectionGate(!readOnly, connection.scope);
   const optimistic = useOptimisticMessages(
@@ -319,6 +341,16 @@ export function ActiveAgentSurface({
             approvalBusy={approvalBusy}
             approvalReadOnly={readOnly}
             onApproval={(id, decision) => void controller.approve(id, decision)}
+            onReviewRetry={
+              turnRetryAvailable(
+                controller,
+                !readOnly && verified !== undefined,
+                draft,
+                actionsBusy,
+              )
+                ? editing.restore
+                : undefined
+            }
           >
             <AgentCommandNotices
               key={JSON.stringify([agentId, viewerId])}
@@ -330,7 +362,7 @@ export function ActiveAgentSurface({
               detail={detail}
               events={state.sandboxEvents}
               observation={observed}
-              running={running}
+              running={running && state.activityStatus !== 'waiting_approval'}
               historyIncomplete={historyIncomplete}
             />
             {suggestions && !readOnly && verified && !historyIncomplete ? (
@@ -366,12 +398,15 @@ export function ActiveAgentSurface({
             readOnly={readOnly}
             controlReady={controlReady}
             verified={verified !== undefined}
+            draftJournal={draftJournal}
+            draftIdentityCurrent={connection.ownerIdentityCurrent}
             draftBlocked={draft?.recoveryBlocked}
             onRestore={editing.restore}
             uploadAttachment={uploadAttachment}
             user={user}
           />
           <Composer
+            onRestart={readOnly || !detail.restartAvailable ? undefined : controller.restart}
             editorRef={editing.editorRef}
             suggestionScope={
               !readOnly && verified && !historyIncomplete ? suggestions?.id : undefined
