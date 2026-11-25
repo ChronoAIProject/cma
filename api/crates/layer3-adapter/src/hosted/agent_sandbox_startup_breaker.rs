@@ -1,6 +1,6 @@
 //! Process-local stop-loss state. Providers supply opaque boot/process identities
 //! and content-free termination evidence; durable work remains authoritative.
-use crate::runtime_startup::{StartupIncarnation, StartupTermination};
+use crate::runtime_startup::{StartupHistory, StartupIncarnation, StartupTermination};
 use crate::{
     AdapterError, RuntimeHandle, RuntimeStartupFailure, RuntimeStartupFailureClass,
     RuntimeStartupProbe,
@@ -25,7 +25,7 @@ struct StartupRecord {
     sandbox_id: String,
     generation: u64,
     boot: String,
-    last_delivery: Delivery,
+    last_delivery: Option<Delivery>,
     failure: RuntimeStartupFailure,
     next_probe: Option<Instant>,
     probe_interval: Duration,
@@ -50,6 +50,48 @@ pub(super) struct Delivery {
 }
 
 impl StartupBreaker {
+    pub(super) fn needs_recovery(
+        &self,
+        handle: &RuntimeHandle,
+        incarnation: &StartupIncarnation,
+    ) -> bool {
+        incarnation.restart >= THRESHOLD && !self.entries.lock().unwrap().contains_key(handle)
+    }
+
+    /// History proves a conservative hold without claiming any acknowledged
+    /// assignment deliveries in this process.
+    pub(super) fn recover(
+        &self,
+        handle: &RuntimeHandle,
+        incarnation: &StartupIncarnation,
+        sandbox_id: String,
+        generation: u64,
+        history: StartupHistory,
+    ) {
+        if incarnation.restart < THRESHOLD || history.duration.is_zero() || history.duration >= FAST
+        {
+            return;
+        }
+        let mut entries = self.entries.lock().unwrap();
+        if entries.contains_key(handle) {
+            return;
+        }
+        if entries.len() >= MAX_RECORDS {
+            entries.pop_first();
+        }
+        let record = StartupRecord {
+            sandbox_id,
+            generation,
+            boot: incarnation.boot.clone(),
+            last_delivery: None,
+            failure: RuntimeStartupFailure::new(history.class, 0),
+            next_probe: Some(Instant::now() + FIRST_PROBE),
+            probe_interval: FIRST_PROBE,
+        };
+        transition(&record, "opened");
+        entries.insert(handle.clone(), record);
+    }
+
     pub(super) fn reset(&self, handle: &RuntimeHandle) {
         if let Some(record) = self.entries.lock().unwrap().remove(handle) {
             if record.next_probe.is_some() {
@@ -93,7 +135,7 @@ impl StartupBreaker {
     ) -> Option<Delivery> {
         let entries = self.entries.lock().unwrap();
         let record = entries.get(handle)?;
-        let delivery = &record.last_delivery;
+        let delivery = record.last_delivery.as_ref()?;
         (record.boot == current.boot
             && !delivery.inspected
             && (current.process != delivery.incarnation.process
@@ -112,7 +154,7 @@ impl StartupBreaker {
             return;
         };
         // A concurrent reset or successful serving proof invalidates the read.
-        if record.last_delivery != *delivered {
+        if record.last_delivery.as_ref() != Some(delivered) {
             return;
         }
         let fast = evidence.filter(|evidence| {
@@ -127,7 +169,7 @@ impl StartupBreaker {
             entries.remove(handle);
             return;
         };
-        record.last_delivery.inspected = true;
+        record.last_delivery.as_mut().unwrap().inspected = true;
         record.failure.consecutive = record.failure.consecutive.saturating_add(1);
         record.failure.class = fast.class;
         if record.failure.consecutive >= THRESHOLD && record.next_probe.is_none() {
@@ -181,10 +223,11 @@ impl StartupBreaker {
             // Duplicate acknowledgements are still delivered normally. They
             // must not re-arm an already inspected failure of this incarnation
             // or replace evidence of a newer acknowledged incarnation.
-            if incarnation != record.last_delivery.incarnation
-                && incarnation.restart >= record.last_delivery.incarnation.restart
-            {
-                record.last_delivery = delivery;
+            if record.last_delivery.as_ref().is_none_or(|previous| {
+                incarnation != previous.incarnation
+                    && incarnation.restart >= previous.incarnation.restart
+            }) {
+                record.last_delivery = Some(delivery);
             }
         } else {
             entries.insert(
@@ -193,7 +236,7 @@ impl StartupBreaker {
                     sandbox_id,
                     generation,
                     boot: incarnation.boot,
-                    last_delivery: delivery,
+                    last_delivery: Some(delivery),
                     failure: RuntimeStartupFailure::new(
                         RuntimeStartupFailureClass::ExitedBeforeServing,
                         0,
