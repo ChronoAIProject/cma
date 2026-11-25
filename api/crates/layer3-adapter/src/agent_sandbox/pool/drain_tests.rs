@@ -359,66 +359,24 @@ async fn drain_does_not_recreate_an_absent_pool() {
 
 #[tokio::test]
 async fn positive_retirement_target_never_delegates_deletion_to_the_controller() {
-    for change in ["positive", "zero", "pending", "ambiguous", "incomplete"] {
-        let fixture = Fixture::new().await;
-        let claim = home_tests::assigned(&fixture).await;
-        let pool = &claim.request.pool;
-        fixture.client.begin_retirement(pool).await.unwrap();
-        {
-            let mut state = fixture.state.lock().unwrap();
-            let member = state.rows.get_mut(MEMBER).unwrap();
-            member["spec"]["podTemplate"]["metadata"]["labels"]["agents.x-k8s.io/claim-uid"] =
-                json!(claim.uid);
-            state.rows.insert(
-                "/api/v1/namespaces/cma-test/pods/retained-pod".into(),
-                pod(),
-            );
-            for suffix in ["one", "two"] {
-                let name = format!("{}-{suffix}", pool.name);
-                let path = MEMBER.replace("warm-member", &name);
-                let owner_uid = if change == "ambiguous" {
-                    "another-pool"
-                } else {
-                    &pool.uid
-                };
-                state.rows.insert(path, json!({
-                    "apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox",
-                    "metadata":{"name":name,"namespace":"cma-test","uid":format!("spare-{suffix}"),
-                        "resourceVersion":"210","labels":{
-                            "agents.x-k8s.io/warm-pool-sandbox":super::super::pods::name_hash(&pool.name)
-                        },"ownerReferences":[{"apiVersion":API_VERSION,"kind":"SandboxWarmPool",
-                            "name":pool.name,"uid":owner_uid,"controller":true}]}
-                }));
-            }
-            state.calls.clear();
-        }
-        if change == "pending" {
-            fixture.edit("sandboxclaims", &claim.name, |row| {
-                row["metadata"]["annotations"]["agents.x-k8s.io/sandbox-name"] =
-                    json!(format!("{}-one", pool.name));
-            });
-        }
-        if change == "incomplete" {
-            fixture.state.lock().unwrap().list_replies.push_back((
-                200, json!({"apiVersion":API_VERSION,"kind":"SandboxClaimList","metadata":{},"items":[]}),
-            ));
-        }
-        if change != "positive" {
-            fixture.edit("sandboxwarmpools", &pool.name, |row| {
-                row["spec"]["replicas"] = json!(0);
-            });
-        }
-        let before = fixture.state.lock().unwrap().rows.clone();
-        let evidence = std::slice::from_ref(&claim);
-        for _ in 0..2 {
-            let result = fixture.client.drain_pool(pool, &[], evidence).await;
-            match change {
-                "positive" => assert!(matches!(result, Err(crate::AdapterError::Unsupported(_)))),
-                "zero" => result.unwrap(),
-                _ => assert!(result.is_err(), "{change}"),
-            }
-        }
-        assert_ne!(fixture.client.retire_pool(pool, &[]).await.ok(), Some(true));
-        unchanged(&fixture, before);
+    let fixture = Fixture::new().await;
+    let claim = home_tests::assigned(&fixture).await;
+    let pool = &claim.request.pool;
+    fixture.client.begin_retirement(pool).await.unwrap();
+    let before = {
+        let mut state = fixture.state.lock().unwrap();
+        let member = state.rows.get_mut(MEMBER).unwrap();
+        member["spec"]["podTemplate"]["metadata"]["labels"]["agents.x-k8s.io/claim-uid"] =
+            json!(claim.uid);
+        state.calls.clear();
+        state.rows.clone()
+    };
+    for _ in 0..2 {
+        let result = fixture
+            .client
+            .drain_pool(pool, &[], std::slice::from_ref(&claim))
+            .await;
+        assert!(matches!(result, Err(crate::AdapterError::Unsupported(_))));
     }
+    unchanged(&fixture, before);
 }

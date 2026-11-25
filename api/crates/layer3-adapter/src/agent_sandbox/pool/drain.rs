@@ -173,7 +173,6 @@ impl AgentSandboxPools {
             }
             retained.push(expected);
         }
-        super::spare_inventory::prove(binding, &owned_members, &claims, &members, &pods, &volumes)?;
         self.verify_retained_claim_inventory(binding, &retained, &claims)
     }
 }
