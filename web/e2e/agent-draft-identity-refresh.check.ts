@@ -175,6 +175,11 @@ for (const exit of ['explicit sign-out', 'session expiry'] as const) {
     baseURL,
   }) => {
     const fixture = new LocalAgentV2();
+    // Use the supported fallback for the decorative landing character so its
+    // asynchronous module load does not race the logout navigation.
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'WebGL2RenderingContext', { value: undefined });
+    });
     try {
       await fixture.route(page, baseURL!);
       const uploadedOnce = await openDraft(page);
@@ -187,10 +192,8 @@ for (const exit of ['explicit sign-out', 'session expiry'] as const) {
           : route.fallback(),
       );
       if (exit === 'explicit sign-out') {
-        await page.route('**/auth/logout', (route) => {
-          expect(route.request().isNavigationRequest()).toBe(true);
+        await fixture.routeSignOut(page, () => {
           signedOut = true;
-          return route.fulfill({ status: 302, headers: { Location: agentPath } });
         });
         await page.getByRole('button', { name: /Account menu for/ }).click();
         await page.getByRole('menuitem', { name: 'Sign out', exact: true }).click();
