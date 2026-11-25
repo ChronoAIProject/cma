@@ -30,27 +30,35 @@ PR_IMAGE_WORKFLOWS = {
 }
 
 
-def qualifies(metadata, expected, run):
-    # The original native-image manifest has no Dockerfile/build-argument
-    # binding. It cannot prove equivalent inputs and therefore falls back to
-    # one build, even if its Git tree happens to match the merged source.
-    required = {"schema", "component", "sourceRevision", "sourceTree", "platform", "versionLabel",
-                "buildFingerprint", "archive", "archiveSha256", "archiveBytes", "workflow"}
-    if not isinstance(metadata, dict) or not required.issubset(metadata):
-        return False
-    workflow = metadata["workflow"]
-    # The manifest must name the same event as the run that retained it, and a
-    # queue manifest the exact group ref that run tested.
+def manifest_miss(metadata, expected, run):
+    if not isinstance(metadata, dict) or metadata.get("schema") != "cma-ci-native-image-v1":
+        return "manifest:schema"
+    fields = {
+        "component": deployable_registry()[DEPLOYABLES[expected["component"]]]["component"],
+        "sourceRevision": expected["source"],
+        "sourceTree": expected["tree"],
+        "platform": "linux/amd64",
+        "buildFingerprint": expected["build"],
+        "versionLabel": expected["version"],
+    }
+    for field, value in fields.items():
+        if metadata.get(field) != value:
+            return "manifest:" + field
+    for field in ("archive", "archiveSha256", "archiveBytes"):
+        if field not in metadata:
+            return "manifest:" + field
+    workflow = metadata.get("workflow")
     event = run.get("event")
-    return (metadata["schema"] == "cma-ci-native-image-v1"
-            and metadata["component"] == deployable_registry()[DEPLOYABLES[expected["component"]]]["component"]
-            and metadata["sourceRevision"] == expected["source"] and metadata["sourceTree"] == expected["tree"]
-            and metadata["platform"] == "linux/amd64" and metadata["versionLabel"] == expected["version"]
-            and metadata["buildFingerprint"] == expected["build"] and isinstance(workflow, dict)
-            and workflow.get("repository") == REPOSITORY and event in ("pull_request", QUEUE_EVENT)
-            and workflow.get("event") == event
-            and (event != QUEUE_EVENT or workflow.get("ref") == "refs/heads/" + str(run.get("head_branch")))
-            and workflow.get("runId") == str(run["id"]) and workflow.get("runAttempt") == str(run["run_attempt"]))
+    if (not isinstance(workflow, dict) or workflow.get("repository") != REPOSITORY
+            or event not in ("pull_request", QUEUE_EVENT) or workflow.get("event") != event
+            or (event == QUEUE_EVENT and workflow.get("ref") != "refs/heads/" + str(run.get("head_branch")))
+            or workflow.get("runId") != str(run["id"]) or workflow.get("runAttempt") != str(run["run_attempt"])):
+        return "manifest:workflow"
+    return None
+
+
+def qualifies(metadata, expected, run):
+    return manifest_miss(metadata, expected, run) is None
 
 
 def download(artifact, destination, token, *, deadline=None, retry=None):
@@ -144,27 +152,38 @@ def fetch(expected, api, archive, token, downloader, deadline):
             "PR artifact source cannot be established")
     lookups = (lambda: queue_run(expected, pr, api, deadline),
                lambda: pull_request_run(expected, pr, api, deadline))
+    found_run = False
     for lookup in lookups:
         run = lookup()
-        artifact = None if run is None else native_artifact(expected, run, api, deadline)
+        if run is None:
+            continue
+        found_run = True
+        artifact = native_artifact(expected, run, api, deadline)
         if artifact is not None:
             downloader(artifact, archive, token, deadline=deadline)
-            return run
-    return None
+            return run, None
+    return None, "no-artifact" if found_run else "no-ci-run"
 
 
-def try_reuse(expected, directory, api, token, downloader=download, runner=command, *, clock=time.monotonic):
+def try_reuse(expected, directory, api, token, downloader=download, runner=command, *,
+              clock=time.monotonic, on_miss=None):
+    def record_miss(reason):
+        if on_miss is not None:
+            on_miss(reason)
+
     archive = directory / "candidate.zip"
     try:
-        run = fetch(expected, api, archive, token, downloader, clock() + REUSE_SECONDS)
+        run, miss = fetch(expected, api, archive, token, downloader, clock() + REUSE_SECONDS)
     except Exception as error:  # noqa: BLE001 - only an exhausted transient failure is tolerated.
         if ci_retry.classify(error) != ci_retry.TRANSIENT:
             raise
         # The PR artifact stayed unreachable through bounded retries, and the
         # download removed its own partial bytes. A build from source costs
         # time; failing here would burn the reserved version.
+        record_miss("unreachable")
         return None
     if run is None:
+        record_miss(miss)
         return None
     with zipfile.ZipFile(archive) as source:
         entries = source.infolist()
@@ -174,7 +193,9 @@ def try_reuse(expected, directory, api, token, downloader=download, runner=comma
         metadata_entry = source.getinfo("metadata.json")
         require(metadata_entry.file_size <= 16384, "Native PR metadata exceeds limit")
         metadata = json.loads(source.read(metadata_entry))
-        if not qualifies(metadata, expected, run):
+        miss = manifest_miss(metadata, expected, run)
+        if miss is not None:
+            record_miss(miss)
             return None
         filename = metadata["archive"]
         require(isinstance(filename, str) and re.fullmatch(r"cma-[a-z-]+-linux-amd64\.docker\.tar\.gz", filename)

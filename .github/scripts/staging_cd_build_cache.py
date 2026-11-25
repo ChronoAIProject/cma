@@ -119,7 +119,8 @@ class BuildCache:
         try:
             tool = bridge()
             tool.transfer("extract", self.pending, namespace=self.namespace,
-                          timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES)
+                          timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES,
+                          compact_registry=self.component == "am")
             tool.seal(self.pending, self.key.prefix, family=self.key.family,
                       max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
             size = sum((self.pending / name).lstat().st_size for name in ("registry.tar.gz", "target.tar.gz"))

@@ -104,8 +104,17 @@ class StagingWorkflowTest < Minitest::Test
         refute_nil bound, "#{name}: step without a bound: #{label}"
         assert_operator bound.to_i, :<, limit, "#{name}: #{label} may use the whole job"
       end
-      setup = job['steps'].reject { |s| s['name'] == 'Build once, scan every layer, and publish exact bytes' }
+      release_steps = %w[producer publication]
+      setup = job['steps'].reject { |step| release_steps.include?(step['id']) }
       assert setup.all? { |s| s['timeout-minutes'].to_i <= 15 }, "#{name}: setup and upload steps must fail within 15 minutes"
+      next unless name == 'publish'
+
+      producer, publication = release_steps.map { |id| job['steps'].find { |step| step['id'] == id } }
+      assert_equal 'python3 -B .github/scripts/staging_cd_produce.py', producer.fetch('run')
+      assert_includes producer.fetch('if'), "vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true'"
+      assert_operator producer.fetch('timeout-minutes'), :<=, 240
+      assert_operator job['steps'].index(producer), :<, job['steps'].index(publication)
+      assert_equal '${{ steps.producer.outputs.prepared }}', publication.fetch('env').fetch('CD_PREPARED_ARCHIVE')
     end
     transport = File.read(File.join(ROOT, 'scripts/staging_cd_transport.sh'))
     %w[Acquire::http::Timeout DPkg::Lock::Timeout].each { |option| assert_includes transport, option }
