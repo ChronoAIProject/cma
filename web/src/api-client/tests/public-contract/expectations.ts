@@ -43,6 +43,7 @@ export const localCodes = new Map([
   ['usage-admin-sandboxes-zero-limit', 'invalid_query'],
 
   ['preparation-reserve-missing-key', 'invalid_binding'],
+  ['binding-profile-transfer-invalid', 'invalid_binding'],
   ['document-source-invalid', 'invalid_document_request'],
   ['filesystem-content-reject-invalid-max-bytes', 'invalid_file_request'],
   ['filesystem-write-reject-malformed-json', 'invalid_file_request'],

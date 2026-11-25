@@ -175,6 +175,30 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.providerBindings.get(param('binding_id')),
   'DELETE /api/v1/cmaeg/bindings/{binding_id}': ({ client, param }) =>
     client.providerBindings.delete(param('binding_id')),
+  'GET /api/v1/cmaeg/bindings/{binding_id}/conversations': ({ client, param }) =>
+    client.providerBindings.listConversations(param('binding_id')),
+  'POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-drift': ({
+    client,
+    param,
+    body,
+  }) =>
+    client.providerBindings.inspectDesiredProfile(
+      param('binding_id'),
+      param('conversation_id'),
+      body,
+    ),
+  'POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-transfers': ({
+    client,
+    param,
+    body,
+    command,
+  }) =>
+    client.providerBindings.transferConversationProfile(
+      param('binding_id'),
+      param('conversation_id'),
+      body,
+      command,
+    ),
   'PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}': ({ client, param }) =>
     client.providerBindings.ensureConversation(param('binding_id'), param('conversation_id')),
   'GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}': ({ client, param }) =>
