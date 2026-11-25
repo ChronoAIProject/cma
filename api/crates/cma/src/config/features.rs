@@ -142,6 +142,7 @@ pub(crate) struct FeatureFlags {
     pub empty_discovery: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
     pub sandbox_binding_hold_metrics: bool,
+    pub startup_native_home_hold_enabled: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -297,6 +298,10 @@ impl FeatureFlags {
             sandbox_reconciliation_reserved_lane: flag(
                 lookup,
                 "CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED",
+            )?,
+            startup_native_home_hold_enabled: flag(
+                lookup,
+                "CHRONO_STARTUP_NATIVE_HOME_HOLD_ENABLED",
             )?,
             sandbox_binding_hold_metrics: flag(
                 lookup,

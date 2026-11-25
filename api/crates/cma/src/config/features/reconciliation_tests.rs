@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn startup_native_home_hold_is_strict_and_default_off() {
+    const KEY: &str = "CHRONO_STARTUP_NATIVE_HOME_HOLD_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.startup_native_home_hold_enabled, expected);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "1".into()))).is_err());
+}
+
+#[test]
 fn binding_diagnostics_are_independent_strict_and_default_off() {
     const KEY: &str = "CHRONO_BINDING_DIAGNOSTICS_ENABLED";
     for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
