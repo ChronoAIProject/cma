@@ -16,7 +16,11 @@ if (
 
 export default defineConfig({
   ...credentialRecovery,
-  testMatch: 'auth-refresh-followup.check.ts',
+  testMatch: [
+    'auth-refresh-followup.check.ts',
+    'auth-sign-out.check.ts',
+    'auth-sign-out-transport.check.ts',
+  ],
   outputDir: process.env.CMA_AUTH_REFRESH_EVIDENCE_DIR ?? credentialRecovery.outputDir,
   webServer: {
     command: `npm run preview -- --host ${preview.hostname} --port ${preview.port} --strictPort`,
