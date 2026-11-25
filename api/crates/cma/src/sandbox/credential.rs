@@ -210,6 +210,17 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
         }
         self.settle_queued(sandbox).await
     }
+
+    async fn retain_retirement_issuance(
+        &self,
+        sandbox: &Sandbox,
+        now: SystemTime,
+    ) -> Result<(), CredentialError> {
+        self.custody
+            .retain_retirement_issuance(sandbox, now)
+            .await
+            .map_err(custody_error)
+    }
 }
 
 fn owned_material(

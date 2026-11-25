@@ -56,6 +56,14 @@ impl SandboxCredentialCustody for MongoSandboxCredentialStore {
         issuance::observe(self, sandbox, intent, observation).await
     }
 
+    async fn retain_retirement_issuance(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        now: std::time::SystemTime,
+    ) -> Result<(), CredentialCustodyError> {
+        issuance::retain_retirement(self, sandbox, now).await
+    }
+
     async fn insert(&self, material: CredentialMaterial) -> Result<(), CredentialCustodyError> {
         if material.source.is_managed() {
             return Err(CredentialCustodyError::Unavailable(

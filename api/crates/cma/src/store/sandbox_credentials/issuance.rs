@@ -10,7 +10,9 @@ use mongodb::ClientSession;
 
 pub(in crate::store) const COLLECTION: &str = "sandbox_credential_issuance";
 pub(in crate::store) mod legacy;
+mod retirement;
 mod transactions;
+pub(super) use retirement::retain_retirement;
 
 fn document(intent: &CredentialIssuance) -> Result<Document, CredentialCustodyError> {
     validate(intent)?;
@@ -162,6 +164,7 @@ pub(super) async fn accept(
             .intents
             .replace_one(
                 doc! {"_id":intent.sandbox_id.as_str(),
+                "retirement_custody":{"$exists":false},
                 "record":mongodb::bson::serialize_to_bson(intent).map_err(|_| corrupt())?},
                 document(&accepted)?,
             )

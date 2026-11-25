@@ -129,6 +129,16 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
         ))
     }
 
+    /// Record the original unresolved issuance for revoke-only reconciliation.
+    /// Recording custody never establishes provider settlement.
+    async fn retain_retirement_issuance(
+        &self,
+        _sandbox: &Sandbox,
+        _now: SystemTime,
+    ) -> Result<(), CredentialCustodyError> {
+        Ok(())
+    }
+
     /// Retain supplied material only. Managed material requires an issuance intent
     /// and current work authority through `accept_issuance`.
     async fn insert(&self, material: CredentialMaterial) -> Result<(), CredentialCustodyError>;
@@ -254,6 +264,14 @@ pub(crate) trait SandboxCredentialController: Send + Sync {
     async fn revoke(&self, sandbox: &Sandbox, provider_key_id: &str)
         -> Result<(), CredentialError>;
     async fn settle_revocations(&self, _sandbox: &Sandbox) -> Result<(), CredentialError> {
+        Ok(())
+    }
+
+    async fn retain_retirement_issuance(
+        &self,
+        _sandbox: &Sandbox,
+        _now: SystemTime,
+    ) -> Result<(), CredentialError> {
         Ok(())
     }
 }

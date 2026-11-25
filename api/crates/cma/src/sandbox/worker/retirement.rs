@@ -23,6 +23,18 @@ impl SandboxWorker {
             .retirement_finalizer
             .as_ref()
             .filter(|_| NativeRetirementFinalizer::applies(&sandbox));
+        if finalizer.is_some_and(|finalizer| finalizer.admission_enabled()) {
+            if let Err(error) = self
+                .dependencies
+                .credentials
+                .retain_retirement_issuance(&sandbox, now)
+                .await
+            {
+                return self
+                    .retry_failure(sandbox, credential_failure(error), now)
+                    .await;
+            }
+        }
         if let Some(finalizer) = finalizer {
             if finalizer.holds_custody(&sandbox).await? {
                 return self
