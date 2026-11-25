@@ -1,12 +1,13 @@
 //! Independent discovery and leases for a known late retirement result.
 use super::*;
+use futures_util::TryStreamExt;
 use layer2_core::sandbox::SandboxCredentialAuthority;
 use mongodb::bson::DateTime;
-use mongodb::options::ReturnDocument;
+use mongodb::options::{Hint, ReturnDocument};
 
 const LEASE_SECONDS: i64 = 90;
 const RETRY_SECONDS: i64 = 30;
-const DISCOVERY_LIMIT: usize = 16;
+const DISCOVERY_LIMIT: i64 = 16;
 
 // Provider dispatch and its account-erasure admission remain in the next
 // draft integration. These leases only establish durable custody ownership.
@@ -120,6 +121,9 @@ fn eligible() -> Document {
         {"$or":[{"retirement_custody.claim":{"$exists":false}},
             {"$expr":{"$and":[{"$eq":[{"$type":"$retirement_custody.claim.expires_at"},"date"]},
                 {"$lte":["$retirement_custody.claim.expires_at","$$NOW"]}]}}]},
+        {"$or":[{"retirement_discovery_at":{"$exists":false}},
+            {"$expr":{"$and":[{"$eq":[{"$type":"$retirement_discovery_at"},"date"]},
+                {"$lte":["$retirement_discovery_at","$$NOW"]}]}}]},
         {"$or":[{"retirement_discovery_refusal.retry_at":{"$exists":false}},
             {"$expr":{"$and":[{"$eq":[{"$type":"$retirement_discovery_refusal.retry_at"},"date"]},
                 {"$lte":["$retirement_discovery_refusal.retry_at","$$NOW"]}]}}]},
@@ -127,6 +131,74 @@ fn eligible() -> Document {
             {"$expr":{"$and":[{"$eq":[{"$type":"$retirement_custody.retry_at"},"date"]},
                 {"$lte":["$retirement_custody.retry_at","$$NOW"]}]}}]},
     ]}
+}
+
+// A v1 marker predating indexed scheduling might already have a lease or a
+// retry deadline. Retain the latest of those dates when first indexing it.
+fn legacy_schedule(row: &Document) -> Result<Option<DateTime>, CredentialCustodyError> {
+    fn optional_date(
+        doc: &Document,
+        field: &str,
+    ) -> Result<Option<DateTime>, CredentialCustodyError> {
+        match doc.get(field) {
+            None => Ok(None),
+            Some(Bson::DateTime(date)) => Ok(Some(*date)),
+            Some(_) => Err(corrupt()),
+        }
+    }
+    let scheduled = optional_date(row, "retirement_discovery_at")?;
+    let marker = marker(row)?;
+    if marker.contains_key("revocation_observation") {
+        return Err(corrupt());
+    }
+    let retry = optional_date(marker, "retry_at")?;
+    let lease = marker
+        .get("claim")
+        .map(|value| {
+            let claim = value.as_document().ok_or_else(corrupt)?;
+            claim
+                .get_datetime("expires_at")
+                .copied()
+                .map_err(|_| corrupt())
+        })
+        .transpose()?;
+    let refusal = row
+        .get("retirement_discovery_refusal")
+        .map(|value| {
+            let refusal = value.as_document().ok_or_else(corrupt)?;
+            refusal
+                .get_datetime("retry_at")
+                .copied()
+                .map_err(|_| corrupt())
+        })
+        .transpose()?;
+    Ok(retry
+        .max(lease)
+        .max(refusal)
+        .filter(|due| scheduled.is_none_or(|at| *due > at)))
+}
+
+fn observed(row: &Document) -> Result<Document, CredentialCustodyError> {
+    let id = row.get("_id").cloned().ok_or_else(corrupt)?;
+    Ok(doc! {"_id":{"$eq":id}, "$expr":{"$eq":["$$ROOT",{"$literal":row}]}})
+}
+
+fn after_seconds(seconds: i64) -> Document {
+    doc! {"$dateAdd":{"startDate":"$$NOW","unit":"second","amount":seconds}}
+}
+
+fn refusal_deadline() -> Document {
+    let mut dates = vec![Bson::Document(after_seconds(RETRY_SECONDS))];
+    for field in [
+        "$retirement_custody.claim.expires_at",
+        "$retirement_custody.retry_at",
+        "$retirement_discovery_refusal.retry_at",
+    ] {
+        dates.push(Bson::Document(
+            doc! {"$cond":[{"$eq":[{"$type":field},"date"]},field,"$$NOW"]},
+        ));
+    }
+    doc! {"$max":dates}
 }
 
 fn current(claim: &RetirementRevocationClaim) -> Result<Document, CredentialCustodyError> {
@@ -160,43 +232,66 @@ impl MongoSandboxCredentialStore {
         if holder.trim().is_empty() || holder.len() > 128 || holder.chars().any(char::is_control) {
             return Err(corrupt());
         }
-        let mut visited: Vec<Bson> = Vec::new();
-        for _ in 0..DISCOVERY_LIMIT {
-            let filter = doc! {"$and":[eligible(), {"_id":{"$nin":visited.clone()}}]};
-            let Some(row) = self
-                .intents
-                .find_one(filter)
-                .sort(doc! {"retirement_discovery_refusal.retry_at":1, "retirement_custody.retry_at":1, "_id":1})
-                .await
-                .map_err(unavailable)?
-            else {
-                break;
-            };
-            let id = row.get("_id").cloned().ok_or_else(corrupt)?;
-            visited.push(id.clone());
-            let (issuance, owner_authority, provider_authority) = match work(&row) {
-                Ok(work) => work,
+        // The partial index uses this exact candidate predicate and sort.
+        // Eligibility is checked after the bounded fetch, under the claim CAS.
+        let rows: Vec<Document> = self
+            .intents
+            .find(retirement_discovery_candidates())
+            .hint(Hint::Name(RETIREMENT_DISCOVERY_INDEX.into()))
+            .sort(doc! {"retirement_discovery_at":1, "_id":1})
+            .limit(DISCOVERY_LIMIT)
+            .await
+            .map_err(unavailable)?
+            .try_collect()
+            .await
+            .map_err(unavailable)?;
+        for row in rows {
+            let checked = work(&row).and_then(|work| Ok((work, legacy_schedule(&row)?)));
+            let ((issuance, owner_authority, provider_authority), legacy_due) = match checked {
+                Ok(checked) => checked,
                 Err(CredentialCustodyError::Corrupt(_)) => {
-                    // Preserve the entire unresolved obligation, even if the
-                    // marker itself has an invalid shape. Only defer the exact
-                    // document observed; concurrent repairs must survive.
-                    self.intents.update_one(
-                        doc! {"_id":{"$eq":id}, "$expr":{"$eq":["$$ROOT",{"$literal":row}]}},
-                        vec![doc! {"$set":{"retirement_discovery_refusal":{
-                            "reason":"invalid_retirement_identity",
-                            "observed_at":"$$NOW",
-                            "retry_at":{"$dateAdd":{"startDate":"$$NOW","unit":"second","amount":RETRY_SECONDS}}
-                        }}}],
-                    ).await.map_err(unavailable)?;
+                    // Preserve the unresolved obligation, even if its marker
+                    // has an invalid shape. A concurrent repair wins the CAS.
+                    self.intents
+                        .update_one(
+                            doc! {"$and":[observed(&row)?, {"$expr":{"$or":[
+                                {"$ne":[{"$type":"$retirement_discovery_at"},"date"]},
+                                {"$lte":["$retirement_discovery_at","$$NOW"]}
+                            ]}}]},
+                            vec![doc! {"$set":{
+                                "retirement_discovery_at": refusal_deadline(),
+                                "retirement_discovery_refusal":{
+                                    "reason":"invalid_retirement_identity",
+                                    "observed_at":"$$NOW",
+                                    "retry_at": refusal_deadline()
+                                }
+                            }}],
+                        )
+                        .await
+                        .map_err(unavailable)?;
                     continue;
                 }
                 Err(error) => return Err(error),
             };
+            if let Some(due) = legacy_due {
+                let normalized = self
+                    .intents
+                    .update_one(
+                        observed(&row)?,
+                        doc! {"$set":{"retirement_discovery_at":due}},
+                    )
+                    .await
+                    .map_err(unavailable)?;
+                if normalized.matched_count != 1 {
+                    continue;
+                }
+            }
             let token = uuid::Uuid::new_v4().simple().to_string();
             let filter = doc! {"$and":[eligible(), exact(&issuance, &owner_authority, &provider_authority)?]};
             let Some(claimed) = self.intents.find_one_and_update(filter, vec![doc! {"$set": {
                 "retirement_custody.claim": {"holder":{"$literal":holder}, "token":{"$literal":&token},
-                    "expires_at":{"$dateAdd":{"startDate":"$$NOW", "unit":"second", "amount":LEASE_SECONDS}}}
+                    "expires_at":after_seconds(LEASE_SECONDS)},
+                "retirement_discovery_at":after_seconds(LEASE_SECONDS)
             }}]).return_document(ReturnDocument::After).await.map_err(unavailable)? else { continue; };
             let (read_issuance, read_owner, read_provider) = work(&claimed)?;
             let lease = marker(&claimed)?
@@ -238,10 +333,18 @@ impl MongoSandboxCredentialStore {
         &self,
         claim: &RetirementRevocationClaim,
     ) -> Result<bool, CredentialCustodyError> {
-        let updated = self.intents.update_one(current(claim)?, vec![
-            doc! {"$set":{"retirement_custody.retry_at":{"$dateAdd":{"startDate":"$$NOW","unit":"second","amount":RETRY_SECONDS}}}},
-            doc! {"$unset":"retirement_custody.claim"},
-        ]).await.map_err(unavailable)?;
+        let updated = self
+            .intents
+            .update_one(
+                current(claim)?,
+                vec![
+                    doc! {"$set":{"retirement_custody.retry_at":after_seconds(RETRY_SECONDS),
+                    "retirement_discovery_at":after_seconds(RETRY_SECONDS)}},
+                    doc! {"$unset":"retirement_custody.claim"},
+                ],
+            )
+            .await
+            .map_err(unavailable)?;
         Ok(updated.matched_count == 1)
     }
 }

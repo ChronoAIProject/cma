@@ -12,6 +12,15 @@ use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 
 pub(in crate::store) const COLLECTION: &str = "sandbox_credential_issuance";
+pub(super) const RETIREMENT_DISCOVERY_INDEX: &str = "retirement_credential_discovery_v2";
+
+pub(super) fn retirement_discovery_candidates() -> Document {
+    doc! {"document_schema_version":1_i64, "record.state":"unknown",
+    "retirement_custody.version":1_i64, "retirement_custody.state":"pending",
+    "retirement_custody.owner_authority":{"$exists":true},
+    "retirement_custody.late_provider_authority":{"$exists":true}}
+}
+
 pub(in crate::store) mod legacy;
 mod retirement;
 mod retirement_claim;

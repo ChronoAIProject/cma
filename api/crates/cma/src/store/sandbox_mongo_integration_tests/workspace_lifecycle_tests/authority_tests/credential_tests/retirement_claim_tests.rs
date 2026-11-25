@@ -134,7 +134,8 @@ async fn independent_retirement_claim_retains_exact_owner_and_survives_takeover(
             .await
             .unwrap()
             .is_none());
-        records.update_one(filter.clone(), doc! {"$set":{"retirement_custody.claim.expires_at":DateTime::from_system_time(SystemTime::now() - std::time::Duration::from_secs(1))}}).await.unwrap();
+        // Simulate an old v1 lease with no indexed schedule, then expire it.
+        records.update_one(filter.clone(), doc! {"$set":{"retirement_custody.claim.expires_at":DateTime::from_system_time(SystemTime::now() - std::time::Duration::from_secs(1))}, "$unset":{"retirement_discovery_at":""}}).await.unwrap();
         let successor = restarted
             .claim_retirement_revocation("successor")
             .await
@@ -228,6 +229,7 @@ async fn independent_retirement_claim_skips_refused_owner_across_restart() {
     intent.insert("sandbox_id", refused_sandbox.id.as_str());
     intent.insert("owner", refused_sandbox.owner.as_str());
     let past = DateTime::from_millis(0);
+    refused.insert("retirement_discovery_at", past);
     refused
         .get_document_mut("retirement_custody")
         .unwrap()
@@ -235,12 +237,64 @@ async fn independent_retirement_claim_skips_refused_owner_across_restart() {
     records
         .update_one(
             filter.clone(),
-            doc! {"$set":{"retirement_custody.retry_at":DateTime::from_millis(1)}},
+            doc! {"$set":{"retirement_custody.retry_at":DateTime::from_millis(1),"retirement_discovery_at":DateTime::from_millis(1)}},
         )
         .await
         .unwrap();
     let refused_filter = doc! {"_id":refused_sandbox.id.as_str()};
     records.insert_one(refused.clone()).await.unwrap();
+
+    // More than one bounded page of v1 records has no indexed schedule.
+    // Their leases, backoff and refusal deadlines are all in the future.
+    let soon = DateTime::from_system_time(SystemTime::now() + std::time::Duration::from_secs(600));
+    let latest =
+        DateTime::from_system_time(SystemTime::now() + std::time::Duration::from_secs(900));
+    let mut legacy = Vec::new();
+    for i in 0..17 {
+        let mut row = original.clone();
+        let id = SandboxId::generate();
+        row.insert("_id", id.as_str());
+        let intent = row.get_document_mut("record").unwrap();
+        intent.insert("sandbox_id", id.as_str());
+        intent.insert("operation_id", format!("mint_{}", uuid::Uuid::new_v4()));
+        let mut frozen = intent.clone();
+        frozen.remove("next_check_at");
+        let marker = row.get_document_mut("retirement_custody").unwrap();
+        marker.insert("issuance", frozen);
+        marker
+            .get_document_mut("late_provider_authority")
+            .unwrap()
+            .insert("provider_key_id", format!("legacy-fixture-key-{i}"));
+        marker.insert("retry_at", soon);
+        if i % 2 == 0 {
+            marker.insert(
+                "claim",
+                doc! {"holder":"legacy-holder", "token":"legacy-token", "expires_at":latest},
+            );
+        } else {
+            row.insert(
+                "retirement_discovery_refusal",
+                doc! {"reason":"invalid_retirement_identity","observed_at":past,"retry_at":latest},
+            );
+        }
+        assert!(!row.contains_key("retirement_discovery_at"));
+        legacy.push(row);
+    }
+    records.insert_many(legacy.clone()).await.unwrap();
+    let first_scan = independent_custody(&f).await;
+    assert!(first_scan
+        .claim_retirement_revocation("only-legacy-page")
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        records
+            .count_documents(doc! {"retirement_discovery_at":latest})
+            .await
+            .unwrap(),
+        16
+    );
+    drop(first_scan);
 
     let independent = independent_custody(&f).await;
     let claim = independent
@@ -250,12 +304,24 @@ async fn independent_retirement_claim_skips_refused_owner_across_restart() {
         .unwrap();
     assert_eq!(claim.issuance.sandbox_id, f.claim.id);
     assert_eq!(claim.issuance.owner, f.claim.owner);
+    for previous in legacy {
+        let mut read = records
+            .find_one(doc! {"_id":previous.get_str("_id").unwrap()})
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(read.remove("retirement_discovery_at"), Some(latest.into()));
+        // No initial lease or refusal was replaced and no new claim was made.
+        assert_eq!(read, previous);
+    }
+
     let mut observed = records
         .find_one(refused_filter.clone())
         .await
         .unwrap()
         .unwrap();
     let refusal = observed.remove("retirement_discovery_refusal").unwrap();
+    let scheduled = observed.get_datetime("retirement_discovery_at").unwrap();
     let refusal = refusal.as_document().unwrap();
     assert_eq!(
         refusal.get_str("reason").unwrap(),
@@ -264,6 +330,8 @@ async fn independent_retirement_claim_skips_refused_owner_across_restart() {
     assert!(
         refusal.get_datetime("retry_at").unwrap() > refusal.get_datetime("observed_at").unwrap()
     );
+    assert_eq!(scheduled, refusal.get_datetime("retry_at").unwrap());
+    observed.insert("retirement_discovery_at", past);
     assert_eq!(observed, refused);
     assert!(independent
         .requires_no_resend(&refused_sandbox)
@@ -287,7 +355,7 @@ async fn independent_retirement_claim_skips_refused_owner_across_restart() {
     records
         .update_one(
             filter,
-            doc! {"$set":{"retirement_custody.claim.expires_at":past}},
+            doc! {"$set":{"retirement_custody.claim.expires_at":past,"retirement_discovery_at":past}},
         )
         .await
         .unwrap();

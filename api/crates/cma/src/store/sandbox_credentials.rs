@@ -143,13 +143,11 @@ impl MongoSandboxCredentialStore {
         intents
             .create_index(
                 IndexModel::builder()
-                    .keys(doc! {"retirement_custody.retry_at":1,"_id":1})
+                    .keys(doc! {"retirement_discovery_at":1,"_id":1})
                     .options(
                         IndexOptions::builder()
-                            .name("retirement_credential_claim".to_string())
-                            .partial_filter_expression(doc! {"retirement_custody.state":"pending",
-                            "retirement_custody.owner_authority":{"$exists":true},
-                            "retirement_custody.late_provider_authority":{"$exists":true}})
+                            .name(issuance::RETIREMENT_DISCOVERY_INDEX.to_string())
+                            .partial_filter_expression(issuance::retirement_discovery_candidates())
                             .build(),
                     )
                     .build(),
