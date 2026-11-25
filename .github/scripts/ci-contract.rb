@@ -41,7 +41,7 @@ module CIContract
 
   def self.artifact(job, condition, prefix)
     upload = step(job, "Retain runtime image evidence", nil, condition)
-    expected = prefix.start_with?("release-") ? "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" : "actions/upload-artifact@v4"
+    expected = prefix.start_with?("release-") ? "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" : "actions/upload-artifact@v4"
     require!(upload["uses"] == expected, "runtime evidence uploader changed")
     require!(upload["with"] == {
       "name" => "#{prefix}-${{ github.run_id }}-${{ github.run_attempt }}",

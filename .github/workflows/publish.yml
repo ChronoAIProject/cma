@@ -117,7 +117,7 @@ jobs:
             "$GITHUB_SERVER_URL" "$RUNNER_TEMP/notes.md" \
             "$RUNNER_TEMP/release.md"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-notes
           path: ${{ runner.temp }}/release.md
@@ -202,7 +202,7 @@ jobs:
         run: node .github/scripts/runtime-ledger-evidence.mjs "$RUNTIME_REFERENCE" "$RUNTIME_SOURCE" "$RUNNER_TEMP/ledger-storage.json"
       - name: Retain ledger storage evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-ledger-storage-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ledger-storage.json
@@ -210,7 +210,7 @@ jobs:
           retention-days: 90
       - name: Retain runtime image evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-runtime-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/runtime-image-evidence.json
@@ -311,15 +311,17 @@ jobs:
       - id: notes-download
         continue-on-error: true
         timeout-minutes: 2
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          digest-mismatch: error
           name: release-notes
           path: ${{ runner.temp }}/notes
       - id: notes-download-retry
         if: steps.notes-download.outcome == 'failure'
         timeout-minutes: 2
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          digest-mismatch: error
           name: release-notes
           path: ${{ runner.temp }}/notes
       - name: Explain the unavailable release notes artifact

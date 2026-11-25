@@ -207,7 +207,7 @@ class DetectorTransportTests(unittest.TestCase):
         self.assertLess(text.index("Build once, scan every layer"), text.index("Retain complete layer detector evidence"))
         export = text.split("- name: Retain complete layer detector evidence", 1)[1].split("- name:", 1)[0]
         self.assertIn("if: success()", export)
-        self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", export)
+        self.assertIn("actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9", export)
         self.assertNotIn("restore-keys", export)
 
 
