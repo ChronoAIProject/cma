@@ -440,6 +440,7 @@ test('LOCAL shared task navigation uses the detail title and keeps long metadata
       ),
     ).toBe(true);
   }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   title = 'Renamed shared investigation';
   await page.getByRole('button', { name: 'Refresh Agents', exact: true }).click();
   await expect(navigation.getByRole('treeitem', { name: new RegExp(title) })).toBeVisible();
