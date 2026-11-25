@@ -258,6 +258,8 @@ mutations = [
   ->(d) { d['ci'][true]['push']['branches'].delete('tl/release/**') },
   ->(d) { d['ci'][true]['push']['branches'] << '**' },
   ->(d) { d['ci']['concurrency']['group'] = 'ci-shared' },
+  ->(d) { d['ci-images']['jobs']['images']['concurrency']['group'] = 'cma-develop-cache-readers' },
+  ->(d) { d['ci-images']['jobs']['images']['concurrency']['cancel-in-progress'] = true },
   ->(d) { d['ci']['jobs']['changes']['steps'].last['run'] = 'python3 -B .github/scripts/ci_tracks/selection.py' },
   ->(d) { d['ci']['jobs']['am']['if'] = 'false' },
   ->(d) { d['ci']['jobs']['eg']['if'] = 'false' },

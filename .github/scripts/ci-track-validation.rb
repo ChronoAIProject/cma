@@ -28,7 +28,12 @@ end
 def check_component_cache_writers(documents)
   develop = "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
   writer = "${{ #{develop} }}"
-  images = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
+  image_job = documents.fetch('ci-images').fetch('jobs').fetch('images')
+  group = "${{ #{develop} && format('cma-develop-ci-image-{0}', matrix.component) || " \
+    "format('ci-image-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.component) }}"
+  require_check(image_job['concurrency'] == {'group' => group, 'queue' => 'max', 'cancel-in-progress' => false},
+    'develop image jobs must queue per component without cancelling active writers')
+  images = image_job.fetch('steps')
   node_setup = ->(s) { s.fetch('uses', '').start_with?('actions/setup-node@') }
   image_nodes = images.select(&node_setup)
   require_check(!image_nodes.empty? && image_nodes.all? { |s|
