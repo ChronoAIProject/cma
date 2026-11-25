@@ -6,6 +6,7 @@ use mongodb::options::ReturnDocument;
 
 const LEASE_SECONDS: i64 = 90;
 const RETRY_SECONDS: i64 = 30;
+const DISCOVERY_LIMIT: usize = 16;
 
 // Provider dispatch and its account-erasure admission remain in the next
 // draft integration. These leases only establish durable custody ownership.
@@ -119,6 +120,9 @@ fn eligible() -> Document {
         {"$or":[{"retirement_custody.claim":{"$exists":false}},
             {"$expr":{"$and":[{"$eq":[{"$type":"$retirement_custody.claim.expires_at"},"date"]},
                 {"$lte":["$retirement_custody.claim.expires_at","$$NOW"]}]}}]},
+        {"$or":[{"retirement_discovery_refusal.retry_at":{"$exists":false}},
+            {"$expr":{"$and":[{"$eq":[{"$type":"$retirement_discovery_refusal.retry_at"},"date"]},
+                {"$lte":["$retirement_discovery_refusal.retry_at","$$NOW"]}]}}]},
         {"$or":[{"retirement_custody.retry_at":{"$exists":false}},
             {"$expr":{"$and":[{"$eq":[{"$type":"$retirement_custody.retry_at"},"date"]},
                 {"$lte":["$retirement_custody.retry_at","$$NOW"]}]}}]},
@@ -156,43 +160,66 @@ impl MongoSandboxCredentialStore {
         if holder.trim().is_empty() || holder.len() > 128 || holder.chars().any(char::is_control) {
             return Err(corrupt());
         }
-        let Some(row) = self
-            .intents
-            .find_one(eligible())
-            .sort(doc! {"retirement_custody.retry_at":1, "_id":1})
-            .await
-            .map_err(unavailable)?
-        else {
-            return Ok(None);
-        };
-        let (issuance, owner_authority, provider_authority) = work(&row)?;
-        let token = uuid::Uuid::new_v4().simple().to_string();
-        let filter =
-            doc! {"$and":[eligible(), exact(&issuance, &owner_authority, &provider_authority)?]};
-        let Some(claimed) = self.intents.find_one_and_update(filter, vec![doc! {"$set": {
-            "retirement_custody.claim": {"holder":{"$literal":holder}, "token":{"$literal":&token},
-                "expires_at":{"$dateAdd":{"startDate":"$$NOW", "unit":"second", "amount":LEASE_SECONDS}}}
-        }}]).return_document(ReturnDocument::After).await.map_err(unavailable)? else { return Ok(None); };
-        let (read_issuance, read_owner, read_provider) = work(&claimed)?;
-        let lease = marker(&claimed)?
-            .get_document("claim")
-            .map_err(|_| corrupt())?;
-        if frozen(&read_issuance)? != frozen(&issuance)?
-            || read_owner != owner_authority
-            || read_provider != provider_authority
-            || lease.get_str("holder").ok() != Some(holder)
-            || lease.get_str("token").ok() != Some(token.as_str())
-        {
-            return Err(corrupt());
+        let mut visited: Vec<Bson> = Vec::new();
+        for _ in 0..DISCOVERY_LIMIT {
+            let filter = doc! {"$and":[eligible(), {"_id":{"$nin":visited.clone()}}]};
+            let Some(row) = self
+                .intents
+                .find_one(filter)
+                .sort(doc! {"retirement_discovery_refusal.retry_at":1, "retirement_custody.retry_at":1, "_id":1})
+                .await
+                .map_err(unavailable)?
+            else {
+                break;
+            };
+            let id = row.get("_id").cloned().ok_or_else(corrupt)?;
+            visited.push(id.clone());
+            let (issuance, owner_authority, provider_authority) = match work(&row) {
+                Ok(work) => work,
+                Err(CredentialCustodyError::Corrupt(_)) => {
+                    // Preserve the entire unresolved obligation, even if the
+                    // marker itself has an invalid shape. Only defer the exact
+                    // document observed; concurrent repairs must survive.
+                    self.intents.update_one(
+                        doc! {"_id":{"$eq":id}, "$expr":{"$eq":["$$ROOT",{"$literal":row}]}},
+                        vec![doc! {"$set":{"retirement_discovery_refusal":{
+                            "reason":"invalid_retirement_identity",
+                            "observed_at":"$$NOW",
+                            "retry_at":{"$dateAdd":{"startDate":"$$NOW","unit":"second","amount":RETRY_SECONDS}}
+                        }}}],
+                    ).await.map_err(unavailable)?;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let token = uuid::Uuid::new_v4().simple().to_string();
+            let filter = doc! {"$and":[eligible(), exact(&issuance, &owner_authority, &provider_authority)?]};
+            let Some(claimed) = self.intents.find_one_and_update(filter, vec![doc! {"$set": {
+                "retirement_custody.claim": {"holder":{"$literal":holder}, "token":{"$literal":&token},
+                    "expires_at":{"$dateAdd":{"startDate":"$$NOW", "unit":"second", "amount":LEASE_SECONDS}}}
+            }}]).return_document(ReturnDocument::After).await.map_err(unavailable)? else { continue; };
+            let (read_issuance, read_owner, read_provider) = work(&claimed)?;
+            let lease = marker(&claimed)?
+                .get_document("claim")
+                .map_err(|_| corrupt())?;
+            if frozen(&read_issuance)? != frozen(&issuance)?
+                || read_owner != owner_authority
+                || read_provider != provider_authority
+                || lease.get_str("holder").ok() != Some(holder)
+                || lease.get_str("token").ok() != Some(token.as_str())
+            {
+                return Err(corrupt());
+            }
+            return Ok(Some(RetirementRevocationClaim {
+                issuance,
+                owner_authority,
+                provider_authority,
+                holder: holder.to_owned(),
+                token,
+                expires_at: *lease.get_datetime("expires_at").map_err(|_| corrupt())?,
+            }));
         }
-        Ok(Some(RetirementRevocationClaim {
-            issuance,
-            owner_authority,
-            provider_authority,
-            holder: holder.to_owned(),
-            token,
-            expires_at: *lease.get_datetime("expires_at").map_err(|_| corrupt())?,
-        }))
+        Ok(None)
     }
 
     pub(crate) async fn retirement_revocation_claim_current(
