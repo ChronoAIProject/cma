@@ -49,20 +49,10 @@ pub(crate) fn initial_retirement_issuance_candidate(sandbox: &Sandbox) -> bool {
             sandbox.work.step,
             SandboxWorkStep::StopAgents | SandboxWorkStep::RevokeRetirementCredentials
         )
-        && (sandbox
+        && sandbox
             .runtime
             .as_ref()
             .is_some_and(|binding| binding.runtime_id.starts_with("agent-sandbox:"))
-            || sandbox
-                .lifecycle
-                .suspended_runtime
-                .as_ref()
-                .is_some_and(|binding| binding.runtime_id.starts_with("agent-sandbox:"))
-            || sandbox
-                .lifecycle
-                .home
-                .as_ref()
-                .is_some_and(|home| home.request.policy.is_native_vct()))
         && sandbox.credential.source.is_managed()
         && sandbox.credential.key_generation == 0
         && !sandbox.credential.delivered
