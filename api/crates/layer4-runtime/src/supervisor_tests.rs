@@ -393,7 +393,10 @@ async fn held_checkpoint_fences_mutations_and_replays_until_exact_resume() {
         supervisor
             .dispatch(RequestFrame::Checkpoint(CheckpointRequest {
                 epoch: 32,
-                exclusions: Vec::new(),
+                exclusions: layer3_adapter::codex::checkpoint_exclusions(&[AgentSlot::new(
+                    "agent-held",
+                )])
+                .unwrap(),
             }))
             .await,
         ResponseFrame::Checkpoint(_)
