@@ -58,6 +58,15 @@ impl MeasuredLedger {
         &self,
         request: FreezeRequest,
     ) -> Result<FrozenEvidence, CaptureError> {
+        self.freeze_with_history_limit(request, MAX_HISTORY_BYTES)
+            .await
+    }
+
+    async fn freeze_with_history_limit(
+        &self,
+        request: FreezeRequest,
+        history_limit: usize,
+    ) -> Result<FrozenEvidence, CaptureError> {
         let stream_id = request
             .scope
             .stream_id()
@@ -69,7 +78,7 @@ impl MeasuredLedger {
             .snapshot(true)
             .await
             .map_err(|_| CaptureError::Unavailable)?;
-        let history = self
+        let (history, history_bytes) = self
             .history(&stream_id, &request.scope, &mut session)
             .await?;
         let target = match &request.correction_of {
@@ -116,6 +125,15 @@ impl MeasuredLedger {
         )
         .map_err(|_| CaptureError::Unavailable)?;
         let expected = encode(&evidence)?;
+        // Preserve replay of every retained revision even after this append.
+        checked_history_bytes(
+            history_bytes,
+            expected
+                .get_str("payload")
+                .map_err(|_| CaptureError::Corrupt)?
+                .len(),
+            history_limit,
+        )?;
         // The unique immutable stream/revision key serializes concurrent writers.
         // A failed acknowledgement never permits a successor or replaces bytes.
         match self.rows.insert_one(expected.clone()).await {
@@ -147,7 +165,7 @@ impl MeasuredLedger {
             .snapshot(true)
             .await
             .map_err(|_| CaptureError::Unavailable)?;
-        let history = self
+        let (history, _) = self
             .history(&stream_id, &request.scope, &mut session)
             .await?;
         history
@@ -161,7 +179,7 @@ impl MeasuredLedger {
         stream_id: &str,
         scope: &EvidenceScope,
         session: &mut ClientSession,
-    ) -> Result<Vec<FrozenEvidence>, CaptureError> {
+    ) -> Result<(Vec<FrozenEvidence>, usize), CaptureError> {
         let mut cursor = self
             .rows
             .find(doc! {"stream_id":stream_id})
@@ -180,13 +198,13 @@ impl MeasuredLedger {
             .transpose()
             .map_err(|_| CaptureError::Unavailable)?
         {
-            bytes += row
-                .get_str("payload")
-                .map_err(|_| CaptureError::Corrupt)?
-                .len();
-            if bytes > MAX_HISTORY_BYTES {
-                return Err(CaptureError::Unavailable);
-            }
+            bytes = checked_history_bytes(
+                bytes,
+                row.get_str("payload")
+                    .map_err(|_| CaptureError::Corrupt)?
+                    .len(),
+                MAX_HISTORY_BYTES,
+            )?;
             let entry = decode(&row)?;
             if entry.scope() != scope || history.len() >= MAX_REVISIONS {
                 return Err(CaptureError::Corrupt);
@@ -200,7 +218,7 @@ impl MeasuredLedger {
             }
             history.push(entry);
         }
-        Ok(history)
+        Ok((history, bytes))
     }
 
     async fn allocation(
@@ -313,6 +331,17 @@ impl MeasuredLedger {
         }
         Ok(event)
     }
+}
+
+fn checked_history_bytes(
+    retained: usize,
+    incoming: usize,
+    limit: usize,
+) -> Result<usize, CaptureError> {
+    retained
+        .checked_add(incoming)
+        .filter(|total| *total <= limit)
+        .ok_or(CaptureError::Unavailable)
 }
 
 fn encode(evidence: &FrozenEvidence) -> Result<Document, CaptureError> {

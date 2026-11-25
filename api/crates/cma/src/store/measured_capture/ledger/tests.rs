@@ -130,6 +130,32 @@ async fn measured_batches_are_immutable_and_corrections_are_idempotent_across_cl
         correction_of: Some(first.reference()),
         ..request.clone()
     };
+    let first_bytes = original.get_str("payload").unwrap().len();
+    assert!(matches!(
+        b.freeze_with_history_limit(correction.clone(), first_bytes)
+            .await,
+        Err(CaptureError::Unavailable)
+    ));
+    assert_eq!(a.rows.count_documents(doc! {}).await.unwrap(), 1);
+    assert_eq!(
+        b.read_exact_period(ExactPeriodReadRequest {
+            period: PeriodReadRequest {
+                owner_id: scope.owner_id.clone(),
+                sandbox_id: scope.sandbox_id.clone(),
+                from_ms: scope.from_ms,
+                to_ms: scope.to_ms,
+                source_cutoff_ms: 40_000,
+                windows: vec![scope.clone()],
+            },
+            selected: vec![SelectedWindow {
+                revision: first.revision(),
+                reference: first.reference(),
+            }],
+        })
+        .await
+        .unwrap(),
+        vec![first.clone()]
+    );
     let (second, peer) = tokio::join!(a.freeze(correction.clone()), b.freeze(correction));
     let second = second.unwrap();
     assert_eq!(second, peer.unwrap());
@@ -253,4 +279,14 @@ async fn measured_batches_are_immutable_and_corrections_are_idempotent_across_cl
     assert_ne!(left_result.is_ok(), right_result.is_ok());
     assert_eq!(a.rows.count_documents(doc! {}).await.unwrap(), 3);
     database.drop().await.unwrap();
+}
+
+#[test]
+fn measured_batches_history_bound_counts_the_prospective_payload() {
+    assert_eq!(
+        checked_history_bytes(MAX_BATCH_PAYLOAD, MAX_BATCH_PAYLOAD, MAX_HISTORY_BYTES).unwrap(),
+        MAX_HISTORY_BYTES
+    );
+    assert!(checked_history_bytes(MAX_HISTORY_BYTES, 1, MAX_HISTORY_BYTES).is_err());
+    assert!(checked_history_bytes(usize::MAX, 1, MAX_HISTORY_BYTES).is_err());
 }

@@ -334,3 +334,31 @@ fn interrupted_disk_allocation_and_overlapping_series_invalidate_the_entire_gap(
         MeasurementStatus::Unmapped,
     );
 }
+
+#[test]
+fn singleton_competing_pvc_observation_refuses_an_interior_estimate() {
+    let home = binding(BindingKind::Home);
+    let mut other = home.clone();
+    other.id = "second-home".into();
+    other.pvc_uid = "second-pvc".into();
+    let mut raw = [(0, 10.0), (60_000, 10.0), (180_000, 30.0), (240_000, 30.0)]
+        .map(|(time, value)| sample(&home, SourceMetric::PvcUsed, time, value))
+        .to_vec();
+    let events = [event(1, 0, 240, allocation(false), allocation(false))];
+    let gap = |rows: Vec<CoverageInterval>| {
+        rows.into_iter()
+            .find(|row| row.metric == SourceMetric::PvcUsed && row.from_ms == 60_000)
+            .unwrap()
+    };
+    let cutoff = 180_000 + LATE_GRACE_MS;
+    assert_eq!(
+        gap(settle(&raw, &events, 0, 240_000, cutoff)).measurement_status,
+        MeasurementStatus::Estimated
+    );
+    raw.push(sample(&other, SourceMetric::PvcUsed, 120_000, 5.0));
+    let unresolved = gap(settle(&raw, &events, 0, 240_000, cutoff));
+    assert_eq!(unresolved.from_ms, 60_000);
+    assert_eq!(unresolved.to_ms, 180_000);
+    assert_eq!(unresolved.measurement_status, MeasurementStatus::Pending);
+    assert_eq!(unresolved.quantity, None);
+}

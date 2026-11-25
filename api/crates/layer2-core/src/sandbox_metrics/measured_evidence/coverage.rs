@@ -105,6 +105,12 @@ struct AllocationSpan<'a> {
     digest: String,
 }
 
+struct ObservedSeries {
+    series: String,
+    metric: SourceMetric,
+    timestamps_ms: Vec<u64>,
+}
+
 struct Candidate {
     interval: MeasuredInterval,
     series: String,
@@ -260,6 +266,7 @@ fn candidates(
         grouped.entry(series).or_default().push(sample);
     }
     let mut result = Vec::new();
+    let mut observed_series = Vec::new();
     for (series, mut group) in grouped {
         group.sort_by_key(|sample| sample.observation().timestamp_ms);
         let owned = |sample: &CustodySample<'_>| {
@@ -269,6 +276,14 @@ fn candidates(
         if !group.iter().any(|sample| owned(sample)) {
             continue;
         }
+        observed_series.push(ObservedSeries {
+            series: series.clone(),
+            metric: group[0].observation().metric,
+            timestamps_ms: group
+                .iter()
+                .map(|sample| sample.observation().timestamp_ms)
+                .collect(),
+        });
         let ordered: Vec<_> = group
             .iter()
             .map(|sample| match sample {
@@ -319,7 +334,7 @@ fn candidates(
         }
         result.extend(series_candidates);
     }
-    estimate_interior(&mut result, cutoff_ms, allocation);
+    estimate_interior(&mut result, &observed_series, cutoff_ms, allocation);
     Ok(result)
 }
 

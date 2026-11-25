@@ -1,7 +1,7 @@
 //! Interior-gap estimates require unique, continuously allocated neighbors.
 use super::{
     quantity::{exact, whole},
-    AllocationSpan, Candidate, Unresolved, LATE_GRACE_MS, MAX_INTERIOR_GAP_MS,
+    AllocationSpan, Candidate, ObservedSeries, Unresolved, LATE_GRACE_MS, MAX_INTERIOR_GAP_MS,
 };
 
 pub(super) fn continuously_allocated(
@@ -31,10 +31,22 @@ pub(super) fn continuously_allocated(
 fn uniquely_attributed(
     candidate: &Candidate,
     candidates: &[Candidate],
+    observed_series: &[ObservedSeries],
     allocation: &[AllocationSpan<'_>],
 ) -> bool {
     candidate.attributed
         && continuously_allocated(allocation, candidate)
+        // A single observation has no adjacent interval, but is still
+        // evidence of competing physical attribution at that position.
+        && !observed_series.iter().any(|other| {
+            other.series != candidate.series
+                && other.metric == candidate.interval.metric
+                && other.timestamps_ms
+                    .get(other.timestamps_ms.partition_point(|timestamp| {
+                        *timestamp < candidate.interval.from_ms
+                    }))
+                    .is_some_and(|timestamp| *timestamp <= candidate.interval.to_ms)
+        })
         && !candidates.iter().any(|other| {
             other.series != candidate.series
                 && other.interval.metric == candidate.interval.metric
@@ -45,6 +57,7 @@ fn uniquely_attributed(
 
 pub(super) fn estimate_interior(
     candidates: &mut [Candidate],
+    observed_series: &[ObservedSeries],
     cutoff_ms: u64,
     allocation: &[AllocationSpan<'_>],
 ) {
@@ -55,14 +68,14 @@ pub(super) fn estimate_interior(
             &candidates[index + 1],
         );
         let elapsed = gap.interval.to_ms - gap.interval.from_ms;
-        if !uniquely_attributed(gap, candidates, allocation)
+        if !uniquely_attributed(gap, candidates, observed_series, allocation)
             || gap.interval.quantity != Err(Unresolved::Coverage)
             || elapsed > MAX_INTERIOR_GAP_MS
             || cutoff_ms.saturating_sub(gap.interval.to_ms) < LATE_GRACE_MS
             || left.series != gap.series
             || right.series != gap.series
-            || !uniquely_attributed(left, candidates, allocation)
-            || !uniquely_attributed(right, candidates, allocation)
+            || !uniquely_attributed(left, candidates, observed_series, allocation)
+            || !uniquely_attributed(right, candidates, observed_series, allocation)
             || left.binding != gap.binding
             || right.binding != gap.binding
             || left.interval.to_ms != gap.interval.from_ms

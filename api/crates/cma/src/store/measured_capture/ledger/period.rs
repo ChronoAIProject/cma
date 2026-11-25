@@ -88,7 +88,7 @@ impl MeasuredLedger {
         let mut selected = Vec::with_capacity(request.windows.len());
         let mut bytes = 0;
         for (index, scope) in request.windows.into_iter().enumerate() {
-            let history = self
+            let (history, _) = self
                 .history(
                     &scope.stream_id().map_err(|_| CaptureError::Corrupt)?,
                     &scope,
