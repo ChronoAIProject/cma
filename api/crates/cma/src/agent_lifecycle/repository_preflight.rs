@@ -201,6 +201,7 @@ impl InlineAgentLifecycle {
         let (reason, repair) = match check {
             GitHubRepositoryCheck::Verified(proved) => {
                 let commit = valid_commit(&proved.commit)?;
+                let image = image.clone();
                 if pin.is_none() {
                     let pin = RepositoryAccessPin {
                         owner: caller.subject.to_string(),
@@ -222,7 +223,7 @@ impl InlineAgentLifecycle {
                         .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
                     input.repository_access_pin = Some(pin);
                 }
-                input.runtime_image = Some(image.clone());
+                input.runtime_image = Some(image);
                 let repository = input
                     .request
                     .repository
