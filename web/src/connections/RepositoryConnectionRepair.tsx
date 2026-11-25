@@ -20,6 +20,10 @@ interface Choice {
   readonly label: string;
   readonly granted_scopes: readonly string[] | null;
   readonly manage_url: string;
+  readonly account?: {
+    readonly login: string;
+    readonly observed_scopes: readonly string[] | null;
+  };
 }
 
 interface Inventory {
@@ -46,11 +50,26 @@ function choice(value: unknown, manage: URL): Choice | undefined {
     return undefined;
   const href = connectionUrl(value.manage_url);
   if (href !== new URL(`/keys/${value.id}`, manage).href) return undefined;
+  const account = value.account;
+  const availableAccount =
+    record(account) &&
+    typeof account.login === 'string' &&
+    /^[A-Za-z0-9_-]{1,100}$/.test(account.login) &&
+    (account.observed_scopes === null ||
+      (Array.isArray(account.observed_scopes) &&
+        account.observed_scopes.length <= 100 &&
+        account.observed_scopes.every((scope) => typeof scope === 'string')));
   return {
     id: value.id,
     label: value.label,
     granted_scopes: value.granted_scopes as readonly string[] | null,
     manage_url: href,
+    account: availableAccount
+      ? {
+          login: account.login as string,
+          observed_scopes: account.observed_scopes as string[] | null,
+        }
+      : undefined,
   };
 }
 
@@ -153,10 +172,13 @@ function ConnectionDetails({ target, owner, selection }: ConnectionDetailsProps)
                 <a href={row.manage_url} target="_blank" rel="noreferrer">
                   {row.label} ({row.id})
                 </a>
+                {row.account ? <p>GitHub account @{row.account.login}</p> : null}
                 <p>
-                  {row.granted_scopes === null
-                    ? 'Granted scopes unavailable'
-                    : `Reported scopes: ${row.granted_scopes.join(', ') || 'None'}`}
+                  {row.account?.observed_scopes
+                    ? `Live scopes — ${row.account.observed_scopes.join(', ') || 'None'}`
+                    : row.granted_scopes === null
+                      ? 'Granted scopes unavailable'
+                      : `Reported scopes: ${row.granted_scopes.join(', ') || 'None'}`}
                 </p>
                 {selection && row.granted_scopes?.includes('repo') ? (
                   <Button

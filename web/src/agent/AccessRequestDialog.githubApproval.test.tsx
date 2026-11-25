@@ -82,6 +82,7 @@ it('requires the owner to choose a repo-capable connection and replays the exact
               id: 'repository-access',
               label: 'Repository access',
               granted_scopes: ['repo'],
+              account: { login: 'repository-owner', observed_scopes: ['repo', 'read:user'] },
               manage_url: 'https://nyx.example/keys/repository-access',
             },
           ],
@@ -93,6 +94,8 @@ it('requires the owner to choose a repo-capable connection and replays the exact
   expect(await screen.findByText(/Shared workspace/)).toBeVisible();
   expect(screen.getByText('agent-two')).toBeVisible();
   expect(screen.getByText('Currently selected connection: profile-only')).toBeVisible();
+  expect(await screen.findByText('GitHub account @repository-owner')).toBeVisible();
+  expect(screen.getByText('Live scopes — repo, read:user')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: /Select Profile access/ })).not.toBeInTheDocument();
   await userEvent.click(await screen.findByRole('button', { name: /Select Repository access/ }));

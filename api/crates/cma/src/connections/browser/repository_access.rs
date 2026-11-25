@@ -46,7 +46,11 @@ pub(super) async fn report(
     {
         return Err(ConnectionError::Invalid);
     }
-    let github = broker.github_connections(&caller.subject).await;
+    let observe_accounts = state.github_connection_approval
+        && matches!(&request.target, ConnectionTarget::AgentServiceAccess { .. });
+    let github = broker
+        .github_connections(&caller.subject, observe_accounts)
+        .await;
     let github_scope_check = request.github_operation.map(|operation| GitHubScopeReport {
         operation,
         check: github
