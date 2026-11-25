@@ -10,6 +10,7 @@ from staging_cd_allocation_io import AllocationIO
 from staging_cd_allocation_snapshot import AllocationConflict, AllocationSnapshot, SnapshotAPI
 from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
+from staging_cd_receipts import canonical
 from staging_cd_reservations import next_reservation, pending_name
 from staging_cd_resolve import ObsoleteSource, verify
 from staging_cd_versions import DEPLOYABLES
@@ -87,6 +88,26 @@ class AllocationGitTests(unittest.TestCase):
             self.assertFalse(any("cma-allocation-outcome/" in arg for arg in push))
             self.assertNotIn("--force", push)
         self.assertEqual(self.store.list(), values)
+
+    def test_live_ref_oids_reuse_local_tags_and_fetch_only_missing_objects(self):
+        f = self.fixture
+        first = f.reservation()
+        self.assertTrue(f.publisher.insert(first))
+        latest = f.reservation(2)
+        name = pending_name(latest)
+        tag = (f"object {latest['source']}\ntype commit\ntag {name}\n"
+               "tagger Fixture <fixture@example.invalid> 0 +0000\n\n")
+        live = f.git("mktag", data=tag + canonical(latest) + "\n", remote=True)
+        f.git("update-ref", "refs/tags/" + name, live, remote=True)
+        stale = f.git("mktag", data=tag + canonical(dict(latest, run_id=3)) + "\n")
+        f.git("update-ref", "refs/tags/" + name, stale)
+
+        f.api.request = Mock(wraps=self.request)
+        self.store.load()
+        self.assertEqual(self.store.list("web"), [first, latest])
+        tag_reads = [call.args[0] for call in f.api.request.call_args_list
+                     if call.args[0].startswith("git/tags/")]
+        self.assertEqual(tag_reads, ["git/tags/" + live])
 
     def test_different_bumps_cannot_claim_the_same_predecessor(self):
         patch = self.plan_two()[0]
