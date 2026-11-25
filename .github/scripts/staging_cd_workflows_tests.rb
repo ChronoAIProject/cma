@@ -111,7 +111,10 @@ class StagingWorkflowTest < Minitest::Test
       assert_includes producer.fetch('if'), "vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true'"
       assert_operator producer.fetch('timeout-minutes'), :<=, 240
       assert_operator job['steps'].index(producer), :<, job['steps'].index(publication)
-      assert_equal '${{ steps.producer.outputs.prepared }}', publication.fetch('env').fetch('CD_PREPARED_ARCHIVE')
+      assert_equal '${{ inputs.protected_web && 30 || 270 }}', publication.fetch('timeout-minutes')
+      assert_equal "${{ (inputs.protected_web && inputs.web_archive != '' && 'true') || steps.producer.outputs.prepared }}",
+                   publication.fetch('env').fetch('CD_PREPARED_ARCHIVE')
+      assert_equal "${{ inputs.protected_web && 'required' || '' }}", publication.dig('env', 'CD_WEB_CONTINUITY')
     end
     transport = File.read(File.join(ROOT, 'scripts/staging_cd_transport.sh'))
     %w[Acquire::http::Timeout DPkg::Lock::Timeout].each { |option| assert_includes transport, option }
@@ -150,7 +153,8 @@ class StagingWorkflowTest < Minitest::Test
       name = File.basename(file, File.extname(file))
       YAML.load_file(file)['jobs'].each do |id, job|
         next unless [promote, writer].include?(job['uses'])
-        if name == 'staging-promote' && %w[deploy redeploy].include?(id)
+        if (name == 'staging-promote' && %w[deploy redeploy].include?(id)) ||
+           (name == 'staging-web-continuity-epoch' && id == 'promote')
           # Jobs inside one reusable call share the caller's slot; a nested
           # acquisition of the same group would deadlock the retry.
           refute job.key?('concurrency'), 'the outer promotion already owns the writer lock'
@@ -177,6 +181,31 @@ class StagingWorkflowTest < Minitest::Test
     admission = workflow('staging-promote')['jobs']['admit']
     assert admission['steps'].any? { |step| step.dig('env', 'CD_RESOLVE_MODE') == 'automatic' }
     assert_equal '${{ needs.admit.outputs.started_at }}', workflow('staging-promote').dig('jobs', 'deploy', 'with', 'started_at')
+  end
+
+  def test_protected_web_builds_before_one_writer_epoch
+    wrapper = workflow('staging-web-continuity')
+    epoch = workflow('staging-web-continuity-epoch')
+    raw, protected_job = %w[raw protected].map { |id| wrapper.fetch('jobs').fetch(id) }
+    observer, release, promote = %w[observe release promote].map { |id| epoch.fetch('jobs').fetch(id) }
+    refute raw.key?('concurrency')
+    refute raw.key?('secrets')
+    refute raw.key?('environment')
+    assert_equal 'raw', protected_job['needs']
+    assert_equal 'cma-staging-deploy-set', protected_job.dig('concurrency', 'group')
+    assert_equal '${{ needs.raw.outputs.artifact }}', protected_job.dig('with', 'archive')
+    assert epoch.fetch('jobs').values.none? { |job| job.key?('concurrency') }
+    scope_step = observer.fetch('steps').find { |step| step['id'] == 'preimage' }
+    assert_includes scope_step.fetch('run'), 'staging_cd_web_preimage.py'
+    credential_steps = observer.fetch('steps').select { |step| step.dig('env', 'CD_NYXID_CLIENT_ID') }
+    assert_equal ['preimage'], credential_steps.map { |step| step['id'] }
+    assert_equal 'observe', release['needs']
+    refute release.key?('secrets')
+    assert_equal true, release.dig('with', 'protected_web')
+    assert_equal '${{ needs.observe.outputs.scope }}', release.dig('with', 'web_scope')
+    assert_equal 'release', promote['needs']
+    assert_equal "needs.release.outputs.finalized == 'success'", promote['if']
+    assert_equal 'web', promote.dig('with', 'lane')
   end
 
   def test_credentials_and_write_permissions_cannot_reach_build_or_redeploy
@@ -453,6 +482,13 @@ class StagingWorkflowTest < Minitest::Test
       assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
       job['uses'] = original
     end
+    %w[staging-web-continuity staging-web-continuity-epoch].zip(%w[protected release]).each do |workflow, id|
+      job = inputs[workflow]['jobs'][id]
+      original = job['uses']
+      job['uses'] = './.github/workflows/staging-promote.yml'
+      assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
+      job['uses'] = original
+    end
   end
 
   def test_package_bundle_writes_only_on_a_develop_dispatch_with_pinned_actions
@@ -715,7 +751,8 @@ class StagingWorkflowTest < Minitest::Test
     'redeploy-staging' => { 'resolve' => %w[infra-token] },
     'staging-cd' => { 'infrastructure' => %w[infra-token] },
     'staging-deploy' => { 'deploy' => %w[infra-token infra-checkout], 'report' => %w[evidence] },
-    'staging-release' => { 'publish' => %w[receipts], 'finalize' => %w[receipts-download] }
+    'staging-release' => { 'publish' => %w[web-archive receipts], 'finalize' => %w[receipts-download] },
+    'staging-web-continuity-epoch' => { 'observe' => %w[infra-token infra-checkout] }
   }.freeze
   # Optional steps whose failure only costs time; publication decides the outcome later.
   OPTIONAL = ['Expose cache runtime to the Buildx client', 'Check release ownership',
@@ -750,7 +787,7 @@ class StagingWorkflowTest < Minitest::Test
         end
       end
     end
-    assert_equal 7, optional.size
+    assert_equal 10, optional.size
     # A job is never repeated or made optional, and no other step may hide its failure.
     REPEATED.each_key do |name|
       workflow(name)['jobs'].each do |job_id, job|
@@ -764,7 +801,7 @@ class StagingWorkflowTest < Minitest::Test
       end
     end
     # Consumers accept the output of whichever attempt succeeded.
-    %w[redeploy-staging staging-cd staging-deploy].each do |name|
+    %w[redeploy-staging staging-cd staging-deploy staging-web-continuity-epoch].each do |name|
       text = File.read(File.join(ROOT, 'workflows', name + '.yml'))
       uses = text.scan(/steps\.infra-token\.outputs\.token[^}]*/)
       refute_empty uses
@@ -778,7 +815,7 @@ class StagingWorkflowTest < Minitest::Test
   def test_release_artifact_handoffs_use_verified_zip_archives
     upload = 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9'
     download = 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333'
-    %w[staging-cd staging-release staging-promote staging-deploy cache-retention publish prod-deploy].each do |name|
+    %w[staging-cd staging-release staging-promote staging-deploy staging-web-continuity cache-retention publish prod-deploy].each do |name|
       steps = workflow(name).fetch('jobs').values.flat_map { |job| job.fetch('steps', []) }
       artifacts = steps.select { |step| step['uses'].to_s.match?(%r{\Aactions/(upload|download)-artifact@}) }
       refute_empty artifacts, name

@@ -9,6 +9,7 @@ from staging_cd_versions import version_tuple
 SCHEMA = "cma-web-asset-continuity-v1"
 PROOF_SCHEMA = "cma-web-asset-publication-proof-v1"
 PREIMAGE_SCHEMA = "cma-web-continuity-preimage-v1"
+BOOTSTRAP_SCHEMA = "cma-web-continuity-bootstrap-v1"
 REPOSITORY = "ghcr.io/chronoaiproject/cma-web"
 IMAGE = r"ghcr\.io/chronoaiproject/cma-web@sha256:[0-9a-f]{64}"
 HASH = r"[0-9a-f]{64}"
@@ -26,6 +27,23 @@ def validate_incumbent(value):
             "Web continuity incumbent is malformed")
     version_tuple(value["version"])
     return value
+
+
+def validate_scope(scope):
+    require(isinstance(scope, dict) and set(scope) == {"incumbent", "inputs", "preimage_sha256"}
+            and matches(HASH, scope["preimage_sha256"]) and isinstance(scope["inputs"], list),
+            "Web publication scope is malformed")
+    validate_incumbent(scope["incumbent"])
+    required = {"image", "source_sha", "version"}
+    for row in scope["inputs"]:
+        require(isinstance(row, dict) and set(row) in (required, required | {"catalog_sha256"})
+                and immutable_image(row["image"]) and matches(r"[0-9a-f]{40}", row["source_sha"])
+                and ("catalog_sha256" not in row or matches(HASH, row["catalog_sha256"])),
+                "Web publication scope input is malformed")
+        version_tuple(row["version"])
+    images = [row["image"] for row in scope["inputs"]]
+    require(images == sorted(set(images)), "Web publication scope inputs are ambiguous")
+    return scope
 
 
 def validate(value, identity, promote_image):
@@ -114,7 +132,27 @@ def validate_proof(proof, continuity, identity, promote_image, promote_archive):
             "Web continuity publication archive or shared layer differs")
 
 
-def retention_scope(preimage, started_at, finalized, *, allow_bootstrap=False):
+def bootstrap_inputs(bootstrap, incumbent, finalized):
+    require(isinstance(bootstrap, dict)
+            and set(bootstrap) == {"schema", "incumbent", "retained", "approved_deployments_sha256"}
+            and bootstrap["schema"] == BOOTSTRAP_SCHEMA and bootstrap["incumbent"] == incumbent
+            and isinstance(bootstrap["retained"], list) and matches(HASH, bootstrap["approved_deployments_sha256"]),
+            "Unprotected Web image requires an approved bootstrap lineage")
+    recognized = {receipt["repository"] + "@" + receipt["digest"]: {
+        "image": receipt["repository"] + "@" + receipt["digest"], "source_sha": receipt["source"],
+        "version": receipt["identity"]["version"],
+    } for receipt in finalized if "asset_continuity" not in receipt}
+    for row in bootstrap["retained"]:
+        require(isinstance(row, dict) and immutable_image(row.get("image"))
+                and row["image"] != incumbent["base_image"] and recognized.get(row["image"]) == row,
+                "Bootstrap Web lineage differs from finalized images")
+    expected = sorted({row["image"] for row in bootstrap["retained"]})
+    require([row["image"] for row in bootstrap["retained"]] == expected,
+            "Bootstrap Web lineage is ambiguous")
+    return [dict(row) for row in bootstrap["retained"]]
+
+
+def retention_scope(preimage, started_at, finalized, *, bootstrap=None):
     """Bind a scoped controller preimage to the lineage of its finalized serving image."""
     require(isinstance(preimage, dict) and set(preimage) == {"schema", "observed_at", "incumbent", "asset_manifest_sha256"}
             and preimage["schema"] == PREIMAGE_SCHEMA and preimage["observed_at"] == started_at,
@@ -142,7 +180,9 @@ def retention_scope(preimage, started_at, finalized, *, allow_bootstrap=False):
         matches_serving.append(receipt.get("asset_proof"))
     require(len(matches_serving) == 1, "Serving Web image has no unique finalized lineage")
     [proof] = matches_serving
-    if proof is None:
-        require(allow_bootstrap is True, "An unprotected Web image cannot supply retained lineage")
-    return {"incumbent": dict(incumbent), "preimage_sha256": sha256(preimage),
-            "inputs": [dict(row) for row in proof["inputs"]] if proof is not None else []}
+    if proof is not None:
+        return {"incumbent": dict(incumbent), "preimage_sha256": sha256(preimage),
+                "inputs": [dict(row) for row in proof["inputs"]]}
+    inputs = bootstrap_inputs(bootstrap, incumbent, finalized)
+    return {"incumbent": dict(incumbent), "inputs": inputs,
+            "preimage_sha256": sha256({"controller": preimage, "bootstrap": bootstrap})}

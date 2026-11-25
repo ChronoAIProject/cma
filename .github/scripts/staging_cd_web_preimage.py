@@ -1,17 +1,24 @@
 """Read the serving Web preimage through the pinned read-only staging controller."""
 
 from pathlib import Path
+import os
 import sys
 import tempfile
 
 from cd_target import STAGING, name as target_name
 from staging_cd_admission import event_identity
-from staging_cd_clock import TERMINATION_GRACE_SECONDS, remaining
+from staging_cd_clock import TERMINATION_GRACE_SECONDS, remaining, timestamp
 from staging_cd_common import require
+from staging_cd_github import GitHub
 from staging_cd_invoke import IDENTITY_KEYS, PROCESS_KEYS, private_script
 from staging_cd_process import run as run_process
+from staging_cd_receipts import canonical
+from staging_cd_release_tags import local_tag_reader
+from staging_cd_resolve import output
+from staging_cd_runtime import run_private
 from staging_cd_set import document
 from staging_cd_tools import environment as tool_environment
+from staging_cd_web_continuity import retention_scope
 
 
 def read(env, masker, *, script_reader=private_script, runner=run_process, tool_reader=tool_environment):
@@ -41,3 +48,30 @@ def read(env, masker, *, script_reader=private_script, runner=run_process, tool_
         require((info.st_mode & 0o777) == 0o600 and 0 < info.st_size <= 4096,
                 "Web controller preimage file is not private or is oversized")
         return document(path.read_text(encoding="utf-8"))
+
+
+def main():
+    def operation(masker):
+        env = dict(os.environ)
+        script = private_script(env)
+        env["CD_STARTED_AT"] = timestamp()
+        preimage = read(env, masker, script_reader=lambda _: script)
+        # The only legacy adoption inputs come from the same immutable
+        # infrastructure checkout as the controller.
+        path = script.parents[1] / "web-asset-bootstrap.json"
+        require(not path.is_symlink(), "Web asset bootstrap links are forbidden")
+        bootstrap = document(path.read_text(encoding="utf-8")) if path.is_file() else None
+        api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(Path.cwd()))
+        tags = api.tags("web")
+        history = api.history()
+        for tag in tags:
+            history.position(tag["target"])
+        scope = retention_scope(preimage, env["CD_STARTED_AT"], [tag["receipt"] for tag in tags], bootstrap=bootstrap)
+        output(env, "scope", canonical(scope))
+        return True
+
+    return run_private(operation, None, subject="web-preimage")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

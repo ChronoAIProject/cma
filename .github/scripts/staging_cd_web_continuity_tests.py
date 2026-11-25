@@ -15,7 +15,7 @@ from staging_cd_receipts import annotation, canonical, parse_annotation, publish
 from staging_cd_receipts_tests import fixture_receipt, fixture_tag
 from staging_cd_resolve import verify
 from staging_cd_set import private_document, release_set, verify_set
-from staging_cd_web_continuity import PREIMAGE_SCHEMA, PROOF_SCHEMA, binding, retention_scope
+from staging_cd_web_continuity import BOOTSTRAP_SCHEMA, PREIMAGE_SCHEMA, PROOF_SCHEMA, binding, retention_scope
 
 
 REPOSITORY = "ghcr.io/chronoaiproject/cma-web"
@@ -256,8 +256,17 @@ class WebContinuityTests(unittest.TestCase):
                   "base_image": REPOSITORY + "@" + self.original["digest"], "source_sha": self.original["source"],
                   "version": self.original["identity"]["version"]}
         preimage = fixture_preimage(legacy)
-        self.assertEqual(retention_scope(preimage, STARTED, [self.original], allow_bootstrap=True)["inputs"], [])
-        with self.assertRaisesRegex(Refusal, "unprotected Web image"):
+        earlier = dict(fixture_receipt(source="c" * 40, previous="0.9.0", version="0.9.1"), digest="sha256:" + "5" * 64)
+        before = {"image": REPOSITORY + "@" + earlier["digest"], "source_sha": earlier["source"],
+                  "version": earlier["identity"]["version"]}
+        bootstrap = {"schema": BOOTSTRAP_SCHEMA, "incumbent": legacy, "approved_deployments_sha256": "b" * 64,
+                     "retained": [before]}
+        self.assertEqual(retention_scope(preimage, STARTED, [self.original, earlier], bootstrap=bootstrap),
+                         {"incumbent": legacy, "inputs": [before],
+                          "preimage_sha256": sha256({"controller": preimage, "bootstrap": bootstrap})})
+        with self.assertRaisesRegex(Refusal, "requires an approved bootstrap lineage"):
             retention_scope(preimage, STARTED, [self.original])
+        with self.assertRaisesRegex(Refusal, "lineage differs from finalized"):
+            retention_scope(preimage, STARTED, [self.original], bootstrap=bootstrap)
         with self.assertRaisesRegex(Refusal, "no unique finalized lineage"):
-            retention_scope(preimage, STARTED, [self.original, self.original], allow_bootstrap=True)
+            retention_scope(preimage, STARTED, [self.original, self.original], bootstrap=bootstrap)

@@ -34,7 +34,8 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
     if len(pending) != 1:
         return "no-single-reservation"
     reservation = pending[0]
-    if reservation["source"] != env["GITHUB_SHA"]:
+    historical_web = reservation["component"] == "web" and env.get("CD_WEB_CONTINUITY_RAW") == "true"
+    if reservation["source"] != env["GITHUB_SHA"] and not historical_web:
         return "historical-reservation"
 
     token = env.get("GH_TOKEN")
