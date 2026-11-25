@@ -178,7 +178,7 @@ module CIContract
       "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
       "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
       "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
-      "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+      "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
       "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
       "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
       "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
