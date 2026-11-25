@@ -4,11 +4,13 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from staging_cd_admission import event_identity
 from staging_cd_build import build, snapshot
-from staging_cd_build_cache import BuildCache
+from staging_cd_build_cache import SCOPES, BuildCache
+from staging_cd_cache_save import report_layers
 from staging_cd_common import require
 from staging_cd_github import GitHub
 from staging_cd_publication_diagnostics import run_publication
@@ -21,7 +23,7 @@ from staging_cd_test_failures import public_summary
 from staging_cd_timing import Timings
 
 
-def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=None):
+def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=None, layer_exports=None):
     timings = timings or Timings()
     event_identity(env)
     require(env["GITHUB_EVENT_NAME"] == "push", "Image preparation only accepts develop pushes")
@@ -64,8 +66,11 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
             if cache.key is not None and cache_metrics is not None:
                 cache_metrics.append({"operation": "restore", "result": cache.restore_result})
         diagnostics.mark("build")
+        started = time.time()
         with timings.stage("build"):
             _, release = build(root, reservation, directory, source=source, cache=cache, progress=progress)
+        if layer_exports is not None and cache is not None and cache.exports_layers():
+            layer_exports.append(started)
         seal(directory, release, cache.namespace if cache and cache.key is not None else None)
         # The destination is allocated exclusively and the manifest is the
         # final commit marker. A partial handoff cannot authorize publication.
@@ -81,10 +86,11 @@ def main():
     disposition = []
     timings = Timings()
     cache_metrics = []
+    layer_exports = []
 
     def run(_masker, diagnostics):
         disposition.append(produce(env, Path.cwd(), diagnostics, progress,
-                                   timings=timings, cache_metrics=cache_metrics))
+                                   timings=timings, cache_metrics=cache_metrics, layer_exports=layer_exports))
         return True
 
     result = run_publication(run, component=env.get("CD_COMPONENT"))
@@ -92,7 +98,10 @@ def main():
         step_output(env, "prepared", "true" if disposition[0] == "prepared" else "false")
         print("Staging release producer result=" + disposition[0], flush=True)
     timings.emit(sys.stdout)
-    emit_cache_metrics(env.get("CD_COMPONENT"), cache_metrics, sys.stdout)
+    component = env.get("CD_COMPONENT")
+    emit_cache_metrics(component, cache_metrics, sys.stdout)
+    if layer_exports:
+        report_layers(component, SCOPES[component], progress, layer_exports[0], env)
     if progress:
         print(json.dumps({"event": "publication-build", **public_summary(progress)}, sort_keys=True),
               flush=True)

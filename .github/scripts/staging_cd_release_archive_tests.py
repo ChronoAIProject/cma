@@ -41,10 +41,12 @@ class ArchiveHandoffTests(unittest.TestCase):
         task = {"mode": "publish", "reservation": reservation, "component": "am"}
         with tempfile.TemporaryDirectory() as temporary, contextlib.ExitStack() as stack:
             root = Path(temporary)
-            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": identity["source"],
+            env = {"GITHUB_REPOSITORY": "ChronoAIProject/cma", "GITHUB_EVENT_NAME": "push",
+                   "GITHUB_REF": "refs/heads/develop", "GITHUB_SHA": identity["source"], "GH_TOKEN": "fixture",
                    "GITHUB_RUN_ID": str(identity["run_id"]), "GITHUB_RUN_ATTEMPT": str(identity["run_attempt"]),
                    "CD_COMPONENT": "am", "CD_TASKS": json.dumps([task]), "RUNNER_TEMP": str(root),
-                   "CD_RECEIPTS_PATH": str(root / "receipts.json"), "CD_PREPARED_ARCHIVE": "true"}
+                   "CD_RECEIPTS_PATH": str(root / "receipts.json"), "CD_PREPARED_ARCHIVE": "true",
+                   "CD_BUILD_CACHE": "enabled", "GITHUB_OUTPUT": str(root / "output")}
             stack.enter_context(patch.dict(os.environ, env, clear=True))
             for module in (staging_cd_produce, staging_cd_publish):
                 for name in ("event_identity", "GitHub", "snapshot"):
@@ -52,9 +54,13 @@ class ArchiveHandoffTests(unittest.TestCase):
             producer_authority = stack.enter_context(patch.object(staging_cd_produce, "Reservations")).return_value
             publisher_authority = stack.enter_context(patch.object(staging_cd_publish, "Reservations")).return_value
             stack.enter_context(patch.object(staging_cd_publish, "Registry"))
+            cache = stack.enter_context(patch.object(staging_cd_produce, "BuildCache")).return_value
+            cache.key = None
+            cache.exports_layers.return_value = True
             stack.enter_context(patch.object(staging_cd_publish, "identity", return_value=(identity, None, None)))
 
-            def build(_root, _reservation, directory, **_kwargs):
+            def build(_root, _reservation, directory, *, progress, **_kwargs):
+                progress["cache_export_error"] = "read-only"
                 archive = directory / ARCHIVE
                 archive.write_bytes(b"synthetic OCI candidate")
                 return archive, identity
@@ -62,11 +68,15 @@ class ArchiveHandoffTests(unittest.TestCase):
             producer_build = stack.enter_context(patch.object(staging_cd_produce, "build", side_effect=build))
             fallback = stack.enter_context(patch.object(staging_cd_publish, "build"))
             publish = stack.enter_context(patch.object(staging_cd_publish, "publish", return_value=receipt))
-            self.assertEqual(staging_cd_produce.produce(env, root, Mock(), {}), "prepared")
-            producer_authority.require_current.assert_called_once_with(reservation, build_started=False)
-
+            stack.enter_context(patch.object(staging_cd_produce.Path, "cwd", return_value=root))
             output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            self.assertEqual(staging_cd_produce.main(), 0)
+            self.assertEqual((root / "output").read_text(), "prepared=true\n")
+            producer_authority.require_current.assert_called_once_with(reservation, build_started=False)
             self.assertEqual(staging_cd_publish.main(), 0)
+            self.assertEqual(output.getvalue().count("CACHE-SAVE cache=build-layers component=am"), 1)
+            self.assertIn("result=not-saved reason=read-only", output.getvalue())
+            self.assertIn("::warning title=Build cache not saved", output.getvalue())
             prepared = load(path_for(root / "cma-prepared-release", reservation), identity)
             self.assertEqual(publish.call_args.args[0], prepared.path)
             self.assertEqual(publish.call_args.kwargs["prepared_checksum"], prepared.sha256)

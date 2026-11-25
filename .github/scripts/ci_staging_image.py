@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -18,7 +19,7 @@ from staging_cd_registry import MEDIA, Registry
 from staging_cd_release_tags import REMOTE, local_tag_reader
 from staging_cd_resolve import output as step_output
 from staging_cd_runtime import run_private
-from staging_cd_versions import DEPLOYABLES, REPOSITORY
+from staging_cd_versions import DEPLOYABLES, REPOSITORY, SEMVER
 
 COMPONENTS = {"api": "am", "runtime": "runtime", "runtime-omarchy": "runtime-omarchy"}
 WAIT_SECONDS = 23 * 60
@@ -40,12 +41,14 @@ def refs(component, source, run=checked_command, *, timeout=20):
     tags, peeled = {}, []
     for line in raw.splitlines():
         oid, sep, ref = line.partition("\t")
-        require(sep and matches(r"[0-9a-f]{40}", oid) and ref.startswith(prefix),
-                "Staging final ref inventory is malformed")
-        if ref.endswith("^{}"):
+        name = ref.removesuffix("^{}")
+        require(sep and matches(r"[0-9a-f]{40}", oid)
+                and matches(re.escape(prefix) + SEMVER, name), "Staging final ref inventory is malformed")
+        if name != ref:
             if oid == source:
-                peeled.append(ref[:-3])
+                peeled.append(name)
         else:
+            require(oid != source, "Staging final on the CI source must be an annotated tag")
             require(ref not in tags, "Staging final ref appears twice")
             tags[ref] = oid
     require(len(peeled) <= 1, "Multiple staging finals name the same component and source")
@@ -80,7 +83,13 @@ def matching_receipt(ref, oid, component, source, tree, api):
             "Staging final names a different workflow")
     # Staging can publish an earlier source while draining a release backlog.
     # Its valid final is not a build by this head's staging run.
-    return receipt if run["head_sha"] == source else None
+    run_head = run["head_sha"]
+    if run_head == source:
+        return receipt
+    history = api.history_containing(run_head)
+    require(history.position(source) < history.position(run_head),
+            "Staging final source does not precede its owning run")
+    return None
 
 
 def await_ref(component, source, *, lookup=refs, clock=time.monotonic, sleep=time.sleep):

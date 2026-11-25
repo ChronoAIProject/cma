@@ -5,9 +5,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from ci_staging_image import adopt, await_ref, matching_receipt, refs, validate_loaded, WAIT_SECONDS
+import ci_retry
+from ci_staging_image import adopt, await_ref, matching_receipt, qualification, refs, validate_loaded, WAIT_SECONDS
 from staging_cd_common import Refusal
 from staging_cd_contract import labels, RECIPE_LABELS
+from staging_cd_history import DevelopHistory
 from staging_cd_receipts import IDENTITY_LABEL, annotation, canonical, final_tag_oid
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt
 from staging_cd_registry import MEDIA
@@ -38,6 +40,16 @@ class StagingImageTests(unittest.TestCase):
         with self.assertRaisesRegex(Refusal, "annotated object"):
             refs("am", source, Mock(return_value=correct))
 
+    def test_reject_direct_final_even_alongside_an_annotated_final(self):
+        receipt = fixture_receipt(component="am")
+        ref, oid, _, _ = final(receipt)
+        source = receipt["source"]
+        direct = f"{source}\trefs/tags/cma-agent-manager/v0.0.99\n"
+        annotated = f"{oid}\t{ref}\n{source}\t{ref}^{{}}\n"
+        for inventory in (direct, annotated + direct):
+            with self.subTest(inventory=inventory), self.assertRaisesRegex(Refusal, "must be an annotated tag"):
+                refs("am", source, Mock(return_value=inventory))
+
     def test_final_binds_exact_source_tree_and_workflow_attempt(self):
         receipt = fixture_runtime_receipt()
         ref, oid, tag, run = final(receipt)
@@ -60,10 +72,37 @@ class StagingImageTests(unittest.TestCase):
     def test_backlog_final_from_a_later_develop_push_uses_fallback(self):
         receipt = fixture_runtime_receipt()
         ref, oid, tag, run = final(receipt)
+        source = receipt["source"]
+        tree = receipt["identity"]["tree"]
+        later = "9" * 40
+        api = Mock()
+        api.request.side_effect = [tag, dict(run, head_sha=later)]
+        api.history_containing.return_value = DevelopHistory(later, [later, source])
+        self.assertIsNone(matching_receipt(ref, oid, "runtime", source, tree, api))
+        api.history_containing.assert_called_once_with(later)
+
+        for bad_head, history in (("0" * 40, DevelopHistory(later, [later, source])),
+                                  (later, DevelopHistory(source, [source, later]))):
+            with self.subTest(head=bad_head):
+                api.request.side_effect = [tag, dict(run, head_sha=bad_head)]
+                api.history_containing.return_value = history
+                with self.assertRaisesRegex(Refusal, "first-parent history|does not precede"):
+                    matching_receipt(ref, oid, "runtime", source, tree, api)
+
+    def test_transient_history_read_is_unreachable(self):
+        receipt = fixture_runtime_receipt()
+        ref, oid, tag, run = final(receipt)
+        source = receipt["source"]
         api = Mock()
         api.request.side_effect = [tag, dict(run, head_sha="9" * 40)]
-        self.assertIsNone(matching_receipt(ref, oid, "runtime", receipt["source"],
-                                           receipt["identity"]["tree"], api))
+        outage = Refusal("Develop ancestry could not be verified")
+        outage.__cause__ = ci_retry.TransientError()
+        api.history_containing.side_effect = outage
+        env = {"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": source, "IMAGE_COMPONENT": "runtime"}
+        with patch("ci_staging_image.event_identity"), patch("ci_staging_image.GitHub", return_value=api), \
+                patch("ci_staging_image.await_ref", return_value=((ref, oid), None)), \
+                patch("ci_staging_image.checked_command", side_effect=[source, receipt["identity"]["tree"]]):
+            self.assertEqual(qualification(env, Path.cwd()), (None, "unreachable"))
 
     def test_wait_ends_at_the_deadline_and_returns_a_later_final(self):
         time = [7.0]
