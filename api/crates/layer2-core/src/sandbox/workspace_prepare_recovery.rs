@@ -47,6 +47,13 @@ impl Workspace {
                     source_commit: None,
                 }
             }
+            WorkspaceSource::PublicRepositorySnapshot { url, commit, .. } => {
+                WorkspaceSource::PublicRepositorySnapshot {
+                    url: url.clone(),
+                    commit: commit.clone(),
+                    source_commit: None,
+                }
+            }
             source => source.clone(),
         };
         content_digest(&serde_json::json!({
@@ -68,6 +75,12 @@ impl Workspace {
                 RuntimeSource::RepositorySnapshot {
                     url: url.clone(),
                     reference: reference.clone(),
+                }
+            }
+            WorkspaceSource::PublicRepositorySnapshot { url, commit, .. } => {
+                RuntimeSource::PublicRepositorySnapshot {
+                    url: url.clone(),
+                    commit: commit.clone(),
                 }
             }
             WorkspaceSource::GitRepository { url, reference } => RuntimeSource::Clone {
@@ -94,7 +107,9 @@ impl Workspace {
 
     pub fn validate_prepare_recovery_binding(&self) -> Result<(), SandboxStoreError> {
         if let Some(recovery) = &self.work.prepare_recovery {
-            if let WorkspaceSource::RepositorySnapshot { source_commit, .. } = &self.source {
+            if let WorkspaceSource::RepositorySnapshot { source_commit, .. }
+            | WorkspaceSource::PublicRepositorySnapshot { source_commit, .. } = &self.source
+            {
                 let completion = recovery
                     .attempts
                     .last()
@@ -197,6 +212,13 @@ impl Workspace {
                     source_commit: None,
                 }
             }
+            crate::profiles::WorkspaceLocation::PublicRepositorySnapshot {
+                url, commit, ..
+            } => WorkspaceSource::PublicRepositorySnapshot {
+                url: url.clone(),
+                commit: commit.clone(),
+                source_commit: None,
+            },
             crate::profiles::WorkspaceLocation::GitRepository { url, reference } => {
                 WorkspaceSource::GitRepository {
                     url: url.clone(),

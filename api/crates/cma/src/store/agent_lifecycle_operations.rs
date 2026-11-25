@@ -49,12 +49,28 @@ pub(crate) enum LifecycleBehavior {
     PromptRepository,
     /// This admission cannot allocate before verifying the GitHub connection.
     ManagedRepository,
+    /// Generic URL-only source admission. The durable pin chooses the source mode.
+    RepositoryChoice,
+    PublicRepository,
 }
 
 impl LifecycleBehavior {
     pub(crate) fn uses_repository_profile(self) -> bool {
-        matches!(self, Self::PromptRepository | Self::ManagedRepository)
+        matches!(
+            self,
+            Self::PromptRepository
+                | Self::ManagedRepository
+                | Self::RepositoryChoice
+                | Self::PublicRepository
+        )
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PublicRepositoryPin {
+    pub url: String,
+    pub commit: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +162,8 @@ pub(crate) struct LifecycleRecord {
     pub repository_commit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository_access_pin: Option<RepositoryAccessPin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_repository: Option<PublicRepositoryPin>,
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<layer1_public::rest::AgentLifecycleFailure>,
@@ -198,6 +216,7 @@ pub(crate) struct LifecycleLease {
 #[derive(Clone)]
 pub(crate) struct MongoAgentLifecycleStore {
     pub(super) creation_writer_epoch: Option<String>,
+    pub(super) creation_terminal_settlement_enabled: bool,
     operations: Collection<LifecycleRecord>,
     admission_settings: Collection<mongodb::bson::Document>,
     pub(super) released_lanes: Option<super::released_runtimes::MongoReleasedRuntimes>,
@@ -239,9 +258,23 @@ impl MongoAgentLifecycleStore {
             )
             .await
             .map_err(driver)?;
+        operations
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"status":1,"creation_fence.epoch":1,"_id":1})
+                    .options(
+                        IndexOptions::builder()
+                            .name("creation_terminal_recovery".to_owned())
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(driver)?;
         canary_admission::ensure_admission_indexes(&operations).await?;
         Ok(Self {
             creation_writer_epoch: None,
+            creation_terminal_settlement_enabled: false,
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
             released_lanes: None,

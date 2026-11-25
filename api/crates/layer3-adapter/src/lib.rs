@@ -206,9 +206,9 @@ pub use runtime_status::{
 };
 pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};
 pub use workspace::{
-    SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
-    WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef,
-    WorktreeRemoveReceipt, WorktreeRequest,
+    public_repository_archive_url, SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt,
+    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource,
+    WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt, WorktreeRequest,
 };
 pub use workspace_prepare_recovery::{
     WorkspacePrepareRecoveryFrame, WorkspacePrepareRecoveryReceipt, WorkspacePrepareRecoveryRequest,

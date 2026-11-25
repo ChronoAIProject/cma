@@ -134,6 +134,8 @@ def gh_json(endpoint):
 
 
 def ci(args):
+    if args.step is not None and args.timer_stage is not None:
+        raise ValueError('Publication timers are job-scoped; --step and --timer-stage cannot be combined')
     auth = subprocess.run(['gh', 'auth', 'status', '--active'], capture_output=True, timeout=15)
     if auth.returncode or b'account chronoai-shining ' not in auth.stdout + auth.stderr:
         raise ValueError('Active GitHub account is not chronoai-shining; no switch attempted')

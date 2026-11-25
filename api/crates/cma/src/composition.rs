@@ -156,15 +156,9 @@ impl ControlPlaneComposition {
             stores.agent_lifecycle.clone(),
             Some(stores.sandbox_model.clone()),
             Some(adapter::desktop_creation(config, adapter.clone(), &stores)?),
-        )
-        .with_released_runtime(stores.released_runtime.clone())
-        .with_task_experience(config.task_experience.clone())
-        .with_session_guidance(
-            config.features.session_guidance_v4,
-            config.features.session_guidance_v5,
-        )
-        .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
-        .with_repository_preflight_config(config, broker.clone());
+        );
+        let inline_lifecycle =
+            runtime::configure_inline_lifecycle(config, &stores, inline_lifecycle, broker.clone());
         let runtime_canary_routes =
             routes::runtime_canaries(config, inline_lifecycle.clone())?.merge(
                 routes::retained_runtime_transitions(config, &stores, adapter.clone())?,

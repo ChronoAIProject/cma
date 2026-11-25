@@ -35,6 +35,7 @@ pub(super) async fn prepare_and_publish(
             if matches!(
                 staged_request.source,
                 layer3_adapter::WorkspaceSource::RepositorySnapshot { .. }
+                    | layer3_adapter::WorkspaceSource::PublicRepositorySnapshot { .. }
             ) {
                 crate::repository_snapshot::prepare_pinned(
                     config,
