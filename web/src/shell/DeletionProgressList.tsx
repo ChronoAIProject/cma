@@ -1,16 +1,18 @@
 import { useState } from 'react';
 import type { SandboxSummary } from '../api/types';
-import { sandboxRetirementWaitExceeded } from '../sandbox/lifecycle';
+import {
+  sandboxRetirementWaitExceeded,
+  type SandboxRetirementObservation,
+} from '../sandbox/lifecycle';
 import { Button } from '../ui/Button';
 import { IconWarningOutline16 } from '../ui/icons/IconWarningOutline16';
 import { IconCopyOutline16 } from '../ui/icons/IconCopyOutline16';
 import './DeletionProgressList.css';
 
-type DeletingSandbox = Pick<SandboxSummary, 'id' | 'name'> & {
-  readonly status?: SandboxSummary['status'];
-  readonly lifecycle?: SandboxSummary['lifecycle'];
-  readonly unknown?: boolean;
-};
+type DeletingSandbox = Pick<SandboxSummary, 'id' | 'name'> &
+  SandboxRetirementObservation & {
+    readonly unknown?: boolean;
+  };
 
 function DeletionProgressRow({
   sandbox,

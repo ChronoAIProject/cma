@@ -1,4 +1,4 @@
-import type { AgentStatus, SandboxSummary, WorkspaceStatus } from '../api/types';
+import type { AgentStatus, SandboxLifecycle, SandboxSummary, WorkspaceStatus } from '../api/types';
 import { sandboxStatusPresentation, type SandboxStatusObservation } from './presentation';
 import { sandboxHasParkedRuntimeUpdate } from './parkedRuntimeUpdate';
 
@@ -20,9 +20,17 @@ export function sandboxRetirementDuringRevive(sandbox: SandboxSummary): boolean 
   );
 }
 
-export function sandboxRetirementWaitExceeded(
-  sandbox: Partial<Pick<SandboxSummary, 'status' | 'lifecycle'>>,
-): boolean {
+export interface SandboxRetirementObservation {
+  readonly status?: SandboxSummary['status'];
+  readonly lifecycle?: {
+    readonly result?: Pick<
+      NonNullable<SandboxLifecycle['result']>,
+      'state' | 'code' | 'continuing'
+    >;
+  };
+}
+
+export function sandboxRetirementWaitExceeded(sandbox: SandboxRetirementObservation): boolean {
   const result = sandbox.lifecycle?.result;
   return (
     sandbox.status === 'retiring' &&
