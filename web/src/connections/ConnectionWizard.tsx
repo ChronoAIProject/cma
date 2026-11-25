@@ -190,7 +190,7 @@ function ConnectionSequence({
     }
   };
 
-  const cancelConnection = (saved?: StartedConnection) => {
+  const cancelConnection = (mode: 'cancel' | 'repair', saved?: StartedConnection) => {
     generation.current += 1;
     cancelled.current = true;
     starting.current = false;
@@ -204,7 +204,7 @@ function ConnectionSequence({
     const active = attempt.current ?? intentRecovery.pending ?? saved;
     if (active !== undefined) void client.cancel(target, active).catch(() => undefined);
     try {
-      intentRecovery.interrupt(true);
+      intentRecovery.interrupt(true, mode === 'cancel');
     } catch {
       /* Cancellation remains fenced in memory. */
     }
@@ -248,7 +248,7 @@ function ConnectionSequence({
         intentRecovery.bind(result, forceSubscription ? undefined : saved);
         if (repositoryRecovery && needsManualGitHubRepair(result)) {
           onRecoverySelected();
-          cancelConnection(saved?.owner === result.owner ? saved : undefined);
+          cancelConnection('repair', saved?.owner === result.owner ? saved : undefined);
           setReport(result);
           return;
         }
@@ -402,7 +402,7 @@ function ConnectionSequence({
     else void startNext(report);
   };
   const cancel = () => {
-    cancelConnection();
+    cancelConnection('cancel');
     onCancel?.();
   };
   const authorize = async () => {
