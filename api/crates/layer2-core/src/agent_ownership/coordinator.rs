@@ -400,32 +400,16 @@ impl OwnershipCoordinator {
     }
 
     pub async fn begin_drain(&self) -> Vec<Arc<Authority>> {
-        self.stop_admission();
-        if self.contains_failures() {
-            if self
-                .prepare_drain(Instant::now() + Duration::from_secs(23))
-                .await
-                .is_err()
-            {
-                self.fail().await;
-            }
-            return self.owned().await;
+        if self
+            .prepare_drain(Instant::now() + Duration::from_secs(23))
+            .await
+            .is_err()
+        {
+            self.fail().await;
         }
-        let _acquisition = self.acquisition.lock().await;
-        let owned: Vec<_> = self
-            .owned
-            .lock()
-            .unwrap()
-            .values()
-            .filter_map(|slot| slot.authority.clone())
-            .collect();
+        let owned = self.owned().await;
         for authority in &owned {
             authority.revoke();
-        }
-        // Failure to advertise drain never restores local authority. In that
-        // case peers can still take over after the expiring durable lease.
-        if self.is_registered() {
-            let _ = bounded(self.store.heartbeat(&self.instance_id, true)).await;
         }
         owned
     }
