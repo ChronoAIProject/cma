@@ -113,7 +113,6 @@ export async function publicRead(origin, path, timeout = 30000) {
   return { status: response.status, body, contentType: response.headers.get('content-type') ?? '' };
 }
 
-export function agentReady(agent, desktop) {
-  return agent?.status === 'ready' && agent?.sandbox?.status === 'active'
-    && (desktop !== true || agent.desktop === true);
+export function agentReady(agent) {
+  return agent?.status === 'ready' && agent?.sandbox?.status === 'active';
 }
