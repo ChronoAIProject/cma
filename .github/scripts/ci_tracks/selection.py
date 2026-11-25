@@ -132,10 +132,13 @@ def determine(root, event, event_name, *, release=False):
 
 
 def determine_ci(root, event, event_name, repository):
-    from ci_events import full_ci_required
+    from ci_events import VERIFICATION_EVENTS, full_ci_required, verification_head
 
     full = full_ci_required(event, event_name, repository)
-    result = determine(root, event, event_name, release=full and event_name == 'pull_request')
+    if event_name in VERIFICATION_EVENTS:
+        result = determine(root, {'after': verification_head()}, 'push')
+    else:
+        result = determine(root, event, event_name, release=full and event_name == 'pull_request')
     if full:
         with snapshot(root, result['head']) as tree:
             coverage = select([], workspace(tree), force_all=True)

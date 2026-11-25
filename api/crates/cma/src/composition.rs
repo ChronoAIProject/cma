@@ -192,7 +192,7 @@ impl ControlPlaneComposition {
         let admin = runtime_inventory::admin_state(
             config.features,
             Arc::clone(&settings),
-            access::sandbox_operators(&stores, &activity),
+            access::sandbox_operators(&stores, &activity, config.features),
             Arc::clone(&activity),
             Arc::clone(&adapter),
         )
