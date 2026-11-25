@@ -14,7 +14,7 @@ import {
 } from './client';
 import { ConnectionWizardView } from './ConnectionWizardView';
 import { ConnectionIntentRecovery, savedConnection } from './intentRecovery';
-import { GitHubConnectionDetails, needsManualGitHubRepair } from './RepositoryConnectionRepair';
+import { needsManualGitHubRepair } from './RepositoryConnectionRepair';
 import { rememberSameTabReturn } from './sameTabReturn';
 import './Connections.css';
 
@@ -222,13 +222,13 @@ function ConnectionSequence({
         if (owner.current !== undefined && result.owner !== owner.current)
           throw new Error('Your CMA account changed. Reopen this connection step to continue.');
         owner.current = result.owner;
+        intentRecovery.bind(result, forceSubscription ? undefined : saved);
         if (repositoryRecovery && needsManualGitHubRepair(result)) {
           onRecoverySelected();
-          popup.current?.close();
+          cancelConnection(saved?.owner === result.owner ? saved : undefined);
           setReport(result);
           return;
         }
-        intentRecovery.bind(result, forceSubscription ? undefined : saved);
         if (recoveryEnabled) {
           if (saved !== undefined && intentRecovery.pending === undefined) persist(undefined);
           saved = undefined;
@@ -378,7 +378,7 @@ function ConnectionSequence({
     if (attempt.current !== undefined) navigatePopup(attempt.current.hosted_url);
     else void startNext(report);
   };
-  const cancel = () => {
+  const cancelConnection = (saved?: StartedConnection) => {
     generation.current += 1;
     cancelled.current = true;
     starting.current = false;
@@ -389,7 +389,7 @@ function ConnectionSequence({
     setBusy(false);
     sequence.current = false;
     setRunning(false);
-    const active = attempt.current ?? intentRecovery.pending;
+    const active = attempt.current ?? intentRecovery.pending ?? saved;
     if (active !== undefined) void client.cancel(target, active).catch(() => undefined);
     try {
       intentRecovery.interrupt(true);
@@ -399,6 +399,9 @@ function ConnectionSequence({
     persist(undefined);
     popup.current?.close();
     popup.current = null;
+  };
+  const cancel = () => {
+    cancelConnection();
     onCancel?.();
   };
   const authorize = async () => {
@@ -462,10 +465,6 @@ function ConnectionSequence({
     setError('Your return to CMA could not be saved. Allow pop-ups or try again.');
     return false;
   };
-  const repositoryRepair =
-    repositoryRecovery && report && needsManualGitHubRepair(report) ? (
-      <GitHubConnectionDetails owner={report.owner} target={target} />
-    ) : undefined;
   return (
     <ConnectionWizardView
       {...{
@@ -487,7 +486,7 @@ function ConnectionSequence({
         connect,
         cancel,
         authorize,
-        repositoryRepair,
+        repositoryRepair: repositoryRecovery ? target : undefined,
         resumeRequired: intentRecovery.needsResume,
       }}
     />

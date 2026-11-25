@@ -1,9 +1,14 @@
-import type { ReactNode } from 'react';
 import { connectionCopy } from '../vocabulary/connect';
 import { StateDot } from '../ui/StateDot';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
-import { subscriptionService, type ConnectionReport, type StartedConnection } from './client';
+import {
+  subscriptionService,
+  type ConnectionReport,
+  type ConnectionTarget,
+  type StartedConnection,
+} from './client';
+import { GitHubConnectionDetails, needsManualGitHubRepair } from './RepositoryConnectionRepair';
 
 interface ViewProps {
   report: ConnectionReport | undefined;
@@ -25,7 +30,7 @@ interface ViewProps {
   cancel: () => void;
   authorize: () => Promise<void>;
   resumeRequired: boolean;
-  repositoryRepair?: ReactNode;
+  repositoryRepair?: ConnectionTarget;
 }
 
 // The subscription row follows the ChatGPT sign-in the user sees.
@@ -53,10 +58,11 @@ export function ConnectionWizardView({
   cancel,
   authorize,
   resumeRequired,
-  repositoryRepair,
+  repositoryRepair: repositoryTarget,
 }: ViewProps) {
   const connected = report?.services.filter((row) => row.state === 'satisfied').length ?? 0;
   const missing = report?.services.filter((row) => row.state !== 'satisfied') ?? [];
+  const repositoryRepair = repositoryTarget && report && needsManualGitHubRepair(report);
   const content = (
     <section
       className="connection-wizard"
@@ -112,7 +118,7 @@ export function ConnectionWizardView({
             repository access. If you have no suitable connection, add one in NyxID and then verify
             again.
           </p>
-          {repositoryRepair}
+          <GitHubConnectionDetails owner={report.owner} target={repositoryTarget} />
         </>
       ) : handoff === undefined ? null : (
         <div className="connection-wizard__handoff">
