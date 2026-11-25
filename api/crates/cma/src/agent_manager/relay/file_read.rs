@@ -80,37 +80,3 @@ pub(super) fn reported(headers: &HeaderMap) -> bool {
     let mut values = headers.get_all(HANDOFF_HEADER).iter();
     values.next().is_some_and(|value| value == "1") && values.next().is_none()
 }
-
-pub(super) async fn recover(
-    relay: &Relay,
-    id: &AgentId,
-    request: Request,
-    next: Next,
-    permit: capacity::Permit,
-    deadline: tokio::time::Instant,
-    reason: &'static str,
-) -> Response {
-    let diagnostic = relay_diagnostics::RelayDiagnostic::from_request(&request);
-    let response = tokio::time::timeout_at(deadline, async {
-        if !relay.coordinator.is_ready() {
-            return http::unavailable_with(diagnostic.as_ref(), Refusal::CoordinatorNotReady);
-        }
-        if let Err(refusal) =
-            http::authorize_public(relay, id, &request, diagnostic.as_ref(), false).await
-        {
-            return refusal;
-        }
-        next.run(request).await
-    })
-    .await
-    .unwrap_or_else(|_| {
-        http::unavailable_with(diagnostic.as_ref(), Refusal::HandoffRecoveryDeadline)
-    });
-    tracing::debug!(
-        target: "cma::agent_manager::file_read_relay",
-        reason,
-        status = response.status().as_u16(),
-        "File read handoff handled at relay ingress"
-    );
-    http::retain_until(response, permit, Some(deadline))
-}

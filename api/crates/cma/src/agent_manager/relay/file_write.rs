@@ -1,6 +1,5 @@
 use super::*;
-use axum::{extract::Request, http::Method, middleware::Next, response::Response};
-use layer2_core::sandbox::agent_filesystem::FileWriteTarget;
+use axum::{http::Method, response::Response};
 
 pub(super) const NOT_ENTERED_HEADER: &str = "x-cma-file-write-not-entered";
 
@@ -37,31 +36,4 @@ pub(super) fn refusal(
         relay.authentication.write_not_entered_tag(proof),
     );
     response
-}
-
-pub(super) async fn recover(
-    relay: &Relay,
-    id: &AgentId,
-    mut request: Request,
-    next: Next,
-    permit: capacity::Permit,
-    deadline: tokio::time::Instant,
-    target: FileWriteTarget,
-) -> Response {
-    let diagnostic = relay_diagnostics::RelayDiagnostic::from_request(&request);
-    let response = tokio::time::timeout_at(deadline, async {
-        if !relay.coordinator.is_ready() {
-            return http::unavailable_with(diagnostic.as_ref(), Refusal::CoordinatorNotReady);
-        }
-        if let Err(refusal) = http::authorize_public(relay, id, &request, None, false).await {
-            return refusal;
-        }
-        request.extensions_mut().insert(target);
-        next.run(request).await
-    })
-    .await
-    .unwrap_or_else(|_| {
-        http::unavailable_with(diagnostic.as_ref(), Refusal::HandoffRecoveryDeadline)
-    });
-    http::retain_until(response, permit, Some(deadline))
 }

@@ -307,17 +307,26 @@ async fn route_request(
         diagnostic.as_mut(),
     )
     .await;
-    if matches!(forwarded, Err(forward::Failure::WriteNotEntered)) {
-        if let Some(target) = write_target {
-            return file_write::recover(&relay, &id, request, next, slot, deadline, target).await;
+    let recovery = match &forwarded {
+        Err(forward::Failure::WriteNotEntered) if write_target.is_some() => Some((
+            relay_diagnostics::RecoveryTrigger::VerifiedWriteNotEntered,
+            write_target,
+        )),
+        _ if file_read => forward::handoff(&forwarded).map(|trigger| (trigger, None)),
+        _ => None,
+    };
+    if let Some((trigger, write_target)) = recovery {
+        return handoff_recovery::Recovery {
+            permit: slot,
+            deadline,
+            diagnostic: diagnostic.as_ref(),
+            trigger,
+            write_target,
         }
+        .run(&relay, &id, request, next)
+        .await;
     }
-    match forward::handoff(&forwarded) {
-        Some(reason) if file_read => {
-            file_read::recover(&relay, &id, request, next, slot, deadline, reason).await
-        }
-        _ => forward::finish(forwarded, slot, deadline, diagnostic.as_ref()),
-    }
+    forward::finish(forwarded, slot, deadline, diagnostic.as_ref())
 }
 
 pub(super) fn authorize_public<'a>(

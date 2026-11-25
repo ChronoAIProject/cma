@@ -1,4 +1,5 @@
 use axum::extract::Request;
+use axum::http::StatusCode;
 use layer2_core::diagnostic_context::DiagnosticContext;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -40,6 +41,23 @@ enum Surface {
     Environment,
     FileRead,
     FileWrite,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum RecoveryTrigger {
+    PeerConnectionFailed,
+    PeerOwnerHandoff,
+    VerifiedWriteNotEntered,
+}
+
+impl RecoveryTrigger {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::PeerConnectionFailed => "peer_connection_failed",
+            Self::PeerOwnerHandoff => "peer_owner_handoff",
+            Self::VerifiedWriteNotEntered => "verified_write_not_entered",
+        }
+    }
 }
 
 pub(super) struct RelayDiagnostic {
@@ -92,5 +110,24 @@ impl RelayDiagnostic {
                 "Agent file relay refused"
             );
         }
+    }
+
+    pub(super) fn recovery(&self, trigger: RecoveryTrigger, status: Option<StatusCode>) {
+        let outcome = match status {
+            None => "started",
+            Some(status) if status.is_success() => "recovered",
+            Some(_) => "refused",
+        };
+        tracing::info!(
+            target: "cma::agent_manager::file_relay",
+            parent: None,
+            request_hash = self.request_hash.as_ref(),
+            hop_hash = self.hop_hash.as_deref(),
+            operation = if matches!(self.surface, Surface::FileRead) { "read" } else { "write" },
+            trigger = trigger.as_str(),
+            outcome,
+            status = status.map(|status| status.as_u16()),
+            "Agent file relay handoff recovery"
+        );
     }
 }

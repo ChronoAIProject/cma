@@ -6,7 +6,7 @@ use axum::{
     response::Response,
 };
 use futures_util::StreamExt as _;
-use relay_diagnostics::RelayDiagnostic;
+use relay_diagnostics::{RecoveryTrigger, RelayDiagnostic};
 use reqwest::RequestBuilder;
 use tokio::time::Instant;
 
@@ -104,14 +104,14 @@ fn prepare(
     ))
 }
 
-pub(super) fn handoff(outcome: &Result<reqwest::Response, Failure>) -> Option<&'static str> {
+pub(super) fn handoff(outcome: &Result<reqwest::Response, Failure>) -> Option<RecoveryTrigger> {
     match outcome {
-        Err(Failure::Connect) => Some("peer_connection_failed"),
+        Err(Failure::Connect) => Some(RecoveryTrigger::PeerConnectionFailed),
         Ok(response)
             if response.status() == StatusCode::SERVICE_UNAVAILABLE
                 && file_read::reported(response.headers()) =>
         {
-            Some("peer_owner_handoff")
+            Some(RecoveryTrigger::PeerOwnerHandoff)
         }
         _ => None,
     }

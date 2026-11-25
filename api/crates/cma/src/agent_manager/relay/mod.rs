@@ -5,6 +5,7 @@ pub(crate) use control::{prestop, DRAIN};
 mod file_read;
 mod file_write;
 mod forward;
+mod handoff_recovery;
 mod http;
 mod ingress;
 mod live;
