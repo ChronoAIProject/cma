@@ -71,6 +71,32 @@ pub(super) fn allow_unversioned(pool: &DynamicObject, replicas: u32) -> Result<(
     Ok(())
 }
 
+pub(super) fn check_target_authority(
+    pool: &DynamicObject,
+    target: &NativePoolTarget,
+) -> Result<bool> {
+    target.validate()?;
+    if let Some(previous) = retained(pool)? {
+        if previous.target_id != target.target_id
+            || previous.revision > target.revision
+            || (previous.revision == target.revision && previous != *target)
+        {
+            return Err(rejected("native pool target generation was superseded"));
+        }
+        let capacity = management::target(pool)?;
+        let retired = capacity == 0
+            && pool
+                .annotations()
+                .get(retirement::RETIRING)
+                .is_some_and(|value| value == "true");
+        if capacity != previous.replicas && !retired {
+            return Err(rejected("native pool target changed outside its watermark"));
+        }
+        return Ok(previous == *target && capacity == target.replicas);
+    }
+    Ok(false)
+}
+
 impl AgentSandboxPools {
     pub async fn resize_fenced(
         &self,
@@ -78,29 +104,25 @@ impl AgentSandboxPools {
         target: &NativePoolTarget,
     ) -> Result<NativePoolStatus> {
         target.validate()?;
-        let (template, actual) = self.bound_resources(binding).await?;
+        let resources = self
+            .bound_resources_with(binding, |pool| {
+                check_target_authority(pool, target).map(|_| ())
+            })
+            .await;
+        if target.replicas > 0
+            && matches!(
+                &resources,
+                Err(crate::AdapterError::NativePoolConfigurationDrift)
+            )
+        {
+            self.verify_seed(&binding.spec.home).await?;
+        }
+        let (template, actual) = resources?;
         if target.replicas > 0 {
             retirement::admitting(&actual)?;
         }
-        if let Some(previous) = retained(&actual)? {
-            if previous.target_id != target.target_id
-                || previous.revision > target.revision
-                || (previous.revision == target.revision && previous != *target)
-            {
-                return Err(rejected("native pool target generation was superseded"));
-            }
-            let capacity = management::target(&actual)?;
-            let retired = capacity == 0
-                && actual
-                    .annotations()
-                    .get(retirement::RETIRING)
-                    .is_some_and(|value| value == "true");
-            if capacity != previous.replicas && !retired {
-                return Err(rejected("native pool target changed outside its watermark"));
-            }
-            if previous == *target && capacity == target.replicas {
-                return management::status(binding.clone(), &actual);
-            }
+        if check_target_authority(&actual, target)? {
+            return management::status(binding.clone(), &actual);
         }
         if target.replicas > 0 {
             self.verify_seed(&binding.spec.home).await?;
