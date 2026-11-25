@@ -76,8 +76,10 @@ def main():
         history = api.history()
         for tag in tags:
             history.position(tag["target"])
+        retain_rollouts = env.get("CD_WEB_RETENTION_ROLLOUTS")
         scope = retention_scope(preimage, env["CD_STARTED_AT"], [tag["receipt"] for tag in tags],
-                                bootstrap=bootstrap, bootstrap_evidence=evidence)
+                                bootstrap=bootstrap, bootstrap_evidence=evidence,
+                                retain_rollouts=int(retain_rollouts) if retain_rollouts else None)
         output(env, "scope", canonical(scope))
         return True
 

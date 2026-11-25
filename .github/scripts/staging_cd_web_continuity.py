@@ -15,6 +15,7 @@ REPOSITORY = "ghcr.io/chronoaiproject/cma-web"
 IMAGE = r"ghcr\.io/chronoaiproject/cma-web@sha256:[0-9a-f]{64}"
 HASH = r"[0-9a-f]{64}"
 ASSET = r"/assets/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,239}"
+INPUT_FIELDS = {"image", "source_sha", "version", "completed_rollouts"}
 
 
 def immutable_image(image):
@@ -30,18 +31,23 @@ def validate_incumbent(value):
     return value
 
 
+def validate_input(row, *, catalog_required):
+    fields = set(row) if isinstance(row, dict) else set()
+    require((fields == INPUT_FIELDS | {"catalog_sha256"} or not catalog_required and fields == INPUT_FIELDS)
+            and immutable_image(row["image"]) and matches(r"[0-9a-f]{40}", row["source_sha"])
+            and type(row["completed_rollouts"]) is int and row["completed_rollouts"] >= 0
+            and ("catalog_sha256" not in row or matches(HASH, row["catalog_sha256"])),
+            "Web publication scope input is malformed")
+    version_tuple(row["version"])
+
+
 def validate_scope(scope):
     require(isinstance(scope, dict) and set(scope) == {"incumbent", "inputs", "preimage_sha256"}
             and matches(HASH, scope["preimage_sha256"]) and isinstance(scope["inputs"], list),
             "Web publication scope is malformed")
     validate_incumbent(scope["incumbent"])
-    required = {"image", "source_sha", "version"}
     for row in scope["inputs"]:
-        require(isinstance(row, dict) and set(row) in (required, required | {"catalog_sha256"})
-                and immutable_image(row["image"]) and matches(r"[0-9a-f]{40}", row["source_sha"])
-                and ("catalog_sha256" not in row or matches(HASH, row["catalog_sha256"])),
-                "Web publication scope input is malformed")
-        version_tuple(row["version"])
+        validate_input(row, catalog_required=False)
     images = [row["image"] for row in scope["inputs"]]
     require(images == sorted(set(images)), "Web publication scope inputs are ambiguous")
     return scope
@@ -102,19 +108,15 @@ def validate_proof(proof, continuity, identity, promote_image, promote_archive):
     require(isinstance(inputs, list) and len(inputs) >= 2, "Web continuity publication inputs are incomplete")
     images = {}
     for row in inputs:
-        require(isinstance(row, dict) and set(row) == {"image", "source_sha", "version", "catalog_sha256"}
-                and immutable_image(row["image"])
-                and matches(r"[0-9a-f]{40}", row["source_sha"])
-                and matches(HASH, row["catalog_sha256"]) and row["image"] not in images,
-                "Web continuity publication input is malformed")
-        version_tuple(row["version"])
-        images[row["image"]] = (row["source_sha"], row["version"])
-    require(list(images) == sorted(images) and len(set(images.values())) == len(images),
+        validate_input(row, catalog_required=True)
+        require(row["image"] not in images, "Web continuity publication input is duplicated")
+        images[row["image"]] = (row["source_sha"], row["version"], row["completed_rollouts"])
+    require(list(images) == sorted(images) and len({value[:2] for value in images.values()}) == len(images),
             "Web continuity publication inputs are ambiguous")
     incumbent = continuity["incumbent"]
     candidate = continuity["candidate_base_image"]
-    require(images.get(incumbent["base_image"]) == (incumbent["source_sha"], incumbent["version"])
-            and images.get(candidate) == (identity["source"], identity["version"]),
+    require(images.get(incumbent["base_image"]) == (incumbent["source_sha"], incumbent["version"], 0)
+            and images.get(candidate) == (identity["source"], identity["version"], 0),
             "Web continuity publication bases differ")
     overlays = proof["overlays"]
     require(isinstance(overlays, dict) and set(overlays) == {"prepare", "promote"},
@@ -167,11 +169,13 @@ def bootstrap_inputs(bootstrap, evidence, incumbent, finalized):
     scope = [*bootstrap["retained"], {key: incumbent[key] for key in identity_fields}]
     require(proved == sorted(scope, key=lambda value: value["image"]),
             "Bootstrap Web deployment evidence does not cover the retained and incumbent images")
-    return [dict(row) for row in bootstrap["retained"]]
+    return [dict(row, completed_rollouts=0) for row in bootstrap["retained"]]
 
 
-def retention_scope(preimage, started_at, finalized, *, bootstrap=None, bootstrap_evidence=None):
+def retention_scope(preimage, started_at, finalized, *, bootstrap=None, bootstrap_evidence=None, retain_rollouts=None):
     """Bind a scoped controller preimage to the lineage of its finalized serving image."""
+    require(retain_rollouts is None or type(retain_rollouts) is int and retain_rollouts > 0,
+            "Web asset retention needs a positive rollout count")
     require(isinstance(preimage, dict) and set(preimage) == {"schema", "observed_at", "incumbent", "asset_manifest_sha256"}
             and preimage["schema"] == PREIMAGE_SCHEMA and preimage["observed_at"] == started_at,
             "Web controller preimage differs from its admission")
@@ -195,12 +199,20 @@ def retention_scope(preimage, started_at, finalized, *, bootstrap=None, bootstra
         require(expected == incumbent, "Serving Web identity differs from its finalized lineage")
         require(observed_manifest == (continuity["asset_manifest_sha256"] if continuity else None),
                 "Serving Web manifest differs from its finalized lineage")
-        matches_serving.append(receipt.get("asset_proof"))
+        matches_serving.append((receipt.get("asset_proof"), promote == incumbent["image"]))
     require(len(matches_serving) == 1, "Serving Web image has no unique finalized lineage")
-    [proof] = matches_serving
+    [(proof, promoted)] = matches_serving
     if proof is not None:
-        return {"incumbent": dict(incumbent), "preimage_sha256": sha256(preimage),
-                "inputs": [dict(row) for row in proof["inputs"]]}
+        inputs = [dict(row) for row in proof["inputs"]]
+        if promoted:
+            # Only a settled candidate counts as a new rollout. A prepare
+            # image may be a rollback after the candidate served HTML.
+            for row in inputs:
+                row["completed_rollouts"] = (0 if row["image"] == incumbent["base_image"]
+                                             else row["completed_rollouts"] + 1)
+            if retain_rollouts is not None:
+                inputs = [row for row in inputs if row["completed_rollouts"] <= retain_rollouts]
+        return {"incumbent": dict(incumbent), "preimage_sha256": sha256(preimage), "inputs": inputs}
     inputs = bootstrap_inputs(bootstrap, bootstrap_evidence, incumbent, finalized)
     return {"incumbent": dict(incumbent), "inputs": inputs,
             "preimage_sha256": sha256({"controller": preimage, "bootstrap": bootstrap})}

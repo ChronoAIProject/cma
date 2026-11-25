@@ -19,7 +19,8 @@ def archive_base(row, directory, runner):
     archive = directory / ("base-" + digest[7:] + ".oci.tar")
     require(not archive.exists() and not archive.is_symlink(), "Web asset archive output already exists")
     runner(["skopeo", "copy", "--preserve-digests", "docker://" + image, "oci-archive:" + str(archive)], timeout=300)
-    return WebArchive(archive, digest, row["source_sha"], row["version"], row.get("catalog_sha256"))
+    return WebArchive(archive, digest, row["source_sha"], row["version"], row.get("catalog_sha256"),
+                      row.get("completed_rollouts", 0))
 
 
 def protected_pair(archive, digest, identity, scope, directory, source, runner, *, max_files, max_bytes):

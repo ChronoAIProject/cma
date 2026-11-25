@@ -53,10 +53,12 @@ def fixture_proof(continuity, release):
         "schema": PROOF_SCHEMA, "continuity_sha256": binding(continuity),
         "retention_preimage_sha256": "d" * 64, "asset_count": 201, "asset_bytes": 10001,
         "inputs": [
-            {"image": image("2"), "source_sha": "b" * 40, "version": "0.10.0", "catalog_sha256": "2" * 64},
+            {"image": image("2"), "source_sha": "b" * 40, "version": "0.10.0", "catalog_sha256": "2" * 64,
+             "completed_rollouts": 0},
             {"image": image("3"), "source_sha": release["source"], "version": release["identity"]["version"],
-             "catalog_sha256": "3" * 64},
-            {"image": image("5"), "source_sha": "c" * 40, "version": "0.9.0", "catalog_sha256": "1" * 64},
+             "catalog_sha256": "3" * 64, "completed_rollouts": 0},
+            {"image": image("5"), "source_sha": "c" * 40, "version": "0.9.0", "catalog_sha256": "1" * 64,
+             "completed_rollouts": 2},
         ],
         "overlays": {"prepare": overlay(image("4"), image("2"), "c" * 64),
                      "promote": overlay(REPOSITORY + "@" + release["digest"], image("3"), release["archive"])},
@@ -222,6 +224,8 @@ class WebContinuityTests(unittest.TestCase):
             lambda proof: proof.update(continuity_sha256="f" * 64),
             lambda proof: proof["inputs"].reverse(),
             lambda proof: proof["inputs"].pop(0),
+            lambda proof: proof["inputs"][1].update(completed_rollouts=1),
+            lambda proof: proof["inputs"][2].update(completed_rollouts=True),
             lambda proof: proof["overlays"]["prepare"].update(base_image=image("3")),
             lambda proof: proof["overlays"]["prepare"].update(layer_digest="sha256:" + "a" * 64),
             lambda proof: proof["overlays"]["promote"].update(archive_sha256="f" * 64),
@@ -240,11 +244,16 @@ class WebContinuityTests(unittest.TestCase):
                     "version": self.receipt["identity"]["version"]}
         after_rollback = dict(self.continuity["incumbent"], image=self.continuity["prepare_image"])
         manifest = self.continuity["asset_manifest_sha256"]
-        for incumbent in (promoted, after_rollback):
-            preimage = fixture_preimage(incumbent, manifest)
-            self.assertEqual(retention_scope(preimage, STARTED, [self.receipt]),
-                             {"incumbent": incumbent, "preimage_sha256": sha256(preimage),
-                              "inputs": self.proof["inputs"]})
+        prepared_preimage = fixture_preimage(after_rollback, manifest)
+        current = retention_scope(prepared_preimage, STARTED, [self.receipt], retain_rollouts=1)
+        self.assertEqual(current, {"incumbent": after_rollback, "preimage_sha256": sha256(prepared_preimage),
+                                   "inputs": self.proof["inputs"]})
+        promoted_preimage = fixture_preimage(promoted, manifest)
+        wider = retention_scope(promoted_preimage, STARTED, [self.receipt])
+        self.assertEqual([row["completed_rollouts"] for row in wider["inputs"]], [1, 0, 3])
+        narrower = retention_scope(promoted_preimage, STARTED, [self.receipt], retain_rollouts=2)
+        self.assertEqual([row["image"] for row in narrower["inputs"]], [image("2"), image("3")])
+        self.assertEqual([row["completed_rollouts"] for row in narrower["inputs"]], [1, 0])
         with self.assertRaisesRegex(Refusal, "differs from its finalized lineage"):
             incorrect = dict(after_rollback, base_image=self.continuity["candidate_base_image"])
             retention_scope(fixture_preimage(incorrect, manifest), STARTED, [self.receipt])
@@ -271,7 +280,7 @@ class WebContinuityTests(unittest.TestCase):
                      "retained": [before]}
         options = {"bootstrap": bootstrap, "bootstrap_evidence": evidence}
         self.assertEqual(retention_scope(preimage, STARTED, [self.original, earlier], **options),
-                         {"incumbent": legacy, "inputs": [before],
+                         {"incumbent": legacy, "inputs": [dict(before, completed_rollouts=0)],
                           "preimage_sha256": sha256({"controller": preimage, "bootstrap": bootstrap})})
         with self.assertRaisesRegex(Refusal, "requires an approved bootstrap lineage"):
             retention_scope(preimage, STARTED, [self.original])

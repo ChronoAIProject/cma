@@ -29,7 +29,8 @@ class WebPublicationTests(unittest.TestCase):
         self.incumbent = {"image": base, "base_image": base, "source_sha": self.previous.source,
                           "version": self.previous.version}
         self.scope = {"incumbent": self.incumbent, "preimage_sha256": "f" * 64, "inputs": [
-            {"image": REPOSITORY + "@" + self.first.digest, "source_sha": self.first.source, "version": self.first.version},
+            {"image": REPOSITORY + "@" + self.first.digest, "source_sha": self.first.source,
+             "version": self.first.version, "completed_rollouts": 1},
         ]}
         self.registry = Mock()
         self.registry.manifest.side_effect = lambda _, reference, **_options: self.tags.get(reference)
