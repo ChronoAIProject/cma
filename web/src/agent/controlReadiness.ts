@@ -27,6 +27,17 @@ export function controlBaselineReady(
 export type ResponseControlAvailability =
   'available' | 'checking' | 'checking-access' | 'unbound' | 'denied';
 
+export function controlsUnavailable(
+  state: AgentResourceState,
+  hasV2Session: boolean,
+  suspended: boolean,
+): boolean {
+  return (
+    suspended ||
+    (hasV2Session && state.status === 'ready' && state.conversation.responseBinding === undefined)
+  );
+}
+
 export function responseControlAvailability(
   state: AgentResourceState,
   agentId: string | undefined,

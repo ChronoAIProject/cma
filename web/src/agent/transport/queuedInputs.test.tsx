@@ -46,7 +46,7 @@ it('invalidates queued drafts on account change and refuses late receipt writes'
   expect(second.queuedInputs.read()).toEqual([]);
 });
 
-function queueHarness(sourceStatus: 'queued' | 'cancelled' = 'cancelled') {
+function queueHarness(observedCommandStatus: 'queued' | 'cancelled' = 'cancelled') {
   let rows = ['one', 'two', 'three'].map((id, index) => {
     const response = queuedObservation(`resp_${id}`).response;
     return {
@@ -75,7 +75,7 @@ function queueHarness(sourceStatus: 'queued' | 'cancelled' = 'cancelled') {
       return json({
         ...source,
         receipt: { ...source.receipt, command_id: commandId },
-        status: sourceStatus,
+        status: observedCommandStatus,
       });
     }
     const id = String(url).split('/').at(-2)!;

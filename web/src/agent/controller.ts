@@ -4,7 +4,7 @@ import {
   useHistoryRetry,
   retainCurrentMetadata,
 } from './historyPublication';
-import { controlBaselineReady, responseControlAvailability } from './controlReadiness';
+import * as controlReadiness from './controlReadiness';
 import { observeRead } from './transport/readObserver';
 import { retrySchedule } from './transport/readRetry';
 import { useAgentTitle } from './useAgentTitle';
@@ -254,7 +254,7 @@ export function useAgentController(
   const historyLoading =
     state.status === 'ready' && state.detail.id === agentId && state.historyLoading === true;
   const historyIncomplete = historyLoading || historyUnavailable;
-  const controlReady = controlBaselineReady(state, agentId, suspended);
+  const controlReady = controlReadiness.controlBaselineReady(state, agentId, suspended);
   const v2 =
     !suspended && state.status === 'ready' && state.detail.id === agentId ? state.v2 : undefined;
   useHistoryRetry({
@@ -433,12 +433,8 @@ export function useAgentController(
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
     controlNotice,
     controlBaselineReady: controlReady,
-    responseControls: responseControlAvailability(state, agentId, suspended),
-    controlsUnavailable:
-      suspended ||
-      (v2 !== undefined &&
-        state.status === 'ready' &&
-        state.conversation.responseBinding === undefined),
+    responseControls: controlReadiness.responseControlAvailability(state, agentId, suspended),
+    controlsUnavailable: controlReadiness.controlsUnavailable(state, v2 !== undefined, suspended),
     recoverPending: v2 === undefined && legacy === undefined ? undefined : recoverPending,
     state: presented,
     inputAvailability: accessCheckedInputAvailability(inputAvailability, suspended),
