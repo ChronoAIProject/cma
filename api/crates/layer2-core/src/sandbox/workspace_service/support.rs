@@ -15,7 +15,7 @@ pub(super) fn workspace(
         .workspace_name()
         .map_err(|error| WorkspaceServiceError::InvalidProfile(error.to_string()))?;
     let source = match &revision.content.location {
-        WorkspaceLocation::RepositorySnapshot { url, reference } => {
+        WorkspaceLocation::RepositorySnapshot { url, reference, .. } => {
             WorkspaceSource::RepositorySnapshot {
                 url: url.clone(),
                 reference: reference.clone(),

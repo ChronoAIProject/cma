@@ -47,6 +47,14 @@ pub(crate) enum LifecycleBehavior {
     #[default]
     Legacy,
     PromptRepository,
+    /// This admission cannot allocate before verifying the GitHub connection.
+    ManagedRepository,
+}
+
+impl LifecycleBehavior {
+    pub(crate) fn uses_repository_profile(self) -> bool {
+        matches!(self, Self::PromptRepository | Self::ManagedRepository)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,6 +144,8 @@ pub(crate) struct LifecycleRecord {
     pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_access_pin: Option<RepositoryAccessPin>,
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<layer1_public::rest::AgentLifecycleFailure>,
@@ -151,6 +161,16 @@ pub(crate) struct LifecycleRecord {
     pub created_at: DateTime,
     pub updated_at: DateTime,
     pub document_schema_version: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RepositoryAccessPin {
+    pub(crate) owner: String,
+    pub(crate) repository: String,
+    pub(crate) commit: String,
+    pub(crate) runtime_image: String,
+    pub(crate) connection: layer2_core::sandbox::InitialServiceConnection,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

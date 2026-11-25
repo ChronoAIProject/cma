@@ -137,11 +137,11 @@ pub(super) fn inline_sandbox_content(
 ) -> Result<SandboxProfileContent, AgentLifecycleProvisioningError> {
     let profile = request.profile.clone().unwrap_or_default();
     let mut permissions = validation::services_for(&profile.permissions, behavior)?;
-    if request.initial_message.is_some()
-        && request.repository.is_some()
-        && !permissions
-            .iter()
-            .any(|service| service.as_str() == "api-github")
+    if request.repository.as_ref().is_some_and(|repository| {
+        request.initial_message.is_some() || repository.operation.is_some()
+    }) && !permissions
+        .iter()
+        .any(|service| service.as_str() == "api-github")
     {
         permissions.push(layer2_core::ServiceId::new("api-github"));
     }

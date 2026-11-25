@@ -104,6 +104,9 @@ export async function* agentFrames(
       if (value !== undefined && value.byteLength > 2 * MAX_AGENT_BYTES)
         throw new ProtocolError('Agent transport chunk exceeds its byte boundary');
       if (value !== undefined) bound.inspect(value);
+      // A disconnected browser reader may report EOF, including mid-codepoint.
+      // Reject the incomplete frame before flushing the UTF-8 decoder.
+      if (done) bound.finish();
       try {
         parser.feed(done ? decoder.decode() : decoder.decode(value, { stream: true }));
       } catch (cause) {
@@ -112,10 +115,7 @@ export async function* agentFrames(
       if (failure !== undefined) throw failure;
       while (pending.length) yield pending.shift()!;
       pendingBytes = 0;
-      if (done) {
-        bound.finish();
-        return;
-      }
+      if (done) return;
     }
   } finally {
     void reader.cancel().catch(() => undefined);
