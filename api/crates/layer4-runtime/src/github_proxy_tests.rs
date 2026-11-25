@@ -433,6 +433,12 @@ async fn github_writes_expose_the_upstream_decision_and_do_not_retry_a_lost_resp
         );
         let (parts, body) = received.recv().await.unwrap();
         assert_eq!(parts.method, method);
+        let approval_wait = parts.headers.get("x-nyxid-approval-wait-seconds");
+        assert_eq!(approval_wait.is_none(), method == Method::GET);
+        if let Some(wait) = approval_wait {
+            assert_eq!(wait, "80");
+        }
+        assert!(!parts.headers.contains_key("x-nyxid-approval-mode"));
         assert_eq!(
             parts.uri.to_string(),
             format!("/api/v1/proxy/github-catalog{path}?_nyxid_via=repository-connection")
@@ -460,14 +466,18 @@ async fn github_writes_expose_the_upstream_decision_and_do_not_retry_a_lost_resp
     assert_eq!(parts.method, Method::PATCH);
     assert!(!body.is_empty());
     tokio::time::pause();
-    tokio::time::advance(Duration::from_secs(600)).await;
+    tokio::time::advance(Duration::from_secs(100)).await;
     tokio::time::resume();
     let response = tokio::time::timeout(Duration::from_secs(5), delayed)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-    assert_eq!(response.text().await.unwrap(), "upstream request failed");
+    assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+    let problem: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(problem["code"], "github_proxy_deadline");
+    assert_eq!(problem["retryable"], false);
+    assert_eq!(problem["connection_id"], "repository-connection");
+    assert_eq!(problem["credential_generation"], 1);
     assert!(
         received.try_recv().is_err(),
         "the uncertain write must only reach the fixture once"

@@ -145,6 +145,7 @@ async fn model_proxy_strips_provider_routing_authority_before_upstream() {
         target: TargetBase::parse(&origin).unwrap(),
         credential,
         client: reqwest::Client::new(),
+        github_client: None,
         allowed_host: None,
         model_proxy: true,
         model_credit_required: false,
