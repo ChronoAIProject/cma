@@ -48,7 +48,7 @@ const SANDBOX_EDGES: &[(S, &[S])] = &[
     ),
     (
         S::Rotating,
-        &[S::Pausing, S::Active, S::Failed, S::Retiring],
+        &[S::Pausing, S::Paused, S::Active, S::Failed, S::Retiring],
     ),
     (S::Failed, &[S::Retiring]),
     (S::Retiring, &[S::Retired, S::Failed]),

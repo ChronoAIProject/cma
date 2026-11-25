@@ -71,14 +71,31 @@ async fn desktop_work_refuses_inactive_sandboxes_before_receiver_challenge() {
         Authorization::new([Capability::UseOwnSandboxes]),
     );
     let id = AgentId("agt_test".into());
-    for status in [
-        SandboxStatus::Active,
-        SandboxStatus::Paused,
-        SandboxStatus::Failed,
-        SandboxStatus::Retiring,
-        SandboxStatus::Retired,
+    for (status, bound) in [
+        (SandboxStatus::Active, true),
+        (SandboxStatus::Paused, false),
+        (SandboxStatus::Failed, true),
+        (SandboxStatus::Retiring, true),
+        (SandboxStatus::Retired, false),
     ] {
-        let service = desktop_fixture(true, false, status, true, AgentStatus::Ready)
+        let mut root = desktop_sandbox(true, status, bound);
+        match status {
+            SandboxStatus::Paused => {
+                root.lifecycle.checkpoints.latest =
+                    Some(crate::sandbox::lifecycle_test_support::checkpoint(1, NOW));
+            }
+            SandboxStatus::Failed => {
+                root.failure = Some(TypedFailure {
+                    class: "fixture_failure".into(),
+                    detail: "Synthetic lifecycle failure".into(),
+                });
+            }
+            SandboxStatus::Retired => root.retired_at = Some(NOW.into()),
+            _ => {}
+        }
+        root.validate()
+            .unwrap_or_else(|error| panic!("invalid {status:?} desktop fixture: {error}"));
+        let service = desktop_service(root, false, AgentStatus::Ready)
             .await
             .with_admission(DesktopAdmission::Protected);
         let result = service
