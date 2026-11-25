@@ -9,7 +9,7 @@ export function taskTemplateForSubmission(
   availability: TaskTemplateAvailability,
 ): TaskTemplate | undefined {
   if (
-    template?.id === 'code' &&
+    (template?.id === 'research' || template?.id === 'code') &&
     template.version === 1 &&
     (availability === 'checking' || availability === 'supported')
   )
