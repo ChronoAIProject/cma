@@ -154,6 +154,7 @@ pub(crate) struct BrowserConnections {
     broker: Arc<dyn ServiceConnectionBroker>,
     subscriptions: Arc<CodexSubscriptions>,
     repository_access: Option<Arc<crate::trigger::CmaServiceConnectionBroker>>,
+    repository_scope_check: bool,
 }
 
 impl BrowserConnections {
@@ -163,12 +164,14 @@ impl BrowserConnections {
         broker: Arc<dyn ServiceConnectionBroker>,
         subscriptions: Arc<CodexSubscriptions>,
         repository_access: Option<Arc<crate::trigger::CmaServiceConnectionBroker>>,
+        repository_scope_check: bool,
     ) -> Arc<Self> {
         Arc::new(Self {
             targets: Arc::new(StoredConnectionTargets { stores, policy }),
             broker,
             subscriptions,
             repository_access,
+            repository_scope_check,
         })
     }
 

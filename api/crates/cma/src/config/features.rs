@@ -54,6 +54,7 @@ pub(crate) struct FeatureFlags {
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
+    pub reviewed_sandbox_retirement_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub command_cancel_wake: bool,
     pub ownership_cleanup_pacing: bool,
@@ -111,6 +112,7 @@ pub(crate) struct FeatureFlags {
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
     pub github_repository_preflight: bool,
+    pub github_connection_recovery: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
     /// Gated writer for the stable proxy replay principal (reader floor landed first).
@@ -191,6 +193,10 @@ impl FeatureFlags {
             native_retirement_finality_enabled: flag(
                 lookup,
                 "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
+            )?,
+            reviewed_sandbox_retirement_enabled: flag(
+                lookup,
+                "CHRONO_REVIEWED_SANDBOX_RETIREMENT_ENABLED",
             )?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
             command_cancel_wake: flag(lookup, "CHRONO_COMMAND_CANCEL_WAKE_ENABLED")?,
@@ -351,6 +357,7 @@ impl FeatureFlags {
             v2_ui_transport: tail.v2_ui_transport,
             trigger_command_admission: tail.trigger_command_admission,
             github_repository_preflight: tail.github_repository_preflight,
+            github_connection_recovery: tail.github_connection_recovery,
             nyxid_resource_request: tail.nyxid_resource_request,
             nyxid_proxy: tail.nyxid_proxy,
             nyxid_proxy_replay_principal: tail.nyxid_proxy_replay_principal,

@@ -70,3 +70,18 @@ it('names the task and Artifact recovery actions shown by the application', () =
   expect(guidance).toHaveTextContent('Retry creation in the open creation dialog');
   expect(guidance).toHaveTextContent('Resume creation in Artifacts to reopen the saved request');
 });
+
+it('uses the Live Sandbox status in the paused task deletion guide', () => {
+  render(<DocsPage view="environments-and-capacity" onNavigate={vi.fn()} />);
+  const guide = within(screen.getByRole('article'));
+  expect(guide.getByRole('heading', { name: 'Delete a task in a paused Sandbox' })).toBeVisible();
+  expect(
+    guide.getByText('A stopped or failed Agent can be deleted after its Sandbox returns to Live.'),
+  ).toBeVisible();
+  expect(
+    guide.getByText(/Wait until its status is Live, then return to the task and choose Delete/),
+  ).toBeVisible();
+  expect(
+    guide.getByText(/An environment marked Deleting still occupies a Sandbox slot/),
+  ).toBeVisible();
+});

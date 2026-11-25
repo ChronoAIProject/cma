@@ -118,6 +118,7 @@ mod provenance;
 mod provenance_inventory;
 mod provenance_service;
 pub mod retirement_archive;
+pub mod reviewed_retirement;
 pub use provenance::{AgentCreationCategory, AgentCreationOrigin, AgentCreationProvenance};
 pub use provenance_inventory::{
     AgentProvenanceInventoryQuery, AgentProvenanceInventoryRow, AgentProvenanceInventoryService,

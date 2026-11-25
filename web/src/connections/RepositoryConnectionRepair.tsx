@@ -1,7 +1,19 @@
 import { useEffect, useState } from 'react';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
-import { connectionUrl, readRepositoryConnections, type ConnectionTarget } from './client';
+import {
+  connectionUrl,
+  readRepositoryConnections,
+  type ConnectionReport,
+  type ConnectionTarget,
+} from './client';
+
+export function needsManualGitHubRepair(report: ConnectionReport): boolean {
+  return report.services.some(
+    (row) =>
+      row.service === 'api-github' && row.connection_mode === 'manual' && row.state !== 'satisfied',
+  );
+}
 
 interface Choice {
   readonly id: string;
