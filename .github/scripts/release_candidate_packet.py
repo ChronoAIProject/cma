@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 from release_candidate_evidence import (
-    check_gate_observations, check_recoveries, check_web_assets, fields, hash_value, timestamp,
+    check_gate_observations, check_recoveries, check_web_assets, has_exact_fields, hash_value, timestamp,
     validate_checks, verify_matrix,
 )
 from staging_cd_common import matches, require
@@ -69,7 +69,7 @@ class EvidenceFiles:
         self.hashes = {}
 
     def read(self, reference):
-        fields(reference, {"path", "sha256"}, "Evidence reference is malformed")
+        require(has_exact_fields(reference, {"path", "sha256"}), "Evidence reference is malformed")
         require(hash_value(reference["sha256"]), "Evidence hash is malformed")
         relative = reference["path"]
         require(isinstance(relative, str), "Evidence path is malformed")
@@ -129,21 +129,23 @@ def verify_source_history(head, receipts, root):
 
 
 def verify_publications(freeze, publications, observed, root):
-    fields(publications, {"schema", "components", "repair"}, "Retained publication inventory is malformed")
+    require(has_exact_fields(publications, {"schema", "components", "repair"}),
+            "Retained publication inventory is malformed")
     require(publications["schema"] == "cma-release-publications-v1", "Publication inventory schema differs")
     receipts = publications["components"]
     validate_set({"schema": "cma-deployment-set-v1", "receipts": receipts})
     require(set(receipts) == TARGETS, "Publication inventory omits a release component")
-    fields(freeze["components"], TARGETS, "Frozen component inventory differs")
-    fields(observed, TARGETS, "Observed component inventory differs")
+    require(has_exact_fields(freeze["components"], TARGETS), "Frozen component inventory differs")
+    require(has_exact_fields(observed, TARGETS), "Observed component inventory differs")
     for component, receipt in receipts.items():
         expected = component_identity(receipt)
         require(freeze["components"][component] == expected, "Frozen publication identity differs")
         row = observed[component]
-        fields(row, {"identity", "transport", "deployed_digest", "controller_verified"},
-               "Component observation is malformed")
+        require(has_exact_fields(row, {"identity", "transport", "deployed_digest", "controller_verified"}),
+                "Component observation is malformed")
         transport = row["transport"]
-        fields(transport, {"source_digest", "destination_digest", "verified"}, "Registry transport result is malformed")
+        require(has_exact_fields(transport, {"source_digest", "destination_digest", "verified"}),
+                "Registry transport result is malformed")
         require(row["identity"] == expected and transport["source_digest"] == expected["digest"]
                 and transport["destination_digest"] == expected["digest"] and transport["verified"] is True
                 and row["deployed_digest"] == expected["digest"] and row["controller_verified"] is True,
@@ -166,9 +168,10 @@ def verify_packet(freeze_bytes, freeze_sha, publications, observation, files, ro
     require(hash_value(freeze_sha) and digest(freeze_bytes) == freeze_sha,
             "Freeze differs from the independently supplied hash")
     freeze = decode(freeze_bytes)
-    fields(freeze, {"schema", "source", "environment", "frozen_at", "components", "state", "repair",
-                    "repair_lineage_head", "web_assets", "matrix", "checks", "previous_candidate_sha256"},
-           "Frozen candidate inventory is malformed")
+    require(has_exact_fields(freeze, {
+        "schema", "source", "environment", "frozen_at", "components", "state", "repair",
+        "repair_lineage_head", "web_assets", "matrix", "checks", "previous_candidate_sha256",
+    }), "Frozen candidate inventory is malformed")
     require(freeze["schema"] == SCHEMA and source_value(freeze["source"])
             and hash_value(freeze["environment"]), "Frozen candidate identity is malformed")
     frozen_at = timestamp(freeze["frozen_at"])
@@ -177,17 +180,18 @@ def verify_packet(freeze_bytes, freeze_sha, publications, observation, files, ro
     previous = freeze["previous_candidate_sha256"]
     require(previous is None or (hash_value(previous) and previous != candidate_sha),
             "Previous freeze identity is malformed")
-    fields(observation, {"schema", "candidate_sha256", "environment", "observed_at", "components",
-                         "state", "web_assets", "matrix", "checks", "recoveries"},
-           "Candidate observation index is malformed")
+    require(has_exact_fields(observation, {
+        "schema", "candidate_sha256", "environment", "observed_at", "components",
+        "state", "web_assets", "matrix", "checks", "recoveries",
+    }), "Candidate observation index is malformed")
     observed_at = timestamp(observation["observed_at"])
     require(observation["schema"] == "cma-release-candidate-observation-v1"
             and observation["candidate_sha256"] == candidate_sha
             and observation["environment"] == freeze["environment"]
             and observed_at >= frozen_at, "Observation belongs to another candidate")
     candidate, repair, contract = verify_publications(freeze, publications, files.json(observation["components"]), root)
-    fields(freeze["state"], STATE_FIELDS, "Frozen configuration inventory differs")
-    fields(observation["state"], STATE_FIELDS, "Observed configuration inventory differs")
+    require(has_exact_fields(freeze["state"], STATE_FIELDS), "Frozen configuration inventory differs")
+    require(has_exact_fields(observation["state"], STATE_FIELDS), "Observed configuration inventory differs")
     for key, expected_hash in freeze["state"].items():
         require(hash_value(expected_hash), "Frozen state hash is malformed")
         reference = observation["state"][key]
