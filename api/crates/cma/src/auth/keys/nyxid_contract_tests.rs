@@ -199,3 +199,30 @@ async fn revoke_outage_is_never_reported_as_confirmed_success() {
         assert_eq!(peer.count(), 1);
     }
 }
+
+#[tokio::test]
+async fn retirement_key_revocation_requires_exact_synchronous_success() {
+    for status in [200, 202, 204, 404, 503] {
+        let mut peer = Peer::start().await;
+        let issuer = issuer(&peer.origin);
+        let expected_provider = issuer.provider_identity();
+        let task = tokio::spawn(async move {
+            issuer
+                .revoke_retirement_key("contract-provider-key", "contract-owner-bearer")
+                .await
+        });
+        let request = peer.next().await;
+        assert_eq!(request.method, Method::DELETE);
+        assert_eq!(request.uri.path(), "/api/v1/api-keys/contract-provider-key");
+        request.respond(status, "synthetic response");
+        let result = finish(task).await;
+        if status == 200 {
+            let confirmed = result.unwrap();
+            assert!(confirmed.matches(&expected_provider, "contract-provider-key"));
+            assert!(!confirmed.matches(&expected_provider, "different-provider-key"));
+        } else {
+            assert!(matches!(result, Err(KeyIssuerError::Refused(actual)) if actual == status));
+        }
+        assert_eq!(peer.count(), 1);
+    }
+}

@@ -28,6 +28,8 @@ pub(crate) struct ControlPlaneComposition {
     pub agent_manager: Option<Arc<crate::agent_manager::AgentManager>>,
     pub agent_relay: Option<Arc<crate::agent_manager::relay::Relay>>,
     pub activity_worker: Option<crate::activity::queue::ActivityWorker>,
+    pub retirement_revocation:
+        Option<crate::sandbox::retirement_revocation::RetirementRevocationWorker>,
     pub workers: crate::worker_supervision::Workers,
     pub worker_observations: crate::store::worker_observations::Observations,
     pub bindings: bindings::BindingComposition,

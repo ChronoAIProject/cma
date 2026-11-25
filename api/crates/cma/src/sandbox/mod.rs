@@ -37,6 +37,7 @@ mod scheduler;
 mod stale_turn_reconciliation;
 #[cfg(test)]
 pub(crate) use stale_turn_reconciliation::assert_partial_does_not_request_stop;
+pub(crate) mod retirement_revocation;
 mod suggestion_worker;
 pub(crate) mod suggestions;
 mod title_budget;

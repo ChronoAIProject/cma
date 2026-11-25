@@ -378,3 +378,392 @@ async fn independent_retirement_claim_skips_refused_owner_across_restart() {
     assert_eq!(f.peer.count_route("POST", "/api/v1/api-keys"), 1);
     f.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn independent_retirement_effect_admission_retains_custody_across_erasure() {
+    use crate::store::account_deletions::MongoAccountDeletionStore;
+    use layer2_core::account_deletion::AccountDeletionStore;
+
+    for erasure_first in [true, false] {
+        let mut f = Fixture::new_with_runtime("retirement_effect_erasure", true, true).await;
+        f.controller = ManagedSandboxCredentials::new(
+            f.issuer.clone(),
+            Arc::new(ExactTokens),
+            f.custody.clone(),
+        );
+        let issuing = f.issue(1);
+        let mint = f.prepare().await;
+        let (_worker, _) = retirement_fixture::begin(&f).await;
+        let (worker, _) = retirement_fixture::native_custody_worker(&f, true, true);
+        assert!(worker
+            .run_one(&f.claim.id, SystemTime::now())
+            .await
+            .unwrap());
+        accepted(mint);
+        assert!(matches!(
+            issuing.await.unwrap().unwrap(),
+            Err(CredentialError::Uncertain)
+        ));
+
+        let database = f.client.database(&f.name);
+        let deletions = MongoAccountDeletionStore::open(&database).await.unwrap();
+        let records = database.collection::<Document>("sandbox_credential_issuance");
+        let filter = doc! {"_id":f.claim.id.as_str()};
+        let independent = independent_custody(&f).await;
+        let claim = independent
+            .claim_retirement_revocation("original-dispatch")
+            .await
+            .unwrap()
+            .unwrap();
+        let issuer = f.issuer.provider_identity();
+        assert!(independent
+            .admit_retirement_revocation(&claim, &"b".repeat(64))
+            .await
+            .is_err());
+        if erasure_first {
+            deletions
+                .request(&claim.issuance.owner, "fixture-erasure-first", &at(0))
+                .await
+                .unwrap();
+            assert!(independent
+                .admit_retirement_revocation(&claim, &issuer)
+                .await
+                .unwrap()
+                .is_none());
+            let row = records.find_one(filter.clone()).await.unwrap().unwrap();
+            assert!(!row
+                .get_document("retirement_custody")
+                .unwrap()
+                .contains_key("revocation_dispatch"));
+        } else {
+            let admission = independent
+                .admit_retirement_revocation(&claim, &issuer)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(independent
+                .retirement_revocation_admission_current(&admission)
+                .await
+                .unwrap());
+            assert!(independent
+                .admit_retirement_revocation(&claim, &issuer)
+                .await
+                .unwrap()
+                .is_none());
+            let original = records.find_one(filter.clone()).await.unwrap().unwrap();
+            let dispatch = original
+                .get_document("retirement_custody")
+                .unwrap()
+                .get_document("revocation_dispatch")
+                .unwrap();
+            assert_eq!(dispatch.get_str("last_claim_token").unwrap(), claim.token);
+            assert_eq!(dispatch.get_i64("attempts").unwrap(), 1);
+            assert_eq!(
+                dispatch
+                    .get_document("identity")
+                    .unwrap()
+                    .get_str("provider_identity")
+                    .unwrap(),
+                issuer
+            );
+
+            // Lost acknowledgement followed by lease expiry permits only a
+            // successor claim for the same exact original effect.
+            let past = DateTime::from_millis(0);
+            records.update_one(filter.clone(), doc! {"$set":{"retirement_custody.claim.expires_at":past,"retirement_discovery_at":past}}).await.unwrap();
+            drop(independent);
+            let restarted = independent_custody(&f).await;
+            let successor = restarted
+                .claim_retirement_revocation("successor-dispatch")
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(!restarted
+                .retirement_revocation_admission_current(&admission)
+                .await
+                .unwrap());
+            assert!(restarted
+                .admit_retirement_revocation(&claim, &issuer)
+                .await
+                .unwrap()
+                .is_none());
+            let next = restarted
+                .admit_retirement_revocation(&successor, &issuer)
+                .await
+                .unwrap()
+                .unwrap();
+            let read = records.find_one(filter.clone()).await.unwrap().unwrap();
+            let second = read
+                .get_document("retirement_custody")
+                .unwrap()
+                .get_document("revocation_dispatch")
+                .unwrap();
+            assert_eq!(
+                second.get_document("identity").unwrap(),
+                dispatch.get_document("identity").unwrap()
+            );
+            assert_eq!(
+                second.get_datetime("first_admitted_at").unwrap(),
+                dispatch.get_datetime("first_admitted_at").unwrap()
+            );
+            assert_eq!(second.get_i64("attempts").unwrap(), 2);
+            assert_eq!(second.get_str("last_claim_token").unwrap(), successor.token);
+
+            // Admission won its transaction. The later erasure cannot erase
+            // the retained obligation or admit a new attempt under its consent.
+            deletions
+                .request(
+                    &claim.issuance.owner,
+                    "fixture-erasure-after-dispatch",
+                    &at(0),
+                )
+                .await
+                .unwrap();
+            assert!(deletions.erasing(&claim.issuance.owner).await.unwrap());
+            assert!(restarted
+                .retirement_revocation_admission_current(&next)
+                .await
+                .unwrap());
+            records.update_one(filter.clone(), doc! {"$set":{"retirement_custody.claim.expires_at":past,"retirement_discovery_at":past}}).await.unwrap();
+            let after_erasure = restarted
+                .claim_retirement_revocation("after-erasure")
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(restarted
+                .admit_retirement_revocation(&after_erasure, &issuer)
+                .await
+                .unwrap()
+                .is_none());
+            let after = records.find_one(filter).await.unwrap().unwrap();
+            assert_eq!(
+                after
+                    .get_document("retirement_custody")
+                    .unwrap()
+                    .get_document("revocation_dispatch")
+                    .unwrap(),
+                second
+            );
+        }
+        let custody = independent_custody(&f).await;
+        assert!(custody.requires_no_resend(&f.claim).await.unwrap());
+        assert_eq!(
+            custody.issuance(&f.claim).await.unwrap().unwrap().state,
+            IssuanceState::Unknown
+        );
+        assert_eq!(f.peer.count_route("POST", "/api/v1/api-keys"), 1);
+        assert_eq!(
+            f.peer
+                .count_route("DELETE", "/api/v1/api-keys/fixture-provider-key"),
+            0
+        );
+        f.cleanup().await;
+    }
+}
+
+struct RevocationTokens {
+    expected: RetirementOwnerAuthority,
+    available: bool,
+}
+
+#[async_trait::async_trait]
+impl crate::sandbox::retirement_revocation::RetirementOwnerTokenSource for RevocationTokens {
+    async fn exact_token(&self, authority: &RetirementOwnerAuthority) -> Option<SecretValue> {
+        assert_eq!(&self.expected, authority);
+        self.available
+            .then(|| SecretValue::new("synthetic-retained-owner-token".into()))
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn independent_retirement_effect_worker_requires_retained_authority_and_exact_200() {
+    use crate::sandbox::retirement_revocation::RetirementRevocationWorker;
+    use crate::store::account_deletions::MongoAccountDeletionStore;
+    use layer2_core::account_deletion::AccountDeletionStore;
+
+    for case in [
+        "missing_authority",
+        "erasure_first",
+        "wrong_issuer",
+        "ambiguous",
+        "stale_claim",
+        "confirmed",
+    ] {
+        let mut f = Fixture::new_with_runtime("retirement_revocation_worker", true, true).await;
+        f.controller = ManagedSandboxCredentials::new(
+            f.issuer.clone(),
+            Arc::new(ExactTokens),
+            f.custody.clone(),
+        );
+        let issuing = f.issue(1);
+        let mint = f.prepare().await;
+        let intent = f.custody.issuance(&f.claim).await.unwrap().unwrap();
+        let (_worker, _) = retirement_fixture::begin(&f).await;
+        let (worker, _) = retirement_fixture::native_custody_worker(&f, true, true);
+        assert!(worker
+            .run_one(&f.claim.id, SystemTime::now())
+            .await
+            .unwrap());
+        let secret = accepted(mint);
+        assert!(matches!(
+            issuing.await.unwrap().unwrap(),
+            Err(CredentialError::Uncertain)
+        ));
+        let database = f.client.database(&f.name);
+        let records = database.collection::<Document>("sandbox_credential_issuance");
+        let filter = doc! {"_id":f.claim.id.as_str()};
+        let before = records.find_one(filter.clone()).await.unwrap().unwrap();
+        let provider_authority: SandboxCredentialAuthority = mongodb::bson::deserialize_from_bson(
+            before
+                .get_document("retirement_custody")
+                .unwrap()
+                .get("late_provider_authority")
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        let deletions = MongoAccountDeletionStore::open(&database).await.unwrap();
+        if case == "erasure_first" {
+            deletions
+                .request(&f.claim.owner, "owner-erasure", &at(0))
+                .await
+                .unwrap();
+        }
+        let issuer = if case == "wrong_issuer" {
+            Arc::new(KeyIssuer::new(
+                reqwest::Client::new(),
+                &f.peer.origin,
+                "other-deployment",
+            ))
+        } else {
+            f.issuer.clone()
+        };
+        let tokens = Arc::new(RevocationTokens {
+            expected: selector(&f.claim.owner),
+            available: case != "missing_authority",
+        });
+        let independent = independent_custody(&f).await;
+        let revoker = RetirementRevocationWorker::new(
+            independent.clone(),
+            issuer,
+            tokens.clone(),
+            "first-revoker".into(),
+        );
+        let dispatches = matches!(case, "ambiguous" | "stale_claim" | "confirmed");
+        if dispatches {
+            let task = tokio::spawn(async move { revoker.run_one().await });
+            let request = f.peer.next().await;
+            assert_eq!(request.method.as_str(), "DELETE");
+            assert_eq!(request.uri.path(), "/api/v1/api-keys/fixture-provider-key");
+            let during = records.find_one(filter.clone()).await.unwrap().unwrap();
+            assert!(during
+                .get_document("retirement_custody")
+                .unwrap()
+                .contains_key("revocation_dispatch"));
+            if case == "stale_claim" {
+                records.update_one(filter.clone(), doc! {"$set":{"retirement_custody.claim.expires_at":DateTime::from_millis(0),"retirement_discovery_at":DateTime::from_millis(0)}}).await.unwrap();
+                assert!(independent
+                    .claim_retirement_revocation("takeover")
+                    .await
+                    .unwrap()
+                    .is_some());
+            }
+            if case == "confirmed" {
+                // Erasure admitted after the durable effect must retain its
+                // exact disposition through an in-flight success response.
+                deletions
+                    .request(&f.claim.owner, "later-erasure", &at(0))
+                    .await
+                    .unwrap();
+            }
+            request.respond(
+                if case == "ambiguous" { 202 } else { 200 },
+                "fixture response",
+            );
+            assert!(task.await.unwrap().unwrap());
+        } else {
+            assert!(revoker.run_one().await.unwrap());
+        }
+        let observed = records.find_one(filter.clone()).await.unwrap().unwrap();
+        let marker = observed.get_document("retirement_custody").unwrap();
+        assert_eq!(marker.contains_key("revocation_dispatch"), dispatches);
+        assert_eq!(
+            marker.contains_key("revocation_observation"),
+            case == "confirmed"
+        );
+        assert_eq!(
+            marker.get_str("state").unwrap(),
+            if case == "confirmed" {
+                "key_revoked"
+            } else {
+                "pending"
+            }
+        );
+        if case == "confirmed" {
+            let receipt = marker.get_document("revocation_observation").unwrap();
+            assert_eq!(receipt.get_i64("http_status").unwrap(), 200);
+            assert_eq!(
+                receipt
+                    .get_document("identity")
+                    .unwrap()
+                    .get_str("provider_key_id")
+                    .unwrap(),
+                "fixture-provider-key"
+            );
+            let mut duplicate = retained(&f);
+            duplicate.authority = provider_authority;
+            duplicate.value = SecretValue::new(secret);
+            assert!(f
+                .custody
+                .retain_late_retirement_result(&f.claim, &intent, &duplicate)
+                .await
+                .unwrap());
+            assert_eq!(
+                records.find_one(filter.clone()).await.unwrap().unwrap(),
+                observed
+            );
+            assert!(independent
+                .claim_retirement_revocation("completed")
+                .await
+                .unwrap()
+                .is_none());
+        }
+        if case == "ambiguous" {
+            // After a lost or unqualified reply, a restart that gets 404
+            // cannot establish original provider finality.
+            records.update_one(filter.clone(), doc! {"$set":{"retirement_custody.retry_at":DateTime::from_millis(0),"retirement_discovery_at":DateTime::from_millis(0)}}).await.unwrap();
+            let restarted = RetirementRevocationWorker::new(
+                independent_custody(&f).await,
+                f.issuer.clone(),
+                tokens,
+                "restart-revoker".into(),
+            );
+            let task = tokio::spawn(async move { restarted.run_one().await });
+            f.peer.next().await.respond(404, "fixture unknown result");
+            assert!(task.await.unwrap().unwrap());
+            let row = records.find_one(filter.clone()).await.unwrap().unwrap();
+            assert!(!row
+                .get_document("retirement_custody")
+                .unwrap()
+                .contains_key("revocation_observation"));
+        }
+        assert_eq!(
+            independent.issuance(&f.claim).await.unwrap().unwrap().state,
+            IssuanceState::Unknown
+        );
+        assert!(independent.requires_no_resend(&f.claim).await.unwrap());
+        assert_eq!(f.peer.count_route("POST", "/api/v1/api-keys"), 1);
+        assert_eq!(
+            f.peer
+                .count_route("DELETE", "/api/v1/api-keys/fixture-provider-key"),
+            if case == "ambiguous" {
+                2
+            } else {
+                usize::from(dispatches)
+            }
+        );
+        f.cleanup().await;
+    }
+}

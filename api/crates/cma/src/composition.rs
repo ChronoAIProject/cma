@@ -237,6 +237,20 @@ impl ControlPlaneComposition {
         let agent_skills = credentials::agent_skills(config, sandbox_credentials.clone())?;
         let limits = crate::control_admission::limiters(config, stores.request_limits.clone());
         let worker_holder = format!("{}:{}", config.deployment_id, uuid::Uuid::new_v4());
+        let retirement_revocation = if config.features.native_retirement_finality_enabled
+            && config.features.native_retirement_revocation_enabled
+        {
+            credentials::key_issuer(config).map(|issuer| {
+                crate::sandbox::retirement_revocation::RetirementRevocationWorker::new(
+                    stores.sandbox_credentials.clone(),
+                    issuer,
+                    auth.clone(),
+                    worker_holder.clone(),
+                )
+            })
+        } else {
+            None
+        };
         let mut sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
                 store: stores.sandbox_model.clone(),
@@ -475,6 +489,7 @@ impl ControlPlaneComposition {
         Ok(Self {
             creation_outcomes,
             activity_worker,
+            retirement_revocation,
             workers,
             document_blob_maintenance,
             worker_observations,

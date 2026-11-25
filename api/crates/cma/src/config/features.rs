@@ -56,6 +56,7 @@ pub(crate) struct FeatureFlags {
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
+    pub native_retirement_revocation_enabled: bool,
     pub reviewed_sandbox_retirement_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub command_cancel_wake: bool,
@@ -199,6 +200,10 @@ impl FeatureFlags {
             native_retirement_finality_enabled: flag(
                 lookup,
                 "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
+            )?,
+            native_retirement_revocation_enabled: flag(
+                lookup,
+                "CHRONO_NATIVE_RETIREMENT_REVOCATION_ENABLED",
             )?,
             reviewed_sandbox_retirement_enabled: flag(
                 lookup,

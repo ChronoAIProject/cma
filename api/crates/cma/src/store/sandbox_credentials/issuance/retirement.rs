@@ -108,11 +108,15 @@ pub(in crate::store::sandbox_credentials) async fn retain_retirement(
         if let Some(retirement) = row.get("retirement_custody") {
             let retirement = retirement.as_document().ok_or_else(corrupt)?;
             if retirement.get_i64("version").ok() != Some(1)
-                || retirement.get_str("state").ok() != Some("pending")
+                || !matches!(retirement.get_str("state").ok(), Some("pending" | "key_revoked"))
                 || retirement.get_document("issuance").ok() != Some(&frozen)
                 || retirement.get_str("reason").ok() != Some("initial_issuance_unresolved")
             {
                 return Err(corrupt());
+            }
+            if retirement.get_str("state").ok() == Some("key_revoked") {
+                super::retirement_effect::validate_key_revocation(retirement, &intent)?;
+                if !retirement.contains_key("owner_authority") { return Err(corrupt()); }
             }
             if let Some(selector) = retirement.get("owner_authority") {
                 let authority: RetirementOwnerAuthority = mongodb::bson::deserialize_from_bson(selector.clone()).map_err(|_| corrupt())?;
@@ -239,13 +243,20 @@ pub(in crate::store::sandbox_credentials) async fn retain_late_result(
     }
     // Absence of the marker supplies no provider finality. A conflicting
     // authoritative receipt cannot replace the frozen responsibility.
-    if store
-        .intents
-        .find_one(exact)
-        .await
-        .map_err(unavailable)?
-        .is_some()
-    {
+    exact.insert(
+        "retirement_custody.state",
+        doc! {"$in":["pending","key_revoked"]},
+    );
+    if let Some(row) = store.intents.find_one(exact).await.map_err(unavailable)? {
+        let marker = row
+            .get_document("retirement_custody")
+            .map_err(|_| corrupt())?;
+        if marker.get_str("state").ok() == Some("key_revoked")
+            && marker.get("late_provider_authority") == Some(&authority)
+        {
+            super::retirement_effect::validate_key_revocation(marker, intent)?;
+            return Ok(true);
+        }
         return Err(corrupt());
     }
     Ok(false)

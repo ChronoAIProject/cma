@@ -24,6 +24,7 @@ pub(super) fn retirement_discovery_candidates() -> Document {
 pub(in crate::store) mod legacy;
 mod retirement;
 mod retirement_claim;
+mod retirement_effect;
 mod transactions;
 pub(super) use retirement::{retain_late_result, retain_retirement};
 

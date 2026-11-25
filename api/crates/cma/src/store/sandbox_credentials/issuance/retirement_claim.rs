@@ -25,7 +25,7 @@ pub(crate) struct RetirementRevocationClaim {
     pub expires_at: DateTime,
 }
 
-fn marker(row: &Document) -> Result<&Document, CredentialCustodyError> {
+pub(super) fn marker(row: &Document) -> Result<&Document, CredentialCustodyError> {
     let marker = row
         .get_document("retirement_custody")
         .map_err(|_| corrupt())?;
@@ -178,7 +178,7 @@ fn legacy_schedule(row: &Document) -> Result<Option<DateTime>, CredentialCustody
         .filter(|due| scheduled.is_none_or(|at| *due > at)))
 }
 
-fn observed(row: &Document) -> Result<Document, CredentialCustodyError> {
+pub(super) fn observed(row: &Document) -> Result<Document, CredentialCustodyError> {
     let id = row.get("_id").cloned().ok_or_else(corrupt)?;
     Ok(doc! {"_id":{"$eq":id}, "$expr":{"$eq":["$$ROOT",{"$literal":row}]}})
 }
@@ -201,7 +201,9 @@ fn refusal_deadline() -> Document {
     doc! {"$max":dates}
 }
 
-fn current(claim: &RetirementRevocationClaim) -> Result<Document, CredentialCustodyError> {
+pub(super) fn current(
+    claim: &RetirementRevocationClaim,
+) -> Result<Document, CredentialCustodyError> {
     let mut filter = exact(
         &claim.issuance,
         &claim.owner_authority,
