@@ -38,3 +38,8 @@ list-wrapper = "mongo-list"
 [[profile.mongo-ordinary.overrides]]
 filter = "test(=store::usage_reports::tests::range_measurement::retained_ranges_measure_435_members_at_checkpoint_cadence_with_exact_first_pages)"
 slow-timeout = { period = "60s", terminate-after = 46 }
+
+# Keep the observation fixture opening timings in hosted CI logs on success.
+[[profile.mongo-ordinary.overrides]]
+filter = "test(=store::sandbox_mongo_integration_tests::resource_access_tests::history_measurement::observation_budget::observation_two_serving_replicas_keep_idle_work_independent_of_history)"
+success-output = "final"
