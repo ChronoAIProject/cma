@@ -73,6 +73,7 @@ pub struct MongoSandboxStore {
     pub(super) creation_writer_epoch: Option<String>,
     pub(super) usage_capture: Option<super::sandbox_usage_export::CaptureStore>,
     pub(super) initial_settings: super::settings_defaults::InitialSettings,
+    pub(super) agent_inspection_parking: bool,
     pub(super) ownership_retry_hints_enabled: bool,
     #[cfg(test)]
     pub(super) ownership_retry_hint_now: Option<mongodb::bson::DateTime>,

@@ -34,6 +34,7 @@ pub(super) use connection_recovery_progress::same_recovery_claim;
 mod create_completion;
 mod first_message;
 mod first_message_publication;
+mod inspection_park;
 mod ledger_retry;
 mod ledger_telemetry;
 mod live_skills;
