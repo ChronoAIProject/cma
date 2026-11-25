@@ -2,6 +2,7 @@
 require 'date'
 require 'json'
 require_relative 'omarchy-ci-contract'
+require_relative 'key-provider-ci-contract'
 require_relative 'ci-track-security-validation'
 
 def require_check(value, message)
@@ -253,6 +254,7 @@ def check_version_label(workflow)
 end
 
 def validate(documents, actions)
+  KeyProviderCIContract.check(documents)
   require_repo_secret_shards(documents)
   require_runtime_inventory(documents)
   require_image_secret_scan(documents)

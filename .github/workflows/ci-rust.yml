@@ -154,6 +154,7 @@ jobs:
       BASH_ENV: "${{ github.workspace }}/.github/scripts/backend-resource-env.sh"
       RUST_MIN_STACK: 33554432
       CMA_NEXTEST_REUSE: "1"
+      CARGO_INCREMENTAL: "0"
     defaults:
       run:
         working-directory: "api"
@@ -166,6 +167,18 @@ jobs:
           node-version: "24.15.0"
       -
         uses: "./.github/actions/rust-archive"
+      -
+        name: "Counting-provider fixture regressions"
+        if: "inputs.track == 'am'"
+        working-directory: "."
+        timeout-minutes: 5
+        run: "node --test .github/scripts/work-recovery/*.test.mjs .github/scripts/key-provider-contracts.test.mjs"
+      -
+        name: "KeyIssuer counting-provider contracts"
+        if: "inputs.track == 'am'"
+        working-directory: "."
+        timeout-minutes: 5
+        run: "python3 -B .github/scripts/key-provider-contracts.py"
       -
         name: "Backend resource sampling regressions"
         run: "python3 .github/scripts/backend-resource-sampler-tests.py"
