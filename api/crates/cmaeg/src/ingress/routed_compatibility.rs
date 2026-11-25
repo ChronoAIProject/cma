@@ -33,7 +33,14 @@ impl RoutedIngress {
             .await?;
         let committed = match self
             .plans
-            .replay_compatibility(request, &source.body)
+            .replay_compatibility(
+                request,
+                &source.body,
+                crate::channels::profile_assignment::requires_guard(
+                    &request.channel.definition,
+                    self.profile_writes_enabled,
+                ),
+            )
             .await
             .map_err(admission_problem)?
         {
@@ -46,7 +53,9 @@ impl RoutedIngress {
                         "routed_admission_paused",
                     ));
                 }
-                let candidate = Candidate::prepare_compatibility(
+                let (assigned, assignment) = self.assign_profile(request).await?;
+                let request = &assigned;
+                let mut candidate = Candidate::prepare_compatibility(
                     request,
                     &source.body,
                     &self.keys,
@@ -80,6 +89,7 @@ impl RoutedIngress {
                         "routed_delivery_unsupported",
                     )
                 })?;
+                candidate.profile_admission = assignment;
                 self.plans
                     .admit_compatibility(&candidate, request)
                     .await

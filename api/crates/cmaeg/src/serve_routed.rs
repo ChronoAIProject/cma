@@ -241,6 +241,7 @@ pub(crate) async fn compose(
             config.routing.non_human_providers.clone(),
             replay_providers,
         )
+        .with_profile_resolver(state.resolver.clone(), config.profile_revisions_enabled)
         .with_native_discovery(state.native_discord.clone())
         .with_binding_preparation(
             config.routing.binding_preparation_enabled,
