@@ -55,6 +55,7 @@ pub struct FakeProviderConfig {
     pub malformed_frame: bool,
     pub disconnect_after: Option<usize>,
     pub recovery_status: Option<&'static str>,
+    pub recovery_replay_status: Option<&'static str>,
     pub recovery_wrong_metadata: bool,
     pub reject_binding: bool,
     pub binding_pause: Option<Arc<BindingPause>>,
@@ -103,6 +104,7 @@ impl Default for FakeProviderConfig {
             malformed_frame: false,
             disconnect_after: None,
             recovery_status: None,
+            recovery_replay_status: None,
             recovery_wrong_metadata: false,
             reject_binding: false,
             binding_pause: None,
@@ -256,11 +258,19 @@ fn recovery_response(state: &StateData, id: &str, status: &str) -> Option<Value>
     } else {
         request["metadata"].clone()
     };
-    Some(json!({
+    let mut response = json!({
         "id":id, "object":"response", "status":status,
         "conversation":{"id":"agt_test"}, "metadata":metadata,
         "output":[{"type":"message","content":[{"type":"output_text","text":"recovered answer"}]}]
-    }))
+    });
+    if status == "failed" {
+        response["error"] =
+            json!({"code":"provider_test_failed","message":"provider test failure"});
+    }
+    if status == "incomplete" {
+        response["incomplete_details"] = json!({"reason":"test_incomplete"});
+    }
+    Some(response)
 }
 
 async fn recovery_snapshot(
@@ -297,18 +307,20 @@ async fn recovery_events(
         headers,
         Bytes::new(),
     );
-    let Some(response) = recovery_response(&state, &id, "completed") else {
+    let status = state.config.recovery_replay_status.unwrap_or("completed");
+    let Some(response) = recovery_response(&state, &id, status) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let event = format!("response.{status}");
     let frame = json!({
-        "type":"response.completed","sequence_number":0,"response_id":id,"response":response
+        "type":event,"sequence_number":0,"response_id":id,"response":response
     });
     (
         [
             ("content-type", "text/event-stream"),
             ("x-cma-response-id", &id),
         ],
-        format!("event: response.completed\nid: 0\ndata: {frame}\n\n"),
+        format!("event: {event}\nid: 0\ndata: {frame}\n\n"),
     )
         .into_response()
 }

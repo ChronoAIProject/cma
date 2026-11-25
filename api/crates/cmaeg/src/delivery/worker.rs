@@ -1,6 +1,6 @@
 use super::{
     event::{key, normalized_consumer, now, EventKey, EventState},
-    gate::Ungated,
+    gate::{SendGate, Ungated},
     intents::{DeliveryCommand, DeliveryOutcome, ReplySource},
     send::{unsupported, SendContext, Sender},
     step::{finish, outcome_event, reply, timer_step},
@@ -168,6 +168,7 @@ async fn handle(
             turn,
             outcome,
             answer_response_id,
+            recovery,
         } => {
             tracing::info!(outcome = outcome.kind(), "provider turn outcome");
             // This is an already-admitted internal turn. Tool ingress separately enforces
@@ -188,6 +189,11 @@ async fn handle(
                     != normalized_consumer(turn.consumer.as_ref())
             {
                 return;
+            }
+            if let Some(authority) = &recovery {
+                if authority.current().await.is_none() {
+                    return;
+                }
             }
             let progress = match &outcome {
                 TurnOutcome::Accepted { response_id, .. } => Some(crate::activity::Change::state(
@@ -253,7 +259,19 @@ async fn handle(
                 turn.activity.source,
                 cmaeg_core::activity::SourceKind::Custom
             );
-            if custom {
+            let sync_authorized = match &recovery {
+                Some(authority)
+                    if matches!(
+                        &opened.payload.reply,
+                        cmaeg_core::seal::ReplyAddress::Sync { .. }
+                    ) =>
+                {
+                    authority.permits_sync().await
+                }
+                Some(_) => false,
+                None => true,
+            };
+            if custom && sync_authorized {
                 let buffered = sender.custom.stream(&opened.payload, &outcome);
                 if outcome.terminal() {
                     sender.custom.observe_local(&opened.payload, buffered).await;
@@ -273,7 +291,14 @@ async fn handle(
                 if let Some(delivered) = sender
                     .custom
                     .outcome(
-                        &state.channel,
+                        recovery
+                            .as_deref()
+                            .map_or(&Ungated as &dyn SendGate, |gate| gate),
+                        if recovery.is_some() {
+                            &turn.channel
+                        } else {
+                            &state.channel
+                        },
                         &state.event,
                         &outcome,
                         answer_response_id.as_deref(),

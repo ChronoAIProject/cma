@@ -42,6 +42,7 @@ pub enum DeliveryCommand {
         outcome: TurnOutcome,
         /// Identity from this provider stream, independent of Activity's current response.
         answer_response_id: Option<String>,
+        recovery: Option<Arc<crate::turns::RecoveryAuthority>>,
     },
 }
 impl DeliveryCommand {

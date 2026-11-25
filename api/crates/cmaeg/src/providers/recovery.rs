@@ -51,7 +51,6 @@ pub struct RecoveryStream {
 }
 
 pub(crate) struct AcceptedRecovery {
-    key: Secret,
     metadata: BTreeMap<String, String>,
 }
 
@@ -64,46 +63,55 @@ impl std::fmt::Debug for AcceptedRecovery {
 }
 
 impl AcceptedRecovery {
-    pub(super) fn new(key: Secret, metadata: BTreeMap<String, String>) -> Self {
-        Self { key, metadata }
+    pub(super) fn new(metadata: BTreeMap<String, String>) -> Self {
+        Self { metadata }
     }
 
-    pub(crate) async fn completed(
+    pub(crate) async fn terminal(
         &self,
         providers: &ProviderClient,
         provider: &ProviderSlug,
         response_id: &str,
         native_agent_id: Option<String>,
-    ) -> Result<Option<ResponsesEvent>, ProviderError> {
+        authority: &crate::turns::RecoveryAuthority,
+    ) -> Result<Option<ResponsesEvent>, &'static str> {
         let mut identity = RecoveryIdentity {
             response_id: response_id.to_owned(),
             native_agent_id,
             metadata: self.metadata.clone(),
         };
+        let key = authority
+            .credential()
+            .await
+            .ok_or("stream_authority_changed")?;
         let snapshot = providers
-            .response_snapshot(provider, &identity, &self.key)
-            .await?;
-        match snapshot.response["status"].as_str() {
-            Some("completed") => {
-                return Ok(Some(ResponsesEvent::Completed {
-                    response: snapshot.response,
-                    matching_response_identity: true,
-                }));
-            }
-            Some("queued" | "in_progress") => (),
-            _ => return Ok(None),
+            .response_snapshot(provider, &identity, &key)
+            .await
+            .map_err(|_| "stream_lost")?;
+        if !matches!(
+            snapshot.response["status"].as_str(),
+            Some("queued" | "in_progress")
+        ) {
+            return super::responses::terminal_snapshot(snapshot.response)
+                .map_err(|_| "stream_lost");
         }
         identity.native_agent_id = Some(snapshot.native_agent_id);
         // Recover only the terminal observation. The delivery worker may have
         // already published individual message or tool frames from the live turn.
+        let key = authority
+            .credential()
+            .await
+            .ok_or("stream_authority_changed")?;
         let mut replay = providers
-            .replay_response(provider, &identity, None, &self.key)
-            .await?;
+            .replay_response(provider, &identity, None, &key)
+            .await
+            .map_err(|_| "stream_lost")?;
         while let Some(frame) = replay.events.recv().await {
-            let event = frame?.event;
+            let event = frame.map_err(|_| "stream_lost")?.event;
             match event {
-                ResponsesEvent::Completed { .. } => return Ok(Some(event)),
-                ResponsesEvent::Failed { .. } | ResponsesEvent::Incomplete { .. } => break,
+                ResponsesEvent::Completed { .. }
+                | ResponsesEvent::Failed { .. }
+                | ResponsesEvent::Incomplete { .. } => return Ok(Some(event)),
                 _ => (),
             }
         }

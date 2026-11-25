@@ -50,6 +50,7 @@ pub struct TurnRunner {
     media: Option<Arc<MediaService>>,
     prepare: PrepareConfig,
     activity: Arc<dyn super::observer::ActivityObserver>,
+    recovery_authority: Option<Arc<dyn super::RecoveryChannelAuthority>>,
 }
 impl TurnRunner {
     pub fn new(
@@ -68,11 +69,19 @@ impl TurnRunner {
             media: None,
             prepare: PrepareConfig::default(),
             activity: Arc::new(super::observer::NoopObserver),
+            recovery_authority: None,
         }
     }
     /// Observe durable dispatch facts through the composition's shared observer.
     pub fn with_activity(mut self, activity: Arc<dyn super::observer::ActivityObserver>) -> Self {
         self.activity = activity;
+        self
+    }
+    pub fn with_recovery_authority(
+        mut self,
+        authority: Arc<dyn super::RecoveryChannelAuthority>,
+    ) -> Self {
+        self.recovery_authority = Some(authority);
         self
     }
     /// Prepare media turns with `media` under `prepare`'s bounds.
@@ -121,6 +130,9 @@ impl TurnRunner {
         };
         let prepare_deadline = (turn.received_at + self.prepare.budget).min(deadline);
         let mut admitted = Some(sender);
+        let recovery = self.recovery_authority.as_ref().and_then(|authority| {
+            super::RecoveryAuthority::new(authority.clone(), turn.clone()).map(Arc::new)
+        });
         let result = tokio::time::timeout_at(deadline.into(), async {
             let fenced = ticket.waits();
             // A predecessor may itself prepare for the whole budget before its
@@ -171,10 +183,10 @@ impl TurnRunner {
             consume::consume(
                 stream,
                 turn.clone(),
-                provider,
                 &*self.delivery,
                 self.activity.as_ref(),
                 self.providers.as_ref(),
+                recovery.as_ref(),
                 &mut admitted,
             )
             .await
@@ -198,6 +210,12 @@ impl TurnRunner {
         };
         observation.finish(error.detail);
         provider_error(provider.as_str(), error.detail);
+        if error.detail == "stream_authority_changed" {
+            // Recovery can observe an authority revocation after acceptance.
+            // Sending a synthetic failure to the retained sink would use it too.
+            return;
+        }
+        let accepted = admitted.is_none();
         if let Some(sender) = admitted.take() {
             let mut problem = Problem::new(error.code, error.status, error.detail);
             if let Some(upstream) = error.upstream {
@@ -205,13 +223,22 @@ impl TurnRunner {
             }
             let _ = sender.send(LaunchOutcome::Refused(problem));
         }
-        self.delivery.terminal(
-            turn,
-            TurnOutcome::Failed {
-                code: error.detail.into(),
-                message: failure_message(error.detail).into(),
-            },
-        );
+        let outcome = TurnOutcome::Failed {
+            code: error.detail.into(),
+            message: failure_message(error.detail).into(),
+        };
+        if let Some(recovery) = recovery.filter(|_| accepted) {
+            let _ = self
+                .delivery
+                .try_submit(super::outcomes::DeliveryCommand::StreamOutcome {
+                    turn,
+                    outcome,
+                    answer_response_id: None,
+                    recovery: Some(recovery),
+                });
+        } else {
+            self.delivery.terminal(turn, outcome);
+        }
     }
     /// Fail a turn whose consumer its channel does not configure, as any
     /// other provider refusal fails, before any provider call.

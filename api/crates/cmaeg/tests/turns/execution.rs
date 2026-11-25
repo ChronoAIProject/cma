@@ -67,7 +67,7 @@ async fn interrupted_accepted_turn_reads_once_or_reattaches_to_its_existing_resp
         )
         .await;
         assert!(matches!(
-            fixture.runner.launch(fixture.request("interrupted")).await,
+            fixture.runner.launch(fixture.custom_recovery_request("interrupted")).await,
             LaunchOutcome::Accepted { response_id } if response_id == "resp_fake"
         ));
         let outcomes = fixture.terminal().await;

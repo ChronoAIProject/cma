@@ -136,6 +136,7 @@ impl DeliverySink for ShardedScheduler {
             turn,
             outcome,
             answer_response_id: None,
+            recovery: None,
         };
         if let Err(refusal) = self.try_submit(command) {
             let command = *refusal.command;

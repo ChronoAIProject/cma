@@ -327,6 +327,7 @@ impl App {
                 turn: self.turn.clone(),
                 outcome,
                 answer_response_id: None,
+                recovery: None,
             })
             .await
             .unwrap();

@@ -68,7 +68,7 @@ pub(super) async fn forward_turn(
                         at: Instant::now(),
                     });
                 }
-                ResponsesEvent::InProgress => {
+                ResponsesEvent::InProgress { .. } => {
                     let Some(response_id) = response_id_from_frame(&frame)
                         .filter(|id| !id.is_empty() && id.len() <= 512)
                     else {
