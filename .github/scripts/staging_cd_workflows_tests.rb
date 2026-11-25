@@ -774,6 +774,26 @@ class StagingWorkflowTest < Minitest::Test
                  workflow('staging-release').dig('jobs', 'publish', 'outputs', 'artifact')
   end
 
+  def test_release_artifact_handoffs_use_verified_zip_archives
+    upload = 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9'
+    download = 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333'
+    %w[staging-cd staging-release staging-promote staging-deploy cache-retention publish prod-deploy].each do |name|
+      steps = workflow(name).fetch('jobs').values.flat_map { |job| job.fetch('steps', []) }
+      artifacts = steps.select { |step| step['uses'].to_s.match?(%r{\Aactions/(upload|download)-artifact@}) }
+      refute_empty artifacts, name
+      artifacts.each do |step|
+        if step['uses'].start_with?('actions/upload-artifact@')
+          assert_equal upload, step['uses'], name
+          assert_equal true, step.fetch('with').fetch('archive', true), name
+        else
+          assert_equal download, step['uses'], name
+          assert_equal 'error', step.dig('with', 'digest-mismatch'), name
+          assert_equal false, step.fetch('with').fetch('skip-decompress', false), name
+        end
+      end
+    end
+  end
+
   def test_catch_up_only_re_runs_the_develop_push_run_and_staging_stays_push_only
     staging = workflow('staging-cd')
     assert_equal 'Staging CD', staging['name'], 'the catch-up trigger names this workflow'

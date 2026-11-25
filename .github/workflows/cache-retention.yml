@@ -72,7 +72,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 -B .github/scripts/actions_cache_buildkit_inventory.py "$RUNNER_TEMP/buildkit-cache-inventory.json"
       - name: Retain the read-only report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: buildkit-cache-inventory
           path: ${{ runner.temp }}/buildkit-cache-inventory.json
@@ -152,8 +152,9 @@ jobs:
         id: layer-candidate-download
         timeout-minutes: 5
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          digest-mismatch: error
           artifact-ids: ${{ steps.layer-candidate.outputs.artifact }}
           run-id: ${{ steps.layer-candidate.outputs.run_id }}
           github-token: ${{ github.token }}
@@ -163,8 +164,9 @@ jobs:
         id: layer-candidate-retry
         if: steps.layer-candidate.outputs.artifact != '' && steps.layer-candidate-download.outcome == 'failure'
         timeout-minutes: 5
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          digest-mismatch: error
           artifact-ids: ${{ steps.layer-candidate.outputs.artifact }}
           run-id: ${{ steps.layer-candidate.outputs.run_id }}
           github-token: ${{ github.token }}

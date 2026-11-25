@@ -232,7 +232,7 @@ function verifyWorkflow(job) {
     }
     const artifact = steps[steps.indexOf(step) + 1];
     assert.equal(artifact.if, `failure() && steps.p1_${suite}.outcome == 'failure'`);
-    assert.equal(artifact.uses, "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02");
+    assert.equal(artifact.uses, "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9");
     assert.equal(artifact.with.path, "${{ runner.temp }}/cma-p1-browser/" + suite);
     assert.equal(artifact.with["if-no-files-found"], "error");
     assert.equal(artifact.with["retention-days"], 1);
