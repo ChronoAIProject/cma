@@ -342,8 +342,9 @@ fn singleton_competing_pvc_observation_refuses_an_interior_estimate() {
     other.id = "second-home".into();
     other.pvc_uid = "second-pvc".into();
     let mut raw = [(0, 10.0), (60_000, 10.0), (180_000, 30.0), (240_000, 30.0)]
+        .into_iter()
         .map(|(time, value)| sample(&home, SourceMetric::PvcUsed, time, value))
-        .to_vec();
+        .collect::<Vec<_>>();
     let events = [event(1, 0, 240, allocation(false), allocation(false))];
     let gap = |rows: Vec<CoverageInterval>| {
         rows.into_iter()
