@@ -108,7 +108,6 @@ pub(super) async fn transition_target(
             "plan.deployment": deployment,
             "document_schema_version": if machine { 2_i64 } else { 1_i64 },
             "activated_at": {"$type": "date"},
-            "durable_release_authority": true,
             "retiring": {"$ne": true},
             "retired": {"$ne": true},
         })
@@ -129,6 +128,42 @@ pub(super) async fn transition_target(
         return Err(WarmPoolError::Conflict);
     }
     Ok(target)
+}
+
+/// Promotion requires an image with no previously activated target. A later
+/// same-image plan can inherit its timestamp, so include all activation
+/// tombstones and refuse an ambiguous identity. Bootstrap has its own marker.
+pub(super) async fn confirm_transition_target_identity(
+    database: &Database,
+    target: &PoolTarget,
+    bootstrap: bool,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), WarmPoolError> {
+    let targets: Collection<Document> = majority_collection(database, COLLECTION);
+    let mut scope = doc! {
+        "plan.deployment": &target.plan.deployment,
+        "document_schema_version": target.document_schema_version,
+        "plan.spec.image.uri": &target.plan.spec.image.uri,
+        "activated_at": {"$type": "date"},
+    };
+    if bootstrap {
+        scope.insert("durable_release_authority", true);
+    }
+    let rows: Vec<_> = targets
+        .find(scope)
+        .projection(doc! {"_id": 1})
+        .limit(2)
+        .session(&mut *session)
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)?
+        .stream(session)
+        .try_collect()
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)?;
+    match rows.as_slice() {
+        [row] if row.get_str("_id").ok() == Some(target.id.as_str()) => Ok(()),
+        _ => Err(WarmPoolError::Conflict),
+    }
 }
 
 #[async_trait]

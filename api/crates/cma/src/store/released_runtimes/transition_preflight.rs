@@ -3,7 +3,8 @@ use mongodb::options::ReadConcern;
 use serde::Serialize;
 
 use super::*;
-use crate::store::transaction_terminal::GuardedTerminal as _;
+use crate::store::{native_warm_pools, transaction_terminal::GuardedTerminal as _};
+use layer1_public::rest::admin::warm_pools::WarmPoolError;
 
 pub(crate) struct TransitionDestination<'a> {
     pub lane: ReleasedLane,
@@ -79,7 +80,7 @@ impl MongoReleasedRuntimes {
             return Err(SandboxStoreError::Conflict);
         }
 
-        let target = crate::store::native_warm_pools::transition_target(
+        let target = native_warm_pools::transition_target(
             &self.database,
             &self.deployment,
             lane == ReleasedLane::Machine,
@@ -87,45 +88,85 @@ impl MongoReleasedRuntimes {
             &mut *session,
         )
         .await
-        .map_err(|error| match error {
-            layer1_public::rest::admin::warm_pools::WarmPoolError::Conflict => {
-                SandboxStoreError::Conflict
-            }
-            _ => SandboxStoreError::Unavailable("retained runtime pool read".into()),
-        })?;
-        let destination_image = target.plan.spec.image.uri;
-        if destination_image != current.active.image {
+        .map_err(pool_error)?;
+        let destination_image = &target.plan.spec.image.uri;
+        let release_revision = if destination_image == &current.active.image {
+            current.active.revision
+        } else {
             let history = self
                 .transitions
                 .find_one(doc! {
                     "deployment":&self.deployment,
                     "document_schema_version":SCHEMA_VERSION,
                     "transition.lane":lane_key(lane),
-                    "transition.from_image":&destination_image,
+                    "transition.from_image":destination_image,
                     "transition.to_revision":{"$lte":revision(current.active.revision)?},
                 })
                 .session(&mut *session)
                 .await
                 .map_err(unavailable)?
                 .ok_or(SandboxStoreError::Conflict)?;
-            if history.id != self.transition_id(lane, history.transition.from_revision)
-                || history.transition.from_revision == 0
-                || history.transition.from_revision.checked_add(1)
-                    != Some(history.transition.to_revision)
+            self.validate_transition(lane, &history)?;
+            history.transition.from_revision
+        };
+        if release_revision > 1 {
+            let promotion = self
+                .transitions
+                .find_one(doc! {"_id":self.transition_id(lane, release_revision - 1)})
+                .session(&mut *session)
+                .await
+                .map_err(unavailable)?
+                .ok_or(SandboxStoreError::Conflict)?;
+            self.validate_transition(lane, &promotion)?;
+            if promotion.transition.to_image != *destination_image
+                || promotion.transition.to_revision != release_revision
             {
-                return Err(SandboxStoreError::Corrupt(
-                    "retained runtime history".into(),
-                ));
+                return Err(SandboxStoreError::Conflict);
             }
         }
+        native_warm_pools::confirm_transition_target_identity(
+            &self.database,
+            &target,
+            release_revision == 1,
+            session,
+        )
+        .await
+        .map_err(pool_error)?;
         Ok(RetainedDestination {
             lane,
             lane_revision: current.revision,
             active_image: current.active.image,
-            destination_image,
+            destination_image: target.plan.spec.image.uri,
             target_id: target.id,
             target_revision: target.revision,
             target_replicas: target.target_replicas,
         })
+    }
+
+    fn validate_transition(
+        &self,
+        lane: ReleasedLane,
+        history: &TransitionDocument,
+    ) -> Result<(), SandboxStoreError> {
+        if history.id != self.transition_id(lane, history.transition.from_revision)
+            || history.deployment != self.deployment
+            || history.document_schema_version != SCHEMA_VERSION
+            || history.transition.lane != lane
+            || history.transition.from_revision == 0
+            || history.transition.from_revision.checked_add(1)
+                != Some(history.transition.to_revision)
+        {
+            return Err(SandboxStoreError::Corrupt(
+                "retained runtime history".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn pool_error(error: WarmPoolError) -> SandboxStoreError {
+    match error {
+        WarmPoolError::Conflict => SandboxStoreError::Conflict,
+        _ => SandboxStoreError::Unavailable("retained runtime pool read".into()),
     }
 }
