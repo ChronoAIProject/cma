@@ -210,6 +210,8 @@ pub use retained_runtime_transition::{
     next_replacement_runtime_generation, RetainedRuntimePolicyBinding, RetainedRuntimeTransition,
     RetainedRuntimeTransitionRequest,
 };
+mod runtime_image_origin;
+pub use runtime_image_origin::SandboxRuntimeImageOrigin;
 mod runtime_update;
 mod runtime_update_resume;
 pub use runtime_update::{
@@ -480,14 +482,13 @@ mod workspace_service_tests;
 
 pub mod agent_access;
 pub mod agent_access_tool;
-mod suspended_runtime;
-
 #[cfg(test)]
 mod runtime_update_lifecycle_tests;
 #[cfg(test)]
 mod runtime_update_test_support;
 #[cfg(test)]
 mod runtime_update_tests;
+mod suspended_runtime;
 
 #[cfg(test)]
 mod runtime_update_resume_tests;

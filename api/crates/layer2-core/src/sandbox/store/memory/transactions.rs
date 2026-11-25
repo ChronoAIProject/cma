@@ -38,9 +38,9 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                         &sandbox,
                         &event_at,
                         &event,
-                        released_runtime
-                            .as_ref()
-                            .map(|release| release.agent.as_str()),
+                        released_runtime.as_ref().and_then(|release| {
+                            self.managed_runtime_target(&sandbox, &release.agent)
+                        }),
                     )?;
                 }
                 let id = sandbox.id.clone();

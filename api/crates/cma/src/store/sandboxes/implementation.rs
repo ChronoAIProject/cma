@@ -118,6 +118,10 @@ impl SandboxStore for MongoSandboxStore {
         self.managed_agent_release()
     }
 
+    fn desktop_runtime_target_is_qualified(&self, target: &str) -> bool {
+        self.desktop_verified_runtime_image.as_deref() == Some(target)
+    }
+
     async fn unpublished_runtime_recovery_snapshot(
         &self,
         id: &SandboxId,
@@ -133,6 +137,11 @@ impl SandboxStore for MongoSandboxStore {
     }
 
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
+        if sandbox.lifecycle.runtime_image_origin.is_some() {
+            return Err(SandboxStoreError::InvalidTransaction(
+                "runtime image origin requires lifecycle admission",
+            ));
+        }
         if sandbox.lifecycle.custom_runtime.is_some()
             || sandbox.lifecycle.runtime_migration_admission.is_some()
         {

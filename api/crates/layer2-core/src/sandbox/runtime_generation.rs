@@ -105,6 +105,11 @@ impl Sandbox {
         next: &Sandbox,
     ) -> Result<(), SandboxModelError> {
         self.validate_unpublished_recovery_successor(next)?;
+        if self.lifecycle.runtime_image_origin != next.lifecycle.runtime_image_origin {
+            return Err(SandboxModelError::invalid_value(
+                "sandbox.runtime_image_origin",
+            ));
+        }
         next.validate_runtime_generation()?;
         if next.lifecycle.runtime_generation_high_water
             < self.lifecycle.runtime_generation_high_water
