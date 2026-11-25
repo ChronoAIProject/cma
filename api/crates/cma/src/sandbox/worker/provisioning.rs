@@ -5,7 +5,7 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
     RuntimeBinding, Sandbox, SandboxEventKind, SandboxStatus, SandboxWorkStep,
 };
-use layer3_adapter::{CredentialFrame, RuntimeCredential, RuntimeProvisionRequest};
+use layer3_adapter::RuntimeProvisionRequest;
 
 use super::support::{
     adapter_failure, credential_failure, credential_rotation_at, credential_valid_for_delivery,
@@ -34,7 +34,6 @@ impl SandboxWorker {
                 .await;
         }
         timing.completed("home_preparation");
-        let spec = sandbox_spec(&sandbox, &self.config.deployment_id);
         if sandbox.work.execution.is_none() {
             let expected = sandbox.revision;
             sandbox.work.execution = Some(self.config.execution);
@@ -63,11 +62,12 @@ impl SandboxWorker {
             };
             sandbox = next;
         }
+        let spec = sandbox_spec(&sandbox, &self.config.deployment_id)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
         let generation = sandbox.lifecycle.runtime_generation_high_water.max(1);
-        let runtime_version = spec
-            .runtime_image
-            .clone()
-            .unwrap_or_else(|| self.config.runtime_version.clone());
+        let (released, runtime_version) = self
+            .initial_runtime_release(&sandbox, &spec, generation)
+            .await?;
         let funded_until = match self
             .funding
             .ensure_coverage(&sandbox, SystemTime::now())
@@ -81,6 +81,7 @@ impl SandboxWorker {
             }
         };
         let mut request = RuntimeProvisionRequest::new(generation, spec);
+        request.released = released;
         request.funded_until = funded_until;
         layer2_core::sandbox::store::WorkAuthority::current()?;
         match self.dependencies.adapter.provision_runtime(&request).await {
@@ -88,7 +89,7 @@ impl SandboxWorker {
                 timing.completed("runtime_provision");
                 let boot_id = match crate::sandbox::runtime_attachment::provisioned_runtime_status(
                     self.dependencies.adapter.as_ref(),
-                    &sandbox_spec(&sandbox, &self.config.deployment_id),
+                    &request.spec,
                     &handle,
                     generation,
                 )
@@ -279,11 +280,7 @@ impl SandboxWorker {
                 )
                 .await;
         }
-        let frame = CredentialFrame {
-            operation_id: operation_id(&sandbox),
-            value: RuntimeCredential::new(material.value.expose()),
-            custody_generation: Some(pending.generation),
-        };
+        let frame = material.into_runtime_frame(operation_id(&sandbox));
         layer2_core::sandbox::store::WorkAuthority::current()?;
         if let Err(error) = self
             .dependencies

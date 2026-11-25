@@ -42,14 +42,13 @@ pub(super) async fn read(
         &auth,
         AgentId(id),
         raw,
-        projection::message_bindings(&headers),
-        projection::tool_output(&headers),
-        projection::retained_output(&headers),
+        projection::Preferences::from_headers(&headers),
     )
     .await
     {
-        Ok(page) => {
+        Ok((page, external)) => {
             let mut response = Json(page).into_response();
+            external.headers(response.headers_mut());
             response
                 .headers_mut()
                 .insert("cache-control", "private, no-store".parse().unwrap());
@@ -64,24 +63,18 @@ async fn page(
     auth: &AuthenticatedResourceCaller,
     id: AgentId,
     raw: Option<String>,
-    message_bindings: bool,
-    tool_output: bool,
-    retained_output: bool,
-) -> Result<EventPage, Error> {
+    preferences: projection::Preferences,
+) -> Result<(EventPage, super::external_approval::Preference), Error> {
     if state.single_fence_pages {
-        return super::buffered::page(
-            state,
-            auth,
-            id,
-            raw,
-            message_bindings,
-            tool_output,
-            retained_output,
-        )
-        .await;
+        return super::buffered::page(state, auth, id, raw, preferences).await;
     }
     let (limit, page_cursor) = parse::snapshot(raw)?;
     let authorization = authorize(state, auth, &id).await?;
+    let external = super::external_approval::Preference::new(
+        preferences.external_approval,
+        &state.external_review_origin,
+        &authorization,
+    );
     let header = state.reads.event_stream_header(&authorization).await?;
     let identity = cursor::incarnation(&header);
     let (through, after) = match page_cursor {
@@ -94,10 +87,16 @@ async fn page(
         after,
         Some(through),
         limit,
-        message_bindings,
+        preferences.message_bindings,
     )
     .await?;
-    let items = projection::items(&window, &identity, tool_output, retained_output)?;
+    let mut items = projection::items(
+        &window,
+        &identity,
+        preferences.tool_output,
+        preferences.retained_output,
+    )?;
+    external.project(&mut items)?;
     let delivered = items.last().map_or(after, |item| item.sequence);
     let page = EventPage {
         object: "cma.agent.event_page",
@@ -113,5 +112,5 @@ async fn page(
         return Err(Error::History);
     }
     state.reads.validate_event_stream(&authorization).await?;
-    Ok(page)
+    Ok((page, external))
 }

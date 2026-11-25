@@ -10,6 +10,8 @@ use std::{
 mod evidence;
 mod fixture;
 mod http;
+mod missing_http_tests;
+mod missing_tests;
 pub(crate) mod pilot;
 mod pilot_http;
 mod runtime_controls;
@@ -30,6 +32,8 @@ struct MemoryState {
     writes: Mutex<Vec<SandboxBillingState>>,
     fail_save: AtomicBool,
     load_barrier: Mutex<Option<Arc<tokio::sync::Barrier>>>,
+    fail_adoption: AtomicBool,
+    lose_adoption_ack: AtomicBool,
 }
 #[async_trait]
 impl FundingStateStore for MemoryState {
@@ -47,12 +51,22 @@ impl FundingStateStore for MemoryState {
             return Err(transient());
         }
         let mut values = self.values.lock().unwrap();
+        let adoption = state.pending.is_none()
+            && values
+                .get(&state.sandbox_id)
+                .is_some_and(|saved| saved.pending.is_some());
+        if adoption && self.fail_adoption.swap(false, Ordering::SeqCst) {
+            return Err(transient());
+        }
         if values.get(&state.sandbox_id).map_or(0, |v| v.revision) != state.revision {
             return Err(FundingError::Conflict);
         }
         state.revision += 1;
         values.insert(state.sandbox_id.clone(), state.clone());
         self.writes.lock().unwrap().push(state.clone());
+        if adoption && self.lose_adoption_ack.swap(false, Ordering::SeqCst) {
+            return Err(transient());
+        }
         Ok(())
     }
     async fn events(&self, _: &SandboxId, after: u64) -> Result<Vec<UsageEvent>, FundingError> {
@@ -113,6 +127,7 @@ struct Provider {
     quotes: AtomicU64,
     requests: Mutex<Vec<ReserveRequest>>,
     receipts: Mutex<HashMap<String, FundingWindow>>,
+    recoveries: Mutex<Vec<String>>,
     evidence: Mutex<Vec<EvidenceRequest>>,
     fail_quote: Mutex<Option<FundingError>>,
     fail_reserve: Mutex<Option<FundingError>>,
@@ -128,6 +143,7 @@ impl Provider {
             quotes: AtomicU64::new(0),
             requests: Mutex::new(vec![]),
             receipts: Mutex::new(HashMap::new()),
+            recoveries: Mutex::new(Vec::new()),
             evidence: Mutex::new(vec![]),
             fail_quote: Mutex::new(None),
             fail_reserve: Mutex::new(None),
@@ -202,6 +218,7 @@ impl FundingProvider for Provider {
         Ok(receipt)
     }
     async fn recover(&self, id: &str) -> Result<Option<FundingWindow>, FundingError> {
+        self.recoveries.lock().unwrap().push(id.into());
         if self.fail_recover.load(Ordering::SeqCst) {
             return Err(transient());
         }

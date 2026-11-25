@@ -16,11 +16,15 @@ pub(super) struct Receipt {
 pub(super) async fn fence(
     store: &MongoSandboxStore,
     session: &mut ClientSession,
-    proof: Option<&CommandRevivalAuthorization>,
+    revival: (
+        Option<&CommandRevivalAuthorization>,
+        Option<&layer3_adapter::ReleasedRuntime>,
+    ),
     candidate: &Sandbox,
     at: &str,
     event: &SandboxEventKind,
 ) -> Result<Option<Receipt>, ApplyError> {
+    let (proof, release) = revival;
     let Some(proof) = proof else { return Ok(None) };
     proof.require_current().map_err(|_| conflict())?;
     store
@@ -34,12 +38,31 @@ pub(super) async fn fence(
             resource_access::ReadError::Domain(_) => conflict(),
         })?;
     proof.validate_snapshot(&snapshot).map_err(|_| conflict())?;
+    if let Some(release) = release {
+        if snapshot
+            .lineage
+            .sandbox
+            .profile
+            .content
+            .runtime_image
+            .is_none()
+        {
+            store
+                .fence_released_admission(
+                    release,
+                    layer2_core::released_runtime::ReleasedLane::Agent,
+                    session,
+                )
+                .await
+                .map_err(ApplyError::Domain)?;
+        }
+    }
     validate_command_revival_transition(
         &snapshot.lineage.sandbox,
         candidate,
         at,
         event,
-        store.managed_runtime_version.as_deref(),
+        release.map(|release| release.agent.as_str()),
     )
     .map_err(ApplyError::Domain)?;
     let command_id = proof.command().receipt.envelope.command_id.clone();

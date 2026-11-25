@@ -14,6 +14,7 @@ mod agent_access_cases;
 mod agent_cases;
 mod agent_customization_cases;
 mod agent_event_cases;
+mod agent_restart_cases;
 mod agent_worktree_recovery_cases;
 mod artifact_cases;
 mod attachment_cases;
@@ -25,6 +26,7 @@ mod bot_setup_cases;
 mod capacity_recovery_cases;
 mod channel_usage_cases;
 mod creation_inventory_cases;
+mod creation_outcome_cases;
 mod credential_cases;
 mod deliverable_cases;
 mod desktop_cases;
@@ -39,6 +41,7 @@ mod gateway_cases;
 mod gateway_interaction_cases;
 mod inventory;
 mod inventory_cases;
+mod legal_consent_cases;
 mod lifecycle_cases;
 mod lifecycle_result_contract;
 mod message_feedback_cases;
@@ -49,13 +52,16 @@ mod provider_association_cases;
 mod queued_cancellation_cases;
 mod queued_input_cases;
 mod replay;
+mod resource_revocation_cases;
 mod response_control_cases;
 mod response_headers;
 mod responses_v2_cases;
 mod retained_clients;
 mod retained_output_cases;
 mod retained_recovery_cases;
+mod runtime_canary_cases;
 mod runtime_capacity_cases;
+mod runtime_migration_cases;
 mod runtime_update_cases;
 mod sandbox_command_cases;
 mod sandbox_inventory_cases;
@@ -175,6 +181,30 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = agent_restart_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = creation_outcome_cases::scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = super::admin::tests::binding_holds_tests::contract_scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = super::agent_original_request::tests::contract_scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = runtime_canary_cases::scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = Box::pin(runtime_migration_cases::scenario(name)).await {
+        return scenario;
+    }
+    if let Some(scenario) = super::privacy_export::tests::contract_scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = resource_revocation_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = platform_spend_cases::scenario(name) {
         return scenario;
     }
@@ -182,6 +212,9 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = account_deletion_cases::scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = legal_consent_cases::scenario(name) {
         return scenario;
     }
     if let Some(scenario) = capacity_recovery_cases::scenario(name).await {

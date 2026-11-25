@@ -91,16 +91,76 @@ async fn periodic_capture_and_concurrent_owner_turn_have_one_winner_after_quiet(
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     for index in 0..8 {
         let (parent, _, agent) = capture_fixture(&store, &format!("quiet_race_{index}")).await;
-        let admission = begin_stored_conversation_turn(&store, agent).await;
+        let request = begin(&parent);
+        let admission = begin_stored_conversation_turn(&store, agent.clone()).await;
         let (capture, turn) = tokio::join!(
-            store.commit_sandbox_lifecycle(begin(&parent)),
-            store.commit_agent_conversation(admission),
+            store.commit_sandbox_lifecycle(request.clone()),
+            store.commit_agent_conversation(admission.clone()),
         );
         match (capture, turn) {
-            (Ok(()), Err(SandboxStoreError::CheckpointInProgress))
-            | (Err(SandboxStoreError::Conflict), Ok(_)) => {}
+            (Ok(()), Err(SandboxStoreError::CheckpointInProgress)) => {
+                assert_capture_race_state(&store, &request.sandbox, &agent, 1).await;
+            }
+            (
+                capture @ (Ok(()) | Err(SandboxStoreError::Conflict)),
+                Err(SandboxStoreError::Conflict),
+            ) => {
+                // Bounded contention can prevent either call from reaching
+                // the domain fence. Verify durable state before retrying.
+                if capture.is_err() {
+                    assert_capture_race_state(&store, &parent, &agent, 0).await;
+                    store
+                        .commit_sandbox_lifecycle(request.clone())
+                        .await
+                        .unwrap();
+                }
+                assert_capture_race_state(&store, &request.sandbox, &agent, 1).await;
+                assert_eq!(
+                    store.commit_agent_conversation(admission).await,
+                    Err(SandboxStoreError::CheckpointInProgress),
+                );
+                assert_capture_race_state(&store, &request.sandbox, &agent, 1).await;
+            }
+            (Err(SandboxStoreError::Conflict), Ok(logs)) => {
+                assert_capture_race_state(&store, &parent, &admission.agent, 0).await;
+                assert_eq!(
+                    store
+                        .agent_log(&agent.id, agent.conversation.last_seq, 10)
+                        .await
+                        .unwrap(),
+                    logs
+                );
+            }
             result => panic!("periodic capture and owner turn were not exclusive: {result:?}"),
         }
     }
     client.database(&name).drop().await.unwrap();
+}
+
+async fn assert_capture_race_state(
+    store: &MongoSandboxStore,
+    parent: &Sandbox,
+    agent: &Agent,
+    sandbox_events: usize,
+) {
+    assert_eq!(
+        store.get_sandbox(&parent.id).await.unwrap().as_ref(),
+        Some(parent)
+    );
+    assert_eq!(
+        store.get_agent(&agent.id).await.unwrap().as_ref(),
+        Some(agent)
+    );
+    assert_eq!(
+        store.sandbox_events(&parent.id, 0, 10).await.unwrap().len(),
+        sandbox_events
+    );
+    assert_eq!(
+        store
+            .agent_log
+            .count_documents(doc! { "agent_id": agent.id.as_str() })
+            .await
+            .unwrap(),
+        agent.conversation.last_seq,
+    );
 }

@@ -13,6 +13,7 @@ async fn model_credit_required_refuses_before_the_upstream_write() {
             operation_id: "funding-fixture".into(),
             value: RuntimeCredential::new("fixture-model-credential"),
             custody_generation: Some(1),
+            github_route: None,
         })
         .await
         .unwrap();
@@ -83,6 +84,7 @@ async fn holder_refuses_generation_rollback_and_conflict() {
             operation_id: "one".into(),
             value: RuntimeCredential::new("secret-one"),
             custody_generation: Some(2),
+            github_route: None,
         })
         .await
         .unwrap();
@@ -91,6 +93,7 @@ async fn holder_refuses_generation_rollback_and_conflict() {
             operation_id: "two".into(),
             value: RuntimeCredential::new("secret-two"),
             custody_generation: Some(1),
+            github_route: None,
         })
         .await
         .unwrap_err();
@@ -100,6 +103,7 @@ async fn holder_refuses_generation_rollback_and_conflict() {
             operation_id: "three".into(),
             value: RuntimeCredential::new("secret-three"),
             custody_generation: Some(2),
+            github_route: None,
         })
         .await
         .unwrap_err();
@@ -133,6 +137,7 @@ async fn model_proxy_strips_provider_routing_authority_before_upstream() {
             operation_id: "title-proxy-credential".into(),
             value: RuntimeCredential::new("current-scoped-title-key"),
             custody_generation: Some(3),
+            github_route: None,
         })
         .await
         .unwrap();
@@ -216,6 +221,7 @@ async fn only_model_proxy_repairs_tool_free_compaction_and_keeps_credential_boun
                 operation_id: "compaction-fixture-credential".into(),
                 value: RuntimeCredential::new("fixture-scoped-credential"),
                 custody_generation: Some(1),
+                github_route: None,
             })
             .await
             .unwrap();

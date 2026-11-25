@@ -171,7 +171,7 @@ impl SandboxProfileContent {
     }
 }
 
-fn valid_runtime_image(value: &str) -> bool {
+pub(crate) fn valid_runtime_image(value: &str) -> bool {
     let Some((name, digest)) = value.rsplit_once("@sha256:") else {
         return false;
     };

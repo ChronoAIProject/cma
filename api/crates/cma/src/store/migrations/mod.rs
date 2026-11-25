@@ -9,15 +9,19 @@ mod activity_page_index;
 mod agent_log_segments;
 pub(in crate::store) mod agent_log_source_keys;
 mod agent_owner_index;
+mod billing_authority;
 mod binding_indexes;
 mod collection_indexes;
+pub(in crate::store) mod command_cohort_index;
 pub(in crate::store) mod home_backup_catalog;
 mod index_inventory;
 mod index_plan;
 mod index_toolkit;
+pub(in crate::store) mod measured_custody;
 pub(in crate::store) mod opening_index;
 mod sandbox_usage_capture;
 mod steps;
+mod turn_policy_index;
 use steps::Step;
 mod authority;
 mod ledger;
@@ -27,6 +31,50 @@ mod tests;
 type Result<T> = std::result::Result<T, &'static str>;
 const DEADLINE: Duration = Duration::from_secs(45);
 const IO: Duration = Duration::from_secs(5);
+
+/// Qualify the reviewed access path and identify the collection incarnation.
+/// A hinted query alone can return an empty result for a nonexistent collection.
+pub(in crate::store) async fn require_command_cohort_index(
+    database: &mongodb::Database,
+) -> Result<mongodb::bson::Binary> {
+    let response = database
+        .run_command(doc! {
+            "listCollections": 1,
+            "filter": {"name": "agent_commands"},
+            "cursor": {"batchSize": 2},
+            "maxTimeMS": 5000,
+        })
+        .await
+        .map_err(|_| "Command cohort collection unavailable")?;
+    crate::store::agent_log_segments::capture::preview_budget::catalog_response(&response)?;
+    let specifications = index_inventory::entries(&response)?;
+    let [specification] = specifications.as_slice() else {
+        return Err("Command cohort collection is missing");
+    };
+    if specification.get_str("name").ok() != Some("agent_commands")
+        || specification.get_str("type").ok() != Some("collection")
+    {
+        return Err("Command cohort collection is invalid");
+    }
+    let Some(mongodb::bson::Bson::Binary(uuid)) = specification
+        .get_document("info")
+        .ok()
+        .and_then(|info| info.get("uuid"))
+    else {
+        return Err("Command cohort collection identity unavailable");
+    };
+    if uuid.subtype != mongodb::bson::spec::BinarySubtype::Uuid || uuid.bytes.len() != 16 {
+        return Err("Command cohort collection identity invalid");
+    }
+    if !command_cohort_index::inspect(database).await?.is_empty() {
+        return Err("Command cohort index is missing");
+    }
+    Ok(uuid.clone())
+}
+
+pub(in crate::store) async fn measured_custody_ready(database: &mongodb::Database) -> Result<bool> {
+    Ok(measured_custody::inspect(database).await?.is_empty())
+}
 
 pub(crate) fn is_command(arguments: &[String]) -> bool {
     if index_toolkit::is_command(arguments) {
@@ -57,6 +105,9 @@ pub(crate) async fn run_command_line(arguments: &[String]) {
 }
 
 pub(crate) async fn command(arguments: &[String]) -> Result<Value> {
+    if let Some(result) = billing_authority::command(arguments) {
+        return result;
+    }
     if let Some(result) = home_backup_catalog::command(arguments) {
         return result;
     }
@@ -102,6 +153,7 @@ async fn execute(arguments: &[String]) -> Result<Value> {
     let mut options = ClientOptions::parse(uri)
         .await
         .map_err(|_| "database configuration")?;
+    crate::store::transaction_barrier::bind(&mut options, &database);
     options.server_selection_timeout = Some(IO);
     options.connect_timeout = Some(IO);
     let client = Client::with_options(options).map_err(|_| "database configuration")?;
@@ -149,7 +201,7 @@ async fn apply_indexes(
     super::sandbox_mongo::require_transaction_topology(database)
         .await
         .map_err(|_| "migration requires a supported replica set or mongos")?;
-    if step == Step::BindingIndexes {
+    if matches!(step, Step::BindingIndexes | Step::MeasuredCustody) {
         step.inspect(database).await?;
     }
     ledger.initialize().await?;
@@ -176,6 +228,10 @@ async fn apply_indexes(
                     _ = renewal.tick() => ledger.renew(&lease).await?,
                 }
             };
+            #[cfg(test)]
+            if created && step == Step::BindingIndexes {
+                tests::startup_ddl::pause_after_binding_index().await?;
+            }
             changed += i64::from(created);
         }
         if !step.inspect(database).await?.is_empty() {
@@ -221,4 +277,7 @@ pub(in crate::store) fn missing_activity_indexes(
 }
 
 #[cfg(test)]
-pub(in crate::store) use tests::startup_ddl::prepare_bindings_for_test;
+pub(in crate::store) use tests::startup_ddl::{
+    apply_binding_indexes_for_test, apply_binding_indexes_with_pause_for_test,
+    prepare_bindings_for_test,
+};

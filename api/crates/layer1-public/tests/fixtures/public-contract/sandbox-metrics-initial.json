@@ -1,0 +1,4679 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "initial-owner-create-ready",
+      "operation": "POST /api/v1/usage/metrics/initial/reports",
+      "scenario": "metrics_initial_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "report": {
+            "schema_version": 1,
+            "report_id": "umr_00000000000000000000000000000001",
+            "status": "ready",
+            "report_complete": true,
+            "scope": {
+              "principal": "owner",
+              "admin": false
+            },
+            "query": {
+              "from": 1000,
+              "to": 1060,
+              "step_seconds": 60,
+              "filters": {
+                "owner": null,
+                "statuses": [],
+                "runtime_version": null,
+                "sandbox_id": null,
+                "agent_id": null,
+                "search": ""
+              }
+            },
+            "as_of": 1180,
+            "measurement_cutoff": 1060,
+            "effective_range": {
+              "from": 1000,
+              "to": 1060
+            },
+            "expires_at": "18446744073709551615",
+            "allocation_watermark": "fixture:1",
+            "mapping_revision": 1,
+            "available_from": 1000,
+            "tracking_started_at": 1000,
+            "warnings": [
+              "measurement_coverage_incomplete"
+            ],
+            "source_health": "partial",
+            "summary": {
+              "sandbox_count": 1,
+              "running_count": 1,
+              "allocated_period": {
+                "disk_retained_seconds": 0.0,
+                "uptime_seconds": 0.0,
+                "cpu_core_hours": 0.0,
+                "memory_gib_hours": 0.0,
+                "disk_gib_hours": 0.0,
+                "complete": false,
+                "projected_tail_seconds": 0,
+                "unknown_seconds": 0
+              },
+              "total_allocated_capacity": {
+                "cpu_cores": 0.0,
+                "memory_bytes": 0.0,
+                "disk_bytes": 0.0
+              },
+              "covered_allocated_capacity": {
+                "cpu_cores": 0.0,
+                "memory_bytes": 0.0,
+                "disk_bytes": 0.0
+              },
+              "measured": {
+                "cpu": {
+                  "state": "partial",
+                  "observed_at": 1040.0,
+                  "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                  "covered_seconds": 30.0,
+                  "expected_seconds": 60.0,
+                  "unknown_mapping_seconds": 0.0,
+                  "coverage_ratio": 0.5,
+                  "available_from": null,
+                  "exceeds_capacity": false,
+                  "last_observed": 1.0,
+                  "latest_cores": 1.0,
+                  "mean_cores": 1.0,
+                  "max_cores": 1.0,
+                  "percent_of_limit": null,
+                  "filesystem_capacity_bytes": null,
+                  "observed_core_hours": 0.008333333333333333
+                },
+                "memory": {
+                  "state": "partial",
+                  "observed_at": 1040.0,
+                  "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                  "covered_seconds": 30.0,
+                  "expected_seconds": 60.0,
+                  "unknown_mapping_seconds": 0.0,
+                  "coverage_ratio": 0.5,
+                  "available_from": null,
+                  "exceeds_capacity": false,
+                  "last_observed": 1024.0,
+                  "latest_bytes": 1024.0,
+                  "mean_bytes": 1024.0,
+                  "max_bytes": null,
+                  "percent_of_limit": null,
+                  "filesystem_capacity_bytes": null,
+                  "observed_gib_hours": 7.947285970052083e-9
+                },
+                "disk": {
+                  "state": "unmounted",
+                  "observed_at": 1040.0,
+                  "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                  "covered_seconds": 30.0,
+                  "expected_seconds": 60.0,
+                  "unknown_mapping_seconds": 0.0,
+                  "coverage_ratio": 0.5,
+                  "available_from": null,
+                  "exceeds_capacity": false,
+                  "last_observed": 2048.0,
+                  "latest_bytes": null,
+                  "mean_bytes": 2048.0,
+                  "max_bytes": null,
+                  "percent_of_limit": null,
+                  "filesystem_capacity_bytes": null,
+                  "observed_gib_hours": 1.5894571940104166e-8
+                }
+              },
+              "excluded_count": 0,
+              "infrastructure": null
+            },
+            "poll_url": "/api/v1/usage/metrics/reports/umr_00000000000000000000000000000001",
+            "retry_after_seconds": 2
+          },
+          "initial": {
+            "projection": {
+              "first_page": {
+                "limit": 50,
+                "sort": "last_activity_at",
+                "order": "desc"
+              },
+              "total_metrics": [
+                "cpu",
+                "memory",
+                "disk"
+              ]
+            },
+            "rows": {
+              "items": [
+                {
+                  "sandbox_id": "sbx_00000000000000000000000000000001",
+                  "name": "Shared measured Sandbox",
+                  "owner": {
+                    "subject": "owner"
+                  },
+                  "status": "active",
+                  "runtime_version": "v1",
+                  "agent_count": "18446744073709551615",
+                  "last_activity_at": 1040,
+                  "allocation": {
+                    "cpu_cores": 2.0,
+                    "memory_bytes": "9007199254740992",
+                    "disk_bytes": 4096.0
+                  },
+                  "allocated_period": {
+                    "disk_retained_seconds": 0.0,
+                    "uptime_seconds": 0.0,
+                    "cpu_core_hours": 0.0,
+                    "memory_gib_hours": 0.0,
+                    "disk_gib_hours": 0.0,
+                    "complete": false,
+                    "projected_tail_seconds": 0,
+                    "unknown_seconds": 0
+                  },
+                  "measured": {
+                    "cpu": {
+                      "state": "partial",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 1.0,
+                      "latest_cores": 1.0,
+                      "mean_cores": 1.0,
+                      "max_cores": 1.0,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_core_hours": 0.008333333333333333
+                    },
+                    "memory": {
+                      "state": "partial",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 1024.0,
+                      "latest_bytes": 1024.0,
+                      "mean_bytes": 1024.0,
+                      "max_bytes": null,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_gib_hours": 7.947285970052083e-9
+                    },
+                    "disk": {
+                      "state": "unmounted",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 2048.0,
+                      "latest_bytes": null,
+                      "mean_bytes": 2048.0,
+                      "max_bytes": null,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_gib_hours": 1.5894571940104166e-8
+                    }
+                  },
+                  "billing": {
+                    "basis": "allocated",
+                    "status": "not_integrated",
+                    "charges": null
+                  },
+                  "shared_sandbox_usage": true
+                }
+              ],
+              "next": null,
+              "report_id": "umr_00000000000000000000000000000001",
+              "as_of": 1180,
+              "total_count": 1
+            },
+            "charts": [
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "cpu",
+                "unit": "cores",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "memory",
+                "unit": "bytes",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "disk",
+                "unit": "bytes",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-create-pending",
+      "operation": "POST /api/v1/usage/metrics/initial/reports",
+      "scenario": "metrics_initial_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "retry-after": "2"
+        },
+        "body": {
+          "report": {
+            "schema_version": 1,
+            "report_id": "umr_00000000000000000000000000000001",
+            "status": "pending",
+            "report_complete": false,
+            "scope": {
+              "principal": "owner",
+              "admin": false
+            },
+            "query": {
+              "from": 1000,
+              "to": 1060,
+              "step_seconds": 60,
+              "filters": {
+                "owner": null,
+                "statuses": [],
+                "runtime_version": null,
+                "sandbox_id": null,
+                "agent_id": null,
+                "search": ""
+              }
+            },
+            "as_of": 1180,
+            "measurement_cutoff": 1060,
+            "effective_range": {
+              "from": 1000,
+              "to": 1060
+            },
+            "expires_at": "18446744073709551615",
+            "allocation_watermark": "fixture:1",
+            "mapping_revision": 1,
+            "available_from": 1000,
+            "tracking_started_at": 1000,
+            "warnings": [
+              "measurement_coverage_incomplete"
+            ],
+            "source_health": "partial",
+            "summary": null,
+            "poll_url": "/api/v1/usage/metrics/reports/umr_00000000000000000000000000000001",
+            "retry_after_seconds": 2
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-create-anonymous",
+      "operation": "POST /api/v1/usage/metrics/initial/reports",
+      "scenario": "metrics_initial_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-create-forbidden",
+      "operation": "POST /api/v1/usage/metrics/initial/reports",
+      "scenario": "metrics_initial_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "usage authority required",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-create-missing",
+      "operation": "POST /api/v1/usage/metrics/initial/reports",
+      "scenario": "metrics_initial_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not_found",
+          "title": "not_found",
+          "status": 404,
+          "detail": "usage report or resource not found",
+          "code": "not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-create-invalid",
+      "operation": "POST /api/v1/usage/metrics/initial/reports",
+      "scenario": "metrics_initial_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Invalid retained cursor",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-create-busy",
+      "operation": "POST /api/v1/usage/metrics/initial/reports",
+      "scenario": "metrics_initial_busy",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/reporting_budget_exceeded",
+          "title": "reporting_budget_exceeded",
+          "status": 429,
+          "detail": "reporting budget exhausted; retry with a narrower range",
+          "code": "reporting_budget_exceeded"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-create-unavailable",
+      "operation": "POST /api/v1/usage/metrics/initial/reports",
+      "scenario": "metrics_initial_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "usage reporting is temporarily unavailable; retry or use a narrower range",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-create-expired",
+      "operation": "POST /api/v1/usage/metrics/initial/reports",
+      "scenario": "metrics_initial_expired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 410,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/report_expired",
+          "title": "report_expired",
+          "status": 410,
+          "detail": "usage report expired; refresh the report",
+          "code": "report_expired"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-latest-ready",
+      "operation": "POST /api/v1/usage/metrics/initial/view",
+      "scenario": "metrics_initial_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "view": {
+            "schema_version": 1,
+            "window": "custom",
+            "requested_range": {
+              "from": 1000,
+              "to": 1060
+            },
+            "report": {
+              "schema_version": 1,
+              "report_id": "umr_00000000000000000000000000000001",
+              "status": "ready",
+              "report_complete": true,
+              "scope": {
+                "principal": "owner",
+                "admin": false
+              },
+              "query": {
+                "from": 1000,
+                "to": 1060,
+                "step_seconds": 60,
+                "filters": {
+                  "owner": null,
+                  "statuses": [],
+                  "runtime_version": null,
+                  "sandbox_id": null,
+                  "agent_id": null,
+                  "search": ""
+                }
+              },
+              "as_of": 1180,
+              "measurement_cutoff": 1060,
+              "effective_range": {
+                "from": 1000,
+                "to": 1060
+              },
+              "expires_at": "18446744073709551615",
+              "allocation_watermark": "fixture:1",
+              "mapping_revision": 1,
+              "available_from": 1000,
+              "tracking_started_at": 1000,
+              "warnings": [
+                "measurement_coverage_incomplete"
+              ],
+              "source_health": "partial",
+              "summary": {
+                "sandbox_count": 1,
+                "running_count": 1,
+                "allocated_period": {
+                  "disk_retained_seconds": 0.0,
+                  "uptime_seconds": 0.0,
+                  "cpu_core_hours": 0.0,
+                  "memory_gib_hours": 0.0,
+                  "disk_gib_hours": 0.0,
+                  "complete": false,
+                  "projected_tail_seconds": 0,
+                  "unknown_seconds": 0
+                },
+                "total_allocated_capacity": {
+                  "cpu_cores": 0.0,
+                  "memory_bytes": 0.0,
+                  "disk_bytes": 0.0
+                },
+                "covered_allocated_capacity": {
+                  "cpu_cores": 0.0,
+                  "memory_bytes": 0.0,
+                  "disk_bytes": 0.0
+                },
+                "measured": {
+                  "cpu": {
+                    "state": "partial",
+                    "observed_at": 1040.0,
+                    "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                    "covered_seconds": 30.0,
+                    "expected_seconds": 60.0,
+                    "unknown_mapping_seconds": 0.0,
+                    "coverage_ratio": 0.5,
+                    "available_from": null,
+                    "exceeds_capacity": false,
+                    "last_observed": 1.0,
+                    "latest_cores": 1.0,
+                    "mean_cores": 1.0,
+                    "max_cores": 1.0,
+                    "percent_of_limit": null,
+                    "filesystem_capacity_bytes": null,
+                    "observed_core_hours": 0.008333333333333333
+                  },
+                  "memory": {
+                    "state": "partial",
+                    "observed_at": 1040.0,
+                    "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                    "covered_seconds": 30.0,
+                    "expected_seconds": 60.0,
+                    "unknown_mapping_seconds": 0.0,
+                    "coverage_ratio": 0.5,
+                    "available_from": null,
+                    "exceeds_capacity": false,
+                    "last_observed": 1024.0,
+                    "latest_bytes": 1024.0,
+                    "mean_bytes": 1024.0,
+                    "max_bytes": null,
+                    "percent_of_limit": null,
+                    "filesystem_capacity_bytes": null,
+                    "observed_gib_hours": 7.947285970052083e-9
+                  },
+                  "disk": {
+                    "state": "unmounted",
+                    "observed_at": 1040.0,
+                    "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                    "covered_seconds": 30.0,
+                    "expected_seconds": 60.0,
+                    "unknown_mapping_seconds": 0.0,
+                    "coverage_ratio": 0.5,
+                    "available_from": null,
+                    "exceeds_capacity": false,
+                    "last_observed": 2048.0,
+                    "latest_bytes": null,
+                    "mean_bytes": 2048.0,
+                    "max_bytes": null,
+                    "percent_of_limit": null,
+                    "filesystem_capacity_bytes": null,
+                    "observed_gib_hours": 1.5894571940104166e-8
+                  }
+                },
+                "excluded_count": 0,
+                "infrastructure": null
+              },
+              "poll_url": "/api/v1/usage/metrics/reports/umr_00000000000000000000000000000001",
+              "retry_after_seconds": 2
+            },
+            "generated_at": 1180,
+            "stale": false,
+            "refresh": {
+              "state": "idle",
+              "report_id": null,
+              "retry_after_seconds": 0
+            }
+          },
+          "initial": {
+            "projection": {
+              "first_page": {
+                "limit": 50,
+                "sort": "last_activity_at",
+                "order": "desc"
+              },
+              "total_metrics": [
+                "cpu",
+                "memory",
+                "disk"
+              ]
+            },
+            "rows": {
+              "items": [
+                {
+                  "sandbox_id": "sbx_00000000000000000000000000000001",
+                  "name": "Shared measured Sandbox",
+                  "owner": {
+                    "subject": "owner"
+                  },
+                  "status": "active",
+                  "runtime_version": "v1",
+                  "agent_count": "18446744073709551615",
+                  "last_activity_at": 1040,
+                  "allocation": {
+                    "cpu_cores": 2.0,
+                    "memory_bytes": "9007199254740992",
+                    "disk_bytes": 4096.0
+                  },
+                  "allocated_period": {
+                    "disk_retained_seconds": 0.0,
+                    "uptime_seconds": 0.0,
+                    "cpu_core_hours": 0.0,
+                    "memory_gib_hours": 0.0,
+                    "disk_gib_hours": 0.0,
+                    "complete": false,
+                    "projected_tail_seconds": 0,
+                    "unknown_seconds": 0
+                  },
+                  "measured": {
+                    "cpu": {
+                      "state": "partial",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 1.0,
+                      "latest_cores": 1.0,
+                      "mean_cores": 1.0,
+                      "max_cores": 1.0,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_core_hours": 0.008333333333333333
+                    },
+                    "memory": {
+                      "state": "partial",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 1024.0,
+                      "latest_bytes": 1024.0,
+                      "mean_bytes": 1024.0,
+                      "max_bytes": null,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_gib_hours": 7.947285970052083e-9
+                    },
+                    "disk": {
+                      "state": "unmounted",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 2048.0,
+                      "latest_bytes": null,
+                      "mean_bytes": 2048.0,
+                      "max_bytes": null,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_gib_hours": 1.5894571940104166e-8
+                    }
+                  },
+                  "billing": {
+                    "basis": "allocated",
+                    "status": "not_integrated",
+                    "charges": null
+                  },
+                  "shared_sandbox_usage": true
+                }
+              ],
+              "next": null,
+              "report_id": "umr_00000000000000000000000000000001",
+              "as_of": 1180,
+              "total_count": 1
+            },
+            "charts": [
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "cpu",
+                "unit": "cores",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "memory",
+                "unit": "bytes",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "disk",
+                "unit": "bytes",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-latest-pending",
+      "operation": "POST /api/v1/usage/metrics/initial/view",
+      "scenario": "metrics_initial_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "retry-after": "2"
+        },
+        "body": {
+          "view": {
+            "schema_version": 1,
+            "window": "custom",
+            "requested_range": {
+              "from": 1000,
+              "to": 1060
+            },
+            "report": {
+              "schema_version": 1,
+              "report_id": "umr_00000000000000000000000000000001",
+              "status": "pending",
+              "report_complete": false,
+              "scope": {
+                "principal": "owner",
+                "admin": false
+              },
+              "query": {
+                "from": 1000,
+                "to": 1060,
+                "step_seconds": 60,
+                "filters": {
+                  "owner": null,
+                  "statuses": [],
+                  "runtime_version": null,
+                  "sandbox_id": null,
+                  "agent_id": null,
+                  "search": ""
+                }
+              },
+              "as_of": 1180,
+              "measurement_cutoff": 1060,
+              "effective_range": {
+                "from": 1000,
+                "to": 1060
+              },
+              "expires_at": "18446744073709551615",
+              "allocation_watermark": "fixture:1",
+              "mapping_revision": 1,
+              "available_from": 1000,
+              "tracking_started_at": 1000,
+              "warnings": [
+                "measurement_coverage_incomplete"
+              ],
+              "source_health": "partial",
+              "summary": null,
+              "poll_url": "/api/v1/usage/metrics/reports/umr_00000000000000000000000000000001",
+              "retry_after_seconds": 2
+            },
+            "generated_at": null,
+            "stale": false,
+            "refresh": {
+              "state": "pending",
+              "report_id": "umr_00000000000000000000000000000001",
+              "retry_after_seconds": 2
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-latest-anonymous",
+      "operation": "POST /api/v1/usage/metrics/initial/view",
+      "scenario": "metrics_initial_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-latest-forbidden",
+      "operation": "POST /api/v1/usage/metrics/initial/view",
+      "scenario": "metrics_initial_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "usage authority required",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-latest-missing",
+      "operation": "POST /api/v1/usage/metrics/initial/view",
+      "scenario": "metrics_initial_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not_found",
+          "title": "not_found",
+          "status": 404,
+          "detail": "usage report or resource not found",
+          "code": "not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-latest-invalid",
+      "operation": "POST /api/v1/usage/metrics/initial/view",
+      "scenario": "metrics_initial_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Invalid retained cursor",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-latest-busy",
+      "operation": "POST /api/v1/usage/metrics/initial/view",
+      "scenario": "metrics_initial_busy",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/reporting_budget_exceeded",
+          "title": "reporting_budget_exceeded",
+          "status": 429,
+          "detail": "reporting budget exhausted; retry with a narrower range",
+          "code": "reporting_budget_exceeded"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-latest-unavailable",
+      "operation": "POST /api/v1/usage/metrics/initial/view",
+      "scenario": "metrics_initial_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "usage reporting is temporarily unavailable; retry or use a narrower range",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-latest-expired",
+      "operation": "POST /api/v1/usage/metrics/initial/view",
+      "scenario": "metrics_initial_expired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 410,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/report_expired",
+          "title": "report_expired",
+          "status": 410,
+          "detail": "usage report expired; refresh the report",
+          "code": "report_expired"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-latest-view_disabled",
+      "operation": "POST /api/v1/usage/metrics/initial/view",
+      "scenario": "metrics_initial_view_disabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 501,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/report_view_disabled",
+          "title": "report_view_disabled",
+          "status": 501,
+          "detail": "retained usage views are not enabled",
+          "code": "report_view_disabled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-read-ready",
+      "operation": "POST /api/v1/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_initial_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "report": {
+            "schema_version": 1,
+            "report_id": "umr_00000000000000000000000000000001",
+            "status": "ready",
+            "report_complete": true,
+            "scope": {
+              "principal": "owner",
+              "admin": false
+            },
+            "query": {
+              "from": 1000,
+              "to": 1060,
+              "step_seconds": 60,
+              "filters": {
+                "owner": null,
+                "statuses": [],
+                "runtime_version": null,
+                "sandbox_id": null,
+                "agent_id": null,
+                "search": ""
+              }
+            },
+            "as_of": 1180,
+            "measurement_cutoff": 1060,
+            "effective_range": {
+              "from": 1000,
+              "to": 1060
+            },
+            "expires_at": "18446744073709551615",
+            "allocation_watermark": "fixture:1",
+            "mapping_revision": 1,
+            "available_from": 1000,
+            "tracking_started_at": 1000,
+            "warnings": [
+              "measurement_coverage_incomplete"
+            ],
+            "source_health": "partial",
+            "summary": {
+              "sandbox_count": 1,
+              "running_count": 1,
+              "allocated_period": {
+                "disk_retained_seconds": 0.0,
+                "uptime_seconds": 0.0,
+                "cpu_core_hours": 0.0,
+                "memory_gib_hours": 0.0,
+                "disk_gib_hours": 0.0,
+                "complete": false,
+                "projected_tail_seconds": 0,
+                "unknown_seconds": 0
+              },
+              "total_allocated_capacity": {
+                "cpu_cores": 0.0,
+                "memory_bytes": 0.0,
+                "disk_bytes": 0.0
+              },
+              "covered_allocated_capacity": {
+                "cpu_cores": 0.0,
+                "memory_bytes": 0.0,
+                "disk_bytes": 0.0
+              },
+              "measured": {
+                "cpu": {
+                  "state": "partial",
+                  "observed_at": 1040.0,
+                  "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                  "covered_seconds": 30.0,
+                  "expected_seconds": 60.0,
+                  "unknown_mapping_seconds": 0.0,
+                  "coverage_ratio": 0.5,
+                  "available_from": null,
+                  "exceeds_capacity": false,
+                  "last_observed": 1.0,
+                  "latest_cores": 1.0,
+                  "mean_cores": 1.0,
+                  "max_cores": 1.0,
+                  "percent_of_limit": null,
+                  "filesystem_capacity_bytes": null,
+                  "observed_core_hours": 0.008333333333333333
+                },
+                "memory": {
+                  "state": "partial",
+                  "observed_at": 1040.0,
+                  "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                  "covered_seconds": 30.0,
+                  "expected_seconds": 60.0,
+                  "unknown_mapping_seconds": 0.0,
+                  "coverage_ratio": 0.5,
+                  "available_from": null,
+                  "exceeds_capacity": false,
+                  "last_observed": 1024.0,
+                  "latest_bytes": 1024.0,
+                  "mean_bytes": 1024.0,
+                  "max_bytes": null,
+                  "percent_of_limit": null,
+                  "filesystem_capacity_bytes": null,
+                  "observed_gib_hours": 7.947285970052083e-9
+                },
+                "disk": {
+                  "state": "unmounted",
+                  "observed_at": 1040.0,
+                  "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                  "covered_seconds": 30.0,
+                  "expected_seconds": 60.0,
+                  "unknown_mapping_seconds": 0.0,
+                  "coverage_ratio": 0.5,
+                  "available_from": null,
+                  "exceeds_capacity": false,
+                  "last_observed": 2048.0,
+                  "latest_bytes": null,
+                  "mean_bytes": 2048.0,
+                  "max_bytes": null,
+                  "percent_of_limit": null,
+                  "filesystem_capacity_bytes": null,
+                  "observed_gib_hours": 1.5894571940104166e-8
+                }
+              },
+              "excluded_count": 0,
+              "infrastructure": null
+            },
+            "poll_url": "/api/v1/usage/metrics/reports/umr_00000000000000000000000000000001",
+            "retry_after_seconds": 2
+          },
+          "initial": {
+            "projection": {
+              "first_page": {
+                "limit": 50,
+                "sort": "last_activity_at",
+                "order": "desc"
+              },
+              "total_metrics": [
+                "cpu",
+                "memory",
+                "disk"
+              ]
+            },
+            "rows": {
+              "items": [
+                {
+                  "sandbox_id": "sbx_00000000000000000000000000000001",
+                  "name": "Shared measured Sandbox",
+                  "owner": {
+                    "subject": "owner"
+                  },
+                  "status": "active",
+                  "runtime_version": "v1",
+                  "agent_count": "18446744073709551615",
+                  "last_activity_at": 1040,
+                  "allocation": {
+                    "cpu_cores": 2.0,
+                    "memory_bytes": "9007199254740992",
+                    "disk_bytes": 4096.0
+                  },
+                  "allocated_period": {
+                    "disk_retained_seconds": 0.0,
+                    "uptime_seconds": 0.0,
+                    "cpu_core_hours": 0.0,
+                    "memory_gib_hours": 0.0,
+                    "disk_gib_hours": 0.0,
+                    "complete": false,
+                    "projected_tail_seconds": 0,
+                    "unknown_seconds": 0
+                  },
+                  "measured": {
+                    "cpu": {
+                      "state": "partial",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 1.0,
+                      "latest_cores": 1.0,
+                      "mean_cores": 1.0,
+                      "max_cores": 1.0,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_core_hours": 0.008333333333333333
+                    },
+                    "memory": {
+                      "state": "partial",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 1024.0,
+                      "latest_bytes": 1024.0,
+                      "mean_bytes": 1024.0,
+                      "max_bytes": null,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_gib_hours": 7.947285970052083e-9
+                    },
+                    "disk": {
+                      "state": "unmounted",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 2048.0,
+                      "latest_bytes": null,
+                      "mean_bytes": 2048.0,
+                      "max_bytes": null,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_gib_hours": 1.5894571940104166e-8
+                    }
+                  },
+                  "billing": {
+                    "basis": "allocated",
+                    "status": "not_integrated",
+                    "charges": null
+                  },
+                  "shared_sandbox_usage": true
+                }
+              ],
+              "next": null,
+              "report_id": "umr_00000000000000000000000000000001",
+              "as_of": 1180,
+              "total_count": 1
+            },
+            "charts": [
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "cpu",
+                "unit": "cores",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "memory",
+                "unit": "bytes",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "disk",
+                "unit": "bytes",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-read-pending",
+      "operation": "POST /api/v1/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_initial_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "retry-after": "2"
+        },
+        "body": {
+          "report": {
+            "schema_version": 1,
+            "report_id": "umr_00000000000000000000000000000001",
+            "status": "pending",
+            "report_complete": false,
+            "scope": {
+              "principal": "owner",
+              "admin": false
+            },
+            "query": {
+              "from": 1000,
+              "to": 1060,
+              "step_seconds": 60,
+              "filters": {
+                "owner": null,
+                "statuses": [],
+                "runtime_version": null,
+                "sandbox_id": null,
+                "agent_id": null,
+                "search": ""
+              }
+            },
+            "as_of": 1180,
+            "measurement_cutoff": 1060,
+            "effective_range": {
+              "from": 1000,
+              "to": 1060
+            },
+            "expires_at": "18446744073709551615",
+            "allocation_watermark": "fixture:1",
+            "mapping_revision": 1,
+            "available_from": 1000,
+            "tracking_started_at": 1000,
+            "warnings": [
+              "measurement_coverage_incomplete"
+            ],
+            "source_health": "partial",
+            "summary": null,
+            "poll_url": "/api/v1/usage/metrics/reports/umr_00000000000000000000000000000001",
+            "retry_after_seconds": 2
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-read-anonymous",
+      "operation": "POST /api/v1/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_initial_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-read-forbidden",
+      "operation": "POST /api/v1/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_initial_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "usage authority required",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-read-missing",
+      "operation": "POST /api/v1/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_initial_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not_found",
+          "title": "not_found",
+          "status": 404,
+          "detail": "usage report or resource not found",
+          "code": "not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-read-invalid",
+      "operation": "POST /api/v1/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_initial_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Invalid retained cursor",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-read-busy",
+      "operation": "POST /api/v1/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_initial_busy",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/reporting_budget_exceeded",
+          "title": "reporting_budget_exceeded",
+          "status": 429,
+          "detail": "reporting budget exhausted; retry with a narrower range",
+          "code": "reporting_budget_exceeded"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-read-unavailable",
+      "operation": "POST /api/v1/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_initial_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "usage reporting is temporarily unavailable; retry or use a narrower range",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-owner-read-expired",
+      "operation": "POST /api/v1/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_initial_expired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 410,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/report_expired",
+          "title": "report_expired",
+          "status": 410,
+          "detail": "usage report expired; refresh the report",
+          "code": "report_expired"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-create-ready",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports",
+      "scenario": "metrics_admin_initial_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "report": {
+            "schema_version": 1,
+            "report_id": "umr_00000000000000000000000000000001",
+            "status": "ready",
+            "report_complete": true,
+            "scope": {
+              "principal": "operator",
+              "admin": true
+            },
+            "query": {
+              "from": 1000,
+              "to": 1060,
+              "step_seconds": 60,
+              "filters": {
+                "owner": null,
+                "statuses": [],
+                "runtime_version": null,
+                "sandbox_id": null,
+                "agent_id": null,
+                "search": ""
+              }
+            },
+            "as_of": 1180,
+            "measurement_cutoff": 1060,
+            "effective_range": {
+              "from": 1000,
+              "to": 1060
+            },
+            "expires_at": "18446744073709551615",
+            "allocation_watermark": "fixture:1",
+            "mapping_revision": 1,
+            "available_from": 1000,
+            "tracking_started_at": 1000,
+            "warnings": [
+              "measurement_coverage_incomplete"
+            ],
+            "source_health": "partial",
+            "summary": {
+              "sandbox_count": 1,
+              "running_count": 1,
+              "allocated_period": {
+                "disk_retained_seconds": 0.0,
+                "uptime_seconds": 0.0,
+                "cpu_core_hours": 0.0,
+                "memory_gib_hours": 0.0,
+                "disk_gib_hours": 0.0,
+                "complete": false,
+                "projected_tail_seconds": 0,
+                "unknown_seconds": 0
+              },
+              "total_allocated_capacity": {
+                "cpu_cores": 0.0,
+                "memory_bytes": 0.0,
+                "disk_bytes": 0.0
+              },
+              "covered_allocated_capacity": {
+                "cpu_cores": 0.0,
+                "memory_bytes": 0.0,
+                "disk_bytes": 0.0
+              },
+              "measured": {
+                "cpu": {
+                  "state": "partial",
+                  "observed_at": 1040.0,
+                  "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                  "covered_seconds": 30.0,
+                  "expected_seconds": 60.0,
+                  "unknown_mapping_seconds": 0.0,
+                  "coverage_ratio": 0.5,
+                  "available_from": null,
+                  "exceeds_capacity": false,
+                  "last_observed": 1.0,
+                  "latest_cores": 1.0,
+                  "mean_cores": 1.0,
+                  "max_cores": 1.0,
+                  "percent_of_limit": null,
+                  "filesystem_capacity_bytes": null,
+                  "observed_core_hours": 0.008333333333333333
+                },
+                "memory": {
+                  "state": "partial",
+                  "observed_at": 1040.0,
+                  "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                  "covered_seconds": 30.0,
+                  "expected_seconds": 60.0,
+                  "unknown_mapping_seconds": 0.0,
+                  "coverage_ratio": 0.5,
+                  "available_from": null,
+                  "exceeds_capacity": false,
+                  "last_observed": 1024.0,
+                  "latest_bytes": 1024.0,
+                  "mean_bytes": 1024.0,
+                  "max_bytes": null,
+                  "percent_of_limit": null,
+                  "filesystem_capacity_bytes": null,
+                  "observed_gib_hours": 7.947285970052083e-9
+                },
+                "disk": {
+                  "state": "unmounted",
+                  "observed_at": 1040.0,
+                  "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                  "covered_seconds": 30.0,
+                  "expected_seconds": 60.0,
+                  "unknown_mapping_seconds": 0.0,
+                  "coverage_ratio": 0.5,
+                  "available_from": null,
+                  "exceeds_capacity": false,
+                  "last_observed": 2048.0,
+                  "latest_bytes": null,
+                  "mean_bytes": 2048.0,
+                  "max_bytes": null,
+                  "percent_of_limit": null,
+                  "filesystem_capacity_bytes": null,
+                  "observed_gib_hours": 1.5894571940104166e-8
+                }
+              },
+              "excluded_count": 0,
+              "infrastructure": {
+                "state": "partial",
+                "unproven_count": 1,
+                "unassigned_pool": [
+                  0.2,
+                  1024.0,
+                  null
+                ],
+                "unattributed": [
+                  0.1,
+                  null,
+                  2048.0
+                ],
+                "observed_at": 1040
+              }
+            },
+            "poll_url": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001",
+            "retry_after_seconds": 2
+          },
+          "initial": {
+            "projection": {
+              "first_page": {
+                "limit": 50,
+                "sort": "last_activity_at",
+                "order": "desc"
+              },
+              "total_metrics": [
+                "cpu",
+                "memory",
+                "disk"
+              ]
+            },
+            "rows": {
+              "items": [
+                {
+                  "sandbox_id": "sbx_00000000000000000000000000000001",
+                  "name": "Shared measured Sandbox",
+                  "owner": {
+                    "subject": "owner"
+                  },
+                  "status": "active",
+                  "runtime_version": "v1",
+                  "agent_count": "18446744073709551615",
+                  "last_activity_at": 1040,
+                  "allocation": {
+                    "cpu_cores": 2.0,
+                    "memory_bytes": "9007199254740992",
+                    "disk_bytes": 4096.0
+                  },
+                  "allocated_period": {
+                    "disk_retained_seconds": 0.0,
+                    "uptime_seconds": 0.0,
+                    "cpu_core_hours": 0.0,
+                    "memory_gib_hours": 0.0,
+                    "disk_gib_hours": 0.0,
+                    "complete": false,
+                    "projected_tail_seconds": 0,
+                    "unknown_seconds": 0
+                  },
+                  "measured": {
+                    "cpu": {
+                      "state": "partial",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 1.0,
+                      "latest_cores": 1.0,
+                      "mean_cores": 1.0,
+                      "max_cores": 1.0,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_core_hours": 0.008333333333333333
+                    },
+                    "memory": {
+                      "state": "partial",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 1024.0,
+                      "latest_bytes": 1024.0,
+                      "mean_bytes": 1024.0,
+                      "max_bytes": null,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_gib_hours": 7.947285970052083e-9
+                    },
+                    "disk": {
+                      "state": "unmounted",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 2048.0,
+                      "latest_bytes": null,
+                      "mean_bytes": 2048.0,
+                      "max_bytes": null,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_gib_hours": 1.5894571940104166e-8
+                    }
+                  },
+                  "billing": {
+                    "basis": "allocated",
+                    "status": "not_integrated",
+                    "charges": null
+                  },
+                  "shared_sandbox_usage": true
+                }
+              ],
+              "next": null,
+              "report_id": "umr_00000000000000000000000000000001",
+              "as_of": 1180,
+              "total_count": 1
+            },
+            "charts": [
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "cpu",
+                "unit": "cores",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "memory",
+                "unit": "bytes",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "disk",
+                "unit": "bytes",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-create-pending",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports",
+      "scenario": "metrics_admin_initial_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "retry-after": "2"
+        },
+        "body": {
+          "report": {
+            "schema_version": 1,
+            "report_id": "umr_00000000000000000000000000000001",
+            "status": "pending",
+            "report_complete": false,
+            "scope": {
+              "principal": "operator",
+              "admin": true
+            },
+            "query": {
+              "from": 1000,
+              "to": 1060,
+              "step_seconds": 60,
+              "filters": {
+                "owner": null,
+                "statuses": [],
+                "runtime_version": null,
+                "sandbox_id": null,
+                "agent_id": null,
+                "search": ""
+              }
+            },
+            "as_of": 1180,
+            "measurement_cutoff": 1060,
+            "effective_range": {
+              "from": 1000,
+              "to": 1060
+            },
+            "expires_at": "18446744073709551615",
+            "allocation_watermark": "fixture:1",
+            "mapping_revision": 1,
+            "available_from": 1000,
+            "tracking_started_at": 1000,
+            "warnings": [
+              "measurement_coverage_incomplete"
+            ],
+            "source_health": "partial",
+            "summary": null,
+            "poll_url": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001",
+            "retry_after_seconds": 2
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-create-anonymous",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports",
+      "scenario": "metrics_admin_initial_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-create-forbidden",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports",
+      "scenario": "metrics_admin_initial_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "usage authority required",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-create-missing",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports",
+      "scenario": "metrics_admin_initial_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not_found",
+          "title": "not_found",
+          "status": 404,
+          "detail": "usage report or resource not found",
+          "code": "not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-create-invalid",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports",
+      "scenario": "metrics_admin_initial_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Invalid retained cursor",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-create-busy",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports",
+      "scenario": "metrics_admin_initial_busy",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/reporting_budget_exceeded",
+          "title": "reporting_budget_exceeded",
+          "status": 429,
+          "detail": "reporting budget exhausted; retry with a narrower range",
+          "code": "reporting_budget_exceeded"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-create-unavailable",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports",
+      "scenario": "metrics_admin_initial_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "usage reporting is temporarily unavailable; retry or use a narrower range",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-create-expired",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports",
+      "scenario": "metrics_admin_initial_expired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "query": {
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 410,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/report_expired",
+          "title": "report_expired",
+          "status": 410,
+          "detail": "usage report expired; refresh the report",
+          "code": "report_expired"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-latest-ready",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/view",
+      "scenario": "metrics_admin_initial_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "view": {
+            "schema_version": 1,
+            "window": "custom",
+            "requested_range": {
+              "from": 1000,
+              "to": 1060
+            },
+            "report": {
+              "schema_version": 1,
+              "report_id": "umr_00000000000000000000000000000001",
+              "status": "ready",
+              "report_complete": true,
+              "scope": {
+                "principal": "operator",
+                "admin": true
+              },
+              "query": {
+                "from": 1000,
+                "to": 1060,
+                "step_seconds": 60,
+                "filters": {
+                  "owner": null,
+                  "statuses": [],
+                  "runtime_version": null,
+                  "sandbox_id": null,
+                  "agent_id": null,
+                  "search": ""
+                }
+              },
+              "as_of": 1180,
+              "measurement_cutoff": 1060,
+              "effective_range": {
+                "from": 1000,
+                "to": 1060
+              },
+              "expires_at": "18446744073709551615",
+              "allocation_watermark": "fixture:1",
+              "mapping_revision": 1,
+              "available_from": 1000,
+              "tracking_started_at": 1000,
+              "warnings": [
+                "measurement_coverage_incomplete"
+              ],
+              "source_health": "partial",
+              "summary": {
+                "sandbox_count": 1,
+                "running_count": 1,
+                "allocated_period": {
+                  "disk_retained_seconds": 0.0,
+                  "uptime_seconds": 0.0,
+                  "cpu_core_hours": 0.0,
+                  "memory_gib_hours": 0.0,
+                  "disk_gib_hours": 0.0,
+                  "complete": false,
+                  "projected_tail_seconds": 0,
+                  "unknown_seconds": 0
+                },
+                "total_allocated_capacity": {
+                  "cpu_cores": 0.0,
+                  "memory_bytes": 0.0,
+                  "disk_bytes": 0.0
+                },
+                "covered_allocated_capacity": {
+                  "cpu_cores": 0.0,
+                  "memory_bytes": 0.0,
+                  "disk_bytes": 0.0
+                },
+                "measured": {
+                  "cpu": {
+                    "state": "partial",
+                    "observed_at": 1040.0,
+                    "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                    "covered_seconds": 30.0,
+                    "expected_seconds": 60.0,
+                    "unknown_mapping_seconds": 0.0,
+                    "coverage_ratio": 0.5,
+                    "available_from": null,
+                    "exceeds_capacity": false,
+                    "last_observed": 1.0,
+                    "latest_cores": 1.0,
+                    "mean_cores": 1.0,
+                    "max_cores": 1.0,
+                    "percent_of_limit": null,
+                    "filesystem_capacity_bytes": null,
+                    "observed_core_hours": 0.008333333333333333
+                  },
+                  "memory": {
+                    "state": "partial",
+                    "observed_at": 1040.0,
+                    "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                    "covered_seconds": 30.0,
+                    "expected_seconds": 60.0,
+                    "unknown_mapping_seconds": 0.0,
+                    "coverage_ratio": 0.5,
+                    "available_from": null,
+                    "exceeds_capacity": false,
+                    "last_observed": 1024.0,
+                    "latest_bytes": 1024.0,
+                    "mean_bytes": 1024.0,
+                    "max_bytes": null,
+                    "percent_of_limit": null,
+                    "filesystem_capacity_bytes": null,
+                    "observed_gib_hours": 7.947285970052083e-9
+                  },
+                  "disk": {
+                    "state": "unmounted",
+                    "observed_at": 1040.0,
+                    "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                    "covered_seconds": 30.0,
+                    "expected_seconds": 60.0,
+                    "unknown_mapping_seconds": 0.0,
+                    "coverage_ratio": 0.5,
+                    "available_from": null,
+                    "exceeds_capacity": false,
+                    "last_observed": 2048.0,
+                    "latest_bytes": null,
+                    "mean_bytes": 2048.0,
+                    "max_bytes": null,
+                    "percent_of_limit": null,
+                    "filesystem_capacity_bytes": null,
+                    "observed_gib_hours": 1.5894571940104166e-8
+                  }
+                },
+                "excluded_count": 0,
+                "infrastructure": {
+                  "state": "partial",
+                  "unproven_count": 1,
+                  "unassigned_pool": [
+                    0.2,
+                    1024.0,
+                    null
+                  ],
+                  "unattributed": [
+                    0.1,
+                    null,
+                    2048.0
+                  ],
+                  "observed_at": 1040
+                }
+              },
+              "poll_url": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001",
+              "retry_after_seconds": 2
+            },
+            "generated_at": 1180,
+            "stale": false,
+            "refresh": {
+              "state": "idle",
+              "report_id": null,
+              "retry_after_seconds": 0
+            }
+          },
+          "initial": {
+            "projection": {
+              "first_page": {
+                "limit": 50,
+                "sort": "last_activity_at",
+                "order": "desc"
+              },
+              "total_metrics": [
+                "cpu",
+                "memory",
+                "disk"
+              ]
+            },
+            "rows": {
+              "items": [
+                {
+                  "sandbox_id": "sbx_00000000000000000000000000000001",
+                  "name": "Shared measured Sandbox",
+                  "owner": {
+                    "subject": "owner"
+                  },
+                  "status": "active",
+                  "runtime_version": "v1",
+                  "agent_count": "18446744073709551615",
+                  "last_activity_at": 1040,
+                  "allocation": {
+                    "cpu_cores": 2.0,
+                    "memory_bytes": "9007199254740992",
+                    "disk_bytes": 4096.0
+                  },
+                  "allocated_period": {
+                    "disk_retained_seconds": 0.0,
+                    "uptime_seconds": 0.0,
+                    "cpu_core_hours": 0.0,
+                    "memory_gib_hours": 0.0,
+                    "disk_gib_hours": 0.0,
+                    "complete": false,
+                    "projected_tail_seconds": 0,
+                    "unknown_seconds": 0
+                  },
+                  "measured": {
+                    "cpu": {
+                      "state": "partial",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 1.0,
+                      "latest_cores": 1.0,
+                      "mean_cores": 1.0,
+                      "max_cores": 1.0,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_core_hours": 0.008333333333333333
+                    },
+                    "memory": {
+                      "state": "partial",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 1024.0,
+                      "latest_bytes": 1024.0,
+                      "mean_bytes": 1024.0,
+                      "max_bytes": null,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_gib_hours": 7.947285970052083e-9
+                    },
+                    "disk": {
+                      "state": "unmounted",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 2048.0,
+                      "latest_bytes": null,
+                      "mean_bytes": 2048.0,
+                      "max_bytes": null,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_gib_hours": 1.5894571940104166e-8
+                    }
+                  },
+                  "billing": {
+                    "basis": "allocated",
+                    "status": "not_integrated",
+                    "charges": null
+                  },
+                  "shared_sandbox_usage": true
+                }
+              ],
+              "next": null,
+              "report_id": "umr_00000000000000000000000000000001",
+              "as_of": 1180,
+              "total_count": 1
+            },
+            "charts": [
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "cpu",
+                "unit": "cores",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "memory",
+                "unit": "bytes",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "disk",
+                "unit": "bytes",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-latest-pending",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/view",
+      "scenario": "metrics_admin_initial_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "retry-after": "2"
+        },
+        "body": {
+          "view": {
+            "schema_version": 1,
+            "window": "custom",
+            "requested_range": {
+              "from": 1000,
+              "to": 1060
+            },
+            "report": {
+              "schema_version": 1,
+              "report_id": "umr_00000000000000000000000000000001",
+              "status": "pending",
+              "report_complete": false,
+              "scope": {
+                "principal": "operator",
+                "admin": true
+              },
+              "query": {
+                "from": 1000,
+                "to": 1060,
+                "step_seconds": 60,
+                "filters": {
+                  "owner": null,
+                  "statuses": [],
+                  "runtime_version": null,
+                  "sandbox_id": null,
+                  "agent_id": null,
+                  "search": ""
+                }
+              },
+              "as_of": 1180,
+              "measurement_cutoff": 1060,
+              "effective_range": {
+                "from": 1000,
+                "to": 1060
+              },
+              "expires_at": "18446744073709551615",
+              "allocation_watermark": "fixture:1",
+              "mapping_revision": 1,
+              "available_from": 1000,
+              "tracking_started_at": 1000,
+              "warnings": [
+                "measurement_coverage_incomplete"
+              ],
+              "source_health": "partial",
+              "summary": null,
+              "poll_url": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001",
+              "retry_after_seconds": 2
+            },
+            "generated_at": null,
+            "stale": false,
+            "refresh": {
+              "state": "pending",
+              "report_id": "umr_00000000000000000000000000000001",
+              "retry_after_seconds": 2
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-latest-anonymous",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/view",
+      "scenario": "metrics_admin_initial_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-latest-forbidden",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/view",
+      "scenario": "metrics_admin_initial_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "usage authority required",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-latest-missing",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/view",
+      "scenario": "metrics_admin_initial_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not_found",
+          "title": "not_found",
+          "status": 404,
+          "detail": "usage report or resource not found",
+          "code": "not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-latest-invalid",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/view",
+      "scenario": "metrics_admin_initial_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Invalid retained cursor",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-latest-busy",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/view",
+      "scenario": "metrics_admin_initial_busy",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/reporting_budget_exceeded",
+          "title": "reporting_budget_exceeded",
+          "status": 429,
+          "detail": "reporting budget exhausted; retry with a narrower range",
+          "code": "reporting_budget_exceeded"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-latest-unavailable",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/view",
+      "scenario": "metrics_admin_initial_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "usage reporting is temporarily unavailable; retry or use a narrower range",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-latest-expired",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/view",
+      "scenario": "metrics_admin_initial_expired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 410,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/report_expired",
+          "title": "report_expired",
+          "status": 410,
+          "detail": "usage report expired; refresh the report",
+          "code": "report_expired"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-latest-view_disabled",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/view",
+      "scenario": "metrics_admin_initial_view_disabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/view",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "selection": {
+            "window": "custom",
+            "from": 1000,
+            "to": 1060
+          },
+          "projection": {
+            "total_metrics": [
+              "cpu",
+              "memory",
+              "disk"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 501,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/report_view_disabled",
+          "title": "report_view_disabled",
+          "status": 501,
+          "detail": "retained usage views are not enabled",
+          "code": "report_view_disabled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-read-ready",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_admin_initial_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "report": {
+            "schema_version": 1,
+            "report_id": "umr_00000000000000000000000000000001",
+            "status": "ready",
+            "report_complete": true,
+            "scope": {
+              "principal": "operator",
+              "admin": true
+            },
+            "query": {
+              "from": 1000,
+              "to": 1060,
+              "step_seconds": 60,
+              "filters": {
+                "owner": null,
+                "statuses": [],
+                "runtime_version": null,
+                "sandbox_id": null,
+                "agent_id": null,
+                "search": ""
+              }
+            },
+            "as_of": 1180,
+            "measurement_cutoff": 1060,
+            "effective_range": {
+              "from": 1000,
+              "to": 1060
+            },
+            "expires_at": "18446744073709551615",
+            "allocation_watermark": "fixture:1",
+            "mapping_revision": 1,
+            "available_from": 1000,
+            "tracking_started_at": 1000,
+            "warnings": [
+              "measurement_coverage_incomplete"
+            ],
+            "source_health": "partial",
+            "summary": {
+              "sandbox_count": 1,
+              "running_count": 1,
+              "allocated_period": {
+                "disk_retained_seconds": 0.0,
+                "uptime_seconds": 0.0,
+                "cpu_core_hours": 0.0,
+                "memory_gib_hours": 0.0,
+                "disk_gib_hours": 0.0,
+                "complete": false,
+                "projected_tail_seconds": 0,
+                "unknown_seconds": 0
+              },
+              "total_allocated_capacity": {
+                "cpu_cores": 0.0,
+                "memory_bytes": 0.0,
+                "disk_bytes": 0.0
+              },
+              "covered_allocated_capacity": {
+                "cpu_cores": 0.0,
+                "memory_bytes": 0.0,
+                "disk_bytes": 0.0
+              },
+              "measured": {
+                "cpu": {
+                  "state": "partial",
+                  "observed_at": 1040.0,
+                  "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                  "covered_seconds": 30.0,
+                  "expected_seconds": 60.0,
+                  "unknown_mapping_seconds": 0.0,
+                  "coverage_ratio": 0.5,
+                  "available_from": null,
+                  "exceeds_capacity": false,
+                  "last_observed": 1.0,
+                  "latest_cores": 1.0,
+                  "mean_cores": 1.0,
+                  "max_cores": 1.0,
+                  "percent_of_limit": null,
+                  "filesystem_capacity_bytes": null,
+                  "observed_core_hours": 0.008333333333333333
+                },
+                "memory": {
+                  "state": "partial",
+                  "observed_at": 1040.0,
+                  "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                  "covered_seconds": 30.0,
+                  "expected_seconds": 60.0,
+                  "unknown_mapping_seconds": 0.0,
+                  "coverage_ratio": 0.5,
+                  "available_from": null,
+                  "exceeds_capacity": false,
+                  "last_observed": 1024.0,
+                  "latest_bytes": 1024.0,
+                  "mean_bytes": 1024.0,
+                  "max_bytes": null,
+                  "percent_of_limit": null,
+                  "filesystem_capacity_bytes": null,
+                  "observed_gib_hours": 7.947285970052083e-9
+                },
+                "disk": {
+                  "state": "unmounted",
+                  "observed_at": 1040.0,
+                  "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                  "covered_seconds": 30.0,
+                  "expected_seconds": 60.0,
+                  "unknown_mapping_seconds": 0.0,
+                  "coverage_ratio": 0.5,
+                  "available_from": null,
+                  "exceeds_capacity": false,
+                  "last_observed": 2048.0,
+                  "latest_bytes": null,
+                  "mean_bytes": 2048.0,
+                  "max_bytes": null,
+                  "percent_of_limit": null,
+                  "filesystem_capacity_bytes": null,
+                  "observed_gib_hours": 1.5894571940104166e-8
+                }
+              },
+              "excluded_count": 0,
+              "infrastructure": {
+                "state": "partial",
+                "unproven_count": 1,
+                "unassigned_pool": [
+                  0.2,
+                  1024.0,
+                  null
+                ],
+                "unattributed": [
+                  0.1,
+                  null,
+                  2048.0
+                ],
+                "observed_at": 1040
+              }
+            },
+            "poll_url": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001",
+            "retry_after_seconds": 2
+          },
+          "initial": {
+            "projection": {
+              "first_page": {
+                "limit": 50,
+                "sort": "last_activity_at",
+                "order": "desc"
+              },
+              "total_metrics": [
+                "cpu",
+                "memory",
+                "disk"
+              ]
+            },
+            "rows": {
+              "items": [
+                {
+                  "sandbox_id": "sbx_00000000000000000000000000000001",
+                  "name": "Shared measured Sandbox",
+                  "owner": {
+                    "subject": "owner"
+                  },
+                  "status": "active",
+                  "runtime_version": "v1",
+                  "agent_count": "18446744073709551615",
+                  "last_activity_at": 1040,
+                  "allocation": {
+                    "cpu_cores": 2.0,
+                    "memory_bytes": "9007199254740992",
+                    "disk_bytes": 4096.0
+                  },
+                  "allocated_period": {
+                    "disk_retained_seconds": 0.0,
+                    "uptime_seconds": 0.0,
+                    "cpu_core_hours": 0.0,
+                    "memory_gib_hours": 0.0,
+                    "disk_gib_hours": 0.0,
+                    "complete": false,
+                    "projected_tail_seconds": 0,
+                    "unknown_seconds": 0
+                  },
+                  "measured": {
+                    "cpu": {
+                      "state": "partial",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 1.0,
+                      "latest_cores": 1.0,
+                      "mean_cores": 1.0,
+                      "max_cores": 1.0,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_core_hours": 0.008333333333333333
+                    },
+                    "memory": {
+                      "state": "partial",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 1024.0,
+                      "latest_bytes": 1024.0,
+                      "mean_bytes": 1024.0,
+                      "max_bytes": null,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_gib_hours": 7.947285970052083e-9
+                    },
+                    "disk": {
+                      "state": "unmounted",
+                      "observed_at": 1040.0,
+                      "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                      "covered_seconds": 30.0,
+                      "expected_seconds": 60.0,
+                      "unknown_mapping_seconds": 0.0,
+                      "coverage_ratio": 0.5,
+                      "available_from": null,
+                      "exceeds_capacity": false,
+                      "last_observed": 2048.0,
+                      "latest_bytes": null,
+                      "mean_bytes": 2048.0,
+                      "max_bytes": null,
+                      "percent_of_limit": null,
+                      "filesystem_capacity_bytes": null,
+                      "observed_gib_hours": 1.5894571940104166e-8
+                    }
+                  },
+                  "billing": {
+                    "basis": "allocated",
+                    "status": "not_integrated",
+                    "charges": null
+                  },
+                  "shared_sandbox_usage": true
+                }
+              ],
+              "next": null,
+              "report_id": "umr_00000000000000000000000000000001",
+              "as_of": 1180,
+              "total_count": 1
+            },
+            "charts": [
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "cpu",
+                "unit": "cores",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "memory",
+                "unit": "bytes",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "report_id": "umr_00000000000000000000000000000001",
+                "metric": "disk",
+                "unit": "bytes",
+                "source": "victoriametrics:kubelet-resource-and-volume:v1",
+                "lines": [
+                  {
+                    "id": "total",
+                    "label": "Total",
+                    "points": [
+                      {
+                        "from": 1000,
+                        "to": 1020,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      },
+                      {
+                        "from": 1020,
+                        "to": 1060,
+                        "mean": null,
+                        "min": null,
+                        "max": null,
+                        "covered_seconds": 0.0,
+                        "expected_seconds": 0.0,
+                        "unknown_mapping_seconds": 0.0,
+                        "numerator": null,
+                        "denominator": null,
+                        "reason": "not_applicable",
+                        "excluded_count": 0
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-read-pending",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_admin_initial_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "retry-after": "2"
+        },
+        "body": {
+          "report": {
+            "schema_version": 1,
+            "report_id": "umr_00000000000000000000000000000001",
+            "status": "pending",
+            "report_complete": false,
+            "scope": {
+              "principal": "operator",
+              "admin": true
+            },
+            "query": {
+              "from": 1000,
+              "to": 1060,
+              "step_seconds": 60,
+              "filters": {
+                "owner": null,
+                "statuses": [],
+                "runtime_version": null,
+                "sandbox_id": null,
+                "agent_id": null,
+                "search": ""
+              }
+            },
+            "as_of": 1180,
+            "measurement_cutoff": 1060,
+            "effective_range": {
+              "from": 1000,
+              "to": 1060
+            },
+            "expires_at": "18446744073709551615",
+            "allocation_watermark": "fixture:1",
+            "mapping_revision": 1,
+            "available_from": 1000,
+            "tracking_started_at": 1000,
+            "warnings": [
+              "measurement_coverage_incomplete"
+            ],
+            "source_health": "partial",
+            "summary": null,
+            "poll_url": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001",
+            "retry_after_seconds": 2
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-read-anonymous",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_admin_initial_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-read-forbidden",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_admin_initial_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "usage authority required",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-read-missing",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_admin_initial_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not_found",
+          "title": "not_found",
+          "status": 404,
+          "detail": "usage report or resource not found",
+          "code": "not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-read-invalid",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_admin_initial_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Invalid retained cursor",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-read-busy",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_admin_initial_busy",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/reporting_budget_exceeded",
+          "title": "reporting_budget_exceeded",
+          "status": 429,
+          "detail": "reporting budget exhausted; retry with a narrower range",
+          "code": "reporting_budget_exceeded"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-read-unavailable",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_admin_initial_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "usage reporting is temporarily unavailable; retry or use a narrower range",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "initial-admin-read-expired",
+      "operation": "POST /api/v1/admin/usage/metrics/initial/reports/{report}",
+      "scenario": "metrics_admin_initial_expired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/initial/reports/umr_00000000000000000000000000000001",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "total_metrics": [
+            "cpu",
+            "memory",
+            "disk"
+          ]
+        }
+      },
+      "response": {
+        "status": 410,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/report_expired",
+          "title": "report_expired",
+          "status": 410,
+          "detail": "usage report expired; refresh the report",
+          "code": "report_expired"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

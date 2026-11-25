@@ -370,13 +370,14 @@ def write_layout(lock, raw, root, layout, image_tag):
     return manifest_descriptor["digest"], sum(layer["size"] for layer in layers)
 
 
-def build(args):
-    lock, raw = load(args.lock)
-    image_tag = tag(lock, raw, args.snapshot)
-    root = Path(args.work)
-    cache = Path(args.cache) if args.cache else None
+def download(entries, root, cache=None, parallel=4, attempts=10, delay=5):
+    """Place each lock entry at root/<path>: kept, copied from the cache or fetched, and always size and sha256 checked.
+
+    Returns how many entries were fetched."""
+    root = Path(root)
+    cache = Path(cache) if cache else None
     jobs = []
-    for e in lock["files"]:
+    for e in entries:
         target = root / e["path"]
         target.parent.mkdir(parents=True, exist_ok=True)
         cached = cache / e["path"] if cache else None
@@ -387,22 +388,30 @@ def build(args):
             continue
         jobs.append(e)
     hosts, stop = Hosts(), threading.Event()
-    with concurrent.futures.ThreadPoolExecutor(args.parallel) as pool:
-        futures = [pool.submit(fetch, e["urls"], root / e["path"], e["size"], e["sha256"], args.attempts, args.delay,
+    with concurrent.futures.ThreadPoolExecutor(parallel) as pool:
+        futures = [pool.submit(fetch, e["urls"], root / e["path"], e["size"], e["sha256"], attempts, delay,
                                hosts=hosts, stop=stop) for e in jobs]
         try:
             for future in concurrent.futures.as_completed(futures):
                 future.result()
         except BaseException:
-            # The first failure fails the build: queued downloads never start,
+            # The first failure fails the call: queued downloads never start,
             # and running ones stop before their next try.
             pool.shutdown(wait=False, cancel_futures=True)
             stop.set()
             raise
+    return len(jobs)
+
+
+def build(args):
+    lock, raw = load(args.lock)
+    image_tag = tag(lock, raw, args.snapshot)
+    root = Path(args.work)
+    downloaded = download(lock["files"], root, args.cache, args.parallel, args.attempts, args.delay)
     verify(lock, root)
     digest, size = write_layout(lock, raw, root, args.output, image_tag)
     summary = {"tag": image_tag, "digest": digest, "layers_bytes": size, "files": len(lock["files"]),
-               "downloaded": len(jobs), "snapshot": lock["snapshot"]}
+               "downloaded": downloaded, "snapshot": lock["snapshot"]}
     print(json.dumps(summary, sort_keys=True))
     if args.summary:
         Path(args.summary).write_text(json.dumps(summary, sort_keys=True) + "\n")

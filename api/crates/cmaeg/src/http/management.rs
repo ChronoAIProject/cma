@@ -41,6 +41,14 @@ pub fn management_router(state: ManagementState) -> Router {
             "/v1/channels/{channel_id}/activity/stream",
             get(super::activity::stream),
         )
+        .route(
+            "/v1/channels/{channel_id}/activity/history",
+            get(super::activity_history::history),
+        )
+        .route(
+            "/v1/channels/{channel_id}/activity/history/events/{event_id}/details",
+            get(super::activity_history::details),
+        )
         .merge(super::outbound::routes())
         .route(
             "/v1/channels/{channel_id}/events/{event_id}/media-responses",
@@ -51,6 +59,10 @@ pub fn management_router(state: ManagementState) -> Router {
         .route(
             "/v1/channel-records/{record_id}",
             get(super::creation::recover_channel),
+        )
+        .route(
+            "/v1/channel-records/{record_id}/management",
+            get(super::record_management::read),
         )
         .route(
             "/v1/channels/{channel_id}",

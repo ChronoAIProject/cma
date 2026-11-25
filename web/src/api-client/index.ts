@@ -1,4 +1,4 @@
-export { retryAfterMilliseconds } from './http.js';
+export { retryAfterMilliseconds, readBytes, errorFromBody } from './http.js';
 /** Typed, repository-only client for CMA's public resource APIs. */
 
 export { Cma, createClient } from './client.js';
@@ -40,6 +40,16 @@ export { Profiles } from './profiles.js';
 export { Marketplace, type MarketplaceListOptions } from './marketplace.js';
 export { readDefaults, type PlatformDefaults } from './defaults.js';
 export * from './admin/index.js';
+export { RuntimeCanaries } from './runtime-canary.js';
+export type {
+  RuntimeCanaryGrant,
+  RuntimeCanaryGrantRequest,
+  RuntimeCanaryPolicy,
+  RuntimeCanaryPolicyRequest,
+  RuntimeCanaryRedemptionRequest,
+  RuntimeCanaryRevokeRequest,
+} from './runtime-canary.js';
+export * from './retained-runtime-transition.js';
 export * from './profile-authoring/index.js';
 export * from './triggers.js';
 export * from './auth.js';
@@ -52,6 +62,8 @@ export * from './launch/index.js';
 export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './resources.js';
 export type * from './agents/types.js';
 export type * from './agents/lifecycle.js';
+export type * from './agents/reply-preview.js';
+export type * from './agents/original-request.js';
 export type * from './agents/desktop.js';
 export type * from './agents/models.js';
 export type * from './agents/skills.js';
@@ -165,3 +177,6 @@ export type { SandboxCapacity } from './instances/capacity.js';
 export { agentLifecycleFailure } from './agents/lifecycle.js';
 
 export * from './account-deletion.js';
+export * from './legal-consent.js';
+export { ResourceRevocations, pendingRevocation } from './resource-revocations.js';
+export type { ResourceRevocationStatus, RevocationRequest } from './resource-revocations.js';

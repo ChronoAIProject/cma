@@ -5,6 +5,8 @@ use layer2_core::sandbox::{SandboxEventKind, SandboxStatus};
 use layer2_core::sandbox_usage_service::SandboxUsageStore as _;
 mod runtime_controls;
 
+mod missing_tests;
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn non_cohort_mongo_decision_survives_restart_and_is_not_due_for_funding() {

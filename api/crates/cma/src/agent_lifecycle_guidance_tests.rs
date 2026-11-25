@@ -1,10 +1,11 @@
 use super::*;
 use crate::store::{LifecycleBehavior, LifecycleInput};
 use layer2_core::profiles::content_digest;
+use layer2_core::sandbox::{AgentInstructionPolicy, AgentSettings, AgentStatus};
 
 #[test]
 fn owner_edits_preserve_exact_managed_revision_and_owner_whitespace() {
-    for managed in [GITHUB_API_V1, managed_v2(), managed_v3()] {
+    for managed in [GITHUB_API_V1, managed_v2(), managed_v3(), managed_v4()] {
         let owner = "  Keep citations.\n\nDo not change my formatting.\n";
         let original = compose_managed(Some(managed), owner);
         assert_eq!(split_managed(&original), (Some(managed), owner));
@@ -20,8 +21,62 @@ fn owner_edits_preserve_exact_managed_revision_and_owner_whitespace() {
 }
 
 #[test]
+fn owner_policy_uses_the_captured_revision_even_after_transport_refresh() {
+    let policy = ManagedInstructionPolicy;
+    let mut agent = crate::auth::test_resources::agent(
+        "agent",
+        "worktree",
+        "workspace",
+        "sandbox",
+        "owner",
+        AgentStatus::Ready,
+    );
+    let owner = format!("{SESSION_GUIDANCE_V1}\n\n  owner continuation\n");
+    agent.profile.content.system_prompt = compose_managed(Some(managed_v3()), &owner);
+    assert_eq!(policy.owner_prompt(&agent), owner);
+    assert_eq!(policy.pinned_managed_guidance(&agent), None);
+    assert_eq!(policy.compose(&agent, &owner), agent.system_prompt());
+
+    let owner = "  Keep the exact owner text.\n";
+    let original = compose_managed(Some(managed_v4()), owner);
+    agent.profile.content.system_prompt = original.clone();
+    agent.conversation.managed_guidance_revision = 2;
+    agent.conversation.settings = Some(AgentSettings {
+        system_prompt: Some(original),
+        ..agent.settings()
+    });
+    assert_eq!(policy.owner_prompt(&agent), owner);
+    assert_eq!(policy.pinned_managed_guidance(&agent), Some(managed_v4()));
+    let edited = policy.compose(&agent, "  New owner text\n");
+    assert_eq!(edited, format!("{}\n\n  New owner text\n", managed_v4()));
+    assert_eq!(edited.matches(SESSION_GUIDANCE_V1).count(), 1);
+    assert_eq!(edited.matches(managed_v3()).count(), 1);
+}
+
+#[test]
+fn new_admission_guidance_requires_explicit_activation() {
+    const KEY: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED";
+    for (value, expected) in [
+        (None, managed_v3()),
+        (Some("false"), managed_v3()),
+        (Some("true"), managed_v4()),
+    ] {
+        let flags = crate::config::FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then_some(value).flatten().map(str::to_owned))
+        })
+        .unwrap();
+        assert_eq!(admission_instructions(flags.session_guidance_v4), expected);
+    }
+    let error = crate::config::FeatureFlags::from_lookup(&mut |key| {
+        Ok((key == KEY).then(|| "TRUE".to_owned()))
+    })
+    .unwrap_err();
+    assert!(error.contains(KEY));
+}
+
+#[test]
 fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() {
-    for instructions in [GITHUB_API_V1, managed_v2(), managed_v3()] {
+    for instructions in [GITHUB_API_V1, managed_v2(), managed_v3(), managed_v4()] {
         for (sandbox, workspace) in [
             (None, None),
             (Some("sandbox-owned"), None),
@@ -61,7 +116,10 @@ fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() 
                 &format!("{instructions}\n\nKeep the user's exact instructions.\n")
             );
             assert_eq!(prompt.contains(MEMORY_V1), instructions != GITHUB_API_V1);
-            assert_eq!(prompt.contains(DOCUMENTS_V1), instructions == managed_v3());
+            assert_eq!(
+                prompt.contains(DOCUMENTS_V1),
+                [managed_v3(), managed_v4()].contains(&instructions)
+            );
             assert_eq!(prompt.matches("CMA GitHub workflow:").count(), 1);
             let restored: LifecycleInput =
                 serde_json::from_slice(&serde_json::to_vec(&input).unwrap()).unwrap();
@@ -174,6 +232,22 @@ fn current_guidance_preserves_github_bytes_and_bounds_memory_management() {
         managed_v3().strip_prefix(managed_v2()),
         Some(format!("\n\n{DOCUMENTS_V1}").as_str())
     );
+    for (guidance, hash) in [
+        (
+            managed_v2(),
+            "00825da641276488015e6e08a732c36a507ad6a3668fa854529f5d5c15bc5531",
+        ),
+        (
+            managed_v3(),
+            "8cd8800d0a69f4d1416ddb63a81ec7328bcd6c55d24bd5d3e43ab6f6684e8884",
+        ),
+        (
+            managed_v4(),
+            "d9432645d2f47ff0ebd093f0ad6c5eda1ea631e38a64a46e9289606f6ec6f5e3",
+        ),
+    ] {
+        assert_eq!(format!("{:x}", Sha256::digest(guidance)), hash);
+    }
     for required in [
         "effective memory limits, total usage",
         "cgroup limits/usage",

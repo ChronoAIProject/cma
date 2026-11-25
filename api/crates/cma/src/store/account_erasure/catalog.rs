@@ -52,6 +52,10 @@ pub(crate) enum Erasure {
     Retained(&'static str),
     Global,
     ProvenAbsent(&'static [&'static str]),
+    /// Fail-closed for stores that keep identities inside serialized JSON:
+    /// any string in these top-level JSON fields naming the subject or one of
+    /// its erased resources, or an unreadable value, blocks erasure.
+    ProvenAbsentJson(&'static [&'static str]),
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -54,6 +54,7 @@ impl SandboxReconciler {
                 sandbox_id: sandbox.id.clone(),
                 expected_revision: sandbox.revision,
                 expected_runtime: sandbox.runtime.clone(),
+                native_retirement_finality: false,
                 retain_runtime: sandbox.lifecycle.home.is_some()
                     && sandbox
                         .runtime

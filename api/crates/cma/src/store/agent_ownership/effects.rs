@@ -11,7 +11,7 @@ impl MongoSandboxStore {
         &self,
         mutation: &layer2_core::sandbox::store::SandboxLifecycleMutation,
         session: &mut ClientSession,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<(), FenceError> {
         let Some(ownership) = &self.agent_ownership else {
             return Ok(());
         };
@@ -23,8 +23,8 @@ impl MongoSandboxStore {
                 )
             }) {
                 let token = layer2_core::agent_ownership::observed_transport(&change.agent.id)
-                    .ok_or(SandboxStoreError::Conflict)?;
-                ownership.fence_transaction(&token, session).await?;
+                    .ok_or(FenceError::Domain(SandboxStoreError::Conflict))?;
+                ownership.fence_transaction_typed(&token, session).await?;
             }
         }
         Ok(())
@@ -34,7 +34,7 @@ impl MongoSandboxStore {
         &self,
         mutation: &layer2_core::sandbox::store::SandboxCheckpointMutation,
         session: &mut ClientSession,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<(), FenceError> {
         let Some(ownership) = &self.agent_ownership else {
             return Ok(());
         };
@@ -44,8 +44,8 @@ impl MongoSandboxStore {
         }
         for conversation in &mutation.checkpoint.conversations {
             let token = layer2_core::agent_ownership::observed_transport(&conversation.agent_id)
-                .ok_or(SandboxStoreError::Conflict)?;
-            ownership.fence_transaction(&token, session).await?;
+                .ok_or(FenceError::Domain(SandboxStoreError::Conflict))?;
+            ownership.fence_transaction_typed(&token, session).await?;
         }
         Ok(())
     }
@@ -65,18 +65,90 @@ impl MongoSandboxStore {
         Ok(self)
     }
 
+    /// Fences an effect for callers that do not run a bounded retry loop; they
+    /// keep the historical error classification.
     pub(in crate::store) async fn fence_agent_effect(
         &self,
         id: &AgentId,
         session: &mut ClientSession,
     ) -> Result<(), SandboxStoreError> {
+        self.fence_agent_effect_transaction(id, session)
+            .await
+            .map_err(FenceError::into_store)
+    }
+
+    pub(in crate::store) async fn fence_agent_effect_transaction(
+        &self,
+        id: &AgentId,
+        session: &mut ClientSession,
+    ) -> Result<(), FenceError> {
+        self.fence_agent_effect_observed(id, session)
+            .await
+            .map_err(ObservedFenceError::into_fence_error)
+    }
+
+    pub(in crate::store) async fn fence_agent_effect_observed(
+        &self,
+        id: &AgentId,
+        session: &mut ClientSession,
+    ) -> Result<(), ObservedFenceError> {
         let Some(store) = &self.agent_ownership else {
             return Ok(());
         };
         let token = execution_owner()
             .filter(|owner| owner.agent_id == *id)
-            .ok_or(SandboxStoreError::Conflict)?;
-        store.fence_transaction(&token, session).await
+            .ok_or(ObservedFenceError::Fence(FenceError::Domain(
+                SandboxStoreError::Conflict,
+            )))?;
+        store.fence_transaction_observed(&token, session).await
+    }
+
+    /// Control intent can revoke unspent work without acquiring a transport
+    /// token. Serialize the intent with changes to the durable owner row.
+    pub(in crate::store) async fn fence_agent_restart_cancellation(
+        &self,
+        id: &AgentId,
+        session: &mut ClientSession,
+    ) -> Result<(), FenceError> {
+        let Some(store) = &self.agent_ownership else {
+            return Ok(());
+        };
+        let Some(row) = store
+            .owners
+            .find_one(doc! {"_id": id.as_str()})
+            .session(&mut *session)
+            .await
+            .map_err(FenceError::Driver)?
+        else {
+            // A first dispatch still needs to CAS the same Agent row.
+            return Ok(());
+        };
+        let epoch = row.get_i64("epoch").map_err(|_| {
+            FenceError::Domain(SandboxStoreError::Corrupt(
+                "invalid Agent owner epoch".into(),
+            ))
+        })?;
+        let owner = row.get("instance_id").cloned().ok_or_else(|| {
+            FenceError::Domain(SandboxStoreError::Corrupt(
+                "missing Agent owner identity".into(),
+            ))
+        })?;
+        let matched = store
+            .owners
+            .update_one(
+                doc! {"_id": id.as_str(), "epoch": epoch, "instance_id": owner,
+                "protocol": i64::from(PROTOCOL_VERSION)},
+                doc! {"$inc": {"effect_revision": 1_i64}},
+            )
+            .session(session)
+            .await
+            .map_err(FenceError::Driver)?
+            .matched_count;
+        if matched == 1 {
+            Ok(())
+        } else {
+            Err(FenceError::Domain(SandboxStoreError::Conflict))
+        }
     }
 
     pub(in crate::store) fn agent_work_owner_fields(

@@ -3,6 +3,9 @@ use super::*;
 use kube::api::DynamicObject;
 use serde_json::json;
 
+#[path = "native_home_snapshot_reobserve_tests.rs"]
+mod reobserve_contracts;
+
 fn request() -> NativeHomeSnapshotRequest {
     NativeHomeSnapshotRequest {
         backup_id: "backup-1".into(),

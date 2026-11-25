@@ -22,7 +22,7 @@ impl MongoAccountStores {
     pub(crate) async fn connect(config: &BackendFreeConfig) -> Result<Arc<Self>, StoreError> {
         let database_config = &config.database;
         let name = &database_config.mongodb_database;
-        let options = connection_options(&database_config.mongodb_uri).await?;
+        let options = connection_options(&database_config.mongodb_uri, name).await?;
         let client = Client::with_options(options)
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
         let database = client.database(name);
@@ -93,6 +93,6 @@ impl crate::health::ReadinessProbe for MongoAccountStores {
             .run_command(doc! { "ping": 1 })
             .await
             .map_err(|error| StoreError::Unavailable(format!("ping MongoDB: {error}")))?;
-        Ok(())
+        crate::store::billing_authority::require_legacy_compatible(&self.database).await
     }
 }

@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { newAgentRequestFixture } from './new-agent-request.fixture';
+import { registerRedesignHomeCases } from './redesign-home.cases';
+
+registerRedesignHomeCases();
 
 for (const status of ['provisioning', 'active'] as const) {
   test(`LOCAL New agent keeps hello independent of a bound ${status} Agent`, async ({
@@ -23,7 +26,7 @@ for (const status of ['provisioning', 'active'] as const) {
     const start = page.getByRole('button', { name: 'Start task', exact: true });
     await task.fill('hello');
     await expect(start).toBeEnabled();
-    await expect(page.getByRole('region', { name: 'Submitted task' })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Original request' })).toHaveCount(0);
     await expect(page.getByText('Preparing a cloud computer for your Agent…')).toHaveCount(0);
     await page.clock.install();
     local.release();
@@ -79,9 +82,9 @@ for (const status of ['provisioning', 'active'] as const) {
       body: creates[0]!.body,
       receipt: { id: 'new-operation', status: 'queued' },
     });
-    await expect(page.getByRole('region', { name: 'Submitted task' })).toContainText('hello');
+    await expect(page.getByRole('region', { name: 'Original request' })).toContainText('hello');
     await page.reload();
-    await expect(page.getByRole('region', { name: 'Submitted task' })).toContainText('hello');
+    await expect(page.getByRole('region', { name: 'Original request' })).toContainText('hello');
     await expect(page).toHaveURL(/\/agent-manager$/);
     expect(creates).toHaveLength(1);
     expect(await retainedCreation()).toBe(creationBeforeReload);

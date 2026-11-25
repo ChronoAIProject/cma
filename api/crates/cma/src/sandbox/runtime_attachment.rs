@@ -35,7 +35,7 @@ pub(crate) fn retained_runtime_request(
         .provision_generation
         .filter(|generation| *generation > 0)
         .ok_or_else(|| AdapterError::Rejected("retained runtime generation is absent".into()))?;
-    let mut spec = sandbox_spec(sandbox, deployment);
+    let mut spec = sandbox_spec(sandbox, deployment)?;
     if spec.runtime_image.is_some() {
         spec.runtime_image = Some(binding.runtime_version.clone());
     }
@@ -117,7 +117,7 @@ pub(crate) fn reserved_recovery_runtime_request(
     let sandbox = &snapshot.sandbox;
     let binding = sandbox.unpublished_recovery_binding().ok_or_else(invalid)?;
     let mut request = retained_runtime_request(sandbox, binding, deployment)?;
-    if sandbox_spec(sandbox, deployment) != request.spec
+    if sandbox_spec(sandbox, deployment)? != request.spec
         || sandbox
             .admitted_runtime_update_target()
             .is_some_and(|image| image != binding.runtime_version)
@@ -217,7 +217,7 @@ pub(crate) async fn inspect_bound_runtime_after(
     let request = RuntimeAdoptionRequest::new(
         generation,
         handle.clone(),
-        sandbox_spec(sandbox, deployment_id),
+        sandbox_spec(sandbox, deployment_id)?,
     )
     .with_expected_image(&binding.runtime_version);
     let inspected = adapter

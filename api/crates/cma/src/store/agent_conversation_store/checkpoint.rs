@@ -1,5 +1,6 @@
 //! Private assistant assembly and exact update receipt on the Agent document.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::AgentMessageCheckpoint;
 use layer2_core::sandbox::AgentUpdateOutcome;
 use mongodb::bson::{Bson, Document, Timestamp};
@@ -8,6 +9,16 @@ use super::*;
 use crate::store::sandbox_mongo::record_bson;
 
 pub(in crate::store) const FIELD: &str = "agent_message_checkpoint";
+
+pub(in crate::store) fn set_field(
+    fields: &mut Document,
+    value: &AgentMessageCheckpoint,
+) -> Result<(), SandboxStoreError> {
+    value.validate()?;
+    let encoded = record_bson(value).map_err(SandboxStoreError::Corrupt)?;
+    fields.insert(FIELD, encoded);
+    Ok(())
+}
 
 pub(in super::super) fn carry_fields(
     row: &Document,
@@ -80,6 +91,8 @@ pub(super) async fn carry(
 
 pub(in crate::store) enum Authority {
     Live,
+    StaleTurn,
+    TurnPolicy,
     Reopen(Box<layer2_core::sandbox::store::AgentReopenGuard>),
     Capacity(Box<layer2_core::sandbox::store::AgentConversationCapacitySettlement>),
 }
@@ -163,23 +176,42 @@ async fn commit_inner(
         let (outcome, publication) = match applied {
             Ok(outcome) => outcome,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
         if let Some(mutation) = &mutation {
             admission::require_current(mutation, &mut session).await?;
         }
-        store.fence_agent_effect(&current.id, &mut session).await?;
+        if let Err(error) = store
+            .fence_agent_effect_transaction(&current.id, &mut session)
+            .await
+        {
+            let _ = session.abort_guarded().await;
+            match error {
+                crate::store::agent_ownership::FenceError::Domain(error) => return Err(error),
+                crate::store::agent_ownership::FenceError::Driver(error)
+                    if is_transient(&error) =>
+                {
+                    last_transient = Some("checkpoint ownership fence aborted".into());
+                    continue;
+                }
+                crate::store::agent_ownership::FenceError::Driver(_) => {
+                    return Err(SandboxStoreError::Unavailable(
+                        "checkpoint ownership fence unavailable".into(),
+                    ));
+                }
+            }
+        }
         let published = publication.is_some();
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {

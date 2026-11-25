@@ -75,7 +75,8 @@ impl FundingControl for RuntimeControl {
         let request = layer3_adapter::RuntimeAdoptionRequest::new(
             runtime.target().generation(),
             layer3_adapter::RuntimeHandle::new(&binding.runtime_id),
-            crate::sandbox::runtime_mapping::sandbox_spec(sandbox, &self.deployment),
+            crate::sandbox::runtime_mapping::sandbox_spec(sandbox, &self.deployment)
+                .map_err(|error| FundingError::Invalid(error.to_string()))?,
         )
         .with_expected_image(&binding.runtime_version);
         self.adapter

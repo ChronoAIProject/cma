@@ -4,6 +4,29 @@ use crate::store::agent_log_segment_reads;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Agent, AgentLogEntry, AgentLogKind, Sandbox};
 
+pub(super) enum ContextError {
+    Domain(AgentReadError),
+    Driver(mongodb::error::Error),
+}
+
+impl ContextError {
+    pub(super) fn into_read_error(self) -> AgentReadError {
+        match self {
+            Self::Domain(error) => error,
+            Self::Driver(error) => unavailable(error),
+        }
+    }
+}
+
+impl From<TransactionLogError> for ContextError {
+    fn from(error: TransactionLogError) -> Self {
+        match error {
+            TransactionLogError::Domain(error) => Self::Domain(unavailable(error)),
+            TransactionLogError::Driver(error) => Self::Driver(error),
+        }
+    }
+}
+
 async fn bounded_log(
     store: &MongoSandboxStore,
     expected: &Agent,
@@ -11,18 +34,16 @@ async fn bounded_log(
     through: u64,
     session: &mut ClientSession,
     snapshot: bool,
-) -> Result<Vec<AgentLogEntry>, AgentReadError> {
+) -> Result<Vec<AgentLogEntry>, TransactionLogError> {
     if through.saturating_sub(after) > MAX_CONTEXT_EVENTS as u64 {
         return Ok(Vec::new());
     }
-    match agent_log_segment_reads::range_with_snapshot(
+    if let Some(entries) = agent_log_segment_reads::range_transaction(
         store, expected, session, after, through, snapshot,
     )
-    .await
+    .await?
     {
-        Ok(Some(entries)) => return Ok(entries),
-        Ok(None) => {}
-        Err(error) => return Err(unavailable(error)),
+        return Ok(entries);
     }
     let find = store.agent_log.find(
         doc! {"agent_id":expected.id.as_str(),"seq":{"$gt":after as i64,"$lte":through as i64}},
@@ -37,14 +58,20 @@ async fn bounded_log(
         .limit(MAX_CONTEXT_EVENTS as i64)
         .session(&mut *session)
         .await
-        .map_err(unavailable)?;
+        .map_err(TransactionLogError::Driver)?;
     let mut entries = Vec::new();
-    while cursor.advance(&mut *session).await.map_err(unavailable)? {
+    while cursor
+        .advance(&mut *session)
+        .await
+        .map_err(TransactionLogError::Driver)?
+    {
         entries.push(
             crate::store::agent_log::read_entry(
-                &cursor.deserialize_current().map_err(unavailable)?,
+                &cursor
+                    .deserialize_current()
+                    .map_err(TransactionLogError::Driver)?,
             )
-            .map_err(unavailable)?,
+            .map_err(TransactionLogError::Domain)?,
         );
     }
     Ok(entries)
@@ -56,26 +83,50 @@ pub(super) async fn current(
     session: &mut ClientSession,
     snapshot: bool,
 ) -> Result<bool, AgentReadError> {
+    current_transaction(store, work, session, snapshot)
+        .await
+        .map_err(ContextError::into_read_error)
+}
+
+pub(super) async fn current_transaction(
+    store: &MongoSandboxStore,
+    work: &SuggestionWork,
+    session: &mut ClientSession,
+    snapshot: bool,
+) -> Result<bool, ContextError> {
+    Ok(current_parent(store, work, session, snapshot)
+        .await?
+        .is_some())
+}
+
+pub(super) async fn current_parent(
+    store: &MongoSandboxStore,
+    work: &SuggestionWork,
+    session: &mut ClientSession,
+    snapshot: bool,
+) -> Result<Option<Sandbox>, ContextError> {
     let Some(row) = store
         .agents
         .find_one(doc! {"_id":work.agent_id.as_str()})
         .session(&mut *session)
         .await
-        .map_err(unavailable)?
+        .map_err(ContextError::Driver)?
     else {
-        return Ok(false);
+        return Ok(None);
     };
-    let agent = crate::store::agents::read_agent(&row).map_err(unavailable)?;
+    let agent = crate::store::agents::read_agent(&row)
+        .map_err(|error| ContextError::Domain(unavailable(error)))?;
     let Some(row) = store
         .sandboxes
         .find_one(doc! {"_id":agent.sandbox_id.as_str()})
         .session(&mut *session)
         .await
-        .map_err(unavailable)?
+        .map_err(ContextError::Driver)?
     else {
-        return Ok(false);
+        return Ok(None);
     };
-    let sandbox: Sandbox = crate::store::work_schema::read(&row).map_err(unavailable)?;
+    let sandbox: Sandbox = crate::store::work_schema::read(&row)
+        .map_err(|error| ContextError::Domain(unavailable(error)))?;
     let newer = store
         .agent_commands
         .find_one(doc! {"agent_id":work.agent_id.as_str(),
@@ -84,7 +135,7 @@ pub(super) async fn current(
         })
         .session(&mut *session)
         .await
-        .map_err(unavailable)?
+        .map_err(ContextError::Driver)?
         .is_some();
     let tail = bounded_log(
         store,
@@ -95,7 +146,7 @@ pub(super) async fn current(
         snapshot,
     )
     .await?;
-    Ok(work_is_current(work, &agent, &sandbox, &tail, newer))
+    Ok(work_is_current(work, &agent, &sandbox, &tail, newer).then_some(sandbox))
 }
 
 pub(in crate::store) async fn enqueue(
@@ -124,7 +175,7 @@ pub(in crate::store) async fn enqueue(
     {
         return Ok(());
     }
-    let map_error = |_| {
+    let outbox_unavailable = || {
         TransactionLogError::Domain(SandboxStoreError::Unavailable(
             "suggestion outbox unavailable".into(),
         ))
@@ -153,7 +204,7 @@ pub(in crate::store) async fn enqueue(
         false,
     )
     .await
-    .map_err(map_error)?;
+    .map_err(|_| outbox_unavailable())?;
     // The append must already be visible with its exact original identity in
     // this transaction. There is no raw-source fallback after proof refusal.
     if logs
@@ -183,7 +234,7 @@ pub(in crate::store) async fn enqueue(
         .suggestions
         .update_one(
             doc! {"_id": &work.id},
-            doc! {"$setOnInsert": document(&work).map_err(map_error)?},
+            doc! {"$setOnInsert": document(&work).map_err(|_| outbox_unavailable())?},
         )
         .upsert(true)
         .session(&mut *session)

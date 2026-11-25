@@ -166,7 +166,7 @@ def validate_bundle(directory, prefix, *, family=None, max_archive=None, max_con
     return manifest
 
 
-def dockerfile(operation, max_content=None):
+def dockerfile(operation, max_content=None, *, compact_registry=False):
     names = ("target",) if operation == "inject-target" else tuple(MOUNTS)
     mounts = " ".join(f"--mount=type=cache,id={MOUNTS[name]},target=/cache/{name},sharing=locked"
                       for name in names)
@@ -179,17 +179,28 @@ def dockerfile(operation, max_content=None):
         return (header + f"COPY {archives} /restore/\n"
                 + f'RUN --network=none {mounts} set -eu; test -n "$CMA_CACHE_TRANSFER"; {commands}\n')
     require(operation == "extract", "unknown cache transfer")
+    bound_kib = (MAX_CONTENT_BYTES if max_content is None else max_content) // 1024
+    compaction = ""
+    if compact_registry:
+        # Cargo can reconstruct these trees from its checksummed .crate files.
+        # Keep the index, package downloads and the complete incremental target.
+        compaction = (
+            f'if [ "$total" -gt {bound_kib * 3 // 4} ] && [ -d /cache/registry/src ]; then '
+            "src=$(du -sk /cache/registry/src | cut -f1); "
+            'total=$((total - src)); skip_src="--exclude=./src"; fi; '
+        )
     return header + f"RUN --network=none {mounts} " + (
-        "set -euo pipefail; test -n \"$CMA_CACHE_TRANSFER\"; mkdir /out; "
-        f"total=$(du -sk /cache/registry /cache/target | awk '{{n += $1}} END {{print n}}'); "
-        f"if [ \"$total\" -gt {(MAX_CONTENT_BYTES if max_content is None else max_content) // 1024} ]; "
-        "then touch /out/oversize; exit 0; fi; "
-        "tar -C /cache/registry -cf - . | gzip -1 > /out/registry.tar.gz; "
+        'set -euo pipefail; test -n "$CMA_CACHE_TRANSFER"; mkdir /out; '
+        "total=$(du -sk /cache/registry /cache/target | awk '{n += $1} END {print n}'); skip_src=; "
+        + compaction +
+        f'if [ "$total" -gt {bound_kib} ]; then touch /out/oversize; exit 0; fi; '
+        "tar -C /cache/registry -cf - $skip_src . | gzip -1 > /out/registry.tar.gz; "
         "tar -C /cache/target -cf - . | gzip -1 > /out/target.tar.gz\n"
         "FROM scratch\nCOPY --from=transfer /out/ /\n")
 
 
-def transfer(operation, directory, builder=None, *, namespace=None, timeout=150, max_content=None):
+def transfer(operation, directory, builder=None, *, namespace=None, timeout=150, max_content=None,
+             compact_registry=False):
     env = {key: value for key, value in os.environ.items()
            if key in ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")}
     command = ["docker", "buildx", "build", "--platform", "linux/amd64", "--progress=plain",
@@ -205,8 +216,8 @@ def transfer(operation, directory, builder=None, *, namespace=None, timeout=150,
     else:
         with tempfile.TemporaryDirectory(prefix="cma-cache-context-") as empty:
             command += ["--output", f"type=local,dest={directory}", "--file", "-", empty]
-            subprocess.run(command, input=dockerfile(operation, max_content), text=True, check=True,
-                           timeout=timeout, env=env)
+            subprocess.run(command, input=dockerfile(operation, max_content, compact_registry=compact_registry),
+                           text=True, check=True, timeout=timeout, env=env)
 
 
 def seal(directory, prefix, *, family=None, max_archive=None, max_content=None):

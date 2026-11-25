@@ -10,21 +10,44 @@ pub(super) async fn read(
     session: &mut ClientSession,
     snapshot: bool,
 ) -> Result<Vec<AgentLogEntry>, TransactionLogError> {
+    read_budgeted(store, captured, sequences, session, snapshot, None).await
+}
+
+pub(super) async fn read_budgeted(
+    store: &MongoSandboxStore,
+    captured: &CapturedLog,
+    sequences: &[u64],
+    session: &mut ClientSession,
+    snapshot: bool,
+    mut budget: Option<&mut preview_budget::PreviewBudget>,
+) -> Result<Vec<AgentLogEntry>, TransactionLogError> {
     // A transaction can see its own writes. Reject an aggregate/head changed
     // since capture even while the exclusive transaction stamp still matches.
-    let query = store
-        .agents
-        .find_one(doc! {"_id":captured.agent.id.as_str()});
-    let query = if snapshot {
-        query.read_concern(ReadConcern::snapshot())
+    let row = if let Some(budget) = budget.as_deref_mut() {
+        budget
+            .document(
+                &store.agents,
+                doc! {"_id":captured.agent.id.as_str()},
+                None,
+                session,
+            )
+            .await?
+            .ok_or_else(corrupt)?
     } else {
+        let query = store
+            .agents
+            .find_one(doc! {"_id":captured.agent.id.as_str()});
+        let query = if snapshot {
+            query.read_concern(ReadConcern::snapshot())
+        } else {
+            query
+        };
         query
+            .session(&mut *session)
+            .await
+            .map_err(TransactionLogError::Driver)?
+            .ok_or_else(corrupt)?
     };
-    let row = query
-        .session(&mut *session)
-        .await
-        .map_err(TransactionLogError::Driver)?
-        .ok_or_else(corrupt)?;
     if crate::store::agents::read_agent(&row)? != captured.agent {
         return Err(SandboxStoreError::SequenceConflict.into());
     }
@@ -43,17 +66,23 @@ pub(super) async fn read(
             .await?;
         }
         CapturedFormat::Segmented => {
-            let head = super::super::read_head(store, &row, session, snapshot).await?;
+            let head = if let Some(budget) = budget.as_deref_mut() {
+                reads::preview_head(store, &row, session, budget).await?
+            } else {
+                super::super::read_head(store, &row, session, snapshot).await?
+            };
             if head != captured.active_head {
                 return Err(SandboxStoreError::SequenceConflict.into());
             }
         }
     }
     let source = store.agent_log.clone_with_type::<RawDocumentBuf>();
-    let mut read = crate::store::mongo_read_telemetry::Read::find(source.name());
+    let mut read = budget
+        .is_none()
+        .then(|| crate::store::mongo_read_telemetry::Read::find(source.name()));
     let signed = sequences.iter().map(|seq| *seq as i64).collect::<Vec<_>>();
     let query = source
-        .find(doc! {"agent_id":captured.agent.id.as_str(),"seq":{"$in":signed}})
+        .find(doc! {"agent_id":captured.agent.id.as_str(),"seq":{"$in":signed.clone()}})
         .sort(doc! {"seq":1})
         .limit(33)
         .batch_size(32);
@@ -62,18 +91,33 @@ pub(super) async fn read(
     } else {
         query
     };
-    let mut cursor = query
-        .session(&mut *session)
-        .await
-        .map_err(TransactionLogError::Driver)?;
+    let mut cursor = if budget.is_none() {
+        Some(
+            query
+                .session(&mut *session)
+                .await
+                .map_err(TransactionLogError::Driver)?,
+        )
+    } else {
+        None
+    };
+    let mut preview_rows = preview_budget::PreviewRows::new(
+        store.agent_log.clone(),
+        doc! {"agent_id":captured.agent.id.as_str(),"seq":{"$in":signed}},
+        33,
+    );
     let mut entries = Vec::with_capacity(sequences.len());
     let mut bytes = 0_usize;
     let mut seal: Option<super::super::Seal> = None;
-    while let Some(raw) = read
-        .next_in_session(&mut cursor, session)
-        .await
-        .map_err(TransactionLogError::Driver)?
-    {
+    while let Some(raw) = if let Some(budget) = budget.as_deref_mut() {
+        preview_rows.next(session, budget).await?
+    } else {
+        read.as_mut()
+            .ok_or_else(corrupt)?
+            .next_in_session(cursor.as_mut().ok_or_else(corrupt)?, session)
+            .await
+            .map_err(TransactionLogError::Driver)?
+    } {
         bytes = bytes
             .checked_add(raw.as_bytes().len())
             .filter(|n| *n <= 4 * 1024 * 1024)
@@ -100,9 +144,12 @@ pub(super) async fn read(
                 .as_ref()
                 .is_none_or(|s| seq < s.start_seq || seq > s.end_seq)
             {
-                seal = Some(
-                    reads::containing(store, &captured.active_head, seq, session, snapshot).await?,
-                );
+                seal = Some(if let Some(budget) = budget.as_deref_mut() {
+                    reads::preview_containing(store, &captured.active_head, seq, session, budget)
+                        .await?
+                } else {
+                    reads::containing(store, &captured.active_head, seq, session, snapshot).await?
+                });
             }
             let seal = seal.as_ref().ok_or_else(corrupt)?;
             digest::check_leaf(&seal.leaf_digests, seq - seal.start_seq, &leaf)?;
@@ -112,6 +159,11 @@ pub(super) async fn read(
     if entries.len() != sequences.len() {
         return Err(SandboxStoreError::SequenceConflict.into());
     }
-    read.complete();
+    if let Some(budget) = budget {
+        budget.check()?;
+    }
+    if let Some(read) = read.as_mut() {
+        read.complete();
+    }
     Ok(entries)
 }

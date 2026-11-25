@@ -10,10 +10,16 @@ pub use failure::{OwnershipFailure, OwnershipFailureReason, OwnershipPhase};
 #[path = "hosted/provider_ownership_evidence.rs"]
 mod evidence;
 pub use evidence::{FirstOwnershipFailure, OwnershipEvidence, OwnershipReceiver};
+#[path = "receiver_settlement.rs"]
+mod settlement;
+pub use settlement::{ReceiverSettlementFailure, ReceiverSettlementWatch};
 
 #[async_trait::async_trait]
 pub trait ReceiverRevocation: Send + Sync {
     fn identity(&self) -> String;
+    fn sandbox_id(&self) -> Option<&str> {
+        None
+    }
     async fn revoke(&self) -> crate::Result<()>;
     /// Compatibility can satisfy one cleanup obligation only when the owner
     /// has closed confirmation admission and this receiver could not install it.
@@ -23,6 +29,17 @@ pub trait ReceiverRevocation: Send + Sync {
     ) -> crate::Result<ReceiverCleanup> {
         self.revoke().await?;
         Ok(ReceiverCleanup::Acknowledged)
+    }
+
+    async fn settle_typed(
+        &self,
+        custody: ReceiverConfirmationCustody,
+        outcome: &ReceiverSettlementWatch,
+    ) -> Result<ReceiverCleanup, ReceiverSettlementFailure> {
+        self.settle(custody).await.map_err(|_| {
+            outcome.record(ReceiverSettlementFailure::Unclassified);
+            ReceiverSettlementFailure::Unclassified
+        })
     }
 }
 

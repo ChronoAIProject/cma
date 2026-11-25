@@ -106,7 +106,9 @@ pub(super) fn control_error(error: AgentControlStoreError) -> AgentServiceError 
         }
         AgentControlStoreError::WorkConflict { step } => AgentServiceError::WorkConflict { step },
         AgentControlStoreError::StopReasonConflict => AgentServiceError::StopReasonConflict,
-        AgentControlStoreError::Conflict => AgentServiceError::ControlConflict,
+        AgentControlStoreError::Conflict | AgentControlStoreError::RestartEvidenceRequired => {
+            AgentServiceError::ControlConflict
+        }
         AgentControlStoreError::WorktreeRecoveryConflict => {
             AgentServiceError::WorktreeRecoveryConflict
         }
