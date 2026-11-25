@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ChartChunk {
+pub(super) struct ChartChunk {
     buckets: Vec<Bucket>,
     expectations: Vec<Expectation>,
 }
@@ -238,8 +238,42 @@ pub(super) async fn ranked_series(
     Ok(ids)
 }
 
-pub(super) async fn fold_sandbox_series(
-    mut cursor: mongodb::Cursor<Document>,
+pub(super) trait ChartRow: DeserializeOwned {
+    fn sandbox(&self) -> Result<&str>;
+    fn owner(&self) -> Result<&str>;
+    fn record(&self) -> Result<ChartChunk>;
+}
+
+impl ChartRow for Document {
+    fn sandbox(&self) -> Result<&str> {
+        self.get_str("sandbox_id").map_err(unavailable)
+    }
+    fn owner(&self) -> Result<&str> {
+        self.get_str("owner").map_err(unavailable)
+    }
+    fn record(&self) -> Result<ChartChunk> {
+        decode(self)
+    }
+}
+
+impl ChartRow for mongodb::bson::RawDocumentBuf {
+    fn sandbox(&self) -> Result<&str> {
+        self.get_str("sandbox_id").map_err(unavailable)
+    }
+    fn owner(&self) -> Result<&str> {
+        self.get_str("owner").map_err(unavailable)
+    }
+    fn record(&self) -> Result<ChartChunk> {
+        if self.get_i64("document_schema_version").ok() != Some(1) {
+            return Err(MetricsError::Unavailable);
+        }
+        let record = self.get_document("record").map_err(unavailable)?;
+        mongodb::bson::deserialize_from_slice(record.as_bytes()).map_err(unavailable)
+    }
+}
+
+pub(super) async fn fold_sandbox_series<T: ChartRow>(
+    mut cursor: mongodb::Cursor<T>,
     report: &Report,
     metric: Metric,
     deadline: std::time::Instant,
@@ -263,7 +297,7 @@ pub(super) async fn fold_sandbox_series(
         if std::time::Instant::now() > deadline {
             return Err(MetricsError::Busy);
         }
-        let next = doc.get_str("sandbox_id").map_err(unavailable)?;
+        let next = doc.sandbox()?;
         if !sandbox.is_empty() && sandbox != next {
             consume(&sandbox, &owner, complete(&sparse, &expectations))?;
             sparse.clear();
@@ -272,8 +306,8 @@ pub(super) async fn fold_sandbox_series(
         sandbox.clear();
         sandbox.push_str(next);
         owner.clear();
-        owner.push_str(doc.get_str("owner").map_err(unavailable)?);
-        let record: ChartChunk = decode(&doc)?;
+        owner.push_str(doc.owner()?);
+        let record = doc.record()?;
         expectations.extend(record.expectations);
         for point in record.buckets {
             sparse.insert(point.from, point);

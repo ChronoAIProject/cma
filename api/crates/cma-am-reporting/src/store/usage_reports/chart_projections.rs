@@ -217,6 +217,7 @@ async fn build_ranked_with_batch(
         let mut sandbox_remaining = RankedBuckets::new(top_sandboxes.clone());
         let mut owner_remaining = RankedBuckets::new(top_owners.clone());
         let cursor = collection
+            .clone_with_type::<RawDocumentBuf>()
             .find(doc! {"report_id":&report.report_id,"metric":metric.index() as i64})
             .sort(doc! {"sandbox_id":1,"chunk":1})
             .batch_size(batch_size)
