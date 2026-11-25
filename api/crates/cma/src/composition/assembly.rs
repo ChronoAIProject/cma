@@ -301,6 +301,8 @@ impl ControlPlaneComposition {
                 deliverables: deliverables.clone(),
                 public_origin: config.public_url.clone(),
                 task_experience: config.task_experience.clone(),
+                github_connection_approval: config.features.github_connection_approval,
+                runtime_adapter: adapter.clone(),
             },
         );
         let projections = projections.with_commands(agent_access.commands.clone());
