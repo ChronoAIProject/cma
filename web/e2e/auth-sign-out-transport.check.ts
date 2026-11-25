@@ -1,4 +1,4 @@
-import { createServer } from 'node:http';
+import { createServer, get } from 'node:http';
 import { expect, test, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 
@@ -11,10 +11,31 @@ const signedIn = {
 };
 
 async function logoutServer(preview: string, logoutStatus: number, landingStatus: number) {
+  const upstream = new URL(preview);
+  if (
+    upstream.protocol !== 'http:' ||
+    !['127.0.0.1', 'localhost'].includes(upstream.hostname) ||
+    !upstream.port ||
+    upstream.username ||
+    upstream.password ||
+    upstream.pathname !== '/' ||
+    upstream.search ||
+    upstream.hash
+  )
+    throw new Error('Logout fixture requires a configured loopback preview origin.');
   let signedOut = false;
   const requests: { path: string; status: number; document?: string }[] = [];
-  const server = createServer(async (request, response) => {
-    const url = new URL(request.url!, preview);
+  const server = createServer((request, response) => {
+    const target = request.url;
+    if (!target?.startsWith('/') || target.startsWith('//') || target.includes('\\')) {
+      response.writeHead(400).end();
+      return;
+    }
+    const url = new URL(target, upstream);
+    if (url.origin !== upstream.origin || url.pathname !== target.split('?')[0] || url.hash) {
+      response.writeHead(400).end();
+      return;
+    }
     if (url.pathname === '/auth/logout') {
       signedOut = logoutStatus === 303;
       requests.push({ path: '/auth/logout', status: logoutStatus });
@@ -32,19 +53,38 @@ async function logoutServer(preview: string, logoutStatus: number, landingStatus
       requests.push({ path: '/', status: 503, document: request.headers['sec-fetch-dest'] });
       response.writeHead(503).end('Synthetic landing unavailable');
     } else {
-      try {
-        const asset = await fetch(new URL(url.pathname + url.search, preview));
-        requests.push({
-          path: url.pathname,
-          status: asset.status,
-          document: request.headers['sec-fetch-dest'],
-        });
-        response
-          .writeHead(asset.status, { 'Content-Type': asset.headers.get('content-type')! })
-          .end(Buffer.from(await asset.arrayBuffer()));
-      } catch {
-        response.writeHead(502).end();
-      }
+      const fail = () => {
+        if (!response.headersSent) response.writeHead(502).end();
+        else response.destroy();
+      };
+      const forward = get(
+        {
+          hostname: upstream.hostname,
+          port: upstream.port,
+          path: url.pathname + url.search,
+        },
+        (asset) => {
+          const status = asset.statusCode ?? 502;
+          if (status >= 300 && status < 400) {
+            asset.resume();
+            fail();
+            return;
+          }
+          requests.push({
+            path: url.pathname,
+            status,
+            document: request.headers['sec-fetch-dest'],
+          });
+          response.writeHead(status, {
+            'Content-Type': asset.headers['content-type'] ?? 'application/octet-stream',
+          });
+          asset.on('error', fail);
+          asset.pipe(response);
+        },
+      );
+      forward.on('error', fail);
+      forward.setTimeout(8000, () => forward.destroy());
+      response.on('close', () => forward.destroy());
     }
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -63,6 +103,31 @@ async function logoutServer(preview: string, logoutStatus: number, landingStatus
       }),
   };
 }
+
+test('LOCAL logout fixture restricts preview forwarding to the configured origin', async ({
+  baseURL,
+}) => {
+  const fixture = await logoutServer(baseURL!, 303, 200);
+  try {
+    const expected = await fetch(new URL('/build-info.json', baseURL));
+    const forwarded = await fetch(new URL('/build-info.json', fixture.origin));
+    expect(forwarded.status).toBe(200);
+    expect(await forwarded.text()).toBe(await expected.text());
+
+    // Only canonical, origin-relative HTTP request targets are accepted.
+    for (const path of ['http://example.invalid/build-info.json', '/assets/../build-info.json']) {
+      const status = await new Promise<number | undefined>((resolve, reject) => {
+        get({ hostname: '127.0.0.1', port: new URL(fixture.origin).port, path }, (response) => {
+          response.resume();
+          resolve(response.statusCode);
+        }).on('error', reject);
+      });
+      expect(status).toBe(400);
+    }
+  } finally {
+    await fixture.close();
+  }
+});
 
 async function prepare(page: Page, origin: string) {
   const boundary = new LocalStartup();
