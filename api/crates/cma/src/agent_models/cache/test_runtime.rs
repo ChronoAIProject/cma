@@ -4,11 +4,19 @@ use std::sync::{
     Mutex,
 };
 use tokio::sync::mpsc;
-#[derive(Default)]
-pub(super) struct Probe {
+pub(crate) struct Probe {
     pub calls: AtomicUsize,
     pub delay_ms: AtomicUsize,
-    pub status: Mutex<Option<RuntimeStatus>>,
+    pub status: Mutex<Result<RuntimeStatus>>,
+}
+impl Probe {
+    pub fn new(status: RuntimeStatus) -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            delay_ms: AtomicUsize::new(0),
+            status: Mutex::new(Ok(status)),
+        }
+    }
 }
 #[async_trait::async_trait]
 impl SandboxAdapter for Probe {
@@ -18,11 +26,7 @@ impl SandboxAdapter for Probe {
             self.delay_ms.load(Ordering::SeqCst) as u64,
         ))
         .await;
-        self.status
-            .lock()
-            .unwrap()
-            .clone()
-            .ok_or_else(|| AdapterError::Unavailable("fixture unavailable".into()))
+        self.status.lock().unwrap().clone()
     }
     fn capabilities(&self) -> AdapterCapabilities {
         panic!("unexpected runtime effect")

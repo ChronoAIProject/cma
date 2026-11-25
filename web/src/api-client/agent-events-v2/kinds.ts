@@ -15,6 +15,8 @@ import {
   type Output,
   type Parser,
 } from '../schema.js';
+import { externalApprovalKind, type ExternalApprovalKind } from './external-approval.js';
+import { record } from '../schema.js';
 import { strict } from './schema.js';
 
 const failure = strict({ class: text, detail: text });
@@ -98,4 +100,15 @@ export const v2AgentEventKind = tagged({
   stopped: kind('stopped', { reason: text }),
   deleted: kind('deleted', {}),
 });
-export type V2AgentEventKind = Output<typeof v2AgentEventKind>;
+export type V2AgentEventKind = Output<typeof v2AgentEventKind> | ExternalApprovalKind;
+
+export function negotiatedAgentEventKind(
+  value: unknown,
+  externalApprovals = false,
+): V2AgentEventKind {
+  const type = record(value).type;
+  return externalApprovals &&
+    (type === 'external_approval_requested' || type === 'external_approval_resolved')
+    ? externalApprovalKind(value)
+    : v2AgentEventKind(value);
+}

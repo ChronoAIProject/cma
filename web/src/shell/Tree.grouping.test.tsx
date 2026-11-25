@@ -34,6 +34,31 @@ it('keeps failed Sandboxes out of Live and counts them only in Needs attention',
   expect(screen.getAllByRole('treeitem')).toHaveLength(1);
 });
 
+it('lists failed repository Workspaces under their own Needs attention Sandboxes', () => {
+  const items = ['atlas', 'boreal'].map((name) => {
+    const id = `sbx_${name}`;
+    const workspace = {
+      ...workspaceFixture(),
+      id: `wsp_${name}`,
+      sandboxId: id,
+      status: 'failed' as const,
+      path: `/workspaces/${name}`,
+      agents: [],
+    };
+    return {
+      sandbox: { ...sandboxFixture('failed'), id, name, workspaces: [workspace] },
+      workspaces: [workspace],
+    };
+  });
+  render(<Tree {...props} items={items} />);
+  const group = within(screen.getByRole('region', { name: 'Needs attention sandboxes' }));
+  for (const name of ['atlas', 'boreal']) {
+    const link = group.getByRole('link', { name: new RegExp(`/workspaces/${name}`) });
+    expect(link).toHaveAttribute('href', `/workspaces/wsp_${name}`);
+    expect(link).toHaveTextContent('Needs attention');
+  }
+});
+
 it('places each visible Sandbox once, excludes deletion progress and preserves exact status filters', async () => {
   const actor = userEvent.setup();
   const statuses = [
@@ -82,7 +107,7 @@ it('places each visible Sandbox once, excludes deletion progress and preserves e
     for (const name of names) expect(within(region).getByText(`${name} fixture`)).toBeVisible();
   }
   expect(screen.getAllByRole('treeitem')).toHaveLength(9);
-  await actor.click(screen.getByText('Deletion progress (2)'));
+  await actor.click(screen.getByText('Cleaning up 2 sandboxes'));
   expect(screen.getByRole('button', { name: 'View status for retiring fixture' })).toBeVisible();
   expect(
     screen.getByRole('button', { name: 'View status for Deletion requested fixture' }),
@@ -138,7 +163,7 @@ it('moves lifecycle transitions between groups without losing the selected route
   }
   view.rerender(renderStatus('retiring'));
   expect(screen.queryByRole('treeitem')).not.toBeInTheDocument();
-  await actor.click(screen.getByText('Deletion progress (1)'));
+  await actor.click(screen.getByText('Cleaning up 1 sandboxes'));
   expect(screen.getByRole('button', { name: 'View status for Atlas' })).toBeVisible();
 });
 
@@ -187,7 +212,7 @@ it('uses the current rotation for the label and filter while keeping Live and de
   for (const item of within(updating).getAllByRole('treeitem')) {
     expect(item).toHaveTextContent('Updating runtime');
   }
-  expect(screen.getByText('Deletion progress (2)')).toBeVisible();
+  expect(screen.getByText('Cleaning up 2 sandboxes')).toBeVisible();
   view.rerender(<Tree {...input} statusFilter="credential_rotating" />);
   expect(screen.getByRole('treeitem')).toHaveTextContent('Refreshing access');
   expect(screen.getByRole('treeitem')).toHaveTextContent('Updating access');

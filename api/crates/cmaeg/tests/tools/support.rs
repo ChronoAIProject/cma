@@ -225,7 +225,7 @@ impl App {
             native_lark_conversation_history: None,
             discord_conversation_history: None,
             complete_replies_enabled: false,
-            commonmark_relay_enabled: false,
+            commonmark_relay: Default::default(),
             whatsapp_templates_enabled: false,
             discord_interactions_enabled: false,
             native_discord_media_controls_enabled: false,

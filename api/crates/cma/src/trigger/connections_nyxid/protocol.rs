@@ -149,6 +149,7 @@ mod tests {
         UserServiceRow {
             id: id.to_owned(),
             slug: slug.to_owned(),
+            catalog_service_id: None,
             is_active,
             credential_source,
         }

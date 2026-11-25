@@ -1,4 +1,3 @@
-import { TopographicBackdrop } from '../decoration/TopographicBackdrop';
 import { Presence } from '../ui/Presence';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { LandingCharacter } from './LandingCharacter';
@@ -6,6 +5,7 @@ import { Button } from '../ui/Button';
 import { LegalNotice } from '../auth/LegalNotice';
 import type { LegalTerms } from '../auth/types';
 import './SignInLanding.css';
+import { useImageManagerAvailability } from '../services/ImageManagerRetirement';
 
 /** Where each service card returns after sign-in; every path is a canonical CMA route. */
 const SERVICES = [
@@ -44,6 +44,7 @@ export function SignInLanding({
   /** Published terms the person accepts by continuing. */
   readonly legalTerms?: LegalTerms;
 }) {
+  const imageManager = useImageManagerAvailability();
   const [entering, setEntering] = useState<{ readonly returnTo?: string }>();
   const [failed, setFailed] = useState(false);
   const pending = useRef(false);
@@ -117,7 +118,6 @@ export function SignInLanding({
             </Presence>
           </div>
           <div className="brand-home sign-in-landing__brand">
-            <TopographicBackdrop placement="landing" />
             <LandingCharacter key={String(failed)} />
           </div>
         </section>
@@ -164,12 +164,14 @@ export function SignInLanding({
                 </Button>
               </article>
             ))}
-            <article className="sign-in-landing__card sign-in-landing__card--soon">
-              <h3>
-                Image Manager <span className="sign-in-landing__soon">Coming soon</span>
-              </h3>
-              <p>Build runtime images and share them privately, with your team, or publicly.</p>
-            </article>
+            {imageManager !== 'retired' ? (
+              <article className="sign-in-landing__card sign-in-landing__card--soon">
+                <h3>
+                  Image Manager <span className="sign-in-landing__soon">Coming soon</span>
+                </h3>
+                <p>Build runtime images and share them privately, with your team, or publicly.</p>
+              </article>
+            ) : null}
           </div>
         </section>
       </div>

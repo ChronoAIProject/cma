@@ -6,6 +6,8 @@ pub(crate) struct UserServiceRow {
     pub(crate) id: String,
     pub(crate) slug: String,
     #[serde(default)]
+    pub(crate) catalog_service_id: Option<String>,
+    #[serde(default)]
     pub(crate) is_active: Option<bool>,
     #[serde(default)]
     pub(crate) credential_source: Option<UserServiceCredentialSource>,

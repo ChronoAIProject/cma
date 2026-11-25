@@ -16,10 +16,12 @@ use super::sandbox_mongo::{
 };
 
 mod acquisition;
+mod binding_diagnostics;
 mod effects;
 mod failure;
 mod membership;
 mod records;
+mod renewal_batch;
 mod work_discovery;
 use records::{member_from, owner_from, token_filter};
 
@@ -41,6 +43,20 @@ pub(in crate::store) enum FenceError {
     Driver(mongodb::error::Error),
 }
 
+pub(in crate::store) enum ObservedFenceError {
+    Read(mongodb::error::Error),
+    Fence(FenceError),
+}
+
+impl ObservedFenceError {
+    pub(in crate::store) fn into_fence_error(self) -> FenceError {
+        match self {
+            Self::Read(error) => FenceError::Driver(error),
+            Self::Fence(error) => error,
+        }
+    }
+}
+
 impl FenceError {
     /// Callers without their own bounded retry keep the historical classification.
     pub(in crate::store) fn into_store(self) -> SandboxStoreError {
@@ -60,13 +76,7 @@ impl MongoAgentOwnership {
         super::schema::initialize_collections(&database, &[MEMBERS, OWNERS])
             .await
             .map_err(unavailable)?;
-        let store = Self {
-            client: client.clone(),
-            receiver_diagnostics_enabled,
-            members: majority_collection(&database, MEMBERS),
-            owners: majority_collection(&database, OWNERS),
-            database,
-        };
+        let store = Self::from_database(client, database, receiver_diagnostics_enabled);
         store
             .members
             .create_index(
@@ -93,6 +103,49 @@ impl MongoAgentOwnership {
             .await
             .map_err(unavailable)?;
         Ok(store)
+    }
+
+    fn from_database(
+        client: &Client,
+        database: Database,
+        receiver_diagnostics_enabled: bool,
+    ) -> Self {
+        Self {
+            client: client.clone(),
+            receiver_diagnostics_enabled,
+            members: majority_collection(&database, MEMBERS),
+            owners: majority_collection(&database, OWNERS),
+            database,
+        }
+    }
+
+    #[cfg(feature = "qualification-hooks")]
+    pub(crate) async fn prepare_qualification_renewal(
+        uri: &str,
+        name: &str,
+    ) -> Result<std::sync::Arc<dyn OwnershipStore>, &'static str> {
+        let mut options = mongodb::options::ClientOptions::parse(uri)
+            .await
+            .map_err(|_| "qualification MongoDB configuration refused")?;
+        options.app_name = Some("cma-qualification-renewal".into());
+        options.min_pool_size = Some(0);
+        options.max_pool_size = Some(1);
+        super::transaction_barrier::bind(&mut options, name);
+        let client =
+            Client::with_options(options).map_err(|_| "qualification MongoDB client refused")?;
+        let database = client.database(name);
+        // Open and verify this separate pool before the local plan can arm.
+        // The ordinary composition owns collections, indexes and all other calls.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            database.run_command(doc! {"ping": 1}),
+        )
+        .await
+        .map_err(|_| "qualification MongoDB startup timed out")?
+        .map_err(|_| "qualification MongoDB startup failed")?;
+        Ok(std::sync::Arc::new(Self::from_database(
+            &client, database, false,
+        )))
     }
 
     async fn server_now(&self) -> Result<i64, OwnershipError> {
@@ -142,9 +195,29 @@ impl MongoAgentOwnership {
         token: &OwnershipToken,
         session: &mut ClientSession,
     ) -> Result<(), FenceError> {
+        self.fence_transaction_observed(token, session)
+            .await
+            .map_err(ObservedFenceError::into_fence_error)
+    }
+
+    pub(super) async fn fence_transaction_observed(
+        &self,
+        token: &OwnershipToken,
+        session: &mut ClientSession,
+    ) -> Result<(), ObservedFenceError> {
         self.open_with_read(&token.instance_id, session)
             .await
-            .map_err(FenceError::Driver)?;
+            .map_err(ObservedFenceError::Read)?;
+        self.fence_transaction_writes(token, session)
+            .await
+            .map_err(ObservedFenceError::Fence)
+    }
+
+    async fn fence_transaction_writes(
+        &self,
+        token: &OwnershipToken,
+        session: &mut ClientSession,
+    ) -> Result<(), FenceError> {
         let member = self
             .members
             .update_one(
@@ -249,6 +322,17 @@ impl OwnershipStore for MongoAgentOwnership {
         self.renew_owner(token).await
     }
 
+    fn supports_batch_renewal(&self) -> bool {
+        true
+    }
+
+    async fn renew_batch(
+        &self,
+        tokens: &[OwnershipToken],
+    ) -> Result<layer2_core::agent_ownership::RenewalBatch, OwnershipError> {
+        self.renew_owner_batch(tokens).await
+    }
+
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
         self.release_owner(token).await
     }
@@ -288,6 +372,8 @@ fn invalid(error: impl std::fmt::Display) -> OwnershipError {
     OwnershipError::Invalid(error.to_string())
 }
 
+#[cfg(test)]
+mod mongo_failure_containment_tests;
 #[cfg(test)]
 pub(crate) mod mongo_renewal_faults;
 #[cfg(test)]

@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { ValidationScope } from './ValidationPath';
 import { SetupPolicy, SetupReview, SetupSection } from './SetupSections';
 import type { Denied } from '../client';
@@ -43,6 +44,7 @@ export function NodeFields({
   create,
   sourceCount,
   savedCustomExecution,
+  retainedAckDelay,
   denied,
 }: {
   draft: Fields;
@@ -54,9 +56,11 @@ export function NodeFields({
   create: boolean;
   sourceCount: number;
   savedCustomExecution?: boolean;
+  retainedAckDelay?: unknown;
   denied: Denied;
 }) {
   const discovery = useRelayCapabilities();
+  const sourceDrafts = useRef(new Map<number, Map<string, Fields>>());
   const sources = records(draft.sources);
   if (!create && section.kind === 'producer' && section.index === sources.length)
     sources.push(defaultSource('nyxid_relay'));
@@ -70,6 +74,19 @@ export function NodeFields({
     // A new channel's grouping follows its producers; saved channels are never rewritten.
     onChange(create && key === 'sources' ? fitPartition(discovery, value) : value);
   };
+  function removeProducer(index: number) {
+    const drafts = sourceDrafts.current;
+    drafts.delete(index);
+    for (let next = index + 1; next < sources.length; next++) {
+      const retained = drafts.get(next);
+      drafts.delete(next);
+      if (retained) drafts.set(next - 1, retained);
+    }
+    set(
+      'sources',
+      sources.filter((_, i) => i !== index),
+    );
+  }
   return (
     <>
       <SetupSection
@@ -82,6 +99,7 @@ export function NodeFields({
             value={draft}
             onChange={onChange}
             hideConnection={create}
+            retainedAckDelay={retainedAckDelay}
             part={create ? 'identity' : 'all'}
           />
         ) : null}
@@ -144,12 +162,17 @@ export function NodeFields({
                         if (option.value === 'discord') return !nativeDiscordUnavailable(discovery);
                         return true;
                       })}
-                      onChange={(type) =>
+                      onChange={(type) => {
+                        const drafts = sourceDrafts.current.get(index) ?? new Map<string, Fields>();
+                        drafts.set(String(source.type), source);
+                        sourceDrafts.current.set(index, drafts);
                         set(
                           'sources',
-                          sources.map((v, i) => (i === index ? defaultSource(type) : v)),
-                        )
-                      }
+                          sources.map((v, i) =>
+                            i === index ? (drafts.get(type) ?? defaultSource(type)) : v,
+                          ),
+                        );
+                      }}
                     />
                   ) : null}
                   <ValidationScope value={`/sources/${index}`}>
@@ -203,6 +226,11 @@ export function NodeFields({
                       }
                       hmac={customUsesHmac(source)}
                     />
+                  ) : null}
+                  {create && index > 0 ? (
+                    <Button onClick={() => removeProducer(index)}>
+                      Remove producer {index + 1}
+                    </Button>
                   ) : null}
                 </Section>
               ) : null,

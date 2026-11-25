@@ -159,8 +159,8 @@ async fn lease_expiry_takeover_and_release_fence_data_and_progress() {
         .unwrap()
         .unwrap();
     assert_projection(
-        &DayBucket::read(&row).unwrap().total.projection,
-        &bucket.total.projection,
+        &DayBucket::read(&row).unwrap().total().projection,
+        &bucket.total().projection,
     );
     store.db.drop().await.unwrap();
 }
@@ -356,7 +356,7 @@ async fn maintained_30_day_history_matches_raw_and_new_heads_replace_projected_t
     assert_eq!(
         DayBucket::read(&old)
             .unwrap()
-            .total
+            .total()
             .projection
             .period
             .projected_tail_seconds,
@@ -413,7 +413,7 @@ async fn maintained_30_day_history_matches_raw_and_new_heads_replace_projected_t
     assert_eq!(
         DayBucket::read(&saved)
             .unwrap()
-            .total
+            .total()
             .projection
             .period
             .projected_tail_seconds,

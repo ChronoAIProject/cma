@@ -230,12 +230,16 @@ fn image_error(error: AgentLifecycleProvisioningError) -> BotError {
         AgentLifecycleProvisioningError::SignInRequired => {
             BotError::Invalid("sign in again to authorize the selected image".into())
         }
+        AgentLifecycleProvisioningError::ImageSelectionUnsupported => {
+            BotError::ImageSelectionUnsupported
+        }
         AgentLifecycleProvisioningError::Invalid(error)
         | AgentLifecycleProvisioningError::DesktopUnsupported(error)
         | AgentLifecycleProvisioningError::Conflict(error) => BotError::Invalid(error),
         AgentLifecycleProvisioningError::SandboxLimitReached { .. }
         | AgentLifecycleProvisioningError::AdmissionPaused
         | AgentLifecycleProvisioningError::ConnectionRequired { .. }
+        | AgentLifecycleProvisioningError::RepositoryAccessRequired { .. }
         | AgentLifecycleProvisioningError::Unavailable => BotError::Unavailable,
     }
 }
@@ -467,4 +471,20 @@ pub(super) fn compose_setup(
         router: resource_routes,
         actor_continuations,
     })
+}
+
+pub(super) fn event_worker_profiles(
+    config: &Config,
+    stores: &MongoStores,
+    settings: &Arc<PlatformSettingsService>,
+) -> Arc<layer2_core::event_workers::EventWorkerProfileService> {
+    layer2_core::event_workers::EventWorkerProfileService::new(
+        stores.event_workers.clone(),
+        layer2_core::bots::PublishedBotProfiles::new(
+            stores.sandbox_profiles.clone(),
+            Arc::clone(settings),
+            config.default_profiles.agent_model.clone(),
+        ),
+        "cma_codex".into(),
+    )
 }

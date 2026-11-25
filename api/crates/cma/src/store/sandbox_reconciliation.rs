@@ -1,5 +1,6 @@
 //! Complete Mongo runtime authority and atomic recovery from runtime loss.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::store::{
     validate_sandbox_runtime_loss_request, Page, PageRequest, SandboxReconciliationStore,
@@ -168,21 +169,21 @@ async fn recover(
         };
         let receipt = match apply_attempt(store, &request, retirement, &mut session).await {
             Ok(RecoveryApplication::Complete(outcome)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(outcome);
             }
             Ok(RecoveryApplication::Persist(receipt)) => receipt,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };

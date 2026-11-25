@@ -20,6 +20,8 @@ use crate::auth::persistence::SecretValue;
 
 #[path = "connections_nyxid_tests/deadline.rs"]
 mod deadline;
+#[path = "connections_nyxid_tests/github.rs"]
+mod github;
 mod selection;
 
 const VISITOR_TOKEN: &str = "visitor-access-secret";
@@ -77,6 +79,8 @@ struct ProviderState {
     service_reads: Mutex<Vec<Option<String>>>,
     catalog_reads: Mutex<Vec<Option<String>>>,
     credential_reads: Mutex<Vec<Option<String>>>,
+    github_proxy_reads: Mutex<Vec<(String, String)>>,
+    github_proxy_scopes: Mutex<Option<String>>,
     readiness_reply: Mutex<Reply>,
 }
 
@@ -98,6 +102,8 @@ impl ProviderState {
             service_reads: Mutex::new(Vec::new()),
             catalog_reads: Mutex::new(Vec::new()),
             credential_reads: Mutex::new(Vec::new()),
+            github_proxy_reads: Mutex::new(Vec::new()),
+            github_proxy_scopes: Mutex::new(None),
             readiness_reply: Mutex::new(Reply::json(
                 json!({"revision":"nyxid-assistant-readiness.v1","capabilities":[{"capabilityId":"api-github","connectionState":"connected","grantState":"missing"}]}),
             )),
@@ -132,6 +138,7 @@ impl Provider {
             .route("/api/v1/user-services", get(read_services))
             .route("/api/v1/services", get(read_catalog))
             .route("/api/v1/keys/{id}", get(read_credential))
+            .route("/api/v1/proxy/{id}/user", get(read_github_proxy))
             .route("/api/v1/assistant/readiness", get(read_readiness))
             .with_state(Arc::clone(&state));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -253,6 +260,30 @@ async fn read_credential(
         Some(row) => Reply::json(json!({"id":id,"slug":row["slug"],"is_active":true,"status":"active","connected":true,"credential_missing":false})).response(),
         None => Reply::error(StatusCode::NOT_FOUND, "missing").response(),
     }
+}
+
+async fn read_github_proxy(
+    State(state): State<Arc<ProviderState>>,
+    Path(catalog): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    assert_eq!(
+        authorization(&headers),
+        Some(format!("Bearer {VISITOR_TOKEN}"))
+    );
+    state
+        .github_proxy_reads
+        .lock()
+        .unwrap()
+        .push((catalog, query.get("_nyxid_via").unwrap().clone()));
+    let mut response = Reply::json(json!({"id": 19})).response();
+    if let Some(scopes) = state.github_proxy_scopes.lock().unwrap().as_deref() {
+        response
+            .headers_mut()
+            .insert("x-oauth-scopes", scopes.parse().unwrap());
+    }
+    response
 }
 
 async fn read_readiness(State(state): State<Arc<ProviderState>>, headers: HeaderMap) -> Response {

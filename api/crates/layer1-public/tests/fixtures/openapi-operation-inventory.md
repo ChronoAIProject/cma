@@ -112,15 +112,22 @@ returns 409, including changing an omitted default into an explicit reference.
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
 | `GET /api/v1/admin/activity` | - | actor, action, limit, cursor | 200 ActivityPageView |
+| `GET /api/v1/admin/activity/actors` | ReadActivityLog and ReadUserDirectory | q (literal display name or subject) | 200 array<ActivityActorView> (up to 20 matches), 400/401/403/503 ProblemDocument |
 | `GET /api/v1/admin/profiles` | - | kind, visibility, owner, cursor, limit | 200 ProfilePageView |
 | `POST /api/v1/admin/profiles/{kind}/{id}/retire` | - | - | 200 ProfileSummaryView |
 | `GET /api/v1/admin/runtime-inventory` | - | - | 200 RuntimeInventoryView |
+| `GET /api/v1/admin/runtime-binding-holds` | - | - | 200 BindingHoldOverviewView; 403/503 ProblemDocument; 404 when diagnostics are disabled |
+| `PUT /api/v1/admin/runtime-canary-policy` | CanaryPolicyRequest | - | 200 CanaryPolicyView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/runtime-canary-grants` | CanaryGrantRequest | - | 201 CanaryGrantView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/runtime-canary-grants/revoke` | CanaryRevokeRequest | - | 200 CanaryGrantView; 401/403/409/422/503 ProblemDocument |
 | `GET /api/v1/admin/sandboxes` | - | owner, status, runtime_version, cursor, limit | 200 SandboxPageView |
 | `GET /api/v1/admin/sandboxes/{id}` | - | - | 200 SandboxDetailView |
 | `POST /api/v1/admin/sandboxes/{id}/always-on` | AdminAlwaysOnRequest | - | 200 SandboxView |
 | `GET /api/v1/admin/sandboxes/{id}/events` | - | after, limit | 200 array<object> |
 | `POST /api/v1/admin/sandboxes/{id}/retire` | - | - | 200 object |
+| `POST /api/v1/admin/sandboxes/{id}/runtime-migration` | CustomRuntimeMigrationRequest | - | 202 SandboxView |
 | `POST /api/v1/admin/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest | - | 202 SandboxView |
+| `GET /api/v1/admin/sandboxes/{id}/runtime-update/activity` | - | - | 200 object |
 | `GET /api/v1/admin/admission` | - | - | 200 AdmissionReadView |
 | `POST /api/v1/admin/admission/stop` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `PUT /api/v1/admin/admission/ceilings` | ReplaceCeilingsRequest | - | 200 CeilingsStateView |
@@ -192,6 +199,7 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/desktop-capability` | - | workspace_id, sandbox_id | 200 DesktopCapabilityView |
 | `POST /api/v1/agents` | AgentLifecycleCreateRequest; key | - | 202 AgentLifecycleCreateReceipt |
 | `GET /api/v1/agent-lifecycle/{id}` | - | - | 200 AgentLifecycleOperationView |
+| `POST /api/v1/runtime-canary-redemptions` | CanaryRedeemRequest; Idempotency-Key | - | 202 AgentLifecycleCreateReceipt; 400/401/403/409/422/503 ProblemDocument |
 | `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `GET /api/v1/agents/{id}/capacity-recovery/dry-run` | - | - | 200 authorized recovery metadata |
@@ -220,6 +228,7 @@ pools and retained homes keep their admitted templates.
 | `POST /api/v1/agents/{id}/skills` | InstallAgentSkillRequest; key | - | 202 AgentSkillsView |
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
+| `POST /api/v1/agents/{id}/restart` | Required key | - | 202 AgentRestartReceipt |
 | `POST /api/v1/agents/{id}/recover-worktree` | -; required key | - | 202 AgentView |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
 | `GET /api/v1/agents/{id}/desktop` | - | - | 200 DesktopDescriptor; 404 ProblemDocument |
@@ -741,7 +750,9 @@ states, refusal categories, atomic admission and rollback qualification.
 `runtime-update` accepts `{ "target_version": "<exact image reference>" }`
 with `Idempotency-Key` from the Sandbox owner. Use the owner detail's
 `runtime_update.latest_version`, or its retained `target_version` when retrying a
-failed update. HTTP 202 records the request; follow `runtime_update.state` on
+failed update. A failed update stalled at reopening conversations whose retained
+target is no longer the latest is recovered onto the latest runtime instead.
+HTTP 202 records the request; follow `runtime_update.state` on
 Sandbox reads until completion. Busy Agents defer the update until idle, and
 eligible managed Sandboxes retain their original home and conversations. Stale
 or conflicting targets return 409; replay an uncertain request with its original
@@ -752,7 +763,8 @@ Operators with `ControlAnySandbox` can queue the same update across owners using
 operator endpoint does not require an idempotency key: retrying the same pending
 target leaves the request unchanged. It validates the configured latest target
 or an already pinned retry target and audits the actual operator, Sandbox owner,
-and target. Queueing does not interrupt current work; the existing idle checks
+and admitted target. After a stalled reopen is recovered onto the latest runtime,
+its former target returns 409. Queueing does not interrupt current work; the existing idle checks
 and transaction fencing retain the original PVC and conversation identities.
 Operator Sandbox detail exposes `runtime_update` with the pinned target, current
 state, and completion or failure metadata. The owner endpoint still hides
@@ -897,4 +909,18 @@ SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both exp
 | `PATCH /api/v1/agents/{id}/preferences` | UpdateAgentPreferencesRequest; key | - | 200 AgentPreferencesView |
 
 | `POST /api/v1/telemetry/browser` | Anonymous, bounded browser diagnostic category; no durable receipt. |
+| `POST /api/v1/usage/metrics/initial/reports` | UsageInitialCreate | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/usage/metrics/initial/view` | UsageInitialViewInput | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/usage/metrics/initial/reports/{report}` | UsageInitialProjection | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/admin/usage/metrics/initial/reports` | UsageInitialCreate | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/admin/usage/metrics/initial/view` | UsageInitialViewInput | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/admin/usage/metrics/initial/reports/{report}` | UsageInitialProjection | - | 200 complete initial data / 202 descriptor only |
+| `GET /api/v1/agents/{id}/original-request` | Read the current owner’s exact admitted Task request without scanning history. |
+| `GET /api/v1/agents/{id}/reply-preview` | Read a bounded certified preview of the latest persisted assistant message. |
+| `POST /api/v1/sandbox-creation-outcomes/lookup` | Read evidence for an exact owner Sandbox creation. |
+| `PUT /api/v1/admin/retained-runtime-policy` | CanaryPolicyRequest | - | 200 CanaryPolicyView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/retained-runtime-preview` | RetainedRuntimeProposal | - | 200 RetainedRuntimePreview; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/retained-runtime-grants` | RetainedRuntimeGrantRequest | - | 201 RetainedRuntimeGrantView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/retained-runtime-redemptions` | RetainedRuntimeRedemption | - | 202 RetainedRuntimeReceipt; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/retained-runtime-grants/abort` | RetainedRuntimeAbort | - | 200 RetainedRuntimeGrantView; 401/403/409/422/503 ProblemDocument |
 <!-- openapi-operations:end -->

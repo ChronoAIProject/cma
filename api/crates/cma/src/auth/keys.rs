@@ -115,6 +115,8 @@ struct MintedKeyResponse {
 struct ServiceRow {
     id: String,
     #[serde(default)]
+    catalog_service_id: Option<String>,
+    #[serde(default)]
     slug: Option<String>,
     #[serde(default)]
     name: Option<String>,
@@ -353,24 +355,38 @@ impl KeyIssuer {
         if wanted.is_empty() {
             return Err(KeyIssuerError::EmptyGrant);
         }
-        let rows = self
-            .service_rows(USER_SERVICES_PATH, owner_token)
-            .await?
+        let rows = self.service_rows(USER_SERVICES_PATH, owner_token).await?;
+        Ok(Self::resolve_service_rows(&rows, wanted)?
             .into_iter()
+            .map(|row| row.id.clone())
+            .collect())
+    }
+
+    fn resolve_service_rows<'a>(
+        rows: &'a [ServiceRow],
+        wanted: &[ServiceId],
+    ) -> Result<Vec<&'a ServiceRow>, KeyIssuerError> {
+        let connections = rows
+            .iter()
             .map(|row| UserServiceRow {
-                slug: row.slug.unwrap_or_else(|| row.id.clone()),
-                id: row.id,
+                slug: row.slug.clone().unwrap_or_else(|| row.id.clone()),
+                id: row.id.clone(),
+                catalog_service_id: row.catalog_service_id.clone(),
                 is_active: row.is_active,
-                credential_source: row.credential_source,
+                credential_source: row.credential_source.clone(),
             })
             .collect::<Vec<_>>();
         let mut resolved = Vec::with_capacity(wanted.len());
         for wanted_service in wanted {
-            let row = selected_service(wanted_service, &rows)
+            let row = selected_service(wanted_service, &connections)
                 .filter(|row| row.is_usable())
+                .and_then(|selected| rows.iter().find(|row| row.id == selected.id))
                 .ok_or_else(|| KeyIssuerError::ServiceNotGranted(wanted_service.clone()))?;
-            if !resolved.contains(&row.id) {
-                resolved.push(row.id.clone());
+            if !resolved
+                .iter()
+                .any(|selected: &&ServiceRow| selected.id == row.id)
+            {
+                resolved.push(row);
             }
         }
         if resolved.is_empty() {

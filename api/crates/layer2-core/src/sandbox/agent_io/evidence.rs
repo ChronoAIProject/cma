@@ -300,6 +300,33 @@ impl CommandEvidence {
         Ok(())
     }
 
+    /// Inspect only evidence that has been validated through this Agent snapshot.
+    /// Does not infer a terminal from elapsed time, runtime loss or Agent state,
+    /// and never changes the command or lane. A deferred source attempt is not
+    /// the logical message's terminal and requires separate retry assessment.
+    pub fn verified_status(
+        &self,
+        command: &AdmittedAgentCommand,
+        agent: &Agent,
+    ) -> Result<AgentResponseStatus, CommandLedgerError> {
+        command.validate()?;
+        if agent.id != self.dispatch.claim.agent_id
+            || agent.conversation.last_seq != self.cursor
+            || !self.fence_seen
+            || !self.turn_seen
+            || command.work.dispatch.as_ref() != Some(&self.dispatch)
+            || command
+                .work
+                .observation
+                .as_ref()
+                .is_some_and(|observation| observation.event_cursor > self.cursor)
+            || self.has_source_deferred()
+        {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        Ok(self.status)
+    }
+
     /// Apply only after the snapshot's entire log was validated. Clear exactly
     /// this command's lease; a newer command may already own the Agent lane.
     pub fn apply(
@@ -350,6 +377,23 @@ impl CommandEvidence {
             && agent.conversation.active_turn != Some(self.dispatch.turn_sequence)
         {
             return Err(CommandLedgerError::Corrupt);
+        }
+        // The same aggregate snapshot carries external waits; native approval
+        // indexes and native action selectors keep their original namespace.
+        if self.message
+            && !self.status.is_terminal()
+            && agent
+                .conversation
+                .turn_timeout
+                .as_ref()
+                .is_some_and(|policy| {
+                    policy.binding().matches_active_turn(agent)
+                        && policy.binding().command_id == self.dispatch.claim.command_id
+                        && policy.binding().operation_sequence == self.dispatch.operation_sequence
+                        && policy.is_waiting_for_external_approval()
+                })
+        {
+            self.status = AgentResponseStatus::WaitingAction;
         }
         let mut next = command.clone();
         next.status = self.status;

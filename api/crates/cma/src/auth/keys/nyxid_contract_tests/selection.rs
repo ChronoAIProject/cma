@@ -124,3 +124,33 @@ async fn legacy_id_only_connections_keep_their_exact_identity_in_supported_listi
         assert_eq!(peer.count(), 1);
     }
 }
+
+#[test]
+fn selected_service_preserves_original_route_metadata() {
+    let rows: Vec<ServiceRow> = serde_json::from_value(json!([
+        {"id":"org-connection","slug":"calendar","catalog_service_id":"org-catalog",
+            "is_active":true,"credential_source":{"type":"org","allowed":true}},
+        {"id":"personal-connection","slug":"calendar","catalog_service_id":"personal-catalog",
+            "is_active":true,"credential_source":{"type":"personal"}},
+        {"id":"legacy-connection","is_active":true}
+    ]))
+    .unwrap();
+    let selected = KeyIssuer::resolve_service_rows(
+        &rows,
+        &[
+            ServiceId::new("calendar"),
+            ServiceId::new("personal-connection"),
+            ServiceId::new("legacy-connection"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(selected.len(), 2);
+    assert!(std::ptr::eq(selected[0], &rows[1]));
+    assert_eq!(selected[0].slug.as_deref(), Some("calendar"));
+    assert_eq!(
+        selected[0].catalog_service_id.as_deref(),
+        Some("personal-catalog")
+    );
+    assert!(std::ptr::eq(selected[1], &rows[2]));
+    assert_eq!(selected[1].slug, None);
+}

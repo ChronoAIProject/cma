@@ -10,7 +10,7 @@ async function start(page: Page) {
 type Attempt = { key: string | undefined; body: unknown };
 
 for (const mobile of [false, true]) {
-  test(`LOCAL creation retains its request through help, cancel and delayed retry (${mobile ? 'mobile' : 'desktop'})`, async ({
+  test(`LOCAL creation retains its request through help, cancel, reload and delayed retry (${mobile ? 'mobile' : 'desktop'})`, async ({
     page,
     baseURL,
   }) => {
@@ -94,6 +94,8 @@ for (const mobile of [false, true]) {
     await expect(dialog).toBeHidden();
     await expect(page.getByText('Creation request: Original private title')).toBeVisible();
     expect(attempts).toHaveLength(1);
+    await page.reload();
+    await expect(page.getByText('Creation request: Original private title')).toBeVisible();
     await page.getByRole('button', { name: 'Resume creation', exact: true }).click();
     await expect(title).toHaveValue('Original private title');
     expect(attempts).toHaveLength(1);

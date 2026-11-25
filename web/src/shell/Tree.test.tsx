@@ -250,7 +250,7 @@ describe('Sandbox navigation tree', () => {
       });
       expect(screen.queryByRole('treeitem')).not.toBeInTheDocument();
       expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
-      await userEvent.setup().click(screen.getByText('Deletion progress (1)'));
+      await userEvent.setup().click(screen.getByText('Cleaning up 1 sandboxes'));
       await userEvent.setup().click(screen.getByRole('button', { name: 'View status for Atlas' }));
       expect(
         screen.getByText(status === 'retiring' ? 'Deleting' : 'Deletion requested'),
@@ -265,7 +265,7 @@ describe('Sandbox navigation tree', () => {
     const onAction = vi.fn();
     const onViewDeletion = vi.fn();
     renderTree({ items: navigationFixture('retiring'), onAction, onViewDeletion });
-    await user.click(screen.getByText('Deletion progress (1)'));
+    await user.click(screen.getByText('Cleaning up 1 sandboxes'));
     await user.click(screen.getByRole('button', { name: 'Copy identifier for Atlas' }));
     expect(write).toHaveBeenCalledExactlyOnceWith('sbx_1');
     expect(screen.getByRole('status')).toHaveTextContent('Identifier copied.');
@@ -279,7 +279,7 @@ describe('Sandbox navigation tree', () => {
     const onAction = vi.fn();
     renderTree({ items: navigationFixture('retiring'), onNavigate, onAction });
     const user = userEvent.setup();
-    await user.click(screen.getByText('Deletion progress (1)'));
+    await user.click(screen.getByText('Cleaning up 1 sandboxes'));
     await user.click(screen.getByRole('button', { name: 'View status for Atlas' }));
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'sandbox', sandboxId: 'sbx_1' });
     expect(onAction).not.toHaveBeenCalled();

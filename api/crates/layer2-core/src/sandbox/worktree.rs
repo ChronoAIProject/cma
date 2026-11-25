@@ -43,7 +43,13 @@ impl Worktree {
             .strip_prefix("wt-")
             .and_then(|n| n.parse::<u64>().ok());
         if number.is_none_or(|number| number == 0)
-            || self.path != format!("/home/cma/{}/.worktrees/{}", workspace.name, self.name)
+            || self.path
+                != format!(
+                    "{}{}/.worktrees/{}",
+                    super::workspace::SANDBOX_HOME,
+                    workspace.name,
+                    self.name
+                )
             || self.branch != format!("cma/{}", self.name)
             || self.base_commit.trim().is_empty()
             || self.revision == 0

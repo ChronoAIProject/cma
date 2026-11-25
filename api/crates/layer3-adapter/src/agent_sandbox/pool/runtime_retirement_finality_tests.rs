@@ -1,7 +1,7 @@
 use super::super::runtime_tests::{client, request};
 use super::*;
 use crate::{AdapterError, HomeVolumeAttachment, RuntimeHandle};
-use std::time::Duration;
+use std::{sync::atomic::Ordering, time::Duration};
 
 async fn bound(
     native: bool,
@@ -49,6 +49,21 @@ async fn verified_retirement_retries_lost_deletion_without_reconstructing_a_rece
                 .retire_verified(&handle, &request, &home, None)
                 .await
                 .unwrap();
+            if native {
+                {
+                    let mut state = fixture.state.lock().unwrap();
+                    let pvc = state.rows.get_mut(VOLUME).unwrap()["metadata"]
+                        .as_object_mut()
+                        .unwrap();
+                    pvc.remove("labels");
+                    pvc.remove("ownerReferences");
+                }
+                assert!(matches!(
+                    client(&fixture, false).verify_retired(&handle, &home).await,
+                    Err(AdapterError::Unavailable(reason)) if reason == "native retirement PVCs remain present"
+                ));
+                fixture.state.lock().unwrap().rows.remove(VOLUME).unwrap();
+            }
             client(&fixture, false)
                 .verify_retired(&handle, &home)
                 .await
@@ -64,7 +79,7 @@ async fn verified_retirement_retries_lost_deletion_without_reconstructing_a_rece
                 .unwrap();
             let state = fixture.state.lock().unwrap();
             assert!(!state.rows.contains_key(MEMBER));
-            assert!(state.rows.contains_key(VOLUME));
+            assert_eq!(state.rows.contains_key(VOLUME), !native);
             let deletes: Vec<_> = state
                 .calls
                 .iter()
@@ -132,7 +147,7 @@ async fn verified_retirement_refuses_changed_authority_without_provider_writes()
 }
 
 #[tokio::test]
-async fn fresh_finality_waits_for_owned_pods_and_cancellation_never_writes() {
+async fn fresh_finality_waits_for_owned_pods_regardless_of_tracking_label() {
     let (fixture, home, request, handle) = bound(true).await;
     let runtime = client(&fixture, false);
     runtime
@@ -140,33 +155,115 @@ async fn fresh_finality_waits_for_owned_pods_and_cancellation_never_writes() {
         .await
         .unwrap();
     let path = "/api/v1/namespaces/cma-test/pods/retiring-original";
-    fixture.state.lock().unwrap().rows.insert(path.into(), json!({
+    let tracking = super::super::super::pods::TRACKING_LABEL;
+    for labels in [
+        json!({}),
+        json!({tracking: "changed"}),
+        json!({tracking: super::super::super::pods::name_hash("warm-member")}),
+    ] {
+        fixture.state.lock().unwrap().rows.insert(path.into(), json!({
+            "apiVersion":"v1", "kind":"Pod", "metadata":{
+                "name":"retiring-original", "namespace":"cma-test", "uid":"original-pod",
+                "deletionTimestamp":"2026-01-01T00:00:00Z",
+                "labels":labels,
+                "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":"warm-member","uid":"member-uid","controller":true}]
+            }
+        }));
+        fixture.state.lock().unwrap().calls.clear();
+        assert!(tokio::time::timeout(
+            Duration::from_millis(80),
+            runtime.verify_retired(&handle, &home)
+        )
+        .await
+        .is_err());
+        let state = fixture.state.lock().unwrap();
+        assert!(state.calls.iter().any(|(call, _)| call.ends_with("/pods")));
+        assert!(state.calls.iter().all(|(call, _)| call.starts_with("GET ")));
+    }
+    fixture.state.lock().unwrap().rows.remove(path);
+    fixture.state.lock().unwrap().rows.remove(VOLUME).unwrap();
+    runtime.verify_retired(&handle, &home).await.unwrap();
+}
+
+#[tokio::test]
+async fn restarted_verifier_waits_for_original_pod_after_acknowledged_delete() {
+    let (fixture, home, request, handle) = bound(true).await;
+    const PODS: &str = "/api/v1/namespaces/cma-test/pods";
+    let pod_path = format!("{PODS}/retiring-original");
+    let original = fixture.state.lock().unwrap().rows[MEMBER].clone();
+    fixture.state.lock().unwrap().rows.insert(pod_path.clone(), json!({
         "apiVersion":"v1", "kind":"Pod", "metadata":{
             "name":"retiring-original", "namespace":"cma-test", "uid":"original-pod",
             "deletionTimestamp":"2026-01-01T00:00:00Z",
             "labels":{super::super::super::pods::TRACKING_LABEL:super::super::super::pods::name_hash("warm-member")},
             "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":"warm-member","uid":"member-uid","controller":true}]}}));
-    fixture.state.lock().unwrap().calls.clear();
-    assert!(tokio::time::timeout(
-        Duration::from_millis(80),
-        runtime.verify_retired(&handle, &home)
-    )
-    .await
-    .is_err());
-    assert!(fixture
+    let pod_read = format!("GET {PODS}");
+    let acknowledged = fixture.gate(pod_read.clone(), Some(format!("DELETE {MEMBER}")));
+    let deadline = Duration::from_secs(5);
+    {
+        let original_client = client(&fixture, false);
+        let retirement = original_client.retire_verified(&handle, &request, &home, None);
+        tokio::pin!(retirement);
+        // A Pod read after the DELETE shows the client received the acknowledgement.
+        tokio::select! {
+            result = &mut retirement => panic!("retirement settled before Pod observation: {result:?}"),
+            result = tokio::time::timeout(deadline, acknowledged.entered.notified()) => result.unwrap(),
+        }
+    }
+    acknowledged.disconnect.store(true, Ordering::SeqCst);
+    acknowledged.release.notify_one();
+    let before_restart = {
+        let state = fixture.state.lock().unwrap();
+        assert!(!state.rows.contains_key(MEMBER));
+        assert_eq!(state.rows[&pod_path]["metadata"]["uid"], "original-pod");
+        state.calls.len()
+    };
+
+    let successor = client(&fixture, false);
+    let first_read = fixture.gate(pod_read.clone(), None);
+    let repeated_read = fixture.gate(pod_read, None);
+    let finality = successor.verify_retired(&handle, &home);
+    tokio::pin!(finality);
+    for (gate, remove_pod) in [(&first_read, false), (&repeated_read, true)] {
+        tokio::select! {
+            result = &mut finality => panic!("finality settled with the original Pod present: {result:?}"),
+            result = tokio::time::timeout(deadline, gate.entered.notified()) => result.unwrap(),
+        }
+        if remove_pod {
+            let mut state = fixture.state.lock().unwrap();
+            state.rows.remove(&pod_path).unwrap();
+            state.rows.remove(VOLUME).unwrap();
+        }
+        gate.release.notify_one();
+    }
+    tokio::time::timeout(deadline, finality)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut replacement = original;
+    replacement["metadata"]["uid"] = json!("replacement");
+    fixture
         .state
         .lock()
         .unwrap()
-        .calls
+        .rows
+        .insert(MEMBER.into(), replacement.clone());
+    assert!(matches!(
+        successor.verify_retired(&handle, &home).await,
+        Err(AdapterError::Rejected(_))
+    ));
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.rows[MEMBER], replacement);
+    assert!(!state.rows.contains_key(VOLUME));
+    assert!(state.calls[before_restart..]
         .iter()
-        .all(|(c, _)| c.starts_with("GET ")));
-    fixture.state.lock().unwrap().rows.remove(path);
-    runtime.verify_retired(&handle, &home).await.unwrap();
+        .all(|(call, _)| call.starts_with("GET ")));
 }
 
 #[tokio::test]
 async fn finality_rejects_replacements_and_incomplete_observations() {
-    for change in ["runtime", "claim", "pod_page", "runtime_page"] {
+    for change in ["runtime", "claim", "home", "pod_page", "runtime_page"] {
         let (fixture, home, request, handle) = bound(true).await;
         let original = fixture.state.lock().unwrap().rows[MEMBER].clone();
         let origin = home.receipt.native_authority.as_deref().unwrap();
@@ -194,6 +291,9 @@ async fn finality_rejects_replacements_and_incomplete_observations() {
                     let mut replacement = original_claim;
                     replacement["metadata"]["uid"] = json!("replacement");
                     state.rows.insert(claim_path, replacement);
+                }
+                "home" => {
+                    state.rows.get_mut(VOLUME).unwrap()["metadata"]["uid"] = json!("replacement");
                 }
                 "pod_page" | "runtime_page" => {
                     let complete = json!({"apiVersion":"v1","kind":"List","metadata":{"resourceVersion":"20"},"items":[]});
@@ -236,4 +336,157 @@ async fn finality_rejects_replacements_and_incomplete_observations() {
             .iter()
             .all(|(c, _)| c.starts_with("GET ")));
     }
+}
+
+#[tokio::test]
+async fn finality_checks_owned_pods_on_later_pages() {
+    let (fixture, home, request, handle) = bound(true).await;
+    let runtime = client(&fixture, false);
+    runtime
+        .retire_verified(&handle, &request, &home, None)
+        .await
+        .unwrap();
+
+    let pods = "/api/v1/namespaces/cma-test/pods";
+    let pod = json!({
+        "apiVersion":"v1", "kind":"Pod", "metadata":{
+            "name":"survivor", "namespace":"cma-test", "uid":"survivor-uid",
+            "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox",
+                "name":"warm-member","uid":"member-uid","controller":true}]
+        }
+    });
+    let page = json!({
+        "apiVersion":"v1", "kind":"PodList",
+        "metadata":{"resourceVersion":"100"}, "items":[]
+    });
+    let mut first = page.clone();
+    first["metadata"]["continue"] = json!("next");
+    let mut second = page;
+    second["items"] = json!([pod.clone()]);
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.calls.clear();
+        state.rows.remove(VOLUME).unwrap();
+        state.rows.insert(format!("{pods}/survivor"), pod);
+        state
+            .read_replies
+            .extend([(pods.into(), 200, first), (pods.into(), 200, second)]);
+    }
+
+    let second_page = fixture.gate(format!("GET {pods}"), None);
+    let probe = runtime.verify_retired(&handle, &home);
+    tokio::pin!(probe);
+    tokio::select! {
+        result = &mut probe => panic!("finality resolved before the Pod inventory: {result:?}"),
+        result = tokio::time::timeout(Duration::from_secs(5), second_page.entered.notified()) => result.unwrap(),
+    }
+    second_page.release.notify_one();
+    assert!(tokio::time::timeout(Duration::from_millis(200), &mut probe)
+        .await
+        .is_err());
+    {
+        let mut state = fixture.state.lock().unwrap();
+        assert!(state.read_replies.is_empty());
+        assert!(state.calls.iter().all(|(call, _)| call.starts_with("GET ")));
+        state.rows.remove(&format!("{pods}/survivor"));
+    }
+    tokio::time::timeout(Duration::from_secs(5), probe)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn finality_reads_every_pvc_page_and_refuses_a_label_less_owned_survivor() {
+    let (fixture, home, request, handle) = bound(true).await;
+    let runtime = client(&fixture, false);
+    runtime
+        .retire_verified(&handle, &request, &home, None)
+        .await
+        .unwrap();
+    const PVCS: &str = "/api/v1/namespaces/cma-test/persistentvolumeclaims";
+    let pvc = json!({
+        "apiVersion": "v1",
+        "kind": "PersistentVolumeClaim",
+        "metadata": {
+            "name": "extra-volume",
+            "namespace": "cma-test",
+            "uid": "extra-volume-uid",
+            "deletionTimestamp": "2026-01-01T00:00:00Z",
+            "ownerReferences": [{
+                "apiVersion": "agents.x-k8s.io/v1beta1", "kind": "Sandbox",
+                "name": "warm-member", "uid": "member-uid", "controller": true
+            }]
+        }
+    });
+    let mut unrelated = pvc.clone();
+    unrelated["metadata"]["name"] = json!("sibling-volume");
+    unrelated["metadata"]["uid"] = json!("sibling-volume-uid");
+    unrelated["metadata"]["ownerReferences"][0]["uid"] = json!("sibling-member-uid");
+    let last = json!({
+        "apiVersion": "v1", "kind": "PersistentVolumeClaimList",
+        "metadata": {"resourceVersion": "100"}, "items": []
+    });
+    let mut first = last.clone();
+    first["metadata"]["continue"] = json!("next");
+    first["items"] = json!([unrelated]);
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.rows.remove(VOLUME).unwrap();
+        state.calls.clear();
+        state.list_queries.clear();
+    }
+    for (resource_version, items, expected_refusal) in [
+        (
+            "100",
+            json!([pvc]),
+            Some("native retirement PVCs remain present"),
+        ),
+        (
+            "101",
+            json!([]),
+            Some("native cleanup inventory changed between pages"),
+        ),
+        ("100", json!([]), None),
+    ] {
+        let mut second = last.clone();
+        second["metadata"]["resourceVersion"] = json!(resource_version);
+        second["items"] = items;
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .list_replies
+            .extend([(200, first.clone()), (200, second)]);
+        let result = runtime.verify_retired(&handle, &home).await;
+        match expected_refusal {
+            Some(expected) => assert!(matches!(
+                result,
+                Err(AdapterError::Unavailable(reason)) if reason == expected
+            )),
+            None => result.unwrap(),
+        }
+    }
+    let state = fixture.state.lock().unwrap();
+    assert!(state.list_replies.is_empty());
+    assert_eq!(state.list_queries.len(), 6);
+    assert_eq!(
+        state
+            .calls
+            .iter()
+            .filter(|(call, _)| call.strip_prefix("GET ") == Some(PVCS))
+            .count(),
+        6
+    );
+    assert!(state
+        .list_queries
+        .iter()
+        .all(|query| !query.contains("labelSelector")));
+    assert!(state
+        .list_queries
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .all(|query| query.contains("continue=next")));
+    assert!(state.calls.iter().all(|(call, _)| call.starts_with("GET ")));
 }

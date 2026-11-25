@@ -24,6 +24,11 @@ use super::sandbox_mongo::{
 use super::worktrees::{read_worktree, worktree_replacement_fields};
 
 mod contention;
+mod owner_stop;
+pub(super) mod pending_adoption;
+pub(super) mod restart_ready;
+#[cfg(test)]
+pub(crate) use pending_adoption::test_hooks as adoption_probe;
 mod persistence;
 mod rebuild_parents;
 use persistence::{advance_agent, advance_worktree};
@@ -34,6 +39,9 @@ mod publication_history;
 mod publication_log;
 mod publication_transaction;
 pub(in crate::store) mod retry_audit;
+pub(super) use publication_transaction::commit_connection as commit_agent_connection_work;
+use publication_transaction::PublicationGuards;
+mod prepared_open_ready;
 mod segmented;
 mod sign_in;
 mod skill_result;
@@ -41,7 +49,6 @@ mod skill_result;
 pub(crate) mod skill_result_test_support;
 use super::agent_log_segments::transaction_scope::TransactionScope;
 use publication_log::{final_agent_and_logs, insert_logs};
-mod prepared_open_ready;
 #[cfg(test)]
 mod prepared_open_ready_tests;
 
@@ -60,12 +67,8 @@ enum ApplyError {
     Driver(mongodb::error::Error),
     PreparedIneligible,
     StaleProposal,
-}
-
-#[derive(Default)]
-struct PublicationGuards<'a> {
-    rebuild_parents: Option<&'a AgentWorkPublicationParents>,
-    skill_result: Option<&'a layer2_core::sandbox::store::AgentSkillResultGuard>,
+    StagePending(Box<pending_adoption::Source>),
+    PendingReplayed,
 }
 
 impl From<TransactionEventError> for ApplyError {
@@ -139,20 +142,7 @@ async fn apply_publication(
     .await
 }
 
-pub(super) async fn commit_repeated_failure(
-    store: &MongoSandboxStore,
-    retry: &layer2_core::sandbox::store::AgentRepeatedFailure,
-) -> Result<(), SandboxStoreError> {
-    publication_transaction::commit(
-        store,
-        retry.mutation.clone(),
-        None,
-        Some(&retry.marker),
-        None,
-    )
-    .await
-    .map(|_| ())
-}
+pub(super) use publication_transaction::commit_repeated_failure;
 
 async fn apply_publication_observed(
     store: &MongoSandboxStore,
@@ -176,10 +166,35 @@ async fn apply_publication_observed(
         rebuild_parents::fence(store, &current, mutation, parents, &mut scope).await?;
     }
     skill_result::fence(store, &current, mutation, guards.skill_result, &mut scope).await?;
-    let segmented = if super::agent_log_segments::read_format(&current_row)
-        .map_err(ApplyError::Domain)?
-        .is_some()
-    {
+    let format =
+        super::agent_log_segments::read_format(&current_row).map_err(ApplyError::Domain)?;
+    if guards.adoption.is_none() {
+        pending_adoption::select(
+            store,
+            &current_row,
+            &current,
+            mutation,
+            format.is_some(),
+            guards
+                .observed_connection
+                .filter(|_| !guards.adoption_not_selected),
+            &mut scope,
+        )
+        .await?;
+    }
+    let segmented = if let Some(prepared) = guards.adoption {
+        Some(
+            segmented::publish_adopted(
+                store,
+                &current_row,
+                &current,
+                mutation,
+                prepared,
+                &mut scope,
+            )
+            .await?,
+        )
+    } else if format.is_some() {
         Some(segmented::publish(store, &current_row, &current, mutation, &mut scope).await?)
     } else {
         None
@@ -369,6 +384,15 @@ async fn apply_publication_observed(
             .map_err(ApplyError::Domain)?;
     }
 
+    owner_stop::settle(
+        store,
+        &current_row,
+        &current,
+        mutation,
+        guards.rebuild_parents,
+        session,
+    )
+    .await?;
     let sign_in_sandbox = sign_in::apply(store, &current, mutation, session).await?;
     prepared_replay::fence(store, &current, &current_worktree, mutation, session).await?;
     let (final_agent, logs) = final_agent_and_logs(&current, mutation)?;
@@ -429,6 +453,13 @@ async fn apply_publication_observed(
         .await?;
         insert_logs(store, &integrity.documents, session).await?;
     }
+    restart_ready::finish(
+        store,
+        (&current_row, &current, &final_agent),
+        guards.rebuild_parents,
+        session,
+    )
+    .await?;
     if let Some(versioned) = mutation.worktree.as_ref() {
         advance_worktree(store, &current_worktree, &versioned.worktree, session).await?;
     }
@@ -445,6 +476,9 @@ async fn apply_publication_observed(
         ),
         None => None,
     };
+    if let (Some(adoption), Some(event)) = (guards.adoption, &event) {
+        adoption.bind_sandbox_event(store, event, session).await?;
+    }
     Ok(PublicationReceipt {
         segmented,
         agent: final_agent,

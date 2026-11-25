@@ -392,3 +392,39 @@ impl MongoSandboxStore {
         Collections::new(self).activation().await
     }
 }
+
+#[cfg(test)]
+mod isolation_role_tests {
+    // Share mode changes, revocations and link redemption read the activation
+    // record, so an isolated runtime role must grant every execution store.
+    #[test]
+    fn isolated_runtime_role_grants_every_execution_collection() {
+        let role = crate::store::isolation::role("matrix");
+        let granted: Vec<String> = role
+            .get_array("privileges")
+            .unwrap()
+            .iter()
+            .filter_map(|grant| {
+                grant
+                    .as_document()?
+                    .get_document("resource")
+                    .ok()?
+                    .get_str("collection")
+                    .ok()
+                    .map(str::to_owned)
+            })
+            .collect();
+        for collection in [
+            super::GRANTS,
+            super::MEMBERS,
+            super::OPERATIONS,
+            super::EFFECTS,
+        ] {
+            assert!(
+                granted.iter().any(|name| name == collection),
+                "{collection} is missing from the isolated runtime role"
+            );
+            assert!(crate::store::isolation::OPTIONAL_COLLECTIONS.contains(&collection));
+        }
+    }
+}

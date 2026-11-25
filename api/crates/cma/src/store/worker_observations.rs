@@ -8,14 +8,33 @@ use std::time::Duration;
 
 mod parked;
 
-pub(crate) struct Observations(Database, bool);
+pub(crate) struct Observations(
+    Database,
+    bool,
+    Option<(
+        crate::telemetry::task_cohort::Cache,
+        crate::config::task_audit::Selection,
+    )>,
+);
 impl Observations {
     pub(super) fn new(database: Database) -> Self {
-        Self(database, false)
+        Self(database, false, None)
     }
 
     pub(crate) fn with_work_retry_policy(mut self, enabled: bool) -> Self {
         self.1 = enabled;
+        self
+    }
+
+    pub(crate) fn with_task_audit(
+        mut self,
+        cache: crate::telemetry::task_cohort::Cache,
+        selection: Option<crate::config::task_audit::Selection>,
+    ) -> Self {
+        self.2 = selection.map(|selection| {
+            cache.initialize();
+            (cache, selection)
+        });
         self
     }
 
@@ -29,6 +48,14 @@ impl Observations {
         initialize("native_warm_pools", "due");
         tokio::spawn(async move {
             let mut parked = self.1.then(|| parked::ParkedObserver::new(self.0.clone()));
+            let audit = self.2.as_ref().map(|(cache, selection)| {
+                let store = super::sandbox_mongo::MongoSandboxStore::audit_handles(
+                    self.0.client(),
+                    self.0.name(),
+                );
+                (cache, selection, store)
+            });
+            let mut next_audit = tokio::time::Instant::now();
             let mut tick = tokio::time::interval(Duration::from_secs(30));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
@@ -51,6 +78,16 @@ impl Observations {
                             sampled(spec.worker, spec.state, true);
                         }
                         _ => sampled(spec.worker, spec.state, false),
+                    }
+                }
+                if let Some((cache, selection, store)) = &audit {
+                    if tokio::time::Instant::now() >= next_audit {
+                        let result = tokio::select! {
+                            _ = crate::shutdown::signalled(shutdown.clone()) => return,
+                            result = super::task_audit::observe(store, selection) => result
+                        };
+                        cache.update(result.map(|report| report.metrics()));
+                        next_audit = tokio::time::Instant::now() + Duration::from_secs(60);
                     }
                 }
                 if let Some(parked) = parked.as_mut() {

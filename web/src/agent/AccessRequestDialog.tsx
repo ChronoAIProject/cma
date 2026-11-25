@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert } from '../ui/Alert';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
+import { GitHubConnectionDetails } from '../connections/RepositoryConnectionRepair';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { ScopePicker } from './ScopePicker';
@@ -100,6 +101,7 @@ function AccessRequestDialog({
   const active = useRef<AbortController | undefined>(undefined);
   const [connected, setConnected] = useState(false);
   const [preparingConnections, setPreparingConnections] = useState(false);
+  const [showGitHubConnections, setShowGitHubConnections] = useState(false);
   const preflight = useScopeConnections(
     request.agent_id,
     owner,
@@ -226,6 +228,25 @@ function AccessRequestDialog({
         Approving updates service access without restarting this Sandbox or interrupting its Agents.
         If the Sandbox is already paused, the request waits until you resume it.
       </p>
+      {request.services.includes('api-github') ? (
+        <>
+          <p>GitHub connection selection is separate from service approval.</p>
+          {owner && services.includes('api-github') ? (
+            <>
+              <Button
+                size="sm"
+                aria-expanded={showGitHubConnections}
+                onClick={() => setShowGitHubConnections((show) => !show)}
+              >
+                {showGitHubConnections ? 'Hide GitHub connections' : 'Manage GitHub connections'}
+              </Button>
+              {showGitHubConnections ? (
+                <GitHubConnectionDetails owner={owner} target={preflight.target} />
+              ) : null}
+            </>
+          ) : null}
+        </>
+      ) : null}
       {request.status === 'pending' ? (
         <ScopePicker
           value={services}

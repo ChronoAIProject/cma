@@ -1,5 +1,6 @@
 import { DocsLink } from '../services/DocsLink';
-import { CreationRequestHelp, type CreationRequest } from './CreationRequestHelp';
+import { CreationRequestHelp } from './CreationRequestHelp';
+import { creationRefused, readCreationRecovery, writeCreationRecovery } from './creationRecovery';
 import { useEffect, useRef, useState } from 'react';
 import { DocumentError, type DocumentsClient, type DocumentView } from '../api/documents';
 import type { AppRoute } from '../routing/routes';
@@ -12,10 +13,12 @@ import { IconPlusOutline16, IconListPenOutline16 } from '../ui/icons';
 
 export function DocumentRegistry({
   client,
+  viewer,
   canCreate,
   onNavigate,
 }: {
   readonly client: DocumentsClient;
+  readonly viewer: string;
   readonly canCreate: boolean;
   readonly onNavigate: (route: AppRoute) => void;
 }) {
@@ -29,15 +32,13 @@ export function DocumentRegistry({
   const [error, setError] = useState<string>();
   const [reload, setReload] = useState(0);
   const [create, setCreate] = useState(false);
-  const [title, setTitle] = useState('Untitled');
+  const [saved, setSaved] = useState(() => readCreationRecovery(viewer));
+  const [title, setTitle] = useState(saved.recovery?.request.title ?? 'Untitled');
   const [busy, setBusy] = useState(false);
-  const [createError, setCreateError] = useState<{
-    message: string;
-    status?: number;
-    refused: boolean;
-  }>();
-  const [intent, setIntent] = useState<CreationRequest>();
-  const [uncertain, setUncertain] = useState(false);
+  const [createError, setCreateError] = useState<string>();
+  const { recovery, error: recoveryError } = saved;
+  const intent = recovery?.request;
+  const refused = creationRefused(recovery?.status);
   const mutation = useRef<AbortController | undefined>(undefined);
   useEffect(() => () => mutation.current?.abort(), []);
   useEffect(() => {
@@ -88,6 +89,7 @@ export function DocumentRegistry({
     if (
       mutation.current ||
       !canCreate ||
+      recoveryError ||
       !title.trim() ||
       new TextEncoder().encode(title.trim()).length > 240
     )
@@ -97,9 +99,15 @@ export function DocumentRegistry({
       key: crypto.randomUUID(),
       startedAt: new Date().toISOString(),
     };
+    const pending = { request: retained, uncertain: true };
+    const storageError = writeCreationRecovery(viewer, pending);
+    if (storageError) {
+      setSaved({ recovery, error: storageError });
+      return;
+    }
     const request = new AbortController();
     mutation.current = request;
-    setIntent(retained);
+    setSaved({ recovery: pending });
     setBusy(true);
     setCreateError(undefined);
     try {
@@ -108,20 +116,28 @@ export function DocumentRegistry({
         { idempotencyKey: retained.key, signal: request.signal },
       );
       if (!request.signal.aborted) {
-        setIntent(undefined);
-        setUncertain(false);
+        const storageError = writeCreationRecovery(viewer);
+        if (storageError) {
+          setSaved({ recovery: pending, error: storageError });
+          return;
+        }
+        setSaved({});
         onNavigate({ kind: 'document', documentId: document.id });
       }
     } catch (cause) {
       if (!request.signal.aborted) {
         const status = cause instanceof DocumentError ? cause.status : undefined;
-        const refused = status !== undefined && status >= 400 && status < 500 && status !== 408;
-        if (!refused || status === 409) setUncertain(true);
-        setCreateError({
-          message: cause instanceof Error ? cause.message : 'No confirmation was received.',
+        const failed = {
+          request: retained,
+          uncertain: !!recovery?.uncertain || !creationRefused(status) || status === 409,
           status,
-          refused,
+        };
+        const storageError = writeCreationRecovery(viewer, failed);
+        setSaved({
+          recovery: storageError ? pending : failed,
+          error: storageError,
         });
+        setCreateError(cause instanceof Error ? cause.message : 'No confirmation was received.');
       }
     } finally {
       if (!request.signal.aborted) setBusy(false);
@@ -136,18 +152,17 @@ export function DocumentRegistry({
           <p>Your ideas, brought together.</p>
           <DocsLink view="find-your-outputs">Help finding your outputs</DocsLink>
         </div>
-        {canCreate || intent ? (
+        {(canCreate && !recoveryError) || intent ? (
           <Button variant="primary" icon={<IconPlusOutline16 />} onClick={() => setCreate(true)}>
             {intent ? 'Resume creation' : 'New document'}
           </Button>
         ) : null}
       </header>
+      {recoveryError && !create ? <Alert tone="error">{recoveryError}</Alert> : null}
       {intent && !create ? (
         <Alert tone="warning" title={`Creation request: ${intent.title}`}>
-          {createError?.refused
-            ? 'The last attempt was refused.'
-            : 'Creation has not been confirmed.'}{' '}
-          Choose Resume creation to return to this request.
+          {refused ? 'The last attempt was refused.' : 'Creation has not been confirmed.'} Choose
+          Resume creation to return to this request.
         </Alert>
       ) : null}
       <div className="documents-page__filters">
@@ -180,7 +195,7 @@ export function DocumentRegistry({
           }}
         />
       </div>
-      {canCreate && !intent ? (
+      {canCreate && !intent && !recoveryError ? (
         <section className="documents-page__create" aria-label="Make something new">
           <p>Make something new</p>
           <button type="button" className="document-template" onClick={() => setCreate(true)}>
@@ -275,6 +290,7 @@ export function DocumentRegistry({
               disabled={
                 busy ||
                 !canCreate ||
+                !!recoveryError ||
                 !title.trim() ||
                 new TextEncoder().encode(title.trim()).length > 240
               }
@@ -297,51 +313,48 @@ export function DocumentRegistry({
             />
           </label>
           {intent ? <p id="creation-title-help">The title stays with this request.</p> : null}
+          {recoveryError ? <Alert tone="error">{recoveryError}</Alert> : null}
           {busy ? (
             <Alert tone="info">Sending this creation request. Waiting for confirmation.</Alert>
           ) : null}
           {new TextEncoder().encode(title.trim()).length > 240 ? (
             <Alert tone="warning">Keep the title within 240 bytes.</Alert>
           ) : null}
-          {createError && intent ? (
+          {intent && !busy ? (
             <>
               <Alert
                 tone="error"
-                title={createError.refused ? 'Creation request refused' : 'Creation not confirmed'}
+                title={refused ? 'Creation request refused' : 'Creation not confirmed'}
               >
-                <p>{createError.message}</p>
-                {createError.refused ? (
+                {createError ? <p>{createError}</p> : null}
+                {refused ? (
                   <p>
-                    This attempt was refused (HTTP {createError.status}). Retry uses the same
-                    request.
+                    This attempt was refused (HTTP {recovery?.status}). Retry uses the same request.
                   </p>
                 ) : (
                   <p>Creation has not been confirmed. Retry uses the same request.</p>
                 )}
-                {createError.refused && uncertain ? (
+                {refused && recovery?.uncertain ? (
                   <p>The original creation is still unconfirmed.</p>
                 ) : null}
               </Alert>
-              <p>
-                You can close this dialog and resume from Artifacts. Keep Artifacts open until
-                creation is resolved.
-              </p>
-              {createError.refused && !uncertain ? (
+              <p>You can return to Artifacts in this browser tab to resume this request.</p>
+              {refused && !recovery?.uncertain && !recoveryError ? (
                 <Button
                   onClick={() => {
-                    setIntent(undefined);
+                    const storageError = writeCreationRecovery(viewer);
+                    if (storageError) {
+                      setSaved({ recovery, error: storageError });
+                      return;
+                    }
+                    setSaved({});
                     setCreateError(undefined);
-                    setUncertain(false);
                   }}
                 >
                   Edit as a new request
                 </Button>
               ) : null}
-              <CreationRequestHelp
-                request={intent}
-                status={createError.status}
-                refused={createError.refused}
-              />
+              <CreationRequestHelp request={intent} status={recovery?.status} refused={refused} />
             </>
           ) : null}
         </div>

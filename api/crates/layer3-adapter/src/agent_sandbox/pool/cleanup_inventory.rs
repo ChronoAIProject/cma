@@ -5,12 +5,76 @@ use kube::{
     Api, ResourceExt,
 };
 
+use crate::HomeVolumeAttachment;
+
 use super::{
     api_error, rejected, unavailable, AgentSandboxPools, NativePoolClaim, NativePoolCleanup,
     NativePoolMember, Result, API_VERSION,
 };
 
 impl AgentSandboxPools {
+    pub(in crate::agent_sandbox) async fn prove_member_pods_absent(&self, uid: &str) -> Result<()> {
+        self.member_pod_absence_version(uid)
+            .await?
+            .map(|_| ())
+            .ok_or_else(|| unavailable("native member Pods remain present"))
+    }
+
+    /// Read a complete namespace snapshot before checking the immutable owner UID.
+    /// Tracking labels can change without updating the owning member.
+    pub(in crate::agent_sandbox) async fn member_pod_absence_version(
+        &self,
+        uid: &str,
+    ) -> Result<Option<String>> {
+        let (pods, version) = complete_with_version(&self.pods).await?;
+        let mut present = false;
+        for pod in pods {
+            if pod.namespace().as_deref() != Some(&self.config.namespace) {
+                return Err(rejected("native Pod is outside its namespace"));
+            }
+            present |= pod
+                .metadata
+                .owner_references
+                .iter()
+                .flatten()
+                .any(|owner| owner.uid == uid);
+        }
+        Ok((!present).then_some(version))
+    }
+
+    pub(in crate::agent_sandbox) async fn prove_retirement_volumes_absent(
+        &self,
+        member_uid: &str,
+        home: &HomeVolumeAttachment,
+    ) -> Result<()> {
+        let mut present = false;
+        for volume in complete(&self.volumes).await? {
+            if volume.namespace().as_deref() != Some(&self.config.namespace) {
+                return Err(rejected("retirement PVC is outside its namespace"));
+            }
+            let original_home =
+                volume.metadata.uid.as_deref() == Some(home.receipt.storage_generation.as_str());
+            if volume.metadata.name.as_deref() == Some(home.receipt.storage_reference.as_str())
+                && !original_home
+            {
+                return Err(rejected("retirement home UID changed"));
+            }
+            // A native VCT still belongs to this retirement if its owner
+            // reference was removed. Detached legacy homes release later.
+            present |= (original_home && home.request.policy.is_native_vct())
+                || volume
+                    .metadata
+                    .owner_references
+                    .iter()
+                    .flatten()
+                    .any(|owner| owner.uid == member_uid);
+        }
+        if present {
+            return Err(unavailable("native retirement PVCs remain present"));
+        }
+        Ok(())
+    }
+
     pub(super) fn cleanup_member(
         &self,
         member: &DynamicObject,
@@ -164,6 +228,13 @@ pub(super) async fn complete<K>(api: &Api<K>) -> Result<Vec<K>>
 where
     K: Clone + std::fmt::Debug + serde::de::DeserializeOwned + kube::Resource,
 {
+    complete_with_version(api).await.map(|(objects, _)| objects)
+}
+
+async fn complete_with_version<K>(api: &Api<K>) -> Result<(Vec<K>, String)>
+where
+    K: Clone + std::fmt::Debug + serde::de::DeserializeOwned + kube::Resource,
+{
     let mut cursor = PageCursor::default();
     let mut objects = Vec::new();
     loop {
@@ -171,7 +242,10 @@ where
         let complete = cursor.accept(&page)?;
         objects.extend(page.items);
         if complete {
-            return Ok(objects);
+            let version = cursor
+                .version
+                .ok_or_else(|| unavailable("native cleanup inventory has no version"))?;
+            return Ok((objects, version));
         }
     }
 }
