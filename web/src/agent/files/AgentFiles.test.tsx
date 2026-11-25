@@ -366,7 +366,7 @@ it.each([
     await userEvent.click(screen.getByRole('button', { name: 'New file' }));
     const input = screen.getByRole('textbox', { name: 'File name' });
     fireEvent.change(input, { target: { value: invalid } });
-    const submit = screen.getByRole('button', { name: 'Create', exact: true });
+    const submit = screen.getByRole('button', { name: /^Create$/ });
     expect(submit).toBeDisabled();
     expect(input).toHaveAccessibleDescription(
       'File and folder names must be at most 255 UTF-8 bytes.',
