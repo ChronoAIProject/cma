@@ -41,28 +41,17 @@ impl AgentSandboxBackend {
             startup_breaker: Default::default(),
         }
     }
-
-    async fn bind(&self, handle: &RuntimeHandle, request: &ProviderSandboxRequest) -> Result<()> {
-        if let Some(until) = request.funded_until {
-            self.client
-                .set_runtime_deadline(handle, request, until)
-                .await?;
-        }
-        let mut timing = crate::agent_sandbox::provision_timing::ProvisionTiming::new();
-        let pod = self.client.wait_ready_for_create(handle).await?;
-        timing.completed("wait_ready");
-        if let Some(until) = request.funded_until {
-            // Readiness can consume the remaining window; never bind expired work.
-            crate::agent_sandbox::funding::deadline(until)?;
-        }
-        let result = self.assign_and_bind(handle, &pod, request).await;
-        timing.completed("assign_and_bind");
-        result
-    }
 }
 
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
+    fn stale_turn_producer(
+        &self,
+        _: &RuntimeHandle,
+    ) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
+        self.transport.stale_turn_producer()
+    }
+
     fn startup_binding_headroom(&self, _handles: &[RuntimeHandle]) -> Option<usize> {
         Some(binding::MAX_ASSIGNMENTS.saturating_sub(self.assignments.lock().unwrap().len()))
     }

@@ -4,9 +4,17 @@ use axum::Router;
 mod openapi;
 
 impl ControlPlaneComposition {
-    pub(crate) async fn build(config: &Config) -> Result<Self, String> {
+    pub(crate) async fn build(
+        config: &Config,
+        #[cfg(feature = "qualification-hooks")] qualification: Option<cma_qualification::Registry>,
+    ) -> Result<Self, String> {
         openapi::warm(layer1_public::rest::openapi_cache::warm).await?;
-        Self::assemble(config).await
+        Self::assemble(
+            config,
+            #[cfg(feature = "qualification-hooks")]
+            qualification,
+        )
+        .await
     }
 }
 

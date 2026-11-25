@@ -112,6 +112,25 @@ impl StaleTurnStore {
         now: DateTime,
         budget: &mut ProofBudget,
     ) -> Result<Observation, ScanError> {
+        self.observe_checkpoint(candidate, now, budget, false).await
+    }
+
+    pub(crate) async fn observe_for_terminal(
+        &self,
+        candidate: &Candidate,
+        now: DateTime,
+        budget: &mut ProofBudget,
+    ) -> Result<Observation, ScanError> {
+        self.observe_checkpoint(candidate, now, budget, true).await
+    }
+
+    async fn observe_checkpoint(
+        &self,
+        candidate: &Candidate,
+        now: DateTime,
+        budget: &mut ProofBudget,
+        read_existing_seal: bool,
+    ) -> Result<Observation, ScanError> {
         let mut snapshot = self.store.client.start_session().snapshot(true).await?;
         let Some(command) = self
             .store
@@ -226,7 +245,10 @@ impl StaleTurnStore {
 
         let checkpoint = checkpoint::read(&row)?;
         if let Some(checkpoint) = &checkpoint {
-            if !checkpoint.matches(&agent) || !checkpoint.assembly.is_empty() {
+            if !checkpoint.matches(&agent)
+                || (!checkpoint.assembly.is_empty()
+                    && (!read_existing_seal || checkpoint.output.is_none()))
+            {
                 return Ok(Observation::Hold("output_uncommitted"));
             }
         }

@@ -19,7 +19,7 @@ pub(in crate::store) enum ScanCaller {
 }
 
 // Only meaningful caller/step pairs exist; non-worker scans use not_applicable.
-pub(super) const CALLERS: [ScanCaller; 43] = [
+pub(super) const CALLERS: [ScanCaller; 47] = [
     ScanCaller::WorkerPublication(AgentWorkStep::InstallSkill),
     ScanCaller::WorkerPublication(AgentWorkStep::WaitForWorkspace),
     ScanCaller::WorkerPublication(AgentWorkStep::AddWorktree),
@@ -63,11 +63,19 @@ pub(super) const CALLERS: [ScanCaller; 43] = [
     ScanCaller::UnknownCommitProof,
     ScanCaller::Other,
     ScanCaller::CommandReconciliation,
+    ScanCaller::WorkerPublication(AgentWorkStep::RestartConversation),
+    ScanCaller::CapacitySettlement(AgentWorkStep::RestartConversation),
+    ScanCaller::WorkerPublication(AgentWorkStep::RestartTeardown),
+    ScanCaller::CapacitySettlement(AgentWorkStep::RestartTeardown),
 ];
 
 impl ScanCaller {
     pub(super) fn index(self) -> usize {
         match self {
+            Self::WorkerPublication(AgentWorkStep::RestartConversation) => 43,
+            Self::CapacitySettlement(AgentWorkStep::RestartConversation) => 44,
+            Self::WorkerPublication(AgentWorkStep::RestartTeardown) => 45,
+            Self::CapacitySettlement(AgentWorkStep::RestartTeardown) => 46,
             Self::WorkerPublication(step) => step_index(step),
             Self::CapacitySettlement(step) => 16 + step_index(step),
             Self::RuntimeReconciliation => 32,
@@ -126,5 +134,7 @@ fn step_index(step: AgentWorkStep) -> usize {
         AgentWorkStep::RemoveWorktree => 13,
         AgentWorkStep::PublishDeleted => 14,
         AgentWorkStep::None => 15,
+        AgentWorkStep::RestartConversation => 16,
+        AgentWorkStep::RestartTeardown => 17,
     }
 }

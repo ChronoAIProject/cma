@@ -72,8 +72,8 @@ impl fixture::Fixture {
             store.clone(),
             access.clone(),
         );
-        let reads =
-            AgentReadService::new(store.clone(), Arc::new(NoExternal)).with_resource_access(access);
+        let reads = AgentReadService::new(store.clone(), Arc::new(NoExternal))
+            .with_resource_access(access.clone());
         let agents = AgentService::new(
             store.clone(),
             Arc::new(layer2_core::profiles::InMemoryProfileStore::default()),
@@ -91,6 +91,7 @@ impl fixture::Fixture {
         .merge(layer1_public::rest::agent_provenance_inventory_router(
             inventory,
         ))
+        .merge(layer1_public::rest::resource_access_router(access))
         .layer(axum::middleware::from_fn_with_state(
             self.activity.clone(),
             crate::activity::record,

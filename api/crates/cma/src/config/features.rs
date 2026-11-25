@@ -35,6 +35,7 @@ pub(crate) struct FeatureFlags {
     pub am_startup_health_serving: bool,
     pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
+    pub usage_snapshot_cursors_enabled: bool,
     pub usage_strict_cursors_enabled: bool,
     pub visitor_two_sandbox_defaults: bool,
     pub admin_runtime_inventory: bool,
@@ -129,6 +130,7 @@ pub(crate) struct FeatureFlags {
     pub reopen_output_refusal_enabled: bool,
     pub cleanup_continuation_enabled: bool,
     pub owner_stop_settlement_enabled: bool,
+    pub owner_agent_restart_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
     pub context_diagnostics: bool,
@@ -140,6 +142,7 @@ pub(crate) struct FeatureFlags {
     pub empty_discovery: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
     pub sandbox_binding_hold_metrics: bool,
+    pub startup_native_home_hold_enabled: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -157,6 +160,7 @@ impl FeatureFlags {
             )?,
             visitor_launch_admission: flag(lookup, "CHRONO_VISITOR_LAUNCH_ADMISSION_ENABLED")?,
             usage_signed_cursors_enabled: flag(lookup, "CHRONO_USAGE_SIGNED_CURSORS_ENABLED")?,
+            usage_snapshot_cursors_enabled: flag(lookup, "CHRONO_USAGE_SNAPSHOT_CURSORS_ENABLED")?,
             usage_strict_cursors_enabled: flag(lookup, "CHRONO_USAGE_STRICT_CURSORS_ENABLED")?,
             visitor_two_sandbox_defaults: flag(
                 lookup,
@@ -271,6 +275,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED",
             )?,
+            owner_agent_restart_enabled: flag(lookup, "CHRONO_OWNER_AGENT_RESTART_ENABLED")?,
             owner_stop_settlement_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_OWNER_STOP_SETTLEMENT_ENABLED",
@@ -297,6 +302,10 @@ impl FeatureFlags {
             sandbox_reconciliation_reserved_lane: flag(
                 lookup,
                 "CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED",
+            )?,
+            startup_native_home_hold_enabled: flag(
+                lookup,
+                "CHRONO_STARTUP_NATIVE_HOME_HOLD_ENABLED",
             )?,
             sandbox_binding_hold_metrics: flag(
                 lookup,
@@ -354,12 +363,7 @@ impl FeatureFlags {
             silent_sign_in: tail.silent_sign_in,
             document_revocation_reserve: tail.document_revocation_reserve,
         };
-        if flags.usage_strict_cursors_enabled && !flags.usage_signed_cursors_enabled {
-            return Err(
-                "CHRONO_USAGE_STRICT_CURSORS_ENABLED requires CHRONO_USAGE_SIGNED_CURSORS_ENABLED"
-                    .into(),
-            );
-        }
+        usage_cursors::validate(&flags)?;
         if flags.agent_shared_observation && !flags.agui_bounded_replay {
             return Err("CHRONO_AGENT_SHARED_OBSERVATION_ENABLED requires CHRONO_AGUI_BOUNDED_REPLAY_ENABLED".into());
         }
@@ -448,6 +452,7 @@ mod tests;
 mod transcript_tests;
 #[cfg(test)]
 mod usage_cursor_tests;
+mod usage_cursors;
 #[cfg(test)]
 mod work_retry_tests;
 

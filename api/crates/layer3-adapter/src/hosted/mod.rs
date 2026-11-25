@@ -63,8 +63,6 @@ pub use adapter::HostedAdapter;
 pub use agent_sandbox_backend::{
     AgentSandboxBackend, NativeStatusInspection, RuntimeBackends, RuntimeRoutingStore,
 };
-#[doc(hidden)]
-pub use backend::RuntimeRecoveryCommand;
 pub use backend::{HostedAgentOpenSettings, HostedAgentRuntime, HostedBackend};
 pub use channel_tools::{HostedChannelToolBinding, HostedChannelToolSource};
 pub use checkpoint_store::{
@@ -143,4 +141,15 @@ pub fn observed_permission_id(
     Some(acp_inbound::permission_id(
         &acp_inbound::permission_locator(request.session_id.0.as_ref(), call, &request.options),
     ))
+}
+
+/// Trusted provider-rendered maintenance command; never user-supplied exec.
+/// The lifecycle adapter supplies authority for inspection or admitted recovery.
+/// Configuration belongs on stdin, not in Kubernetes command arguments.
+/// Fields are crate-private to keep command construction inside the adapter.
+#[doc(hidden)]
+pub struct RuntimeRecoveryCommand {
+    pub(crate) program: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) input: Vec<u8>,
 }

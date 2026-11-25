@@ -70,18 +70,25 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     let failures = 0;
     let last: AuthState = { status: 'checking' };
     let pendingNavigation = false;
+    let pendingRefresh = false;
     let leaving: ReturnType<typeof setTimeout> | undefined;
 
     const refresh = (mayNavigate = false) => {
-      if (!live || inFlight || leaving !== undefined) return;
+      if (!live || leaving !== undefined) return;
+      if (inFlight) {
+        pendingRefresh = true;
+        return;
+      }
       clearTimeout(timer);
       inFlight = true;
       allowSessionReads(false);
       const version = ++currentRead.current;
+      let canFollowUp = false;
       void provider
         .current()
         .then((next) => {
           if (live && version === currentRead.current) {
+            canFollowUp = next.status === 'authenticated' || next.status === 'anonymous';
             if (next.status === 'authenticated') {
               retainAgentDraftOwner(next.user.id);
               retainPreparationDraftOwner(next.user.id);
@@ -141,10 +148,11 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         })
         .finally(() => {
           inFlight = false;
-          if (live && pendingNavigation) {
-            pendingNavigation = false;
-            refresh(true);
-          }
+          const followUp = pendingNavigation || (pendingRefresh && canFollowUp);
+          const navigate = pendingNavigation;
+          pendingNavigation = false;
+          pendingRefresh = false;
+          if (live && version === currentRead.current && followUp) refresh(navigate);
         });
     };
     const backgroundRefresh = () => refresh();

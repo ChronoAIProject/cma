@@ -166,6 +166,8 @@ export class LocalStartup {
         );
       }
       switch (url.pathname.replace(this.agent.id, 'agt_contract')) {
+        case '/api/v1/build-info':
+          return reply({ version: '0.1.0', source_sha: 'b'.repeat(40) });
         case '/api/v1/ui/image-manager-retirement':
           return reply(false);
         case '/api/v1/agents/agt_contract/preferences':
@@ -175,7 +177,6 @@ export class LocalStartup {
             prompt_pending: false,
             prompt_supported: false,
           });
-        case '/api/v1/build-info':
         case '/api/v2/ui/task-experience':
         case '/api/v1/agents/agt_contract/suggestions':
         case '/api/v1/agents/agt_contract/reply-preview':

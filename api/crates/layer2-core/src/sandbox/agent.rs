@@ -423,6 +423,49 @@ impl Agent {
         Ok(())
     }
 
+    /// Select the process named by the admitted Open, including an uncertain Open
+    /// that still needs cleanup. The initial incarnation keeps its legacy ID.
+    pub fn close_process_request(
+        &self,
+    ) -> Result<layer3_adapter::AgentCloseRequest, SandboxModelError> {
+        use layer3_adapter::{AgentCloseRequest, AgentProcessAction, AgentSlot};
+
+        let incarnation = self
+            .open_process_incarnation()?
+            .ok_or_else(|| SandboxModelError::invalid_value("agent.work.open_process"))?;
+        Ok(AgentCloseRequest::new(
+            AgentProcessAction::Close.operation_id(self.id.as_str(), incarnation),
+            AgentSlot::new(self.id.as_str()),
+        ))
+    }
+
+    pub(super) fn open_process_incarnation(&self) -> Result<Option<u64>, SandboxModelError> {
+        let mut opens = self
+            .work
+            .receipts
+            .iter()
+            .filter(|receipt| receipt.step == AgentWorkStep::OpenConversation)
+            .map(|receipt| receipt.operation_id.as_str())
+            .chain(
+                self.work
+                    .cleanup_debt
+                    .iter()
+                    .filter(|debt| debt.step == AgentWorkStep::OpenConversation)
+                    .map(|debt| debt.operation_id.as_str()),
+            );
+        let invalid = || SandboxModelError::invalid_value("agent.work.open_process");
+        let Some(operation) = opens.next() else {
+            return Ok(None);
+        };
+        if opens.next().is_some() {
+            return Err(invalid());
+        }
+        layer3_adapter::AgentProcessAction::Open
+            .incarnation(self.id.as_str(), operation)
+            .map(Some)
+            .ok_or_else(invalid)
+    }
+
     pub fn operation_id(&self, step: super::AgentWorkStep) -> String {
         format!("agent:{}:{}:v1", self.id, step.operation_name())
     }

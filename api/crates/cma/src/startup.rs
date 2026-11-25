@@ -58,19 +58,32 @@ async fn serve_inner(
         return agent_manager::relay::prestop(&config).await;
     }
     let recorder = telemetry::install()?;
-    let _metrics_server = telemetry::server::Server::start(config.metrics_bind, recorder).await?;
+    let task_cohorts = telemetry::task_cohort::Cache::default();
+    let _metrics_server =
+        telemetry::server::Server::start(config.metrics_bind, recorder, task_cohorts.clone())
+            .await?;
+    #[cfg(feature = "qualification-hooks")]
+    let qualification =
+        qualification.map(|options| (options, cma_qualification::Registry::default()));
     let mut composition = observe(
         "composition",
-        ControlPlaneComposition::build(&config),
+        ControlPlaneComposition::build(
+            &config,
+            #[cfg(feature = "qualification-hooks")]
+            qualification.as_ref().map(|(_, registry)| registry.clone()),
+        ),
         |_| None,
     )
     .await?;
+    composition.worker_observations = composition
+        .worker_observations
+        .with_task_audit(task_cohorts, config.task_audit.clone());
     #[cfg(feature = "qualification-hooks")]
-    let _qualification_server = if let Some(options) = qualification {
+    let _qualification_server = if let Some((options, registry)) = qualification {
         Some(
             options
                 .bind(
-                    cma_qualification::Registry::default(),
+                    registry,
                     composition
                         .agent_manager
                         .as_ref()

@@ -16,6 +16,8 @@ pub(super) struct Control {
     pub cancelled: AtomicUsize,
     pub cleanup: AtomicUsize,
     pub homes: AtomicUsize,
+    pub refuse_binding_inventory: std::sync::atomic::AtomicBool,
+    pub inventory_calls: AtomicUsize,
     pub gates: Vec<Semaphore>,
     pub count: usize,
     pub fail: Option<usize>,
@@ -41,6 +43,8 @@ impl Control {
             cancelled: AtomicUsize::new(0),
             cleanup: AtomicUsize::new(0),
             homes: AtomicUsize::new(0),
+            refuse_binding_inventory: std::sync::atomic::AtomicBool::new(false),
+            inventory_calls: AtomicUsize::new(0),
             gates: (0..count).map(|_| Semaphore::new(0)).collect(),
             count,
             fail,
@@ -91,7 +95,17 @@ impl HostedBackend for Backend {
         self.inner.provision(request).await
     }
     async fn inventory(&self) -> layer3_adapter::Result<Vec<RuntimeObservation>> {
-        self.inner.inventory().await
+        let call = self.control.inventory_calls.fetch_add(1, Ordering::SeqCst);
+        if !self.control.refuse_binding_inventory.load(Ordering::SeqCst) {
+            return self.inner.inventory().await;
+        }
+        if call == 0 {
+            // Omit the binding from startup's initial snapshot so it refreshes.
+            return Ok(Vec::new());
+        }
+        Err(layer3_adapter::AdapterError::Rejected(
+            "native home identity changed or disappeared".into(),
+        ))
     }
     async fn adopt(
         &self,

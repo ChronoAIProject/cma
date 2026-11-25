@@ -39,6 +39,7 @@ import { usePreparedConfiguration } from './preparedConfiguration';
 import { messageSubmission } from './messageSubmission';
 import { useFirstTextSend } from './useFirstTextSend';
 import { composerInputAvailability } from './composerPresentation';
+import { turnRetryAvailable } from './turnRetryAvailability';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -319,6 +320,16 @@ export function ActiveAgentSurface({
             approvalBusy={approvalBusy}
             approvalReadOnly={readOnly}
             onApproval={(id, decision) => void controller.approve(id, decision)}
+            onReviewRetry={
+              turnRetryAvailable(
+                controller,
+                !readOnly && verified !== undefined,
+                draft,
+                actionsBusy,
+              )
+                ? editing.restore
+                : undefined
+            }
           >
             <AgentCommandNotices
               key={JSON.stringify([agentId, viewerId])}
@@ -330,7 +341,7 @@ export function ActiveAgentSurface({
               detail={detail}
               events={state.sandboxEvents}
               observation={observed}
-              running={running}
+              running={running && state.activityStatus !== 'waiting_approval'}
               historyIncomplete={historyIncomplete}
             />
             {suggestions && !readOnly && verified && !historyIncomplete ? (
@@ -372,6 +383,7 @@ export function ActiveAgentSurface({
             user={user}
           />
           <Composer
+            onRestart={readOnly || !detail.restartAvailable ? undefined : controller.restart}
             editorRef={editing.editorRef}
             suggestionScope={
               !readOnly && verified && !historyIncomplete ? suggestions?.id : undefined

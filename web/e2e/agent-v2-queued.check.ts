@@ -82,7 +82,8 @@ for (const outcome of ['delivered', 'cancelled'] as const) {
         fixture.append({ type: 'message', role: 'assistant', content: 'The build finished.' });
         await expect(page.getByText('The build finished.', { exact: true })).toBeVisible();
       }
-      await expect(recover).toHaveCount(0);
+      // A read before confirmation can defer the next command read by ten seconds.
+      await expect(recover).toHaveCount(0, { timeout: outcome === 'cancelled' ? 15_000 : 5_000 });
       await expect(row).toHaveCount(0);
       await expect(composer).toHaveValue('Keep the draft');
       await expect(page.getByRole('button', { name: 'Steering mode: Interrupt' })).toBeVisible();

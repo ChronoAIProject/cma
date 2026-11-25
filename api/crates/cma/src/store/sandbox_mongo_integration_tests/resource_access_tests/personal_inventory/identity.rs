@@ -16,6 +16,7 @@ pub(super) struct Identity {
     base: String,
     server: tokio::task::JoinHandle<()>,
     store: Arc<crate::store::MongoAuthStore>,
+    choices: Arc<Mutex<Option<Vec<serde_json::Value>>>>,
 }
 impl Drop for Identity {
     fn drop(&mut self) {
@@ -27,13 +28,21 @@ impl Identity {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let metadata = json!({"authorization_endpoint":format!("{base}/authorize"),"token_endpoint":format!("{base}/token"),"userinfo_endpoint":format!("{base}/userinfo"),"introspection_endpoint":format!("{base}/introspect")});
+        let choices = Arc::new(Mutex::new(None::<Vec<serde_json::Value>>));
+        let listed_choices = choices.clone();
+        let membership_choices = choices.clone();
         let app = Router::new()
-            .route("/api/v1/orgs/{id}/authorization", get(|axum::extract::Path(id): axum::extract::Path<String>| async move {
-                if id == "owner" || id == "org" {
-                    Ok(Json(json!({"id": id, "your_role":"viewer"})))
-                } else {
-                    Err(axum::http::StatusCode::FORBIDDEN)
-                }
+            .route("/api/v1/orgs", get(move || async move {
+                Json(json!({"orgs": listed_choices.lock().unwrap().as_deref().unwrap_or_default()}))
+            }))
+            .route("/api/v1/orgs/{id}/authorization", get(move |axum::extract::Path(id): axum::extract::Path<String>| async move {
+                let choices = membership_choices.lock().unwrap();
+                let membership = match choices.as_ref() {
+                    Some(choices) => choices.iter().find(|choice| choice["id"] == id).cloned(),
+                    None if id == "owner" || id == "org" => Some(json!({"id": id, "your_role":"viewer"})),
+                    None => None,
+                };
+                membership.map(Json).ok_or(axum::http::StatusCode::FORBIDDEN)
             }))
             .route(
                 "/.well-known/openid-configuration",
@@ -68,6 +77,7 @@ impl Identity {
             base,
             server,
             store,
+            choices,
         };
         identity.add_reader(0).await;
         identity
@@ -107,6 +117,9 @@ impl Identity {
             self.store.clone(),
         )
         .with_browser_session_join(joined)
+    }
+    pub(super) fn set_organization_choices(&self, choices: Vec<serde_json::Value>) {
+        *self.choices.lock().unwrap() = Some(choices);
     }
     pub async fn revoke(&self, reader: usize) {
         self.store

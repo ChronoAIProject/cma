@@ -44,7 +44,10 @@ use layer2_core::{
 pub(crate) use state::ControlPlaneComposition;
 use std::sync::Arc;
 impl ControlPlaneComposition {
-    async fn assemble(config: &Config) -> Result<Self, String> {
+    async fn assemble(
+        config: &Config,
+        #[cfg(feature = "qualification-hooks")] qualification: Option<cma_qualification::Registry>,
+    ) -> Result<Self, String> {
         let stores = stores::connect(config).await?;
         let creation_outcomes = creation_outcomes::open(config, &stores).await?;
         let (deletions, standing) = account_deletion::compose(config, &stores).await?;
@@ -132,12 +135,12 @@ impl ControlPlaneComposition {
         .with_response_logs(stores.sandbox_model.response_log_reader())
         .with_external_approval_review_origin(auth.approval_review_origin())
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
+        let projections = agent_manager::owner_restart(config, &stores, &adapter, projections);
+        #[cfg(feature = "qualification-hooks")]
+        let projections = projections.with_qualification(qualification);
         let (projections, observations) =
             observation::prepare(config, &stores, &agent_manager, projections).await?;
-        let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
-            config.image_manager_base_url.clone(),
-            config.features.image_manager_retirement,
-        )?;
+        let image_resolver = runtime::image_manager_resolver(config)?;
         let inline_lifecycle = crate::agent_lifecycle::InlineAgentLifecycle::new(
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),
@@ -201,12 +204,7 @@ impl ControlPlaneComposition {
         .with_admission_control(stores::admission_control(&stores, config));
         let admin = runtime.attach_admin(admin, &stores);
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
-        let profiles = ProfilesState::new(
-            stores.sandbox_profiles.clone(),
-            Arc::clone(&operations),
-            Arc::clone(&settings),
-            profile_policy,
-        );
+        let profiles = profiles::route_state(&stores, &operations, &settings, profile_policy);
         let hierarchy = HierarchyState::new(
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),

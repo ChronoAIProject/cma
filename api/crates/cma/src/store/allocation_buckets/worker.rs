@@ -196,14 +196,14 @@ impl ReportingStore {
             if let Some(cached) = cached {
                 let bucket = DayBucket::read(&cached)?;
                 if bucket.validate_source(state)?
-                    && bucket.total.range.to >= range.to
+                    && bucket.total().range.to >= range.to
                     && bucket.boundary_prepared(state)
                 {
                     result.reused += 1;
                     continue;
                 }
-                if bucket.revision > state.revision
-                    || bucket.last_observed_at > state.last_observed_at
+                if bucket.revision() > state.revision
+                    || bucket.last_observed_at() > state.last_observed_at
                 {
                     return Err(MetricsError::Unavailable);
                 }

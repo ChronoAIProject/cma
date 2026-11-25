@@ -198,17 +198,43 @@ export function useAgentDraft(
       agentId: agentId ?? '',
       message,
       bind: (key, storage) => {
+        const current = active.current;
+        if (!agentId || (current && current.scope.viewerId !== viewerId)) return 'superseded';
+        const mounted = current?.scope.agentId === agentId;
+        const entry = mounted ? current.entry : current?.cache.get(agentId);
+        if ((mounted && editing.current) || (entry && entry.value.revision !== snapshot.revision))
+          return 'superseded';
+        const updateEntry = (update: (value: Entry) => Entry) => {
+          if (!current) return;
+          setStored((previous) => {
+            if (previous.scope.viewerId !== viewerId) return previous;
+            if (previous.scope.agentId === agentId) {
+              if (previous.entry.value.revision !== snapshot.revision) return previous;
+              return { ...previous, entry: update(previous.entry) };
+            }
+            const cached = previous.cache.get(agentId);
+            if (cached?.value.revision !== snapshot.revision) return previous;
+            return { ...previous, cache: new Map(previous.cache).set(agentId, update(cached)) };
+          });
+        };
         try {
           requireDraftIdentity();
-          const saved = readAgentDraft(viewerId, agentId!, storage);
-          if (saved.revision === snapshot.revision)
-            saveAgentDraft(viewerId, agentId!, { ...saved, commandKey: key }, storage);
+          const saved = readAgentDraft(viewerId, agentId, storage);
+          if (entry?.unread) throw new Error(draftWriteError);
+          if (saved.revision !== snapshot.revision) {
+            if (entry) throw new Error(draftWriteError);
+            return 'superseded';
+          }
+          saveAgentDraft(viewerId, agentId, { ...saved, commandKey: key }, storage);
+          updateEntry((entry) => ({
+            ...entry,
+            value: { ...entry.value, commandKey: key },
+            error: entry.error === draftWriteError ? undefined : entry.error,
+          }));
+          return 'bound';
         } catch {
-          setStored((previous) =>
-            previous.scope === scope
-              ? { ...previous, entry: { ...previous.entry, error: draftWriteError } }
-              : previous,
-          );
+          updateEntry((entry) => (entry.unread ? entry : { ...entry, error: draftWriteError }));
+          return 'unavailable';
         }
       },
     });

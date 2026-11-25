@@ -167,6 +167,12 @@ fn validate_mutation(
     retired_process_absent: bool,
 ) -> Result<(), SandboxStoreError> {
     validate_common(current, current_worktree, actual_last_seq, mutation)?;
+    if current.work.step == AgentWorkStep::RestartConversation
+        && mutation.agent.status == AgentStatus::Ready
+    {
+        return super::agent_restart_ready::validate(current, current_worktree, mutation);
+    }
+
     if let Some(result) =
         super::agent_log_capacity::validate_failure(current, current_worktree, mutation)
     {

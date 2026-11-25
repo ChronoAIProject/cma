@@ -113,9 +113,11 @@ pub(in crate::store) async fn apply(
             scope.session(),
         ))
         .await?;
-    } else if actual.as_ref().is_some_and(|checkpoint| {
-        Some(checkpoint.runtime_generation) > current.conversation.runtime_generation
-    }) {
+    } else if actual_agent.work.step.fences_conversation_output()
+        || actual.as_ref().is_some_and(|checkpoint| {
+            Some(checkpoint.runtime_generation) > current.conversation.runtime_generation
+        })
+    {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
     let project = |agent: &Agent| match guard {

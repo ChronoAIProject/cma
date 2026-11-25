@@ -19,7 +19,9 @@ pub(super) fn service(
     let key = config
         .auth_encryption_key
         .usage_cursor_key(&config.deployment_id);
-    SandboxUsageService::new(store, UsageCursors::new(&key, policy))
+    let cursors = UsageCursors::new(&key, policy)
+        .with_snapshot_issuance(config.features.usage_snapshot_cursors_enabled);
+    SandboxUsageService::new(store, cursors)
 }
 
 pub(super) struct Background {

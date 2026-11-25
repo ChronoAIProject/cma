@@ -247,6 +247,7 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
         (SandboxStatus::CredentialRotating, SandboxStatus::Retiring),
         (SandboxStatus::Rotating, SandboxStatus::Active),
         (SandboxStatus::Rotating, SandboxStatus::Pausing),
+        (SandboxStatus::Rotating, SandboxStatus::Paused),
         (SandboxStatus::Rotating, SandboxStatus::Retiring),
         (SandboxStatus::Failed, SandboxStatus::Retiring),
         (SandboxStatus::Retiring, SandboxStatus::Retired),
