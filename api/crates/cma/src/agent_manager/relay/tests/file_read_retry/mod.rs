@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 use std::{sync::atomic::Ordering::SeqCst, time::Instant};
 
 mod backend;
+mod conditional_edits;
 mod home;
 mod runtime;
 use backend::FileBackend;
@@ -96,7 +97,7 @@ struct Steady {
 }
 
 impl Steady {
-    async fn bind(uri: &str, runtime: &Runtime) -> Self {
+    async fn bind(uri: &str, runtime: &Runtime, conditional_write_retry: bool) -> Self {
         let admin = Client::with_uri_str(uri).await.unwrap();
         let name = format!("cma_file_steady_{}", uuid::Uuid::new_v4().simple());
         let db = admin.database(&name);
@@ -128,6 +129,9 @@ impl Steady {
             ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"synthetic-steady-owner-key"),
         )
         .unwrap();
+        if conditional_write_retry {
+            relay.enable_file_write_handoff();
+        }
         let auth = crate::auth::AuthState::in_memory(
             crate::auth::AuthMode::Trusted {
                 subject: agent.owner.to_string(),
@@ -161,8 +165,20 @@ impl Steady {
                 files.clone(),
             ))
             .unwrap();
+        let observed = runtime.counts.clone();
         let router =
-            layer1_public::rest::agent_filesystem_router(AgentFileService::new(access, files));
+            layer1_public::rest::agent_filesystem_router(AgentFileService::new(access, files))
+                .layer(axum::middleware::from_fn(
+                    move |request: axum::extract::Request, next: axum::middleware::Next| {
+                        let observed = observed.clone();
+                        async move {
+                            if request.method() == Method::POST {
+                                observed.edit_admissions.fetch_add(1, SeqCst);
+                            }
+                            next.run(request).await
+                        }
+                    },
+                ));
         let router = relay.authenticated_routes(router, auth);
         let router = crate::with_request_context(router);
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -331,7 +347,7 @@ fn since(runtime: &Runtime, before: (usize, usize, usize)) -> (usize, usize, usi
 async fn owner_file_reads_renegotiate_once_and_keep_receiver_fences() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let runtime = Runtime::start().await;
-    let steady = Steady::bind(&uri, &runtime).await;
+    let steady = Steady::bind(&uri, &runtime, false).await;
     let _ = steady.authority().await;
 
     for (method, route, first) in [

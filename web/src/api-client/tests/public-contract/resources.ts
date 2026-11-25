@@ -160,6 +160,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.agents.createLifecycle(body, command),
   'GET /api/v1/agent-lifecycle/{id}': ({ client, param }) =>
     client.agents.readLifecycle(param('id')),
+  'POST /api/v1/agent-lifecycle/{id}/cancel': ({ client, param }) =>
+    client.agents.cancelLifecycle(param('id')),
   'GET /api/v1/desktop-capability': ({ client, query }) =>
     client.agents.desktopCapability({
       workspace_id: query.get('workspace_id') ?? undefined,

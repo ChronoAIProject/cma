@@ -2,7 +2,7 @@ import type { AgentController } from './controller';
 import type { UploadAttachment } from './attachments';
 import type { MessageUser } from './MessageIdentity';
 import type { queuePresentation } from './queuePresentation';
-import { QueuedMessages } from './QueuedMessages';
+import { QueuedMessages, UnappliedQueuedEdits } from './QueuedMessages';
 import { QueuedInputOutcomes } from './QueuedInputOutcomes';
 
 export function AgentInputQueue({
@@ -53,6 +53,12 @@ export function AgentInputQueue({
         uploadAttachment={uploadAttachment}
         user={user}
       />
+      {verified && !readOnly && inputs.unappliedEdits ? (
+        <UnappliedQueuedEdits
+          drafts={inputs.unappliedEdits}
+          onDismiss={inputs.dismissUnappliedEdit}
+        />
+      ) : null}
     </>
   );
 }

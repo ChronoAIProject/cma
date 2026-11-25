@@ -32,7 +32,9 @@ mod strict_inactivity_tests;
 pub(crate) struct FeatureFlags {
     pub image_manager_retirement: bool,
     pub session_guidance_v4: bool,
+    pub session_guidance_v5: bool,
     pub am_startup_health_serving: bool,
+    pub am_empty_warm_pool_startup: bool,
     pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
     pub usage_snapshot_cursors_enabled: bool,
@@ -40,6 +42,7 @@ pub(crate) struct FeatureFlags {
     pub visitor_two_sandbox_defaults: bool,
     pub admin_runtime_inventory: bool,
     pub binding_diagnostics: bool,
+    pub agent_inspection_parking: bool,
     pub ownership_retry_hints_enabled: bool,
     pub home_backup_enabled: bool,
     pub home_backup_expiry_enabled: bool,
@@ -104,6 +107,7 @@ pub(crate) struct FeatureFlags {
     pub sandbox_detail_timings: bool,
     pub agent_file_read_timings: bool,
     pub bounded_response_reads: bool,
+    pub active_log_proofs: bool,
     pub bounded_transcript_reads: bool,
     pub privacy_export_enabled: bool,
     pub bounded_usage_reads: bool,
@@ -113,6 +117,7 @@ pub(crate) struct FeatureFlags {
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
     pub github_repository_preflight: bool,
+    pub github_connection_approval: bool,
     pub github_connection_recovery: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
@@ -154,8 +159,10 @@ impl FeatureFlags {
         let flags = Self {
             binding_diagnostics: flag(lookup, "CHRONO_BINDING_DIAGNOSTICS_ENABLED")?,
             session_guidance_v4: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED")?,
+            session_guidance_v5: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V5_ENABLED")?,
             image_manager_retirement: flag(lookup, "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED")?,
             am_startup_health_serving: flag(lookup, "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED")?,
+            am_empty_warm_pool_startup: flag(lookup, "CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED")?,
             pending_home_reconciliation: flag(
                 lookup,
                 "CHRONO_PENDING_HOME_RECONCILIATION_ENABLED",
@@ -169,6 +176,7 @@ impl FeatureFlags {
                 "CHRONO_VISITOR_TWO_SANDBOX_DEFAULTS_ENABLED",
             )?,
             admin_runtime_inventory: flag(lookup, "CHRONO_ADMIN_RUNTIME_INVENTORY_ENABLED")?,
+            agent_inspection_parking: flag(lookup, "CHRONO_AGENT_INSPECTION_PARKING_ENABLED")?,
             ownership_retry_hints_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_OWNERSHIP_RETRY_HINT_ENABLED",
@@ -347,6 +355,7 @@ impl FeatureFlags {
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
+            active_log_proofs: flag(lookup, "CHRONO_AGENT_LOG_ACTIVE_PROOFS_ENABLED")?,
             bounded_transcript_reads: flag(
                 lookup,
                 "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED",
@@ -359,6 +368,7 @@ impl FeatureFlags {
             v2_ui_transport: tail.v2_ui_transport,
             trigger_command_admission: tail.trigger_command_admission,
             github_repository_preflight: tail.github_repository_preflight,
+            github_connection_approval: tail.github_connection_approval,
             github_connection_recovery: tail.github_connection_recovery,
             nyxid_resource_request: tail.nyxid_resource_request,
             nyxid_proxy: tail.nyxid_proxy,

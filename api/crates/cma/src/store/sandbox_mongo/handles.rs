@@ -48,6 +48,7 @@ impl MongoSandboxStore {
             sandbox_snapshot_reads: false,
             sandbox_batched_reads: false,
             bounded_response_reads: false,
+            active_log_proofs: false,
             writer_policy: Default::default(),
             bindings,
             client: client.clone(),
@@ -66,6 +67,7 @@ impl MongoSandboxStore {
             agent_writes: Default::default(),
             agent_control_write_coordination: false,
             agent_ownership: None,
+            agent_inspection_parking: false,
             ownership_retry_hints_enabled: false,
             #[cfg(test)]
             ownership_retry_hint_now: None,

@@ -11,9 +11,9 @@ use axum::{
 use layer2_core::{
     sandbox::agent_access::{
         validate_access_services, AgentAccessError, AgentAccessRequest, AgentAccessRequests,
-        AgentAccessStatus,
+        AgentAccessStatus, GithubConnectionApproval,
     },
-    AgentId,
+    AgentId, SandboxId,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -56,6 +56,18 @@ pub(crate) struct AgentAccessRequestView {
     pub connection: Option<AgentAccessConnection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_approval: Option<GithubApprovalContextView>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct GithubApprovalContextView {
+    sandbox_id: String,
+    sandbox_name: String,
+    other_agents: Vec<String>,
+    current_user_service_id: Option<String>,
+    scope_revision: u64,
+    credential_generation: u64,
 }
 impl From<AgentAccessRequest> for AgentAccessRequestView {
     fn from(value: AgentAccessRequest) -> Self {
@@ -84,6 +96,20 @@ impl From<AgentAccessRequest> for AgentAccessRequestView {
             retry_of: value.retry_of,
             connection,
             error: value.error,
+            github_approval: value
+                .github_approval
+                .map(|approval| GithubApprovalContextView {
+                    sandbox_id: approval.sandbox_id.to_string(),
+                    sandbox_name: approval.sandbox_name,
+                    other_agents: approval
+                        .other_agents
+                        .into_iter()
+                        .map(|id| id.to_string())
+                        .collect(),
+                    current_user_service_id: approval.current_user_service_id,
+                    scope_revision: approval.scope_revision,
+                    credential_generation: approval.credential_generation,
+                }),
         }
     }
 }
@@ -96,6 +122,16 @@ pub(crate) struct AgentAccessRequestList {
 pub(crate) struct ApproveAgentAccessRequest {
     #[schema(min_items = 1, max_items = 32)]
     pub services: Vec<String>,
+    pub github_connection: Option<GithubConnectionApprovalBody>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GithubConnectionApprovalBody {
+    sandbox_id: String,
+    user_service_id: String,
+    scope_revision: u64,
+    credential_generation: u64,
 }
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -193,18 +229,40 @@ pub(crate) async fn approve(
     };
     // The permanent core decision ledger owns replay. A cached HTTP receipt must
     // not substitute for the request's current durable progress.
-    response(
-        service
-            .approve(
-                &resource.context,
-                credential.value(),
-                &AgentId(id),
-                &request_id,
-                body.services,
-                &key,
-            )
-            .await,
-    )
+    let agent = AgentId(id);
+    let result = match body.github_connection {
+        Some(choice) => {
+            service
+                .approve_github_connection(
+                    &resource.context,
+                    credential.value(),
+                    &agent,
+                    &request_id,
+                    body.services,
+                    GithubConnectionApproval {
+                        sandbox_id: SandboxId(choice.sandbox_id),
+                        user_service_id: choice.user_service_id,
+                        scope_revision: choice.scope_revision,
+                        credential_generation: choice.credential_generation,
+                    },
+                    &key,
+                )
+                .await
+        }
+        None => {
+            service
+                .approve(
+                    &resource.context,
+                    credential.value(),
+                    &agent,
+                    &request_id,
+                    body.services,
+                    &key,
+                )
+                .await
+        }
+    };
+    response(result)
 }
 
 #[utoipa::path(post, operation_id = "post_api_v1_agents_by_id_access_requests_by_request_id_deny", path = "/api/v1/agents/{id}/access-requests/{request_id}/deny", tag = "agents",
@@ -253,6 +311,9 @@ fn problem(error: AgentAccessError) -> Response {
         ),
         AgentAccessError::NotFound => (StatusCode::NOT_FOUND, "agent_access_not_found"),
         AgentAccessError::Conflict => (StatusCode::CONFLICT, "agent_access_conflict"),
+        AgentAccessError::StaleGithubApproval => {
+            (StatusCode::CONFLICT, "agent_access_stale_github_approval")
+        }
         AgentAccessError::Unavailable => {
             (StatusCode::SERVICE_UNAVAILABLE, "agent_access_unavailable")
         }

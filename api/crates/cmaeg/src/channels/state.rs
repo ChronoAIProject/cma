@@ -351,6 +351,8 @@ pub struct RecordedChannel {
     pub version: u64,
     /// The sealed record's size, against CMA's 64 KiB record limit.
     pub record_bytes: usize,
+    /// The admitted version of an owner-retired incomplete channel.
+    pub retirement_expected_version: Option<u64>,
     /// Whether the definition passes this image's reader rules.
     pub valid: bool,
 }

@@ -9,24 +9,43 @@ impl OwnershipCoordinator {
         let Ok(_admission) = self.acquisition.try_lock() else {
             return Ok(());
         };
-        match self
-            .finish_acquisitions(Instant::now() + Duration::from_secs(2))
-            .await
-        {
-            Err(OwnershipError::Unavailable(_)) => Ok(()),
-            result => result,
+        let until = Instant::now() + Duration::from_secs(2);
+        match self.finish_acquisitions(until).await {
+            Ok(()) | Err(OwnershipError::Unavailable(_)) => {}
+            Err(error) => return Err(error),
         }
+        if !self.contains_failures() {
+            // These tokens were never published and have no attached work.
+            let unpublished = self
+                .owned()
+                .await
+                .into_iter()
+                .filter(|authority| authority.is_unpublished());
+            let releases =
+                stream::iter(unpublished).for_each_concurrent(4, |authority| async move {
+                    let _ = self
+                        .handoff(&authority, authority.revoke_transports())
+                        .await;
+                });
+            let _ = tokio::time::timeout_at(until, releases).await;
+        }
+        Ok(())
     }
     /// Close publication before waiting for admitted operations. The caller
     /// takes its final authority snapshot only after joining lifecycle work.
     pub async fn prepare_drain(&self, until: Instant) -> Result<(), OwnershipError> {
         self.stop_admission();
-        let _maintenance = retirement::within(until, async { Ok(self.retry.lock().await) }).await?;
+        // Keep time for local work and known exact-token releases even when
+        // an acquisition's store reply is still unresolved.
+        let custody_until =
+            until.min(Instant::now() + Duration::from_millis(3 * STORE_DEADLINE_MS));
+        let _maintenance =
+            retirement::within(custody_until, async { Ok(self.retry.lock().await) }).await?;
         let _admission =
-            retirement::within(until, async { Ok(self.acquisition.lock().await) }).await?;
-        let acquisitions = self.finish_acquisitions(until).await;
+            retirement::within(custody_until, async { Ok(self.acquisition.lock().await) }).await?;
+        let acquisitions = self.finish_acquisitions(custody_until).await;
         let renewals = stream::iter(self.owned().await)
-            .map(|authority| async move { authority.join_renewal_until(until).await })
+            .map(|authority| async move { authority.join_renewal_until(custody_until).await })
             .buffer_unordered(4)
             .collect::<Vec<_>>()
             .await;
@@ -57,7 +76,11 @@ impl OwnershipCoordinator {
             .collect();
         let results = stream::iter(operations)
             .map(|(id, authority, operation)| async move {
-                let result = operation.join_until(until).await;
+                let result = async {
+                    let outcome = operation.join_until(until).await?;
+                    self.reconcile_acquisition(&id, outcome, until).await
+                }
+                .await;
                 (id, authority, operation, result)
             })
             .buffer_unordered(4)

@@ -103,6 +103,7 @@ impl KeyIssuer {
         let mut route = layer3_adapter::GithubCredentialRoute {
             service_id: connection.id().into(),
             catalog_id: connection.catalog_id().into(),
+            repository_scope: None,
             other_services: Vec::new(),
         };
         if !others.is_empty() {

@@ -1,0 +1,50 @@
+use super::{NativePoolStatus, PoolTarget, WarmPoolView};
+
+impl PoolTarget {
+    pub fn view(&self, live: Option<&NativePoolStatus>, available: bool) -> WarmPoolView {
+        let exact = live.filter(|status| self.binding.as_ref() == Some(&status.binding));
+        let observed = exact.is_some_and(|status| {
+            status.observed && status.desired_replicas == self.target_replicas
+        });
+        let ready = exact
+            .filter(|_| observed)
+            .map(|status| status.ready_replicas);
+        let status = if !available || self.error.is_some() {
+            "unavailable"
+        } else if self.applied_revision != self.revision || !observed {
+            "pending"
+        } else {
+            match (self.target_replicas, ready) {
+                (0, Some(0)) => "disabled",
+                (target, Some(count)) if target > 0 && count >= target => "ready",
+                _ => "pending",
+            }
+        };
+        WarmPoolView {
+            id: self.id.clone(),
+            revision: self.revision as u64,
+            image: self.plan.spec.image.uri.clone(),
+            config_sha256: self.plan.config_sha256.clone(),
+            cpu_millis: self.plan.spec.cpu_millis,
+            memory_mib: self.plan.spec.memory_mib,
+            target_replicas: self.target_replicas,
+            ready_replicas: ready,
+            observed,
+            status: status.into(),
+            resource_name: self.binding.as_ref().map(|binding| binding.name.clone()),
+            error: self.error.clone().or_else(|| {
+                if !available {
+                    Some("Native warm pool inventory is unavailable.".into())
+                } else if self.applied_revision == self.revision
+                    && self.target_replicas > 0
+                    && ready == Some(0)
+                {
+                    Some("Native provider reports zero Ready members; the pool is degraded.".into())
+                } else {
+                    None
+                }
+            }),
+            machine: self.machine,
+        }
+    }
+}

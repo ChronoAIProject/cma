@@ -1,7 +1,7 @@
 //! Owner-authorized inspection of retained records without creating an address.
 use super::{
     channel_endpoints::channel_endpoints,
-    management::{DeleteQuery, EndpointResponse},
+    management::EndpointResponse,
     management_responses::management_error,
     problems::{no_store, problem},
     record_ids::canonical_record_id,
@@ -22,8 +22,8 @@ use cmaeg_core::{
     problem::ProblemCode,
     profile::NyxIdIdentity,
 };
-use serde::Serialize;
-use utoipa::ToSchema;
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 #[derive(Debug, Serialize, ToSchema)]
 struct ChannelRecordManagement {
@@ -44,6 +44,9 @@ enum ManagedRecord {
         address: Box<RecordedAddress>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pending_operation: Option<RecordedOperation>,
+        /// Expected version for the retained Delete intent of a retired incomplete channel.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        retirement_expected_version: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         retirement: Option<LegacyRetirement>,
     },
@@ -183,10 +186,15 @@ fn project(
             } else {
                 None
             },
-            pending_operation: definition
-                .mutation
-                .as_ref()
-                .map(|mutation| mutation.operation.into()),
+            pending_operation: if current.retirement_expected_version.is_some() {
+                Some(RecordedOperation::Delete)
+            } else {
+                definition
+                    .mutation
+                    .as_ref()
+                    .map(|mutation| mutation.operation.into())
+            },
+            retirement_expected_version: current.retirement_expected_version,
         }
     } else {
         ManagedRecord::Invalid
@@ -218,16 +226,24 @@ pub async fn read(
     }
 }
 
+#[derive(Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
+pub struct LegacyDeleteQuery {
+    #[param(required = true, nullable = false)]
+    expected_version: Option<u64>,
+}
+
 #[utoipa::path(delete, path="/v1/channel-records/{record_id}/management",
     operation_id="retireLegacyChannelRecord", tag="channels",
     security(("creatorBearer"=[])),
-    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("record_id"=String, Path), DeleteQuery),
+    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("record_id"=String, Path), LegacyDeleteQuery),
     responses((status=204), (status="default", body=cmaeg_core::problem::Problem, content_type="application/problem+json")))]
 pub async fn retire(
     State(state): State<ManagementState>,
     creator: Creator,
     Path(id): Path<String>,
-    query: Result<Query<DeleteQuery>, axum::extract::rejection::QueryRejection>,
+    query: Result<Query<LegacyDeleteQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Response {
     let id = match canonical_record_id(id) {
         Ok(id) => id,
