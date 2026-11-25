@@ -1,9 +1,15 @@
 //! The Sandbox -> Workspace -> Worktree -> Agent domain hierarchy.
 
 mod desktop;
+mod runtime_migration_guard;
 pub use desktop::{
     DesktopAdmission, DesktopAuthorization, DesktopConnection, DesktopError, DesktopFrame,
     DesktopService,
+};
+pub use runtime_migration_guard::{
+    runtime_desktop_activity_snapshot, runtime_desktop_process_incarnation,
+    try_acquire_runtime_migration_guard, RuntimeDesktopActivitySnapshot, RuntimeMigrationBusy,
+    RuntimeMigrationGuard,
 };
 mod admin;
 mod auto_pause_operator;
@@ -47,7 +53,9 @@ mod agent_operation_queue;
 mod agent_operation_service;
 mod agent_operation_settlement;
 mod agent_read_types;
+mod agent_reply_preview;
 pub use agent_failure_projection::{public_agent_turn_failure, sanitize_agent_transcript};
+pub use agent_reply_preview::{normalize_reply_preview, AgentReplyPreview, AssistantReplyPreview};
 mod agent_reads;
 pub use admission_checkpoint::AgentLogCheckpoint;
 mod agent_log_projection;
@@ -68,6 +76,8 @@ mod agent_service;
 mod agent_work;
 mod agent_worktree_recovery;
 pub mod answer_deliverables;
+mod owner_agent_restart;
+pub use agent_service::{AgentRestartControl, AgentRestartObservation, AgentRestartService};
 pub mod work_retry;
 pub use agent_worktree_recovery::{
     plan_agent_worktree_recovery, AgentWorktreeRecovery, AgentWorktreeRecoveryContext,
@@ -188,9 +198,16 @@ pub use retained_recovery::{
     RetainedRecoveryInspector, RetainedRecoveryService, RetainedRecoverySnapshot,
     RetainedRecoverySource,
 };
+mod runtime_migration;
+pub use runtime_migration::*;
 mod custom_runtime;
 pub use custom_runtime::{
     SandboxCustomRuntimeMigration, SandboxCustomRuntimeOrigin, SandboxCustomRuntimeState,
+};
+mod retained_runtime_transition;
+pub use retained_runtime_transition::{
+    next_replacement_runtime_generation, RetainedRuntimePolicyBinding, RetainedRuntimeTransition,
+    RetainedRuntimeTransitionRequest,
 };
 mod runtime_update;
 mod runtime_update_resume;
@@ -280,11 +297,11 @@ pub use agent_reads::privacy_export;
 pub use agent_reads::{
     AgentBufferedEventRequest, AgentConfigurationRead, AgentDetailReading,
     AgentEventStreamAuthorization, AgentEventStreamHeader, AgentEventStreamSnapshot,
-    AgentHistoryCursor, AgentHistoryReading, AgentOutputObservation, AgentReadService,
-    AgentReplayEntry, AgentReplayWindow, AgentResponseBinding, AgentRetainedOutput,
-    AgentRetainedOutputAvailability, AgentRetainedOutputPage, AgentSourceReadError,
-    AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
-    RETAINED_OUTPUT_CHUNK_BYTES,
+    AgentHistoryCursor, AgentHistoryReading, AgentOriginalRequest, AgentOutputObservation,
+    AgentReadService, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
+    AgentResponseObservation, AgentRetainedOutput, AgentRetainedOutputAvailability,
+    AgentRetainedOutputPage, AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry,
+    SharedAgentDetail, SharedAgentOrigin, RETAINED_OUTPUT_CHUNK_BYTES,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,

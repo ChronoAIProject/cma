@@ -70,7 +70,9 @@ jobs:
     name: "CI / Version label"
     needs:
       - "changes"
-    if: "always()"
+    # Superseded workflows must not turn cancelled selection into a label error.
+    # Active selector failures still reach the validator and fail closed.
+    if: "${{ !cancelled() }}"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5
     steps:

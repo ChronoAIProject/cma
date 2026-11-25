@@ -133,6 +133,9 @@ impl AgentConversationStore for InMemorySandboxStore {
             .agents
             .get(&mutation.agent.id)
             .ok_or(SandboxStoreError::NotFound)?;
+        if current.work.step.fences_conversation_output() {
+            return Err(SandboxStoreError::Conflict);
+        }
         crate::sandbox::turn_timeout::validate_ordinary_publication(current, &mutation)?;
         let mut candidate = state.clone();
         let appended = apply_conversation(&mut candidate, mutation)?;
@@ -365,9 +368,14 @@ fn commit_message(
             .map_err(|_| {
                 SandboxStoreError::InvalidTransaction("reopen output authority is stale")
             })?;
-    } else if actual.is_some_and(|checkpoint| {
-        Some(checkpoint.runtime_generation) > current.conversation.runtime_generation
-    }) {
+    } else if state
+        .agents
+        .get(&current.id)
+        .is_some_and(|agent| agent.work.step.fences_conversation_output())
+        || actual.is_some_and(|checkpoint| {
+            Some(checkpoint.runtime_generation) > current.conversation.runtime_generation
+        })
+    {
         return Err(SandboxStoreError::Conflict);
     }
     let reanchor = mutation.is_none()

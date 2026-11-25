@@ -29,6 +29,14 @@ export function runtimeLifecycleNotice(
         'The latest runtime status could not be confirmed. Last reported details are shown below.',
       tone: 'warning',
     };
+  // Eligibility comes from the retained-home contract, independently of whether
+  // a pinned/custom image happens to match the current managed release.
+  if (update.state === 'up_to_date' && !update.preservesHome)
+    return {
+      title: 'Managed runtime updates unavailable',
+      detail: 'This Sandbox is not eligible for automatic CMA runtime updates.',
+      tone: 'neutral',
+    };
   if (
     update.state === 'up_to_date' &&
     (status !== 'active' ||
@@ -60,14 +68,23 @@ export function SandboxRuntimeFacts({
   const rows = [
     ...(sandboxId === undefined ? [] : [['Sandbox ID', sandboxId]]),
     ['Current runtime', current || 'Not reported'],
-    ...(update === undefined ? [] : [['Latest runtime', update.latestVersion]]),
+    ...(update === undefined
+      ? []
+      : [
+          [
+            update.preservesHome ? 'Latest runtime' : 'Latest managed runtime',
+            update.latestVersion,
+          ],
+        ]),
     ...(target && target !== update?.latestVersion ? [['Requested runtime', target]] : []),
     ...(update === undefined
       ? []
       : [
           [
             'Automatic updates',
-            `Daily at ${update.schedule.localTime} SGT (${update.schedule.timezone}), when idle`,
+            update.preservesHome
+              ? `Daily at ${update.schedule.localTime} SGT (${update.schedule.timezone}), when idle`
+              : 'Not available for this Sandbox',
           ],
         ]),
   ];

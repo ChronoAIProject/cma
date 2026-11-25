@@ -50,6 +50,7 @@ pub use rate_limits::RateLimitConfig;
 mod relay_capacity;
 mod runtime;
 mod runtime_capacity;
+mod runtime_migration;
 mod shell_settings;
 pub(crate) use relay_capacity::RelayCapacityConfig;
 pub(crate) use shell_settings::BackendFreeConfig;
@@ -75,7 +76,7 @@ mod usage_transport;
 pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
-pub(crate) use runtime::RuntimeConfig;
+pub(crate) use runtime::{canary as runtime_canary, RuntimeConfig};
 pub(crate) use sandbox_billing::SandboxBillingConfig;
 pub(crate) use sandbox_metrics::MetricsConfig;
 pub(crate) use usage_billing::UsageBillingConfig;
@@ -433,6 +434,8 @@ use validation::{
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::{desktop_canary_config, retained_runtime_config};
 
 #[cfg(test)]
 mod graduation_tests;

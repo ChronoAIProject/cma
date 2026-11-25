@@ -135,6 +135,7 @@ export function operatorClient() {
     listSandboxes: vi
       .fn<OperatorClient['admin']['listSandboxes']>()
       .mockResolvedValue({ items: [sandboxRow], next: null }),
+    bindingHolds: vi.fn<OperatorClient['admin']['bindingHolds']>(),
     readSandbox: vi.fn<OperatorClient['admin']['readSandbox']>().mockResolvedValue(detail),
     sandboxEvents: vi.fn<OperatorClient['admin']['sandboxEvents']>().mockResolvedValue([
       {

@@ -43,6 +43,43 @@ pub(super) async fn ready_machine(store: &MongoSandboxStore) -> Record {
     record
 }
 
+pub(crate) async fn admit_machine_for_pointer_fixture(
+    store: &MongoSandboxStore,
+    release: &layer3_adapter::ReleasedRuntime,
+    owner: &str,
+    key: &str,
+) -> Result<Sandbox, Box<dyn std::error::Error + Send + Sync>> {
+    use layer2_core::released_runtime::ReleasedLane;
+
+    let plan = machine_plan().for_runtime(release.machine.as_deref().expect("Machine lane"))?;
+    store
+        .reconcile_native_prepared_release(Some(&plan), 1, NOW, true, release)
+        .await?;
+    let prepared = ready_machine(store).await;
+    let database = store.client.database(&store.sandboxes.namespace().db);
+    let mut lifecycle = crate::store::MongoAgentLifecycleStore::open(&database).await?;
+    lifecycle.released_lanes = store.released_lanes.clone();
+    let result = lifecycle
+        .create_with_submission(
+            &SubjectId::new(owner),
+            key,
+            lifecycle_input(&plan),
+            None,
+            Some((release, ReleasedLane::Machine)),
+        )
+        .await?;
+    let crate::store::CreateResult::Created(operation_id) = result else {
+        panic!("expected a new Machine lifecycle receipt");
+    };
+    let request = sandbox_admission(store, &plan, owner, key, operation_id).await;
+    let SandboxAdmissionResult::Created(owned) = admit_at(store, request, NOW).await? else {
+        panic!("expected a newly owned Machine");
+    };
+    assert_eq!(owned.id, prepared.payload.id);
+    assert_eq!(owned.runtime, prepared.payload.runtime);
+    Ok(owned)
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
 async fn health_probe_scheduling_keeps_each_classes_other_reservation_admissible() {

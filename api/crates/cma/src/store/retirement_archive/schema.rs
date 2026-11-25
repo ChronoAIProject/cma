@@ -1,5 +1,8 @@
 //! Exact archive census versions. Compatibility never means an arbitrary subset.
-use super::*;
+use super::{
+    census_catalog::{AUDIT, DEPLOYMENT_ONLY, OUTSIDE_MANIFEST},
+    *,
+};
 use crate::retirement_archive::Manifest;
 use std::{collections::BTreeSet, sync::LazyLock};
 
@@ -48,7 +51,9 @@ pub(crate) fn manifest_collections() -> &'static [&'static str] {
             .iter()
             .copied()
             .filter(|name| {
-                *name != CREATION_PROOFS && !super::census_catalog::OUTSIDE_MANIFEST.contains(name)
+                *name != CREATION_PROOFS
+                    && !OUTSIDE_MANIFEST.contains(name)
+                    && !DEPLOYMENT_ONLY.contains(name)
             })
             .collect()
     });
@@ -56,13 +61,18 @@ pub(crate) fn manifest_collections() -> &'static [&'static str] {
 }
 
 pub(crate) fn schema_sha256() -> String {
-    let audit: Vec<_> = super::census_catalog::AUDIT
+    let audit: Vec<_> = AUDIT
         .iter()
         .copied()
-        .filter(|(name, _)| *name != CREATION_PROOFS)
+        .filter(|(name, _)| *name != CREATION_PROOFS && !DEPLOYMENT_ONLY.contains(name))
         .collect();
-    let names = manifest_collections().join("\n");
-    digest(format!("archive-census-v2\n{audit:?}\n{names}").as_bytes())
+    digest(
+        format!(
+            "archive-census-v2\n{audit:?}\n{}",
+            manifest_collections().join("\n")
+        )
+        .as_bytes(),
+    )
 }
 
 fn collections(schema: &str) -> Result<&'static [&'static str]> {

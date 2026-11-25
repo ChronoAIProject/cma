@@ -67,6 +67,7 @@ mod desktop;
 #[path = "agent_lifecycle_image.rs"]
 mod image;
 mod repository_preflight;
+pub(crate) mod runtime_canary;
 #[path = "agent_lifecycle_policy.rs"]
 mod task_policy;
 pub(crate) use image::{valid_immutable_image, ImageManagerResolver, ImageResolver};

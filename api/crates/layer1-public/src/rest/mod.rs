@@ -66,6 +66,7 @@ mod agent_worktree_recovery;
 mod dependency_diagnostics;
 mod message_feedback;
 mod message_feedback_reasons;
+mod owner_agent_restart;
 mod suggestion_shapes;
 mod suggestions;
 pub use agent_channel_usage::agent_channel_usage_router;
@@ -75,9 +76,11 @@ mod agent_channel_usage_tests;
 mod agent_provenance;
 mod agent_provenance_inventory;
 pub use agent_provenance_inventory::agent_provenance_inventory_router;
+mod agent_original_request;
 #[cfg(test)]
 mod agent_provenance_inventory_tests;
 mod agent_reads;
+mod agent_reply_preview;
 pub(crate) mod agent_retained_output;
 mod agent_shared_shapes;
 mod agent_source;
@@ -85,6 +88,8 @@ pub use agent_provenance::agent_provenance_router;
 mod agent_history;
 mod agent_lifecycle;
 mod desktop_creation;
+pub mod retained_runtime_transition;
+pub mod runtime_canary;
 pub use desktop_creation::DesktopCreationScope;
 #[cfg(test)]
 mod agent_provenance_tests;

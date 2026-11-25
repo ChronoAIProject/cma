@@ -3,9 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use layer2_core::profiles::store::{
-    InMemoryProfileStore, SandboxProfileStore as _, WorkspaceProfileStore as _,
-};
+use layer2_core::profiles::store::{InMemoryProfileStore, WorkspaceProfileStore as _};
 use layer2_core::profiles::{
     AgentProvider, EnvironmentVariable, ModelAccess, ProfileCapacityBounds, ProfileVisibility,
     SandboxProfile, SandboxProfileContent, SandboxProfileRef, WorkspaceLocation, WorkspaceProfile,
@@ -82,7 +80,7 @@ fn runtime_image() -> String {
 }
 
 #[derive(Clone, Default)]
-struct ActionLog(Arc<Mutex<Vec<String>>>);
+pub(crate) struct ActionLog(Arc<Mutex<Vec<String>>>);
 
 impl ActionLog {
     fn push(&self, action: impl Into<String>) {
@@ -114,10 +112,13 @@ impl SandboxPolicySource for MutablePolicy {
 }
 
 mod credential_fixture;
+pub(crate) use credential_fixture::MemoryCredentials;
 use credential_fixture::*;
 mod harness;
 use harness::*;
+pub(crate) use harness::{AgentStopRecorder, WorkspaceRecorder};
 mod profile_fixtures;
+pub(crate) use profile_fixtures::seed_sandbox_profile_with_capacity;
 use profile_fixtures::*;
 mod base_creation;
 mod base_credential_rotation;

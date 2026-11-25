@@ -54,6 +54,7 @@ export interface User {
   readonly visitor: boolean;
   readonly serviceAuthorization?: boolean;
   readonly privacyExport?: boolean;
+  readonly bindingDiagnostics?: boolean;
   readonly legalTerms?: LegalTerms;
 }
 

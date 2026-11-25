@@ -4,14 +4,15 @@ import {
   useHistoryRetry,
   retainCurrentMetadata,
 } from './historyPublication';
-import { controlBaselineReady, responseControlAvailability } from './controlReadiness';
+import * as controlReadiness from './controlReadiness';
 import { observeRead } from './transport/readObserver';
 import { retrySchedule } from './transport/readRetry';
 import { useAgentTitle } from './useAgentTitle';
 import { usePreparationProgress } from './preparationProgress';
 import { queueObservationRevision } from './queueObservationRevision';
 import { ReadinessWake } from './readinessWait';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useControllerMode } from './controllerMode';
 import { agentReadRetryAt, errorMessage, retainHistoryOnFailure } from './controllerError';
 import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
 export { loadAgent, type ReadyAgent } from './loadAgent';
@@ -27,6 +28,7 @@ import {
 } from './transport/approvalProjectionObserver';
 import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
+import { lifecycleCommands } from './lifecycleCommands';
 import { useAgentActionError, useAgentIdentityChange } from './actionError';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedInputs } from './transport/queuedInputsStatus';
@@ -41,24 +43,7 @@ export function useAgentController(
   agentId: string | undefined,
   options: AgentControllerOptions = {},
 ): AgentController {
-  const suspended = options.suspended === true;
-  const {
-    agentId: lineageAgentId,
-    workspaceId: lineageWorkspaceId,
-    sandboxId: lineageSandboxId,
-  } = options.authorizedLineage ?? {};
-  const lineage = useMemo(
-    () =>
-      !suspended &&
-      options.viewerId !== undefined &&
-      lineageAgentId === agentId &&
-      lineageAgentId !== undefined &&
-      lineageWorkspaceId !== undefined &&
-      lineageSandboxId !== undefined
-        ? { agentId: lineageAgentId, workspaceId: lineageWorkspaceId, sandboxId: lineageSandboxId }
-        : undefined,
-    [agentId, suspended, options.viewerId, lineageAgentId, lineageWorkspaceId, lineageSandboxId],
-  );
+  const { suspended, lineage, retained } = useControllerMode(client, agentId, options);
   const [revision, setRevision] = useState(0);
   const [replayRevision, setReplayRevision] = useState(0);
   const [requestRevision, setRequestRevision] = useState(0);
@@ -269,7 +254,7 @@ export function useAgentController(
   const historyLoading =
     state.status === 'ready' && state.detail.id === agentId && state.historyLoading === true;
   const historyIncomplete = historyLoading || historyUnavailable;
-  const controlReady = controlBaselineReady(state, agentId, suspended);
+  const controlReady = controlReadiness.controlBaselineReady(state, agentId, suspended);
   const v2 =
     !suspended && state.status === 'ready' && state.detail.id === agentId ? state.v2 : undefined;
   useHistoryRetry({
@@ -442,23 +427,14 @@ export function useAgentController(
       ? state.conversation.messages
       : undefined,
   );
-  const interruptTurn = (strict: boolean) =>
-    command(
-      'interrupt',
-      (id, key, signal) => client.interruptAgent(id, { idempotencyKey: key, signal }),
-      strict,
-    );
   return {
+    retained,
     ...retainedInputs,
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
     controlNotice,
     controlBaselineReady: controlReady,
-    responseControls: responseControlAvailability(state, agentId, suspended),
-    controlsUnavailable:
-      suspended ||
-      (v2 !== undefined &&
-        state.status === 'ready' &&
-        state.conversation.responseBinding === undefined),
+    responseControls: controlReadiness.responseControlAvailability(state, agentId, suspended),
+    controlsUnavailable: controlReadiness.controlsUnavailable(state, v2 !== undefined, suspended),
     recoverPending: v2 === undefined && legacy === undefined ? undefined : recoverPending,
     state: presented,
     inputAvailability: accessCheckedInputAvailability(inputAvailability, suspended),
@@ -488,13 +464,6 @@ export function useAgentController(
         : (content, onAccepted, onReceiptObserved, onRefused, onOrdinaryInput) =>
             run(content, onAccepted, onReceiptObserved, onRefused, 'interrupt', onOrdinaryInput),
     approve: (approvalId, decision) => run({ id: approvalId, decision }),
-    interruptForControl: () => interruptTurn(true),
-    interrupt: () => interruptTurn(false),
-    stop: () =>
-      command('stop', (id, key, signal) => client.stopAgent(id, { idempotencyKey: key, signal })),
-    delete: () =>
-      command('delete', (id, key, signal) =>
-        client.deleteAgent(id, { idempotencyKey: key, signal }),
-      ),
+    ...lifecycleCommands(client, command),
   };
 }

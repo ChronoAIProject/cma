@@ -29,16 +29,28 @@ pub struct AgentRoutesState {
         Option<Arc<dyn super::super::agent_skills::AgentSkillRuntimeSupport>>,
     pub(in crate::rest) commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
     pub(in crate::rest) agents: Arc<AgentService>,
+    pub(in crate::rest) owner_agent_restart:
+        Option<Arc<dyn layer2_core::sandbox::AgentRestartControl>>,
     pub(in crate::rest) reads: Arc<AgentReadService>,
     pub(in crate::rest) agent_operations: Arc<AgentOperationService>,
     pub(in crate::rest) operation_records: Arc<dyn OperationStore>,
     pub(in crate::rest) lifecycle: Option<Arc<dyn AgentLifecycleProvisioner>>,
     pub(in crate::rest) lifecycle_operations: Option<Arc<dyn AgentLifecycleOperationReader>>,
     pub(in crate::rest) history_exporter: Option<Arc<dyn AgentHistoryExporter>>,
+    #[cfg(feature = "qualification-hooks")]
+    control_checkpoint: Option<Arc<dyn layer2_core::qualification::ControlCheckpoint>>,
     pub(super) sandbox_profile_readability: Option<Arc<dyn SandboxProfileStore>>,
 }
 
 impl AgentRoutesState {
+    pub fn with_owner_agent_restart(
+        mut self,
+        service: Arc<dyn layer2_core::sandbox::AgentRestartControl>,
+    ) -> Self {
+        self.owner_agent_restart = Some(service);
+        self
+    }
+
     pub fn with_suggestions(
         mut self,
         store: Arc<dyn layer2_core::sandbox::suggestions::SuggestionStore>,
@@ -84,12 +96,15 @@ impl AgentRoutesState {
             skill_support: None,
             commands: None,
             agents,
+            owner_agent_restart: None,
             reads,
             agent_operations,
             operation_records,
             lifecycle: None,
             lifecycle_operations: None,
             history_exporter: None,
+            #[cfg(feature = "qualification-hooks")]
+            control_checkpoint: None,
             sandbox_profile_readability: None,
         }
     }
@@ -130,5 +145,34 @@ impl AgentRoutesState {
     ) -> Self {
         self.commands = Some(commands);
         self
+    }
+}
+
+#[cfg(feature = "qualification-hooks")]
+impl AgentRoutesState {
+    pub fn with_control_checkpoint(
+        mut self,
+        checkpoint: Arc<dyn layer2_core::qualification::ControlCheckpoint>,
+    ) -> Self {
+        self.control_checkpoint = Some(checkpoint);
+        self
+    }
+
+    pub(in crate::rest) fn qualification_for(
+        &self,
+        guard: &super::super::idempotency::Idempotency,
+        operation: layer2_core::qualification::ControlOperation,
+        agent: &layer2_core::AgentId,
+    ) -> Option<(
+        Arc<dyn layer2_core::qualification::ControlCheckpoint>,
+        layer2_core::qualification::ControlContext,
+    )> {
+        let super::super::idempotency::Idempotency::Acquired { claim, .. } = guard else {
+            return None;
+        };
+        let checkpoint = self.control_checkpoint.as_ref()?;
+        let context =
+            layer2_core::qualification::ControlContext::from_claim(operation, agent, claim)?;
+        Some((Arc::clone(checkpoint), context))
     }
 }

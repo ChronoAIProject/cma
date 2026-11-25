@@ -1,5 +1,22 @@
 use super::*;
 impl NativeBackend {
+    pub async fn stage_reserved_request(&self, request: ProviderSandboxRequest) {
+        let mut rows = self.row.lock().await;
+        let row = rows.as_mut().unwrap();
+        assert_eq!(row.request.image, request.image);
+        assert_eq!(row.request.volumes, request.volumes);
+        row.observation.generation = request.metadata["cma/runtime-generation"].parse().unwrap();
+        row.request = request;
+        // The retained provider object and failed Pod have not been replaced.
+    }
+
+    pub async fn restart_process(&self) {
+        self.retirement_incarnation.fetch_add(1, Ordering::SeqCst);
+        let rows = self.row.lock().await;
+        let pod = rows.as_ref().unwrap().pod.as_ref().unwrap();
+        self.inner.restart_persistent_process(pod).await.unwrap();
+    }
+
     pub(super) async fn run_recovery_fixture(
         &self,
         _: &RuntimeHandle,

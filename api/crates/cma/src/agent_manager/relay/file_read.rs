@@ -19,6 +19,15 @@ pub(super) fn eligible(path: &str, method: &Method) -> bool {
             })
 }
 
+pub(super) async fn run(next: Next, request: Request, retry: bool) -> Response {
+    let response = next.run(request);
+    if retry {
+        layer3_adapter::file_read_retry::scope(response).await
+    } else {
+        response.await
+    }
+}
+
 pub(super) fn refusal(reason: Refusal) -> Response {
     tracing::debug!(
         target: "cma::agent_manager::file_read_relay",
