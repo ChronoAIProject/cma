@@ -19,6 +19,7 @@ import time
 import zipfile
 
 import ci_retry
+from staging_cd_build_cargo_keys import CARGO_NAMESPACE
 
 REPO = "ChronoAIProject/cma"
 WORKFLOW = ".github/workflows/staging-cd.yml"
@@ -188,6 +189,8 @@ FAILURES = (Refused, KeyError, TypeError, ValueError, AttributeError, EOFError, 
 def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develop, sleep=time.sleep):
     destination = context(env)
     component = env["CD_COMPONENT"]
+    family = env.get("CD_CARGO_FAMILY", "")
+    require(re.fullmatch(re.escape(f"{CARGO_NAMESPACE}{component}-") + r"[0-9a-f]{64}-", family), "family")
     require(not destination.exists() and not destination.is_symlink(), "destination")
     destination.parent.mkdir(mode=0o700, exist_ok=True)
     require(destination.parent.is_dir() and not destination.parent.is_symlink(), "destination")
@@ -229,8 +232,16 @@ def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develo
             producer = validate_producer(run, jobs, artifact, component)
             read(f"repos/{REPO}/actions/artifacts/{artifact['id']}/zip", DOWNLOAD_SECONDS, download)
             unpack(download, artifact, destination)
+            # The artifact name is shared across compiler profiles. Continue the
+            # bounded search until its sealed manifest identifies the selected
+            # family. BuildCache still verifies the full bundle before injection.
+            manifest_path = destination / "manifest.json"
+            require(manifest_path.stat().st_size < 4096, "manifest")
+            manifest = json.loads(manifest_path.read_text())
+            require(isinstance(manifest, dict) and isinstance(manifest.get("prefix"), str)
+                    and re.fullmatch(re.escape(family) + r"[0-9a-f]{64}-", manifest["prefix"]), "family")
             return {"state": "RESTORED", **producer, "artifact_id": artifact["id"],
-                    "artifact_digest": artifact["digest"]}
+                    "artifact_digest": artifact["digest"], "compiler_family": family}
         except FAILURES as error:
             # A partly written bundle must never reach the validator.
             discard(destination)

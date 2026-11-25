@@ -33,6 +33,11 @@ class ArchiveHandoffTests(unittest.TestCase):
             self.assertEqual(handoff.sha256, json.loads((directory / MANIFEST).read_text())["archive_sha256"])
 
     def test_normal_release_consumes_the_prepared_archive_without_rebuilding(self):
+        for level in ("", "0", "1"):
+            with self.subTest(level=level):
+                self.assert_prepared_archive_handoff(level)
+
+    def assert_prepared_archive_handoff(self, level):
         receipt = fixture_receipt(component="am")
         identity = receipt["identity"]
         reservation = identity.copy()
@@ -46,7 +51,8 @@ class ArchiveHandoffTests(unittest.TestCase):
                    "GITHUB_RUN_ID": str(identity["run_id"]), "GITHUB_RUN_ATTEMPT": str(identity["run_attempt"]),
                    "CD_COMPONENT": "am", "CD_TASKS": json.dumps([task]), "RUNNER_TEMP": str(root),
                    "CD_RECEIPTS_PATH": str(root / "receipts.json"), "CD_PREPARED_ARCHIVE": "true",
-                   "CD_BUILD_CACHE": "enabled", "GITHUB_OUTPUT": str(root / "output")}
+                   "CD_BUILD_CACHE": "enabled", "GITHUB_OUTPUT": str(root / "output"),
+                   "CMA_STAGING_AM_OPT_LEVEL": level}
             stack.enter_context(patch.dict(os.environ, env, clear=True))
             for module in (staging_cd_produce, staging_cd_publish):
                 for name in ("event_identity", "GitHub", "snapshot"):
@@ -56,8 +62,10 @@ class ArchiveHandoffTests(unittest.TestCase):
             stack.enter_context(patch.object(staging_cd_publish, "Registry"))
             cache = stack.enter_context(patch.object(staging_cd_produce, "BuildCache")).return_value
             cache.key = None
+            cache.component = "am"
+            cache.staging_am_opt_level = level
             cache.exports_layers.return_value = True
-            stack.enter_context(patch.object(staging_cd_publish, "identity", return_value=(identity, None, None)))
+            stack.enter_context(patch.object(staging_cd_publish, "identity", return_value=(identity, None, {"CMA_STAGING_AM_OPT_LEVEL": level} if level else {})))
 
             def build(_root, _reservation, directory, *, progress, **_kwargs):
                 progress["cache_export_error"] = "read-only"
@@ -85,9 +93,11 @@ class ArchiveHandoffTests(unittest.TestCase):
             self.assertEqual(json.loads(Path(env["CD_RECEIPTS_PATH"]).read_text()), [receipt])
             fallback.assert_not_called()
             producer_build.assert_called_once()
+            self.assertEqual(producer_build.call_args.kwargs["staging_am_opt_level"], level)
             with self.assertRaisesRegex(Refusal, "destination already exists"):
                 staging_cd_produce.produce(env, root, Mock(), {})
             producer_build.assert_called_once()
+            self.assertEqual(producer_build.call_args.kwargs["staging_am_opt_level"], level)
 
     def test_handoff_refuses_a_different_reservation_or_build(self):
         identity = fixture_identity(component="runtime")

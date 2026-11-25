@@ -16,7 +16,7 @@ DEVELOP = "refs/heads/develop"
 BUDGET = 90 * 1024 ** 3
 PULL = re.compile(r"refs/pull/([1-9][0-9]*)/merge")
 HEX = r"[a-f0-9]{64}"
-INDEX = re.compile(r"(index-cma-(?:am|eg|web|runtime|runtime-omarchy)-1-[0-9a-f]{8})#([0-9]+)")
+INDEX = re.compile(r"(index-cma-(?:am|cd-am-staging-opt-[01]|eg|web|runtime|runtime-omarchy)-1-[0-9a-f]{8})#([0-9]+)")
 CARGO = re.compile(rf"{CARGO_NAMESPACE}(am|eg)-({HEX})-{HEX}-[1-9][0-9]*-[1-9][0-9]*")
 OMARCHY = re.compile(rf"omarchy-layer-archive-v1-runtime-omarchy-deps-{HEX}")
 # Default-branch CodeQL builds these databases. Its automatic overlay reader
@@ -64,8 +64,9 @@ class Policies:
     omarchy: str
 
     @classmethod
-    def from_source(cls, root):
-        cargo = {service: identity(root, service).family for service in ("am", "eg")}
+    def from_source(cls, root, *, staging_am_opt_level=""):
+        cargo = {"am": identity(root, "am", staging_am_opt_level=staging_am_opt_level).family,
+                 "eg": identity(root, "eg").family}
         helper = run_path(str(Path(__file__).with_name("omarchy-cache-key.py")))
         return cls(cargo, "omarchy-layer-archive-v1-" + helper["scope"](helper["manifest"](root)))
 

@@ -1,4 +1,7 @@
 import hashlib
+import json
+import io
+import tarfile
 import stat
 import subprocess
 import tempfile
@@ -13,7 +16,8 @@ import staging_cd_cargo_artifact as transport
 REPO = "ChronoAIProject/cma"
 SOURCE = "a" * 40
 CURRENT = "b" * 40
-FILES = {"manifest.json": b'{"format": 1}', "registry.tar.gz": b"registry", "target.tar.gz": b"target"}
+FAMILY = "cma-cd-cargo-v4-am-" + "a" * 64 + "-"
+FILES = {"manifest.json": json.dumps({"format": 1, "prefix": FAMILY + "b" * 64 + "-"}).encode(), "registry.tar.gz": b"registry", "target.tar.gz": b"target"}
 
 
 def bundle(path, members=None, *, symlink=None):
@@ -73,7 +77,7 @@ class CargoArtifactTests(unittest.TestCase):
         (self.root / "runner").mkdir()
         self.env = {"GITHUB_REPOSITORY": REPO, "GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/develop",
                     "GITHUB_SHA": CURRENT, "GITHUB_RUN_ID": "900", "GITHUB_RUN_ATTEMPT": "1",
-                    "CD_COMPONENT": "am", "RUNNER_TEMP": str(self.root / "runner")}
+                    "CD_COMPONENT": "am", "CD_CARGO_FAMILY": FAMILY, "RUNNER_TEMP": str(self.root / "runner")}
         self.accepted = self.root / "runner/cma-build-cache/accepted"
 
     def tearDown(self):
@@ -125,6 +129,42 @@ class CargoArtifactTests(unittest.TestCase):
                     path.unlink()
                 self.accepted.rmdir()
 
+    def test_newer_incompatible_profile_does_not_hide_older_compatible_bundle(self):
+        from staging_cd_build_cache import BuildCache, bridge, prepare
+        from staging_cd_build_profile import AM_PROFILE
+
+        root = Path(__file__).resolve().parents[2]
+        tool = bridge()
+        env = {**self.env, "CD_TASKS": json.dumps([{"component": "am", "mode": "resume"}])}
+        for index, (selected, incompatible) in enumerate((("1", "0"), ("0", ""), ("", "1"))):
+            with self.subTest(selected=selected, incompatible=incompatible):
+                reader_env = {**env, AM_PROFILE: selected}
+                reader = BuildCache(root, reader_env, root, "am")
+                requested = prepare(root, reader_env)
+                self.assertEqual(requested["family"], reader.key.family)
+                compatible = self.root / f"compatible-{index}"
+                other = self.root / f"other-{index}"
+                for directory, profile in ((compatible, selected), (other, incompatible)):
+                    directory.mkdir()
+                    writer = BuildCache(root, {**env, AM_PROFILE: profile}, root, "am")
+                    for name in ("registry", "target"):
+                        with tarfile.open(directory / f"{name}.tar.gz", "w:gz") as archive:
+                            member = tarfile.TarInfo("release/incremental/fixture/data" if name == "target" else "fixture")
+                            member.size = 4
+                            archive.addfile(member, io.BytesIO(b"data"))
+                    tool.seal(directory, writer.key.prefix, family=writer.key.family)
+                def spec(run_id, directory):
+                    return self.spec(run_id, members={file.name: file.read_bytes() for file in directory.iterdir()})
+                remote = Remote(self.root, [spec(42, other), spec(41, compatible)])
+                result = self.restore(remote, {**reader_env, "CD_CARGO_FAMILY": requested["family"]})
+                self.assertEqual((result["state"], result["producer_run"]), ("RESTORED", 41))
+                self.assertEqual(result["compiler_family"], requested["family"])
+                with patch("staging_cd_build_cache.bridge", return_value=tool), patch.object(tool, "transfer") as transfer:
+                    self.assertTrue(reader.restore())
+                    transfer.assert_called_once()
+                    self.assertEqual(transfer.call_args.args[0], "inject")
+                transport.discard(self.accepted)
+
     def test_a_producer_off_develop_history_is_never_trusted(self):
         # A tag named develop reports head_branch "develop" for an arbitrary commit.
         calls = []
@@ -175,7 +215,8 @@ class CargoArtifactTests(unittest.TestCase):
 
     def test_context_and_existing_destination_refuse_before_any_read(self):
         for altered in ({"GITHUB_REPOSITORY": "fork/cma"}, {"GITHUB_EVENT_NAME": "pull_request"},
-                        {"GITHUB_REF": "refs/heads/feature"}, {"CD_COMPONENT": "web"}, {"GITHUB_RUN_ID": "0"}):
+                        {"GITHUB_REF": "refs/heads/feature"}, {"CD_COMPONENT": "web"}, {"GITHUB_RUN_ID": "0"},
+                        {"CD_CARGO_FAMILY": ""}, {"CD_CARGO_FAMILY": FAMILY.replace("-am-", "-eg-")}):
             with self.subTest(altered=altered):
                 remote = Remote(self.root, [self.spec(61)])
                 with self.assertRaises(transport.Refused):

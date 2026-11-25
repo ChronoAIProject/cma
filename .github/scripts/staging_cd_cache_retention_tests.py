@@ -62,13 +62,14 @@ class Inventory:
 class Generations(unittest.TestCase):
     def test_scope_versions_and_shared_blobs(self):
         rows = []
-        for i, service in enumerate(("am", "eg", "web", "runtime", "runtime-omarchy")):
+        services = ("am", "eg", "web", "runtime", "runtime-omarchy", "cd-am-staging-opt-0", "cd-am-staging-opt-1")
+        for i, service in enumerate(services):
             prefix = f"index-cma-{service}-1-fd3dfe2c#"
             # Two-digit BuildKit generations sort numerically.
             rows.extend([entry(2*i+1, prefix + "9"), entry(2*i+2, prefix + "10")])
-        rows.extend([entry(11, "buildkit-blob-1-sha256:" + DIGEST),
-                     replace(rows[1], id=12, version="different"), entry(13, "index-unmanaged")])
-        self.assertEqual(decisions(rows), {2*i+1: 2*i+2 for i in range(5)})
+        rows.extend([entry(21, "buildkit-blob-1-sha256:" + DIGEST),
+                     replace(rows[1], id=22, version="different"), entry(23, "index-unmanaged")])
+        self.assertEqual(decisions(rows), {2*i+1: 2*i+2 for i in range(len(services))})
 
     def test_seed_rollover_waits_for_visible_qualified_replacement(self):
         obsolete = entry(1, f"cma-cd-cargo-v2-am-{GRAPH}-12-1")

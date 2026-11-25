@@ -12,6 +12,7 @@ from image_secret_gate import ScanRefusal, checksum, verified_staging_scan
 from staging_cd_admission import event_identity
 from staging_cd_artifacts import try_reuse
 from staging_cd_build import build, command, identity, inspect, snapshot
+from staging_cd_build_profile import AM_PROFILE, from_environment
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHub
 from staging_cd_release_archive import load as load_prepared_archive, path_for
@@ -23,7 +24,7 @@ from staging_cd_reservations import Reservations, SourceAlreadyFinal, validate_r
 from staging_cd_publication_diagnostics import PublicationDiagnostics, run_publication
 from staging_cd_versions import DEPLOYABLES
 from staging_cd_timing import Timings
-from staging_cd_build_cache import SCOPES, BuildCache
+from staging_cd_build_cache import SCOPES, BuildCache, layer_scope
 from staging_cd_cache_save import report_layers
 from staging_cd_runtime_smoke import CleanupIncomplete, qualify as qualify_runtime
 from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS, TARGETS
@@ -224,6 +225,7 @@ def main():
     def operation(_masker, diagnostics):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Image publication only accepts develop pushes")
+        profile = from_environment(env, env["CD_COMPONENT"])
         diagnostics.mark("validate")
         tasks = validated_tasks(json.loads(env["CD_TASKS"]), env)
         receipts = []
@@ -260,7 +262,7 @@ def main():
                     with timings.stage("source"):
                         snapshot(root, reservation["source"], source)
                         diagnostics.mark("validate")
-                        release, _, _ = identity(reservation, source)
+                        release, _, arguments = identity(reservation, source, staging_am_opt_level=profile)
                     diagnostics.mark("reuse")
                     qualified = False
                     prepared_checksum = None
@@ -274,6 +276,9 @@ def main():
                             if prepared.cache_namespace is not None:
                                 cache = BuildCache(root, env, source, reservation["component"])
                                 cache.namespace = prepared.cache_namespace
+                        elif AM_PROFILE in arguments:
+                            print(f"AM staging-only package optimization is {arguments[AM_PROFILE]}", flush=True)
+                            archive = None
                         else:
                             archive = try_reuse(release, directory, api, env.get("GH_TOKEN"),
                                                 on_miss=reuse_misses.append)
@@ -291,9 +296,10 @@ def main():
                             build_metrics.append(progress)
                             started = time.time()
                             archive, release = build(root, reservation, directory, source=source, cache=cache,
-                                                     progress=progress)
+                                                     progress=progress, staging_am_opt_level=profile)
                         if cache is not None and cache.exports_layers() is True:
-                            layer_exports.append((started, progress))
+                            layer_exports.append((started, progress, layer_scope(reservation["component"],
+                                                                                arguments.get(AM_PROFILE, ""))))
                     require(release["component"] == reservation["component"], "Built release component differs")
                     try:
                         receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
@@ -372,9 +378,9 @@ def main():
     if layer_exports and component in SCOPES:
         # Diagnostic only, after publication: did the last export reach the
         # Actions cache, or will the next build of this component start cold?
-        started, progress = layer_exports[-1]
+        started, progress, scope = layer_exports[-1]
         try:
-            report_layers(component, SCOPES[component], progress, started, env)
+            report_layers(component, scope, progress, started, env)
         except Exception:  # noqa: BLE001 - by construction, the check never changes the outcome.
             print(f"CACHE-SAVE cache=build-layers component={component} result=unknown reason=unreadable",
                   flush=True)

@@ -9,7 +9,8 @@ from pathlib import Path
 
 from staging_cd_admission import event_identity
 from staging_cd_build import build, snapshot
-from staging_cd_build_cache import SCOPES, BuildCache
+from staging_cd_build_cache import BuildCache, layer_scope
+from staging_cd_build_profile import from_environment
 from staging_cd_cache_save import report_layers
 from staging_cd_common import require
 from staging_cd_github import GitHub
@@ -27,6 +28,7 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
     timings = timings or Timings()
     event_identity(env)
     require(env["GITHUB_EVENT_NAME"] == "push", "Image preparation only accepts develop pushes")
+    profile = from_environment(env, env["CD_COMPONENT"])
     tasks = validated_tasks(json.loads(env["CD_TASKS"]), env)
     pending = [value for mode, value in tasks if mode == "publish"]
     # Build one candidate at a time. The existing publisher interleaves builds
@@ -68,9 +70,10 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
         diagnostics.mark("build")
         started = time.time()
         with timings.stage("build"):
-            _, release = build(root, reservation, directory, source=source, cache=cache, progress=progress)
+            _, release = build(root, reservation, directory, source=source, cache=cache, progress=progress,
+                               staging_am_opt_level=profile)
         if layer_exports is not None and cache is not None and cache.exports_layers():
-            layer_exports.append(started)
+            layer_exports.append((started, layer_scope(cache.component, cache.staging_am_opt_level)))
         seal(directory, release, cache.namespace if cache and cache.key is not None else None)
         # The destination is allocated exclusively and the manifest is the
         # final commit marker. A partial handoff cannot authorize publication.
@@ -101,7 +104,8 @@ def main():
     component = env.get("CD_COMPONENT")
     emit_cache_metrics(component, cache_metrics, sys.stdout)
     if layer_exports:
-        report_layers(component, SCOPES[component], progress, layer_exports[0], env)
+        started, scope = layer_exports[0]
+        report_layers(component, scope, progress, started, env)
     if progress:
         print(json.dumps({"event": "publication-build", **public_summary(progress)}, sort_keys=True),
               flush=True)

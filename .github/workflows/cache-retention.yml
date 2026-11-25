@@ -11,6 +11,8 @@ on:
         type: boolean
         default: false
 permissions: {}
+env:
+  CMA_STAGING_AM_OPT_LEVEL: ${{ vars.CMA_STAGING_AM_OPT_LEVEL }}
 jobs:
   sweep:
     if: >-

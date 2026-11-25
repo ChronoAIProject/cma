@@ -234,6 +234,7 @@ jobs:
     with:
       component: am
       tasks: ${{ fromJSON(needs.allocate.outputs.publications)['am'] }}
+      staging_am_opt_level: ${{ vars.CMA_STAGING_AM_OPT_LEVEL }}
   release_eg:
     name: Release eg
     needs: [allocate, infrastructure]

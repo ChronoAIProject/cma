@@ -6,6 +6,7 @@ import tomllib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from staging_cd_build_profile import AM_PROFILE, for_source as source_profile
 from staging_cd_versions import DEPLOYABLES
 
 CARGO_NAMESPACE = "cma-cd-cargo-v4-"
@@ -66,7 +67,7 @@ class CargoKey:
         return self.prefix + env["GITHUB_RUN_ID"] + "-" + env["GITHUB_RUN_ATTEMPT"]
 
 
-def identity(root, component, *, day=None):
+def identity(root, component, *, day=None, staging_am_opt_level=""):
     recipe = json.loads((root / ".github/scripts/deployables.json").read_text())[DEPLOYABLES[component]]
     api = root / "api"
     workspace = tomllib.loads((api / "Cargo.toml").read_text())
@@ -81,11 +82,15 @@ def identity(root, component, *, day=None):
     # In the family, the first build of each day recompiled the whole workspace
     # from nothing (AM 32 minutes on 21 Nov 2026 instead of 14).
     refresh = day if day is not None else datetime.now(timezone.utc).date()
-    family = digest({"platform": "linux/amd64",
-                     "target": "x86_64-unknown-linux-musl", "profile": "release",
-                     "release_profile": workspace.get("profile", {}).get("release", {}),
-                     "config": configs, "toolchain": tomllib.loads((api / "rust-toolchain.toml").read_text()),
-                     "compiler": compiler_recipe(root / recipe["dockerfile"])})
+    compiler = {"platform": "linux/amd64",
+                "target": "x86_64-unknown-linux-musl", "profile": "release",
+                "release_profile": workspace.get("profile", {}).get("release", {}),
+                "config": configs, "toolchain": tomllib.loads((api / "rust-toolchain.toml").read_text()),
+                "compiler": compiler_recipe(root / recipe["dockerfile"])}
+    profile = source_profile(root, component, staging_am_opt_level)
+    if profile:
+        compiler["staging_profile"] = {AM_PROFILE: profile}
+    family = digest(compiler)
     manifests = {}
     for path in [api / "Cargo.toml", *sorted((api / "crates").glob("*/Cargo.toml"))]:
         manifest = workspace if path == api / "Cargo.toml" else tomllib.loads(path.read_text())

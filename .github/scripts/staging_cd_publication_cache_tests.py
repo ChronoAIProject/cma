@@ -11,10 +11,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from actions_cargo_admission import candidates
 from staging_cd_build_cache import BuildCache, SCOPES, bridge, identity, layer_options, prepare
 from staging_cd_build_progress import summarize
+from staging_cd_build_profile import AM_PROFILE
 from staging_cd_common import Refusal
 from staging_cd_cache_context import context
+from staging_cd_reservations import next_reservation
 from staging_cd_timing import Timings
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -131,10 +134,41 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(prepare(ROOT, env)['key'], actual.archive_key(env))
             source = snapshot.call_args.args[2]
             snapshot.assert_called_once_with(ROOT, reservation["source"], source)
-            key.assert_called_once_with(source, 'eg')
+            key.assert_called_once_with(source, 'eg', staging_am_opt_level="")
         task['reservation'] = dict(reservation, source='invalid')
         with self.assertRaises(Refusal):
             prepare(ROOT, dict(env, CD_TASKS=json.dumps([task])))
+
+    def test_staging_am_profiles_isolate_lookup_restore_and_layer_scopes(self):
+        env = dict(self.env, CD_COMPONENT="am", CD_TASKS=json.dumps([{"component": "am", "mode": "resume"}]),
+                   ACTIONS_RUNTIME_TOKEN="synthetic", ACTIONS_RESULTS_URL="synthetic")
+        default = BuildCache(ROOT, env, ROOT, "am")
+        first = BuildCache(ROOT, {**env, AM_PROFILE: "0"}, ROOT, "am")
+        second = BuildCache(ROOT, {**env, AM_PROFILE: "1"}, ROOT, "am")
+        self.assertEqual(default.key.graph, first.key.graph)
+        self.assertEqual(first.key.graph, second.key.graph)
+        self.assertEqual(len({default.key.family, first.key.family, second.key.family}), 3)
+        reservation = next_reservation("am", env["GITHUB_SHA"], "b" * 40, 42, "patch", 123, 1, [], [])
+        publications = json.dumps({"am": json.dumps([{"component": "am", "mode": "publish",
+                                                      "reservation": reservation}])})
+        for level, cache in (("0", first), ("1", second)):
+            selected = {**env, AM_PROFILE: level}
+            prepared = prepare(ROOT, selected)
+            self.assertEqual(prepared["key"], cache.key.archive_key(env))
+            with patch("actions_cargo_admission.Path.cwd", return_value=ROOT):
+                self.assertEqual(candidates(dict(selected, CARGO_PUBLICATIONS=publications)), [prepared["key"]])
+            scopes = [arg for arg in cache.build_options() if "scope=" in arg]
+            self.assertEqual(len(scopes), 2)
+            self.assertTrue(all("scope=cma-cd-am-staging-opt-" + level + "," in arg for arg in scopes))
+        tool = bridge()
+        self.populate(first.accepted)
+        tool.seal(first.accepted, first.key.prefix, family=first.key.family)
+        with patch.object(tool, "transfer") as transfer, patch("staging_cd_build_cache.bridge", return_value=tool):
+            self.assertFalse(default.restore())
+            self.assertFalse(second.restore())
+            transfer.assert_not_called()
+            self.assertTrue(first.restore())
+            transfer.assert_called_once()
 
     def test_staging_bundles_use_the_artifact_bound_and_report_why_exports_are_withheld(self):
         import staging_cd_build_cache as module
@@ -229,12 +263,12 @@ class CacheTests(unittest.TestCase):
         tool = bridge()
         yesterday, today = date(2026, 11, 20), date(2026, 11, 21)
         with patch.object(staging_cd_build_cache, 'identity',
-                          side_effect=lambda root, component: identity(root, component, day=yesterday)):
+                          side_effect=lambda root, component, **kwargs: identity(root, component, day=yesterday, **kwargs)):
             producer = self.cache()
         self.populate(producer.accepted)
         tool.seal(producer.accepted, producer.key.prefix, family=producer.key.family)
         with patch.object(staging_cd_build_cache, 'identity',
-                          side_effect=lambda root, component: identity(root, component, day=today)):
+                          side_effect=lambda root, component, **kwargs: identity(root, component, day=today, **kwargs)):
             cache = self.cache()
         self.assertEqual(cache.key.family, producer.key.family)
         self.assertNotEqual(cache.key.prefix, producer.key.prefix)
@@ -474,6 +508,7 @@ class CacheTests(unittest.TestCase):
                            workflow.index('Build once, scan every layer, and publish exact bytes'))
         self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'", workflow)
         self.assertIn("run: python3 -B .github/scripts/staging_cd_cargo_artifact.py", workflow)
+        self.assertIn("CD_CARGO_FAMILY: ${{ steps.build-cache.outputs.family }}", workflow)
         self.assertIn("name: cma-cd-cargo-${{ inputs.component }}", workflow)
         self.assertIn("path: ${{ steps.build-cache.outputs.directory }}", workflow)
         self.assertIn('actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd', workflow)
