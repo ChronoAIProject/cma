@@ -134,29 +134,8 @@ jobs:
           echo "ready=true" >> "$GITHUB_OUTPUT"
         fi
     - name: Start wall-clock and runner headroom measurement
-      run: |
-        set -eu
-        samples="$RUNNER_TEMP/omarchy-evidence/headroom.tsv"
-        date -u +%s > "$RUNNER_TEMP/omarchy-evidence/comparison-start"
-        python3 - "$samples" "$RUNNER_TEMP/omarchy-comparison.stop" <<'PY' &
-        import os
-        import pathlib
-        import sys
-        import time
-
-        os.setsid()
-        stop = pathlib.Path(sys.argv[2])
-        with open(sys.argv[1], "a", buffering=1) as samples:
-            print("unix_time\tused_memory_kib\troot_free_kib\tartifact_free_kib", file=samples)
-            while not stop.exists():
-                with open("/proc/meminfo") as source:
-                    memory = dict((name.rstrip(":"), int(value)) for name, value, *_ in map(str.split, source))
-                disks = (os.statvfs(path) for path in ("/", os.environ["RUNNER_TEMP"]))
-                root_free, artifact_free = (disk.f_bavail * disk.f_frsize // 1024 for disk in disks)
-                memory_used = memory["MemTotal"] - memory["MemAvailable"]
-                print(f"{time.time():.3f}\t{memory_used}\t{root_free}\t{artifact_free}", file=samples)
-                time.sleep(2)
-        PY
+      timeout-minutes: 1
+      run: python3 -B .github/scripts/omarchy-qualification-sampler.py start "$RUNNER_TEMP/omarchy-evidence"
     - name: Scan tested Omarchy image as staging publication does
       id: omarchy-scan-start
       if: success() && matrix.scan_order == 'overlapped' && steps.omarchy-scanner-install.outputs.ready
@@ -189,12 +168,24 @@ jobs:
         CMA_OMARCHY_TEST_IMAGE_TMP: '1'
       run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/image-tmp"
     - name: Restore Trivy databases
+      id: trivy-cache-restore
       if: github.event_name != 'push' || github.ref != 'refs/heads/develop'
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: "${{ github.workspace }}/.cache/trivy"
         key: cache-trivy-readonly
         restore-keys: cache-trivy-
+    - name: Record restored cache identities
+      env:
+        OMARCHY_REQUESTED: omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}
+        OMARCHY_MATCHED: ${{ steps.omarchy-cache-restore.outputs.cache-matched-key }}
+        OMARCHY_HIT: ${{ steps.omarchy-cache-restore.outputs.cache-hit }}
+        OMARCHY_OUTCOME: ${{ steps.omarchy-cache-restore.outcome }}
+        TRIVY_REQUESTED: cache-trivy-readonly
+        TRIVY_MATCHED: ${{ steps.trivy-cache-restore.outputs.cache-matched-key }}
+        TRIVY_HIT: ${{ steps.trivy-cache-restore.outputs.cache-hit }}
+        TRIVY_OUTCOME: ${{ steps.trivy-cache-restore.outcome }}
+      run: python3 -B .github/scripts/omarchy-qualification-sampler.py cache "$RUNNER_TEMP/omarchy-evidence"
     - name: Scan tested Omarchy image
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
       with:
@@ -237,20 +228,11 @@ jobs:
       env:
         QUALIFICATION_MODE: "${{ matrix.scan_order }}"
         QUALIFICATION_TRIAL: "${{ matrix.trial }}"
+      timeout-minutes: 1
       run: |
         set -eu
-        touch "$RUNNER_TEMP/omarchy-comparison.stop"
         dir="$RUNNER_TEMP/omarchy-evidence"
-        test -f "$dir/comparison-start"
-        end=$(date -u +%s)
-        start=$(cat "$dir/comparison-start")
-        samples="$dir/headroom.tsv"
-        test "$(wc -l < "$samples")" -gt 1
-        awk -v duration="$((end-start))"         'NR>1 {
-              if ($2 > peak) peak = $2
-              if (NR == 2 || $3 < root) root = $3
-              if (NR == 2 || $4 < artifacts) artifacts = $4
-            } END {print duration, peak, root, artifacts}'         "$samples" > "$dir/comparison-totals.txt"
+        python3 -B .github/scripts/omarchy-qualification-sampler.py finish "$dir"
         printf '%s %s\n' "$QUALIFICATION_MODE" "$QUALIFICATION_TRIAL" > "$dir/comparison-mode.txt"
         if test -f "$RUNNER_TEMP/ci-native-image/metadata.json"; then
           cp "$RUNNER_TEMP/ci-native-image/metadata.json" "$dir/tested-image.json"
