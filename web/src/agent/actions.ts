@@ -3,7 +3,12 @@ import type { AgentActionOptions } from './actionOptions';
 import type { InputErrorOwner } from './actionError';
 import type { AgentCommand, ApprovalDecision, MessageAcceptance } from './controllerTypes';
 import { ApiError, type AnswerContext } from '@cma/client';
-import { isLegacySuggestionRefusal, stoppedInputMessage } from './controllerError';
+import { DraftBindingError } from './draftDelivery';
+import {
+  isLegacySuggestionRefusal,
+  isV2InputRefusal,
+  stoppedInputMessage,
+} from './controllerError';
 import { agentRestartReady } from './controlReadiness';
 import { runId } from './transport/runId';
 import { submitV2Control, recoverV2Control } from './transport/controls';
@@ -287,22 +292,9 @@ export function useAgentActions({
           !approving &&
           !accepted &&
           !recoveringInput &&
-          (error instanceof InterruptionNotSubmittedError ||
-            (error instanceof ApiError &&
-              ((error.status === 422 &&
-                [
-                  'invalid_response_input',
-                  'invalid_answer_context',
-                  'invalid_control_request',
-                  'invalid_interrupt_request',
-                  ...(mode === 'interrupt' ? ['capability_unsupported'] : []),
-                ].includes(error.code ?? '')) ||
-                (error.status === 409 &&
-                  [
-                    'response_control_not_admitted',
-                    'response_interrupt_not_admitted',
-                    'agent_command_not_admissible',
-                  ].includes(error.code ?? '')))))
+          (error instanceof DraftBindingError ||
+            error instanceof InterruptionNotSubmittedError ||
+            isV2InputRefusal(error, mode === 'interrupt'))
         )
           onRefused?.(
             answerContext &&
