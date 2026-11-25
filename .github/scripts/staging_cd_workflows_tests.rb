@@ -339,6 +339,22 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 'automatic', admit['steps'].find { |step| step['id'] == 'set' }.dig('env', 'CD_RESOLVE_MODE')
   end
 
+  def test_only_the_locked_staging_promotion_admission_reads_prior_proofs
+    callers = workflow('staging-cd')['jobs'].values.select { |job| job['uses'] == './.github/workflows/staging-promote.yml' }
+    assert_equal 6, callers.length
+    callers.each do |job|
+      assert_equal 'cma-staging-deploy-set', job.dig('concurrency', 'group')
+      assert_equal 'read', job.dig('permissions', 'deployments')
+    end
+    promote = workflow('staging-promote')
+    %w[admit readmit].each do |job|
+      admission = promote['jobs'].fetch(job)
+      assert_equal 'read', admission.dig('permissions', 'deployments')
+      assert_equal 'chrono-ai-staging', admission['steps'].find { |step| step['id'] == 'set' }.dig('env', 'CD_STAGING_ENVIRONMENT')
+    end
+    %w[deploy redeploy].each { |job| refute promote['jobs'][job]['permissions'].key?('deployments') }
+  end
+
   def test_one_automatic_retry_re_admits_after_a_transient_refusal_and_its_outcome_counts
     promote = workflow('staging-promote')
     jobs = promote['jobs']
