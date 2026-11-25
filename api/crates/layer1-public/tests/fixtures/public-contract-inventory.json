@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 334,
+  "openapi_operations": 335,
   "operations": {
     "POST /api/v1/admin/sandboxes/{id}/runtime-migration": {
       "classification": "openapi",
@@ -3279,6 +3279,23 @@
       ]
     },
     "PATCH /api/v1/documents/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_document_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "DELETE /api/v1/documents/{id}": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
       "required_problems": [

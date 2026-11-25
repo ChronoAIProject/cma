@@ -114,6 +114,10 @@ impl MongoDocumentQuotaStore {
             .await?
             .ok_or(DocumentError::Corrupt)?;
         validate_row(&owner, "owner")?;
+        if self.rows.find_one(doc! {"_id": super::deletion::obligation_id(&source.owner_hash, &source.document_id)})
+            .session(&mut *session).await?.is_some() {
+            return Err(DocumentError::NotFound.into());
+        }
         let usage = [
             number(&owner, "documents")?,
             number(&owner, "bytes")?,

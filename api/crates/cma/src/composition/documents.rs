@@ -20,6 +20,13 @@ pub(super) fn compose(
     stores: &MongoStores,
     standing: Arc<dyn AccountStanding>,
 ) -> Result<DocumentComposition, String> {
+    if config.features.document_deletion
+        && (!config.features.document_quotas || !config.features.document_source_commits)
+    {
+        return Err(
+            "document deletion requires the source accounting writer and quota baseline".into(),
+        );
+    }
     let maintenance = config
         .document_storage
         .clone()
@@ -44,6 +51,7 @@ pub(super) fn compose(
         config.features.document_revocation_reserve,
         Some(quota),
     )
+    .with_deletion_enabled(config.features.document_deletion)
     .with_account_standing(standing)
     .with_directory(UserDirectory::new(stores.users.clone()));
     Ok(DocumentComposition {

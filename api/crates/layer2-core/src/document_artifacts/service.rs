@@ -10,6 +10,7 @@ pub struct DocumentService {
     pub(super) blobs: Arc<dyn DocumentBlobStore>,
     pub(super) revocation_reserve_enabled: bool,
     pub(super) quota: Option<Arc<dyn DocumentQuotaStore>>,
+    pub(super) deletion_enabled: bool,
 }
 impl DocumentService {
     pub fn new(store: Arc<dyn DocumentStore>, blobs: Arc<dyn DocumentBlobStore>) -> Arc<Self> {
@@ -36,6 +37,7 @@ impl DocumentService {
             directory: None,
             revocation_reserve_enabled,
             quota,
+            deletion_enabled: false,
         })
     }
     pub async fn create(
@@ -67,6 +69,9 @@ impl DocumentService {
         }
         let id = types::identity("doc_", &[caller.subject.as_str(), key]);
         let fingerprint = types::fingerprint(&body)?;
+        if self.store.tombstone(&id).await?.is_some() {
+            return Err(DocumentError::NotFound);
+        }
         if let Some(existing) = self.store.get(&id).await? {
             if let Some(guard) = guard {
                 guard.validate(Some(&existing)).await?;

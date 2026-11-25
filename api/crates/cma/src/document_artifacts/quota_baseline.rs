@@ -98,7 +98,7 @@ impl Inventory {
             .projection(
                 doc! {"owner_subject": 1, "document_schema_version": 1, "record.metadata.id": 1,
                 "record.metadata.owner_subject": 1, "record.revisions.object_key": 1,
-                "record.revisions.metadata.sha256": 1, "record.revisions.metadata.size_bytes": 1},
+                "record.revisions.metadata.sha256": 1, "record.revisions.metadata.size_bytes": 1, "deletion": 1},
             )
             .limit(MAX_BASELINE_OBJECTS as i64 + 1)
             .batch_size(16)
@@ -118,6 +118,9 @@ impl Inventory {
 
     fn check_reference(&self, row: &Document) -> Result<(), DocumentError> {
         let corrupt = |_| DocumentError::Corrupt;
+        if super::deletion::decode(row)?.is_some() {
+            return Ok(());
+        }
         if row.get_i64("document_schema_version").ok() != Some(1) {
             return Err(DocumentError::Corrupt);
         }

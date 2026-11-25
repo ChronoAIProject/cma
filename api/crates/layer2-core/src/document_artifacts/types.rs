@@ -254,6 +254,21 @@ impl DocumentListing {
 #[async_trait::async_trait]
 pub trait DocumentStore: Send + Sync {
     async fn get(&self, id: &str) -> Result<Option<StoredDocument>, DocumentError>;
+    /// Read the immutable owner-deletion receipt for this identity.
+    async fn tombstone(
+        &self,
+        _id: &str,
+    ) -> Result<Option<super::DocumentTombstone>, DocumentError> {
+        Ok(None)
+    }
+    /// Atomically fence the live owner/revision and retain the deletion receipt.
+    async fn delete(
+        &self,
+        _owner: &str,
+        _tombstone: &super::DocumentTombstone,
+    ) -> Result<bool, DocumentError> {
+        Err(DocumentError::Unavailable)
+    }
     /// Insert exactly once; false means the deterministic identity already exists.
     async fn insert(&self, record: &StoredDocument) -> Result<bool, DocumentError>;
     /// Publish a new Document with its reserved source on stores that track publication.

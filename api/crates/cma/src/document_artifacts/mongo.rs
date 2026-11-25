@@ -61,7 +61,23 @@ impl DocumentStore for MongoDocumentStore {
             .find_one(doc! {"_id": id})
             .await
             .map_err(|_| DocumentError::Unavailable)?;
-        value.as_ref().map(decode).transpose()
+        match value.as_ref() {
+            Some(value) if super::deletion::decode(value)?.is_some() => Ok(None),
+            _ => value.as_ref().map(decode).transpose(),
+        }
+    }
+    async fn tombstone(&self, id: &str) -> Result<Option<DocumentTombstone>, DocumentError> {
+        super::deletion::tombstone(self, id).await
+    }
+    async fn delete(
+        &self,
+        owner: &str,
+        tombstone: &DocumentTombstone,
+    ) -> Result<bool, DocumentError> {
+        if !self.source_commits {
+            return Err(DocumentError::Unavailable);
+        }
+        super::deletion::delete(self, owner, tombstone).await
     }
     async fn insert(&self, record: &StoredDocument) -> Result<bool, DocumentError> {
         match self.rows.insert_one(encode(record)?).await {
