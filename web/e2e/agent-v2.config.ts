@@ -23,6 +23,7 @@ export default defineConfig({
   testMatch: [
     'agent-v2.check.ts',
     'agent-draft-binding.check.ts',
+    'agent-draft-identity-refresh.check.ts',
     'agent-v2-cjk.check.ts',
     'agent-v2-queued.check.ts',
     'agent-v2-queued-edit.check.ts',
