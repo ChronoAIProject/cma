@@ -130,6 +130,29 @@ test('Agent navigation reports the first H1 of the committed main document', { t
   });
 });
 
+test('invalid navigation gives the Agent a recovery path and an unavailable browser reports disconnect', { timeout: 30000 }, async test => {
+  const browser = await fixture(test);
+  const navigate = url => run(process.execPath, [join(__dirname, 'command.cjs'), 'navigate', url], {
+    env: { ...process.env, CMA_BROWSER_SOCKET: join(browser.directory, 'browser.sock') },
+  });
+  for (const url of ['file:///workspace/preview.html', 'not-a-url', 'https://user:placeholder@example.test/',
+    'http://127.0.0.1/' + 'a'.repeat(8192)]) {
+    await assert.rejects(navigate(url), error => {
+      assert.equal(error.code, 1);
+      const result = JSON.parse(error.stdout);
+      assert.equal(result.error, 'browser_navigation_invalid');
+      assert.match(result.message, /HTTP or HTTPS URL without credentials/);
+      assert.match(result.message, /serve it over HTTP on 127\.0\.0\.1/);
+      return true;
+    });
+  }
+  assert.equal(JSON.parse((await navigate(browser.url)).stdout).navigated, true);
+  await browser.call({ operation: 'disable' });
+  await assert.rejects(navigate(browser.url), {
+    code: 1, stdout: '{"error":"browser_disconnected"}',
+  });
+});
+
 test('live observations report only the current origin and reset it with the browser context', { timeout: 30000 }, async test => {
   const browser = await fixture(test);
   const target = new URL(browser.url);
