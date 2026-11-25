@@ -21,7 +21,12 @@ interface PendingAction {
 }
 
 /** Keep the original operation in memory; only the verified server result releases it. */
-export function useConnectionGate(enabled = true, scope?: object, description?: string) {
+export function useConnectionGate(
+  enabled = true,
+  scope?: object,
+  description?: string,
+  repositoryRecovery = false,
+) {
   const [pending, setPending] = useState<PendingAction>();
   const [interactive, setInteractive] = useState(false);
   const [error, setError] = useState<string>();
@@ -128,6 +133,7 @@ export function useConnectionGate(enabled = true, scope?: object, description?: 
         forceSubscription={pending.forceSubscription}
         expectedOwner={pending.owner}
         description={description}
+        repositoryRecovery={repositoryRecovery}
         onReady={(report) => complete(pending, report)}
         onCancel={cancel}
       />

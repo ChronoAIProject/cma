@@ -101,6 +101,7 @@ function PreparationCheck({ client, viewerId, intent, operation }: Required<Prop
     target !== undefined,
     scope,
     'Connect the accounts this repository needs. CMA verifies the connections; this check does not retry repository preparation or send your task.',
+    true,
   );
   useEffect(() => {
     const abort = new AbortController();

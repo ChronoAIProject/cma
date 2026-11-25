@@ -74,6 +74,8 @@ use utoipa::OpenApi;
         http::events::receive_event,
         http::event_attestation::attest_event,
         http::tools::reply_to_event,
+        http::side_messages::capability,
+        http::side_messages::send,
         http::form_preparation::prepare_form_reply,
         http::form_preparation::read_form_preparation,
         http::tools::update_message,

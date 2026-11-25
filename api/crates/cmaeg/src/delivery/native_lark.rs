@@ -76,7 +76,10 @@ impl Sender {
             rendering,
             ..rejected("empty_message")
         };
-        let deadline = Instant::now() + Duration::from_secs(60);
+        let deadline = ctx
+            .gate
+            .transport_deadline()
+            .unwrap_or_else(|| Instant::now() + Duration::from_secs(60));
         let prepared = async {
             if sticker {
                 let records = self.relay.interactions.as_ref()?.channel_records();
@@ -241,7 +244,13 @@ impl Sender {
                         confirmed_at: now,
                         retained_until: now + RETENTION,
                     };
-                    if store.put(&receipt).await.is_err() {
+                    if !super::gate::within_deadline(
+                        ctx.gate,
+                        async { store.put(&receipt).await.is_ok() },
+                        false,
+                    )
+                    .await
+                    {
                         result.delivery = DeliveryOutcome::Unknown {
                             reason: "native_lark_receipt_unconfirmed".into(),
                         };
