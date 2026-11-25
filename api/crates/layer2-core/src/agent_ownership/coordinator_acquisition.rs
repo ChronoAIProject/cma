@@ -134,10 +134,7 @@ impl OwnershipCoordinator {
         outcome: WriteOutcome,
         until: Instant,
     ) -> Result<WriteOutcome, OwnershipError> {
-        if matches!(
-            outcome,
-            WriteOutcome::Uncertain(OwnershipError::Unavailable(_))
-        ) {
+        if matches!(outcome, WriteOutcome::Uncertain(_)) {
             let token = retirement::stage(
                 until,
                 self.store.reconcile_acquisition(id, &self.instance_id),

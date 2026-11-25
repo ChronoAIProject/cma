@@ -61,7 +61,8 @@ impl LeaseWrite {
                     now_ms: membership.now_ms,
                     lease,
                 },
-                Ok(Err(error)) => WriteOutcome::Uncertain(error),
+                Ok(Err(error @ OwnershipError::Unavailable(_))) => WriteOutcome::Uncertain(error),
+                Ok(Err(error)) => WriteOutcome::NotIssued(error),
                 Err(_) => WriteOutcome::Uncertain(unresolved()),
             }
         })

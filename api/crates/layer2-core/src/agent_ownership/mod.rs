@@ -135,6 +135,8 @@ pub trait OwnershipStore: Send + Sync {
     async fn has_owner_history(&self, agent_id: &AgentId) -> Result<bool, OwnershipError>;
     /// Returns None for a live peer owner, another preferred member, or capacity.
     /// Missing process-local attachment is never evidence for takeover.
+    /// Errors other than Unavailable prove no acquisition committed. If a
+    /// store cannot establish the result, it must return Unavailable.
     async fn acquire(
         &self,
         agent_id: &AgentId,

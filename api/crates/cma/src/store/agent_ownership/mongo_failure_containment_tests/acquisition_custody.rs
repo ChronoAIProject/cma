@@ -25,6 +25,71 @@ async fn manager_with_policy(
 
 #[tokio::test]
 #[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
+async fn definite_acquisition_refusal_frees_capacity_and_allows_retry_after_repair() {
+    for policy in [
+        MaintenancePolicy::Legacy,
+        MaintenancePolicy::ContainFailures,
+    ] {
+        let store = Store::new().await;
+        let coordinator = manager_with_policy(store.clone(), "first", policy).await;
+        let bad = AgentId("incompatible-agent".into());
+        let other = AgentId("healthy-agent".into());
+        let owner_filter = doc! {"_id": bad.as_str()};
+        store
+            .inner
+            .owners
+            .insert_one(doc! {
+                "_id": bad.as_str(),
+                "document_schema_version": 1_i64,
+                "protocol": i64::from(PROTOCOL_VERSION) + 1,
+                "epoch": 0_i64,
+                "instance_id": mongodb::bson::Bson::Null,
+                "expires_at": mongodb::bson::DateTime::from_millis(0),
+                "effect_revision": 0_i64,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            coordinator.acquire(&bad).await.err(),
+            Some(OwnershipError::IncompatibleProtocol)
+        );
+        assert_eq!(store.membership().await.unwrap().members[0].owned_agents, 0);
+        let healthy = coordinator.acquire(&other).await.unwrap().unwrap();
+        coordinator
+            .handoff(&healthy, healthy.revoke_transports())
+            .await
+            .unwrap();
+
+        store
+            .inner
+            .owners
+            .update_one(
+                owner_filter,
+                doc! {"$set": {"protocol": i64::from(PROTOCOL_VERSION)}},
+            )
+            .await
+            .unwrap();
+        let repaired = coordinator.acquire(&bad).await.unwrap().unwrap();
+        assert_eq!(repaired.token.epoch, 1);
+        let drained = coordinator.begin_drain().await;
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].token, repaired.token);
+        coordinator
+            .handoff(&drained[0], drained[0].revoke_transports())
+            .await
+            .unwrap();
+        coordinator
+            .prepare_drain(Instant::now() + Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert_eq!(store.membership().await.unwrap().members[0].owned_agents, 0);
+        close(&store, &[coordinator]).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
 async fn lost_acquisition_reply_releases_exact_expired_token_and_restores_capacity() {
     for policy in [
         MaintenancePolicy::Legacy,
