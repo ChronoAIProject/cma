@@ -1,5 +1,5 @@
 use super::*;
-use axum::{extract::Request, middleware::Next, response::Response};
+use axum::{extract::Request, http::HeaderValue, middleware::Next, response::Response};
 use futures_util::future::join_all;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Mutex};
@@ -7,7 +7,13 @@ use std::{collections::BTreeMap, sync::Mutex};
 tokio::task_local! { static PHASE: &'static str; }
 
 pub(super) async fn foreground(request: Request, next: Next) -> Response {
-    PHASE.scope("foreground", next.run(request)).await
+    let started = Instant::now();
+    let mut response = PHASE.scope("foreground", next.run(request)).await;
+    response.headers_mut().insert(
+        "x-fixture-handler-us",
+        HeaderValue::from_str(&started.elapsed().as_micros().to_string()).unwrap(),
+    );
+    response
 }
 
 #[derive(Default)]
@@ -16,14 +22,20 @@ struct WaitSamples {
     failed: usize,
 }
 
-#[derive(Clone, Default)]
-pub(super) struct WaitMeter(Arc<Mutex<BTreeMap<&'static str, WaitSamples>>>);
+#[derive(Default)]
+struct TimingSamples {
+    waits: BTreeMap<&'static str, WaitSamples>,
+    commands: BTreeMap<(&'static str, String), WaitSamples>,
+}
 
-impl WaitMeter {
+#[derive(Clone, Default)]
+pub(super) struct TimingMeter(Arc<Mutex<TimingSamples>>);
+
+impl TimingMeter {
     pub(super) fn record(&self, duration: Duration, failed: bool) {
         let phase = PHASE.try_with(|phase| *phase).unwrap_or("unattributed");
         let mut phases = self.0.lock().unwrap();
-        let samples = phases.entry(phase).or_default();
+        let samples = phases.waits.entry(phase).or_default();
         if failed {
             samples.failed += 1;
         } else {
@@ -31,7 +43,18 @@ impl WaitMeter {
         }
     }
 
-    fn take(&self) -> BTreeMap<&'static str, WaitSamples> {
+    pub(super) fn command(&self, name: &str, duration: Duration, failed: bool) {
+        let phase = PHASE.try_with(|phase| *phase).unwrap_or("unattributed");
+        let mut phases = self.0.lock().unwrap();
+        let samples = phases.commands.entry((phase, name.to_owned())).or_default();
+        if failed {
+            samples.failed += 1;
+        } else {
+            samples.successful_ms.push(duration.as_secs_f64() * 1000.);
+        }
+    }
+
+    fn take(&self) -> TimingSamples {
         std::mem::take(&mut *self.0.lock().unwrap())
     }
 }
@@ -54,31 +77,20 @@ fn distribution(mut samples: Vec<f64>) -> Value {
     })
 }
 
-struct HttpRead {
-    start: Duration,
-    end: Duration,
-    scheduled_ms: u64,
-}
+mod load;
+use load::HttpRead;
+pub(super) use load::LoadGenerator;
 
-impl HttpRead {
-    fn latency_ms(&self) -> f64 {
-        (self.end - self.start).as_secs_f64() * 1000.
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn measure_window(
     meter: &Meter,
-    waits: &WaitMeter,
+    timings: &TimingMeter,
     managers: &[Manager],
-    servers: &[HttpForeground],
-    client: &reqwest::Client,
-    target: &AgentId,
+    load: &LoadGenerator,
     defer: bool,
     foreground: bool,
     phase_ms: u64,
 ) {
-    waits.take();
+    timings.take();
     let before = meter.checkouts.load(Ordering::SeqCst);
     let cpu = cpu_seconds();
     let started = Instant::now();
@@ -132,37 +144,7 @@ pub(super) async fn measure_window(
         }
         sweep_windows
     };
-    let reads = async {
-        let mut reads = Vec::new();
-        let mut statuses = BTreeMap::new();
-        if foreground {
-            for index in 0..64 {
-                let scheduled_ms = phase_ms + index * 125;
-                tokio::time::sleep_until((started + Duration::from_millis(scheduled_ms)).into())
-                    .await;
-                let start = started.elapsed();
-                let server = &servers[index as usize % servers.len()];
-                let response = client
-                    .get(format!("{}/api/v1/agents/{}", server.address, target))
-                    .send()
-                    .await
-                    .unwrap();
-                let status = response.status().as_u16();
-                let body = response.bytes().await.unwrap();
-                reads.push(HttpRead {
-                    start,
-                    end: started.elapsed(),
-                    scheduled_ms,
-                });
-                *statuses.entry(status).or_insert(0) += 1;
-                if status == 200 {
-                    let value: Value = serde_json::from_slice(&body).unwrap();
-                    assert_eq!(value["id"], target.as_str());
-                }
-            }
-        }
-        (reads, statuses)
-    };
+    let reads = load.window(started, foreground, phase_ms);
     let (sweep_windows, (reads, statuses)) = tokio::join!(background, reads);
     tokio::time::sleep_until((started + Duration::from_secs(8)).into()).await;
     let elapsed = started.elapsed().as_secs_f64();
@@ -171,6 +153,8 @@ pub(super) async fn measure_window(
     let mut overlap = Vec::new();
     let mut between = Vec::new();
     let mut by_phase: BTreeMap<u64, Vec<f64>> = BTreeMap::new();
+    let mut handler_by_phase: BTreeMap<u64, Vec<f64>> = BTreeMap::new();
+    let mut dispatch_by_phase: BTreeMap<u64, Vec<f64>> = BTreeMap::new();
     for read in &reads {
         let latency = read.latency_ms();
         if sweep_windows
@@ -185,10 +169,19 @@ pub(super) async fn measure_window(
             .entry(read.scheduled_ms % 1000)
             .or_default()
             .push(latency);
+        handler_by_phase
+            .entry(read.scheduled_ms % 1000)
+            .or_default()
+            .push(read.handler_ms);
+        dispatch_by_phase
+            .entry(read.scheduled_ms % 1000)
+            .or_default()
+            .push(read.dispatch_delay_ms());
     }
     let http = distribution(reads.iter().map(HttpRead::latency_ms).collect());
-    let mongo: BTreeMap<_, _> = waits
-        .take()
+    let samples = timings.take();
+    let mongo: BTreeMap<_, _> = samples
+        .waits
         .into_iter()
         .map(|(phase, samples)| {
             (
@@ -197,6 +190,9 @@ pub(super) async fn measure_window(
             )
         })
         .collect();
+    let commands: BTreeMap<_, _> = samples.commands.into_iter().map(|((phase, name), samples)| {
+        (format!("{phase}/{name}"), json!({"round_trip": distribution(samples.successful_ms), "failed": samples.failed}))
+    }).collect();
     let timing_by_phase: BTreeMap<_, _> = by_phase
         .into_iter()
         .map(|(phase, samples)| (phase, distribution(samples)))
@@ -210,8 +206,13 @@ pub(super) async fn measure_window(
             "checkouts": checkouts, "checkouts_per_second": checkouts as f64 / elapsed,
             "mean_cores": consumed_cpu / elapsed, "http_p95_ms": http["p95_ms"],
             "http_status_counts": statuses, "rss_kib": rss_kib(), "http_latency": http,
+            "scheduled_to_send_ms": distribution(reads.iter().map(HttpRead::dispatch_delay_ms).collect()),
+            "handler_duration_ms": distribution(reads.iter().map(|read| read.handler_ms).collect()),
+            "mongo_command_round_trip_by_phase": commands,
             "http_overlapping_sweep": distribution(overlap), "http_between_sweeps": distribution(between),
             "http_by_scheduled_phase_ms": timing_by_phase, "mongo_checkout_by_phase": mongo,
+            "handler_by_scheduled_phase_ms": handler_by_phase.into_iter().map(|(phase, samples)| (phase, distribution(samples))).collect::<BTreeMap<_, _>>(),
+            "dispatch_by_scheduled_phase_ms": dispatch_by_phase.into_iter().map(|(phase, samples)| (phase, distribution(samples))).collect::<BTreeMap<_, _>>(),
             "sweep_duration_ms": distribution(sweep_windows.iter().map(|(start, end)| (*end - *start).as_secs_f64() * 1000.).collect()),
         })
     );

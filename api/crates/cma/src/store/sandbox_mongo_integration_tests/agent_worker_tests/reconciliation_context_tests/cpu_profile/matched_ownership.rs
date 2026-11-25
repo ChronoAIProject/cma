@@ -16,7 +16,7 @@ use layer2_core::{
 use layer3_adapter::ConversationUpdate;
 
 mod timing;
-use timing::{measure_window, WaitMeter};
+use timing::{measure_window, TimingMeter};
 
 struct HttpForeground {
     address: String,
@@ -83,10 +83,10 @@ struct Manager {
     store: Arc<MongoSandboxStore>,
 }
 
-async fn measured_client(uri: &str, meter: &Meter, waits: &WaitMeter) -> Client {
+async fn measured_client(uri: &str, meter: &Meter, timings: &TimingMeter) -> Client {
     let mut options = ClientOptions::parse(uri).await.unwrap();
     let checkouts = meter.checkouts.clone();
-    let waits = waits.clone();
+    let waits = timings.clone();
     options.cmap_event_handler = Some(EventHandler::callback(move |event| match event {
         CmapEvent::ConnectionCheckedOut(event) => {
             checkouts.fetch_add(1, Ordering::SeqCst);
@@ -94,6 +94,21 @@ async fn measured_client(uri: &str, meter: &Meter, waits: &WaitMeter) -> Client 
         }
         CmapEvent::ConnectionCheckoutFailed(event) => waits.record(event.duration, true),
         _ => {}
+    }));
+    // Command monitoring forces reply decoding. Both pinned implementations
+    // use exactly this instrumentation; retain only command name and timing.
+    let commands = timings.clone();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        use mongodb::event::command::CommandEvent;
+        match event {
+            CommandEvent::Succeeded(event) => {
+                commands.command(&event.command_name, event.duration, false)
+            }
+            CommandEvent::Failed(event) => {
+                commands.command(&event.command_name, event.duration, true)
+            }
+            _ => {}
+        }
     }));
     Client::with_options(options).unwrap()
 }
@@ -177,7 +192,7 @@ impl Manager {
 
 // Each mode visits the same live rows with the same real, renewable leases
 // and attached streams. Independently composed managers share only Mongo.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "manual paired scheduler measurement against a disposable replica set"]
 async fn matched_live_ownership_profile() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
@@ -189,14 +204,14 @@ async fn matched_live_ownership_profile() {
         let meter = Meter {
             checkouts: Arc::new(AtomicU64::new(0)),
         };
-        let waits = WaitMeter::default();
+        let timings = TimingMeter::default();
         let name = format!("cma_matched_{}", uuid::Uuid::new_v4().simple());
-        let client = measured_client(&uri, &meter, &waits).await;
+        let client = measured_client(&uri, &meter, &timings).await;
         let fixture = MongoSandboxStore::open(&client, &name).await.unwrap();
         let agents = population::seed(&fixture).await;
         let mut managers = Vec::new();
         for index in 0..replicas {
-            let client = measured_client(&uri, &meter, &waits).await;
+            let client = measured_client(&uri, &meter, &timings).await;
             managers.push(Manager::start(&client, &name, format!("owner-{index}")).await);
         }
 
@@ -229,15 +244,11 @@ async fn matched_live_ownership_profile() {
         for manager in &managers {
             servers.push(HttpForeground::start(manager, &client, &name, &agents[0].owner).await);
         }
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(3))
-            .build()
-            .unwrap();
-        let target = &agents[0].id;
+        let http = timing::LoadGenerator::start(&servers, agents[0].id.clone());
         for foreground in [false, true] {
             for defer in [false, true, true, false] {
                 measure_window(
-                    &meter, &waits, &managers, &servers, &http, target, defer, foreground, phase_ms,
+                    &meter, &timings, &managers, &http, defer, foreground, phase_ms,
                 )
                 .await;
             }
@@ -251,6 +262,7 @@ async fn matched_live_ownership_profile() {
         for (manager, count) in managers.iter().zip(custody) {
             assert_eq!(manager.coordinator.owned().await.len(), count);
         }
+        drop(http);
         drop(servers);
         drop(streams);
         drop(managers);
