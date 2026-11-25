@@ -12,7 +12,16 @@ use std::collections::BTreeSet;
 pub struct ProfileRevisions {
     pub current_revision: u64,
     pub baseline_complete: bool,
+    #[serde(default)]
+    pub last_publication: Option<ProfilePublication>,
     pub retained: Vec<RetainedProfileRevision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfilePublication {
+    pub expected_version: u64,
+    pub request_fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -30,6 +39,7 @@ impl ProfileRevisions {
         json!({
             "current_revision": self.current_revision,
             "baseline_complete": self.baseline_complete,
+            "last_publication": self.last_publication,
             "retained": self.retained.iter().map(|revision| json!({
                 "revision": revision.revision,
                 "profile_digest": revision.profile_digest,
@@ -56,8 +66,18 @@ impl ProfileRevisions {
                 .and_then(|len| len.checked_add(1))
                 != Some(self.current_revision)
             || (!self.baseline_complete && self.current_revision != 1)
+            || (self.last_publication.is_some() != (self.current_revision > 1))
         {
             return Err(invalid());
+        }
+        if let Some(published) = &self.last_publication {
+            if published.expected_version == 0 {
+                return Err(invalid());
+            }
+            validate_hash(
+                &published.request_fingerprint,
+                "/secrets/profile_revisions/publication",
+            )?;
         }
         let mut bindings = BTreeSet::from([channel.provider.binding_id.as_str()]);
         for (index, revision) in self.retained.iter().enumerate() {

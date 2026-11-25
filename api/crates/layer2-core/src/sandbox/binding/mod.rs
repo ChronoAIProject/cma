@@ -8,7 +8,9 @@ mod inspection;
 pub use access::{
     BindingAccessService, BindingConversationAuthority, BindingPrincipal, BindingSubmissionPolicy,
 };
-pub use inspection::{BindingConversationInspection, BindingProfileDrift};
+pub use inspection::{
+    BindingConversationCatalog, BindingConversationInspection, BindingProfileDrift,
+};
 mod fence;
 mod model;
 mod preparation_service;

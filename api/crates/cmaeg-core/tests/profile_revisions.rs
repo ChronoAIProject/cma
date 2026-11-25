@@ -1,4 +1,6 @@
-use cmaeg_core::channel::{ChannelDefinition, ProfileRevisions, RetainedProfileRevision, Secret};
+use cmaeg_core::channel::{
+    ChannelDefinition, ProfilePublication, ProfileRevisions, RetainedProfileRevision, Secret,
+};
 use cmaeg_core::ids::BindingId;
 
 #[test]
@@ -20,6 +22,10 @@ fn sealed_revision_history_retains_original_provider_and_credential() {
     channel.secrets.profile_revisions = Some(ProfileRevisions {
         current_revision: 2,
         baseline_complete: true,
+        last_publication: Some(ProfilePublication {
+            expected_version: 1,
+            request_fingerprint: format!("sha256:{}", "1".repeat(64)),
+        }),
         retained: vec![RetainedProfileRevision {
             revision: 1,
             profile_digest: original.profile_digest.clone(),

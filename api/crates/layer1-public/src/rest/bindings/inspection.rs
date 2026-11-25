@@ -61,10 +61,43 @@ pub(super) async fn get(
     }
 }
 
+#[derive(Serialize, ToSchema)]
+pub struct BindingConversationCatalogView {
+    pub binding_id: String,
+    pub generation: u64,
+    pub revision: u64,
+    pub transport_conversations: Vec<String>,
+}
+
+#[utoipa::path(get, operation_id = "list_binding_conversations",
+    path = "/api/v1/cmaeg/bindings/{binding_id}/conversations",
+    tag = "provider bindings", params(("binding_id" = String, Path)),
+    responses((status = 200, body = BindingConversationCatalogView), (status = 401), (status = 403), (status = 404), (status = 409), (status = 503)))]
+pub(super) async fn catalog(
+    State(state): State<BindingRouteState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Response {
+    match state.service.conversation_catalog(&caller, &id).await {
+        Ok(value) => Json(BindingConversationCatalogView {
+            binding_id: value.binding_id,
+            generation: value.generation,
+            revision: value.revision,
+            transport_conversations: value.transport_conversations,
+        })
+        .into_response(),
+        Err(value) => error(value),
+    }
+}
+
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(get),
-    components(schemas(BindingConversationInspectionView, BindingProfileDriftView))
+    paths(get, catalog),
+    components(schemas(
+        BindingConversationInspectionView,
+        BindingProfileDriftView,
+        BindingConversationCatalogView
+    ))
 )]
 struct InspectionApiDoc;
 

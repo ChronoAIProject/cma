@@ -213,3 +213,30 @@ pub(crate) async fn prepare_admission(
         insert,
     }))
 }
+
+/// Baseline insertion is authorized by an already admitted provider mapping or
+/// immutable event. It never creates provider work.
+pub(super) async fn baseline(
+    store: &Store,
+    current: &ResolvedChannel,
+    conversation: &ConversationId,
+) -> Result<(), Error> {
+    let consumer = ConsumerId::default_consumer();
+    let Some((assignment, write)) = prepare(store, current, &consumer, conversation, true).await?
+    else {
+        return Err(Error::Corrupt);
+    };
+    if let Some(write) = write {
+        if store.batch(&[write]).await.is_err() {
+            let Some((retained, None)) =
+                prepare(store, current, &consumer, conversation, false).await?
+            else {
+                return Err(Error::Lost);
+            };
+            if retained != assignment {
+                return Err(Error::Lost);
+            }
+        }
+    }
+    Ok(())
+}

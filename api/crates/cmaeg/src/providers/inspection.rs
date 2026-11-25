@@ -97,6 +97,83 @@ impl ProviderClient {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ConversationCatalog {
+    pub binding_id: String,
+    pub generation: u64,
+    pub revision: u64,
+    pub transport_conversations: Vec<String>,
+}
+
+impl ProviderClient {
+    pub(crate) async fn conversation_catalog(
+        &self,
+        provider: &ProviderSlug,
+        binding: &BindingId,
+        credential: &Secret,
+    ) -> Result<ConversationCatalog, ProviderError> {
+        if provider.as_str() != "cma_codex" {
+            return Err(ProviderError::InvalidRequest(
+                "conversation catalog requires CMA".into(),
+            ));
+        }
+        let handle = self.handle(provider)?;
+        let _permit = super::client::acquire(&handle.inflight).await?;
+        let mut url = handle
+            .entry
+            .url("binding", &[("binding_id", binding.as_str())])
+            .map_err(|_| ProviderError::InvalidRequest("invalid binding path".into()))?;
+        url.path_segments_mut()
+            .map_err(|_| ProviderError::InvalidRequest("invalid binding path".into()))?
+            .pop_if_empty()
+            .push("conversations");
+        let bearer = self.management_bearer(provider, &url, credential).await?;
+        let response = handle
+            .client
+            .get(url)
+            .bearer_auth(bearer.as_str())
+            .timeout(self.request_timeout)
+            .send()
+            .await
+            .map_err(|_| ProviderError::Unavailable("conversation catalog unavailable".into()))?;
+        let mut response = self.success_or_error(response).await?;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| ProviderError::Unavailable("conversation catalog unavailable".into()))?
+        {
+            if bytes.len() + chunk.len() > 768 * 1024 {
+                return Err(ProviderError::ResponseMalformed(
+                    "conversation catalog exceeds bound".into(),
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let catalog: ConversationCatalog = serde_json::from_slice(&bytes)
+            .map_err(|_| ProviderError::ResponseMalformed("invalid conversation catalog".into()))?;
+        if catalog.binding_id != binding.as_str()
+            || catalog.generation == 0
+            || catalog.revision == 0
+            || catalog.transport_conversations.len() > 1024
+            || catalog
+                .transport_conversations
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+            || catalog
+                .transport_conversations
+                .iter()
+                .any(|id| ConversationId::new(id).is_err())
+        {
+            return Err(ProviderError::ResponseMalformed(
+                "invalid conversation catalog identity".into(),
+            ));
+        }
+        Ok(catalog)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -29,7 +29,9 @@ mod partition;
 mod platform;
 mod profile_revision;
 mod provider;
-pub use profile_revision::{ProfileRevisionView, ProfileRevisions, RetainedProfileRevision};
+pub use profile_revision::{
+    ProfilePublication, ProfileRevisionView, ProfileRevisions, RetainedProfileRevision,
+};
 pub use provider::{ConformanceLevel, ProviderBinding, ProviderTarget};
 mod routing;
 mod routing_validation;

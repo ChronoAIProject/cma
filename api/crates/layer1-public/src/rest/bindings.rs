@@ -175,6 +175,10 @@ fn routes(state: BindingRouteState) -> Router {
             put(put_binding).get(get_binding).delete(delete_binding),
         )
         .route(
+            "/api/v1/cmaeg/bindings/{binding_id}/conversations",
+            axum::routing::get(inspection::catalog),
+        )
+        .route(
             "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
             put(put_conversation)
                 .delete(delete_conversation)

@@ -3,6 +3,7 @@ use crate::profiles::AgentProfileContent;
 use crate::sandbox::{Agent, AgentSkillInstallStatus, AgentStatus};
 use crate::Caller;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 pub struct BindingConversationInspection {
     pub conversation: BindingConversation,
@@ -123,6 +124,114 @@ impl BindingService {
             conversation,
             agent_status: agent.map(|agent| agent.status),
             profile_drift,
+        })
+    }
+}
+
+/// Content-free inventory used when the Gateway establishes the retained
+/// partition baseline. The caller must quiesce legacy unassigned admission.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BindingConversationCatalog {
+    pub binding_id: String,
+    pub generation: u64,
+    pub revision: u64,
+    pub transport_conversations: Vec<String>,
+}
+
+impl BindingService {
+    pub async fn conversation_catalog(
+        &self,
+        caller: &Caller,
+        id: &str,
+    ) -> Result<BindingConversationCatalog, BindingError> {
+        const MAX_CONVERSATIONS: usize = 1024;
+        let binding = self.read_for_retirement(caller, id).await?;
+        if binding.existing_agent.is_some() || binding.previous.is_some() {
+            return Err(BindingError::Conflict);
+        }
+        let resets = self.store.conversation_reset_state(id).await?;
+        let mut aliases = std::collections::BTreeMap::new();
+        for head in resets
+            .heads
+            .values()
+            .filter(|head| head.successor.generation == binding.generation)
+        {
+            aliases.insert(
+                head.successor.conversation_id.clone(),
+                head.transport_conversation_id.clone(),
+            );
+        }
+        for receipt in resets
+            .receipts
+            .values()
+            .filter(|receipt| receipt.head.successor.generation == binding.generation)
+        {
+            aliases.insert(
+                receipt.previous.conversation_id.clone(),
+                receipt.head.transport_conversation_id.clone(),
+            );
+            aliases.insert(
+                receipt.head.successor.conversation_id.clone(),
+                receipt.head.transport_conversation_id.clone(),
+            );
+        }
+        let mut conversations = BTreeSet::new();
+        conversations.extend(aliases.values().cloned());
+        let mut after = None;
+        let mut count = 0;
+        loop {
+            let page = self
+                .store
+                .binding_conversations(id, binding.generation, after.as_deref(), 100)
+                .await?;
+            if page.len() > 100 {
+                return Err(BindingError::Corrupt(
+                    "invalid conversation catalog page".into(),
+                ));
+            }
+            if page.is_empty() {
+                break;
+            }
+            for conversation in page {
+                conversation.validate().map_err(BindingError::Corrupt)?;
+                if conversation.binding_id != binding.binding_id
+                    || conversation.owner != binding.owner
+                    || conversation.generation != binding.generation
+                    || conversation.sandbox_id != binding.sandbox_id
+                    || conversation.workspace_id != binding.workspace_id
+                    || after
+                        .as_ref()
+                        .is_some_and(|value: &String| value >= &conversation.conversation_id)
+                {
+                    return Err(BindingError::Corrupt(
+                        "invalid conversation catalog identity".into(),
+                    ));
+                }
+                count += 1;
+                if count > MAX_CONVERSATIONS {
+                    return Err(BindingError::Conflict);
+                }
+                conversations.insert(
+                    aliases
+                        .get(&conversation.conversation_id)
+                        .unwrap_or(&conversation.conversation_id)
+                        .clone(),
+                );
+                after = Some(conversation.conversation_id);
+            }
+        }
+        if conversations.len() > MAX_CONVERSATIONS
+            || self.read_for_retirement(caller, id).await? != binding
+            || self.store.conversation_reset_state(id).await? != resets
+        {
+            return Err(BindingError::Conflict);
+        }
+        Ok(BindingConversationCatalog {
+            binding_id: binding.binding_id,
+            generation: binding.generation,
+            revision: binding.revision,
+            transport_conversations: conversations.into_iter().collect(),
         })
     }
 }
