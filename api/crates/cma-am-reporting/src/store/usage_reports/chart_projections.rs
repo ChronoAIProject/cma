@@ -123,10 +123,17 @@ pub async fn build_chart_totals(
             .await
             .map_err(unavailable)?;
         let mut total = None;
-        fold_sandbox_series(cursor, report, metric, deadline, |_, _, points| {
-            merge_buckets(total.get_or_insert_with(Vec::new), &points);
-            Ok(())
-        })
+        fold_sandbox_series(
+            cursor,
+            report,
+            metric,
+            deadline,
+            unavailable,
+            |_, _, points| {
+                merge_buckets(total.get_or_insert_with(Vec::new), &points);
+                Ok(())
+            },
+        )
         .await?;
         let mut base = base.clone();
         base.insert("metric", metric.index() as i64);
@@ -186,10 +193,20 @@ async fn build_ranked_with_batch(
             "sandbox_id",
             MAX_TOP,
             db_deadline,
+            optional_query_error,
         )
         .await?;
         let top_owners = if report.scope.admin {
-            ranked_series(collection, report, metric, "owner", MAX_TOP, db_deadline).await?
+            ranked_series(
+                collection,
+                report,
+                metric,
+                "owner",
+                MAX_TOP,
+                db_deadline,
+                optional_query_error,
+            )
+            .await?
         } else {
             Vec::new()
         };
@@ -205,12 +222,13 @@ async fn build_ranked_with_batch(
             .batch_size(batch_size)
             .max_time(db_deadline)
             .await
-            .map_err(unavailable)?;
+            .map_err(optional_query_error)?;
         let result = fold_sandbox_series(
             cursor,
             report,
             metric,
             deadline,
+            optional_query_error,
             |sandbox, owner, points| {
                 sandbox_remaining.add_sandbox(sandbox, &points);
                 if report.scope.admin {
@@ -255,27 +273,34 @@ pub async fn build_owner_chart_projections(
             .batch_size(100)
             .max_time(db_deadline)
             .await
-            .map_err(unavailable)?;
+            .map_err(optional_query_error)?;
         let mut base = base.clone();
         base.insert("metric", metric.index() as i64);
         let mut previous: Option<String> = None;
         let mut points = Vec::new();
-        fold_sandbox_series(cursor, report, metric, deadline, |_, owner, buckets| {
-            if let Some(id) = previous.as_deref().filter(|id| *id != owner) {
-                append_line(
-                    batch,
-                    &base,
-                    "chart_explicit_owner",
-                    id,
-                    Some(std::mem::take(&mut points)),
-                )?;
-            }
-            if previous.as_deref() != Some(owner) {
-                previous = Some(owner.to_owned());
-            }
-            merge_buckets(&mut points, &buckets);
-            Ok(())
-        })
+        fold_sandbox_series(
+            cursor,
+            report,
+            metric,
+            deadline,
+            optional_query_error,
+            |_, owner, buckets| {
+                if let Some(id) = previous.as_deref().filter(|id| *id != owner) {
+                    append_line(
+                        batch,
+                        &base,
+                        "chart_explicit_owner",
+                        id,
+                        Some(std::mem::take(&mut points)),
+                    )?;
+                }
+                if previous.as_deref() != Some(owner) {
+                    previous = Some(owner.to_owned());
+                }
+                merge_buckets(&mut points, &buckets);
+                Ok(())
+            },
+        )
         .await?;
         if let Some(id) = previous {
             append_line(batch, &base, "chart_explicit_owner", &id, Some(points))?;

@@ -1,6 +1,6 @@
 //! Bounded owner rankings over the frozen report, never a new collection job.
 use super::{aggregate_projections, *};
-use cma_am_reporting::ProjectionBatch;
+use cma_am_reporting::{ProjectionBatch, ProjectionManifest};
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::{
     cursor::Cursor, disambiguate_options_with_context, option_label, FilterOption, Metric,
@@ -42,7 +42,7 @@ impl ReportingStore {
             })
             .transpose()?;
         let mut page = Vec::new();
-        if let Some(after) = after {
+        if let Some(after) = after.as_ref() {
             let value = after
                 .last_value
                 .as_f64()
@@ -50,7 +50,7 @@ impl ReportingStore {
                 .ok_or_else(|| MetricsError::Invalid("Invalid owner allocation cursor.".into()))?;
             page.push(doc! {"$match":{"$or":[
                 {"allocated_hours":{"$lt":value}},
-                {"allocated_hours":value,"_id":{"$gt":after.sandbox_id}}
+                {"allocated_hours":value,"_id":{"$gt":&after.sandbox_id}}
             ]}});
         }
         page.extend([
@@ -58,13 +58,13 @@ impl ReportingStore {
             doc! {"$limit":i64::from(limit)+1},
         ]);
         let projected = self.projected_family(report, "owner_allocation").await?;
-        let (collection, mut pipeline) = if let Some(generation) = projected {
+        let (collection, mut pipeline) = if let Some(manifest) = projected.as_ref() {
             (
                 aggregate_projections::COLLECTION,
                 vec![
-                    doc! {"$match":{"report_id":&report.report_id,"generation":generation,
+                    doc! {"$match":{"report_id":&report.report_id,"generation":manifest.generation,
                     "document_schema_version":1_i64,"kind":"owner_allocation","metric":query.metric.index() as i64}},
-                    doc! {"$project":{"_id":"$series","allocated_hours":1,"sandbox_count":1,"complete":1}},
+                    doc! {"$project":{"_id":"$series","allocated_hours":1,"sandbox_count":1,"complete":1,"projection_document":"$$ROOT"}},
                 ],
             )
         } else {
@@ -102,7 +102,8 @@ impl ReportingStore {
             .await
             .map_err(|_| MetricsError::Unavailable)?
             .ok_or(MetricsError::Unavailable)?;
-        if projected.is_some() {
+        if let Some(manifest) = projected.as_ref() {
+            verify_allocation_page(manifest, query.metric, after.as_ref(), limit, &document)?;
             let members = document
                 .get_array("coverage")
                 .map_err(unavailable)?
@@ -228,17 +229,20 @@ impl ReportingStore {
             (Metric::Memory, "memory_gib_hours"),
             (Metric::Disk, "disk_gib_hours"),
         ] {
+            let mut pipeline = owner_totals(report, field).to_vec();
+            pipeline.push(doc! {"$sort":{"allocated_hours":-1,"_id":1}});
             let mut cursor = self
                 .collection(ROWS)
-                .aggregate(owner_totals(report, field))
+                .aggregate(pipeline)
                 .allow_disk_use(false)
                 .max_time(DB_DEADLINE)
                 .await
-                .map_err(|_| MetricsError::Unavailable)?;
+                .map_err(cma_am_reporting::optional_query_error)?;
+            let mut rank = 0_i64;
             while let Some(mut row) = cursor
                 .try_next()
                 .await
-                .map_err(|_| MetricsError::Unavailable)?
+                .map_err(cma_am_reporting::optional_query_error)?
             {
                 if Instant::now() >= deadline {
                     return Err(MetricsError::Busy);
@@ -250,13 +254,109 @@ impl ReportingStore {
                 let mut document = base.clone();
                 document.extend(
                     doc! {"kind":"owner_allocation","metric":metric.index() as i64,
-                    "series":owner,"chunk":0_i64},
+                    "series":owner,"chunk":0_i64,"allocation_rank":rank},
                 );
                 document.extend(row);
                 batch.push(document)?;
+                rank += 1;
             }
         }
         Ok(())
+    }
+}
+
+fn verify_allocation_page(
+    manifest: &ProjectionManifest,
+    metric: Metric,
+    after: Option<&Cursor>,
+    limit: u16,
+    response: &Document,
+) -> Result<()> {
+    let metric = metric.index() as i64;
+    let order = manifest.allocation_order(metric)?;
+    let entries: Vec<&Document> = order
+        .iter()
+        .map(|entry| entry.as_document().ok_or(MetricsError::Unavailable))
+        .collect::<Result<_>>()?;
+    let mut membership = std::collections::BTreeSet::new();
+    for entry in &entries {
+        if !membership.insert(entry.get_str("owner").map_err(unavailable)?) {
+            return Err(MetricsError::Unavailable);
+        }
+    }
+    let actual = response.get_array("identities").map_err(unavailable)?;
+    if actual.len() != membership.len() {
+        return Err(MetricsError::Unavailable);
+    }
+    for (value, expected) in actual.iter().zip(membership) {
+        if value.as_document().and_then(|row| row.get_str("_id").ok()) != Some(expected) {
+            return Err(MetricsError::Unavailable);
+        }
+    }
+    let count = response
+        .get_array("count")
+        .map_err(unavailable)?
+        .first()
+        .and_then(|value| value.as_document())
+        .and_then(|row| {
+            row.get_i64("total")
+                .or_else(|_| row.get_i32("total").map(i64::from))
+                .ok()
+        })
+        .unwrap_or(0);
+    if count != entries.len() as i64 {
+        return Err(MetricsError::Unavailable);
+    }
+    let start = if let Some(after) = after {
+        let position = entries
+            .iter()
+            .position(|entry| entry.get_str("owner").ok() == Some(after.sandbox_id.as_str()))
+            .ok_or(MetricsError::Unavailable)?;
+        let amount = allocation_number(
+            entries[position]
+                .get("amount")
+                .ok_or(MetricsError::Unavailable)?,
+        )?;
+        if after.last_value.as_f64().map(f64::to_bits) != Some(amount.to_bits()) {
+            return Err(MetricsError::Unavailable);
+        }
+        position + 1
+    } else {
+        0
+    };
+    let end = entries.len().min(start + usize::from(limit) + 1);
+    let expected = &entries[start..end];
+    let page = response.get_array("page").map_err(unavailable)?;
+    if page.len() != expected.len() {
+        return Err(MetricsError::Unavailable);
+    }
+    for (index, (row, expected)) in page.iter().zip(expected).enumerate() {
+        let row = row.as_document().ok_or(MetricsError::Unavailable)?;
+        let owner = expected.get_str("owner").map_err(unavailable)?;
+        let source = row
+            .get_document("projection_document")
+            .map_err(unavailable)?;
+        if row.get_str("_id").ok() != Some(owner)
+            || source.get_str("series").ok() != Some(owner)
+            || source.get_i64("allocation_rank").ok() != Some((start + index) as i64)
+            || source.get("allocated_hours") != expected.get("amount")
+            || ["allocated_hours", "sandbox_count", "complete"]
+                .iter()
+                .any(|key| row.get(*key) != source.get(*key))
+        {
+            return Err(MetricsError::Unavailable);
+        }
+        manifest.verify_document("owner_allocation", metric, owner, source)?;
+    }
+    Ok(())
+}
+
+fn allocation_number(value: &mongodb::bson::Bson) -> Result<f64> {
+    match value {
+        mongodb::bson::Bson::Double(value) => Ok(*value),
+        mongodb::bson::Bson::Int64(value) => Ok(*value as f64),
+        mongodb::bson::Bson::Int32(value) => Ok(f64::from(*value)),
+        _ => Err(MetricsError::Unavailable),
     }
 }
 

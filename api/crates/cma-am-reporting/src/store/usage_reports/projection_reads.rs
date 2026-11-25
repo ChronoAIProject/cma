@@ -1,11 +1,13 @@
 use super::chart_projections::{MAX_TOP, POINTS_PER_CHUNK};
 use super::charts::{fold_sandbox_series, merge_buckets, read_series};
 use super::projection_codec::decode_points;
+use super::projection_manifest::{document_digest, ProjectionManifest};
 use super::*;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::{
     series::Bucket, GroupBy, Line, Point, Report, Series, SeriesQuery, SOURCE,
 };
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, time::Instant};
 
 pub async fn read_chart_projection(
@@ -13,28 +15,44 @@ pub async fn read_chart_projection(
     charts: Collection<Document>,
     report: &Report,
     query: SeriesQuery,
-    generation: i64,
-    cached_owners: bool,
+    manifest: &ProjectionManifest,
     db_deadline: Duration,
 ) -> Result<Series> {
     let top = query.validate(report.scope.admin)?;
     if query.group_by == GroupBy::Sandbox && query.series_id.is_some() {
         return read_series(charts, report, query, db_deadline).await;
     }
-    let base = doc! {"report_id":&report.report_id,"generation":generation,
+    let base = doc! {"report_id":&report.report_id,"generation":manifest.generation,
     "document_schema_version":1_i64,"metric":query.metric.index() as i64};
     let mut lines = Vec::new();
     match (query.group_by, query.series_id.as_deref()) {
         (GroupBy::Total, _) => {
-            let points = read_line(projections, &base, "chart_total", "", db_deadline)
-                .await?
-                .ok_or(MetricsError::Unavailable)?;
+            let points = read_line(
+                projections,
+                &base,
+                manifest,
+                report,
+                "chart_total",
+                "",
+                db_deadline,
+            )
+            .await?
+            .ok_or(MetricsError::Unavailable)?;
             if let Some(points) = points {
                 lines.push(line("total", points));
             }
         }
         (GroupBy::Owner, Some(owner)) => {
-            let points = read_owner_line(projections, &charts, &base, owner, db_deadline).await?;
+            let points = read_owner_line(
+                projections,
+                &charts,
+                &base,
+                manifest,
+                report,
+                owner,
+                db_deadline,
+            )
+            .await?;
             lines.push(line(owner, points));
         }
         (group, None) => {
@@ -49,6 +67,7 @@ pub async fn read_chart_projection(
                 .await
                 .map_err(unavailable)?
                 .ok_or(MetricsError::Unavailable)?;
+            manifest.verify_document(kind, query.metric.index() as i64, "", &rank)?;
             let ranks: Vec<String> = mongodb::bson::deserialize_from_bson(
                 rank.get("ranks")
                     .cloned()
@@ -66,8 +85,9 @@ pub async fn read_chart_projection(
                 .filter(|id| id != "other")
                 .collect();
             let selected = if group == GroupBy::Owner {
-                if cached_owners {
-                    read_selected_owners(projections, &base, &ids, db_deadline).await?
+                if manifest.has_family("chart_explicit_owner") {
+                    read_selected_owners(projections, &base, manifest, report, &ids, db_deadline)
+                        .await?
                 } else {
                     read_ranked_owner_sources(&charts, report, &query, &ids, db_deadline).await?
                 }
@@ -75,9 +95,17 @@ pub async fn read_chart_projection(
                 read_selected_sandboxes(&charts, report, &query, &ids, db_deadline).await?
             };
             lines.extend(selected);
-            let other = read_line(projections, &base, kind, &top.to_string(), db_deadline)
-                .await?
-                .ok_or(MetricsError::Unavailable)?;
+            let other = read_line(
+                projections,
+                &base,
+                manifest,
+                report,
+                kind,
+                &top.to_string(),
+                db_deadline,
+            )
+            .await?
+            .ok_or(MetricsError::Unavailable)?;
             if let Some(points) = other {
                 lines.push(line("other", points));
             }
@@ -98,12 +126,16 @@ async fn read_owner_line(
     projections: &Collection<Document>,
     charts: &Collection<Document>,
     base: &Document,
+    manifest: &ProjectionManifest,
+    report: &Report,
     owner: &str,
     db_deadline: Duration,
 ) -> Result<Vec<Point>> {
     if let Some(points) = read_line(
         projections,
         base,
+        manifest,
+        report,
         "chart_explicit_owner",
         owner,
         db_deadline,
@@ -142,6 +174,7 @@ struct ProjectionChunks {
     points: Vec<Point>,
     expected: Option<(usize, bool)>,
     count: usize,
+    digest: Sha256,
 }
 impl ProjectionChunks {
     fn push(&mut self, document: Document) -> Result<()> {
@@ -163,16 +196,44 @@ impl ProjectionChunks {
         {
             return Err(MetricsError::Unavailable);
         }
+        self.digest.update(document_digest(&document)?);
         self.points.extend(part);
         self.count += 1;
         Ok(())
     }
 
-    fn finish(self) -> Result<Option<Option<Vec<Point>>>> {
+    fn finish(
+        self,
+        manifest: &ProjectionManifest,
+        metric: i64,
+        report: &Report,
+        kind: &str,
+        series: &str,
+    ) -> Result<Option<Option<Vec<Point>>>> {
+        let verified = manifest.verify_line(kind, metric, series, self.count, self.digest)?;
         match self.expected {
-            Some((chunks, _)) if chunks != self.count => Err(MetricsError::Unavailable),
-            Some((_, present)) => Ok(Some(present.then_some(self.points))),
-            None => Ok(None),
+            Some((chunks, present)) if verified && chunks == self.count => {
+                if present {
+                    let range = report.effective_range;
+                    let step = report.query.step_seconds;
+                    let mut at = range.from / step * step;
+                    for point in &self.points {
+                        if at >= range.to
+                            || point.from != at.max(range.from)
+                            || point.to != (at + step).min(range.to)
+                        {
+                            return Err(MetricsError::Unavailable);
+                        }
+                        at += step;
+                    }
+                    if at < range.to && range.seconds() > 0 {
+                        return Err(MetricsError::Unavailable);
+                    }
+                }
+                Ok(Some(present.then_some(self.points)))
+            }
+            None if !verified => Ok(None),
+            _ => Err(MetricsError::Unavailable),
         }
     }
 }
@@ -180,6 +241,8 @@ impl ProjectionChunks {
 async fn read_line(
     collection: &Collection<Document>,
     base: &Document,
+    manifest: &ProjectionManifest,
+    report: &Report,
     kind: &str,
     series: &str,
     db_deadline: Duration,
@@ -195,12 +258,20 @@ async fn read_line(
     while let Some(document) = cursor.try_next().await.map_err(unavailable)? {
         chunks.push(document)?;
     }
-    chunks.finish()
+    chunks.finish(
+        manifest,
+        base.get_i64("metric").map_err(unavailable)?,
+        report,
+        kind,
+        series,
+    )
 }
 
 async fn read_selected_owners(
     projections: &Collection<Document>,
     base: &Document,
+    manifest: &ProjectionManifest,
+    report: &Report,
     ids: &[String],
     db_deadline: Duration,
 ) -> Result<Vec<Line>> {
@@ -231,7 +302,13 @@ async fn read_selected_owners(
         .into_iter()
         .map(|(id, chunks)| {
             let points = chunks
-                .finish()?
+                .finish(
+                    manifest,
+                    base.get_i64("metric").map_err(unavailable)?,
+                    report,
+                    "chart_explicit_owner",
+                    &id,
+                )?
                 .flatten()
                 .ok_or(MetricsError::Unavailable)?;
             Ok(line(&id, points))
@@ -265,6 +342,7 @@ async fn read_ranked_owner_sources(
         report,
         query.metric,
         deadline,
+        unavailable,
         |_, owner, points| {
             if !ids.iter().any(|id| id == owner) {
                 return Err(MetricsError::Unavailable);
@@ -310,6 +388,7 @@ async fn read_selected_sandboxes(
         report,
         query.metric,
         deadline,
+        unavailable,
         |sandbox, _, buckets| {
             if !ids.iter().any(|id| id == sandbox) {
                 return Err(MetricsError::Unavailable);

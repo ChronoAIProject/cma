@@ -273,7 +273,18 @@ async fn projection_parent_survives_delayed_pruning_for_ready_and_failed_reports
             .unwrap()
             .unwrap();
         assert_eq!(job.get("expires_at"), Some(&mongodb::bson::Bson::Null));
-        assert_eq!(job.get_i64("reserved_bytes").unwrap(), bytes);
+        let manifest = job.get_document("projection_manifest").unwrap();
+        let manifest_bytes = mongodb::bson::serialize_to_vec(
+            &doc! {"projection_generation":lease.generation,"projection_manifest":manifest},
+        )
+        .unwrap()
+        .len()
+            - 5;
+        assert_eq!(
+            job.get_i64("reserved_bytes").unwrap(),
+            bytes + manifest_bytes as i64
+        );
+        assert_eq!(manifest.get_i64("page_bytes").unwrap(), bytes);
         // The original TTL would have passed while the pruner was unavailable.
         store
             .collection(JOBS)

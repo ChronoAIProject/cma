@@ -77,7 +77,15 @@ async fn aggregate_projection_reconciles_committed_manifest_after_lost_acknowled
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(job.get_i64("bytes").unwrap(), bytes);
+    let manifest = job.get_document("projection_manifest").unwrap();
+    let manifest_bytes = mongodb::bson::serialize_to_vec(
+        &doc! {"projection_generation":lease.generation,"projection_manifest":manifest},
+    )
+    .unwrap()
+    .len()
+        - 5;
+    assert_eq!(job.get_i64("bytes").unwrap(), bytes + manifest_bytes as i64);
+    assert_eq!(manifest.get_i64("page_bytes").unwrap(), bytes);
     let persisted = f
         .store
         .collection(COLLECTION)
@@ -86,4 +94,94 @@ async fn aggregate_projection_reconciles_committed_manifest_after_lost_acknowled
         .unwrap();
     assert_eq!(persisted, 2);
     f.store.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable Mongo contract runner with failpoints"]
+async fn optional_chart_query_timeout_retains_completed_totals() {
+    use crate::config::report_views::{ViewPolicy, WarmScope};
+    use crate::store::migrations::usage_projections;
+
+    let f = Fixture::new().await;
+    let store = f.store.with_view_policy(ViewPolicy {
+        aggregate_projections_enabled: true,
+        view_scopes: vec![WarmScope {
+            admin: true,
+            principal: "operator".into(),
+            sandbox_id: None,
+        }],
+        ..Default::default()
+    });
+    for (collection, index) in usage_projections::inspect(&store.db).await.unwrap() {
+        store
+            .db
+            .run_command(doc! {"createIndexes":collection,"indexes":[index]})
+            .await
+            .unwrap();
+    }
+    let at = now();
+    seed(&store, &[state(0, at - 3600), state(1, at - 3600)]).await;
+    let scope = scope("operator", true);
+    store
+        .submit(
+            scope.clone(),
+            ReportInput::default().validate(at).unwrap(),
+            at,
+        )
+        .await
+        .unwrap();
+    let lease = store
+        .claim_report("report:0", "optional-family")
+        .await
+        .unwrap()
+        .unwrap();
+    // The already accumulated totals require no chart find. The initial
+    // optional ranked-family cursor is the first matching read.
+    f.fail(
+        &["find"],
+        1,
+        doc! {"namespace":format!("{}.{CHARTS}", store.db.name()), "errorCode":50},
+    )
+    .await;
+    let generated =
+        crate::sandbox_metrics::generate_fixture_with_collection(store.clone(), &lease, false)
+            .await;
+    f.disable().await;
+    store
+        .finish_report(&lease, generated.unwrap(), true)
+        .await
+        .unwrap();
+    let report = store
+        .report(&scope, &lease.report.report_id, now())
+        .await
+        .unwrap();
+    assert_eq!(report.status, ReportStatus::Ready);
+    assert!(store
+        .projected_family(&report, "chart_total")
+        .await
+        .unwrap()
+        .is_some());
+    assert!(store
+        .projected_family(&report, "chart_owner")
+        .await
+        .unwrap()
+        .is_none());
+    assert!(store
+        .projected_family(&report, "chart_sandbox")
+        .await
+        .unwrap()
+        .is_none());
+    let query = SeriesQuery {
+        metric: Metric::Cpu,
+        group_by: GroupBy::Total,
+        series_id: None,
+        top: None,
+    };
+    let legacy = f.store.series(&report, query.clone()).await.unwrap();
+    let cached = store.series(&report, query).await.unwrap();
+    assert_eq!(
+        serde_json::to_vec(&legacy).unwrap(),
+        serde_json::to_vec(&cached).unwrap()
+    );
+    store.db.drop().await.unwrap();
 }

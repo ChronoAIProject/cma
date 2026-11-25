@@ -7,6 +7,8 @@ mod control;
 mod controlled_updates;
 mod owners;
 mod projection_codec;
+mod projection_manifest;
+pub use projection_manifest::ProjectionManifest;
 mod projection_reads;
 mod reports;
 mod rows;
@@ -41,6 +43,16 @@ pub fn now() -> u64 {
 pub fn unavailable(error: impl std::fmt::Display) -> MetricsError {
     tracing::warn!(target: "cma::store::usage_reports", error=%error,"reporting store unavailable");
     MetricsError::Unavailable
+}
+/// Optional read work may be omitted after a definite server query timeout.
+/// Keep all other driver failures distinct from an exhausted work budget.
+pub fn optional_query_error(error: mongodb::error::Error) -> MetricsError {
+    if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command) if command.code == 50)
+    {
+        MetricsError::Busy
+    } else {
+        MetricsError::Unavailable
+    }
 }
 pub fn encode<T: Serialize>(record: &T) -> Result<mongodb::bson::Bson> {
     mongodb::bson::serialize_to_bson(record).map_err(unavailable)

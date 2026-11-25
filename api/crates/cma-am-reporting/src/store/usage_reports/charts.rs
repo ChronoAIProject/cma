@@ -139,7 +139,16 @@ async fn read_series_with_budget(
         (Some(id), _) => vec![id.clone()],
         (None, GroupBy::Total) => Vec::new(),
         (None, _) => {
-            ranked_series(&collection, report, query.metric, field, top, db_deadline).await?
+            ranked_series(
+                &collection,
+                report,
+                query.metric,
+                field,
+                top,
+                db_deadline,
+                unavailable,
+            )
+            .await?
         }
     };
     let mut filter = doc! {"report_id":&report.report_id,"metric":query.metric.index() as i64};
@@ -160,6 +169,7 @@ async fn read_series_with_budget(
         report,
         query.metric,
         deadline,
+        unavailable,
         |sandbox, owner, points| {
             let identity = if query.group_by == GroupBy::Owner {
                 owner
@@ -209,6 +219,7 @@ pub(super) async fn ranked_series(
     field: &str,
     top: usize,
     db_deadline: Duration,
+    map_query_error: fn(mongodb::error::Error) -> MetricsError,
 ) -> Result<Vec<String>> {
     let mut cursor = collection
         .aggregate([
@@ -219,9 +230,9 @@ pub(super) async fn ranked_series(
         ])
         .max_time(db_deadline)
         .await
-        .map_err(unavailable)?;
+        .map_err(map_query_error)?;
     let mut ids = Vec::new();
-    while let Some(doc) = cursor.try_next().await.map_err(unavailable)? {
+    while let Some(doc) = cursor.try_next().await.map_err(map_query_error)? {
         ids.push(doc.get_str("_id").map_err(unavailable)?.into());
     }
     Ok(ids)
@@ -232,6 +243,7 @@ pub(super) async fn fold_sandbox_series(
     report: &Report,
     metric: Metric,
     deadline: std::time::Instant,
+    map_query_error: fn(mongodb::error::Error) -> MetricsError,
     mut consume: impl FnMut(&str, &str, Vec<Bucket>) -> Result<()>,
 ) -> Result<()> {
     let mut sandbox = String::new();
@@ -247,7 +259,7 @@ pub(super) async fn fold_sandbox_series(
             report.query.step_seconds,
         )
     };
-    while let Some(doc) = cursor.try_next().await.map_err(unavailable)? {
+    while let Some(doc) = cursor.try_next().await.map_err(map_query_error)? {
         if std::time::Instant::now() > deadline {
             return Err(MetricsError::Busy);
         }

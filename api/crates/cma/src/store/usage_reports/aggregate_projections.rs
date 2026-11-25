@@ -2,12 +2,11 @@ use super::*;
 use crate::store::{migrations::usage_projections, transaction_scope as tx};
 use cma_am_reporting::{
     build_chart_totals, build_owner_chart_projections, build_ranked_projections, ProjectionBatch,
-    TotalProjection,
+    ProjectionManifest, TotalProjection,
 };
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::Report;
 use mongodb::bson::RawDocumentBuf;
-use sha2::{Digest, Sha256};
 use std::time::Instant;
 
 pub(super) const COLLECTION: &str = usage_projections::COLLECTION;
@@ -38,14 +37,17 @@ impl ReportingStore {
 
     #[cfg(test)]
     pub(super) async fn projected_generation(&self, report: &Report) -> Result<Option<i64>> {
-        self.projected_family(report, "chart_total").await
+        Ok(self
+            .projected_family(report, "chart_total")
+            .await?
+            .map(|manifest| manifest.generation))
     }
 
     pub(super) async fn projected_family(
         &self,
         report: &Report,
         family: &str,
-    ) -> Result<Option<i64>> {
+    ) -> Result<Option<ProjectionManifest>> {
         if !self.projections_allowed(report) {
             return Ok(None);
         }
@@ -65,41 +67,11 @@ impl ReportingStore {
                     // independently persisted aggregates can outlive a row.
                     self.retained_counts(report, &job).await?;
                 }
-                let manifest = job.get_document(MANIFEST_FIELD).map_err(unavailable)?;
-                if manifest.get_i64("version").ok() != Some(2)
-                    || manifest.get_i64("generation").ok() != Some(generation)
-                {
-                    return Err(MetricsError::Unavailable);
-                }
-                let families = manifest.get_array("families").map_err(unavailable)?;
-                let mut seen = std::collections::BTreeSet::new();
-                let mut chunks = 0_i64;
-                for entry in families {
-                    let entry = entry.as_document().ok_or(MetricsError::Unavailable)?;
-                    let name = entry.get_str("kind").map_err(unavailable)?;
-                    let count = entry.get_i64("chunks").map_err(unavailable)?;
-                    let digest = entry.get_str("sha256").map_err(unavailable)?;
-                    if !matches!(
-                        name,
-                        "chart_total"
-                            | "chart_sandbox"
-                            | "chart_owner"
-                            | "chart_explicit_owner"
-                            | "owner_allocation"
-                            | "contributor"
-                    ) || !seen.insert(name)
-                        || count <= 0
-                        || digest.len() != 64
-                        || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
-                    {
-                        return Err(MetricsError::Unavailable);
-                    }
-                    chunks = chunks.checked_add(count).ok_or(MetricsError::Unavailable)?;
-                }
-                if manifest.get_i64("chunks").ok() != Some(chunks) {
-                    return Err(MetricsError::Unavailable);
-                }
-                Ok(seen.contains(family).then_some(generation))
+                let manifest = ProjectionManifest::parse(
+                    generation,
+                    job.get_document(MANIFEST_FIELD).map_err(unavailable)?,
+                )?;
+                Ok(manifest.has_family(family).then_some(manifest))
             }
         }
     }
@@ -128,14 +100,56 @@ impl ReportingStore {
             }
             Err(error) => return Err(error),
         };
-        let documents = batch.into_documents();
-        let bytes = documents.iter().try_fold(0_i64, |total, document| {
-            total
-                .checked_add(document.as_bytes().len() as i64)
-                .ok_or(MetricsError::Busy)
-        })?;
+        let remaining = batch.remaining_bytes();
+        let mut documents = batch.into_documents();
+        let budget = remaining.saturating_add(
+            documents
+                .iter()
+                .map(|document| document.as_bytes().len())
+                .sum::<usize>(),
+        );
+        // Optional result families may be omitted as a whole if their parent
+        // commitments do not fit the exact reserved bytes or metadata limit.
+        let mut optional = [
+            "chart_explicit_owner",
+            "owner_allocation",
+            "chart_sandbox",
+            "chart_owner",
+        ]
+        .into_iter();
+        let (manifest, bytes) = loop {
+            let page_bytes = documents.iter().try_fold(0_i64, |total, document| {
+                total
+                    .checked_add(document.as_bytes().len() as i64)
+                    .ok_or(MetricsError::Busy)
+            })?;
+            match Self::projection_manifest(lease, &documents, page_bytes) {
+                Ok((manifest, charged))
+                    if usize::try_from(charged).is_ok_and(|charged| charged <= budget) =>
+                {
+                    break (manifest, charged)
+                }
+                Ok(_) | Err(MetricsError::Busy) => {
+                    let Some(kind) = optional.next() else {
+                        return Ok(());
+                    };
+                    documents.retain(|document| document.get_str("kind").ok() != Some(kind));
+                    tracing::info!(target: "cma::store::usage_reports::budget", stage="aggregate_projection", family=kind, result="manifest_budget");
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        if documents.is_empty() {
+            return Ok(());
+        }
         let stored = self
-            .persist_projections(lease, &documents, bytes, (row_count, chart_count))
+            .persist_projection_manifest(
+                lease,
+                &documents,
+                bytes,
+                &manifest,
+                (row_count, chart_count),
+            )
             .await?;
         tracing::info!(target: "cma::store::usage_reports::budget",
             stage = "aggregate_projection", stored, bytes, chunks = documents.len(),
@@ -337,30 +351,25 @@ impl ReportingStore {
     fn projection_manifest(
         lease: &ReportLease,
         documents: &[RawDocumentBuf],
-        bytes: i64,
-    ) -> Result<Document> {
-        let mut digest = Sha256::new();
-        let mut families = std::collections::BTreeMap::<String, (i64, Sha256)>::new();
-        for document in documents {
-            digest.update(document.as_bytes());
-            let family = families
-                .entry(document.get_str("kind").map_err(unavailable)?.to_owned())
-                .or_default();
-            family.0 += 1;
-            family.1.update(document.as_bytes());
-        }
-        let families: Vec<_> = families
-            .into_iter()
-            .map(|(kind, (chunks, digest))| {
-                doc! {"kind":kind,"chunks":chunks,"sha256":format!("{:x}",digest.finalize())}
-            })
-            .collect();
-        Ok(
-            doc! {"version":2_i64,"generation":lease.generation,"chunks":documents.len() as i64,
-            "bytes":bytes,"sha256":format!("{:x}",digest.finalize()),"families":families},
+        page_bytes: i64,
+    ) -> Result<(Document, i64)> {
+        let mut manifest = ProjectionManifest::build(lease.generation, documents, page_bytes)?;
+        ProjectionManifest::bounded_len(&manifest)?;
+        // BSON embeds the same elements without a second document header.
+        let increment = mongodb::bson::serialize_to_vec(
+            &doc! {GENERATION_FIELD: lease.generation, MANIFEST_FIELD: &manifest},
         )
+        .map_err(unavailable)?
+        .len()
+            - 5;
+        let charged = page_bytes
+            .checked_add(i64::try_from(increment).map_err(unavailable)?)
+            .ok_or(MetricsError::Busy)?;
+        manifest.insert("bytes", charged);
+        Ok((manifest, charged))
     }
 
+    #[cfg(test)]
     pub(super) async fn persist_projections(
         &self,
         lease: &ReportLease,
@@ -368,16 +377,49 @@ impl ReportingStore {
         bytes: i64,
         source_counts: (i64, i64),
     ) -> Result<bool> {
-        let manifest = Self::projection_manifest(lease, documents, bytes)?;
+        let (manifest, bytes) = match Self::projection_manifest(lease, documents, bytes) {
+            Ok(value) => value,
+            Err(MetricsError::Busy) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        self.persist_projection_manifest(lease, documents, bytes, &manifest, source_counts)
+            .await
+    }
+
+    async fn persist_projection_manifest(
+        &self,
+        lease: &ReportLease,
+        documents: &[RawDocumentBuf],
+        bytes: i64,
+        manifest: &Document,
+        source_counts: (i64, i64),
+    ) -> Result<bool> {
         let result = tx::run(
             &self.client,
-            (self, lease, documents, bytes, &manifest, source_counts),
+            (self, lease, documents, bytes, manifest, source_counts),
             |&(store, lease, documents, bytes, manifest, (rows, charts)), session| {
                 Box::pin(async move {
                     let mut fence = lease.fence();
                     fence.insert(INVALIDATED_FIELD, doc! {"$exists":false});
                     fence.insert("row_count", rows);
                     fence.insert("chart_count", charts);
+                    let parent = store
+                        .collection(JOBS)
+                        .find_one(fence.clone())
+                        .session(&mut *session)
+                        .await
+                        .map_err(tx::mongo)?
+                        .ok_or(MetricsError::Unavailable)?;
+                    let mut sized = parent;
+                    sized.insert(GENERATION_FIELD, lease.generation);
+                    sized.insert(MANIFEST_FIELD, manifest.clone());
+                    if mongodb::bson::serialize_to_vec(&sized)
+                        .map_err(tx::unavailable)?
+                        .len()
+                        > 15 * 1024 * 1024
+                    {
+                        return Ok(false);
+                    }
                     let has_budget = doc! {"$and":[fence.clone(),{
                         "bytes":{"$lte":store.budgets.report_bytes - bytes},
                         "$expr":{"$lte":[{"$add":["$bytes",bytes]},"$reserved_bytes"]},
@@ -453,7 +495,7 @@ impl ReportingStore {
             .map_err(unavailable)?;
         if current.as_ref().is_some_and(|job| {
             job.get_i64(GENERATION_FIELD).ok() == Some(lease.generation)
-                && job.get_document(MANIFEST_FIELD).ok() == Some(&manifest)
+                && job.get_document(MANIFEST_FIELD).ok() == Some(manifest)
         }) {
             return Ok(true);
         }

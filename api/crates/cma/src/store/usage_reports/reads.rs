@@ -148,26 +148,21 @@ impl MetricsStore for ReportingStore {
             (layer2_core::sandbox_metrics::GroupBy::Owner, false) => "chart_owner",
             (layer2_core::sandbox_metrics::GroupBy::Sandbox, false) => "chart_sandbox",
             (layer2_core::sandbox_metrics::GroupBy::Sandbox, true) => {
+                if self.projections_allowed(report) {
+                    self.initial_namespace(report).await?;
+                }
                 return cma_am_reporting::read_series(charts, report, query, DB_DEADLINE).await;
             }
         };
-        let Some(generation) = self.projected_family(report, family).await? else {
+        let Some(manifest) = self.projected_family(report, family).await? else {
             return cma_am_reporting::read_series(charts, report, query, DB_DEADLINE).await;
-        };
-        let cached_owners = if family == "chart_owner" {
-            self.projected_family(report, "chart_explicit_owner")
-                .await?
-                == Some(generation)
-        } else {
-            true
         };
         cma_am_reporting::read_chart_projection(
             &self.collection(aggregate_projections::COLLECTION),
             charts,
             report,
             query,
-            generation,
-            cached_owners,
+            &manifest,
             DB_DEADLINE,
         )
         .await
