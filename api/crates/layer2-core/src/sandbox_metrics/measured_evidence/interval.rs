@@ -13,7 +13,7 @@ pub enum CustodySample<'a> {
 }
 
 impl CustodySample<'_> {
-    fn observation(&self) -> &ObservationV1 {
+    pub(super) fn observation(&self) -> &ObservationV1 {
         match self {
             Self::Undisputed(observation) | Self::Disputed(observation) => &observation.0,
         }

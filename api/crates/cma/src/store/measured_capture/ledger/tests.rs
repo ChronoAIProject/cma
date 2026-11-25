@@ -1,0 +1,164 @@
+use super::*;
+use crate::store::measured_capture::tests::observation_at;
+use layer2_core::{
+    sandbox_usage::{Allocation, SandboxUsage, UsageEventKind},
+    SandboxId, SubjectId,
+};
+use mongodb::Client;
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn measured_batches_are_immutable_and_corrections_are_idempotent_across_clients() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let left = Client::with_uri_str(&uri).await.unwrap();
+    let right = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("measured_frozen_{}", uuid::Uuid::new_v4().simple());
+    let database = left.database(&name);
+    let capture = MeasuredCapture::new(&database);
+    database
+        .create_collection(super::super::COLLECTION)
+        .await
+        .unwrap();
+    let a = MeasuredLedger::new(&database);
+    let b = MeasuredLedger::new(&right.database(&name));
+    let index = measured_batches::inspect(&database)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    measured_batches::create(&database, index.1).await.unwrap();
+    let sandbox_id = SandboxId("sbx_synthetic".into());
+    let owner = SubjectId::new("owner-a");
+    let allocation = Allocation {
+        running: false,
+        cpu_millis: 0,
+        memory_mib: 0,
+        disk_gib: 1,
+    };
+    let totals = allocation.usage(20).unwrap();
+    let event = UsageEvent {
+        sandbox_id: sandbox_id.clone(),
+        owner: owner.clone(),
+        revision: 1,
+        source_seq: 1,
+        kind: UsageEventKind::Baseline,
+        started_at: 20,
+        ended_at: 40,
+        allocation: allocation.clone(),
+        next_allocation: allocation.clone(),
+        status: "paused".into(),
+        quantity: totals.clone(),
+    };
+    let state = SandboxUsage {
+        sandbox_id: sandbox_id.clone(),
+        owner: owner.clone(),
+        name: "synthetic".into(),
+        status: "paused".into(),
+        allocation,
+        created_at: 20,
+        tracking_started_at: 20,
+        last_observed_at: 40,
+        source_seq: 1,
+        source_revision: 1,
+        revision: 1,
+        has_started: true,
+        complete_lifecycle: true,
+        totals,
+    };
+    database
+        .collection::<Document>(sandbox_usage::STATES)
+        .insert_one(sandbox_usage::state_document(&state).unwrap())
+        .await
+        .unwrap();
+    database
+        .collection::<Document>(sandbox_usage::EVENTS)
+        .insert_one(sandbox_usage::event_document(&event).unwrap())
+        .await
+        .unwrap();
+    let scope = EvidenceScope {
+        owner_id: owner.to_string(),
+        sandbox_id: sandbox_id.to_string(),
+        window_id: "window-fixture".into(),
+        from_ms: 21_000,
+        to_ms: 39_000,
+        rate_card_id: "rate-fixture".into(),
+        rate_card_version: 1,
+    };
+    let request = FreezeRequest {
+        scope: scope.clone(),
+        source_cutoff_ms: 40_000,
+        correction_of: None,
+    };
+    let (first, peer) = tokio::join!(a.freeze(request.clone()), b.freeze(request.clone()));
+    let first = first.unwrap();
+    assert_eq!(first, peer.unwrap());
+    let original = a
+        .rows
+        .find_one(doc! {"_id":first.evidence_id()})
+        .await
+        .unwrap()
+        .unwrap();
+    capture
+        .capture(&observation_at("owner-a", 1, 21_000, 100.0))
+        .await
+        .unwrap();
+    capture
+        .capture(&observation_at("owner-a", 1, 39_000, 200.0))
+        .await
+        .unwrap();
+    assert_eq!(b.freeze(request.clone()).await.unwrap(), first);
+    let correction = FreezeRequest {
+        correction_of: Some(first.reference()),
+        ..request.clone()
+    };
+    let (second, peer) = tokio::join!(a.freeze(correction.clone()), b.freeze(correction));
+    let second = second.unwrap();
+    assert_eq!(second, peer.unwrap());
+    second.validate_successor(&first).unwrap();
+    assert_eq!(
+        a.rows
+            .find_one(doc! {"_id":first.evidence_id()})
+            .await
+            .unwrap(),
+        Some(original)
+    );
+    assert_eq!(a.rows.count_documents(doc! {}).await.unwrap(), 2);
+    assert_eq!(
+        b.read(ReadRequest {
+            scope: scope.clone(),
+            revision: 1
+        })
+        .await
+        .unwrap(),
+        first
+    );
+    assert_eq!(
+        b.read(ReadRequest {
+            scope: scope.clone(),
+            revision: 2
+        })
+        .await
+        .unwrap(),
+        second
+    );
+    let wrong = EvidenceScope {
+        owner_id: "owner-b".into(),
+        ..scope
+    };
+    assert!(b
+        .read(ReadRequest {
+            scope: wrong.clone(),
+            revision: 1
+        })
+        .await
+        .is_err());
+    assert!(b
+        .freeze(FreezeRequest {
+            scope: wrong,
+            source_cutoff_ms: 40_000,
+            correction_of: None
+        })
+        .await
+        .is_err());
+    database.drop().await.unwrap();
+}

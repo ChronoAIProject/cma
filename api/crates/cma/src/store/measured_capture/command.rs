@@ -27,6 +27,15 @@ type Result<T> = std::result::Result<T, &'static str>;
 mod tests;
 
 pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
+    if arguments.first().is_some_and(|value| {
+        matches!(
+            value.as_str(),
+            "--measured-freeze" | "--measured-evidence-read"
+        )
+    }) {
+        return batch_command(arguments).await;
+    }
+
     if arguments
         .first()
         .is_some_and(|value| value == "--measured-preview")
@@ -54,6 +63,53 @@ pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
     })
     .await
     .map_err(|_| UNAVAILABLE)?
+}
+
+async fn batch_command(arguments: &[String]) -> Result<Value> {
+    use super::ledger::{FreezeRequest, MeasuredLedger, ReadRequest};
+    use crate::store::{ledger_census::files, migrations::measured_batches};
+    use std::path::Path;
+    let [command, input, output] = arguments else {
+        return Err("measured evidence requires a private request and new output file");
+    };
+    if std::env::var("CHRONO_MEASURED_BATCH_ENABLED").as_deref() != Ok("true") {
+        return Err("measured finalization is disabled");
+    }
+    let bytes = files::read(Path::new(input))?;
+    let output = Path::new(output);
+    files::require_parent(output)?;
+    if output.exists() {
+        return Err("measured evidence requires a new output file");
+    }
+    let database = open_database().await?;
+    let evidence = tokio::time::timeout(Duration::from_secs(45), async {
+        verify_authority(&database).await?;
+        let status = database.run_command(doc!{"connectionStatus":1,"showPrivileges":true}).await.map_err(|_| AUTHORITY)?;
+        let batch = doc!{"privileges":[{"resource":{"db":database.name(),"collection": measured_batches::COLLECTION},"actions":isolation::MEASURED_CUSTODY_ACTIONS}]};
+        verify_shared_schema(&status, database.name(), &batch).map_err(|_|AUTHORITY)?;
+        check_schema(&database).await?;
+        if !crate::store::migrations::measured_batches_ready(&database).await? {
+            return Err("measured batch custody requires its explicit schema migration");
+        }
+        let ledger = MeasuredLedger::new(&database);
+        match command.as_str() {
+            "--measured-freeze" => {
+                let request: FreezeRequest = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
+                if request.source_cutoff_ms > usage_reports::now().checked_mul(1000).ok_or(INVALID)? { return Err(INVALID); }
+                ledger.freeze(request).await
+            }
+            "--measured-evidence-read" => {
+                let request: ReadRequest = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
+                ledger.read(request).await
+            }
+            _ => return Err(INVALID),
+        }.map_err(|_| "measured batch evidence is unavailable or conflicts with retained custody")
+    }).await.map_err(|_|UNAVAILABLE)??;
+    let payload = serde_json::to_vec(&evidence).map_err(|_| UNAVAILABLE)?;
+    files::publish(output, &payload)?;
+    Ok(
+        json!({"evidence_id": evidence.evidence_id(), "evidence_sha256": evidence.evidence_sha256(), "revision": evidence.revision()}),
+    )
 }
 
 async fn open_database() -> Result<Database> {

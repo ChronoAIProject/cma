@@ -17,6 +17,7 @@ pub(in crate::store) mod home_backup_catalog;
 mod index_inventory;
 mod index_plan;
 mod index_toolkit;
+pub(in crate::store) mod measured_batches;
 pub(in crate::store) mod measured_custody;
 pub(in crate::store) mod opening_index;
 mod sandbox_usage_capture;
@@ -70,6 +71,10 @@ pub(in crate::store) async fn require_command_cohort_index(
         return Err("Command cohort index is missing");
     }
     Ok(uuid.clone())
+}
+
+pub(in crate::store) async fn measured_batches_ready(database: &mongodb::Database) -> Result<bool> {
+    Ok(measured_batches::inspect(database).await?.is_empty())
 }
 
 pub(in crate::store) async fn measured_custody_ready(database: &mongodb::Database) -> Result<bool> {
@@ -201,7 +206,10 @@ async fn apply_indexes(
     super::sandbox_mongo::require_transaction_topology(database)
         .await
         .map_err(|_| "migration requires a supported replica set or mongos")?;
-    if matches!(step, Step::BindingIndexes | Step::MeasuredCustody) {
+    if matches!(
+        step,
+        Step::BindingIndexes | Step::MeasuredCustody | Step::MeasuredBatches
+    ) {
         step.inspect(database).await?;
     }
     ledger.initialize().await?;

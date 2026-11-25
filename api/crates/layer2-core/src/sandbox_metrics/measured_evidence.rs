@@ -4,6 +4,8 @@ use layer3_adapter::sandbox_metrics::{RawPhysicalSeries, SourceMetric};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod batch;
+pub mod coverage;
 pub mod interval;
 
 const SCHEMA_VERSION: u32 = 1;

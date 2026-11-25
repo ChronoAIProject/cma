@@ -24,6 +24,7 @@ pub(super) const DEPLOYMENT_ONLY: &[&str] = &[
 pub(super) const OUTSIDE_MANIFEST: &[&str] = &[
     super::super::retained_consents::COLLECTION,
     crate::store::migrations::measured_custody::COLLECTION,
+    crate::store::migrations::measured_batches::COLLECTION,
 ];
 pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("account_deletions", Independent),
