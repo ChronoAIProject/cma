@@ -126,6 +126,21 @@ jobs:
           path: "${{ runner.temp }}/cma-receipt-recovery"
           retention-days: 1
       -
+        name: "Local identity refresh recovery contracts"
+        id: auth_refresh
+        timeout-minutes: 5
+        env:
+          CMA_AUTH_REFRESH_EVIDENCE_DIR: "${{ runner.temp }}/cma-auth-refresh"
+        run: "node node_modules/playwright/cli.js test --config e2e/auth-refresh-followup.config.ts"
+      -
+        name: "Identity refresh failure evidence"
+        if: "failure() && steps.auth_refresh.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "auth-refresh-failure"
+          path: "${{ runner.temp }}/cma-auth-refresh"
+          retention-days: 1
+      -
         name: "Local row menu pointer and keyboard contracts"
         id: row_menu
         timeout-minutes: 5
