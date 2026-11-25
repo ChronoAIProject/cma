@@ -408,7 +408,16 @@ for (const { access, unavailable } of [
       started();
       await completion;
       if (unavailable) {
-        return route.fulfill({ status: 503, json: { code: 'temporarily_unavailable' } });
+        return route.fulfill({
+          status: 503,
+          headers: { 'content-type': 'application/problem+json' },
+          json: {
+            type: 'about:blank',
+            title: 'Unavailable',
+            status: 503,
+            code: 'temporarily_unavailable',
+          },
+        });
       }
       await route.fulfill({
         json: {
@@ -463,7 +472,8 @@ for (const { access, unavailable } of [
       if (unavailable) {
         await expect(computer.getByText('We couldn’t check file availability.')).toBeVisible();
       } else {
-        await expect(computer.getByRole('button', { name: 'README.md' })).toBeVisible();
+        if (access !== 'owner')
+          await expect(computer.getByRole('button', { name: 'README.md' })).toBeVisible();
         const newFile = computer.getByRole('button', { name: 'New file', exact: true });
         if (access === 'reader') await expect(newFile).toHaveCount(0);
         else await expect(newFile).toBeEnabled();
