@@ -447,7 +447,7 @@ async fn reconcile_claimed(
             let status = provider
                 .configure_planned(&target.plan, 0)
                 .await
-                .map_err(provider_apply_error)?;
+                .map_err(|_| WarmPoolError::Unavailable)?;
             store.bind(&target, &status.binding).await?;
             target.binding = Some(status.binding);
         }

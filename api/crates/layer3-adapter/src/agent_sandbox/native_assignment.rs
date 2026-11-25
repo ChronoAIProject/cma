@@ -46,7 +46,12 @@ impl AgentSandboxClient {
             let before = match before {
                 Ok(before) => before,
                 Err(error) => {
-                    policy?;
+                    if !matches!(
+                        &policy,
+                        Err(crate::AdapterError::NativePoolConfigurationDrift)
+                    ) {
+                        policy?;
+                    }
                     return Err(error);
                 }
             };

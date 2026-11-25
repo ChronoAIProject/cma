@@ -276,10 +276,22 @@ impl AgentSandboxPools {
             return Err(rejected("native warm pool target exceeds its bound"));
         }
         require_canary_target(&binding.spec, replicas)?;
-        let (template, actual) = self.bound_resources(binding).await?;
+        let resources = self
+            .bound_resources_with(binding, |pool| {
+                super::target_fence::allow_unversioned(pool, replicas)
+            })
+            .await;
         if replicas > 0 {
-            self.verify_seed(&binding.spec.home).await?;
+            if resources.is_ok()
+                || matches!(
+                    &resources,
+                    Err(crate::AdapterError::NativePoolConfigurationDrift)
+                )
+            {
+                self.verify_seed(&binding.spec.home).await?;
+            }
         }
+        let (template, actual) = resources?;
         let config = model::binding_config(&self.config, binding);
         let desired = model::pool(&config, &binding.spec, &template, replicas)?;
         let updated = self.apply_target(actual, &desired).await?;
@@ -289,6 +301,14 @@ impl AgentSandboxPools {
     pub(super) async fn bound_resources(
         &self,
         binding: &NativePoolBinding,
+    ) -> Result<(DynamicObject, DynamicObject)> {
+        self.bound_resources_with(binding, |_| Ok(())).await
+    }
+
+    pub(super) async fn bound_resources_with(
+        &self,
+        binding: &NativePoolBinding,
+        authority: impl FnOnce(&DynamicObject) -> Result<()>,
     ) -> Result<(DynamicObject, DynamicObject)> {
         let config = model::binding_config(&self.config, binding);
         let desired = model::template(&config, &binding.spec)?;
@@ -314,6 +334,7 @@ impl AgentSandboxPools {
         if actual.uid().as_deref() != Some(&binding.uid) {
             return Err(rejected("native pool UID changed"));
         }
+        authority(&actual)?;
         Self::verify_pool_specs(&template, &desired, &actual, &desired_pool)?;
         Ok((template, actual))
     }

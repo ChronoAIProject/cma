@@ -28,8 +28,45 @@ async fn startup_native_pool_drift_holds_original_binding_and_recovers_after_rep
             json!("Always");
         original
     };
+    // With both failures present, the member ownership refusal remains fatal.
+    let original_member = {
+        let mut api = fixture.native.api.state.lock().unwrap();
+        let member = api.rows.get_mut(api::MEMBER).unwrap();
+        let original_member = member.clone();
+        member["metadata"]["ownerReferences"][0]["uid"] = json!("different-claim");
+        original_member
+    };
     fixture.control.other_gate.add_permits(64);
     fixture.control.status_gate.add_permits(16);
+    let failed = tokio::time::timeout(
+        Duration::from_secs(10),
+        fixture.reconciler.initialize_before_workers(fixture.now),
+    )
+    .await
+    .unwrap();
+    assert!(failed.is_err());
+    fixture.control.assert_no_cleanup();
+    assert!(fixture
+        .native
+        .api
+        .state
+        .lock()
+        .unwrap()
+        .assignments
+        .is_empty());
+    fixture
+        .native
+        .api
+        .state
+        .lock()
+        .unwrap()
+        .rows
+        .insert(api::MEMBER.into(), original_member);
+    // A new manager sees the original durable binding with spec drift alone.
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(60)).await;
+    tokio::time::resume();
+    fixture.control.other_settled.store(0, Ordering::SeqCst);
     tokio::time::timeout(
         Duration::from_secs(10),
         fixture.reconciler.initialize_before_workers(fixture.now),

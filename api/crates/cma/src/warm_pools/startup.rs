@@ -350,31 +350,25 @@ async fn step(
             // Release preparation can create the exact pool before promotion.
             // Bind its original UIDs under the durable lease so normal initial
             // configure(0) cannot drain already-warm members during startup.
-            let inventory = match provider.inventory().await {
-                Ok(inventory) => inventory,
-                Err(AdapterError::NativePoolConfigurationDrift) => {
-                    match provider.observe_planned_pool(plan).await {
-                        Ok(observed) => observed.into_iter().collect(),
-                        Err(AdapterError::NativePoolConfigurationDrift) => {
-                            store.finish(&claimed, false).await?;
-                            return Err(WarmPoolError::ProviderConfigurationDrift);
-                        }
-                        Err(error) => return Err(observation_error(error)),
-                    }
-                }
-                Err(_) => return Err(WarmPoolError::Unavailable),
+            let target = layer3_adapter::agent_sandbox::NativePoolTarget {
+                target_id: claimed.id.clone(),
+                revision: claimed.revision,
+                replicas: claimed.target_replicas,
             };
-            let mut matching = inventory.into_iter().filter(|status| {
-                status.binding.spec == plan.spec
-                    && status.binding.pod_policy == plan.pod_policy
-                    && status.binding.config_sha256 == plan.config_sha256
-            });
-            if let Some(existing) = matching.next() {
-                if matching.next().is_some() {
-                    return Err(WarmPoolError::Unavailable);
+            match provider
+                .observe_planned_pool(plan, &target, policy.target_fencing)
+                .await
+            {
+                Ok(Some(existing)) => {
+                    store.bind(&claimed, &existing.binding).await?;
+                    claimed.binding = Some(existing.binding);
                 }
-                store.bind(&claimed, &existing.binding).await?;
-                claimed.binding = Some(existing.binding);
+                Ok(None) => {}
+                Err(AdapterError::NativePoolConfigurationDrift) => {
+                    store.finish(&claimed, false).await?;
+                    return Err(WarmPoolError::ProviderConfigurationDrift);
+                }
+                Err(error) => return Err(observation_error(error)),
             }
         }
         if reconcile_claimed(store, provider, claimed, policy.target_fencing).await?

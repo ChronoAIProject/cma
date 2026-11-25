@@ -64,6 +64,8 @@ pub trait NativePoolControl: Send + Sync {
     async fn observe_planned_pool(
         &self,
         configuration: &NativePoolConfiguration,
+        _target: &super::NativePoolTarget,
+        _fenced: bool,
     ) -> Result<Option<NativePoolStatus>> {
         let mut matching = self.inventory().await?.into_iter().filter(|status| {
             status.binding.spec == configuration.spec
@@ -153,8 +155,11 @@ impl NativePoolControl for AgentSandboxPools {
     async fn observe_planned_pool(
         &self,
         configuration: &NativePoolConfiguration,
+        target: &super::NativePoolTarget,
+        fenced: bool,
     ) -> Result<Option<NativePoolStatus>> {
-        self.observe_planned_pool(configuration).await
+        self.observe_planned_pool(configuration, target, fenced)
+            .await
     }
     async fn observe_admitting_pool(
         &self,
