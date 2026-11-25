@@ -165,6 +165,7 @@ async fn warm_pools(
     let (outcome, desired) = match &result {
         Ok(WarmPoolStartup::Ready) => ("ok", None),
         Ok(WarmPoolStartup::ZeroTarget) => ("zero_target", None),
+        Ok(WarmPoolStartup::ConfigurationDrift) => ("configuration_drift", None),
         Ok(WarmPoolStartup::CapacityDeferred(proof)) => {
             ("capacity_deferred", Some(proof.desired() as usize))
         }

@@ -484,13 +484,12 @@ pub mod agent_access_tool;
 #[cfg(test)]
 mod runtime_update_lifecycle_tests;
 #[cfg(test)]
+mod runtime_update_resume_tests;
+#[cfg(test)]
 mod runtime_update_test_support;
 #[cfg(test)]
 mod runtime_update_tests;
 mod suspended_runtime;
-
-#[cfg(test)]
-mod runtime_update_resume_tests;
 
 #[cfg(test)]
 mod always_on_tests;

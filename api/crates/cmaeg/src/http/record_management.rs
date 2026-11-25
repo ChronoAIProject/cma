@@ -98,6 +98,7 @@ enum RecordedAddress {
 enum RecordedOperation {
     Create,
     Update,
+    ProfileRevision,
     Delete,
     AuditRouting,
     AuditAttachments,
@@ -108,6 +109,7 @@ impl From<ChannelMutationKind> for RecordedOperation {
         match operation {
             ChannelMutationKind::Create => Self::Create,
             ChannelMutationKind::Update => Self::Update,
+            ChannelMutationKind::ProfileRevision => Self::ProfileRevision,
             ChannelMutationKind::Delete => Self::Delete,
             ChannelMutationKind::AuditRouting => Self::AuditRouting,
             ChannelMutationKind::AuditAttachments => Self::AuditAttachments,

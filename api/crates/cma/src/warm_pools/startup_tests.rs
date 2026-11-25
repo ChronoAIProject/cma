@@ -215,16 +215,66 @@ async fn empty_startup_requires_opt_in_exact_admission_and_fresh_durable_target(
         *store.rows.lock().unwrap() = vec![original.clone()];
     }
 
-    for failed in [&store.claim_error, planner.inventory_error.as_ref()] {
-        failed.store(true, Ordering::SeqCst);
+    for retirement_read in [false, true] {
+        let observations = planner.admission_observations.load(Ordering::SeqCst);
+        let claims = store.claims.lock().unwrap().len();
+        if retirement_read {
+            // The readiness and retirement branches list in that order.
+            store.list_error_after.store(2, Ordering::SeqCst);
+        } else {
+            planner.inventory_error.store(true, Ordering::SeqCst);
+        }
+        let started = tokio::time::Instant::now();
         assert!(matches!(
             enabled
                 .await_default_ready_until(Some(&Admission::new()))
                 .await,
-            Err(WarmPoolError::Unavailable)
+            Ok(WarmPoolStartup::CapacityDeferred(_))
         ));
-        assert!(!failed.load(Ordering::SeqCst));
+        assert_eq!(started.elapsed(), Duration::from_secs(240));
+        assert_eq!(
+            planner.admission_observations.load(Ordering::SeqCst),
+            observations + 1
+        );
+        assert_eq!(store.list_error_after.load(Ordering::SeqCst), 0);
+        assert!(!planner.inventory_error.load(Ordering::SeqCst));
+        assert_eq!(
+            store.claims.lock().unwrap().len() - claims,
+            if retirement_read { 240 } else { 239 },
+        );
     }
+
+    let observations = planner.admission_observations.load(Ordering::SeqCst);
+    store.claim_error.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        enabled
+            .await_default_ready_until(Some(&Admission::new()))
+            .await,
+        Err(WarmPoolError::Unavailable)
+    ));
+    assert!(!store.claim_error.load(Ordering::SeqCst));
+    assert_eq!(
+        planner.admission_observations.load(Ordering::SeqCst),
+        observations
+    );
+
+    let mut superseded = original.clone();
+    superseded.id = "superseded".into();
+    superseded.retiring = true;
+    store.rows.lock().unwrap().push(superseded);
+    store.retirement_claim_error.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        enabled
+            .await_default_ready_until(Some(&Admission::new()))
+            .await,
+        Err(WarmPoolError::Unavailable)
+    ));
+    assert!(!store.retirement_claim_error.load(Ordering::SeqCst));
+    assert_eq!(
+        planner.admission_observations.load(Ordering::SeqCst),
+        observations
+    );
+    store.rows.lock().unwrap().truncate(1);
 
     for case in ["resize", "drain", "read_failed", "timeout"] {
         let (entered, receiving) = tokio::sync::oneshot::channel();
@@ -440,4 +490,118 @@ async fn startup_drain_never_claims_or_zeroes_a_prewarmed_default() {
             "inventory",
         ]
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn startup_pool_drift_requires_exact_target_and_preserves_healthy_capacity_gate() {
+    for allow_empty in [false, true] {
+        let store = Arc::new(resize::Targets::default());
+        let planner = resize::Planner::default();
+        let image = resize::pinned("agent", 'a');
+        let pool = resize::deployment(store.clone(), planner.clone(), &image, None);
+        pool.ensure_default().await.unwrap();
+        let original = {
+            let mut rows = store.rows.lock().unwrap();
+            let row = rows.first_mut().unwrap();
+            row.target_replicas = 2;
+            row.applied_revision = row.revision;
+            row.binding = Some(resize::Planner::binding(&row.plan));
+            row.clone()
+        };
+        let mut observation = NativePoolStatus {
+            binding: original.binding.clone().unwrap(),
+            desired_replicas: 2,
+            ready_replicas: 0,
+            observed: false,
+        };
+        planner.inventory.lock().unwrap().push(observation.clone());
+        planner.inventory_drift.store(true, Ordering::SeqCst);
+        let policy = StartupPoolPolicy {
+            allow_empty,
+            target_fencing: true,
+        };
+        let await_pool = || {
+            await_ready_with_fencing(
+                &*store,
+                &planner,
+                &original.plan,
+                tokio::time::Instant::now() + Duration::from_secs(3),
+                policy,
+                None,
+                None,
+            )
+        };
+
+        // Drift on a historical pool is no proof for the current target.
+        assert!(matches!(
+            await_pool().await,
+            Err(WarmPoolError::Unavailable)
+        ));
+        observation.ready_replicas = 1;
+        observation.observed = true;
+        planner.inventory.lock().unwrap()[0] = observation;
+        assert!(matches!(await_pool().await, Ok(WarmPoolStartup::Ready)));
+
+        planner.bound_drift.store(true, Ordering::SeqCst);
+        planner.superseded_target.store(true, Ordering::SeqCst);
+        assert!(matches!(await_pool().await, Err(WarmPoolError::Conflict)));
+        planner.superseded_target.store(false, Ordering::SeqCst);
+        assert!(matches!(
+            await_pool().await,
+            Ok(WarmPoolStartup::ConfigurationDrift)
+        ));
+        assert_eq!(
+            store.find(&original.id).await.unwrap().unwrap().binding,
+            original.binding
+        );
+        assert_eq!(
+            store
+                .find(&original.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .target_replicas,
+            2
+        );
+
+        planner.retiring.store(true, Ordering::SeqCst);
+        assert!(matches!(await_pool().await, Err(WarmPoolError::Conflict)));
+    }
+}
+
+pub(crate) async fn assert_startup_pool_with_historical_template_absent(
+    provider: &dyn NativePoolControl,
+    plan: NativePoolConfiguration,
+    active: NativePoolStatus,
+) {
+    let store = resize::Targets::default();
+    let mut target = default_target(
+        plan.clone(),
+        ConfigureWarmPoolBody {
+            cpu_millis: plan.spec.cpu_millis,
+            memory_mib: plan.spec.memory_mib,
+            target_replicas: active.desired_replicas,
+        },
+    );
+    target.binding = Some(active.binding);
+    target.applied_revision = target.revision;
+    store.rows.lock().unwrap().push(target);
+    for allow_empty in [false, true] {
+        assert!(matches!(
+            await_ready_with_fencing(
+                &store,
+                provider,
+                &plan,
+                tokio::time::Instant::now() + Duration::from_secs(3),
+                StartupPoolPolicy {
+                    allow_empty,
+                    target_fencing: true
+                },
+                None,
+                None,
+            )
+            .await,
+            Ok(WarmPoolStartup::Ready)
+        ));
+    }
 }

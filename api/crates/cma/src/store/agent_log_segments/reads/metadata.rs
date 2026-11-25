@@ -28,7 +28,7 @@ pub(in crate::store::agent_log_segments) async fn read_export_head(
     .await
 }
 
-pub(super) async fn read_head_from(
+pub(in crate::store::agent_log_segments) async fn read_head_from(
     db: &Database,
     aggregate: &Document,
     session: &mut ClientSession,
@@ -158,7 +158,7 @@ pub(in crate::store::agent_log_segments) async fn seal_at(
     seal_at_from(&database(store), head, ordinal, session, snapshot, None).await
 }
 
-pub(super) async fn seal_at_from(
+pub(in crate::store::agent_log_segments) async fn seal_at_from(
     db: &Database,
     head: &Head,
     ordinal: i64,

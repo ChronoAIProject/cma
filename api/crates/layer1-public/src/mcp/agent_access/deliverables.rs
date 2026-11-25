@@ -60,7 +60,7 @@ pub(super) fn failure(error: DeliverableError) -> Value {
         ),
         // Invalid file requests also include runtime permission refusals.
         DeliverableError::NotFound
-        | DeliverableError::File(AgentFileError::NotFound | AgentFileError::Invalid)
+        | DeliverableError::File(AgentFileError::NotFound | AgentFileError::Invalid | AgentFileError::NameTooLong)
         | DeliverableError::Answer(AgentReadError::NotFound | AgentReadError::Forbidden)
         | DeliverableError::Document(DocumentError::NotFound) => NOT_ACCESSIBLE,
         DeliverableError::File(AgentFileError::TooLarge) => (

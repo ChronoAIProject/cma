@@ -35,6 +35,7 @@ export default defineConfig({
     'agent-receipt-error.check.ts',
     'agent-history-export.check.ts',
     'agent-recovery-consistency.check.ts',
+    'file-preview.check.ts',
   ],
   workers: 1,
   retries: 0,

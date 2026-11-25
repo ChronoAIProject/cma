@@ -221,6 +221,10 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("sandbox_usage_streams_v1", Retained("usage-capture-custody") => false),
     entry!("sandbox_usage_inventory_v1", Retained("usage-capture-custody") => false),
     entry!("sandbox_billing_measured_observations_v1", Retained("measured-billing-custody") => false),
+    entry!("sandbox_billing_measured_batches_v1", Retained("measured-billing-custody") => false),
+    entry!("sandbox_billing_measured_projection_v1", Retained("measured-billing-custody") => false),
+    entry!("sandbox_billing_measured_manifest_v1", Retained("measured-billing-custody") => false),
+    entry!("sandbox_billing_measured_batches_v2", Retained("measured-billing-custody") => false),
     entry!("sandbox_profile_revisions", Reference(ReferenceRule::Profiles) => false),
     entry!("sandbox_profiles", Reference(ReferenceRule::Profiles) => false),
     entry!("sandbox_retained_availability", Linked(Sandboxes, &["_id"]) => true),
@@ -240,4 +244,5 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("workspace_profiles", Reference(ReferenceRule::Profiles) => false),
     entry!("workspaces", Linked(Sandboxes, &["sandbox_id"]) => true),
     entry!("worktrees", Linked(Sandboxes, &["sandbox_id"]) => true),
+    entry!("agent_log_active_proofs_v1", Linked(Agents, &["_id"]) => true),
 ];

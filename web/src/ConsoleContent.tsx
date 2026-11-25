@@ -83,11 +83,11 @@ export function ConsoleContent({
   const computerObservation = useMemo(
     () =>
       new AgentComputerObservation(
-        { client, subject: user.id, agentId: selectedAgent },
+        { client, subject: user.id, agentId: selectedAgent, authEpoch },
         () => setPanel('activity'),
         () => setPanel(undefined),
       ),
-    [client, user.id, selectedAgent, setPanel],
+    [client, user.id, selectedAgent, setPanel, authEpoch],
   );
   const scopeClient = user.visitor ? undefined : client.resourceViews;
   const {
@@ -294,10 +294,7 @@ export function ConsoleContent({
       />
     ) : route.kind === 'event_worker_profiles' ||
       route.kind === 'event_worker_profile' ||
-      route.kind === 'profiles' ||
-      route.kind === 'profile' ? (
-      <LegacyProfileNotice />
-    ) : route.kind === 'marketplace' || route.kind === 'marketplace_profile' ? (
+      ['profiles', 'profile', 'marketplace', 'marketplace_profile'].includes(route.kind) ? (
       <LegacyProfileNotice />
     ) : route.kind === 'operations' ? (
       <OperationsRoute

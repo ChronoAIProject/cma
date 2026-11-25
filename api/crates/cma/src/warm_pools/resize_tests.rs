@@ -278,6 +278,8 @@ pub(super) struct Targets {
     pub(super) claims: Mutex<Vec<String>>,
     pub(super) find_error: AtomicBool,
     pub(super) claim_error: AtomicBool,
+    pub(super) list_error_after: std::sync::atomic::AtomicUsize,
+    pub(super) retirement_claim_error: AtomicBool,
     pub(super) find_gate: Mutex<Option<FindGate>>,
     clock: std::sync::atomic::AtomicI64,
 }
@@ -308,6 +310,15 @@ impl PoolTargetStore for Targets {
         Ok(())
     }
     async fn list(&self) -> Result<Vec<PoolTarget>, WarmPoolError> {
+        if self
+            .list_error_after
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            == Ok(1)
+        {
+            return Err(WarmPoolError::Unavailable);
+        }
         tokio::task::yield_now().await;
         let rows = self.rows.lock().unwrap();
         Ok(rows.iter().filter(|row| !row.retired).cloned().collect())
@@ -394,6 +405,9 @@ impl PoolTargetStore for Targets {
         Ok(None)
     }
     async fn claim_retirement(&self, _: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
+        if self.retirement_claim_error.swap(false, Ordering::SeqCst) {
+            return Err(WarmPoolError::Unavailable);
+        }
         Ok(None)
     }
     async fn bind(&self, _: &PoolTarget, _: &NativePoolBinding) -> Result<(), WarmPoolError> {
@@ -410,6 +424,10 @@ pub(super) struct Planner {
     pub(super) inventory: Arc<Mutex<Vec<NativePoolStatus>>>,
     pub(super) retiring: Arc<AtomicBool>,
     pub(super) inventory_error: Arc<AtomicBool>,
+    pub(super) admission_observations: Arc<std::sync::atomic::AtomicUsize>,
+    pub(super) inventory_drift: Arc<AtomicBool>,
+    pub(super) bound_drift: Arc<AtomicBool>,
+    pub(super) superseded_target: Arc<AtomicBool>,
 }
 
 impl Planner {
@@ -451,16 +469,30 @@ impl NativePoolControl for Planner {
                 "synthetic read failure".into(),
             ));
         }
+        if self.inventory_drift.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::NativePoolConfigurationDrift);
+        }
         Ok(self.inventory.lock().unwrap().clone())
     }
     async fn observe_admitting_pool(
         &self,
         binding: &NativePoolBinding,
+        _: &layer3_adapter::agent_sandbox::NativePoolTarget,
+        fenced: bool,
     ) -> layer3_adapter::Result<NativePoolStatus> {
+        self.admission_observations.fetch_add(1, Ordering::SeqCst);
+        if fenced && self.superseded_target.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::Rejected(
+                "superseded target".into(),
+            ));
+        }
         if self.retiring.load(Ordering::SeqCst) {
             return Err(layer3_adapter::AdapterError::Rejected(
                 "retiring pool".into(),
             ));
+        }
+        if self.bound_drift.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::NativePoolConfigurationDrift);
         }
         self.inventory
             .lock()
