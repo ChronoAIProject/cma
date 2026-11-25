@@ -46,7 +46,7 @@ export function auditSyntheticPublications(
       [
         {
           method: 'POST',
-          path: `/api/v1/triggers/public/${document.public_id}/launches`,
+          path: `/api/v2/triggers/public/${document.public_id}/launches`,
           bodyHash: 'a'.repeat(64),
           key: `synthetic-key-${index}`,
         },
