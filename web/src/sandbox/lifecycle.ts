@@ -20,6 +20,18 @@ export function sandboxRetirementDuringRevive(sandbox: SandboxSummary): boolean 
   );
 }
 
+export function sandboxRetirementWaitExceeded(
+  sandbox: Partial<Pick<SandboxSummary, 'status' | 'lifecycle'>>,
+): boolean {
+  const result = sandbox.lifecycle?.result;
+  return (
+    sandbox.status === 'retiring' &&
+    result?.state === 'recoverable_pending' &&
+    result.code === 'lifecycle_wait_exceeded' &&
+    result.continuing
+  );
+}
+
 export function sandboxChildrenReadable(sandbox: SandboxSummary): boolean {
   return [
     'active',
