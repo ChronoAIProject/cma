@@ -222,43 +222,48 @@ async fn delete_owned(
             )
             .await?;
     }
-    let step = format!(
-        "unbind:{}:{}",
-        definition.provider.slug, definition.provider.binding_id
-    );
-    if !reservation.done(&step) {
-        reservation
-            .effect(&state.records, &state.master_keys, step)
-            .await?;
-        if let Err(error) = state
-            .providers
-            .unbind_custodied(
-                &definition.provider.slug,
-                &definition.provider.binding_id,
-                credential,
-            )
-            .await
-        {
-            if !error.unconfirmed {
-                reservation
-                    .retryable(&state.records, &state.master_keys)
-                    .await?;
-            }
-            return Err(match error.error {
-                // A definite answer that is not absence keeps the record (#1465).
-                crate::providers::ProviderError::Rejected { status, code } => {
-                    ManagementError::ReleaseRefused { status, code }
+    let mut bindings = Vec::new();
+    if let Some(revisions) = &definition.secrets.profile_revisions {
+        bindings.extend(
+            revisions
+                .retained
+                .iter()
+                .map(|revision| (&revision.provider, &revision.credential)),
+        );
+    }
+    bindings.push((&definition.provider, credential));
+    for (provider, credential) in bindings {
+        let step = format!("unbind:{}:{}", provider.slug, provider.binding_id);
+        if !reservation.done(&step) {
+            reservation
+                .effect(&state.records, &state.master_keys, step)
+                .await?;
+            if let Err(error) = state
+                .providers
+                .unbind_custodied(&provider.slug, &provider.binding_id, credential)
+                .await
+            {
+                if !error.unconfirmed {
+                    reservation
+                        .retryable(&state.records, &state.master_keys)
+                        .await?;
                 }
-                other => ManagementError::Provider(other),
-            });
+                return Err(match error.error {
+                    // A definite answer that is not absence keeps the record (#1465).
+                    crate::providers::ProviderError::Rejected { status, code } => {
+                        ManagementError::ReleaseRefused { status, code }
+                    }
+                    other => ManagementError::Provider(other),
+                });
+            }
+            reservation
+                .confirmed(
+                    &state.records,
+                    &state.master_keys,
+                    reservation.desired.clone(),
+                )
+                .await?;
         }
-        reservation
-            .confirmed(
-                &state.records,
-                &state.master_keys,
-                reservation.desired.clone(),
-            )
-            .await?;
     }
     reservation.delete(&state.records).await?;
     state.index.removed(&definition.record_id);

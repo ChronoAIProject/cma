@@ -300,6 +300,13 @@ pub async fn publish(
             actual: Some(current.record.version),
         });
     }
+    // The existing channel mutation journal can retain at most sixteen steps,
+    // including each binding retirement and an optional connection disconnect.
+    if history.retained.len() >= 12 {
+        return Err(refuse(
+            "profile revision history exceeds channel retirement capacity",
+        ));
+    }
     let old = current
         .definition
         .secrets

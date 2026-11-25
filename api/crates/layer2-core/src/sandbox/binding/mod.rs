@@ -10,6 +10,7 @@ pub use access::{
 };
 pub use inspection::{
     BindingConversationCatalog, BindingConversationInspection, BindingProfileDrift,
+    DesiredProfileDrift,
 };
 mod fence;
 mod model;

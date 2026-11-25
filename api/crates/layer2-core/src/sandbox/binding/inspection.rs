@@ -235,3 +235,72 @@ impl BindingService {
         })
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesiredProfileDrift {
+    pub profile_digest: String,
+    pub prompt: bool,
+    pub skills: bool,
+    pub model: bool,
+    pub service_scope: bool,
+}
+
+impl BindingService {
+    pub async fn desired_profile_drift(
+        &self,
+        caller: &Caller,
+        id: &str,
+        conversation: &str,
+        profile: serde_json::Value,
+        digest: &str,
+    ) -> Result<Option<DesiredProfileDrift>, BindingError> {
+        let binding = self.read_for_retirement(caller, id).await?;
+        if binding.existing_agent.is_some() {
+            return Err(BindingError::Conflict);
+        }
+        let expected = super::profile::map_profile(
+            profile,
+            digest,
+            self.policy.provider,
+            &self.policy.supported_model_api,
+            self.policy.bounds,
+        )?;
+        if expected.owner != binding.owner {
+            return Err(BindingError::Forbidden);
+        }
+        let mapping = self.inspect_conversation(caller, id, conversation).await?;
+        let Some(agent) = self.store.get_agent(&mapping.conversation.agent_id).await? else {
+            return Ok(None);
+        };
+        let Some(sandbox) = self
+            .store
+            .get_sandbox(&mapping.conversation.sandbox_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if agent.owner != binding.owner
+            || agent.sandbox_id != sandbox.id
+            || sandbox.owner != binding.owner
+            || agent.worktree_id != mapping.conversation.worktree_id
+            || agent.workspace_id != mapping.conversation.workspace_id
+            || self.read_for_retirement(caller, id).await? != binding
+        {
+            return Err(BindingError::Conflict);
+        }
+        let Some(environment) = expected.environment.as_ref() else {
+            return Ok(None);
+        };
+        let drift = profile_drift(&agent, &expected.agent, digest);
+        let actual_services: BTreeSet<_> = sandbox.profile.content.nyxid_services.iter().collect();
+        let desired_services: BTreeSet<_> = environment.sandbox.nyxid_services.iter().collect();
+        Ok(Some(DesiredProfileDrift {
+            profile_digest: digest.to_owned(),
+            prompt: drift.prompt,
+            skills: drift.skills,
+            model: drift.model,
+            service_scope: actual_services != desired_services,
+        }))
+    }
+}

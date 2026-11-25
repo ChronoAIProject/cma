@@ -110,6 +110,24 @@ impl IngressState {
         mut source: Option<VerifiedIngress>,
         hold: OwnedSemaphorePermit,
     ) -> LaunchOutcome {
+        if self.profile_revisions_enabled {
+            let current = match self
+                .resolver
+                .resolve_current(request.channel.id.as_str())
+                .await
+            {
+                Ok(current) => current,
+                Err(error) => return LaunchOutcome::Refused(error.problem()),
+            };
+            if current.version != request.channel.version || current.definition.mutation.is_some() {
+                self.resolver.invalidate(request.channel.id.as_str());
+                return LaunchOutcome::Refused(Problem::new(
+                    ProblemCode::Conflict,
+                    409,
+                    "channel changed before event admission",
+                ));
+            }
+        }
         if let Some(routing) = self
             .routed
             .as_ref()

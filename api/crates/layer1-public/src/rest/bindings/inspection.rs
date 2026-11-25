@@ -90,9 +90,55 @@ pub(super) async fn catalog(
     }
 }
 
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DesiredProfileRequest {
+    pub profile: serde_json::Value,
+    pub profile_digest: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DesiredProfileDriftView {
+    pub profile_digest: String,
+    pub prompt: bool,
+    pub skills: bool,
+    pub model: bool,
+    pub service_scope: bool,
+}
+
+#[utoipa::path(post, operation_id = "inspect_binding_desired_profile", path = "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-drift", tag = "provider bindings", params(("binding_id" = String, Path), ("conversation_id" = String, Path)), request_body = DesiredProfileRequest, responses((status = 200, body = Option<DesiredProfileDriftView>), (status = 401), (status = 403), (status = 404), (status = 409), (status = 503)))]
+pub(super) async fn desired_drift(
+    State(state): State<BindingRouteState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path((id, conversation)): Path<(String, String)>,
+    Json(request): Json<DesiredProfileRequest>,
+) -> Response {
+    match state
+        .service
+        .desired_profile_drift(
+            &caller,
+            &id,
+            &conversation,
+            request.profile,
+            &request.profile_digest,
+        )
+        .await
+    {
+        Ok(value) => Json(value.map(|drift| DesiredProfileDriftView {
+            profile_digest: drift.profile_digest,
+            prompt: drift.prompt,
+            skills: drift.skills,
+            model: drift.model,
+            service_scope: drift.service_scope,
+        }))
+        .into_response(),
+        Err(value) => error(value),
+    }
+}
+
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(get, catalog),
+    paths(get, catalog, desired_drift),
     components(schemas(
         BindingConversationInspectionView,
         BindingProfileDriftView,

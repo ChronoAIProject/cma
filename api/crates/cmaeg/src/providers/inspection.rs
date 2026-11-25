@@ -174,6 +174,88 @@ impl ProviderClient {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DesiredProfileDrift {
+    pub profile_digest: String,
+    pub prompt: bool,
+    pub skills: bool,
+    pub model: bool,
+    pub service_scope: bool,
+}
+
+impl ProviderClient {
+    pub(crate) async fn desired_profile_drift(
+        &self,
+        provider: &ProviderSlug,
+        binding: &BindingId,
+        conversation: &ConversationId,
+        credential: &Secret,
+        profile: &cmaeg_core::profile::EventWorkerProfile,
+    ) -> Result<Option<DesiredProfileDrift>, ProviderError> {
+        if provider.as_str() != "cma_codex" {
+            return Err(ProviderError::InvalidRequest(
+                "profile drift requires CMA".into(),
+            ));
+        }
+        let handle = self.handle(provider)?;
+        let _permit = super::client::acquire(&handle.inflight).await?;
+        let mut url = handle
+            .entry
+            .url(
+                "conversation",
+                &[
+                    ("binding_id", binding.as_str()),
+                    ("conversation_id", conversation.as_str()),
+                ],
+            )
+            .map_err(|_| ProviderError::InvalidRequest("invalid conversation path".into()))?;
+        url.path_segments_mut()
+            .map_err(|_| ProviderError::InvalidRequest("invalid conversation path".into()))?
+            .pop_if_empty()
+            .push("profile-drift");
+        let bearer = self.management_bearer(provider, &url, credential).await?;
+        let digest = profile.digest();
+        let mut response = self
+            .success_or_error(
+                handle
+                    .client
+                    .post(url)
+                    .bearer_auth(bearer.as_str())
+                    .json(&serde_json::json!({"profile":profile,"profile_digest":digest}))
+                    .timeout(self.request_timeout)
+                    .send()
+                    .await
+                    .map_err(|_| ProviderError::Unavailable("profile drift unavailable".into()))?,
+            )
+            .await?;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| ProviderError::Unavailable("profile drift unavailable".into()))?
+        {
+            if bytes.len() + chunk.len() > 16_384 {
+                return Err(ProviderError::ResponseMalformed(
+                    "profile drift exceeds bound".into(),
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let view: Option<DesiredProfileDrift> = serde_json::from_slice(&bytes)
+            .map_err(|_| ProviderError::ResponseMalformed("invalid profile drift".into()))?;
+        if view
+            .as_ref()
+            .is_some_and(|value| value.profile_digest != digest)
+        {
+            return Err(ProviderError::ResponseMalformed(
+                "profile drift identity mismatch".into(),
+            ));
+        }
+        Ok(view)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

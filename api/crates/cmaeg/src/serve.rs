@@ -81,6 +81,9 @@ pub(crate) async fn serve(
         );
     }
     state.profile_revisions_enabled = config.profile_revisions_enabled;
+    state
+        .resolver
+        .require_current_profile_reads(config.profile_revisions_enabled);
     activity::configure(&mut state, &mut observers).await?;
     let telegram = Arc::new(telegram::TelegramClient::production(
         config.delivery.reply_timeout,
@@ -263,6 +266,7 @@ pub(crate) async fn serve(
             observers.activity.clone(),
         )),
     )?
+    .with_profile_revisions(config.profile_revisions_enabled)
     .with_whatsapp_receipts(whatsapp_receipts)
     .with_telegram(telegram.clone())
     .with_telegram_effects(telegram_effects || config.native_telegram_received_reactions_enabled)

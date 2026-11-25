@@ -10,7 +10,7 @@ pub(crate) use context_retry::diagnostics::attach_request_hash as attach_context
 pub(crate) use context_retry::ContextFailure;
 mod conversation;
 mod inspection;
-pub use inspection::ConversationInspection;
+pub use inspection::{ConversationInspection, DesiredProfileDrift};
 mod frozen;
 mod management_auth;
 mod media_continuations;
