@@ -30,6 +30,7 @@ import { CharacterColorContext } from './character/characterColor';
 import { SandboxPage } from './sandbox/SandboxPage';
 import { useResourceActions } from './ResourceActions';
 import { Button } from './ui/Button';
+import { Alert } from './ui/Alert';
 import { consoleLinks } from './ConsoleLinks';
 import { ShellCommandMenu } from './shell/ShellCommandMenu';
 import { ConsoleActionError, NotFoundView, UnavailableView } from './ConsoleViews';
@@ -104,6 +105,22 @@ export function ConsoleContent({
     shared,
     personalAgentId,
   } = useConsoleAgentAccess(client, selectedAgent, user.id, authEpoch);
+  const downloadScope = useMemo(
+    () => ({ client, selectedAgent, subject: user.id, authEpoch }),
+    [client, selectedAgent, user.id, authEpoch],
+  );
+  const [downloadDenial, setDownloadDenial] = useState<{
+    scope: typeof downloadScope;
+    message: string;
+  }>();
+  const reloadAgentAccess = agentAccess.reload;
+  const onFileAccessChanged = useCallback(
+    (message?: string) => {
+      if (message) setDownloadDenial({ scope: downloadScope, message });
+      reloadAgentAccess();
+    },
+    [downloadScope, reloadAgentAccess],
+  );
   const accessUncertain = useIdentityUncertain() || agentAccessUncertain;
   const selectedRetired =
     personalAgentId === selectedAgent && !accessUncertain ? observedRetired : undefined;
@@ -379,7 +396,7 @@ export function ConsoleContent({
               conversation={ready?.conversation}
               observation={computerObservation}
               onClose={() => setPanel(undefined)}
-              onAccessChanged={agentAccess.reload}
+              onAccessChanged={onFileAccessChanged}
               publicationScope={artifactPublicationScope}
               historyLoading={ready?.historyLoading || !!ready?.historyUnavailable}
               controlReady={agent.controlBaselineReady}
@@ -493,6 +510,18 @@ export function ConsoleContent({
               </Button>
             ) : null}
             <ConsoleActionError error={actions.error} />
+            {downloadDenial?.scope === downloadScope ? (
+              <Alert
+                tone="error"
+                actions={
+                  <Button size="sm" onClick={() => setDownloadDenial(undefined)}>
+                    Dismiss
+                  </Button>
+                }
+              >
+                {downloadDenial.message}
+              </Alert>
+            ) : null}
             {content}
           </main>
         }

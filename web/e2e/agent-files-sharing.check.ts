@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
 import type { AgentShareLink } from '../src/api-client/index';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
@@ -6,6 +7,14 @@ import { LocalStartup, localTime } from './agent-startup-fixtures';
 // Public HTTP fixtures exercise the full browser UI, not a running Sandbox/backend.
 const longName = 'research-findings-with-a-deliberately-long-filename-for-truncation.md';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
+
+function hold() {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
 
 async function files(page: Page, writable = true) {
   await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
@@ -65,8 +74,18 @@ async function files(page: Page, writable = true) {
       return route.fulfill({ json: { path, entries } });
     }
     const text = contents.get(path)!;
-    if (url.pathname.endsWith('/download'))
-      return route.fulfill({ contentType: 'application/octet-stream', body: text });
+    if (url.pathname.endsWith('/download')) {
+      expect(request.method()).toBe('GET');
+      return route.fulfill({
+        contentType: 'application/octet-stream',
+        headers: {
+          'cache-control': 'private, no-store',
+          'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(path)}`,
+          'x-content-type-options': 'nosniff',
+        },
+        body: text,
+      });
+    }
     return route.fulfill({
       json: {
         path,
@@ -367,6 +386,12 @@ for (const { access, unavailable } of [
     const boundary = new LocalStartup();
     await boundary.route(page, baseURL!);
     const filesystem = await files(page, access !== 'reader');
+    let revalidateAt: string | null = null;
+    let revalidation: Promise<void> | undefined;
+    if (access === 'reader') {
+      await page.clock.install({ time: new Date(localTime) });
+      revalidateAt = new Date(Date.parse(localTime) + 30_000).toISOString();
+    }
     if (access !== 'owner') {
       await page.route('**/api/v1/agents/agt_contract', (route) =>
         route.fulfill({
@@ -407,6 +432,7 @@ for (const { access, unavailable } of [
     await page.route('**/api/v1/agents/agt_contract/environment', async (route) => {
       started();
       await completion;
+      await revalidation;
       if (unavailable) {
         return route.fulfill({
           status: 503,
@@ -424,7 +450,7 @@ for (const { access, unavailable } of [
           agent_id: 'agt_contract',
           policy_revision: 1,
           runtime_incarnation: null,
-          revalidate_at: null,
+          revalidate_at: revalidateAt,
           files: {
             state: 'available',
             reason: 'authorized_mounted_home',
@@ -477,6 +503,77 @@ for (const { access, unavailable } of [
         const newFile = computer.getByRole('button', { name: 'New file', exact: true });
         if (access === 'reader') await expect(newFile).toHaveCount(0);
         else await expect(newFile).toBeEnabled();
+        await computer.getByRole('button', { name: 'Sandbox root /home/', exact: true }).click();
+        await computer.getByRole('checkbox', { name: 'Show hidden' }).check();
+        await computer.getByRole('button', { name: '.dockerignore', exact: true }).click();
+        await expect(
+          computer.getByRole('textbox', { name: 'Contents of .dockerignore' }),
+        ).toHaveValue(filesystem.contents.get('.dockerignore')!);
+        const downloadButton = computer.getByRole('button', { name: 'Download file' });
+        const downloadPath = '**/agt_contract/files/download?path=.dockerignore';
+        const downloadDotfile = async () => {
+          const [download] = await Promise.all([
+            page.waitForEvent('download', { timeout: 5_000 }),
+            downloadButton.click(),
+          ]);
+          expect(download.suggestedFilename()).toMatch(/^\.?dockerignore$/);
+          expect(await readFile((await download.path())!, 'utf8')).toBe(
+            filesystem.contents.get('.dockerignore'),
+          );
+        };
+        await downloadDotfile();
+        if (access === 'reader') {
+          const holdDownload = hold();
+          const holdAccess = hold();
+          await page.route(
+            downloadPath,
+            async (route) => {
+              await holdDownload.promise;
+              await route.abort();
+            },
+            { times: 1 },
+          );
+          try {
+            await Promise.all([page.waitForRequest(downloadPath), downloadButton.click()]);
+            await expect(computer.getByText('Downloading file…')).toBeVisible();
+            revalidateAt = null;
+            revalidation = holdAccess.promise;
+            await page.clock.fastForward(31_000);
+            await expect(computer.getByText('Checking file access…')).toBeVisible();
+            holdAccess.release();
+            await expect(computer.getByRole('alert')).toContainText(
+              'Download was interrupted. Try downloading the file again.',
+              { timeout: 5_000 },
+            );
+          } finally {
+            holdAccess.release();
+            holdDownload.release();
+          }
+          await downloadDotfile();
+          await page.route(
+            downloadPath,
+            (route) =>
+              route.fulfill({
+                status: 404,
+                contentType: 'application/problem+json',
+                json: { code: 'resource_not_found' },
+              }),
+            { times: 1 },
+          );
+          const unexpectedDownloads: string[] = [];
+          page.on('download', (download) => unexpectedDownloads.push(download.suggestedFilename()));
+          await downloadButton.click();
+          await expect(
+            page.getByRole('alert').filter({
+              hasText:
+                'File access is no longer available. Ask the Agent owner to check your access.',
+            }),
+          ).toBeVisible();
+          await expect(
+            computer.getByRole('textbox', { name: 'Contents of .dockerignore' }),
+          ).toHaveCount(0);
+          expect(unexpectedDownloads).toEqual([]);
+        }
       }
       await expect(filesTab).toHaveAttribute('aria-selected', 'true');
       await expect(computer.getByRole('tab', { name: 'Screen' })).toHaveAttribute(
