@@ -166,6 +166,19 @@ fn retained_defaults_and_runtime_values_form_a_complete_configuration() {
 }
 
 #[test]
+fn task_audit_defaults_are_wired_into_execution_configuration() {
+    let config = configured(&[]).unwrap();
+    let selection = config.task_audit.unwrap();
+    assert_eq!(selection.from, "2026-11-24T16:00:00Z");
+    assert_eq!(selection.to, None);
+    assert_eq!(selection.overdue_seconds, 3600);
+    assert!(configured(&[("CHRONO_TASK_AUDIT_SELECTION", "null")])
+        .unwrap()
+        .task_audit
+        .is_none());
+}
+
+#[test]
 fn account_deletion_config_defaults_off() {
     assert!(!configured(&[]).unwrap().account_deletion_enabled);
     assert!(
