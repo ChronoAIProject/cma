@@ -59,6 +59,7 @@ pub struct MetricEvidence {
     pub quantity_unit: String,
     pub coverage: MetricCoverage,
     pub intervals: Vec<CoverageInterval>,
+    pub interval_sha256: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,7 +171,7 @@ impl FrozenEvidence {
             allocation_watermark: watermark(allocation)?,
             revision,
             correction_of,
-            metrics: metric_evidence(intervals),
+            metrics: metric_evidence(intervals)?,
         };
         if previous.is_some_and(|prior| {
             prior.payload.metrics == payload.metrics
@@ -240,6 +241,12 @@ impl FrozenEvidence {
                     .intervals
                     .windows(2)
                     .any(|pair| pair[0].to_ms != pair[1].from_ms)
+                || evidence.interval_sha256.len() != evidence.intervals.len()
+                || evidence
+                    .intervals
+                    .iter()
+                    .zip(&evidence.interval_sha256)
+                    .any(|(row, expected)| digest(row).ok().as_ref() != Some(expected))
                 || evidence.coverage != coverage(&evidence.intervals)
             {
                 return Err(BatchError::Invalid);
@@ -315,7 +322,7 @@ fn watermark(events: &[UsageEvent]) -> Result<Option<AllocationWatermark>, Batch
     }))
 }
 
-fn metric_evidence(intervals: Vec<CoverageInterval>) -> Vec<MetricEvidence> {
+fn metric_evidence(intervals: Vec<CoverageInterval>) -> Result<Vec<MetricEvidence>, BatchError> {
     [
         SourceMetric::CpuCounter,
         SourceMetric::WorkingSet,
@@ -328,12 +335,18 @@ fn metric_evidence(intervals: Vec<CoverageInterval>) -> Vec<MetricEvidence> {
             .filter(|row| row.metric == metric)
             .cloned()
             .collect();
-        MetricEvidence {
+        let interval_sha256 = rows
+            .iter()
+            .map(digest)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| BatchError::Invalid)?;
+        Ok(MetricEvidence {
             metric_code: metric_code(metric).to_owned(),
             quantity_unit: unit(metric).to_owned(),
             coverage: coverage(&rows),
             intervals: rows,
-        }
+            interval_sha256,
+        })
     })
     .collect()
 }

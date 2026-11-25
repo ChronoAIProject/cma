@@ -194,6 +194,8 @@ async fn execute(
     let (revision, bindings) = binding_snapshot(database, sandbox, range).await?;
     let mut observations = Vec::new();
     let mut incomplete = 0;
+    let mut unattributed_series = 0_u64;
+    let mut unattributed_samples = 0_u64;
     for binding in &bindings {
         for metric in SourceMetric::ALL
             .into_iter()
@@ -222,7 +224,14 @@ async fn execute(
                 .export_raw(&selected)
                 .await
                 .map_err(|_| UNAVAILABLE)?;
-            series.retain(|row| has_physical_identity(binding, row, metric));
+            series.retain(|row| {
+                let verified = has_physical_identity(binding, row, metric);
+                if !verified {
+                    unattributed_series += 1;
+                    unattributed_samples += row.samples().len() as u64;
+                }
+                verified
+            });
             let mut captured = capture_observations(binding, revision, metric, &series, active)
                 .map_err(|_| "measured capture could not attribute a source observation")?;
             if captured.is_empty() {
@@ -249,6 +258,8 @@ async fn execute(
     Ok(json!({
         "inserted": inserted, "replayed": replayed, "disputed": disputed,
         "incomplete_metric_intervals": incomplete, "bindings": bindings.len(),
+        "unattributed_source_series": unattributed_series,
+        "unattributed_source_samples": unattributed_samples,
     }))
 }
 
