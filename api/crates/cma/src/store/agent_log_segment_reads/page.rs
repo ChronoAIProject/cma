@@ -84,6 +84,9 @@ async fn sealed_page(
     if after >= through || through >= head.active_start_seq as u64 {
         return Ok(None);
     }
+    segments::verify_terminal_seal(store, &head, session)
+        .await
+        .map_err(segment_error)?;
     segments::projection::read(store, agent, &head, session)
         .await
         .map_err(segment_error)?;

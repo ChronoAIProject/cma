@@ -10,9 +10,7 @@ use crate::store::durability::majority_collection;
 use futures_util::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 
-#[path = "erase_source_log.rs"]
-mod log_erasure;
-use log_erasure::erase_source_log;
+use super::erase_source_log::erase_source_log;
 
 pub(super) fn authored(name: &str, rule: Erasure) -> bool {
     matches!(name, "agent_message_feedback" | "agent_suggestions")
@@ -96,7 +94,7 @@ pub(super) async fn remove(
         _ => doc! {"_id":{"$in":ids}},
     };
     let removed = if entry.collection == "agent_log" {
-        erase_source_log(db, rows, ids, filter, batch).await?
+        erase_source_log(db, rows, ids, filter).await?
     } else {
         majority_collection::<Document>(db, entry.collection)
             .delete_many(filter)

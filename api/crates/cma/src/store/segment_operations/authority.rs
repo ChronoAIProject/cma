@@ -33,7 +33,16 @@ pub(super) fn role(database: &str, access: Access) -> Document {
     let mut grants = Vec::new();
     for name in segments::COLLECTIONS {
         let mut actions = vec!["listIndexes"];
-        if matches!(access, Access::Audit | Access::ActiveProof) {
+        if access == Access::Audit
+            || (access == Access::ActiveProof
+                && [
+                    segments::HEADS,
+                    segments::SEGMENTS,
+                    segments::AUDITS,
+                    segments::PROJECTIONS,
+                ]
+                .contains(name))
+        {
             actions.push("find");
             if *name == segments::HEADS {
                 actions.push("update");

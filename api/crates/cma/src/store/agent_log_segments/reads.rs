@@ -19,6 +19,19 @@ use crate::store::{
 
 type Result<T> = std::result::Result<T, TransactionLogError>;
 
+pub(in crate::store) async fn verify_terminal_seal(
+    store: &MongoSandboxStore,
+    head: &Head,
+    session: &mut ClientSession,
+) -> Result<()> {
+    if head.active_ordinal > 0 {
+        metadata::seal_at(store, head, head.active_ordinal - 1, session, true)
+            .await?
+            .precedes(head)?;
+    }
+    Ok(())
+}
+
 pub(in crate::store) struct LogRange {
     pub after: u64,
     pub through: u64,

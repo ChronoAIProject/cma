@@ -395,3 +395,51 @@ async fn active_proof_rejects_bad_leaves_and_recovers_after_predecessor_publicat
     assert!(observed.docs_examined <= 50);
     db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable replica set with profiler access"]
+async fn early_sealed_page_refuses_missing_or_mismatched_terminal_seal() {
+    let (client, trace) = measure::client().await;
+    let name = format!("cma_sealed_boundary_{}", uuid::Uuid::new_v4().simple());
+    let db = client.database(&name);
+    schema::migrate(&db).await.unwrap();
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (agent, rows) = super::super::fixtures::segmented_with_width(&store, 3, 256, 100).await;
+    let f = fixture::Fixture {
+        agent: agent.clone(),
+        target: rows[..256].to_vec(),
+        active: rows[768..].to_vec(),
+        active_bytes: 0,
+    };
+    let (page, observed) = measure::sample(&db, &trace, fixture::CASES[0], &f, 0, "page", async {
+        store
+            .agent_log_page_projection(&agent, 3, 200)
+            .await?
+            .ok_or_else(|| SandboxStoreError::Unavailable("sealed page absent".into()))
+    })
+    .await;
+    assert_eq!(page.unwrap(), rows[3..203]);
+    assert!(observed.docs_examined <= 250);
+    let seals = db.collection::<Document>(SEGMENTS);
+    let filter = doc! {"agent_id":agent.id.as_str(),"ordinal":2_i64};
+    let terminal = seals.find_one(filter.clone()).await.unwrap().unwrap();
+    seals.delete_one(filter).await.unwrap();
+    assert!(store
+        .agent_log_page_projection(&agent, 3, 200)
+        .await
+        .is_err());
+    seals.insert_one(terminal).await.unwrap();
+    let heads = db.collection::<Document>(HEADS);
+    heads
+        .update_one(
+            doc! {"_id":agent.id.as_str()},
+            doc! {"$set":{"previous_seal":segments::digest::binary([0_u8;32])}},
+        )
+        .await
+        .unwrap();
+    assert!(store
+        .agent_log_page_projection(&agent, 3, 200)
+        .await
+        .is_err());
+    db.drop().await.unwrap();
+}

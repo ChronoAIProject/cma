@@ -1,20 +1,25 @@
 //! Invalidate a certified active tail atomically with deletion of its source.
-use super::*;
+use super::Error;
+use crate::store::durability::majority_collection;
 use crate::store::{
     agent_log_segments::active_proof::COLLECTION,
     sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome},
     transaction_terminal::GuardedTerminal as _,
 };
+use mongodb::{
+    bson::{doc, Bson, Document},
+    Database,
+};
+use std::collections::BTreeSet;
 
-pub(super) async fn erase_source_log(
+pub(in crate::store) async fn erase_source_log(
     db: &Database,
     rows: &[Document],
     ids: &[Bson],
     filter: Document,
-    batch: &mut Batch,
 ) -> Result<u64, Error> {
     let source = majority_collection::<Document>(db, "agent_log");
-    if super::super::optional::absent(db, COLLECTION, Some(false)).await? {
+    if super::optional::absent(db, COLLECTION, Some(false)).await? {
         return Ok(source.delete_many(filter).await?.deleted_count);
     }
     let agents: BTreeSet<_> = rows
@@ -29,20 +34,26 @@ pub(super) async fn erase_source_log(
     let mut session = db.client().start_session().await?;
     start_transaction(&mut session).await?;
     let result = async {
-        let invalidated = majority_collection::<Document>(db, COLLECTION)
-            .delete_many(doc! {"_id":{"$in":agents.into_iter().collect::<Vec<_>>()}})
-            .session(&mut session)
-            .await?
-            .deleted_count;
+        let proofs = majority_collection::<Document>(db, COLLECTION);
+        // An upsert, including when no prior proof exists, shares the same
+        // unique identity with first preparation and every successor proof.
+        for agent in agents {
+            let fence = doc! {"_id": &agent, "format_version":0_i64,"invalidated_for_erasure":true};
+            proofs
+                .replace_one(doc! {"_id":&agent}, fence)
+                .upsert(true)
+                .session(&mut session)
+                .await?;
+        }
         let removed = source
             .delete_many(filter)
             .session(&mut session)
             .await?
             .deleted_count;
-        Ok::<_, mongodb::error::Error>((invalidated, removed))
+        Ok::<_, mongodb::error::Error>(removed)
     }
     .await;
-    let (invalidated, removed) = match result {
+    let removed = match result {
         Ok(value) => value,
         Err(error) => {
             let _ = session.abort_guarded().await;
@@ -56,9 +67,6 @@ pub(super) async fn erase_source_log(
         return Err(Error::Store(
             "Agent log erasure transaction outcome unresolved".into(),
         ));
-    }
-    if invalidated != 0 {
-        *batch.deleted.entry(COLLECTION.into()).or_default() += invalidated;
     }
     Ok(removed)
 }

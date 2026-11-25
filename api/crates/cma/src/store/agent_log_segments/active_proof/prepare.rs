@@ -69,10 +69,22 @@ async fn prepare_transaction(
         }
         return Ok(proof);
     }
+    publish_prepared(database, &agent, &proof, session).await?;
+    Ok(proof)
+}
+
+async fn publish_prepared(
+    database: &Database,
+    agent: &Agent,
+    proof: &ActiveProof,
+    session: &mut ClientSession,
+) -> Result<(), TransactionLogError> {
+    let head = &proof.head;
+    let agent_id = agent.id.as_str();
     // Exact no-op replacement participates in the same head write as every
     // publication. A competing writer must conflict or make readback stale.
     let heads = majority_collection::<Document>(database, super::super::HEADS);
-    let canonical_head = bson::serialize_to_document(&head).map_err(|_| corrupt())?;
+    let canonical_head = bson::serialize_to_document(head).map_err(|_| corrupt())?;
     if heads
         .replace_one(canonical_head.clone(), canonical_head)
         .session(&mut *session)
@@ -99,8 +111,7 @@ async fn prepare_transaction(
     {
         return Err(SandboxStoreError::Conflict.into());
     }
-    proof.persist_database(database, session).await?;
-    Ok(proof)
+    proof.persist_database(database, session).await
 }
 
 async fn current(
@@ -207,4 +218,227 @@ async fn scan(
         return Err(corrupt().into());
     }
     Ok(digest::binary(leaves))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::agent_log_segments::{mongo_tests::fixtures, schema};
+
+    #[tokio::test]
+    #[ignore = "requires a disposable replica set"]
+    async fn active_proof_first_creation_and_erasure_share_an_identity() {
+        for erase_first in [true, false] {
+            let (client, name) = fixtures::database("active_proof_erase").await;
+            let database = client.database(&name);
+            schema::migrate(&database).await.unwrap();
+            let mut store = MongoSandboxStore::open(&client, &name).await.unwrap();
+            let mut agent = fixtures::agent();
+            agent.status = layer2_core::sandbox::AgentStatus::Ready;
+            agent.conversation.conversation_id = Some("erase-fence-fixture".into());
+            agent.conversation.runtime_generation = Some(1);
+            let entries = (1..=276)
+                .map(|seq| layer2_core::sandbox::AgentLogEntry {
+                    agent_id: agent.id.clone(),
+                    seq,
+                    appended_at: "2026-11-01T00:00:00Z".into(),
+                    kind: match seq {
+                        1 => AgentLogKind::Created {
+                            workspace_id: agent.workspace_id.clone(),
+                            worktree_id: agent.worktree_id.clone(),
+                        },
+                        2 => AgentLogKind::ConversationOpened {
+                            conversation_id: "erase-fence-fixture".into(),
+                            runtime_generation: 1,
+                        },
+                        _ => AgentLogKind::ModeChanged {
+                            mode: "fixture".into(),
+                        },
+                    },
+                })
+                .collect::<Vec<_>>();
+            let (agent, _) = fixtures::install(&store, agent, entries, 1, 256).await;
+            use layer2_core::sandbox::store::AgentLogStore as _;
+            let valid = AgentLogKind::ModeChanged {
+                mode: "before-erasure".into(),
+            };
+            let valid_identity = layer2_core::sandbox::store::AgentLogPublicationIdentity {
+                key: "before-erasure".into(),
+                appended_at: "2026-11-05T00:00:00Z".into(),
+                fingerprint: super::super::super::publication::request_digest(&valid)
+                    .unwrap()
+                    .bytes
+                    .try_into()
+                    .unwrap(),
+            };
+            store
+                .append_agent_log_keyed(&agent.id, &valid_identity, valid)
+                .await
+                .unwrap();
+            let row = store
+                .agents
+                .find_one(doc! {"_id":agent.id.as_str()})
+                .await
+                .unwrap()
+                .unwrap();
+            let agent = crate::store::agents::read_agent(&row).unwrap();
+            use crate::store::migrations::agent_log_active_proofs as migration;
+            for (_, index) in migration::inspect(&database).await.unwrap() {
+                migration::create(&database, index).await.unwrap();
+            }
+            store.active_log_proofs = true;
+            let proofs = database.collection::<Document>(COLLECTION);
+            assert!(proofs
+                .find_one(doc! {"_id":agent.id.as_str()})
+                .await
+                .unwrap()
+                .is_none());
+            let sources = database.collection::<Document>("agent_log");
+            let row = sources
+                .find_one(doc! {"agent_id":agent.id.as_str(),"seq":260_i64})
+                .await
+                .unwrap()
+                .unwrap();
+            let row_id = row.get("_id").unwrap().clone();
+            let erase = || {
+                crate::store::account_erasure::erase_source_log::erase_source_log(
+                    &database,
+                    std::slice::from_ref(&row),
+                    std::slice::from_ref(&row_id),
+                    doc! {"_id": &row_id},
+                )
+            };
+            // The initial preparation starts before the erase with no sidecar.
+            let mut session = client.start_session().await.unwrap();
+            start_transaction(&mut session).await.unwrap();
+            let (source_agent, head) = current(&database, agent.id.as_str(), &mut session, false)
+                .await
+                .unwrap();
+            let leaves = scan(&database, &source_agent, &head, &mut session)
+                .await
+                .unwrap();
+            let proof = ActiveProof::new(&head, source_agent.revision, leaves).unwrap();
+            if erase_first {
+                assert_eq!(erase().await.unwrap(), 1);
+                assert!(
+                    publish_prepared(&database, &source_agent, &proof, &mut session)
+                        .await
+                        .is_err()
+                );
+                let _ = session.abort_guarded().await;
+            } else {
+                publish_prepared(&database, &source_agent, &proof, &mut session)
+                    .await
+                    .unwrap();
+                assert!(matches!(
+                    commit_transaction(&mut session).await,
+                    CommitOutcome::Committed
+                ));
+                assert_eq!(erase().await.unwrap(), 1);
+            }
+            let fence = proofs
+                .find_one(doc! {"_id":agent.id.as_str()})
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(fence.get_bool("invalidated_for_erasure").ok(), Some(true));
+            assert!(prepare(&client, &database, agent.id.as_str())
+                .await
+                .is_err());
+            let kind = AgentLogKind::ModeChanged {
+                mode: "after-erasure".into(),
+            };
+            let identity = layer2_core::sandbox::store::AgentLogPublicationIdentity {
+                key: "after-erasure".into(),
+                appended_at: "2026-11-05T00:00:00Z".into(),
+                fingerprint: super::super::super::publication::request_digest(&kind)
+                    .unwrap()
+                    .bytes
+                    .try_into()
+                    .unwrap(),
+            };
+            assert!(store
+                .append_agent_log_keyed(&agent.id, &identity, kind)
+                .await
+                .is_err());
+            database.drop().await.unwrap();
+        }
+    }
+    #[tokio::test]
+    #[ignore = "requires a built CMA executable and an authenticated disposable replica set"]
+    async fn active_proof_operator_cli_uses_generated_isolated_role() {
+        let (client, name) = fixtures::database("active_proof_cli").await;
+        let database = client.database(&name);
+        schema::migrate(&database).await.unwrap();
+        let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+        let (agent, _) = fixtures::segmented_with_width(&store, 1, 256, 20).await;
+        use crate::store::migrations::agent_log_active_proofs as migration;
+        for (_, index) in migration::inspect(&database).await.unwrap() {
+            migration::create(&database, index).await.unwrap();
+        }
+        let executable =
+            std::env::var("CMA_TEST_CMA_EXECUTABLE").expect("exact built CMA executable");
+        let printed = std::process::Command::new(&executable)
+            .args(["--print-agent-log-operator-role", "active-proof"])
+            .env("CHRONO_MONGODB_DATABASE", &name)
+            .output()
+            .unwrap();
+        assert!(printed.status.success(), "printed operator role");
+        let role: Document = serde_json::from_slice(&printed.stdout).unwrap();
+        database.run_command(role).await.unwrap();
+        let user = "active-proof-operator";
+        let password = uuid::Uuid::new_v4().simple().to_string();
+        database
+            .run_command(doc! {"createUser":user,"pwd":&password,
+            "roles":[{"role":"cma_am_log_operator","db":&name}]})
+            .await
+            .unwrap();
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+        let mut operator_uri = url::Url::parse(&uri).unwrap();
+        operator_uri.set_username(user).unwrap();
+        operator_uri.set_password(Some(&password)).unwrap();
+        let options = operator_uri
+            .query_pairs()
+            .filter(|(key, _)| key != "authSource")
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect::<Vec<_>>();
+        operator_uri.set_query(None);
+        operator_uri
+            .query_pairs_mut()
+            .extend_pairs(options)
+            .append_pair("authSource", &name);
+        let operator = Client::with_uri_str(operator_uri.as_str()).await.unwrap();
+        assert!(operator
+            .database(&name)
+            .collection::<Document>(super::super::super::PUBLICATIONS)
+            .find_one(doc! {})
+            .await
+            .is_err());
+        let prepared = std::process::Command::new(executable)
+            .args(["--agent-log-active-proof-prepare", agent.id.as_str()])
+            .env("CHRONO_MONGODB_URI", operator_uri.as_str())
+            .env("CHRONO_MONGODB_DATABASE", &name)
+            .env("CHRONO_MONGODB_AUTHORITY_MODE", "isolated")
+            .output()
+            .unwrap();
+        assert!(
+            prepared.status.success(),
+            "isolated preparation command refused"
+        );
+        let receipt: serde_json::Value = serde_json::from_slice(&prepared.stdout).unwrap();
+        assert_eq!(receipt["operation"], "active_proof_prepare");
+        let row = database
+            .collection::<Document>(COLLECTION)
+            .find_one(doc! {"_id":agent.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap();
+        let proof: ActiveProof = bson::deserialize_from_document(row).unwrap();
+        proof.validate().unwrap();
+        assert_eq!(
+            proof.head.revision,
+            receipt["head_revision"].as_i64().unwrap()
+        );
+        database.drop().await.unwrap();
+    }
 }
