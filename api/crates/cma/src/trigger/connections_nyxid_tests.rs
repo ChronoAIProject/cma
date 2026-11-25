@@ -271,12 +271,14 @@ async fn read_github_proxy(
         authorization(&headers),
         Some(format!("Bearer {VISITOR_TOKEN}"))
     );
+    let selected = query.get("_nyxid_via").unwrap().clone();
+    let login = format!("fixture-{selected}");
     state
         .github_proxy_reads
         .lock()
         .unwrap()
-        .push((catalog, query.get("_nyxid_via").unwrap().clone()));
-    let mut response = Reply::json(json!({"id": 19})).response();
+        .push((catalog, selected));
+    let mut response = Reply::json(json!({"id": 19, "login": login})).response();
     if let Some(scopes) = state.github_proxy_scopes.lock().unwrap().as_deref() {
         response
             .headers_mut()

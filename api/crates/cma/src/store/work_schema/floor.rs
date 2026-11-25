@@ -9,12 +9,13 @@ pub(in crate::store) const COLLECTION: &str = "sandbox_credentials";
 const SANDBOX_CREDENTIALS: &str = COLLECTION;
 const FLOOR: &str = "ordinary-work-writer-floor-v1";
 const RUNTIME_MIGRATION_FLOOR: &str = "runtime-migration-writer-floor-v1";
+const RUNTIME_IMAGE_ORIGIN_FLOOR: &str = "runtime-image-origin-writer-floor-v1";
 
 pub(in crate::store) async fn verify(database: &mongodb::Database) -> Result<(), StoreError> {
     let rows = database.collection::<Document>(SANDBOX_CREDENTIALS);
     if rows
         .find_one(
-            doc! {"document_schema_version":3_i64,"_id":{"$nin":[FLOOR,RUNTIME_MIGRATION_FLOOR]}},
+            doc! {"document_schema_version":3_i64,"_id":{"$nin":[FLOOR,RUNTIME_MIGRATION_FLOOR,RUNTIME_IMAGE_ORIGIN_FLOOR]}},
         )
         .await
         .map_err(|_| StoreError::Unavailable("credential writer floor unavailable".into()))?
@@ -84,7 +85,32 @@ pub(in crate::store) async fn verify(database: &mongodb::Database) -> Result<(),
             }
         }
     }
+    match rows.find_one(doc! {"_id":RUNTIME_IMAGE_ORIGIN_FLOOR}).await {
+        Ok(Some(row)) if row == runtime_image_origin_floor_document() => {}
+        Ok(Some(_)) => {
+            return Err(StoreError::Malformed(
+                "runtime image origin writer floor is not recognized".into(),
+            ))
+        }
+        Ok(None) => {
+            let protected = database
+                .collection::<Document>("sandboxes")
+                .find_one(doc! {"document_schema_version":super::RUNTIME_IMAGE_ORIGIN_VERSION})
+                .await
+                .map_err(|_| image_origin_unavailable())?;
+            if protected.is_some() {
+                return Err(StoreError::Malformed(
+                    "runtime image origin writer floor is missing".into(),
+                ));
+            }
+        }
+        Err(_) => return Err(image_origin_unavailable()),
+    }
     Ok(())
+}
+
+fn image_origin_unavailable() -> StoreError {
+    StoreError::Unavailable("runtime image origin writer floor unavailable".into())
 }
 
 fn floor_document() -> Document {
@@ -146,5 +172,33 @@ pub(in crate::store) async fn retain_runtime_migration(
     .upsert(true)
     .session(session)
     .await?;
+    Ok(())
+}
+
+fn runtime_image_origin_floor_document() -> Document {
+    doc! {"_id":RUNTIME_IMAGE_ORIGIN_FLOOR,"document_schema_version":3_i64,
+    "protocol":"runtime-image-origin-v1","generation":-3_i64}
+}
+
+pub(in crate::store) async fn retain_runtime_image_origin(
+    store: &crate::store::sandbox_mongo::MongoSandboxStore,
+    session: &mut ClientSession,
+) -> Result<(), mongodb::error::Error> {
+    let rows = store
+        .client
+        .database(&store.sandboxes.namespace().db)
+        .collection::<Document>(COLLECTION);
+    let floor = runtime_image_origin_floor_document();
+    if rows
+        .find_one(floor.clone())
+        .session(&mut *session)
+        .await?
+        .is_none()
+    {
+        rows.update_one(floor.clone(), doc! {"$setOnInsert":floor})
+            .upsert(true)
+            .session(session)
+            .await?;
+    }
     Ok(())
 }

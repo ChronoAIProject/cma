@@ -55,7 +55,7 @@ pub(super) async fn apply(
         .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
     channel_reuse::require(store, &current, sandbox, session).await?;
     if revival.0.is_none()
-        && current.profile.content.runtime_image.is_none()
+        && current.has_managed_runtime_image()
         && current.runtime_update_request() != sandbox.runtime_update_request()
     {
         if let Some(release) = revival.1 {

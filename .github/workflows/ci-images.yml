@@ -5,8 +5,12 @@ on:
       components:
         type: "string"
         required: true
+      changed_deployables:
+        default: "[]"
+        type: "string"
 permissions:
   contents: "read"
+  actions: "read"
   issues: "read"
 jobs:
   images:
@@ -18,7 +22,7 @@ jobs:
       cancel-in-progress: false
     name: "Image (${{ matrix.component }})"
     runs-on: "ubuntu-24.04"
-    timeout-minutes: 60
+    timeout-minutes: 95
     strategy:
       fail-fast: false
       matrix:
@@ -71,13 +75,26 @@ jobs:
         with:
           cache-binary: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
       -
+        name: "Load the exact finalized staging image"
+        id: staging-image
+        if: >-
+          vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true' && github.event_name == 'push' &&
+          github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma' &&
+          ((matrix.component == 'api' && contains(fromJSON(inputs.changed_deployables), 'cma-agent-manager')) ||
+           (matrix.component == 'runtime' && contains(fromJSON(inputs.changed_deployables), 'cma-runtime')))
+        timeout-minutes: 32
+        env:
+          IMAGE_COMPONENT: "${{ matrix.component }}"
+          GH_TOKEN: ${{ github.token }}
+        run: "python3 -B .github/scripts/ci_staging_image.py"
+      -
         name: "Prepare API Cargo cache identity"
-        if: "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'merge_group')"
+        if: "steps.staging-image.outputs.adopted != 'true' && (matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'merge_group'))"
         id: "api-cargo-cache"
         run: "python3 .github/scripts/api-cargo-cache.py prepare"
       -
         name: "Restore API Cargo cache archive"
-        if: "matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'"
+        if: "steps.staging-image.outputs.adopted != 'true' && (matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success')"
         id: "api-cargo-cache-restore"
         uses: "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830"
         timeout-minutes: 3
@@ -90,15 +107,17 @@ jobs:
           enableCrossOsArchive: false
       -
         name: "Inject API Cargo cache mounts"
-        if: "matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'"
+        if: "steps.staging-image.outputs.adopted != 'true' && (matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success')"
         timeout-minutes: 3
         run: "python3 .github/scripts/api-cargo-cache.py inject"
       -
         name: "Set immutable image version"
+        if: "steps.staging-image.outputs.adopted != 'true'"
         id: "build-identity"
         run: "echo \"version=git-${GITHUB_SHA:0:12}\" >> \"$GITHUB_OUTPUT\""
       -
         name: "Resolve OS security refresh key"
+        if: "steps.staging-image.outputs.adopted != 'true'"
         id: "os-refresh"
         env:
           IMAGE_COMPONENT: "${{ matrix.component }}"
@@ -106,6 +125,7 @@ jobs:
         run: "python3 .github/scripts/os_refresh_key.py \"$IMAGE_COMPONENT\" api/crates/layer4-runtime/Dockerfile \"$PER_BUILD_KEY\" >> \"$GITHUB_OUTPUT\""
       -
         name: "Build image for all target platforms"
+        if: "steps.staging-image.outputs.adopted != 'true'"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
         with:
           context: "."
@@ -123,6 +143,7 @@ jobs:
           cache-to: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,version=2,mode=max,ignore-error=true,scope={0}', matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component) || '' }}"
       -
         name: "Load native image for scanning"
+        if: "steps.staging-image.outputs.adopted != 'true'"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
         with:
           context: "."
@@ -141,7 +162,7 @@ jobs:
           cache-from: "type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}"
       -
         name: "Extract API Cargo cache before pruning"
-        if: "github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'"
+        if: "steps.staging-image.outputs.adopted != 'true' && (github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true')"
         id: "api-cargo-cache-export"
         timeout-minutes: 3
         run: "python3 .github/scripts/api-cargo-cache.py extract"
@@ -311,7 +332,7 @@ jobs:
           compression-level: 0
       -
         name: "Export tested native image"
-        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "steps.staging-image.outputs.adopted != 'true' && (success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository))"
         timeout-minutes: 10
         env:
           IMAGE_COMPONENT: "${{ matrix.component }}"
@@ -334,7 +355,7 @@ jobs:
         run: "python3 -B .github/scripts/ci_image_secret_scan.py \"$IMAGE_COMPONENT\" \"$RUNNER_TEMP/ci-native-image\" \"$GITHUB_SHA\""
       -
         name: "Retain tested native image"
-        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "steps.staging-image.outputs.adopted != 'true' && (success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository))"
         timeout-minutes: 10
         uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
         with:
@@ -345,7 +366,7 @@ jobs:
           retention-days: 1
       -
         name: "Save accepted API Cargo cache archive"
-        if: "success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'"
+        if: "steps.staging-image.outputs.adopted != 'true' && (success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true')"
         uses: "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830"
         timeout-minutes: 3
         continue-on-error: true

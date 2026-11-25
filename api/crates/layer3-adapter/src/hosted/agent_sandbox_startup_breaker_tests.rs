@@ -187,6 +187,9 @@ fn concurrent_observations_and_late_duplicate_acknowledgements_count_one_failed_
     delivered(&breaker, &handle, 1);
     breaker.observe(&handle, &pending, None);
     let entries = breaker.entries.lock().unwrap();
-    assert_eq!(entries[&handle].last_delivery.incarnation, identity(2));
+    assert_eq!(
+        entries[&handle].last_delivery.as_ref().unwrap().incarnation,
+        identity(2)
+    );
     assert_eq!(entries[&handle].failure.consecutive, 1);
 }

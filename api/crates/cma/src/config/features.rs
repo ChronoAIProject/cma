@@ -32,6 +32,7 @@ mod strict_inactivity_tests;
 pub(crate) struct FeatureFlags {
     pub image_manager_retirement: bool,
     pub session_guidance_v4: bool,
+    pub session_guidance_v5: bool,
     pub am_startup_health_serving: bool,
     pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
@@ -40,6 +41,7 @@ pub(crate) struct FeatureFlags {
     pub visitor_two_sandbox_defaults: bool,
     pub admin_runtime_inventory: bool,
     pub binding_diagnostics: bool,
+    pub agent_inspection_parking: bool,
     pub ownership_retry_hints_enabled: bool,
     pub home_backup_enabled: bool,
     pub home_backup_expiry_enabled: bool,
@@ -76,6 +78,7 @@ pub(crate) struct FeatureFlags {
     pub parent_not_ready_pacing_enabled: bool,
     pub startup_sibling_hold_enabled: bool,
     pub retained_reopen_enabled: bool,
+    pub runtime_image_origin_enabled: bool,
     pub retained_suspended_reopen_enabled: bool,
     pub retained_repeat_reopen_enabled: bool,
     pub agent_skill_upgrade_enabled: bool,
@@ -112,6 +115,7 @@ pub(crate) struct FeatureFlags {
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
     pub github_repository_preflight: bool,
+    pub github_connection_approval: bool,
     pub github_connection_recovery: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
@@ -153,6 +157,7 @@ impl FeatureFlags {
         let flags = Self {
             binding_diagnostics: flag(lookup, "CHRONO_BINDING_DIAGNOSTICS_ENABLED")?,
             session_guidance_v4: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED")?,
+            session_guidance_v5: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V5_ENABLED")?,
             image_manager_retirement: flag(lookup, "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED")?,
             am_startup_health_serving: flag(lookup, "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED")?,
             pending_home_reconciliation: flag(
@@ -168,6 +173,7 @@ impl FeatureFlags {
                 "CHRONO_VISITOR_TWO_SANDBOX_DEFAULTS_ENABLED",
             )?,
             admin_runtime_inventory: flag(lookup, "CHRONO_ADMIN_RUNTIME_INVENTORY_ENABLED")?,
+            agent_inspection_parking: flag(lookup, "CHRONO_AGENT_INSPECTION_PARKING_ENABLED")?,
             ownership_retry_hints_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_OWNERSHIP_RETRY_HINT_ENABLED",
@@ -229,6 +235,7 @@ impl FeatureFlags {
                 "CHRONO_AGENT_STARTUP_SIBLING_HOLD_ENABLED",
             )?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
+            runtime_image_origin_enabled: flag(lookup, "CHRONO_RUNTIME_IMAGE_ORIGIN_ENABLED")?,
             retained_suspended_reopen_enabled: flag(
                 lookup,
                 "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED",
@@ -357,6 +364,7 @@ impl FeatureFlags {
             v2_ui_transport: tail.v2_ui_transport,
             trigger_command_admission: tail.trigger_command_admission,
             github_repository_preflight: tail.github_repository_preflight,
+            github_connection_approval: tail.github_connection_approval,
             github_connection_recovery: tail.github_connection_recovery,
             nyxid_resource_request: tail.nyxid_resource_request,
             nyxid_proxy: tail.nyxid_proxy,
