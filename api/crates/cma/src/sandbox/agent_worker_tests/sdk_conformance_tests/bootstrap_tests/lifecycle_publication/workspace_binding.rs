@@ -44,7 +44,7 @@ async fn workspace_wait_requeue_rebuilds_after_a_concurrent_workspace_revision()
         .await
         .unwrap();
     let ready = h.store.get_workspace(&workspace.id).await.unwrap().unwrap();
-    assert_bound(&fixture, &claimed, &ready, h.backend.requests().await.len()).await;
+    assert_bound(&fixture, &claimed, &ready, requests_before).await;
     fixture.cleanup().await;
 }
 
