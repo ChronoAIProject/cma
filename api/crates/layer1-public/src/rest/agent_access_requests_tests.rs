@@ -75,6 +75,33 @@ impl AgentAccessRequests for Service {
         self.calls.lock().unwrap().push(json!({"action":"approve","caller":context.caller.subject.as_str(),"agent":agent.0,"request":request,"services":services,"key":key}));
         self.result(AgentAccessStatus::Connecting)
     }
+    async fn approve_github_connection(
+        &self,
+        context: &CallerContext,
+        credential: &str,
+        agent: &AgentId,
+        request: &str,
+        services: Vec<String>,
+        choice: GithubConnectionApproval,
+        key: &str,
+    ) -> Result<AgentAccessRequest, AgentAccessError> {
+        assert_eq!(credential, "request-credential");
+        self.calls.lock().unwrap().push(json!({
+            "action": "approve_github_connection",
+            "caller": context.caller.subject.as_str(),
+            "agent": agent.0,
+            "request": request,
+            "services": services,
+            "key": key,
+            "choice": {
+                "sandbox_id": choice.sandbox_id.0,
+                "user_service_id": choice.user_service_id,
+                "scope_revision": choice.scope_revision,
+                "credential_generation": choice.credential_generation,
+            },
+        }));
+        self.result(AgentAccessStatus::Connecting)
+    }
     async fn deny(
         &self,
         caller: &Caller,
@@ -158,6 +185,58 @@ async fn routes_project_durable_requests_and_forward_exact_authority_and_decisio
     );
     assert_eq!(calls[3]["key"], "deny-key");
 }
+#[tokio::test]
+async fn github_approval_forwards_one_exact_owner_decision() {
+    let (router, service) = app();
+    let body = json!({
+        "services": ["chrono-llm-public", "api-github"],
+        "github_connection": {
+            "sandbox_id": "sandbox-one",
+            "user_service_id": "repository-connection",
+            "scope_revision": 3,
+            "credential_generation": 7,
+        },
+    });
+    let submit = || {
+        request(
+            Method::POST,
+            Some("approve"),
+            Some("owner-choice"),
+            Some(body.clone()),
+        )
+    };
+    let mut without_owner_credential = submit();
+    without_owner_credential
+        .extensions_mut()
+        .remove::<crate::DelegatedCredential>();
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(without_owner_credential)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert!(service.calls.lock().unwrap().is_empty());
+
+    let (status, receipt) = agents_tests::json_response(&router, submit()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(receipt["status"], "connecting");
+    assert_eq!(
+        *service.calls.lock().unwrap(),
+        vec![json!({
+            "action": "approve_github_connection",
+            "caller": "owner",
+            "agent": "agent-one",
+            "request": "access-one",
+            "services": body["services"],
+            "key": "owner-choice",
+            "choice": body["github_connection"],
+        })]
+    );
+}
+
 #[tokio::test]
 async fn authentication_context_and_delegation_are_verified_before_effects() {
     let (router, service) = app();
