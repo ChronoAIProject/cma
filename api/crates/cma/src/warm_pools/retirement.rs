@@ -31,7 +31,13 @@ pub(super) async fn retire_claimed(
     mut target: PoolTarget,
 ) -> Result<bool, WarmPoolError> {
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        if !store.retirement_authorized(&target, image).await? {
+        // A saved pool request can still need its first Claim. A permanent
+        // marker would refuse that admitted operation before it can resume.
+        if store
+            .retirement_drain_homes(&target, image)
+            .await?
+            .is_none()
+        {
             return Err(WarmPoolError::Unavailable);
         }
         target = store.begin_retirement(&target).await?;

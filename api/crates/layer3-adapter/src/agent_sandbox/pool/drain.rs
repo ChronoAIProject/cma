@@ -1,6 +1,6 @@
 //! Drain only spare capacity; retained runtime upgrades govern later deletion.
 use super::{
-    api_error, cleanup_inventory::complete, model, rejected, retirement::RETIRING,
+    api_error, cleanup_inventory::complete, management, rejected, retirement::RETIRING,
     AgentSandboxPools, NativePoolBinding, NativePoolClaim, Result,
 };
 use crate::HomeVolumeAttachment;
@@ -8,8 +8,8 @@ use kube::{api::DynamicObject, Resource, ResourceExt};
 use std::collections::BTreeSet;
 
 impl AgentSandboxPools {
-    /// The caller persists retirement and rechecks every durable allocation after
-    /// marking. Provider inventory also excludes Claims missing from that store.
+    /// Check drain evidence for an original, already-zero pool. Positive pools
+    /// await a controller that deletes members with identity preconditions.
     pub async fn drain_pool(
         &self,
         binding: &NativePoolBinding,
@@ -20,15 +20,16 @@ impl AgentSandboxPools {
         let Some(pool) = pool else { return Ok(()) };
         marked(&pool)?;
         self.drain_inventory(binding, homes, adopted_claims).await?;
-        // Fence the actual target write with fresh original identities and the
-        // marker. Never create a definition after a lost retirement response.
-        let (template, pool) = self.retirement_definitions(binding).await?;
+        let (_, pool) = self.retirement_definitions(binding).await?;
         let Some(pool) = pool else { return Ok(()) };
         marked(&pool)?;
-        let template = template.ok_or_else(|| rejected("native drain template is missing"))?;
-        let config = model::binding_config(&self.config, binding);
-        let desired = model::pool(&config, &binding.spec, &template, 0)?;
-        self.apply_target(pool, &desired).await?;
+        // The WarmPool controller selects members from its cache and deletes
+        // them by name. A pool CAS cannot fence those member deletes.
+        if management::target(&pool)? != 0 {
+            return Err(crate::AdapterError::Unsupported(
+                "native pool drain requires UID and resourceVersion preconditions on controller member deletes".into(),
+            ));
+        }
         Ok(())
     }
 

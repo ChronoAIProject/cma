@@ -29,12 +29,12 @@ async fn reconcile(store: &Memory, provider: &Provider) {
 
 #[tokio::test]
 async fn late_allocation_after_provider_marker_prevents_drain_and_definition_removal() {
-    let (store, provider) = fixture(&[true]);
+    let (store, provider) = fixture(&[false, true]);
     reconcile(&store, &provider).await;
     assert_eq!(
         *store.calls.lock().unwrap(),
         [
-            "authorize-retirement",
+            "drain-scan",
             "persist-retiring",
             "mark-provider",
             "scan",
@@ -49,13 +49,21 @@ async fn late_allocation_after_provider_marker_prevents_drain_and_definition_rem
 }
 
 #[tokio::test]
+async fn pending_allocation_prevents_both_retirement_markers() {
+    let (store, provider) = fixture(&[true]);
+    reconcile(&store, &provider).await;
+    assert_eq!(*store.calls.lock().unwrap(), ["drain-scan", "finish:false"]);
+    assert!(!store.target.lock().unwrap().retiring);
+}
+
+#[tokio::test]
 async fn retirement_drains_before_removal_and_replays_without_recreating_definitions() {
     let (store, provider) = fixture(&[]);
     reconcile(&store, &provider).await;
     assert_eq!(
         *store.calls.lock().unwrap(),
         [
-            "authorize-retirement",
+            "drain-scan",
             "persist-retiring",
             "mark-provider",
             "scan",
@@ -72,7 +80,7 @@ async fn retirement_drains_before_removal_and_replays_without_recreating_definit
     assert_eq!(
         *store.calls.lock().unwrap(),
         [
-            "authorize-retirement",
+            "drain-scan",
             "persist-retiring",
             "mark-provider",
             "scan",
@@ -142,7 +150,7 @@ async fn actual_reconciler_drains_obsolete_zero_and_positive_targets_while_retai
             assert_eq!(
                 *store.calls.lock().unwrap(),
                 [
-                    "authorize-retirement",
+                    "drain-scan",
                     "persist-retiring",
                     "mark-provider",
                     "scan",
@@ -175,7 +183,7 @@ async fn actual_reconciler_keeps_replaced_uid_failure_unapplied_and_preserves_or
     assert_eq!(
         *store.calls.lock().unwrap(),
         [
-            "authorize-retirement",
+            "drain-scan",
             "persist-retiring",
             "mark-provider",
             "scan",
@@ -201,7 +209,7 @@ async fn lost_binding_ack_preserves_retirement_marker_and_reuses_binding() {
     assert_eq!(
         *store.calls.lock().unwrap(),
         [
-            "authorize-retirement",
+            "drain-scan",
             "persist-retiring",
             "inventory",
             "persist-binding",
@@ -219,7 +227,7 @@ async fn lost_binding_ack_preserves_retirement_marker_and_reuses_binding() {
     assert_eq!(
         *store.calls.lock().unwrap(),
         [
-            "authorize-retirement",
+            "drain-scan",
             "persist-retiring",
             "mark-provider",
             "scan",

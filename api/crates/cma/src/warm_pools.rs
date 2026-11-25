@@ -98,13 +98,6 @@ pub(crate) trait PoolTargetStore: Send + Sync {
     ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
-    async fn retirement_authorized(
-        &self,
-        _target: &PoolTarget,
-        _image: &str,
-    ) -> Result<bool, WarmPoolError> {
-        Err(WarmPoolError::Unavailable)
-    }
     async fn begin_retirement(&self, _target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }

@@ -85,7 +85,7 @@ pub(super) async fn activate(store: &MongoNativeWarmPools, id: &str) -> Result<(
     Ok(())
 }
 
-pub(super) async fn authorized(
+async fn authorized(
     store: &MongoNativeWarmPools,
     target: &PoolTarget,
     image: &str,

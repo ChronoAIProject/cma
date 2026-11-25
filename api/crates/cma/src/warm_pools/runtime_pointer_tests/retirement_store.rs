@@ -85,14 +85,6 @@ impl PoolTargetStore for RetirementStore {
         self.store.retirement_drain_homes(target, image).await
     }
 
-    async fn retirement_authorized(
-        &self,
-        target: &PoolTarget,
-        image: &str,
-    ) -> Result<bool, WarmPoolError> {
-        self.store.retirement_authorized(target, image).await
-    }
-
     async fn begin_retirement(&self, target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         let hold = self
             .hold

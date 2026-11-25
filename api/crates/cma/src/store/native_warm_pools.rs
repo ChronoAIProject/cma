@@ -148,14 +148,6 @@ impl PoolTargetStore for MongoNativeWarmPools {
         let durable = self.current_retirement_image(target, image).await?;
         retirement::drain_homes(self, target, &durable).await
     }
-    async fn retirement_authorized(
-        &self,
-        target: &PoolTarget,
-        image: &str,
-    ) -> Result<bool, WarmPoolError> {
-        let image = self.current_retirement_image(target, image).await?;
-        retirement::authorized(self, target, &image).await
-    }
     async fn begin_retirement(&self, target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         retirement::begin(self, target).await
     }

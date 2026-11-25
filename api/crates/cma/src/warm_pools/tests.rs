@@ -110,13 +110,6 @@ impl PoolTargetStore for Memory {
             .unwrap_or(false))
         .then_some(vec![]))
     }
-    async fn retirement_authorized(&self, _: &PoolTarget, _: &str) -> Result<bool, WarmPoolError> {
-        self.calls
-            .lock()
-            .unwrap()
-            .push("authorize-retirement".into());
-        Ok(true)
-    }
     async fn begin_retirement(&self, _: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         self.calls.lock().unwrap().push("persist-retiring".into());
         let mut target = self.target.lock().unwrap();

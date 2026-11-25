@@ -40,21 +40,6 @@ impl AgentSandboxPools {
         {
             return Err(rejected("native drain Claim ownership is ambiguous"));
         }
-        // Warm adoption changes the Pod template in the same write as the owner
-        // transfer. Ready's generation shows the shared Sandbox cache saw it.
-        let generation = member.metadata.generation.filter(|&value| value > 0);
-        let current = member
-            .data
-            .pointer("/status/conditions")
-            .and_then(|value| value.as_array())
-            .into_iter()
-            .flatten()
-            .filter(|condition| condition["type"] == "Ready")
-            .map(|condition| condition["observedGeneration"].as_i64())
-            .collect::<Vec<_>>();
-        if generation.is_none() || current != [generation] {
-            return Err(rejected("native drain Sandbox adoption is not observed"));
-        }
         Ok(())
     }
 }
