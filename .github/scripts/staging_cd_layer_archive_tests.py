@@ -261,6 +261,26 @@ class RetirementTests(unittest.TestCase):
         self.assertEqual(retire_verified(api, keep.key, 'a' * 40, self.restored)['deleted_bytes'], 0)
         api.delete.assert_not_called()
 
+    def test_cyclic_records_and_result_parents_cannot_retire(self):
+        for record_cycle in (True, False):
+            with self.subTest(record_cycle=record_cycle):
+                layer = blob(self.restored, b'layer with valid digest', 'application/vnd.oci.image.layer.v1.tar+gzip')
+                config = blob(self.restored, {"layers": [{"blob": layer["digest"], "parent": -1 if record_cycle else 0}],
+                    "records": [{"digest": "sha256:" + "b" * 64, "layers": [{"layer": 0}],
+                                 "inputs": [[{"link": 0}]] if record_cycle else []}]},
+                    "application/vnd.buildkit.cacheconfig.v0")
+                manifest = blob(self.restored, {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "config": config, "layers": [layer]}, "application/vnd.oci.image.manifest.v1+json")
+                manifest["annotations"] = {"org.opencontainers.image.ref.name": "latest"}
+                (self.restored / "index.json").write_text(json.dumps({"schemaVersion": 2,
+                    "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [manifest]}))
+                old = entry(1, PREFIX + 'am--10-1')
+                keep = entry(4, PREFIX + 'am--11-1')
+                api = Inventory(old, keep)
+                with self.assertRaises(ValueError):
+                    retire_verified(api, keep.key, 'a' * 40, self.restored)
+                api.delete.assert_not_called()
+
     def test_hash_valid_layer_tree_without_cache_configuration_cannot_retire(self):
         layer = blob(self.restored, b'valid hash, no cache records', 'application/vnd.oci.image.layer.v1.tar+gzip')
         layer['annotations'] = {'org.opencontainers.image.ref.name': 'latest'}

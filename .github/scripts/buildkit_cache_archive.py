@@ -8,6 +8,7 @@ import re
 import shutil
 import stat
 import tarfile
+from graphlib import TopologicalSorter
 from pathlib import Path
 
 
@@ -79,7 +80,9 @@ def check_graph(root, files):
     records = config.get("records", [])
     require(records and any(record.get("layers") or any(chain.get("layers") for chain in record.get("chains", []))
                             for record in records), "cache configuration contains no result records")
-    for record in records:
+    record_inputs = {}
+    for index, record in enumerate(records):
+        record_inputs[index] = set()
         require(re.fullmatch(DIGEST, record.get("digest", "")), "invalid cache record digest")
         inputs = record.get("inputs", [])
         require(isinstance(inputs, list) and all(isinstance(group, list) and group for group in inputs),
@@ -88,6 +91,14 @@ def check_graph(root, files):
             for link in group:
                 require(isinstance(link, dict) and type(link.get("link", 0)) is int
                         and 0 <= link.get("link", 0) < len(records), "unresolved cache record input")
+                require(isinstance(link.get("selector", ""), str), "invalid cache input selector")
+                record_inputs[index].add(link.get("link", 0))
+    # BuildKit recursively resolves record inputs and layer parents. A
+    # hash-valid graph with in-range cycles fails the supported importer.
+    TopologicalSorter(record_inputs).prepare()
+    parents = {index: set() if layer.get("parent", 0) == -1 else {layer.get("parent", 0)}
+               for index, layer in enumerate(config["layers"])}
+    TopologicalSorter(parents).prepare()
 
 
 def inventory(root):
