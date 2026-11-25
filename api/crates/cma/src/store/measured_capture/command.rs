@@ -30,7 +30,7 @@ pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
     if arguments.first().is_some_and(|value| {
         matches!(
             value.as_str(),
-            "--measured-freeze" | "--measured-evidence-read"
+            "--measured-freeze" | "--measured-evidence-read" | "--measured-period-read"
         )
     }) {
         return batch_command(arguments).await;
@@ -71,7 +71,7 @@ pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
 }
 
 async fn batch_command(arguments: &[String]) -> Result<Value> {
-    use super::ledger::{FreezeRequest, MeasuredLedger, ReadRequest};
+    use super::ledger::{FreezeRequest, MeasuredLedger, PeriodReadRequest, ReadRequest};
     use crate::store::{ledger_census::files, migrations::measured_batches};
     use std::path::Path;
     let [command, input, output] = arguments else {
@@ -87,7 +87,7 @@ async fn batch_command(arguments: &[String]) -> Result<Value> {
         return Err("measured evidence requires a new output file");
     }
     let database = open_database().await?;
-    let evidence = tokio::time::timeout(Duration::from_secs(45), async {
+    let (payload, receipt) = tokio::time::timeout(Duration::from_secs(45), async {
         verify_authority(&database).await?;
         let status = database.run_command(doc!{"connectionStatus":1,"showPrivileges":true}).await.map_err(|_| AUTHORITY)?;
         let batch = doc!{"privileges":[{"resource":{"db":database.name(),"collection": measured_batches::COLLECTION},"actions":isolation::MEASURED_CUSTODY_ACTIONS}]};
@@ -97,7 +97,13 @@ async fn batch_command(arguments: &[String]) -> Result<Value> {
             return Err("measured batch custody requires its explicit schema migration");
         }
         let ledger = MeasuredLedger::new(&database);
-        match command.as_str() {
+        if command == "--measured-period-read" {
+            let request: PeriodReadRequest = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
+            let windows = ledger.read_period(request).await.map_err(|_| "measured period evidence is unavailable or incomplete")?;
+            let receipt = json!({"windows": windows.iter().map(|batch| json!({"evidence_id": batch.evidence_id(), "evidence_sha256": batch.evidence_sha256(), "revision": batch.revision()})).collect::<Vec<_>>()});
+            return Ok((serde_json::to_vec(&windows).map_err(|_| UNAVAILABLE)?, receipt));
+        }
+        let evidence = match command.as_str() {
             "--measured-freeze" => {
                 let request: FreezeRequest = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
                 if request.source_cutoff_ms > usage_reports::now().checked_mul(1000).ok_or(INVALID)? { return Err(INVALID); }
@@ -108,13 +114,11 @@ async fn batch_command(arguments: &[String]) -> Result<Value> {
                 ledger.read(request).await
             }
             _ => return Err(INVALID),
-        }.map_err(|_| "measured batch evidence is unavailable or conflicts with retained custody")
+        }.map_err(|_| "measured batch evidence is unavailable or conflicts with retained custody")?;
+        Ok((serde_json::to_vec(&evidence).map_err(|_| UNAVAILABLE)?, json!({"evidence_id": evidence.evidence_id(), "evidence_sha256": evidence.evidence_sha256(), "revision": evidence.revision()})))
     }).await.map_err(|_|UNAVAILABLE)??;
-    let payload = serde_json::to_vec(&evidence).map_err(|_| UNAVAILABLE)?;
     files::publish(output, &payload)?;
-    Ok(
-        json!({"evidence_id": evidence.evidence_id(), "evidence_sha256": evidence.evidence_sha256(), "revision": evidence.revision()}),
-    )
+    Ok(receipt)
 }
 
 async fn open_database() -> Result<Database> {

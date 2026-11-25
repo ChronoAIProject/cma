@@ -17,7 +17,7 @@ use super::sandbox_mongo::{
 use super::transaction_terminal::GuardedTerminal;
 
 pub(crate) mod command;
-mod ledger;
+pub(crate) mod ledger;
 mod preview;
 const SCHEMA_VERSION: i64 = 1;
 const ATTEMPTS: usize = 3;

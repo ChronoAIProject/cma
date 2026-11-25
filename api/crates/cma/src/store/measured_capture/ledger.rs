@@ -20,6 +20,10 @@ use std::time::Duration;
 const MAX_HISTORY: usize = 4096;
 const MAX_REVISIONS: usize = 128;
 const MAX_BATCH_PAYLOAD: usize = 8 * 1024 * 1024;
+const MAX_HISTORY_BYTES: usize = 16 * 1024 * 1024;
+#[path = "ledger/period.rs"]
+mod period;
+pub(crate) use period::PeriodReadRequest;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -36,13 +40,13 @@ pub(super) struct ReadRequest {
     pub revision: u64,
 }
 
-pub(super) struct MeasuredLedger {
+pub(crate) struct MeasuredLedger {
     database: Database,
     rows: Collection<Document>,
 }
 
 impl MeasuredLedger {
-    pub(super) fn new(database: &Database) -> Self {
+    pub(crate) fn new(database: &Database) -> Self {
         Self {
             database: database.clone(),
             rows: majority_collection(database, measured_batches::COLLECTION),
@@ -167,12 +171,20 @@ impl MeasuredLedger {
             .await
             .map_err(|_| CaptureError::Unavailable)?;
         let mut history = Vec::new();
+        let mut bytes = 0;
         while let Some(row) = cursor
             .next(&mut *session)
             .await
             .transpose()
             .map_err(|_| CaptureError::Unavailable)?
         {
+            bytes += row
+                .get_str("payload")
+                .map_err(|_| CaptureError::Corrupt)?
+                .len();
+            if bytes > MAX_HISTORY_BYTES {
+                return Err(CaptureError::Unavailable);
+            }
             let entry = decode(&row)?;
             if entry.scope() != scope || history.len() >= MAX_REVISIONS {
                 return Err(CaptureError::Corrupt);

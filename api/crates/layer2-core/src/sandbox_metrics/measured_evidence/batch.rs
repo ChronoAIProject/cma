@@ -285,6 +285,18 @@ impl FrozenEvidence {
     pub fn scope(&self) -> &EvidenceScope {
         &self.payload.scope
     }
+    pub fn source_cutoff_ms(&self) -> u64 {
+        self.payload.source_cutoff_ms
+    }
+    pub fn allocation_watermark(&self) -> Option<&AllocationWatermark> {
+        self.payload.allocation_watermark.as_ref()
+    }
+    pub fn correction_of(&self) -> Option<&CorrectionReference> {
+        self.payload.correction_of.as_ref()
+    }
+    pub fn metrics(&self) -> &[MetricEvidence] {
+        &self.payload.metrics
+    }
     pub fn revision(&self) -> u64 {
         self.payload.revision
     }

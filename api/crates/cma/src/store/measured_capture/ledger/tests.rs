@@ -160,6 +160,39 @@ async fn measured_batches_are_immutable_and_corrections_are_idempotent_across_cl
         .unwrap(),
         second
     );
+    let period = PeriodReadRequest {
+        owner_id: scope.owner_id.clone(),
+        sandbox_id: scope.sandbox_id.clone(),
+        from_ms: scope.from_ms,
+        to_ms: scope.to_ms,
+        source_cutoff_ms: 40_000,
+        windows: vec![scope.clone()],
+    };
+    assert_eq!(
+        b.read_period(period.clone()).await.unwrap(),
+        vec![second.clone()]
+    );
+    assert!(b
+        .read_period(PeriodReadRequest {
+            from_ms: period.from_ms - 1000,
+            ..period.clone()
+        })
+        .await
+        .is_err());
+    assert!(b
+        .read_period(PeriodReadRequest {
+            owner_id: "owner-b".into(),
+            ..period.clone()
+        })
+        .await
+        .is_err());
+    assert!(b
+        .read_period(PeriodReadRequest {
+            source_cutoff_ms: 39_000,
+            ..period
+        })
+        .await
+        .is_err());
     let wrong = EvidenceScope {
         owner_id: "owner-b".into(),
         ..scope
