@@ -470,6 +470,7 @@ async fn drains_two_spares_with_an_observed_claim_before_home_adoption() {
             .drain_pool(pool, &[], evidence)
             .await
             .unwrap();
+        assert!(fixture.client.retire_pool(pool, &[]).await.is_err());
         let state = fixture.state.lock().unwrap();
         assert_eq!(state.rows[&pool_path]["spec"]["replicas"], 0);
         for (path, row) in before {
@@ -485,7 +486,5 @@ async fn drains_two_spares_with_an_observed_claim_before_home_adoption() {
                 .count(),
             1
         );
-        drop(state);
-        assert!(fixture.client.retire_pool(pool, &[]).await.is_err());
     }
 }
