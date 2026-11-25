@@ -1,38 +1,54 @@
 use super::*;
 use crate::trigger::GitHubRepositoryNeed::PublicRepositoryWrite;
 
+pub(crate) struct GithubRepositoryFixture {
+    provider: Provider,
+}
+
+impl GithubRepositoryFixture {
+    pub(crate) async fn start() -> Self {
+        let provider = Provider::start().await;
+        *provider.state.catalog_reply.lock().unwrap() =
+            Reply::json(json!({"services":[{"id":"github-catalog","slug":"api-github"}]}));
+        let row = |id, slug| {
+            json!({
+                "id":id, "slug":slug, "catalog_service_id":"github-catalog", "is_active":true,
+                "credential_source":{"type":"personal"}
+            })
+        };
+        let key = |id, slug| {
+            Reply::json(json!({
+                "id":id, "slug":slug, "label":id, "catalog_service_id":"github-catalog",
+                "is_active":true, "status":"active", "connection_status":"active",
+                "credential_type":"oauth2", "granted_scopes":["public_repo"]
+            }))
+        };
+        provider.state.set_services_reply(Reply::json(json!({
+            "services":[row("sibling", "api-github"), row("selected", "api-github-2")]
+        })));
+        provider
+            .state
+            .credential_replies
+            .lock()
+            .unwrap()
+            .insert("selected".into(), key("selected", "api-github-2"));
+        *provider.state.github_proxy_scopes.lock().unwrap() = Some("public_repo".into());
+        Self { provider }
+    }
+
+    pub(crate) fn broker(&self) -> Arc<NyxidServiceConnectionBroker> {
+        Arc::new(broker(&self.provider, Tokens::available()))
+    }
+}
+
 #[tokio::test]
 async fn managed_repository_preserves_the_exact_key_and_pinned_commit_on_replay() {
     use crate::trigger::GitHubRepositoryCheck;
     use layer1_public::rest::AgentLifecycleRepository;
 
-    let provider = Provider::start().await;
-    *provider.state.catalog_reply.lock().unwrap() =
-        Reply::json(json!({"services":[{"id":"github-catalog","slug":"api-github"}]}));
-    let row = |id, slug| {
-        json!({
-            "id":id, "slug":slug, "catalog_service_id":"github-catalog", "is_active":true,
-            "credential_source":{"type":"personal"}
-        })
-    };
-    let key = |id, slug| {
-        Reply::json(json!({
-            "id":id, "slug":slug, "label":id, "catalog_service_id":"github-catalog",
-            "is_active":true, "status":"active", "connection_status":"active",
-            "credential_type":"oauth2", "granted_scopes":["public_repo"]
-        }))
-    };
-    provider.state.set_services_reply(Reply::json(json!({
-        "services":[row("sibling", "api-github"), row("selected", "api-github-2")]
-    })));
-    provider
-        .state
-        .credential_replies
-        .lock()
-        .unwrap()
-        .insert("selected".into(), key("selected", "api-github-2"));
-    *provider.state.github_proxy_scopes.lock().unwrap() = Some("public_repo".into());
-    let broker = broker(&provider, Tokens::available());
+    let fixture = GithubRepositoryFixture::start().await;
+    let provider = &fixture.provider;
+    let broker = fixture.broker();
     let owner = SubjectId::new("visitor");
     let mut request = AgentLifecycleRepository {
         url: "https://github.com/example/project.git".into(),

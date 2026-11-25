@@ -28,7 +28,7 @@ async fn managed_repository_waits_before_allocation_for_both_entry_points() {
     .with_task_experience(fixture::task_policy())
     .with_managed_repository_preflight(true);
     let flag_off = fixture::facade_with_limit(
-        store,
+        store.clone(),
         profiles.clone(),
         operations.clone(),
         4,
@@ -149,6 +149,105 @@ async fn managed_repository_waits_before_allocation_for_both_entry_points() {
         0
     );
 
+    let exact = request(json!({
+        "name": "Selected GitHub setup",
+        "repository": {
+            "url": "https://github.com/example/project",
+            "ref": "branch/synthetic",
+            "operation": "public_repository_write",
+            "connection_id": "selected"
+        }
+    }));
+    for (key, input) in [
+        ("takeover-explicit", &exact),
+        ("takeover-implicit", &create),
+    ] {
+        // Admit through the enabled facade and leave both operations queued.
+        // The flag-off facade claims each operation before its first pin.
+        let CreateResult::Created(id) = facade
+            .admit_operation(
+                &owner.caller,
+                Some(&owner),
+                None,
+                input.clone(),
+                (key, None),
+                "",
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("expected a new lifecycle operation");
+        };
+        let admitted = read_operation_when(&operations, &id, |row| row.status == "queued").await;
+        assert_eq!(
+            admitted.input.behavior,
+            LifecycleBehavior::ManagedRepository
+        );
+        assert!(admitted.repository_access_pin.is_none());
+        flag_off.run_worker(&id).await.unwrap();
+        let blocked = read_operation_when(&operations, &id, |row| {
+            row.status == "waiting_for_connection"
+        })
+        .await;
+        assert_eq!(blocked.attempts, 1);
+        assert!(blocked.sandbox_id.is_none());
+        assert!(blocked.agent_id.is_none());
+        assert!(blocked.repository_access_pin.is_none());
+        assert_eq!(
+            blocked.connection.unwrap().repository_access,
+            Some(layer1_public::rest::RepositoryAccessRefusal::VerificationUnavailable)
+        );
+    }
+    assert_eq!(
+        flag_off.sandbox.capacity(&owner.caller).await.unwrap().live,
+        0
+    );
+
+    let provider = crate::trigger::GithubRepositoryFixture::start().await;
+    let recovery = fixture::facade_with_limit(
+        store,
+        profiles.clone(),
+        operations.clone(),
+        4,
+        layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready,
+    )
+    .with_task_experience(fixture::task_policy())
+    .with_managed_repository_preflight(true);
+    let image = format!("registry.example/runtime@sha256:{}", "a".repeat(64));
+    assert!(recovery
+        .managed_repository_runtime_images
+        .set((image.clone(), vec![image]))
+        .is_ok());
+    assert!(recovery
+        .managed_repository_broker
+        .set(provider.broker())
+        .is_ok());
+    let original = operations
+        .replay(&owner.caller.subject, "takeover-explicit", &exact)
+        .await
+        .unwrap()
+        .unwrap();
+    let replay = recovery
+        .create(
+            &owner.caller,
+            Some(&owner),
+            None,
+            exact,
+            "takeover-explicit",
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.id, original.id);
+    let recovered =
+        read_operation_when(&operations, &replay.id, |row| row.sandbox_id.is_some()).await;
+    assert_eq!(recovered.attempts, 2);
+    let pin = recovered
+        .repository_access_pin
+        .expect("verified before allocation");
+    assert_eq!(pin.owner, owner.caller.subject.as_str());
+    assert_eq!(pin.connection.selection.connection_id, "selected");
+    assert_eq!(pin.commit, "a".repeat(40));
+
     for (key, input) in [("legacy-task", task), ("legacy-create", create)] {
         let receipt = flag_off
             .create(&owner.caller, Some(&owner), None, input, key)
@@ -160,7 +259,7 @@ async fn managed_repository_waits_before_allocation_for_both_entry_points() {
     }
     assert_eq!(
         flag_off.sandbox.capacity(&owner.caller).await.unwrap().live,
-        2
+        3
     );
     database.drop().await.unwrap();
 }

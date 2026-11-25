@@ -64,7 +64,7 @@ impl InlineAgentLifecycle {
         input: &mut ProvisionInput,
         retained_commit: Option<&str>,
     ) -> Result<(), AgentLifecycleProvisioningError> {
-        if input.behavior != LifecycleBehavior::PromptRepository
+        if !input.behavior.uses_repository_profile()
             || input.request.sandbox_id.is_some()
             || input.request.workspace_id.is_some()
         {
@@ -73,10 +73,22 @@ impl InlineAgentLifecycle {
         let Some(repository) = input.request.repository.as_ref() else {
             return Ok(());
         };
-        if input.repository_access_pin.is_some()
-            || (self.managed_repository_preflight.get() == Some(&true)
-                && input.existing_sandbox_id.is_none())
-        {
+        let requires_managed = input.behavior == LifecycleBehavior::ManagedRepository
+            || repository.operation.is_some()
+            || repository.connection_id.is_some();
+        if input.repository_access_pin.is_some() || requires_managed {
+            if input.repository_access_pin.is_none()
+                && self.managed_repository_preflight.get() != Some(&true)
+            {
+                return self
+                    .wait_for_managed_repository_access(
+                        caller,
+                        input,
+                        RepositoryAccessRefusal::VerificationUnavailable,
+                        None,
+                    )
+                    .await;
+            }
             return self
                 .preflight_managed_repository(caller, input, retained_commit)
                 .await;

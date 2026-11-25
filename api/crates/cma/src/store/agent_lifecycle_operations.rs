@@ -47,6 +47,14 @@ pub(crate) enum LifecycleBehavior {
     #[default]
     Legacy,
     PromptRepository,
+    /// This admission cannot allocate before verifying the GitHub connection.
+    ManagedRepository,
+}
+
+impl LifecycleBehavior {
+    pub(crate) fn uses_repository_profile(self) -> bool {
+        matches!(self, Self::PromptRepository | Self::ManagedRepository)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

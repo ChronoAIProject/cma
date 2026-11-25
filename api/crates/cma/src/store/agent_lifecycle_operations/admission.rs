@@ -69,7 +69,7 @@ impl LifecycleRecord {
         if self.document_schema_version != DOCUMENT_SCHEMA_VERSION
             || self.canary_admission.is_some()
             || canary_key::is_reserved(&self.key)
-            || self.input.behavior != LifecycleBehavior::PromptRepository
+            || !self.input.behavior.uses_repository_profile()
             || !request.machine_included
             || request.image.is_some()
             || request.workspace_id.is_some()

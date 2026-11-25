@@ -287,7 +287,7 @@ pub(super) fn admitted_first_message(input: &crate::store::LifecycleInput) -> Op
     if let Some(message) = &input.request.initial_message {
         return Some(message.clone());
     }
-    (input.behavior == LifecycleBehavior::PromptRepository).then(|| {
+    input.behavior.uses_repository_profile().then(|| {
         input
             .setup_message
             .clone()

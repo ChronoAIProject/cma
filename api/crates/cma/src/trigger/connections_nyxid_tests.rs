@@ -23,6 +23,7 @@ mod deadline;
 #[path = "connections_nyxid_tests/github.rs"]
 mod github;
 mod github_repository;
+pub(crate) use github_repository::GithubRepositoryFixture;
 
 const VISITOR_TOKEN: &str = "visitor-access-secret";
 const PROVIDER_EXPIRES_AT: &str = "2026-09-05T12:15:00.731Z";

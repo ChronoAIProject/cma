@@ -287,8 +287,7 @@ impl InlineAgentLifecycle {
         };
         // Prepared sessions are adopted only after owner credentials and parent readiness.
         // WaitForWorkspace remains effect-free for ordinary cold admission.
-        let early_admission =
-            behavior == LifecycleBehavior::PromptRepository && !has_prepared_hierarchy;
+        let early_admission = behavior.uses_repository_profile() && !has_prepared_hierarchy;
         let workspace_id = if early_admission {
             self.reserve_bootstrap_workspace(
                 caller,

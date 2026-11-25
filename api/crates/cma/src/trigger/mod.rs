@@ -4,6 +4,8 @@ mod inline;
 
 #[cfg(test)]
 mod connections_nyxid_tests;
+#[cfg(test)]
+pub(crate) use connections_nyxid_tests::GithubRepositoryFixture;
 
 #[allow(
     dead_code,
