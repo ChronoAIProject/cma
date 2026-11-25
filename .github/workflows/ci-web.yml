@@ -111,6 +111,36 @@ jobs:
           CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
         run: "npx playwright test --config e2e/desktop-conversation.config.ts"
       -
+        name: "Local Launch receipt recovery contracts"
+        id: receipt_recovery
+        timeout-minutes: 5
+        env:
+          CMA_RECEIPT_EVIDENCE_DIR: "${{ runner.temp }}/cma-receipt-recovery"
+        run: "node node_modules/playwright/cli.js test --config e2e/review-receipt-recovery-ci.config.ts"
+      -
+        name: "Launch receipt recovery failure evidence"
+        if: "failure() && steps.receipt_recovery.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "receipt-recovery-failure"
+          path: "${{ runner.temp }}/cma-receipt-recovery"
+          retention-days: 1
+      -
+        name: "Local identity refresh recovery contracts"
+        id: auth_refresh
+        timeout-minutes: 5
+        env:
+          CMA_AUTH_REFRESH_EVIDENCE_DIR: "${{ runner.temp }}/cma-auth-refresh"
+        run: "node node_modules/playwright/cli.js test --config e2e/auth-refresh-followup.config.ts"
+      -
+        name: "Identity refresh failure evidence"
+        if: "failure() && steps.auth_refresh.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "auth-refresh-failure"
+          path: "${{ runner.temp }}/cma-auth-refresh"
+          retention-days: 1
+      -
         name: "Local row menu pointer and keyboard contracts"
         id: row_menu
         timeout-minutes: 5

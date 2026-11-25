@@ -29,6 +29,26 @@ export function isLegacySuggestionRefusal(error: unknown): error is ApiError {
   );
 }
 
+export function isV2InputRefusal(error: unknown, interrupting: boolean): boolean {
+  return (
+    error instanceof ApiError &&
+    ((error.status === 422 &&
+      ([
+        'invalid_response_input',
+        'invalid_answer_context',
+        'invalid_control_request',
+        'invalid_interrupt_request',
+      ].includes(error.code ?? '') ||
+        (interrupting && error.code === 'capability_unsupported'))) ||
+      (error.status === 409 &&
+        [
+          'response_control_not_admitted',
+          'response_interrupt_not_admitted',
+          'agent_command_not_admissible',
+        ].includes(error.code ?? '')))
+  );
+}
+
 export function stoppedInputMessage(
   error: unknown,
   current: AgentResourceState,
