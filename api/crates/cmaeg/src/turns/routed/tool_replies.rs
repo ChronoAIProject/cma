@@ -85,41 +85,8 @@ impl RoutedToolReplies {
         self.reply_inner(caller, event, message, delayed, idempotency_key, None)
             .await
     }
-    /// Recheck retained target authority independently of the answer ledger.
-    pub(crate) async fn authorize_side_message(
-        &self,
-        caller: AgentCaller,
-        event: &EventRefPayload,
-    ) -> Result<(), ExecutionError> {
-        let Some(binding) = self.journal.tool_reply_binding(event).await? else {
-            return if self.journal.partitions.is_some() {
-                Err(ExecutionError::Unsupported)
-            } else {
-                Ok(())
-            };
-        };
-        let plan = self
-            .plans
-            .load(&binding.identity)
-            .await
-            .map_err(admission_error)?
-            .ok_or(ExecutionError::Corrupt)?;
-        if plan.admission_id != binding.root || plan.request_hash != binding.request_hash {
-            return Err(ExecutionError::Corrupt);
-        }
-        let target = plan
-            .targets
-            .iter()
-            .find(|target| target.id == binding.target)
-            .ok_or(ExecutionError::Corrupt)?;
-        if !same_event(&delivery_event(&plan, target), event, false) {
-            return Err(ExecutionError::AuthorityChanged);
-        }
-        let current = current_target(self.authority.as_ref(), &plan, target).await?;
-        if caller.consumer(&current).ok().as_ref() != Some(&target.launch.consumer) {
-            return Err(ExecutionError::AuthorityChanged);
-        }
-        self.journal.require_reply_open(&plan, target).await
+    pub(crate) fn requires_retained_binding(&self) -> bool {
+        self.journal.partitions.is_some()
     }
 
     pub(super) async fn reply_inner(

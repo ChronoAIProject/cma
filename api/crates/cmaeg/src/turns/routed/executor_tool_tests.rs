@@ -205,7 +205,8 @@ async fn event_side_message_receipt_never_suppresses_the_restarted_executor_answ
 }
 
 #[tokio::test]
-async fn event_side_message_routed_authority_refuses_waiting_send_after_quarantine_or_rebind() {
+async fn event_side_message_routed_authority_refuses_waiting_send_after_quarantine_rebind_or_rotation(
+) {
     use crate::{
         channels::resolver::ChannelResolver,
         delivery::{engine::DeliveryEngine, relay_client::RelayClient},
@@ -216,7 +217,7 @@ async fn event_side_message_routed_authority_refuses_waiting_send_after_quaranti
     use cmaeg_core::{ids::ConversationId, seal::seal_blob};
     use std::time::Duration;
 
-    for quarantine in [false, true] {
+    for change in ["quarantine", "provider rebind", "credential rotation"] {
         let channel_store = Server::start().await;
         let mut request = fixture::request(
             |value| {
@@ -269,7 +270,7 @@ async fn event_side_message_routed_authority_refuses_waiting_send_after_quaranti
             Default::default(),
         );
         request.channel = resolver.resolve_current(channel_id.as_str()).await.unwrap();
-        let setup = Setup::with_request(supported(), request).await;
+        let setup = Setup::with_server(supported(), request, b"raw-event", channel_store).await;
         let lease = super::delivery_tests::accepted(&setup).await;
         let payload = event(&setup.journal().body(&lease).await.unwrap());
         let channel = setup.current.channel.lock().unwrap().clone();
@@ -278,10 +279,16 @@ async fn event_side_message_routed_authority_refuses_waiting_send_after_quaranti
                 .consumer_key_hash(payload.consumer.as_ref())
                 .unwrap(),
         };
-        let (routed, _) = lane(&setup);
-        let tools = Arc::new(routed.tool_replies());
-        tools
-            .authorize_side_message(caller, &payload)
+        let current: Arc<dyn Authority> = if change == "quarantine" {
+            Arc::new(resolver.clone())
+        } else {
+            setup.current.clone()
+        };
+        // The reader has the backing records and works without a recovery runtime.
+        let authority =
+            SideMessageAuthority::new(resolver.record_client(), keys.clone(), current, false);
+        authority
+            .check(caller, &payload, channel.version)
             .await
             .unwrap();
 
@@ -303,17 +310,17 @@ async fn event_side_message_routed_authority_refuses_waiting_send_after_quaranti
         );
         let delivery = engine.side_messages_if(true).unwrap();
         let gate = SideMessageGate::new(
-            resolver,
+            resolver.clone(),
             channel.clone(),
             payload.clone(),
             caller,
-            Some(tools.clone()),
+            authority,
         );
         let message: cmaeg_core::message::OutboundMessage =
             serde_json::from_value(serde_json::json!({"text":"progress"})).unwrap();
         let mut send = Box::pin(delivery.send(&channel, &payload, &message, &gate));
         assert!(futures_util::poll!(&mut send).is_pending());
-        if quarantine {
+        if change == "quarantine" {
             let saved = super::quarantine::Quarantine {
                 kind: super::quarantine::KIND.into(),
                 target: setup.target().id.clone(),
@@ -338,17 +345,32 @@ async fn event_side_message_routed_authority_refuses_waiting_send_after_quaranti
                 .await
                 .unwrap();
             assert!(matches!(
-                tools.authorize_side_message(caller, &payload).await,
+                SideMessageAuthority::new(
+                    resolver.record_client(),
+                    Arc::new(fixture::keys()),
+                    Arc::new(resolver),
+                    false,
+                )
+                .check(caller, &payload, channel.version)
+                .await,
                 Err(ExecutionError::Abandoned)
             ));
         } else {
             let mut current = setup.current.channel.lock().unwrap();
             let current = Arc::make_mut(&mut current);
-            current.definition.provider.binding_id = "replacement-binding".parse().unwrap();
+            if change == "provider rebind" {
+                current.definition.provider.binding_id = "replacement-binding".parse().unwrap();
+            } else {
+                current.version += 1;
+                current.definition.secrets.telegram_bot_token =
+                    Some(cmaeg_core::channel::Secret::new("77:rotated-fixture"));
+            }
         }
         let result = send.await;
         assert!(
-            matches!(result.delivery, DeliveryOutcome::Rejected { ref reason } if reason == "side_message_authority_changed")
+            matches!(result.delivery, DeliveryOutcome::Rejected { ref reason } if reason == "side_message_authority_changed"),
+            "{change}: {:?}",
+            result.delivery
         );
         assert!(platform.calls().is_empty());
     }

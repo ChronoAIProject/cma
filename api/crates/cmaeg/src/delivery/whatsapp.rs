@@ -367,7 +367,13 @@ impl Sender {
                         retained_until: now + RETENTION,
                     };
                     confirmed += 1;
-                    if !matches!(timeout_at(deadline, store.put(&receipt)).await, Ok(Ok(()))) {
+                    if !super::gate::within_deadline(
+                        ctx.gate,
+                        async { store.put(&receipt).await.is_ok() },
+                        false,
+                    )
+                    .await
+                    {
                         result.delivery = DeliveryOutcome::Unknown {
                             reason: "native_whatsapp_receipt_unconfirmed".into(),
                         };

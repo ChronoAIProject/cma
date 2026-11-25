@@ -337,3 +337,49 @@ async fn native_lark_checks_authority_again_between_upload_and_recipient_send() 
     assert!(matches!(receipt.delivery, DeliveryOutcome::Rejected { .. }));
     assert_eq!(io.writes.lock().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn ordinary_native_lark_answer_retains_confirmation_past_its_transport_deadline() {
+    use crate::delivery::gate::{AttemptPermit, GateRefusal, RouteTicket, SendGate, Ungated};
+    use std::sync::atomic::Ordering;
+
+    struct NearlyExpired;
+    impl SendGate for NearlyExpired {
+        fn enter_route<'a>(
+            &'a self,
+            route: &'a str,
+        ) -> BoxFuture<'a, Result<RouteTicket, GateRefusal>> {
+            Ungated.enter_route(route)
+        }
+        fn commit(&self) -> bool {
+            true
+        }
+        fn attempt(&self) -> BoxFuture<'_, Result<AttemptPermit, GateRefusal>> {
+            Box::pin(async {
+                tokio::time::pause();
+                tokio::time::advance(Duration::from_secs(59)).await;
+                tokio::time::resume();
+                Ok(AttemptPermit::empty())
+            })
+        }
+        fn progress(&self) {}
+    }
+
+    let (sender, channel, event, io, server) =
+        media_setup(vec![confirmed("om_delayed_receipt", false)]).await;
+    server.memory.delay_ms.store(1500, Ordering::SeqCst);
+    let receipt = send_media(
+        &sender,
+        &channel,
+        &event,
+        &message("ordinary answer".into()),
+        &NearlyExpired,
+    )
+    .await;
+    assert!(matches!(
+        receipt.delivery,
+        DeliveryOutcome::Confirmed { platform_message_id: Some(ref id) } if id == "om_delayed_receipt"
+    ));
+    assert_eq!(io.writes.lock().unwrap().len(), 1);
+    assert_eq!(server.memory.writes.load(Ordering::SeqCst), 1);
+}

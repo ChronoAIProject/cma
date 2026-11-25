@@ -22,7 +22,7 @@ use crate::{
         intents::IntentReceipt,
         side_messages::SideMessageDelivery,
     },
-    turns::routed::RoutedToolReplies,
+    turns::routed::SideMessageAuthority,
 };
 
 const TOOL: &str = "sendSideMessage";
@@ -33,7 +33,10 @@ impl ToolsState {
         caller: AgentCaller,
         reference: &EventRef,
     ) -> Result<bool, Problem> {
-        let (channel, event) = self.side_message_context(caller, reference).await?;
+        let authority = self.side_message_authority();
+        let (channel, event) = self
+            .side_message_context(caller, reference, &authority)
+            .await?;
         Ok(side_destination(&channel, &event.reply).is_ok())
     }
 
@@ -46,7 +49,10 @@ impl ToolsState {
         text: String,
     ) -> Result<IntentReceipt, Problem> {
         super::validate_reply_key(Some(request_id))?;
-        let (channel, original_event) = self.side_message_context(caller, reference).await?;
+        let authority = self.side_message_authority();
+        let (channel, original_event) = self
+            .side_message_context(caller, reference, &authority)
+            .await?;
         let mut event = original_event.clone();
         side_destination(&channel, &event.reply)?;
         if text.trim().is_empty() {
@@ -107,17 +113,29 @@ impl ToolsState {
             channel.clone(),
             original_event,
             caller,
-            self.routed_replies.clone(),
+            authority,
         );
         let receipt = delivery.send(&channel, &event, &message, &gate).await;
         store.finish(claim, &receipt).await?;
         Ok(receipt)
     }
 
+    fn side_message_authority(&self) -> SideMessageAuthority {
+        SideMessageAuthority::new(
+            self.resolver.record_client(),
+            self.keys.clone(),
+            Arc::new(self.resolver.clone()),
+            self.routed_replies
+                .as_ref()
+                .is_some_and(|routed| routed.requires_retained_binding()),
+        )
+    }
+
     async fn side_message_context(
         &self,
         caller: AgentCaller,
         reference: &EventRef,
+        authority: &SideMessageAuthority,
     ) -> Result<(Arc<ResolvedChannel>, EventRefPayload), Problem> {
         let (_, event, _) = self.authorize_event(caller, reference, TOOL).await?;
         let current = self
@@ -133,11 +151,14 @@ impl ToolsState {
                 "side_message_revoked",
             ));
         }
-        if let Some(routed) = &self.routed_replies {
-            routed
-                .authorize_side_message(caller, &event)
-                .await
-                .map_err(super::routed_reply_error)?;
+        authority
+            .check(caller, &event, current.version)
+            .await
+            .map_err(super::routed_reply_error)?;
+        if time::OffsetDateTime::now_utc().unix_timestamp() >= event.expires_at {
+            return Err(super::routed_reply_error(
+                crate::turns::routed::ExecutionError::Expired,
+            ));
         }
         Ok((current, event))
     }
@@ -191,7 +212,7 @@ pub(crate) struct SideMessageGate {
     channel: Arc<ResolvedChannel>,
     event: EventRefPayload,
     caller: AgentCaller,
-    routed: Option<Arc<RoutedToolReplies>>,
+    authority: SideMessageAuthority,
     deadline: tokio::time::Instant,
 }
 
@@ -201,14 +222,14 @@ impl SideMessageGate {
         channel: Arc<ResolvedChannel>,
         event: EventRefPayload,
         caller: AgentCaller,
-        routed: Option<Arc<RoutedToolReplies>>,
+        authority: SideMessageAuthority,
     ) -> Self {
         Self {
             resolver,
             channel,
             event,
             caller,
-            routed,
+            authority,
             deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(20),
         }
     }
@@ -244,11 +265,12 @@ impl SendGate for SideMessageGate {
                 {
                     return Err(refuse);
                 }
-                if let Some(routed) = &self.routed {
-                    routed
-                        .authorize_side_message(self.caller, &self.event)
-                        .await
-                        .map_err(|_| refuse)?;
+                self.authority
+                    .check(self.caller, &self.event, self.channel.version)
+                    .await
+                    .map_err(|_| refuse)?;
+                if !self.commit() {
+                    return Err(refuse);
                 }
                 Ok(AttemptPermit::empty())
             };
