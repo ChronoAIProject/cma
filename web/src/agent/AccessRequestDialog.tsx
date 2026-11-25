@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from '../ui/Alert';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { GitHubConnectionDetails } from '../connections/RepositoryConnectionRepair';
@@ -6,7 +6,12 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { ScopePicker } from './ScopePicker';
 import { REQUIRED_AGENT_SCOPES } from './requiredScopes';
-import { accessRequests, validAccessServices, type AgentAccessRequest } from './accessRequests';
+import {
+  accessRequests,
+  validAccessServices,
+  type AgentAccessRequest,
+  type GithubConnectionApproval,
+} from './accessRequests';
 import { loadAccessDecision, saveAccessDecision } from './accessDecisionStorage';
 import type { SandboxStatus } from '../api/types';
 import { useScopeConnections } from './scopeConnections';
@@ -102,11 +107,25 @@ function AccessRequestDialog({
   const [connected, setConnected] = useState(false);
   const [preparingConnections, setPreparingConnections] = useState(false);
   const [showGitHubConnections, setShowGitHubConnections] = useState(false);
+  const [selection, setSelection] = useState<GithubConnectionApproval>();
+  const approval = request.github_approval;
+  const selectedGithub =
+    selection &&
+    approval &&
+    selection.sandbox_id === approval.sandbox_id &&
+    selection.scope_revision === approval.scope_revision &&
+    selection.credential_generation === approval.credential_generation
+      ? selection
+      : undefined;
   const preflight = useScopeConnections(
     request.agent_id,
     owner,
-    services,
+    approval ? services.filter((service) => service !== 'api-github') : services,
     request.status === 'pending' && !intent,
+  );
+  const githubInventoryTarget = useMemo(
+    () => ({ type: 'agent_service_access' as const, id: request.agent_id, services }),
+    [request.agent_id, services],
   );
   const connectionTargetId =
     request.status === 'connecting' || request.status === 'applying'
@@ -114,12 +133,17 @@ function AccessRequestDialog({
       : undefined;
   useEffect(() => () => active.current?.abort(), []);
   const decide = async (action: 'approve' | 'deny') => {
-    if (active.current || saved.error || (action === 'approve' && !intent && !preflight.ready))
+    if (
+      active.current ||
+      saved.error ||
+      (action === 'approve' && !intent && (!preflight.ready || (approval && !selectedGithub)))
+    )
       return;
     const selected = intent ?? {
       key: crypto.randomUUID(),
       action,
       services: action === 'approve' ? services : [],
+      githubConnection: action === 'approve' ? selectedGithub : undefined,
     };
     if (selected.action === 'approve' && !validAccessServices(selected.services)) {
       setError('Choose up to 32 services. Existing Sandbox access must remain included.');
@@ -146,6 +170,7 @@ function AccessRequestDialog({
         selected.key,
         selected.services,
         abort.signal,
+        selected.githubConnection,
       );
       if (!abort.signal.aborted) {
         saveAccessDecision(owner, request.agent_id, request.id);
@@ -211,7 +236,11 @@ function AccessRequestDialog({
             </Button>
             <Button
               variant="primary"
-              disabled={pending || !!saved.error || (!intent && !preflight.ready)}
+              disabled={
+                pending ||
+                !!saved.error ||
+                (!intent && (!preflight.ready || (approval !== undefined && !selectedGithub)))
+              }
               onClick={() => void decide('approve')}
             >
               {pending ? 'Saving decision…' : intent ? 'Retry access decision' : 'Approve'}
@@ -230,8 +259,46 @@ function AccessRequestDialog({
       </p>
       {request.services.includes('api-github') ? (
         <>
-          <p>GitHub connection selection is separate from service approval.</p>
-          {owner && services.includes('api-github') ? (
+          {approval ? (
+            <>
+              <p>
+                This choice changes GitHub access for Sandbox {approval.sandbox_name} (
+                {approval.sandbox_id}).
+              </p>
+              {approval.other_agents.length > 0 ? (
+                <>
+                  <p>Other Agents sharing this credential</p>
+                  <ul>
+                    {approval.other_agents.map((id) => (
+                      <li key={id}>{id}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+              {approval.current_user_service_id ? (
+                <p>Currently selected connection: {approval.current_user_service_id}</p>
+              ) : null}
+            </>
+          ) : (
+            <p>GitHub connection selection is separate from service approval.</p>
+          )}
+          {owner && approval ? (
+            <GitHubConnectionDetails
+              owner={owner}
+              target={githubInventoryTarget}
+              selection={{
+                id: (intent?.githubConnection ?? selectedGithub)?.user_service_id,
+                disabled: pending || !!intent || !!saved.error,
+                onSelect: (id) =>
+                  setSelection({
+                    sandbox_id: approval.sandbox_id,
+                    user_service_id: id,
+                    scope_revision: approval.scope_revision,
+                    credential_generation: approval.credential_generation,
+                  }),
+              }}
+            />
+          ) : owner && services.includes('api-github') ? (
             <>
               <Button
                 size="sm"

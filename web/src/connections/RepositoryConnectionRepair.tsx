@@ -100,13 +100,19 @@ export function RepositoryConnectionRepair({ target, owner, pending, onRecheck }
   );
 }
 
-type ConnectionDetailsProps = Pick<Props, 'target' | 'owner'>;
+type ConnectionDetailsProps = Pick<Props, 'target' | 'owner'> & {
+  readonly selection?: {
+    readonly id?: string;
+    readonly disabled: boolean;
+    readonly onSelect: (id: string) => void;
+  };
+};
 
 export function GitHubConnectionDetails(props: ConnectionDetailsProps) {
   return <ConnectionDetails key={JSON.stringify([props.owner, props.target])} {...props} />;
 }
 
-function ConnectionDetails({ target, owner }: ConnectionDetailsProps) {
+function ConnectionDetails({ target, owner, selection }: ConnectionDetailsProps) {
   const [result, setResult] = useState<{ readonly inventory?: Inventory }>();
   useEffect(() => {
     const controller = new AbortController();
@@ -136,7 +142,11 @@ function ConnectionDetails({ target, owner }: ConnectionDetailsProps) {
       ) : null}
       {result?.inventory?.connections?.length ? (
         <>
-          <p>NyxID reports these connections. CMA has not verified the Agent’s connection.</p>
+          <p>
+            {selection
+              ? 'Choose the connection CMA should verify for this Sandbox.'
+              : 'NyxID reports these connections. CMA has not verified the Agent’s connection.'}
+          </p>
           <ul>
             {result.inventory.connections.map((row) => (
               <li key={row.id}>
@@ -148,6 +158,16 @@ function ConnectionDetails({ target, owner }: ConnectionDetailsProps) {
                     ? 'Granted scopes unavailable'
                     : `Reported scopes: ${row.granted_scopes.join(', ') || 'None'}`}
                 </p>
+                {selection && row.granted_scopes?.includes('repo') ? (
+                  <Button
+                    size="sm"
+                    aria-pressed={selection.id === row.id}
+                    disabled={selection.disabled}
+                    onClick={() => selection.onSelect(row.id)}
+                  >
+                    Select {row.label} ({row.id})
+                  </Button>
+                ) : null}
               </li>
             ))}
           </ul>

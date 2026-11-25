@@ -23,6 +23,7 @@ fn receipt(status: AgentAccessStatus) -> AgentAccessRequest {
         services: vec!["api-github".into()],
         reason: "Read the selected repository.".into(),
         error: None,
+        github_approval: None,
     }
 }
 impl Service {
