@@ -367,6 +367,7 @@ for (const { access, unavailable } of [
     const boundary = new LocalStartup();
     await boundary.route(page, baseURL!);
     const filesystem = await files(page, access !== 'reader');
+    let accessUnavailable = false;
     if (access !== 'owner') {
       await page.route('**/api/v1/agents/agt_contract', (route) =>
         route.fulfill({
@@ -381,19 +382,23 @@ for (const { access, unavailable } of [
         }),
       );
       await page.route('**/api/v1/resource-access/agent/agt_contract', (route) =>
-        route.fulfill({
-          json: {
-            capabilities: [
-              'view_details',
-              'view_history',
-              'view_files',
-              ...(access === 'writer' ? ['operate_agent'] : []),
-            ],
-            policy_revision: 1,
-            revalidate_at: null,
-            owner: { kind: 'person', is_current_person: false },
-          },
-        }),
+        route.fulfill(
+          accessUnavailable
+            ? { status: 503, json: { code: 'temporarily_unavailable' } }
+            : {
+                json: {
+                  capabilities: [
+                    'view_details',
+                    'view_history',
+                    'view_files',
+                    ...(access === 'writer' ? ['operate_agent'] : []),
+                  ],
+                  policy_revision: 1,
+                  revalidate_at: null,
+                  owner: { kind: 'person', is_current_person: false },
+                },
+              },
+        ),
       );
     }
     let started!: () => void;
@@ -477,6 +482,30 @@ for (const { access, unavailable } of [
         const newFile = computer.getByRole('button', { name: 'New file', exact: true });
         if (access === 'reader') await expect(newFile).toHaveCount(0);
         else await expect(newFile).toBeEnabled();
+        // The explicit child navigation survives a real browser access refresh.
+        await computer.getByRole('button', { name: 'Sandbox root /home/' }).click();
+        await computer.getByRole('button', { name: 'cma', exact: true }).click();
+        for (const width of [1440, 375]) {
+          await page.setViewportSize({ width, height: 812 });
+          await expect(computer.getByLabel('Current directory')).toContainText('/home/cma');
+          await expect(
+            computer.getByRole('button', { name: 'notes.md', exact: true }),
+          ).toBeVisible();
+          await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+          await expect(computer.getByLabel('Current directory')).toContainText('/home/cma');
+        }
+        if (access !== 'owner') {
+          accessUnavailable = true;
+          await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+          const retry = page.getByRole('button', { name: 'Check access again', exact: true });
+          await expect(page.getByRole('heading', { name: 'Agent unavailable' })).toBeVisible();
+          accessUnavailable = false;
+          await retry.click();
+          await expect(computer.getByLabel('Current directory')).toContainText('/home/cma');
+          await expect(
+            computer.getByRole('button', { name: 'notes.md', exact: true }),
+          ).toBeVisible();
+        }
       }
       await expect(filesTab).toHaveAttribute('aria-selected', 'true');
       await expect(computer.getByRole('tab', { name: 'Screen' })).toHaveAttribute(
