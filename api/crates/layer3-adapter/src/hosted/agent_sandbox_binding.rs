@@ -85,7 +85,8 @@ impl AgentSandboxBackend {
                 .validate_native_request_with_home(handle, request, home),
         )
         .await?;
-        self.bind_adopted(handle, request, &object, true).await?;
+        self.bind_adopted(handle, request, &object, Some(home))
+            .await?;
         // Binding may wait or deliver bootstrap. Its earlier observation cannot
         // authorize the returned runtime after either boundary completes.
         timed(
@@ -100,7 +101,7 @@ impl AgentSandboxBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
         observed: &DynamicObject,
-        retained_home: bool,
+        retained_home: Option<&HomeVolumeAttachment>,
     ) -> Result<()> {
         // The caller has freshly validated the original Claim/Sandbox/PVC and
         // complete request. A receipt never replaces that current authority proof.
@@ -129,8 +130,10 @@ impl AgentSandboxBackend {
             self.client.verify_explicit_runtime_policy(observed).await?;
             return self.bind_transport(handle, request).await;
         }
-        if retained_home && self.client.runtime_startup_breaker_enabled() {
-            self.recover_startup_hold(handle, request, &pod).await;
+        if self.client.runtime_startup_breaker_enabled() {
+            if let Some(home) = retained_home {
+                self.recover_startup_hold(handle, request, home, &pod).await;
+            }
         }
         self.assign_and_bind(handle, &pod, request).await
     }
@@ -139,6 +142,7 @@ impl AgentSandboxBackend {
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
         pod: &PodBinding,
     ) {
         let Some(incarnation) = crate::agent_sandbox::startup_incarnation(pod) else {
@@ -155,6 +159,18 @@ impl AgentSandboxBackend {
         let Some(history) = self.client.startup_history(pod).await else {
             return;
         };
+        // Read the retained authority and the exact current binding again after
+        // reading history. A stale generation or a replacement must not open a hold.
+        let Ok(proof) = self
+            .client
+            .native_runtime_proof(handle, request, home)
+            .await
+        else {
+            return;
+        };
+        if proof.pod() != pod || !proof.matches(request, home).unwrap_or(false) {
+            return;
+        }
         // A serving or assignment proof acquired during the read wins. The
         // breaker itself serializes concurrent observations and their deadline.
         let assignments = self.assignments.lock().unwrap();
