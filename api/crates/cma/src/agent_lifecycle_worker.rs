@@ -3,6 +3,7 @@ use super::*;
 use crate::store::HEARTBEAT;
 
 pub(super) const PREPARATION_FAILED: &str = "Agent runtime preparation failed";
+const SANDBOX_QUOTA_ATTEMPTS: u32 = 3;
 
 // Warm creation should observe committed readiness promptly. Bound the faster
 // polling window; sequential reads and the worker-slot limit cap its load.
@@ -127,6 +128,12 @@ impl InlineAgentLifecycle {
                     .await;
             }
         };
+        let retry_sandbox_quota = attempts < SANDBOX_QUOTA_ATTEMPTS
+            && record.input.request.sandbox_id.is_none()
+            && record.input.request.workspace_id.is_none()
+            && record.sandbox_id.is_none()
+            && record.agent_id.is_none()
+            && canary_profiles.is_none();
         let capacity = record.input.captured_capacity(self.bounds);
         let limits = record.input.captured_limits();
         let first_message = validation::admitted_first_message(&record.input);
@@ -178,6 +185,14 @@ impl InlineAgentLifecycle {
         match outcome {
             Ok(agent_id) => self.operations.succeed(&lease, &agent_id).await,
             Err(AgentLifecycleProvisioningError::Unavailable) => {
+                self.operations.retry(&lease, attempts).await
+            }
+            // A free slot at HTTP admission can disappear before the Sandbox
+            // transaction runs. Retry the same operation briefly. The Sandbox
+            // transaction checks quota and replays any matching admission.
+            Err(AgentLifecycleProvisioningError::SandboxLimitReached { .. })
+                if retry_sandbox_quota =>
+            {
                 self.operations.retry(&lease, attempts).await
             }
             Err(AgentLifecycleProvisioningError::ConnectionRequired {
