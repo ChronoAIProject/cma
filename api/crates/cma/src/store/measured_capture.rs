@@ -22,6 +22,7 @@ pub(crate) mod ledger;
 mod preview;
 const SCHEMA_VERSION: i64 = 1;
 const ATTEMPTS: usize = 3;
+const INDEXED_ATTEMPTS: usize = 32;
 const DEADLINE: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,7 +98,18 @@ impl MeasuredCapture {
         payload: &str,
     ) -> Result<Capture, CaptureError> {
         let physical = observation.physical_sample_id();
-        for _ in 0..ATTEMPTS {
+        // Indexed custody writes one authenticated generation root. Retry only
+        // confirmed aborted transactions, with jitter to let competing writers
+        // complete within the existing whole-capture deadline.
+        let attempts = if self.indexed.is_some() {
+            INDEXED_ATTEMPTS
+        } else {
+            ATTEMPTS
+        };
+        for attempt in 0..attempts {
+            if self.indexed.is_some() {
+                super::contention::backoff(attempt).await;
+            }
             let mut session = self
                 .client
                 .start_session()
