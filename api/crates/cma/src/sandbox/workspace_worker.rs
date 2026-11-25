@@ -146,30 +146,7 @@ impl WorkspaceWorker {
             Ok(value) => value,
             Err(failure) => return self.handle_failure(workspace, failure, now).await,
         };
-        let source = match &workspace.source {
-            WorkspaceSource::RepositorySnapshot { url, reference, .. } => {
-                RuntimeWorkspaceSource::RepositorySnapshot {
-                    url: url.clone(),
-                    reference: reference.clone(),
-                }
-            }
-            WorkspaceSource::GitRepository { url, reference } => RuntimeWorkspaceSource::Clone {
-                url: url.clone(),
-                reference: reference.clone(),
-            },
-            WorkspaceSource::Empty => RuntimeWorkspaceSource::Init,
-        };
-        let request = WorkspaceRequest::with_clone_depth(
-            workspace.operation_id(WorkspaceWorkStep::Prepare),
-            workspace.id.to_string(),
-            workspace.name.clone(),
-            source,
-            workspace
-                .work
-                .execution
-                .expect("execution policy was persisted")
-                .clone_depth,
-        );
+        let request = workspace.original_prepare_request()?;
         layer2_core::sandbox::store::WorkAuthority::current()?;
         match self
             .dependencies

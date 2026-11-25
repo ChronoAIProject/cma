@@ -239,7 +239,7 @@ pub(crate) use agent_lifecycle_operations::canary_key;
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
     CanaryProfiles, CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput,
-    LifecycleLease, MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
+    LifecycleLease, MongoAgentLifecycleStore, RepositoryAccessPin, DISCOVERY_BATCH, HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};

@@ -33,6 +33,7 @@ async fn declared_write_checks_only_the_unique_active_default_oauth_key() {
     ]);
     let broker = broker(&provider, Tokens::available());
     let owner = SubjectId::new("visitor");
+    *provider.state.github_proxy_scopes.lock().unwrap() = Some("repo".into());
     for rows in [
         vec![weak.clone(), strong.clone()],
         vec![strong.clone(), weak.clone()],
@@ -48,7 +49,38 @@ async fn declared_write_checks_only_the_unique_active_default_oauth_key() {
                 "manage_url":"https://nyx.example/keys/weak"
             })
         );
+        assert_eq!(
+            serde_json::to_value(
+                broker
+                    .exact_github_scope_check(&owner, "strong", PublicRepositoryWrite)
+                    .await
+            )
+            .unwrap(),
+            json!({"status":"scope_satisfied", "connection_id":"strong"})
+        );
+        assert_eq!(
+            serde_json::to_value(
+                broker
+                    .exact_github_scope_check(&owner, "foreign", PublicRepositoryWrite)
+                    .await
+            )
+            .unwrap(),
+            json!({"status":"verification_unavailable"})
+        );
     }
+    provider.state.set_services_reply(Reply::json(json!({
+        "services":[weak.clone(), row("strong", "api-github-2", false)]
+    })));
+    assert_eq!(
+        serde_json::to_value(
+            broker
+                .exact_github_scope_check(&owner, "strong", PublicRepositoryWrite)
+                .await
+        )
+        .unwrap(),
+        json!({"status":"verification_unavailable"})
+    );
+
     provider.state.credential_replies.lock().unwrap().insert(
         "strong".into(),
         key("strong", "api-github", json!(["repo"])),
@@ -190,6 +222,84 @@ async fn scope_check_distinguishes_missing_and_empty_evidence_and_the_two_operat
             assert_eq!(check["status"], expected);
         }
     }
+}
+
+#[tokio::test]
+async fn exact_scope_reports_require_agreeing_live_and_recorded_permissions() {
+    let provider = Provider::start().await;
+    *provider.state.catalog_reply.lock().unwrap() =
+        Reply::json(json!({"services":[{"id":"github-catalog","slug":"api-github"}]}));
+    provider
+        .state
+        .set_services_reply(Reply::json(json!({"services":[{
+            "id":"selected", "slug":"api-github-2", "catalog_service_id":"github-catalog",
+            "is_active":true, "credential_source":{"type":"personal"}
+        }]})));
+    let broker = broker(&provider, Tokens::available());
+    let owner = SubjectId::new("visitor");
+    for (stored, live, need, status) in [
+        (
+            json!(["public_repo"]),
+            Some("public_repo"),
+            PublicRepositoryWrite,
+            "scope_satisfied",
+        ),
+        (
+            json!(["public_repo"]),
+            Some("public_repo"),
+            PrivateRepositoryRead,
+            "insufficient_scope",
+        ),
+        (
+            json!(["repo"]),
+            Some("read:user"),
+            PublicRepositoryWrite,
+            "verification_unavailable",
+        ),
+        (
+            json!(["repo"]),
+            Some("repo,,read:user"),
+            PrivateRepositoryRead,
+            "verification_unavailable",
+        ),
+        (
+            json!(["repo"]),
+            None,
+            PrivateRepositoryRead,
+            "verification_unavailable",
+        ),
+        (
+            json!([]),
+            Some(""),
+            PublicRepositoryWrite,
+            "insufficient_scope",
+        ),
+    ] {
+        provider.state.credential_replies.lock().unwrap().insert(
+            "selected".into(),
+            Reply::json(json!({
+                "id":"selected", "slug":"api-github-2", "catalog_service_id":"github-catalog",
+                "label":"Owner's connection", "granted_scopes":stored, "credential_type":"oauth2",
+                "is_active":true, "status":"active", "connection_status":"active"
+            })),
+        );
+        *provider.state.github_proxy_scopes.lock().unwrap() = live.map(str::to_owned);
+        let value = serde_json::to_value(
+            broker
+                .exact_github_scope_check(&owner, "selected", need)
+                .await,
+        )
+        .unwrap();
+        assert_eq!(value["status"], status);
+        if status == "insufficient_scope" {
+            assert_eq!(value["connection_id"], "selected");
+            assert_eq!(value["manage_url"], "https://nyx.example/keys/selected");
+        }
+    }
+    assert_eq!(
+        *provider.state.github_proxy_reads.lock().unwrap(),
+        vec![("github-catalog".into(), "selected".into()); 6]
+    );
 }
 
 #[tokio::test]

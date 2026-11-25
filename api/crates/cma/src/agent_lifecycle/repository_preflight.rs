@@ -1,7 +1,14 @@
 //! Verify a fresh, owner-scoped repository snapshot before paid allocation.
 
-use layer1_public::rest::{AgentLifecycleRepository, RepositoryAccessRefusal};
+use crate::store::RepositoryAccessPin;
+use crate::trigger::{GitHubRepositoryCheck, GitHubScopeCheck, GITHUB_SERVICE};
+use layer1_public::rest::{
+    AgentLifecycleRepository, GitHubRepositoryNeed, RepositoryAccessRefusal, RepositoryScopeRepair,
+};
 use layer2_core::profiles::authoring::AuthoringSourceError;
+use layer2_core::sandbox::{
+    InitialServiceConnection, RepositoryCredentialRequirement, ServiceConnectionSelection,
+};
 
 use super::*;
 
@@ -17,11 +24,29 @@ pub(super) trait RepositoryReadiness: Send + Sync {
 }
 
 impl InlineAgentLifecycle {
-    pub(crate) fn with_managed_repository_preflight(self: Arc<Self>, enabled: bool) -> Arc<Self> {
+    pub(super) fn with_managed_repository_preflight(self: Arc<Self>, enabled: bool) -> Arc<Self> {
         self.managed_repository_preflight
             .set(enabled)
             .expect("repository preflight is configured once before use");
         self
+    }
+
+    pub(crate) fn with_repository_preflight_config(
+        self: Arc<Self>,
+        config: &crate::config::Config,
+        broker: Arc<crate::trigger::CmaServiceConnectionBroker>,
+    ) -> Arc<Self> {
+        let lifecycle =
+            self.with_managed_repository_preflight(config.features.github_repository_preflight);
+        assert!(lifecycle.managed_repository_broker.set(broker).is_ok());
+        lifecycle
+            .managed_repository_runtime_images
+            .set((
+                config.runtime.sandbox_image.clone(),
+                config.runtime.github_repository_runtime_images.clone(),
+            ))
+            .expect("repository runtime qualification is configured once before use");
+        lifecycle
     }
 
     #[cfg(test)]
@@ -48,8 +73,13 @@ impl InlineAgentLifecycle {
         let Some(repository) = input.request.repository.as_ref() else {
             return Ok(());
         };
-        if self.managed_repository_preflight.get() == Some(&true) {
-            return self.wait_for_managed_repository_access(caller, input).await;
+        if input.repository_access_pin.is_some()
+            || (self.managed_repository_preflight.get() == Some(&true)
+                && input.existing_sandbox_id.is_none())
+        {
+            return self
+                .preflight_managed_repository(caller, input, retained_commit)
+                .await;
         }
         if input.request.initial_message.is_none() {
             return Ok(());
@@ -79,16 +109,170 @@ impl InlineAgentLifecycle {
         Ok(())
     }
 
+    async fn preflight_managed_repository(
+        &self,
+        caller: &Caller,
+        input: &mut ProvisionInput,
+        retained_commit: Option<&str>,
+    ) -> Result<(), AgentLifecycleProvisioningError> {
+        use RepositoryAccessRefusal as Refusal;
+        let repository = input
+            .request
+            .repository
+            .as_ref()
+            .expect("repository checked by caller");
+        let need = repository
+            .operation
+            .unwrap_or(GitHubRepositoryNeed::PrivateRepositoryRead);
+        let requirement = match need {
+            GitHubRepositoryNeed::PublicRepositoryWrite => {
+                RepositoryCredentialRequirement::PublicRepositoryWrite
+            }
+            GitHubRepositoryNeed::PrivateRepositoryRead => {
+                RepositoryCredentialRequirement::PrivateRepositoryRead
+            }
+        };
+        let pin = input.repository_access_pin.as_ref();
+        let selected = pin.map(|pin| pin.connection.selection.connection_id.as_str());
+        if let Some(pin) = pin {
+            if pin.owner != caller.subject.as_str()
+                || pin.repository != repository.url
+                || pin.connection.requirement != requirement
+                || pin.connection.selection.service.as_str() != GITHUB_SERVICE
+                || repository
+                    .connection_id
+                    .as_deref()
+                    .is_some_and(|id| Some(id) != selected)
+                || Some(pin.commit.as_str()) != retained_commit
+            {
+                return Err(AgentLifecycleProvisioningError::Conflict(
+                    "The retained GitHub repository authorization does not match this request."
+                        .into(),
+                ));
+            }
+        }
+
+        let Some((default, qualified)) = self.managed_repository_runtime_images.get() else {
+            return self
+                .wait_for_managed_repository_access(
+                    caller,
+                    input,
+                    Refusal::VerificationUnavailable,
+                    None,
+                )
+                .await;
+        };
+        let image = {
+            let image = pin
+                .map(|pin| &pin.runtime_image)
+                .or(input.runtime_image.as_ref())
+                .unwrap_or(default);
+            (input
+                .runtime_image
+                .as_ref()
+                .is_none_or(|resolved| resolved == image)
+                && qualified.contains(image))
+            .then_some(image)
+        };
+        let Some(image) = image else {
+            return self
+                .wait_for_managed_repository_access(
+                    caller,
+                    input,
+                    Refusal::RuntimeUnsupported,
+                    None,
+                )
+                .await;
+        };
+
+        let Some(broker) = self.managed_repository_broker.get() else {
+            return self
+                .wait_for_managed_repository_access(
+                    caller,
+                    input,
+                    Refusal::VerificationUnavailable,
+                    None,
+                )
+                .await;
+        };
+        let check = broker
+            .verify_github_repository(&caller.subject, repository, selected, retained_commit)
+            .await;
+        let (reason, repair) = match check {
+            GitHubRepositoryCheck::Verified(proved) => {
+                let commit = valid_commit(&proved.commit)?;
+                if pin.is_none() {
+                    let pin = RepositoryAccessPin {
+                        owner: caller.subject.to_string(),
+                        repository: repository.url.clone(),
+                        commit: commit.clone(),
+                        runtime_image: image.clone(),
+                        connection: InitialServiceConnection {
+                            selection: ServiceConnectionSelection {
+                                service: layer2_core::ServiceId::new(GITHUB_SERVICE),
+                                connection_id: proved.connection_id,
+                            },
+                            requirement,
+                            repository: proved.repository,
+                        },
+                    };
+                    self.operations
+                        .pin_repository_access(&input.lease, &pin)
+                        .await
+                        .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
+                    input.repository_access_pin = Some(pin);
+                }
+                input.runtime_image = Some(image.clone());
+                let repository = input
+                    .request
+                    .repository
+                    .as_mut()
+                    .expect("verified repository exists");
+                repository.reference = Some(commit);
+                repository.operation = Some(need);
+                let binding = &input
+                    .repository_access_pin
+                    .as_ref()
+                    .expect("repository access pinned")
+                    .connection;
+                repository.url = format!("https://github.com/{}", binding.repository);
+                repository.connection_id = Some(binding.selection.connection_id.clone());
+                if input.request.initial_message.is_none() {
+                    input.first_message = Some(validation::setup_message(&input.request));
+                }
+                return Ok(());
+            }
+            GitHubRepositoryCheck::RepositoryUnavailable => (Refusal::RepositoryUnavailable, None),
+            GitHubRepositoryCheck::ReferenceUnavailable => (Refusal::ReferenceUnavailable, None),
+            GitHubRepositoryCheck::Scope(GitHubScopeCheck::MissingConnection) => {
+                (Refusal::MissingConnection, None)
+            }
+            GitHubRepositoryCheck::Scope(GitHubScopeCheck::InsufficientScope {
+                connection_id,
+                required_scope,
+                manage_url,
+            }) => (
+                Refusal::InsufficientScope,
+                Some(RepositoryScopeRepair {
+                    connection_id,
+                    operation: need,
+                    required_scope: required_scope.into(),
+                    manage_url,
+                }),
+            ),
+            GitHubRepositoryCheck::Scope(_) => (Refusal::VerificationUnavailable, None),
+        };
+        self.wait_for_managed_repository_access(caller, input, reason, repair)
+            .await
+    }
+
     async fn wait_for_managed_repository_access(
         &self,
         caller: &Caller,
         input: &ProvisionInput,
+        reason: RepositoryAccessRefusal,
+        repair: Option<RepositoryScopeRepair>,
     ) -> Result<(), AgentLifecycleProvisioningError> {
-        // Both the runtime archive reader and Agent setup use the credentialed
-        // slug. Public metadata can become stale before dispatch, and a retained
-        // commit proves only content identity. Hold until runtime dispatch can
-        // prove the effective grant or enforce anonymous source access.
-        tracing::info!(operation_id = %input.lease.id, "Managed repository access verification paused");
         let mut content = profiles::inline_sandbox_content(
             &input.request,
             input.runtime_image.clone(),
@@ -97,7 +281,7 @@ impl InlineAgentLifecycle {
             input.behavior,
             None,
         )?;
-        let github = layer2_core::ServiceId::new(crate::trigger::GITHUB_SERVICE);
+        let github = layer2_core::ServiceId::new(GITHUB_SERVICE);
         if !content.nyxid_services.contains(&github) {
             content.nyxid_services.push(github);
         }
@@ -106,7 +290,8 @@ impl InlineAgentLifecycle {
             .await?;
         Err(AgentLifecycleProvisioningError::RepositoryAccessRequired {
             connection_target: admission::connection_profile_target(&profile),
-            reason: RepositoryAccessRefusal::VerificationUnavailable,
+            reason,
+            repair: repair.map(Box::new),
         })
     }
 

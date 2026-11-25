@@ -334,9 +334,9 @@ pub use conversation_recorder::{
     AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
 };
 pub use credential::{
-    SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
-    SandboxServiceGrant, SandboxServiceScopeRevision, SandboxSignInState,
-    ServiceConnectionSelection,
+    InitialServiceConnection, RepositoryCredentialRequirement, SandboxCredentialAuthority,
+    SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt, SandboxServiceGrant,
+    SandboxServiceScopeRevision, SandboxSignInState, ServiceConnectionSelection,
 };
 pub use credential_prerequisite::{
     FixedSandboxCredentialPrerequisite, SandboxCredentialPrerequisite,

@@ -2,12 +2,16 @@ use serde::Serialize;
 
 use super::*;
 
+mod repository;
+pub(crate) use repository::GitHubRepositoryCheck;
+
 pub(crate) const GITHUB_SERVICE: &str = "api-github";
 const MAX_CHOICES: usize = 12;
 
 pub(crate) struct VerifiedGitHubConnection {
     connection_id: String,
     catalog_id: String,
+    pub(crate) manage_url: String,
 }
 
 impl VerifiedGitHubConnection {
@@ -29,20 +33,21 @@ pub(crate) struct GitHubConnections {
     binding: Binding,
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum GitHubRepositoryNeed {
-    PublicRepositoryWrite,
-    PrivateRepositoryRead,
+pub(crate) use layer1_public::rest::GitHubRepositoryNeed;
+
+fn required_scope(need: GitHubRepositoryNeed) -> &'static str {
+    match need {
+        GitHubRepositoryNeed::PublicRepositoryWrite => "public_repo",
+        GitHubRepositoryNeed::PrivateRepositoryRead => "repo",
+    }
 }
 
-impl GitHubRepositoryNeed {
-    fn required_scope(self) -> &'static str {
-        match self {
-            Self::PublicRepositoryWrite => "public_repo",
-            Self::PrivateRepositoryRead => "repo",
-        }
-    }
+fn scope_satisfied<'a>(
+    need: GitHubRepositoryNeed,
+    mut scopes: impl Iterator<Item = &'a str>,
+) -> bool {
+    let required = required_scope(need);
+    scopes.any(|scope| matches!(scope, "repo") || scope == required)
 }
 
 #[derive(Serialize)]
@@ -83,28 +88,17 @@ impl GitHubConnections {
         let Some(scopes) = &connection.granted_scopes else {
             return GitHubScopeCheck::VerificationUnavailable;
         };
-        if !connection.active_oauth
-            || scopes.iter().any(|scope| {
-                scope.is_empty()
-                    || !scope.bytes().all(|byte| {
-                        byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'-')
-                    })
-            })
-        {
+        if !connection.active_oauth || !scopes.iter().all(|scope| valid_git_scope(scope)) {
             return GitHubScopeCheck::VerificationUnavailable;
         }
-        let required = need.required_scope();
-        if scopes
-            .iter()
-            .any(|scope| scope == "repo" || scope == required)
-        {
+        if scope_satisfied(need, scopes.iter().map(String::as_str)) {
             GitHubScopeCheck::ScopeSatisfied {
-                connection_id: id.clone(),
+                connection_id: connection.id.clone(),
             }
         } else {
             GitHubScopeCheck::InsufficientScope {
-                connection_id: id.clone(),
-                required_scope: required,
+                connection_id: connection.id.clone(),
+                required_scope: required_scope(need),
                 manage_url: connection.manage_url.clone(),
             }
         }
@@ -197,12 +191,22 @@ impl NyxidServiceConnectionBroker {
         }
         let choices = choices
             .into_iter()
-            .map(|row| (row.id.clone(), row.slug.clone()))
+            .map(|row| {
+                (
+                    row.id.clone(),
+                    row.slug.clone(),
+                    row.is_active == Some(true),
+                )
+            })
             .collect::<Vec<_>>();
         let results = futures_util::stream::iter(choices)
-            .map(|(id, slug)| async move {
+            .map(|(id, slug, active)| async move {
                 self.github_detail(&id, &slug, catalog_id, credential, deadline)
                     .await
+                    .map(|mut detail| {
+                        detail.active_oauth &= active;
+                        detail
+                    })
             })
             .buffered(4)
             .collect::<Vec<_>>()
@@ -264,6 +268,17 @@ impl NyxidServiceConnectionBroker {
         connection_id: &str,
         deadline: Instant,
     ) -> Result<VerifiedGitHubConnection, ServiceConnectionError> {
+        self.verify_github_token_for(credential, connection_id, None, deadline)
+            .await
+    }
+
+    pub(super) async fn verify_github_token_for(
+        &self,
+        credential: &SecretValue,
+        connection_id: &str,
+        need: Option<GitHubRepositoryNeed>,
+        deadline: Instant,
+    ) -> Result<VerifiedGitHubConnection, ServiceConnectionError> {
         if !valid_browser_id(connection_id) {
             return Err(ServiceConnectionError::Refused);
         }
@@ -273,39 +288,63 @@ impl NyxidServiceConnectionBroker {
             let detail = self
                 .github_detail(connection_id, &row.slug, &catalog_id, credential, deadline)
                 .await?;
-            if !valid_browser_id(&catalog_id)
-                || !detail.active_oauth
-                || !detail
-                    .granted_scopes
-                    .is_some_and(|scopes| scopes.iter().any(|scope| scope == "repo"))
-            {
-                return Err(ServiceConnectionError::Refused);
-            }
-            let response = self
-                .send(
-                    self.http
-                        .get(self.endpoint(&format!("/api/v1/proxy/{catalog_id}/user")))
-                        .query(&[("_nyxid_via", connection_id)])
-                        .bearer_auth(credential.expose()),
-                    true,
-                    Some(deadline),
-                )
-                .await?;
-            let scopes = response
-                .headers()
-                .get("x-oauth-scopes")
-                .and_then(|value| value.to_str().ok())
-                .ok_or_else(|| unavailable("selected GitHub credential scope was not observed"))?;
-            if !scopes.split(',').any(|scope| scope.trim() == "repo") {
-                return Err(ServiceConnectionError::Refused);
+            if let Some(need) = need {
+                let scope = self
+                    .observe_scope(credential, &catalog_id, &detail, need, deadline)
+                    .await?;
+                if !matches!(scope, GitHubScopeCheck::ScopeSatisfied { .. }) {
+                    return Err(ServiceConnectionError::Refused);
+                }
+            } else {
+                if !valid_browser_id(&catalog_id)
+                    || !detail.active_oauth
+                    || !detail
+                        .granted_scopes
+                        .as_ref()
+                        .is_some_and(|scopes| scopes.iter().any(|scope| scope == "repo"))
+                {
+                    return Err(ServiceConnectionError::Refused);
+                }
+                let response = self
+                    .github_user(credential, &catalog_id, connection_id, deadline)
+                    .await?;
+                let scopes = response
+                    .headers()
+                    .get("x-oauth-scopes")
+                    .and_then(|value| value.to_str().ok())
+                    .ok_or_else(|| {
+                        unavailable("selected GitHub credential scope was not observed")
+                    })?;
+                if !scopes.split(',').any(|scope| scope.trim() == "repo") {
+                    return Err(ServiceConnectionError::Refused);
+                }
             }
             Ok(VerifiedGitHubConnection {
                 connection_id: detail.id,
                 catalog_id,
+                manage_url: detail.manage_url,
             })
         })
         .await
         .map_err(|_| unavailable(PROVIDER_UNAVAILABLE))?
+    }
+
+    async fn github_user(
+        &self,
+        credential: &SecretValue,
+        catalog_id: &str,
+        connection_id: &str,
+        deadline: Instant,
+    ) -> Result<reqwest::Response, ServiceConnectionError> {
+        self.send(
+            self.http
+                .get(self.endpoint(&format!("/api/v1/proxy/{catalog_id}/user")))
+                .query(&[("_nyxid_via", connection_id)])
+                .bearer_auth(credential.expose()),
+            true,
+            Some(deadline),
+        )
+        .await
     }
 
     async fn github_detail(
@@ -368,6 +407,13 @@ fn default_binding(rows: &[protocol::UserServiceRow], catalog_id: &str) -> Bindi
         }
         _ => Binding::Unverified,
     }
+}
+
+fn valid_git_scope(scope: &str) -> bool {
+    !scope.is_empty()
+        && scope
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'-'))
 }
 
 fn valid_browser_id(id: &str) -> bool {

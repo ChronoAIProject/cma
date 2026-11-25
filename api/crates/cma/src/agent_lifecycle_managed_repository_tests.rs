@@ -116,6 +116,39 @@ async fn managed_repository_waits_before_allocation_for_both_entry_points() {
         );
     }
 
+    facade
+        .managed_repository_runtime_images
+        .set((
+            format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
+            vec![],
+        ))
+        .unwrap();
+    let incompatible = facade
+        .create(
+            &owner.caller,
+            Some(&owner),
+            None,
+            task.clone(),
+            "incompatible-runtime",
+        )
+        .await
+        .unwrap();
+    let protected = read_operation_when(&operations, &incompatible.id, |row| {
+        row.status == "waiting_for_connection"
+    })
+    .await;
+    assert!(protected.sandbox_id.is_none());
+    assert!(protected.agent_id.is_none());
+    assert!(protected.repository_access_pin.is_none());
+    assert_eq!(
+        protected.connection.unwrap().repository_access,
+        Some(layer1_public::rest::RepositoryAccessRefusal::RuntimeUnsupported),
+    );
+    assert_eq!(
+        facade.sandbox.capacity(&owner.caller).await.unwrap().live,
+        0
+    );
+
     for (key, input) in [("legacy-task", task), ("legacy-create", create)] {
         let receipt = flag_off
             .create(&owner.caller, Some(&owner), None, input, key)

@@ -26,7 +26,8 @@ pub(crate) use self::{
 };
 pub(crate) use composition::{TriggerComposition, TriggerCompositionDependencies};
 pub(crate) use connections_nyxid::{
-    GitHubConnections, GitHubRepositoryNeed, GitHubScopeCheck, GITHUB_SERVICE,
+    GitHubConnections, GitHubRepositoryCheck, GitHubRepositoryNeed, GitHubScopeCheck,
+    GITHUB_SERVICE,
 };
 pub(crate) use inline::InlineTriggerProfileMaterializer;
 pub(crate) use scheduler::LaunchScheduler;

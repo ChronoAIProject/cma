@@ -261,6 +261,16 @@ async fn repository_scope_check_is_opt_in_and_requires_the_callers_target() {
             .unwrap();
         assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), expected);
     }
+    let selection_without_operation = json!({"target":target(), "github_connection_id":"selected"});
+    assert!(matches!(
+        repository_access::report(
+            State(state.clone()),
+            AuthenticatedCaller(caller),
+            Json(serde_json::from_value(selection_without_operation).unwrap()),
+        )
+        .await,
+        Err(ConnectionError::Invalid)
+    ));
     let stranger = Caller::new(SubjectId::new("stranger"), Authorization::none());
     assert!(matches!(
         repository_access::report(

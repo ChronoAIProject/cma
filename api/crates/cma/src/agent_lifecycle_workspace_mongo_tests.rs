@@ -132,6 +132,7 @@ fn work(record: &crate::store::LifecycleRecord, existing: bool) -> ProvisionInpu
         existing_agent_id: existing.then(|| record.agent_id.clone()).flatten(),
         actor: record.input.actor.clone(),
         canary_profiles: None,
+        repository_access_pin: None,
     }
 }
 

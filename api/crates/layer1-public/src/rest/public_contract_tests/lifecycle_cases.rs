@@ -103,6 +103,7 @@ impl AgentLifecycleOperationReader for Lifecycle {
             }],
             connection: Some(AgentLifecycleConnectionRequired {
                 repository_access: None,
+                repository_scope_repair: None,
                 services: vec!["api-github".into()],
                 target: serde_json::json!({"type":"sandbox_profile","profile":{"id":"internal-sandbox","revision":1}}),
             }),

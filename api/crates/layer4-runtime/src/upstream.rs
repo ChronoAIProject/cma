@@ -12,6 +12,8 @@ use tokio::sync::RwLock;
 use crate::config::{ProxyConfig, RuntimeConfig};
 use crate::failure::{Result, RuntimeError};
 use crate::upstream_target::TargetBase;
+#[path = "github_scope_proxy.rs"]
+pub(crate) mod github_scope;
 
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CREDENTIAL_BYTES: usize = 64 * 1024;
@@ -273,8 +275,37 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
             .into_response();
     };
     let (parts, body) = request.into_parts();
+    let github_scope = credential.github_route.as_ref().and_then(|route| {
+        let scoped = route.repository_scope.as_ref()?;
+        github_scope::operation_path(state.allowed_host, state.model_proxy, &parts.uri, route)
+            .map(|path| (route, scoped, path))
+    });
+    if !github_scope::source_is_current(
+        &parts.headers,
+        github_scope.as_ref().map(|(route, _, _)| *route),
+        credential.generation,
+    ) {
+        return (StatusCode::FORBIDDEN, "GitHub source connection changed").into_response();
+    }
+    let scope_read = github_scope.as_ref().is_some_and(|(_, _, path)| {
+        state.allowed_host == Some("api.github.com")
+            && *path == github_scope::ACCESS_PATH
+            && parts.method == axum::http::Method::GET
+    });
+    if state.allowed_host == Some("api.github.com")
+        && parts.uri.path() == github_scope::ACCESS_PATH
+        && parts.method == axum::http::Method::GET
+        && !scope_read
+    {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    let route_uri = if scope_read && state.allowed_host == Some("api.github.com") {
+        &axum::http::Uri::from_static("/user")
+    } else {
+        &parts.uri
+    };
     let target = match (state.allowed_host, &credential.github_route) {
-        (Some("api.github.com"), Some(route)) => state.target.join_github(&parts.uri, route),
+        (Some("api.github.com"), Some(route)) => state.target.join_github(route_uri, route),
         (None, Some(route)) if !state.model_proxy => {
             state.target.join_selected_platform(&parts.uri, route)
         }
@@ -308,6 +339,13 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
         )
             .into_response();
     }
+    let is_write = matches!(
+        parts.method,
+        axum::http::Method::POST
+            | axum::http::Method::PUT
+            | axum::http::Method::PATCH
+            | axum::http::Method::DELETE
+    );
     let mut outbound = reqwest::Request::new(parts.method, target);
     copy_request_headers(&parts.headers, outbound.headers_mut());
     let bearer = match HeaderValue::from_str(&format!("Bearer {}", credential.value)) {
@@ -339,6 +377,24 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
             .into_response();
     }
     let status = response.status();
+    if let Some((route, scope, path)) = github_scope {
+        if scope_read {
+            return github_scope::access_report(
+                status,
+                response.headers(),
+                route,
+                scope,
+                credential.generation.unwrap_or_default(),
+            );
+        }
+        if is_write {
+            if let Some(refusal) =
+                github_scope::write_refusal(status, response.headers(), path, route, scope)
+            {
+                return refusal;
+            }
+        }
+    }
     let headers = response.headers().clone();
     let stream =
         crate::upstream_guard::guarded(response.bytes_stream(), credential.value.into_bytes());
@@ -372,7 +428,7 @@ fn allowed_request_host(request: &Request, host: &str) -> bool {
 
 pub(crate) fn copy_request_headers(source: &HeaderMap, target: &mut HeaderMap) {
     for (name, value) in source {
-        if !owned_header(name.as_str()) {
+        if !owned_header(name.as_str()) && name.as_str() != github_scope::SOURCE_AUTHORITY_HEADER {
             target.insert(name, value.clone());
         }
     }

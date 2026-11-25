@@ -102,6 +102,8 @@ pub(crate) struct InlineAgentLifecycle {
     failure_metadata_enabled: OnceLock<bool>,
     repository_preflight: OnceLock<Arc<dyn repository_preflight::RepositoryReadiness>>,
     managed_repository_preflight: OnceLock<bool>,
+    managed_repository_broker: OnceLock<Arc<crate::trigger::CmaServiceConnectionBroker>>,
+    managed_repository_runtime_images: OnceLock<(String, Vec<String>)>,
     worker_slots: Arc<tokio::sync::Semaphore>,
     tasks: LifecycleDrain,
 }
@@ -121,6 +123,7 @@ struct ProvisionInput {
     existing_agent_id: Option<String>,
     actor: Option<layer2_core::resource_access::ResourceActor>,
     canary_profiles: Option<crate::store::CanaryProfiles>,
+    repository_access_pin: Option<crate::store::RepositoryAccessPin>,
 }
 
 impl InlineAgentLifecycle {
@@ -162,6 +165,8 @@ impl InlineAgentLifecycle {
             failure_metadata_enabled: OnceLock::new(),
             repository_preflight: OnceLock::new(),
             managed_repository_preflight: OnceLock::new(),
+            managed_repository_broker: OnceLock::new(),
+            managed_repository_runtime_images: OnceLock::new(),
             worker_slots: Arc::new(tokio::sync::Semaphore::new(crate::store::DISCOVERY_BATCH)),
             tasks: LifecycleDrain::new(crate::store::DISCOVERY_BATCH + 1),
         });
@@ -202,6 +207,7 @@ impl InlineAgentLifecycle {
             existing_agent_id,
             actor,
             canary_profiles,
+            repository_access_pin,
         } = input;
         let profile_started = tokio::time::Instant::now();
         let profile_result = profiles::create_profiles(
@@ -246,13 +252,14 @@ impl InlineAgentLifecycle {
             SandboxId(id)
         } else {
             let admission_started = tokio::time::Instant::now();
-            let admission_result = validation::create_sandbox_with_fence(
+            let admission_result = admission::create_sandbox_with_fence(
                 self.sandbox.as_ref(),
                 caller,
                 sandbox_profile.clone(),
                 &request.name,
                 &lease,
                 creation_fence,
+                repository_access_pin.map(|pin| pin.connection),
             )
             .await;
             tracing::info!(

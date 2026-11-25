@@ -212,5 +212,6 @@ pub(super) fn work(record: &crate::store::LifecycleRecord) -> ProvisionInput {
         existing_agent_id: record.agent_id.clone(),
         actor: record.input.actor.clone(),
         canary_profiles: None,
+        repository_access_pin: None,
     }
 }

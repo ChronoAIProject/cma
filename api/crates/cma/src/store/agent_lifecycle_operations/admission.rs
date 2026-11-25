@@ -49,6 +49,7 @@ impl LifecycleRecord {
             sandbox_id: None,
             agent_id: None,
             repository_commit: None,
+            repository_access_pin: None,
             error: None,
             failure: None,
             connection: None,

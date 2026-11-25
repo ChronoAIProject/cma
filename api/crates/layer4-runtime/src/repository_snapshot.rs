@@ -135,12 +135,29 @@ async fn prepare_source(
         .map_err(|error| transport_failure(&operation_ref, ReadStage::ProxySetup, None, &error))?;
     let parsed = url::Url::parse(url).map_err(|_| invalid("invalid repository URL"))?;
     let repository = parsed.path().trim_matches('/').trim_end_matches(".git");
+    let authority = match &request.repository_connection_id {
+        Some(connection) => Some(
+            crate::upstream::github_scope::verify_repository_scope(&client, repository, connection)
+                .await?,
+        ),
+        None => None,
+    };
+    let source_read = |url: &str| {
+        let request = client.get(url);
+        match &authority {
+            Some(authority) => request.header(
+                crate::upstream::github_scope::SOURCE_AUTHORITY_HEADER,
+                authority,
+            ),
+            None => request,
+        }
+    };
     let endpoint = format!("http://api.github.com/repos/{repository}");
     let source_commit = if let Some(commit) = pinned_commit {
         commit.to_owned()
     } else {
         let bytes = fetch(
-            client.get(&endpoint),
+            source_read(&endpoint),
             "repository_unavailable",
             &operation_ref,
             ReadStage::Metadata,
@@ -157,8 +174,7 @@ async fn prepare_source(
                 .to_owned(),
         };
         let commits = fetch(
-            client
-                .get(format!("{endpoint}/commits"))
+            source_read(&format!("{endpoint}/commits"))
                 .query(&[("sha", reference.as_str()), ("per_page", "1")]),
             "repository_ref_not_found",
             &operation_ref,
@@ -173,6 +189,11 @@ async fn prepare_source(
             .ok_or_else(|| invalid("repository ref did not resolve to a commit"))?
             .to_owned()
     };
+    if request.repository_connection_id.is_some() && reference.as_ref() != Some(&source_commit) {
+        return Err(invalid(
+            "repository commit does not match the admitted source",
+        ));
+    }
     let path = home.join(&request.name);
     std::fs::create_dir(&path).map_err(|_| {
         RuntimeError::rejected("workspace_exists", "repository destination already exists")
@@ -180,7 +201,7 @@ async fn prepare_source(
     fs_durability::write(&path.join(".cma-source-pin"), source_commit.as_bytes())
         .map_err(io_error)?;
     let bytes = fetch(
-        client.get(format!("{endpoint}/zipball/{source_commit}")),
+        source_read(&format!("{endpoint}/zipball/{source_commit}")),
         "repository_archive_unavailable",
         &operation_ref,
         ReadStage::Archive,
