@@ -137,11 +137,12 @@ fn project(
             },
             creation,
             address: Box::new(address),
-            pending_operation: definition
-                .mutation
-                .as_ref()
-                .map(|mutation| mutation.operation.into()),
-            retirement_expected_version: management::unready_retirement_version(definition),
+            pending_operation: if current.retirement_expected_version.is_some() {
+                Some(RecordedOperation::Delete)
+            } else {
+                definition.mutation.as_ref().map(|mutation| mutation.operation.into())
+            },
+            retirement_expected_version: current.retirement_expected_version,
         }
     } else {
         ManagedRecord::Invalid

@@ -75,6 +75,14 @@ impl MongoRecords {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_worker_tracking(
+        &mut self,
+        tracking: crate::worker_credentials::WorkerCredentials,
+    ) {
+        self.worker_credentials = Some(tracking);
+    }
+
     pub(crate) fn database(&self) -> Database {
         self.db.clone()
     }
@@ -274,7 +282,9 @@ impl MongoRecords {
         }
         if self.kind == RecordKind::Channel {
             if let Some(tracking) = &self.worker_credentials {
-                tracking.record_blob(blob).await?;
+                let version = expected.unwrap_or(0).checked_add(1)
+                    .ok_or_else(|| RecordError::Rejected("invalid record revision".into()))?;
+                tracking.record_blob(id, version, blob).await?;
             }
         }
         if retention == super::retention::InteractionRetention::WhatsappReaction

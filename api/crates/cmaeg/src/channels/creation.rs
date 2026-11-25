@@ -7,7 +7,7 @@ use crate::{auth::Creator, providers::BindingResponse, records::RecordError};
 use cmaeg_core::{
     channel::{ChannelCreation, ChannelDefinition, ChannelMutationKind, ConformanceLevel},
     ids::{BindingId, RecordId},
-    seal::open_blob,
+    seal::open_retained_channel,
     ValidationError,
 };
 
@@ -43,7 +43,7 @@ pub async fn create(
     }
     let _guard = state.mutation_guard(record_id.as_str()).await;
     let fingerprint = request.fingerprint();
-    let mut current = match load_record(state, creator, &record_id).await {
+    let mut current = match load_record_for_create(state, creator, &record_id).await {
         Ok(current) => current,
         Err(ManagementError::NotFound) => {
             let binding_id = BindingId::new(format!("bnd_{}", uuid.simple()))
@@ -100,7 +100,7 @@ pub async fn create(
                     }
                 }
                 Err(RecordError::Conflict { .. }) => {
-                    load_record(state, creator, &record_id).await?
+                    load_record_for_create(state, creator, &record_id).await?
                 }
                 Err(error) => return Err(ManagementError::Record(error)),
             }
@@ -115,9 +115,7 @@ pub async fn create(
             expected: 0,
             actual: Some(current.record.version),
         })?;
-    if creation.fingerprint != fingerprint
-        || unready_retirement_version(&current.definition).is_some()
-    {
+    if creation.fingerprint != fingerprint {
         return Err(ManagementError::Conflict {
             expected: 0,
             actual: Some(current.record.version),
@@ -280,6 +278,24 @@ pub async fn load_record(
     creator: &Creator,
     id: &RecordId,
 ) -> Result<LoadedChannel, ManagementError> {
+    inspect_record(state, creator, id).await.map(|(loaded, _)| loaded)
+}
+
+async fn load_record_for_create(
+    state: &ManagementState,
+    creator: &Creator,
+    id: &RecordId,
+) -> Result<LoadedChannel, ManagementError> {
+    let (loaded, retirement) = inspect_record(state, creator, id).await?;
+    super::inspection::require_not_retired(retirement, loaded.record.version)?;
+    Ok(loaded)
+}
+
+async fn inspect_record(
+    state: &ManagementState,
+    creator: &Creator,
+    id: &RecordId,
+) -> Result<(LoadedChannel, Option<u64>), ManagementError> {
     let pointer = channel_pointer(&state.cma_base_url, id).map_err(ManagementError::Invalid)?;
     let record = state
         .records
@@ -289,8 +305,9 @@ pub async fn load_record(
             RecordError::NotFound => ManagementError::NotFound,
             other => ManagementError::Record(other),
         })?;
-    let opened = open_blob(&state.master_keys, &record.blob)
-        .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
+    let (opened, retirement) =
+        open_retained_channel(&state.master_keys, id.as_str(), record.version, &record.blob)
+            .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
     let definition: ChannelDefinition = serde_json::from_slice(&opened.payload)
         .map_err(|_| ManagementError::Internal("channel definition cannot be read".into()))?;
     if definition.owner.subject != creator.subject
@@ -313,10 +330,10 @@ pub async fn load_record(
     if recovered.payload != pointer {
         return Err(ManagementError::NotFound);
     }
-    Ok(LoadedChannel {
+    Ok((LoadedChannel {
         channel_id: creation.channel_id.clone(),
         pointer,
         definition,
         record,
-    })
+    }, retirement))
 }

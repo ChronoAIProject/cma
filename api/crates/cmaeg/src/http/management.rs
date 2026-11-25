@@ -255,8 +255,8 @@ pub async fn get_channel(
         Ok(channel_id) => channel_id,
         Err(error) => return management_error(error),
     };
-    let loaded = match management::load(&state, &creator, &channel_id).await {
-        Ok(loaded) => loaded,
+    let loaded = match management::inspect(&state, &creator, &channel_id).await {
+        Ok((loaded, _)) => loaded,
         Err(error) => return management_error(error),
     };
     let response = channel_response(

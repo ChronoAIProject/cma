@@ -1,29 +1,15 @@
 //! Channel delete and master-key rekey over sealed CMA records.
 
-use super::management::{load, load_unowned, open_pointer, seal_definition};
+use super::inspection::load_unowned;
+use super::management::{inspect, load, open_pointer, seal_definition};
 use super::state::{ManagementError, ManagementState};
 use crate::{auth::Creator, providers::ProviderError, records::RecordError};
-use base64::{engine::general_purpose::STANDARD, Engine};
 use cmaeg_core::{
-    channel::{ChannelDefinition, ChannelMutation, ChannelMutationKind},
+    channel::ChannelMutationKind,
     ids::ChannelId,
-    seal::seal_blob,
+    seal::{open_blob, seal_retired_channel},
     ValidationError,
 };
-
-const RETIRE_UNREADY: &str = "retire_unready";
-const UNCONFIRMED_CREATE: &str = "unconfirmed_create";
-
-pub(crate) fn unready_retirement_version(definition: &ChannelDefinition) -> Option<u64> {
-    definition
-        .mutation
-        .as_ref()
-        .filter(|mutation| {
-            mutation.operation == ChannelMutationKind::Delete
-                && mutation.completed.iter().any(|step| step == RETIRE_UNREADY)
-        })
-        .map(|mutation| mutation.original_version)
-}
 
 /// Retain provider cleanup without allowing the original create to activate.
 pub(crate) async fn retire_unready(
@@ -34,8 +20,7 @@ pub(crate) async fn retire_unready(
 ) -> Result<(), ManagementError> {
     let pointer = open_pointer(state, channel_id)?;
     let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
-    let current = load(state, creator, channel_id).await?;
-    let retirement_version = unready_retirement_version(&current.definition);
+    let (current, retirement_version) = inspect(state, creator, channel_id).await?;
     let version = retirement_version.unwrap_or(current.record.version);
     if version != expected_version {
         return Err(ManagementError::Conflict {
@@ -57,61 +42,34 @@ pub(crate) async fn retire_unready(
     if retirement_version.is_some() {
         return Ok(());
     }
-    let mut definition = current.definition;
-    let mut mutation = match definition.mutation.take() {
-        Some(previous)
-            if matches!(
-                previous.operation,
-                ChannelMutationKind::Create | ChannelMutationKind::Delete
-            ) =>
-        {
-            previous
-        }
-        Some(_) => {
-            return Err(ManagementError::Conflict {
-                expected: expected_version,
-                actual: Some(version),
-            });
-        }
-        None => {
-            // The enclosing record retains the entire target. This hold has
-            // no dispatchable provider step and commits to that target by digest.
-            let target = super::mutation::fingerprint(&definition);
-            let intended = seal_blob(&state.master_keys, target.as_bytes()).map_err(|_| {
-                ManagementError::Internal("retirement target cannot be sealed".into())
-            })?;
-            ChannelMutation {
-                nonce: uuid::Uuid::new_v4().to_string(),
-                operation_id: uuid::Uuid::new_v4().to_string(),
-                operation: ChannelMutationKind::Delete,
-                original_version: version,
-                fingerprint: String::new(),
-                intended: STANDARD.encode(intended),
-                completed: Vec::new(),
-                effect: None,
-            }
-        }
-    };
-    // Store the original provider effect and target. Change the operation so
-    // readers reject activation even when their local custody switch is off.
-    mutation.nonce = uuid::Uuid::new_v4().to_string();
-    mutation.operation = ChannelMutationKind::Delete;
-    mutation.original_version = version;
-    mutation.fingerprint = format!("{version:064x}");
-    // A tracked reservation cannot prove that an earlier replica used custody.
-    // The retirement marker retains that obligation independently of the tracked
-    // effect. A hold in the existing effect field also fences older readers.
-    mutation.completed.push(RETIRE_UNREADY.into());
-    mutation
-        .effect
-        .get_or_insert_with(|| UNCONFIRMED_CREATE.into());
-    definition.mutation = Some(mutation);
-    definition.validate().map_err(ManagementError::Invalid)?;
-    let blob = seal_definition(&state.master_keys, &definition)?;
+    if current.definition.mutation.as_ref().is_some_and(|mutation| {
+        !matches!(mutation.operation, ChannelMutationKind::Create | ChannelMutationKind::Delete)
+    }) {
+        return Err(ManagementError::Conflict {
+            expected: expected_version,
+            actual: Some(version),
+        });
+    }
+    let successor = version.checked_add(1).ok_or_else(|| {
+        ManagementError::Internal("channel record version exhausted".into())
+    })?;
+    let record_id = &current.definition.record_id;
+    let opened = open_blob(&state.master_keys, &current.record.blob)
+        .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
+    // Retain the complete creation and cleanup state, including any tracked
+    // effect and the unresolved possibility of an earlier untracked bind.
+    // Ordinary readers refuse this seal kind before any provider or record write.
+    let blob = seal_retired_channel(
+        &state.master_keys,
+        record_id.as_str(),
+        successor,
+        &opened.payload,
+    )
+    .map_err(|_| ManagementError::Internal("retired channel cannot be sealed".into()))?;
     let stored_version = match state
         .records
         .put(
-            &definition.record_id,
+            record_id,
             &creator.subject,
             &blob,
             Some(current.record.version),
@@ -121,8 +79,8 @@ pub(crate) async fn retire_unready(
         Ok(stored_version) => stored_version,
         Err(error) => {
             // A retry may have committed the same retirement under a prior request.
-            let saved = load(state, creator, channel_id).await?;
-            if unready_retirement_version(&saved.definition) != Some(expected_version) {
+            let (saved, retirement) = inspect(state, creator, channel_id).await?;
+            if retirement != Some(expected_version) {
                 return Err(error.into());
             }
             saved.record.version
@@ -130,7 +88,7 @@ pub(crate) async fn retire_unready(
     };
     state
         .index
-        .changed(&definition.record_id, &creator.subject, stored_version);
+        .changed(record_id, &creator.subject, stored_version);
     state.resolver.invalidate(channel_id.as_str());
     Ok(())
 }
@@ -146,7 +104,6 @@ pub async fn delete(
     let current = load(state, creator, channel_id).await?;
     if super::mutation::original_version(&current.definition, current.record.version)
         != expected_version
-        || unready_retirement_version(&current.definition).is_some()
     {
         return Err(ManagementError::Conflict {
             expected: expected_version,

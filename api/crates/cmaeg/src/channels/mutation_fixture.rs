@@ -9,7 +9,7 @@ use axum::{
     extract::{Path, State},
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
-    routing::put,
+    routing::{get, put},
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -63,6 +63,7 @@ impl Fixture {
         let base = format!("http://{}", listener.local_addr().unwrap());
         let app = Router::new()
             .route("/bindings/{id}", put(provider).delete(provider))
+            .route("/api/v1/gateway/channel-records", get(list))
             .route(
                 "/api/v1/gateway/channel-records/{id}",
                 put(save).get(load).delete(delete),
@@ -94,8 +95,19 @@ impl Fixture {
         let records = match &self.mongo {
             Some(mongo) => mongo.records(&self.base).await,
             None => RecordClient::new(&self.base, "fixture-service").unwrap(),
-        }
-        .with_channel_mutation_custody(custody);
+        };
+        self.with_records(records, custody)
+    }
+    pub async fn state_with_tracking(
+        &self,
+        tracking: crate::worker_credentials::WorkerCredentials,
+    ) -> ManagementState {
+        let records = self.mongo.as_ref().unwrap()
+            .records_with_tracking(&self.base, Some(tracking)).await;
+        self.with_records(records, self.custody)
+    }
+    fn with_records(&self, records: RecordClient, custody: bool) -> ManagementState {
+        let records = records.with_channel_mutation_custody(custody);
         let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":self.base,"kind":"responses_http","paths":{"agent_card":"/card","binding":"/bindings/{binding_id}","conversation":"/bindings/{binding_id}/conversations/{conversation_id}","responses":"/responses"},"max_inflight":8}]).to_string()).unwrap();
         ManagementState::new(
             Arc::new(
@@ -247,4 +259,12 @@ async fn delete(
     }
     rows.remove(&id);
     StatusCode::NO_CONTENT.into_response()
+}
+
+async fn list(State(peer): State<Peer>) -> Json<Value> {
+    let rows = peer.rows.lock().unwrap();
+    let items: Vec<_> = rows.iter().map(|(id, row)| {
+        json!({"record_id": id, "owner": row["owner"], "version": row["version"]})
+    }).collect();
+    Json(json!({"items": items}))
 }
