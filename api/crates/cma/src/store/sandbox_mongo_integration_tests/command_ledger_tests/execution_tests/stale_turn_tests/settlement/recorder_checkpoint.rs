@@ -330,6 +330,7 @@ async fn open_receipt(Json(request): Json<RequestFrame>) -> Json<ResponseFrame> 
     let RequestFrame::OpenAgent(FencedRequest {
         authority_fence,
         request,
+        restart_runtime: None,
     }) = request
     else {
         panic!("expected an open request");
