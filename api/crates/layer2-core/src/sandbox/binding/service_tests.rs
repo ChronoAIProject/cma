@@ -463,6 +463,31 @@ async fn binding_rejects_invalid_credential_before_reserving_the_identifier() {
     assert!(f.custody.keys.lock().unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn binding_rejects_missing_environment_before_reserving_or_retaining_credentials() {
+    let f = fixture();
+    for remove in [true, false] {
+        let mut value = profile("Instruction");
+        if remove {
+            value.as_object_mut().unwrap().remove("environment");
+        } else {
+            value["environment"] = serde_json::Value::Null;
+        }
+        let digest = format!("sha256:{}", content_digest(&value).unwrap());
+        assert!(matches!(
+            f.service
+                .put(&f.caller, "binding-one", value, &digest, &f.key)
+                .await,
+            Err(BindingError::InvalidRequest(_))
+        ));
+        assert!(f.store.binding("binding-one").await.unwrap().is_none());
+        assert!(f.custody.keys.lock().unwrap().is_empty());
+        assert!(f.custody.values.lock().unwrap().is_empty());
+    }
+    let binding = f.ready().await;
+    assert_eq!(binding.state, BindingState::Ready);
+}
+
 mod access;
 mod rotation;
 
