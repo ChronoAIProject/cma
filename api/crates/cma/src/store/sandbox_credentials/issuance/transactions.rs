@@ -1,7 +1,9 @@
 use super::*;
 use crate::store::sandbox_mongo::is_transient;
 use crate::store::transaction_terminal::GuardedTerminal as _;
-use mongodb::error::{Error, ErrorKind, WriteFailure};
+use mongodb::error::{
+    Error, ErrorKind, WriteFailure, TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT,
+};
 
 const ACCEPTANCE_START_ATTEMPTS: usize = 3;
 const WRITE_CONFLICT: i32 = 112;
@@ -35,24 +37,37 @@ pub(super) async fn start_acceptance(
 ) -> Result<ClientSession, CredentialCustodyError> {
     // The provider result is already in memory. A confirmed abort while
     // acquiring the Mongo fence permits another snapshot under the same claim.
-    for _ in 1..ACCEPTANCE_START_ATTEMPTS {
-        match start_once(store, sandbox).await {
-            Err(StartError::Driver(error)) if server_aborted_opening(&error) => continue,
+    let mut attempt = 1;
+    loop {
+        let error = match start_once(store, sandbox).await {
+            Err(StartError::Driver(error)) => error,
             result => return result.map_err(StartError::into_custody),
+        };
+        // The driver also labels transport errors as transient. Require the
+        // server's write-conflict response before acquiring a fresh fence.
+        let driver_code = match error.kind.as_ref() {
+            ErrorKind::Command(command) => Some(command.code),
+            ErrorKind::Write(WriteFailure::WriteError(write)) => Some(write.code),
+            _ => None,
+        };
+        if attempt == ACCEPTANCE_START_ATTEMPTS
+            || driver_code != Some(WRITE_CONFLICT)
+            || !is_transient(&error)
+        {
+            tracing::warn!(
+                sandbox_id = %sandbox.id,
+                attempt,
+                driver_code,
+                transient_transaction = error.contains_label(TRANSIENT_TRANSACTION_ERROR),
+                unknown_commit = error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT),
+                "credential acceptance authority could not be opened"
+            );
+            return Err(unavailable(error));
         }
+        tracing::debug!(sandbox_id = %sandbox.id, attempt, driver_code,
+            "retrying credential acceptance after a confirmed write conflict");
+        attempt += 1;
     }
-    start(store, sandbox).await
-}
-
-fn server_aborted_opening(error: &Error) -> bool {
-    // The driver also labels transport errors as transient. Require the
-    // server's write-conflict response before acquiring a fresh fence.
-    is_transient(error)
-        && match error.kind.as_ref() {
-            ErrorKind::Command(command) => command.code == WRITE_CONFLICT,
-            ErrorKind::Write(WriteFailure::WriteError(write)) => write.code == WRITE_CONFLICT,
-            _ => false,
-        }
 }
 
 async fn start_once(
