@@ -36,6 +36,7 @@ pub(crate) struct AgentProjectionServices {
     skill_support: Option<Arc<dyn layer1_public::rest::AgentSkillRuntimeSupport>>,
     commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
     agents: Arc<AgentService>,
+    owner_agent_restart: Option<Arc<layer2_core::sandbox::AgentRestartService>>,
     operations: Arc<AgentOperationService>,
     reads: Arc<AgentReadService>,
     lifecycle: Option<Arc<dyn AgentLifecycleProvisioner>>,
@@ -86,6 +87,14 @@ impl AgentProjectionServices {
         commands: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
     ) -> Self {
         self.commands = Some(commands);
+        self
+    }
+
+    pub(crate) fn with_owner_agent_restart(
+        mut self,
+        service: Arc<layer2_core::sandbox::AgentRestartService>,
+    ) -> Self {
+        self.owner_agent_restart = Some(service);
         self
     }
 
@@ -184,6 +193,7 @@ impl AgentProjectionServices {
             skill_support: None,
             commands: None,
             agents,
+            owner_agent_restart: None,
             operations,
             reads,
             lifecycle: None,

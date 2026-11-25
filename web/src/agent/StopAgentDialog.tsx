@@ -111,9 +111,8 @@ export function StopAgentDialog({
         }
       >
         <p>
-          Stopping this Agent closes it permanently and ends its active work. It cannot be
-          restarted. Its conversation history and Worktree are retained. Delete remains a separate
-          action.
+          Stopping this Agent ends its active work. Its conversation history and Worktree are
+          retained. Delete remains a separate action.
         </p>
         <p>{STOP_RESPONSE_GUIDANCE}</p>
       </Modal>

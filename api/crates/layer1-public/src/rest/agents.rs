@@ -55,6 +55,10 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
         )
         .route("/api/v1/agents/{id}", get(read).delete(delete_agent))
         .route(
+            "/api/v1/agents/{id}/restart",
+            post(super::owner_agent_restart::restart),
+        )
+        .route(
             "/api/v1/agents/{id}/suggestions",
             get(super::suggestions::read),
         )
@@ -257,22 +261,37 @@ pub(crate) async fn read(
     } else {
         AgentDetailReading::Personal(Box::new(state.reads.lineage(&caller, &id).await?))
     };
-    let (view, private) = match (detail, state.sandbox_profile_readability.as_deref()) {
-        (AgentDetailReading::Personal(lineage), Some(profiles)) => {
-            let pinned = &lineage.sandbox.profile;
-            let readable =
+    let (view, private) = match detail {
+        AgentDetailReading::Personal(lineage) => {
+            let readable = if let Some(profiles) = state.sandbox_profile_readability.as_deref() {
+                let pinned = &lineage.sandbox.profile;
                 match readable_revision(profiles, &caller, pinned.id.as_str(), pinned.revision)
                     .await
                 {
                     Ok(revision) => Some(revision.digest == pinned.digest),
                     Err(ProfileProblem::Forbidden | ProfileProblem::NotFound) => Some(false),
                     Err(_) => None,
-                };
-            let view =
+                }
+            } else {
+                None
+            };
+            let restart_available = state.owner_agent_restart.is_some()
+                && lineage.agent.owner == caller.subject
+                && caller.authorization.allows(Capability::UseOwnSandboxes)
+                && lineage.sandbox.status == layer2_core::sandbox::SandboxStatus::Active
+                && lineage
+                    .agent
+                    .admit_owner_restart(&lineage.worktree, layer2_core::now_rfc3339())
+                    .is_ok();
+            let mut view =
                 AgentView::from_lineage(*lineage, None).with_sandbox_profile_readability(readable);
-            (AccessibleAgentView::Personal(Box::new(view)), true)
+            view.restart_available = restart_available.then_some(true);
+            (
+                AccessibleAgentView::Personal(Box::new(view)),
+                restart_available || state.sandbox_profile_readability.is_some(),
+            )
         }
-        (detail, _) => (AccessibleAgentView::from(detail), false),
+        detail => (AccessibleAgentView::from(detail), false),
     };
     let body = Json(view.with_agent_page(&state.agent_page_origin));
     let mut response = body.into_response();

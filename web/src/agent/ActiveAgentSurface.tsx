@@ -372,6 +372,7 @@ export function ActiveAgentSurface({
             user={user}
           />
           <Composer
+            onRestart={readOnly || !detail.restartAvailable ? undefined : controller.restart}
             editorRef={editing.editorRef}
             suggestionScope={
               !readOnly && verified && !historyIncomplete ? suggestions?.id : undefined

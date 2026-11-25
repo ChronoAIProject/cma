@@ -22,6 +22,10 @@ impl AgentProjectionServices {
             Arc::clone(&self.operations),
             operation_records,
         );
+        let agent_routes = match &self.owner_agent_restart {
+            Some(service) => agent_routes.with_owner_agent_restart(service.clone()),
+            None => agent_routes,
+        };
         #[cfg(feature = "qualification-hooks")]
         let agent_routes = match &self.qualification {
             Some(registry) => agent_routes.with_control_checkpoint(registry.clone()),

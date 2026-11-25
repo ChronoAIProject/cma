@@ -2,8 +2,11 @@ mod binding;
 mod control;
 mod creation;
 mod launch;
+#[path = "owner_agent_restart_service.rs"]
+mod restart;
 mod support;
 use launch::CreationAttribution;
+pub use restart::{AgentRestartControl, AgentRestartObservation, AgentRestartService};
 use support::{
     control_error, creation_key, profile_error, require, require_launch, store_error,
     validate_title,

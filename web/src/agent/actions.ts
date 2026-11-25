@@ -1,21 +1,17 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import type { AgentActionOptions } from './actionOptions';
 import type { InputErrorOwner } from './actionError';
-import type { AgentCommand, ApprovalDecision } from './controller';
-import type { MessageAcceptance } from './controllerTypes';
+import type { AgentCommand, ApprovalDecision, MessageAcceptance } from './controllerTypes';
 import { ApiError, type AnswerContext } from '@cma/client';
 import { isLegacySuggestionRefusal, stoppedInputMessage } from './controllerError';
+import { agentRestartReady } from './controlReadiness';
+import { runId } from './transport/runId';
 import { submitV2Control, recoverV2Control } from './transport/controls';
 import {
   submitV2Interruption,
   recoverV2Interruption,
   InterruptionNotSubmittedError,
 } from './transport/interruption';
-function runId(): string {
-  return typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `run-${String(Date.now())}-${String(Math.random()).slice(2)}`;
-}
 export function useAgentActions({
   agentId,
   client,
@@ -361,7 +357,11 @@ export function useAgentActions({
       requireStop = false,
     ) => {
       const mayPreemptSend = name === 'interrupt' && actionKindRef.current === 'send';
-      if (currentContext.current !== context || commandsBlocked || currentCommandsBlocked.current) {
+      const ready =
+        name === 'restart'
+          ? agentRestartReady(stateRef.current, agentId)
+          : !commandsBlocked && !currentCommandsBlocked.current;
+      if (currentContext.current !== context || !ready) {
         if (requireStop)
           throw new Error('Agent activity is still loading. Try again when it is available.');
         return;

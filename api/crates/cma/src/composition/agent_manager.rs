@@ -20,6 +20,26 @@ pub(super) async fn register(
     }
 }
 
+pub(super) fn owner_restart(
+    config: &Config,
+    stores: &MongoStores,
+    adapter: &Arc<dyn layer3_adapter::SandboxAdapter>,
+    projections: AgentProjectionServices,
+) -> AgentProjectionServices {
+    if !config.features.owner_agent_restart_enabled
+        || !config.features.owner_stop_settlement_enabled
+    {
+        return projections;
+    }
+    projections.with_owner_agent_restart(layer2_core::sandbox::AgentRestartService::new(
+        stores.sandbox_model.clone(),
+        Arc::new(crate::sandbox::agent_process_proof::RestartObservation {
+            adapter: adapter.clone(),
+            deployment_id: config.deployment_id.clone(),
+        }),
+    ))
+}
+
 pub(super) fn relay(
     config: &Config,
     manager: &Option<Arc<crate::agent_manager::AgentManager>>,

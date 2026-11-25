@@ -28,6 +28,7 @@ import {
 } from './transport/approvalProjectionObserver';
 import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
+import { lifecycleCommands } from './lifecycleCommands';
 import { useAgentActionError, useAgentIdentityChange } from './actionError';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedInputs } from './transport/queuedInputsStatus';
@@ -426,12 +427,6 @@ export function useAgentController(
       ? state.conversation.messages
       : undefined,
   );
-  const interruptTurn = (strict: boolean) =>
-    command(
-      'interrupt',
-      (id, key, signal) => client.interruptAgent(id, { idempotencyKey: key, signal }),
-      strict,
-    );
   return {
     retained,
     ...retainedInputs,
@@ -473,13 +468,6 @@ export function useAgentController(
         : (content, onAccepted, onReceiptObserved, onRefused, onOrdinaryInput) =>
             run(content, onAccepted, onReceiptObserved, onRefused, 'interrupt', onOrdinaryInput),
     approve: (approvalId, decision) => run({ id: approvalId, decision }),
-    interruptForControl: () => interruptTurn(true),
-    interrupt: () => interruptTurn(false),
-    stop: () =>
-      command('stop', (id, key, signal) => client.stopAgent(id, { idempotencyKey: key, signal })),
-    delete: () =>
-      command('delete', (id, key, signal) =>
-        client.deleteAgent(id, { idempotencyKey: key, signal }),
-      ),
+    ...lifecycleCommands(client, command),
   };
 }

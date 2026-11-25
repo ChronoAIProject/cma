@@ -403,6 +403,15 @@ export class Agents extends AgentDeliverables {
     return this.operate(id, '/stop', 'POST', options, input(stopAgentRequest, body));
   }
 
+  restart(id: string, options: CommandOptions) {
+    return read(
+      this.config,
+      `/api/v1/agents/${segment(id)}/restart`,
+      object({ agent_id: text, worktree_id: text, operation_id: text, accepted_at: text }),
+      { ...command(options), method: 'POST', expectedStatus: 202 },
+    );
+  }
+
   delete(id: string, options: CommandOptions) {
     return this.operate(id, '', 'DELETE', options);
   }

@@ -285,6 +285,7 @@ export interface AgentDetail {
   readonly firstMessage?: FirstMessageState;
   readonly failure?: Failure;
   readonly stopReason?: string;
+  readonly restartAvailable?: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly readyAt?: string;
