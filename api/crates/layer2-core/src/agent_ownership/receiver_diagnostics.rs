@@ -19,11 +19,19 @@ fn digest(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
 }
 
+/// Retain lineage from an existing Agent read under its exact execution authority.
+pub fn observe_agent_sandbox(agent: &AgentId, sandbox: &crate::SandboxId) {
+    if let Some(authority) = super::execution_authority().filter(|a| a.token.agent_id == *agent) {
+        authority.observe_diagnostic_sandbox(sandbox.as_str());
+    }
+}
+
 pub struct Correlation {
     pub agent_sha256: String,
     pub sandbox_sha256: Option<String>,
     pub instance_sha256: String,
     pub receiver_sha256: Option<String>,
+    pub epoch: Option<u64>,
 }
 
 impl Correlation {
@@ -33,6 +41,7 @@ impl Correlation {
             sandbox_sha256: sandbox.map(digest),
             instance_sha256: digest(instance),
             receiver_sha256: None,
+            epoch: None,
         }
     }
 }
@@ -54,6 +63,7 @@ impl Authority {
         let mut fields = Correlation::new(&self.token.agent_id, None, &self.token.instance_id);
         fields.sandbox_sha256 = self.sandbox_sha256.get().cloned();
         fields.receiver_sha256 = receiver.map(digest);
+        fields.epoch = Some(self.token.epoch);
         fields
     }
 

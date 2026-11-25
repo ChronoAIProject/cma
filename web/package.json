@@ -13,6 +13,7 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:approval-contract": "vitest run --mode approval-contract",
     "e2e": "playwright test --config e2e/playwright.config.ts",
     "e2e:mechanics": "playwright test --config e2e/mechanics.config.ts",
     "e2e:typecheck": "tsc --project e2e/tsconfig.json",

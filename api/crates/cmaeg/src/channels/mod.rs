@@ -12,6 +12,7 @@ pub mod definition;
 mod definition_sources;
 mod github_sources;
 pub(crate) use definition_sources::check_github_sources;
+mod inspection;
 mod lifecycle;
 pub mod management;
 pub(crate) mod mutation;
@@ -50,3 +51,5 @@ mod mutation_bounds_tests;
 mod mutation_fixture;
 #[cfg(test)]
 mod mutation_tests;
+#[cfg(test)]
+mod setup_refusal_tests;

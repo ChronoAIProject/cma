@@ -5,6 +5,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
   type Ref,
 } from 'react';
 import { RetiredAgentRow } from './PersonalAgentTree';
@@ -88,6 +89,7 @@ function ViewerNavigation({
   deletingSandboxIds,
   onScope,
   onViewDeletion,
+  deletionNotice,
   onNavigate,
   onRestoreTaskRoute = onNavigate,
   onAgentIntent,
@@ -117,6 +119,7 @@ function ViewerNavigation({
   readonly deletingSandboxIds: ReadonlySet<string>;
   readonly onScope: (scope: string) => void;
   readonly onViewDeletion: (id: string) => void;
+  readonly deletionNotice?: ReactNode;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onRestoreTaskRoute?: (route: AppRoute) => void;
   readonly onAgentIntent?: (agentId: string, active: boolean) => void;
@@ -384,6 +387,7 @@ function ViewerNavigation({
           Filters apply now but cannot be remembered after refresh.
         </p>
       ) : null}
+      {view === 'sandbox' && !sidebar?.collapsed ? deletionNotice : null}
       <div
         ref={scrollport}
         className="manager-navigation__list"

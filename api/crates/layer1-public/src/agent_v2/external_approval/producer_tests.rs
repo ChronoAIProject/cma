@@ -14,6 +14,15 @@ use serde_json::{json, Value};
 use std::time::{Duration, UNIX_EPOCH};
 use tower::ServiceExt;
 
+fn approval_headers(headers: &axum::http::HeaderMap) -> Value {
+    json!({
+        "Content-Type": headers["content-type"].to_str().unwrap(),
+        "Preference-Applied": headers["preference-applied"].to_str().unwrap(),
+        "CMA-Approval-Review-Origin": headers["cma-approval-review-origin"].to_str().unwrap(),
+        "CMA-External-Approval-Action": headers["cma-external-approval-action"].to_str().unwrap()
+    })
+}
+
 async fn read(f: &Fixture, path: &str) -> (axum::http::HeaderMap, Vec<u8>) {
     let mut request = request(Method::GET, path, "owner-a", None, None);
     request
@@ -136,7 +145,7 @@ async fn committed_approval_timeout_projects_the_same_order_in_snapshot_and_repl
 
         let (headers, body) = read(&f, SNAPSHOT).await;
         let pending: Value = serde_json::from_slice(&body).unwrap();
-        let (_, body) = read(&f, &format!("{EVENTS}/head")).await;
+        let (head_headers, body) = read(&f, &format!("{EVENTS}/head")).await;
         let head: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(head["through_cursor"], pending["through_cursor"]);
         let rows = pending["items"].as_array().unwrap();
@@ -206,7 +215,7 @@ async fn committed_approval_timeout_projects_the_same_order_in_snapshot_and_repl
                 .unwrap();
         f.store.commit_turn_timeout(&settlement).await.unwrap();
         f.store.commit_turn_timeout(&settlement).await.unwrap();
-        let (_, body) = read(&f, SNAPSHOT).await;
+        let (terminal_headers, body) = read(&f, SNAPSHOT).await;
         let terminal: Value = serde_json::from_slice(&body).unwrap();
         let prefix = pending["items"].as_array().unwrap();
         let all = terminal["items"].as_array().unwrap();
@@ -331,19 +340,22 @@ async fn committed_approval_timeout_projects_the_same_order_in_snapshot_and_repl
         ] {
             assert!(!wire.contains(private));
         }
+        let after = pending["through_cursor"].as_str().unwrap();
+        let (stream_headers, resumed_wire) =
+            read(&f, &format!("{EVENTS}?follow=false&after_cursor={after}")).await;
         println!(
             "EXTERNAL_APPROVAL_PRODUCER_FIXTURE {}",
             json!({
                 "buffered": buffered,
                 "fraction_ms": fraction_ms,
-                "response_headers": {
-                    "Preference-Applied": headers["preference-applied"].to_str().unwrap(),
-                    "CMA-Approval-Review-Origin": headers["cma-approval-review-origin"].to_str().unwrap(),
-                    "CMA-External-Approval-Action": headers["cma-external-approval-action"].to_str().unwrap()
-                },
+                "response_headers": approval_headers(&headers),
+                "head_headers": approval_headers(&head_headers),
+                "terminal_headers": approval_headers(&terminal_headers),
+                "stream_headers": approval_headers(&stream_headers),
                 "waiting_snapshot": pending,
-            "waiting_head": head,
+                "waiting_head": head,
                 "terminal_snapshot": terminal,
+                "resumed_stream": String::from_utf8(resumed_wire).unwrap(),
                 "replayed_events": events
             })
         );

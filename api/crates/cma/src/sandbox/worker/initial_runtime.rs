@@ -20,6 +20,22 @@ pub(super) fn installation_request(sandbox: &Sandbox) -> Option<InstallRequest> 
     ))
 }
 
+/// The immutable profile keeps the qualified image selected by this creation
+/// operation even after the Agent release advances.
+pub(super) fn managed_desktop_creation_release(
+    sandbox: &Sandbox,
+) -> Option<layer3_adapter::ReleasedRuntime> {
+    if !sandbox.has_managed_desktop_image() {
+        return None;
+    }
+    Some(layer3_adapter::ReleasedRuntime {
+        revision: 0,
+        agent: sandbox.profile.content.runtime_image.clone()?,
+        machine: None,
+        lane_revisions: None,
+    })
+}
+
 impl SandboxWorker {
     pub(super) async fn initial_runtime_release(
         &self,
@@ -28,6 +44,11 @@ impl SandboxWorker {
         generation: u64,
     ) -> Result<(Option<layer3_adapter::ReleasedRuntime>, String), SandboxStoreError> {
         let (mut released, mut runtime_version) = self.config.release_for(spec);
+        if let Some(admitted) = managed_desktop_creation_release(sandbox) {
+            if spec.runtime_image.as_deref() == Some(admitted.agent.as_str()) {
+                return Ok((Some(admitted), runtime_version));
+            }
+        }
         if spec.runtime_image.is_none()
             && released
                 .as_ref()

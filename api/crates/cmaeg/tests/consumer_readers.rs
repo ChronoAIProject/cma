@@ -23,6 +23,10 @@ const ALLOWED: &[(&str, &str)] = &[
         "storage: delete and rekey act on the stored binding",
     ),
     (
+        "channels/create_cleanup_tests.rs",
+        "storage fixtures: exercise incomplete records and retained credentials",
+    ),
+    (
         "channels/creation.rs",
         "storage: creation binds the stored provider",
     ),

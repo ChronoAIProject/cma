@@ -170,7 +170,10 @@ impl AgentModelCatalog for ChronoAgentModels {
                 Reason::CredentialMismatch,
             ));
         }
-        let fetch = || self.fetch(service, material.value.expose());
+        let fetch = || async {
+            validate_expiry(sandbox)?;
+            self.fetch(service, material.value.expose()).await
+        };
         let result = match &self.cache {
             Some(cache) => cache.get(sandbox, service, fetch).await,
             None => fetch().await,

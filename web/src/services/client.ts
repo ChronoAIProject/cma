@@ -14,6 +14,7 @@ export class ServiceError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -35,13 +36,15 @@ export async function serviceRequest<T>(
   });
   if (!response.ok) {
     let detail = `Service request failed (${response.status}).`;
+    let code: string | undefined;
     try {
-      const body = (await response.json()) as { detail?: string };
+      const body = (await response.json()) as { detail?: string; code?: string };
       if (typeof body.detail === 'string') detail = body.detail;
+      if (typeof body.code === 'string') code = body.code;
     } catch {
       /* Status remains authoritative. */
     }
-    throw new ServiceError(response.status, detail);
+    throw new ServiceError(response.status, detail, code);
   }
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
 }

@@ -149,9 +149,12 @@ async fn deletion_retry_requires_complete_fresh_absence_after_a_lingering_origin
     for partial in [false, true] {
         let (handle, _, pods) = pod_read_tests::ready();
         let mut absent_pods = list("PodList");
+        let mut pod_reads = vec![(200, pods)];
         if partial {
             absent_pods["metadata"]["continue"] = json!("another-page");
+            pod_reads.push((200, absent_pods.clone()));
         }
+        pod_reads.push((200, absent_pods));
         let reads = Observations::new(
             vec![
                 (404, missing()),
@@ -159,17 +162,20 @@ async fn deletion_retry_requires_complete_fresh_absence_after_a_lingering_origin
                 (200, list("SandboxList")),
                 (200, list("SandboxList")),
             ],
-            vec![(200, pods), (200, absent_pods)],
+            pod_reads,
         );
         let result = reads.client.delete(&handle).await;
+        let mut expected = vec!["sandbox", "pvc", "sandbox", "pods", "sandbox", "pods"];
         if partial {
             assert!(matches!(result, Err(AdapterError::Unavailable(_))));
+            expected.push("pods");
+            assert!(reads.calls.lock().unwrap()[6]
+                .query()
+                .unwrap()
+                .contains("continue=another-page"));
         } else {
             result.unwrap();
         }
-        assert_eq!(
-            reads.order(),
-            ["sandbox", "pvc", "sandbox", "pods", "sandbox", "pods"]
-        );
+        assert_eq!(reads.order(), expected);
     }
 }
