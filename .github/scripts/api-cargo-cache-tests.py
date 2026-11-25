@@ -215,12 +215,13 @@ class CacheTests(unittest.TestCase):
         self.assertIn(f"max_expanded={bound}", compact)
         self.assertIn(f"max_compressed={cache.MAX_ARCHIVE_BYTES}", compact)
         self.assertIn('"$registry" -cf - $skip_src .', compact)
-        self.assertIn('"$target" -cf - .', compact)
+        self.assertIn("target_entry=.\n", compact)
+        self.assertIn('"$target" -cf - "$target_entry"', compact)
         self.assertIn('"$target" -cf - "$@"', compact)
         self.assertNotIn("rm -rf /cache", compact)
         legacy = cache.dockerfile("extract", bound, compact_registry=True, incremental_only=True)
         self.assertIn("--exclude=./src", legacy)
-        self.assertIn("tar -C /cache/target -cf - ./release/incremental", legacy)
+        self.assertIn("target_entry=./release/incremental\n", legacy)
 
     def test_am_compaction_restores_complete_groups_and_cross_group_links(self):
         import os

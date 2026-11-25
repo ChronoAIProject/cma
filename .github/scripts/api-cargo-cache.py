@@ -270,6 +270,7 @@ def dockerfile(operation, max_content=None, *, compact_registry=False, max_archi
             MAX_CONTENT_BYTES if max_content is None else max_content,
             MAX_ARCHIVE_BYTES if max_archive is None else max_archive,
             MAX_MEMBERS,
+            incremental_only=incremental_only,
         )
         return (header + f"RUN --network=none {mounts} <<'CACHE_EXPORT'\n"
                 + 'set -eu\nset -- /cache/registry /cache/target /out\n'
