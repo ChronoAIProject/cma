@@ -119,7 +119,7 @@ test('Agent navigation reports the first H1 of the committed main document', { t
     }, path);
   }
   await assert.rejects(navigate('/superseded-heading'), {
-    code: 1, stdout: /^\{"error":"browser_(navigation_unconfirmed|disconnected)"\}$/,
+    code: 1, stdout: /^\{"error":"browser_navigation_(unconfirmed|failed)"\}$/,
   });
   const status = await browser.call({ operation: 'status' });
   assert.equal(Object.hasOwn(status, 'first_heading'), false);

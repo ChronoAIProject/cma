@@ -221,8 +221,11 @@ const agent = createServer(async (request, response) => {
     response.setHeader('content-type', 'application/json');
     response.end(JSON.stringify(result));
   } catch (error) {
-    const code = error.code?.startsWith('browser_') ? error.code
-      : browser?.closed ? 'browser_disconnected' : 'browser_request_failed';
+    let code = error?.code;
+    if (typeof code !== 'string' || !code.startsWith('browser_')) {
+      if (browser?.closed) code = 'browser_disconnected';
+      else code = request.url === '/navigate' ? 'browser_navigation_failed' : 'browser_request_failed';
+    }
     response.setHeader('content-type', 'application/json');
     if (code === 'browser_navigation_invalid') {
       response.writeHead(400).end(JSON.stringify({ error: code, message: navigationHelp }));
