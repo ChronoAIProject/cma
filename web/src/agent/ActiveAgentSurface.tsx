@@ -98,6 +98,7 @@ export function ActiveAgentSurface({
   let draftJournal: AgentTransportJournal | undefined;
   if (
     accessAuthorized &&
+    !connection.ownerMismatch &&
     !readOnly &&
     viewerId !== undefined &&
     state.status === 'ready' &&
@@ -398,6 +399,7 @@ export function ActiveAgentSurface({
             controlReady={controlReady}
             verified={verified !== undefined}
             draftJournal={draftJournal}
+            draftIdentityCurrent={connection.ownerIdentityCurrent}
             draftBlocked={draft?.recoveryBlocked}
             onRestore={editing.restore}
             uploadAttachment={uploadAttachment}

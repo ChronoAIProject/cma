@@ -27,6 +27,7 @@ it('invalidates old local draft actions on access loss, Agent navigation, and a 
   const other = agentTransportJournal(sessionStorage, 'owner', 'agt_2');
   other.select(true);
   const dismiss = vi.fn();
+  let identityMatches = true;
   const controller = {
     inputAvailability: { allowed: true },
     queuedInputs: {
@@ -40,14 +41,19 @@ it('invalidates old local draft actions on access loss, Agent navigation, and a 
     readOnly: false,
     controlReady: true,
     verified: false,
+    draftIdentityCurrent: () => identityMatches,
     onRestore: vi.fn(),
   };
   const view = render(<AgentInputQueue {...props} draftJournal={first} />);
   const old = presentation.current!;
   expect(old.canUse()).toBe(true);
+  identityMatches = false;
+  expect(old.canUse()).toBe(false);
+  old.onDismiss('key');
   view.rerender(<AgentInputQueue {...props} />);
   expect(old.canUse()).toBe(false);
   old.onDismiss('key');
+  identityMatches = true;
   view.rerender(<AgentInputQueue {...props} draftJournal={first} />);
   expect(old.canUse()).toBe(false);
   old.onDismiss('key');

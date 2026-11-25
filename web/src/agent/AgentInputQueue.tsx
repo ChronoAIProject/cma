@@ -14,6 +14,7 @@ export function AgentInputQueue({
   controlReady,
   verified,
   draftJournal,
+  draftIdentityCurrent,
   draftBlocked,
   onRestore,
   uploadAttachment,
@@ -25,6 +26,7 @@ export function AgentInputQueue({
   readonly controlReady: boolean;
   readonly verified: boolean;
   readonly draftJournal?: AgentTransportJournal;
+  readonly draftIdentityCurrent: () => boolean;
   readonly draftBlocked?: boolean;
   readonly onRestore: (text: string) => void;
   readonly uploadAttachment?: UploadAttachment;
@@ -43,7 +45,8 @@ export function AgentInputQueue({
     };
   }, [draftScope]);
   const canUseDrafts = () => {
-    if (!draftScope || currentDraftScope.current !== draftScope) return false;
+    if (!draftScope || currentDraftScope.current !== draftScope || !draftIdentityCurrent())
+      return false;
     try {
       return draftScope.journal.selected() === 'responses_v2';
     } catch {

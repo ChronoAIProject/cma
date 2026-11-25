@@ -345,7 +345,9 @@ it('shows a settled local queued edit with confirmed owner access during connect
     remove: vi.fn(),
     recover: vi.fn(),
   };
+  const pendingConnection = deferred<ConnectionReport>();
   vi.mocked(connectionClient.check).mockReturnValue(new Promise(() => {}));
+  vi.mocked(connectionClient.check).mockReturnValueOnce(pendingConnection.promise);
   let view = setup({
     controller: {
       ...ready,
@@ -358,6 +360,17 @@ it('shows a settled local queued edit with confirmed owner access during connect
   expect(draft()).toHaveValue('My unapplied draft');
   expect(draft()).toHaveAttribute('readonly');
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  await act(async () => pendingConnection.resolve({ ...connected, owner: 'another-owner' }));
+  expect(draft()).toBeNull();
+  expect(
+    screen.getByText('Your CMA account changed. Open the Agent again to continue.'),
+  ).toBeVisible();
+  const retry = deferred<ConnectionReport>();
+  vi.mocked(connectionClient.check).mockReturnValueOnce(retry.promise);
+  fireEvent.click(screen.getByRole('button', { name: 'Retry connections' }));
+  expect(draft()).toBeNull();
+  await act(async () => retry.resolve(connected));
+  expect(draft()).toHaveValue('My unapplied draft');
   view.rerender(<AgentSurface {...view.props} accessUncertain />);
   expect(draft()).toBeNull();
   view.rerender(<AgentSurface {...view.props} accessAuthorized={false} />);
