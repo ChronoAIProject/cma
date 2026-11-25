@@ -152,6 +152,16 @@ async fn retirement_retains_exact_initial_issuance_for_revoke_only_custody() {
             Err(CredentialError::Uncertain)
         ));
         finish_rejection(&f, before).await;
+        // The fault injector has its own client. Production composes both
+        // stores on one client so the shared publication fence can use the
+        // custody transaction's session.
+        f.custody = Arc::new(
+            MongoSandboxCredentialStore::open(&f.client, &f.name, "work-contract", &f.key)
+                .await
+                .unwrap(),
+        );
+        f.controller =
+            ManagedSandboxCredentials::new(f.issuer.clone(), Arc::new(Tokens), f.custody.clone());
         let (_worker, _) = retirement_fixture::begin(&f).await;
         if !provenance_allowed {
             Kind::Sandbox
