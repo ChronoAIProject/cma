@@ -8,5 +8,6 @@ export default defineConfig({
     'review-recovery-custody.check.ts',
     'review-acceptance-order.check.ts',
     'review-progress-order.check.ts',
+    'review-preflight-lifetime.check.ts',
   ],
 });
