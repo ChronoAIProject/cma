@@ -301,10 +301,11 @@ pub(super) fn repository_location(
 pub(super) fn sandbox_error(error: SandboxServiceError) -> AgentLifecycleProvisioningError {
     match error {
         SandboxServiceError::Forbidden => AgentLifecycleProvisioningError::Forbidden,
-        SandboxServiceError::SandboxLimitReached { limit, live } => {
+        SandboxServiceError::SandboxLimitReached { limit, live, usage } => {
             AgentLifecycleProvisioningError::SandboxLimitReached {
                 limit,
                 live: u64::from(live),
+                quota_usage: Some(usage),
             }
         }
         SandboxServiceError::NameConflict

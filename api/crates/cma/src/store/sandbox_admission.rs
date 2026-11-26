@@ -208,14 +208,18 @@ where
     }
     let live = store
         .sandboxes
-        .count_documents(doc! { "owner": owner, "retired_at": Bson::Null })
+        .count_documents(super::sandboxes::capacity::charged_owner_slots(owner))
         .session(&mut *session)
         .await
         .map_err(AdmissionError::Driver)?;
     if live >= u64::from(live_limit) {
+        let usage = super::sandboxes::capacity::quota_usage(store, owner, session)
+            .await
+            .map_err(AdmissionError::Driver)?;
         return Err(AdmissionError::Domain(SandboxStoreError::LimitReached {
             limit: live_limit,
             live: u16::try_from(live).unwrap_or(u16::MAX),
+            usage,
         }));
     }
     let ceilings = super::budget::require_open_protected(
