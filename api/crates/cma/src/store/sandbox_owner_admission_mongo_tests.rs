@@ -5,11 +5,31 @@ use mongodb::bson::Bson;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
 async fn one_settled_retirement_slot_is_reused_once_across_managers() {
-    use layer2_core::sandbox::{SandboxHome, SandboxStatus, SandboxWorkStep};
+    for debt in [
+        RetirementDebt::Missing,
+        RetirementDebt::Empty,
+        RetirementDebt::Outstanding,
+    ] {
+        exercise_retirement_admission(debt).await;
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RetirementDebt {
+    Missing,
+    Empty,
+    Outstanding,
+}
+
+async fn exercise_retirement_admission(debt: RetirementDebt) {
+    use layer2_core::sandbox::{
+        SandboxHome, SandboxLifecycleResult, SandboxStatus, SandboxWorkStep,
+    };
 
     let (client, name) = database("owner_retirement_slot").await;
     let left = MongoSandboxStore::open(&client, &name).await.unwrap();
     let right = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let release_expected = !matches!(debt, RetirementDebt::Outstanding);
     for i in 0..2 {
         let id = format!("sbx_outgoing_{i}");
         let SandboxAdmissionResult::Created(mut parent) = left
@@ -38,16 +58,44 @@ async fn one_settled_retirement_slot_is_reused_once_across_managers() {
             parent
                 .work
                 .schedule(SandboxWorkStep::MarkRetired, NOW.into());
-            assert!(parent.retirement_released_owner_slot());
+            if !release_expected {
+                parent
+                    .credential
+                    .queue_revoke("fixture-key".into(), NOW.into());
+            }
         } else {
             assert!(!parent.retirement_released_owner_slot());
         }
         left.save_sandbox(previous, parent).await.unwrap();
     }
+    if matches!(debt, RetirementDebt::Missing) {
+        assert_eq!(
+            left.sandboxes
+                .update_one(
+                    doc! {"_id": "sbx_outgoing_0"},
+                    doc! {"$unset": {"record.credential.revoke_debt": ""}},
+                )
+                .await
+                .unwrap()
+                .modified_count,
+            1,
+        );
+    }
+    let retained = right
+        .get_sandbox(&SandboxId("sbx_outgoing_0".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let lifecycle =
+        SandboxLifecycleResult::observe(&retained, Some(NOW), std::time::SystemTime::now(), true)
+            .unwrap();
+    assert_eq!(lifecycle.owner_slot_released, Some(release_expected));
+
     let owner = SubjectId::new("owner");
     let snapshot = right.owner_capacity(&owner).await.unwrap();
-    assert_eq!(snapshot.counts, [(SandboxStatus::Retiring, 1)]);
-    assert_eq!(snapshot.retiring_released, 1);
+    let released = u64::from(release_expected);
+    assert_eq!(snapshot.counts, [(SandboxStatus::Retiring, 2 - released)]);
+    assert_eq!(snapshot.retiring_released, released);
     let (a, b) = tokio::join!(
         left.admit_sandbox(admission("sbx_replacement_a", "launch-replacement-a", 2)),
         right.admit_sandbox(admission("sbx_replacement_b", "launch-replacement-b", 2)),
@@ -58,13 +106,19 @@ async fn one_settled_retirement_slot_is_reused_once_across_managers() {
             .iter()
             .filter(|value| matches!(value, Ok(SandboxAdmissionResult::Created(_))))
             .count(),
-        1
+        usize::from(release_expected)
     );
-    assert!(results.iter().any(|value| matches!(
-        value,
-        Err(SandboxStoreError::LimitReached { limit: 2, live: 2, usage })
-            if usage.retiring_charged == 1 && usage.retiring_released == 1
-    )));
+    assert_eq!(
+        results
+            .iter()
+            .filter(|value| matches!(
+                value,
+                Err(SandboxStoreError::LimitReached { limit: 2, live: 2, usage })
+                    if usage.retiring_charged == 2 - released && usage.retiring_released == released
+            ))
+            .count(),
+        2 - usize::from(release_expected),
+    );
     client.database(&name).drop().await.unwrap();
 }
 

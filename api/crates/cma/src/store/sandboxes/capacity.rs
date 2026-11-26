@@ -17,7 +17,10 @@ fn owner_slot_released() -> Document {
         {"$eq": [{"$ifNull": ["$record.credential.current", Bson::Null]}, Bson::Null]},
         {"$eq": [{"$ifNull": ["$record.credential.pending", Bson::Null]}, Bson::Null]},
         {"$eq": ["$record.credential.delivered", false]},
-        {"$eq": ["$record.credential.revoke_debt", Bson::Array(vec![])]},
+        {"$or": [
+            {"$eq": [{"$type": "$record.credential.revoke_debt"}, "missing"]},
+            {"$eq": ["$record.credential.revoke_debt", Bson::Array(vec![])]},
+        ]},
         {"$or": [
             {"$eq": ["$record.lifecycle.home.released", true]},
             {"$eq": ["$record.lifecycle.home.native_pool.cleaned", true]},
