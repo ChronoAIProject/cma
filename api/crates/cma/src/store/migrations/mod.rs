@@ -26,6 +26,7 @@ pub(in crate::store) mod opening_index;
 mod sandbox_usage_capture;
 mod steps;
 mod turn_policy_index;
+pub(in crate::store) mod usage_projections;
 use steps::Step;
 mod authority;
 mod ledger;
@@ -196,7 +197,7 @@ async fn execute(arguments: &[String]) -> Result<Value> {
     } else {
         Ok(json!({"migration":step.id(),"checksum":step.checksum(),
             "prerequisites":[],"phase":"expand","missing_indexes":indexes.len(),
-            "effects":"add nonunique query indexes only","writes":false}))
+            "effects":if step == Step::UsageProjections { "add a projection collection and indexes" } else { "add nonunique query indexes only" },"writes":false}))
     }
 }
 
@@ -216,6 +217,7 @@ async fn apply_indexes(
             | Step::MeasuredBatches
             | Step::MeasuredIndex
             | Step::AgentLogActiveProofs
+            | Step::UsageProjections
     ) {
         step.inspect(database).await?;
     }

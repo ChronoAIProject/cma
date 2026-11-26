@@ -20,10 +20,11 @@ pub(super) const DEPLOYMENT_ONLY: &[&str] = &[
     crate::store::released_runtimes::TRANSITIONS_COLLECTION,
 ];
 
-// Detached receipts and measured billing custody have no entry in the Sandbox manifest.
+// Detached custody and disposable report projections have no Sandbox archive entry.
 pub(super) const OUTSIDE_MANIFEST: &[&str] = &[
     super::super::retained_consents::COLLECTION,
     crate::store::migrations::measured_custody::COLLECTION,
+    crate::store::migrations::usage_projections::COLLECTION,
     crate::store::migrations::measured_batches::COLLECTION,
     crate::store::migrations::measured_index::PROJECTIONS,
     crate::store::migrations::measured_index::MANIFESTS,

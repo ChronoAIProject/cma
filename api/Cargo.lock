@@ -499,6 +499,7 @@ name = "cma-am-reporting"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "flate2",
  "futures-util",
  "layer2-core",
  "mongodb",
