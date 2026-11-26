@@ -100,6 +100,10 @@ def managers(secret, ready):
         separators=(',',':'))
     env['stringData']['CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED']='true'
     env['stringData'].update(CHRONO_USAGE_REPORT_VIEWS_ENABLED='true', CHRONO_USAGE_REPORT_WARMER_ENABLED='false', CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED='false')
+    env['stringData']['CHRONO_USAGE_REPORT_VIEW_SCOPES'] = json.dumps([
+        {'principal': 'native-am-fixture-owner', 'admin': False, 'sandbox_id': None},
+        {'principal': 'native-am-fixture-admin', 'admin': True, 'sandbox_id': None},
+    ], separators=(',', ':'))
     prepared = ready.get('fixture') == 'prepared'
     if prepared:
         env['stringData']['CHRONO_NATIVE_PREPARED_TARGET'] = '1'

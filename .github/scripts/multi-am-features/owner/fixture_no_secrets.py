@@ -1,6 +1,7 @@
 """Isolated synthetic WS4 inputs; never read, list, create, or repair a Secret."""
 from copy import deepcopy
 import hashlib
+import json
 import time
 import urllib.parse
 
@@ -90,6 +91,10 @@ class LocalFixture(OriginalFixture):
         observed = {key: config.get('data', {}).get(key) for key in expected}
         if observed != expected:
             raise RuntimeError('actual_am_environment_mismatch')
+        scopes = json.loads(config['data']['CHRONO_USAGE_REPORT_VIEW_SCOPES'])
+        if scopes != [{'principal': 'native-am-fixture-owner', 'admin': False, 'sandbox_id': None},
+                      {'principal': 'native-am-fixture-admin', 'admin': True, 'sandbox_id': None}]:
+            raise RuntimeError('actual_usage_view_scope_mismatch')
         write(self.output / 'environment-readback.json', {
             'expected': expected, 'observed': observed, 'verdict': 'PASS',
             'configmap_uid': config['metadata']['uid'], 'secret_resource_access': False})

@@ -90,6 +90,10 @@ class OwnershipTests(unittest.TestCase):
         objects = synthetic_configmaps(manifests.managers(legacy_manifests.credentials(), ready))
         environment = next(x['data'] for x in objects if x['kind'] == 'ConfigMap')
         self.assertEqual(environment['CHRONO_AGENT_MANAGER_REPLICAS_ENABLED'], 'true')
+        self.assertEqual(json.loads(environment['CHRONO_USAGE_REPORT_VIEW_SCOPES']), [
+            {'principal': 'native-am-fixture-owner', 'admin': False, 'sandbox_id': None},
+            {'principal': 'native-am-fixture-admin', 'admin': True, 'sandbox_id': None},
+        ])
         managers = [x for x in objects if x['kind'] == 'StatefulSet']
         self.assertEqual({x['metadata']['name'] for x in managers}, {'am-a', 'am-b'})
         for manager in managers:
