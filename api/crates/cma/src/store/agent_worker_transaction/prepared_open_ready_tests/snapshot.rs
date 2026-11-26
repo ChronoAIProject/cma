@@ -182,3 +182,74 @@ async fn prepared_open_ready_preparation_write_conflicts_with_the_consumed_snaps
     assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
+async fn prepared_open_ready_refuses_a_worktree_schema_changed_after_snapshot() {
+    let (client, name, store, agent, observed) = fixture().await;
+    let peer = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let worktrees = peer
+        .database(&name)
+        .collection::<Document>(store.worktrees.name());
+    let tree_id = observed.worktree.id.as_str();
+    let future_schema = DOCUMENT_SCHEMA_VERSION + 1;
+    let done = completion(&agent, &observed.worktree);
+    let mut session = client.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    let revision = prepared_open_ready::proof_revision(&store, &agent, &observed, &mut session)
+        .await
+        .unwrap_or_else(|_| panic!("eligible preparation"));
+
+    assert_eq!(
+        worktrees
+            .update_one(
+                doc! {"_id": tree_id, "document_schema_version": DOCUMENT_SCHEMA_VERSION},
+                doc! {"$set": {"document_schema_version": future_schema}},
+            )
+            .await
+            .unwrap()
+            .matched_count,
+        1
+    );
+    assert!(matches!(
+        prepared_open_ready::fence(&store, &agent, &observed.worktree, &observed,
+            revision, &mut session).await,
+        Err(ApplyError::Driver(error)) if is_transient(&error)
+    ));
+    session.abort_transaction().await.unwrap();
+    assert!(matches!(
+        store
+            .commit_prepared_agent_open_ready(done, observed.clone())
+            .await,
+        Err(SandboxStoreError::Corrupt(message))
+            if message.starts_with("unsupported document schema version ")
+    ));
+    let persisted = worktrees
+        .find_one(doc! {"_id": tree_id})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        persisted.get_i64("document_schema_version").unwrap(),
+        future_schema
+    );
+    assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
+    for (collection, id) in [
+        (&store.sandboxes, observed.sandbox.id.as_str()),
+        (&store.workspaces, observed.workspace.id.as_str()),
+        (&store.worktrees, tree_id),
+        (&store.native_prepared, observed.sandbox.id.as_str()),
+    ] {
+        let row = collection
+            .find_one(doc! {"_id": id})
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!row.contains_key("agent_prepared_open_ready_fence"));
+    }
+    client.database(&name).drop().await.unwrap();
+}
