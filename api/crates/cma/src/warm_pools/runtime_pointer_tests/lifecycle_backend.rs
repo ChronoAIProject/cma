@@ -189,6 +189,7 @@ impl HostedBackend for Backend {
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
+        _for_retirement: bool,
     ) -> layer3_adapter::Result<()> {
         let runtimes = self.hosted.runtimes.lock().await;
         let runtime = runtimes.get(handle).expect("known native Sandbox");

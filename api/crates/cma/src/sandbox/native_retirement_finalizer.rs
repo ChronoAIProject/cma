@@ -10,7 +10,9 @@ use layer2_core::sandbox::store::{
 };
 use layer2_core::sandbox::{Sandbox, SandboxInterruptionCause, SandboxStatus, SandboxWorkStep};
 use layer2_core::{rfc3339_at, seconds_from_rfc3339};
-use layer3_adapter::{AdapterError, RuntimeAdoptionRequest, RuntimeRetirement, SandboxAdapter};
+use layer3_adapter::{
+    AdapterError, RuntimeAdoptionRequest, RuntimeObservation, RuntimeRetirement, SandboxAdapter,
+};
 
 use crate::store::native_retirement_action::{
     RetirementAction, RetirementPhase, RetirementRecords,
@@ -156,8 +158,17 @@ impl NativeRetirementFinalizer {
                 "retirement custody identity changed",
             ));
         }
-        if present {
-            if !self.runtime_identity_unchanged(original, &request).await {
+        if let Some(observed) = present {
+            let stopped = matches!(
+                observed.lifecycle.state.as_str(),
+                "suspended" | "terminating"
+            ) && action
+                .as_ref()
+                .is_some_and(|action| action.phase == RetirementPhase::Dispatching);
+            if stopped && !after_graceful_stop {
+                return Ok(RetirementOutcome::GracefulWithCustody);
+            }
+            if !stopped && !self.runtime_identity_unchanged(original, &request).await {
                 return Ok(RetirementOutcome::ProviderPending(
                     "retirement runtime identity changed or was refused",
                 ));
@@ -168,8 +179,11 @@ impl NativeRetirementFinalizer {
             let Some(current) = action.as_mut() else {
                 return Ok(RetirementOutcome::GracefulPending);
             };
-            if let Some(outcome) = self
-                .dispatch(
+            let outcome = if stopped {
+                self.dispatch_suspended(original, holder, provider, &request, current)
+                    .await?
+            } else {
+                self.dispatch(
                     original,
                     holder,
                     provider,
@@ -178,7 +192,8 @@ impl NativeRetirementFinalizer {
                     after_graceful_stop,
                 )
                 .await?
-            {
+            };
+            if let Some(outcome) = outcome {
                 return Ok(outcome);
             }
         }
@@ -291,7 +306,7 @@ impl NativeRetirementFinalizer {
         &self,
         sandbox: &Sandbox,
         request: &RuntimeAdoptionRequest,
-    ) -> Result<bool, &'static str> {
+    ) -> Result<Option<RuntimeObservation>, &'static str> {
         let inventory =
             match tokio::time::timeout(Duration::from_secs(30), self.adapter.runtime_inventory())
                 .await
@@ -307,7 +322,9 @@ impl NativeRetirementFinalizer {
         }) {
             return Err("retirement inventory contains changed authority");
         }
-        Ok(inventory.iter().any(|item| item.handle == request.handle))
+        Ok(inventory
+            .into_iter()
+            .find(|item| item.handle == request.handle))
     }
 
     async fn admit_action(
@@ -371,6 +388,34 @@ impl NativeRetirementFinalizer {
                 .await?;
             *action = dispatched;
         }
+        self.delete_with_custody(
+            parent,
+            holder,
+            action,
+            provider.retire_unreachable(request, &action.observation.receiver.pod),
+        )
+        .await
+    }
+
+    async fn dispatch_suspended(
+        &self,
+        parent: &Sandbox,
+        holder: &str,
+        provider: &dyn RuntimeRetirement,
+        request: &RuntimeAdoptionRequest,
+        action: &RetirementAction,
+    ) -> Result<Option<RetirementOutcome>, SandboxStoreError> {
+        self.delete_with_custody(parent, holder, action, provider.retire_suspended(request))
+            .await
+    }
+
+    async fn delete_with_custody(
+        &self,
+        parent: &Sandbox,
+        holder: &str,
+        action: &RetirementAction,
+        delete: impl std::future::Future<Output = layer3_adapter::Result<()>>,
+    ) -> Result<Option<RetirementOutcome>, SandboxStoreError> {
         if !self.current(parent, holder).await? {
             return Ok(Some(RetirementOutcome::Superseded));
         }
@@ -378,11 +423,7 @@ impl NativeRetirementFinalizer {
             return Err(SandboxStoreError::Conflict);
         }
         if !matches!(
-            tokio::time::timeout(
-                Duration::from_secs(180),
-                provider.retire_unreachable(request, &action.observation.receiver.pod),
-            )
-            .await,
+            tokio::time::timeout(Duration::from_secs(180), delete).await,
             Ok(Ok(())),
         ) {
             return Ok(Some(RetirementOutcome::ProviderPending(

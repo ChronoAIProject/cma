@@ -14,6 +14,14 @@ impl NativeWarmPools {
             let Some((image, _)) = released.machine else {
                 return Ok(false);
             };
+            // Desktop has exactly one deployment-selected immutable plan.
+            // Agent pools retain support for operator-configured other sizes.
+            if target.plan.spec.cold_canary
+                || target.plan.spec.cpu_millis != self.default_capacity.cpu_millis
+                || target.plan.spec.memory_mib != self.default_capacity.memory_mib
+            {
+                return Ok(false);
+            }
             image
         } else {
             released.agent

@@ -4,6 +4,16 @@ use crate::{provider::ProviderSandboxRequest, HomeVolumeAttachment, Result, Runt
 use kube::ResourceExt;
 
 impl AgentSandboxClient {
+    pub(crate) async fn verify_retirement_suspension(
+        &self,
+        runtime: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        self.verify_suspended(runtime, request).await?;
+        let (_, uid) = parse_handle(runtime)?;
+        self.pools.prove_member_pods_absent(uid).await
+    }
+
     pub(crate) async fn retirement_receiver(
         &self,
         runtime: &RuntimeHandle,
@@ -24,6 +34,27 @@ impl AgentSandboxClient {
         home: &HomeVolumeAttachment,
         receiver: Option<&crate::RetirementPod>,
     ) -> Result<()> {
+        self.retire_exact(runtime, request, home, receiver, false)
+            .await
+    }
+
+    pub(crate) async fn retire_suspended(
+        &self,
+        runtime: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.retire_exact(runtime, request, home, None, true).await
+    }
+
+    async fn retire_exact(
+        &self,
+        runtime: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        receiver: Option<&crate::RetirementPod>,
+        require_suspended: bool,
+    ) -> Result<()> {
         let identity = crate::hosted::provider_request_identity(request)?;
         home.validate_for(&identity.sandbox_id)?;
         if request.metadata.get("cma/home-identity") != Some(&home.identity()?) {
@@ -36,10 +67,24 @@ impl AgentSandboxClient {
             .await?;
         if let Some(mut actual) = object.clone() {
             let (name, _) = parse_handle(runtime)?;
-            let desired = self.desired_at(request, name).await?;
+            let mut desired = self.desired_at(request, name).await?;
+            if require_suspended {
+                desired.data["spec"]["operatingMode"] = serde_json::json!("Suspended");
+                if actual
+                    .resource_version()
+                    .as_deref()
+                    .is_none_or(str::is_empty)
+                {
+                    return Err(rejected("missing retirement resource version"));
+                }
+            }
             // An accepted foreground delete is retried with the original UID.
             actual.metadata.deletion_timestamp = None;
             self.matches(&actual, &desired)?;
+        }
+        if require_suspended {
+            let (_, uid) = parse_handle(runtime)?;
+            self.pools.prove_member_pods_absent(uid).await?;
         }
         if let Some(receiver) = receiver {
             let binding = self.pod_binding(runtime).await?;

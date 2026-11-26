@@ -2,6 +2,79 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn migrated_desktop_selection_retires_only_the_previous_size_on_the_same_image() {
+    let (db, store, mut old, _) = fixture().await;
+    old.id = "old-desktop-size".into();
+    old.machine = true;
+    old.document_schema_version = 2;
+    old.plan.config_sha256 = "c".repeat(64);
+    old.plan.spec.image.uri = format!("registry.example/desktop@sha256:{}", "c".repeat(64));
+    old.target_replicas = 2;
+    old.binding = None;
+    store.insert(old.clone()).await.unwrap();
+
+    let mut selected = old.clone();
+    selected.id = "new-desktop-size".into();
+    selected.plan.config_sha256 = "d".repeat(64);
+    selected.plan.spec.memory_mib *= 2;
+    store.insert(selected.clone()).await.unwrap();
+    let image = selected.plan.spec.image.uri.clone();
+    assert!(store
+        .retirement_drain_homes(&old, &image)
+        .await
+        .unwrap()
+        .is_none());
+
+    // Both legacy records inherited the image's activation time. The exact
+    // configured default is selected once and gets an independent settle window.
+    store.activate(&selected.id).await.unwrap();
+    let collection = db.collection::<Document>(COLLECTION);
+    collection
+        .update_one(
+            doc! {"_id": &selected.id},
+            doc! {"$set": {
+                "machine_plan_activated_at": DateTime::from_millis(2),
+            }},
+        )
+        .await
+        .unwrap();
+    let selected = store.find(&selected.id).await.unwrap().unwrap();
+    assert_eq!(selected.activated_at, old.activated_at);
+    assert!(matches!(
+        store.activate(&old.id).await,
+        Err(WarmPoolError::Conflict)
+    ));
+    assert_eq!(
+        store.retirement_drain_homes(&old, &image).await.unwrap(),
+        drain_homes_only(vec![])
+    );
+    assert!(store
+        .retirement_drain_homes(&selected, &image)
+        .await
+        .unwrap()
+        .is_none());
+
+    let retired = store.begin_retirement(&old).await.unwrap();
+    assert_eq!(retired.target_replicas, 0);
+    assert!(retired.retiring);
+    assert_eq!(
+        store
+            .retirement_drain_homes(&retired, &image)
+            .await
+            .unwrap(),
+        drain_homes_only(vec![])
+    );
+    let restarted = MongoNativeWarmPools::open(&db, "test").await.unwrap();
+    restarted.activate(&selected.id).await.unwrap();
+    assert!(matches!(
+        restarted.activate(&old.id).await,
+        Err(WarmPoolError::Conflict)
+    ));
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn machine_and_agent_release_order_remain_independent_across_restart() {
     let (db, store, old_agent, agent_image) = fixture().await;
     let mut machine = old_agent.clone();

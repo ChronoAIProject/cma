@@ -286,6 +286,7 @@ pub(super) struct WorkerFailure {
     retry_kind: WorkRetryFailure,
     pub(super) native_claim_pending: bool,
     pub(super) startup_hold: bool,
+    pub(super) credential_issuance_pending: bool,
     pub(super) reopen_refusal: Option<Box<layer2_core::sandbox::store::ReopenRefusalFence>>,
 }
 
@@ -330,6 +331,7 @@ impl WorkerFailure {
             retryable,
             native_claim_pending: false,
             startup_hold: false,
+            credential_issuance_pending: false,
             reopen_refusal: None,
             retry_kind: if retryable {
                 WorkRetryFailure::Transient
@@ -416,7 +418,11 @@ pub(super) use super::install_failure::install_failure;
 pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
     match error {
         CredentialError::Uncertain => {
-            WorkerFailure::waiting("credential issuance is uncertain; reconciliation will retry")
+            let mut failure = WorkerFailure::waiting(
+                "credential issuance is uncertain; reconciliation will retry",
+            );
+            failure.credential_issuance_pending = true;
+            failure
         }
         CredentialError::ServiceNotGranted(service) => {
             WorkerFailure::service_not_granted(service.as_str())
