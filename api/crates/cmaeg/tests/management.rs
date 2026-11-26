@@ -9,6 +9,8 @@ pub mod fake_cma;
 pub mod fake_nyxid;
 #[path = "fake_provider.rs"]
 mod fake_provider;
+#[path = "support/management_state.rs"]
+mod management_fixture;
 
 use std::sync::Arc;
 
@@ -90,26 +92,15 @@ fn management_state(
         .unwrap(),
     );
     let records = Arc::new(RecordClient::new(&cma.base_url, "cma-service").unwrap());
-    let creator_auth = Arc::new(CreatorAuthenticator::new(&nyxid.base_url).unwrap());
-    ManagementState::new(
+    management_fixture::state(
         providers,
         records,
-        creator_auth,
-        cmaeg::ManagementConfig {
-            console_public_url: None,
-            master_keys: Arc::new(ring),
-            public_url: "http://127.0.0.1:8090".into(),
-            public_api_url: "http://127.0.0.1:8090".into(),
-            public_api_aliases: vec![],
-            advertise_public_api_url: true,
-            cma_base_url: cma.base_url.clone(),
-            tools_nyxid_slug: "cmaeg".into(),
-            cma_service_token: cmaeg_core::channel::Secret::new("cma-service"),
-            nyxid_base_url: nyxid.base_url.clone(),
-        },
-        cmaeg::ChannelCacheConfig::default(),
+        Arc::new(ring),
+        &cma.base_url,
+        &nyxid.base_url,
     )
 }
+
 async fn serve_app(
     state: ManagementState,
 ) -> (String, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
