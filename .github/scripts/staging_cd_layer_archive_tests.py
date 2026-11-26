@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import os
 import tarfile
 import unittest
 from pathlib import Path
@@ -50,6 +51,40 @@ class ArchiveTests(unittest.TestCase):
             archive.restore(root / "archive.tar", root / "restored")
             self.assertEqual(archive.inventory(root / "source"), archive.inventory(root / "restored"))
             self.assertFalse((root / "restored" / "cache.lock").exists())
+
+    def test_buildkit_ingest_locks_are_validated_and_omitted(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            populate(source)
+            locks = source / "ingest-locks"
+            locks.mkdir()
+            lock = locks / ("a" * 64)
+            lock.touch()
+            stored = root / "archive.tar"
+            archive.seal(source, stored)
+            archive.restore(stored, root / "restored")
+            self.assertFalse((root / "restored" / "ingest-locks").exists())
+            self.assertEqual(archive.inventory(source), archive.inventory(root / "restored"))
+            lock.write_text("unexpected content")
+            with self.assertRaisesRegex(ValueError, "unexpected cache lock"):
+                archive.inventory(source)
+            lock.unlink()
+            lock.symlink_to(source / "index.json")
+            with self.assertRaisesRegex(ValueError, "unexpected cache lock"):
+                archive.inventory(source)
+            lock.unlink()
+            os.link(source / "index.json", lock)
+            with self.assertRaisesRegex(ValueError, "unexpected cache lock|unexpected cache member"):
+                archive.inventory(source)
+            lock.unlink()
+            lock.touch()
+            with patch.object(archive, "MAX_MEMBERS", len(archive.inventory(source))), self.assertRaisesRegex(ValueError, "member bound"):
+                archive.inventory(source)
+            lock.unlink()
+            (locks / "unknown").touch()
+            with self.assertRaisesRegex(ValueError, "unexpected cache member"):
+                archive.inventory(source)
 
     def test_missing_or_changed_layer_prevents_save(self):
         with TemporaryDirectory() as directory:
