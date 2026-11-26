@@ -20,7 +20,7 @@ use crate::{
     shutdown::{self, signalled, ShutdownCoordinator},
     startup_timing::{observe, Phase},
     telemetry,
-    warm_pools::startup::WarmPoolStartup,
+    warm_pools::{startup::WarmPoolStartup, NativeWarmPools},
     with_cors, with_request_context,
 };
 
@@ -134,34 +134,69 @@ async fn warm_pools(
         crate::warm_pools::telemetry::startup("stopped");
         return Ok((writer_ready, WarmPoolStartup::Stopping));
     }
-    observe(
+    let result = match &composition.runtime_pointer {
+        Some(controller) => {
+            observe(
+                "default_warm_pool_configuration",
+                controller.bootstrap(),
+                |_| None,
+            )
+            .await?;
+            observe_pool_readiness(async {
+                if admission.is_some_and(Admission::is_draining) {
+                    return Ok(WarmPoolStartup::Stopping);
+                }
+                controller.await_active_ready(admission).await
+            })
+            .await
+        }
+        None => fixed_pool_startup(&composition.native_warm_pools, admission).await,
+    };
+    result.map(|result| (writer_ready, result))
+}
+
+pub(crate) async fn fixed_pool_startup(
+    pools: &NativeWarmPools,
+    admission: Option<&Admission>,
+) -> Result<WarmPoolStartup, String> {
+    let held = observe(
         "default_warm_pool_configuration",
-        async {
-            match &composition.runtime_pointer {
-                Some(controller) => controller.bootstrap().await,
-                None => composition
-                    .native_warm_pools
-                    .ensure_default()
-                    .await
-                    .map_err(|error| format!("native warm pool default is not usable: {error:?}")),
-            }
-        },
+        pools.ensure_fixed_defaults(),
         |_| None,
     )
-    .await?;
-    let phase = Phase::new("default_warm_pool_readiness");
-    let result = if admission.is_some_and(Admission::is_draining) {
-        Ok(WarmPoolStartup::Stopping)
-    } else {
-        match &composition.runtime_pointer {
-            Some(controller) => controller.await_active_ready(admission).await,
-            None => composition
-                .native_warm_pools
-                .await_default_ready_until(admission)
-                .await
-                .map_err(|error| format!("native warm pool startup readiness failed: {error:?}")),
+    .await
+    .map_err(|error| format!("native warm pool default is not usable: {error:?}"))?;
+    observe_pool_readiness(async {
+        if admission.is_some_and(Admission::is_draining) {
+            return Ok(WarmPoolStartup::Stopping);
         }
-    };
+        if pools.fixed_agent_default_held() {
+            return Ok(WarmPoolStartup::ConfigurationDrift);
+        }
+        let readiness = pools
+            .await_fixed_default_ready(admission)
+            .await
+            .map_err(|error| format!("native warm pool startup readiness failed: {error:?}"))?;
+        // Capacity deferral carries proof needed by the caller. A held machine
+        // lane has already reported its drift during default configuration.
+        if held
+            && matches!(
+                readiness,
+                WarmPoolStartup::Ready | WarmPoolStartup::ZeroTarget
+            )
+        {
+            return Ok(WarmPoolStartup::ConfigurationDrift);
+        }
+        Ok(readiness)
+    })
+    .await
+}
+
+async fn observe_pool_readiness(
+    readiness: impl Future<Output = Result<WarmPoolStartup, String>>,
+) -> Result<WarmPoolStartup, String> {
+    let phase = Phase::new("default_warm_pool_readiness");
+    let result = readiness.await;
     let (outcome, desired) = match &result {
         Ok(WarmPoolStartup::Ready) => ("ok", None),
         Ok(WarmPoolStartup::ZeroTarget) => ("zero_target", None),
@@ -174,7 +209,7 @@ async fn warm_pools(
     };
     crate::warm_pools::telemetry::startup(outcome);
     phase.finish(outcome, desired);
-    result.map(|result| (writer_ready, result))
+    result
 }
 
 async fn bind(address: SocketAddr) -> Result<TcpListener, String> {

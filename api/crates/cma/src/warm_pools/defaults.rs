@@ -2,6 +2,51 @@
 use super::*;
 
 impl NativeWarmPools {
+    /// Fixed pins can lag the durable release after a control-plane rollback.
+    pub(crate) async fn ensure_fixed_defaults(&self) -> Result<bool, WarmPoolError> {
+        let released = self.released_images();
+        self.ensure_fixed_image(&released.agent, self.default_target, false)
+            .await?;
+        if let Some((image, target)) = &released.machine {
+            self.ensure_fixed_image(image, *target, true).await?;
+        }
+        Ok(self.default_holds.lane(false) || self.default_holds.lane(true))
+    }
+
+    async fn ensure_fixed_image(
+        &self,
+        image: &RuntimeImage,
+        replicas: u32,
+        machine: bool,
+    ) -> Result<(), WarmPoolError> {
+        match self.ensure_image(image, replicas, machine).await {
+            Err(WarmPoolError::Conflict) if self.hold_conflicting_pin(image, machine).await? => {
+                Ok(())
+            }
+            result => result,
+        }
+    }
+
+    pub(super) async fn hold_conflicting_pin(
+        &self,
+        image: &RuntimeImage,
+        machine: bool,
+    ) -> Result<bool, WarmPoolError> {
+        let plan = self.default_plan(image)?;
+        if !self.store.default_pin_conflicts(&plan, machine).await? {
+            return Ok(false);
+        }
+        self.default_holds.hold(machine, image.uri.clone());
+        tracing::warn!(target: "cma_warm_pool_startup", parent: None,
+            reason = "durable_default_conflict", machine, config_sha256 = %plan.config_sha256,
+            "Agent Manager will serve with the native pool lane held until restart");
+        Ok(true)
+    }
+
+    pub(crate) fn fixed_agent_default_held(&self) -> bool {
+        self.default_holds.lane(false)
+    }
+
     /// Persist the deployment-owned default target before the reconciler starts.
     /// The target is keyed by the exact immutable plan, so a runtime image or
     /// Pod-policy change creates a new pool identity and never mutates a claimed

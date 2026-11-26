@@ -27,6 +27,30 @@ mod supervision;
 pub(crate) mod telemetry;
 mod view;
 
+/// Images whose fixed-pin startup failed the durable pool activation fence.
+/// Startup records a hold before opening admission or starting any workers.
+#[derive(Default)]
+pub(crate) struct DefaultPoolHolds(std::sync::RwLock<[Option<String>; 2]>);
+
+impl DefaultPoolHolds {
+    fn hold(&self, machine: bool, image: String) {
+        self.0.write().expect("default pool holds")[usize::from(machine)] = Some(image);
+    }
+
+    fn lane(&self, machine: bool) -> bool {
+        self.0.read().expect("default pool holds")[usize::from(machine)].is_some()
+    }
+
+    pub(crate) fn image(&self, image: &str) -> bool {
+        self.0
+            .read()
+            .expect("default pool holds")
+            .iter()
+            .flatten()
+            .any(|held| held == image)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PoolTarget {
     #[serde(rename = "_id")]
@@ -83,6 +107,13 @@ pub(crate) trait PoolTargetStore: Send + Sync {
     }
     async fn activate(&self, _id: &str) -> Result<(), WarmPoolError> {
         Err(WarmPoolError::Unavailable)
+    }
+    async fn default_pin_conflicts(
+        &self,
+        _plan: &NativePoolConfiguration,
+        _machine: bool,
+    ) -> Result<bool, WarmPoolError> {
+        Ok(false)
     }
     async fn retirement_homes(
         &self,
@@ -162,6 +193,7 @@ pub(crate) struct NativeWarmPools {
     machine_target: u32,
     target_fencing: bool,
     allow_empty_startup: bool,
+    default_holds: Arc<DefaultPoolHolds>,
 }
 
 impl NativeWarmPools {
@@ -185,6 +217,7 @@ impl NativeWarmPools {
             machine_target,
             target_fencing: false,
             allow_empty_startup: false,
+            default_holds: Arc::default(),
         })
         .with_target_fencing(false)
     }
@@ -195,11 +228,33 @@ impl NativeWarmPools {
         self
     }
 
+    pub(crate) fn with_default_pool_holds(
+        mut self: Arc<Self>,
+        holds: Arc<DefaultPoolHolds>,
+    ) -> Arc<Self> {
+        Arc::make_mut(&mut self).default_holds = holds;
+        self
+    }
+
     async fn reconcile_one(&self) -> Result<bool, WarmPoolError> {
         let Some(provider) = self.adapter.native_pools() else {
             return Ok(false);
         };
-        let Some(target) = self.store.claim().await? else {
+        let target = if self.default_holds.lane(false) || self.default_holds.lane(true) {
+            let mut claimed = None;
+            for target in self.store.list().await? {
+                if !self.default_holds.lane(target.machine) {
+                    claimed = self.store.claim_retirement(&target.id).await?;
+                    if claimed.is_some() {
+                        break;
+                    }
+                }
+            }
+            claimed
+        } else {
+            self.store.claim().await?
+        };
+        let Some(target) = target else {
             return Ok(false);
         };
         if target.retiring {
@@ -292,6 +347,9 @@ impl WarmPoolAdministration for NativeWarmPools {
         if let Some(existing) = self.store.find(&id).await? {
             return replay(existing, &body).map(|target| target.view(None, true));
         }
+        if self.default_holds.lane(false) {
+            return Err(WarmPoolError::Conflict);
+        }
         let provider = self
             .adapter
             .native_pools()
@@ -344,17 +402,17 @@ impl WarmPoolAdministration for NativeWarmPools {
         }
         // Only a resize of the current machine plan is the operator's desired
         // machine count; zeroing superseded capacity merely drains it.
+        let target = self.store.find(id).await?.ok_or(WarmPoolError::NotFound)?;
+        if self.default_holds.lane(target.machine) {
+            return Err(WarmPoolError::Conflict);
+        }
         let operator_choice = if body.target_replicas > 0 {
-            let target = self.store.find(id).await?.ok_or(WarmPoolError::NotFound)?;
             if !self.current_plan(&target)? {
                 return Err(WarmPoolError::Conflict);
             }
             target.machine
         } else {
-            match self.store.find(id).await? {
-                Some(target) => target.machine && matches!(self.current_plan(&target), Ok(true)),
-                None => false,
-            }
+            target.machine && matches!(self.current_plan(&target), Ok(true))
         };
         let target = self.store.resize(id, &body, operator_choice).await?;
         Ok(target.view(None, true))

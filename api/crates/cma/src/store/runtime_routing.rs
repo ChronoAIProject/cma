@@ -7,16 +7,30 @@ use mongodb::{
     Collection, Database,
 };
 use std::sync::Arc;
+
+use crate::warm_pools::DefaultPoolHolds;
+
 const COLLECTION: &str = "runtime_backend_routes";
 pub(crate) struct MongoRuntimeRouting {
     rows: Collection<Document>,
     deployment: String,
+    default_pool_holds: Arc<DefaultPoolHolds>,
 }
 impl MongoRuntimeRouting {
+    #[cfg(test)]
     pub(crate) async fn open(
         db: &Database,
         deployment: &str,
         allocate_new: bool,
+    ) -> Result<Arc<Self>, String> {
+        Self::open_with_default_pool_holds(db, deployment, allocate_new, Arc::default()).await
+    }
+
+    pub(crate) async fn open_with_default_pool_holds(
+        db: &Database,
+        deployment: &str,
+        allocate_new: bool,
+        default_pool_holds: Arc<DefaultPoolHolds>,
     ) -> Result<Arc<Self>, String> {
         super::schema::initialize_collections(db, &[COLLECTION])
             .await
@@ -24,6 +38,7 @@ impl MongoRuntimeRouting {
         let store = Arc::new(Self {
             rows: super::durability::majority_collection(db, COLLECTION),
             deployment: deployment.into(),
+            default_pool_holds,
         });
         let migration_id = format!("provider-routing-initialized:{deployment}");
         let initialized = store
@@ -87,6 +102,15 @@ impl MongoRuntimeRouting {
 }
 #[async_trait::async_trait]
 impl RuntimeRoutingStore for MongoRuntimeRouting {
+    fn require_allocation_image(&self, image: &str) -> layer3_adapter::Result<()> {
+        if self.default_pool_holds.image(image) {
+            return Err(AdapterError::Unavailable(
+                "runtime allocation is held because the configured image conflicts with durable pool authority".into(),
+            ));
+        }
+        Ok(())
+    }
+
     async fn select(
         &self,
         sandbox: &str,

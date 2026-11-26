@@ -23,6 +23,7 @@ impl RuntimeBackends {
         &self,
         request: &ProviderSandboxRequest,
     ) -> Result<bool> {
+        self.routing.require_allocation_image(&request.image.uri)?;
         let identity = crate::hosted::deployment::provider_request_identity(request)?;
         self.routing
             .select(
