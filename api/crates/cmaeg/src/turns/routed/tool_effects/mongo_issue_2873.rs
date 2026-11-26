@@ -226,6 +226,10 @@ async fn same_lark_chat(legacy: bool) {
             assert_eq!(report.aborted, 0);
         }
         assert!(engine.drain(std::time::Instant::now() + BOUND).await);
+        let replay = request(1).await.unwrap();
+        assert_eq!(replay.status(), reqwest::StatusCode::OK);
+        assert_eq!(first, replay.json::<Value>().await.unwrap());
+        assert_eq!(sends.load(Ordering::SeqCst), 1);
     })).await;
 }
 
