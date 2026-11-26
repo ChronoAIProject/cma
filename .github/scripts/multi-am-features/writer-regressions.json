@@ -235,11 +235,17 @@
       "feature": "Sharing/access/artifact metadata",
       "requirement": "No raw conflict for internal contention; fresh authorization and policy snapshot checked on retry, immutable receipt recovered on unknown outcome, denied/revoked caller never admitted. Some share redemption retry already exists; preserve it.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Organization and access-request transitions, deterministic contention and unknown-outcome recovery, plus hosted execution of the share and artifact receipt case.",
+      "remaining": "Access-request transitions, deterministic contention and unknown-outcome recovery, plus hosted execution of share, artifact and organization assertions.",
       "trigger": "Agent-target share create/revoke/redemption, access request transitions and artifact publication concurrent with owner revision change",
       "required_assertions": [
         {
           "case": "writer.share_and_artifact_receipts",
+          "minimum_runs": 1,
+          "phases": ["before_restart", "after_restart"],
+          "routing": "both"
+        },
+        {
+          "case": "writer.organization_share_membership",
           "minimum_runs": 1,
           "phases": ["before_restart", "after_restart"],
           "routing": "both"

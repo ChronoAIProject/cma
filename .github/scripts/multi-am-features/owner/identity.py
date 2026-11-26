@@ -14,6 +14,7 @@ import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 OWNER = 'native-am-fixture-owner'
+ORGANIZATION = {'id': 'fixture-organization', 'your_role': 'member', 'display_name': 'Synthetic organization'}
 SERVICES = [{'id': 'fixture-llm', 'slug': 'chrono-llm-public', 'is_active': True},
             {'id': 'fixture-ornn', 'slug': 'ornn-api', 'is_active': True}]
 PERMISSIONS = ['cma:sandbox:create', 'cma:sandbox:use',
@@ -72,6 +73,7 @@ class Identity(BaseHTTPRequestHandler):
     config = None
     keys = {}
     codes = {}
+    outsider_is_member = False
     lock = threading.Lock()
 
     def log_message(self, *_):
@@ -153,6 +155,17 @@ class Identity(BaseHTTPRequestHandler):
             actor = self.actor(header[7:]) if header.startswith('Bearer ') else None
             return self.reply(200, {'sub': actor[0], 'name': 'Local native qualification',
                                     'permissions': actor[1]}) if actor else self.reply(401, {'error': 'unauthorized'})
+        org_authorization = '/api/v1/orgs/' + ORGANIZATION['id'] + '/authorization'
+        if self.path in ('/api/v1/orgs', org_authorization):
+            authorization = self.headers.get('Authorization', '')
+            actor = self.actor(authorization[7:]) if authorization.startswith('Bearer ') else None
+            if actor is None:
+                return self.reply(401, {'error': 'unauthorized'})
+            with self.lock:
+                member = actor[0] == 'native-am-fixture-outsider' and self.outsider_is_member
+            if self.path == '/api/v1/orgs':
+                return self.reply(200, {'orgs': [ORGANIZATION] if member else []})
+            return self.reply(200, ORGANIZATION) if member else self.reply(404, {'error': 'not_member'})
         if not self.bearer():
             return self.reply(401, {'error': 'unauthorized'})
         if self.path in ['/api/v1/services', '/api/v1/user-services']:
@@ -172,6 +185,16 @@ class Identity(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             raw = self.body()
+            if self.path == '/fixture/organization-membership':
+                admin = 'Bearer ' + self.config['admin_bearer']
+                if not hmac.compare_digest(self.headers.get('Authorization', ''), admin):
+                    return self.reply(403, {'error': 'fixture_admin_required'})
+                body = json.loads(raw)
+                if not isinstance(body, dict) or set(body) != {'member'} or type(body['member']) is not bool:
+                    raise ValueError('organization_membership_contract')
+                with self.lock:
+                    type(self).outsider_is_member = body['member']
+                return self.reply(200, {'member': body['member']})
             if self.path == '/token':
                 form = parse_qs(raw.decode(), strict_parsing=True)
                 if (form.get('client_id') != [self.config['client_id']]

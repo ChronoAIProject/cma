@@ -183,6 +183,17 @@ class Fixture:
         sample = json.dumps({'sandboxId': sandboxId, 'agentIds': agentIds})
         return self.mongo(f'const lifecycleSample = {sample};\n' + (ROOT / 'lifecycle_snapshot.js').read_text())
 
+    def organizationMembership(self, member=None):
+        if type(member) is not bool:
+            raise ValueError('organization_membership_required')
+        origin = self.client.forward('identity', 8080)
+        code, body = self.client.http(origin, 'POST', '/fixture/organization-membership',
+                                     headers={'Authorization': 'Bearer ' + self.secret['admin_bearer']},
+                                     body={'member': member})
+        if code != 200 or body != {'member': member}:
+            raise RuntimeError('organization_membership_update_unconfirmed')
+        return body
+
     def runtimeFor(self, agentId=None, agent_id=None, **_):
         identity=agentId or agent_id
         live=next((a for a in ['a','b'] if a not in self.killed),None)
@@ -395,7 +406,8 @@ class Fixture:
                     allowed=['topology','runtimeFor','ownerOf','killAm','restoreAm','prepareTurn',
                              'releaseTurn','oracle','captureFailure','titleEffects','skillEffects',
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
-                             'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot']
+                             'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
+                             'organizationMembership']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

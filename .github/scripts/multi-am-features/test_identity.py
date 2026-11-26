@@ -69,6 +69,24 @@ class IndependentActorTests(unittest.TestCase):
             'client_id': self.credentials['client_id'], 'client_secret': self.credentials['client_secret']})
         self.assertEqual(status, 401); self.assertFalse(body['active'])
 
+    def test_organization_membership_is_current_and_bound_to_the_exact_actor(self):
+        admin = self.credentials['admin_bearer']
+        recipient = self.credentials['outsider_bearer']
+        control = '/fixture/organization-membership'
+        authorization = '/api/v1/orgs/fixture-organization/authorization'
+        self.assertEqual(self.request('GET', '/api/v1/orgs', token=recipient), (200, {'orgs': []}))
+        self.assertEqual(self.request('POST', control, token=recipient, data={'member': True})[0], 403)
+        self.assertEqual(self.request('POST', control, token=admin, data={'member': 'true'})[0], 400)
+        self.assertEqual(self.request('POST', control, token=admin, data={'member': True}), (200, {'member': True}))
+        status, membership = self.request('GET', authorization, token=recipient)
+        self.assertEqual(status, 200)
+        self.assertEqual(membership['id'], 'fixture-organization')
+        self.assertEqual(membership['your_role'], 'member')
+        self.assertEqual(self.request('GET', authorization, token=admin)[0], 404)
+        self.assertEqual(self.request('POST', control, token=admin, data={'member': False}), (200, {'member': False}))
+        self.assertEqual(self.request('GET', authorization, token=recipient)[0], 404)
+        self.assertEqual(self.request('GET', '/api/v1/orgs', token=recipient), (200, {'orgs': []}))
+
     def test_scope_key_uses_disposable_deployment_and_ornn_revocation(self):
         token = self.credentials['bearer']
         endpoint = '/api/v1/api-keys'

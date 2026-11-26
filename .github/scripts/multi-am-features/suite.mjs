@@ -18,6 +18,7 @@ import {queuedCommandCase} from './features/queued_commands.mjs';
 import {configurationDenials} from './features/configuration_denials.mjs';
 import {installSkillCase} from './features/skills.mjs';
 import {shareAgentArtifact} from './features/sharing.mjs';
+import {organizationShare} from './features/organization_share.mjs';
 import {triggerAlwaysOn} from './features/trigger_always_on.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -207,6 +208,8 @@ try {
           await caseContext.runCase('writer.skill_installs_once', () => installSkillCase(caseContext));
           await caseContext.runCase('writer.share_and_artifact_receipts',
             () => shareAgentArtifact({...caseContext, user, outsider}));
+          await caseContext.runCase('writer.organization_share_membership',
+            () => organizationShare({...caseContext, user, outsider}));
         }
         await userCases(caseContext);
         await configurationDenials({...caseContext, outsider});
