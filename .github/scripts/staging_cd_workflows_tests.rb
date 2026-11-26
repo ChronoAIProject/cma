@@ -834,7 +834,7 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal %w[schedule workflow_run], events.keys.sort
     assert_equal({ 'workflows' => ['Staging CD'], 'types' => ['completed'], 'branches' => ['develop'] },
                  events['workflow_run'])
-    assert_equal [{ 'cron' => '23 * * * *' }], events['schedule']
+    assert_equal [{ 'cron' => '3-59/10 * * * *' }], events['schedule']
     assert_equal({}, check['permissions'])
     refute check.key?('concurrency')
     assert_equal ['catch_up'], check['jobs'].keys
