@@ -1,8 +1,6 @@
 use super::*;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing to a disposable replica set"]
-async fn workspace_wait_requeues_after_concurrent_initial_credential_delivery() {
+async fn pending_initial_credential() -> (Fixture, Agent) {
     use layer2_core::sandbox::store::WorkAuthorityProtocol;
 
     let mut fixture = Fixture::new().await;
@@ -55,6 +53,14 @@ async fn workspace_wait_requeues_after_concurrent_initial_credential_delivery() 
         assert_eq!(row.get_i64("document_schema_version").unwrap(), 3);
     }
 
+    (fixture, waiting)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing to a disposable replica set"]
+async fn workspace_wait_requeues_after_concurrent_initial_credential_delivery() {
+    let (fixture, waiting) = pending_initial_credential().await;
+    let h = &fixture.bootstrap.harness;
     let (claimed, now) = fixture.claim(&waiting.id).await;
     let requests_before = h.backend.requests().await.len();
     *fixture.trace.deliver_initial_credential.lock().unwrap() = Some(waiting.sandbox_id.clone());
@@ -101,6 +107,9 @@ async fn workspace_wait_requeues_after_concurrent_initial_credential_delivery() 
     assert_bound(&fixture, &claimed, &ready, requests_before).await;
     fixture.cleanup().await;
 }
+
+#[path = "workspace_wait_expiry.rs"]
+mod workspace_wait_expiry;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing to a disposable replica set"]

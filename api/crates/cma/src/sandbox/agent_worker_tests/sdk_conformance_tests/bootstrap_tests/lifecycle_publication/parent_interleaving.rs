@@ -3,6 +3,15 @@ use super::*;
 
 pub(super) fn advance(callback: &Trace, observer: &MongoSandboxStore) {
     let transaction = callback.bodies.fetch_add(1, Ordering::SeqCst) + 1;
+    if transaction == 2 {
+        let expiry = callback.expire_recovery_publication.lock().unwrap().take();
+        if let Some(expiry) = expiry {
+            let remaining = expiry
+                .duration_since(SystemTime::now())
+                .expect("recovery publication starts with a live claim");
+            std::thread::sleep(remaining + Duration::from_millis(100));
+        }
+    }
     let delivery = callback.deliver_initial_credential.lock().unwrap().take();
     if let Some(id) = delivery {
         tokio::task::block_in_place(|| {

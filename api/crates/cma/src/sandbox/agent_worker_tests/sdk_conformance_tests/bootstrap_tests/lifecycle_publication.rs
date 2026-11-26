@@ -37,6 +37,7 @@ struct Trace {
     publish_ready_workspace: Mutex<Option<Workspace>>,
     deliver_initial_credential: Mutex<Option<layer2_core::SandboxId>>,
     recovery_read: Mutex<Option<RecoveryRead>>,
+    expire_recovery_publication: Mutex<Option<SystemTime>>,
     repair_after_abort: Mutex<Option<AgentId>>,
     intervention: Mutex<Option<Intervention>>,
     replace_before_failure: Mutex<Option<(AgentId, layer3_adapter::hosted::InMemoryHostedBackend)>>,
