@@ -27,12 +27,17 @@ type Result<T> = std::result::Result<T, &'static str>;
 mod tests;
 
 pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
+    if let [command, predecessor] = arguments {
+        if command == "--measured-index-backfill" {
+            return index_command(command, Some(predecessor)).await;
+        }
+    }
     if let [command] = arguments {
         if matches!(
             command.as_str(),
             "--measured-index-backfill" | "--measured-index-certify"
         ) {
-            return index_command(command).await;
+            return index_command(command, None).await;
         }
     }
     if arguments.first().is_some_and(|value| {
@@ -221,14 +226,17 @@ fn capture_store(database: &Database) -> Result<MeasuredCapture> {
 
 // The floor identifies the independently documented exclusion and drain of
 // v1-only writers. The operator must establish it before starting backfill.
-async fn index_command(command: &str) -> Result<Value> {
+async fn index_command(command: &str, expected_predecessor: Option<&str>) -> Result<Value> {
     let database = open_database().await?;
     tokio::time::timeout(Duration::from_secs(300), async {
         verify_authority(&database).await?;
         check_schema(&database).await?;
         let indexed = indexed_store(&database)?.ok_or(AUTHORITY)?;
         if command == "--measured-index-backfill" {
-            indexed.begin().await.map_err(|_| UNAVAILABLE)?;
+            indexed
+                .begin_current(expected_predecessor)
+                .await
+                .map_err(|_| UNAVAILABLE)?;
             let (rows, exhausted) = indexed.advance().await.map_err(|_| UNAVAILABLE)?;
             Ok(json!({"projected_rows":rows, "exhausted":exhausted}))
         } else {
