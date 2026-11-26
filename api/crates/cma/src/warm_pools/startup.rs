@@ -91,22 +91,6 @@ impl NativeWarmPools {
         self.await_default_ready_as(admission, None).await
     }
 
-    pub(crate) async fn await_fixed_default_ready(
-        &self,
-        admission: Option<&Admission>,
-    ) -> Result<WarmPoolStartup, WarmPoolError> {
-        match self.await_default_ready_until(admission).await {
-            Err(WarmPoolError::Conflict)
-                if self
-                    .hold_conflicting_pin(&self.released_images().agent, false)
-                    .await? =>
-            {
-                Ok(WarmPoolStartup::ConfigurationDrift)
-            }
-            result => result,
-        }
-    }
-
     pub(crate) async fn await_default_ready_as(
         &self,
         admission: Option<&Admission>,

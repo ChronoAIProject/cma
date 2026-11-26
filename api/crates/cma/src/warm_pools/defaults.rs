@@ -1,7 +1,24 @@
 //! Persist independently pinned agent and desktop pool defaults.
-use super::*;
+use super::{startup::WarmPoolStartup, *};
+use crate::startup::Admission;
 
 impl NativeWarmPools {
+    pub(crate) async fn await_fixed_default_ready(
+        &self,
+        admission: Option<&Admission>,
+    ) -> Result<WarmPoolStartup, WarmPoolError> {
+        match self.await_default_ready_until(admission).await {
+            Err(WarmPoolError::Conflict)
+                if self
+                    .hold_conflicting_pin(&self.released_images().agent, false)
+                    .await? =>
+            {
+                Ok(WarmPoolStartup::ConfigurationDrift)
+            }
+            result => result,
+        }
+    }
+
     /// Fixed pins can lag the durable release after a control-plane rollback.
     pub(crate) async fn ensure_fixed_defaults(&self) -> Result<bool, WarmPoolError> {
         let released = self.released_images();
