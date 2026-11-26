@@ -14,6 +14,8 @@ pub enum NativeClaimGuardReason {
     Pending,
     #[error("readiness deadline reached")]
     TimedOut,
+    #[error("runtime pod is unschedulable")]
+    Unschedulable,
     #[error("runtime container is in CrashLoopBackOff")]
     CrashLoop,
     #[error("runtime container restarted during readiness observation")]
@@ -33,6 +35,11 @@ pub(super) fn sample(member: &DynamicObject, pod: &Pod) -> Result<Sample> {
         .uid()
         .filter(|uid| !uid.is_empty())
         .ok_or_else(|| super::rejected("guarded Pod has no UID"))?;
+    if member.metadata.deletion_timestamp.is_none() && is_unschedulable(pod) {
+        return Err(AdapterError::NativeClaimNotReady(
+            NativeClaimGuardReason::Unschedulable,
+        ));
+    }
     let container = pod
         .status
         .as_ref()
@@ -67,6 +74,24 @@ pub(super) fn sample(member: &DynamicObject, pod: &Pod) -> Result<Sample> {
         restart_count: container.map(|value| value.restart_count),
         crash_loop,
     })
+}
+
+fn is_unschedulable(pod: &Pod) -> bool {
+    // A bound or terminating Pod can retain an earlier scheduler condition.
+    // Use the condition only while this exact Pod is still awaiting placement.
+    pod.metadata.deletion_timestamp.is_none()
+        && pod
+            .spec
+            .as_ref()
+            .is_some_and(|spec| spec.node_name.as_deref().is_none_or(str::is_empty))
+        && pod.status.as_ref().is_some_and(|status| {
+            status.phase.as_deref() == Some("Pending")
+                && status.conditions.iter().flatten().any(|condition| {
+                    condition.type_ == "PodScheduled"
+                        && condition.status == "False"
+                        && condition.reason.as_deref() == Some("Unschedulable")
+                })
+        })
 }
 
 pub(super) async fn wait<F, Fut>(stage: &'static str, mut observe: F) -> Result<PodBinding>
@@ -131,6 +156,9 @@ pub(super) async fn bounded<T>(
         Ok(_) => "ready",
         Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Pending)) => "pending",
         Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::TimedOut)) => "timeout",
+        Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Unschedulable)) => {
+            "unschedulable"
+        }
         Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::CrashLoop)) => "crash_loop",
         Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Restarting)) => "restarting",
         Err(_) => "error",

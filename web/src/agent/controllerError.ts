@@ -4,6 +4,7 @@ import { ApiError } from '@cma/client';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { approvalBaselineMessage } from './transport/approvalBaseline';
 import { readableError } from '../vocabulary/errors';
+import { WorkspaceReadUnavailable } from '../api/rest/workspaceRead';
 import { currentAgentStatus } from './status';
 import {
   RESTART_AVAILABLE_MESSAGE,
@@ -15,6 +16,7 @@ export function errorMessage(error: unknown): string {
   const approval = approvalBaselineMessage(error);
   if (approval !== undefined) return approval;
   if (isIdentityChanged(error)) return new IdentityChangedError().message;
+  if (error instanceof WorkspaceReadUnavailable) return `${error.message} Check again shortly.`;
   if (error instanceof ApiError && error.code === 'sandbox_checkpoint_in_progress')
     return 'Progress is being saved. Your input was not accepted. Try again after saving finishes.';
   return readableError(error, 'The Agent operation did not complete.');

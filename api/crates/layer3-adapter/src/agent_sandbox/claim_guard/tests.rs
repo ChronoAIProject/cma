@@ -62,6 +62,31 @@ fn stale_member_generation_and_incomplete_pod_readiness_are_pending() {
     }
 }
 
+#[test]
+fn stale_unschedulable_condition_does_not_override_current_pod_state() {
+    let (member, mut pod) = resources("pod-uid", 0, false, false);
+    pod.spec = Some(
+        serde_json::from_value(json!({
+            "containers": [{"name": "runtime", "image": "image"}],
+            "nodeName": "test-node"
+        }))
+        .unwrap(),
+    );
+    let status = pod.status.as_mut().unwrap();
+    status.phase = Some("Pending".into());
+    status.conditions = Some(
+        serde_json::from_value(json!([
+            {"type": "PodScheduled", "status": "False", "reason": "Unschedulable"}
+        ]))
+        .unwrap(),
+    );
+    assert!(sample(&member, &pod).is_ok());
+    pod.spec.as_mut().unwrap().node_name = None;
+    pod.metadata.deletion_timestamp =
+        Some(serde_json::from_value(json!("2026-11-26T12:00:00Z")).unwrap());
+    assert!(sample(&member, &pod).is_ok());
+}
+
 #[tokio::test(start_paused = true)]
 async fn healthy_and_pending_then_ready_keep_the_original_binding() {
     for pending in [false, true] {
@@ -218,6 +243,13 @@ async fn metrics_are_bounded_and_include_cancellation() {
     })
     .await
     .is_err());
+    assert!(wait("home", || async {
+        Err(AdapterError::NativeClaimNotReady(
+            NativeClaimGuardReason::Unschedulable,
+        ))
+    })
+    .await
+    .is_err());
     assert!(tokio::time::timeout(
         Duration::from_millis(1),
         wait("bind", std::future::pending::<Result<Sample>>)
@@ -225,7 +257,7 @@ async fn metrics_are_bounded_and_include_cancellation() {
     .await
     .is_err());
     let rendered = handle.render();
-    for outcome in ["ready", "crash_loop", "cancelled"] {
+    for outcome in ["ready", "crash_loop", "unschedulable", "cancelled"] {
         assert!(
             rendered
                 .lines()

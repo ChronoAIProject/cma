@@ -10,7 +10,7 @@ import sys
 import time
 
 import selection
-from selection import analyze_summaries, changed_paths, check_sha, recipes, snapshot, summarize
+from selection import analyze_comparison, check_sha, recipes, snapshot, summarize
 from git_comparison import comparison_details
 from image_inputs import NAMES, validate_recipe_sources
 from selection_cache import SelectionCache, canonical, fingerprint
@@ -119,7 +119,7 @@ def determine_many(root, revisions, cache=None, parallel=None, deadline=None):
             continue  # Its snapshot was not reached before the deadline.
         current = summaries[head]
         result = (conservative(NAMES, reason, current[0]) if reason else
-                  analyze_summaries(changed_paths(root, base, head), [summaries[base], current]))
+                  analyze_comparison(root, base, head, [summaries[base], current]))
         result.update(base=base, head=head)
         results.append(result)
         if cache is not None:

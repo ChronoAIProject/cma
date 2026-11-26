@@ -13,16 +13,22 @@ export function liveReasoning(state: ConversationState, event: AgentLiveEvent): 
         runId: event.runId,
         content: '',
         status: 'streaming',
+        startedAt: event.timestamp,
       }),
     };
   }
   if (event.type.includes('CONTENT')) {
     const block = current ?? { id, runId: event.runId, content: '', status: 'streaming' as const };
+    const delta = text(event.delta) ?? text(event.content) ?? '';
+    if (delta === '') return state;
     return {
       ...state,
       reasoning: upsert(state.reasoning, {
         ...block,
-        content: `${block.content}${text(event.delta) ?? text(event.content) ?? ''}`,
+        startedAt: current?.startedAt ?? event.timestamp,
+        progressAt:
+          delta.trim() === '' ? current?.progressAt : (event.timestamp ?? current?.progressAt),
+        content: `${block.content}${delta}`,
       }),
     };
   }
