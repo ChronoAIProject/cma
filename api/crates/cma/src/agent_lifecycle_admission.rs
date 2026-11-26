@@ -123,16 +123,24 @@ impl InlineAgentLifecycle {
             ),
             None => None,
         };
-        let lane = crate::store::managed_lifecycle_release_lane(&request);
         let behavior = if self.managed_repository_preflight.get() == Some(&true)
             && request.repository.is_some()
             && request.sandbox_id.is_none()
             && request.workspace_id.is_none()
         {
-            LifecycleBehavior::ManagedRepository
+            if self.public_repository_writer.get() == Some(&true)
+                && request.repository.as_ref().is_some_and(|repository| {
+                    repository.operation.is_none() && repository.connection_id.is_none()
+                })
+            {
+                LifecycleBehavior::RepositoryChoice
+            } else {
+                LifecycleBehavior::ManagedRepository
+            }
         } else {
             LifecycleBehavior::PromptRepository
         };
+        let lane = crate::store::managed_lifecycle_release_lane(&request, behavior);
         for attempt in 0..4 {
             let captured = lane
                 .and_then(|_| self.released.get())
@@ -163,7 +171,11 @@ impl InlineAgentLifecycle {
             let input = LifecycleInput {
                 behavior,
                 managed_agent_instructions: Some(instructions.into()),
-                setup_message: Some(validation::setup_message(&request)),
+                setup_message: Some(if behavior == LifecycleBehavior::RepositoryChoice {
+                    validation::public_repository_setup_message(&request)
+                } else {
+                    validation::setup_message(&request)
+                }),
                 request: request.clone(),
                 resolved_image,
                 capacity: Some(self.capacity),

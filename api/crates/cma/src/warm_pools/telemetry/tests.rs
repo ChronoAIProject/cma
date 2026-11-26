@@ -39,6 +39,7 @@ fn capacity_separates_machine_and_agent_and_requires_exact_observed_binding() {
         config_sha256: agent.plan.config_sha256.clone(),
     };
     agent.binding = Some(binding.clone());
+    agent.applied_revision = agent.revision;
     let mut machine = agent.clone();
     machine.machine = true;
     machine.target_replicas = 0;
@@ -64,6 +65,65 @@ fn capacity_separates_machine_and_agent_and_requires_exact_observed_binding() {
     let mut unobserved = status;
     unobserved.observed = false;
     assert!(!capacity(&[&agent], &[unobserved])[0].complete);
+}
+
+#[test]
+fn empty_capacity_recovers_only_when_the_same_target_is_full() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    let mut target = super::super::tests::target();
+    let binding = NativePoolBinding {
+        name: "pool".into(),
+        uid: "pool-uid".into(),
+        template_name: "template".into(),
+        template_uid: "template-uid".into(),
+        spec: target.plan.spec.clone(),
+        pod_policy: target.plan.pod_policy.clone(),
+        config_sha256: target.plan.config_sha256.clone(),
+    };
+    target.binding = Some(binding.clone());
+    target.target_replicas = 2;
+    target.applied_revision = target.revision;
+    let mut status = NativePoolStatus {
+        binding,
+        desired_replicas: 2,
+        ready_replicas: 0,
+        observed: true,
+    };
+    let mut previous = BTreeMap::new();
+    metrics::with_local_recorder(&recorder, || {
+        for (ready, at) in [(0, 10.), (1, 20.)] {
+            status.ready_replicas = ready;
+            publish(
+                "agent",
+                Some(capacity(&[&target], std::slice::from_ref(&status))[0]),
+                at,
+            );
+            observe_capacity_changes(&[&target], std::slice::from_ref(&status), &mut previous);
+            assert!(previous[&target.id].degraded);
+            assert!(handle
+                .render()
+                .contains("cma_warm_pool_capacity_degraded{kind=\"agent\"} 1"));
+        }
+        publish("agent", Some(capacity(&[&target], &[])[0]), 30.);
+        observe_capacity_changes(&[&target], &[], &mut previous);
+        assert!(previous[&target.id].degraded);
+        assert!(handle
+            .render()
+            .contains("cma_warm_pool_observation_complete{kind=\"agent\"} 0"));
+        status.ready_replicas = 2;
+        publish(
+            "agent",
+            Some(capacity(&[&target], std::slice::from_ref(&status))[0]),
+            40.,
+        );
+        observe_capacity_changes(&[&target], &[status], &mut previous);
+        assert!(!previous[&target.id].degraded);
+        assert_eq!(previous[&target.id].binding, target.binding.unwrap());
+        assert!(handle
+            .render()
+            .contains("cma_warm_pool_capacity_degraded{kind=\"agent\"} 0"));
+    });
 }
 
 #[test]

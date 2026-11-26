@@ -1,5 +1,6 @@
 //! Cached, deployment-scoped capacity observations. Scrapes never call the provider.
 use super::*;
+use std::collections::BTreeMap;
 
 impl NativeWarmPools {
     pub(crate) fn spawn_observations(
@@ -14,6 +15,7 @@ impl NativeWarmPools {
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(15));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut previous = BTreeMap::new();
             loop {
                 tokio::select! {
                     _ = crate::shutdown::signalled(shutdown.clone()) => return,
@@ -36,6 +38,7 @@ impl NativeWarmPools {
                         }
                     }
                     let counts = capacity(&current, &inventory);
+                    observe_capacity_changes(&current, &inventory, &mut previous);
                     Ok::<_, WarmPoolError>((targets, counts))
                 };
                 let result = tokio::select! {
@@ -106,15 +109,8 @@ fn capacity(targets: &[&PoolTarget], inventory: &[NativePoolStatus]) -> [Capacit
         if target.target_replicas == 0 && target.binding.is_none() {
             continue;
         }
-        let exact = inventory
-            .iter()
-            .find(|status| target.binding.as_ref() == Some(&status.binding));
-        match exact {
-            Some(status)
-                if status.observed && status.desired_replicas == target.target_replicas =>
-            {
-                count.ready += u64::from(status.ready_replicas);
-            }
+        match startup::observed_capacity(target, inventory) {
+            Some(ready) => count.ready += u64::from(ready),
             _ => count.complete = false,
         }
     }
@@ -128,8 +124,61 @@ fn publish(kind: &'static str, capacity: Option<Capacity>, at: f64) {
         metrics::gauge!("cma_warm_pool_desired_replicas", "kind" => kind).set(count.desired as f64);
         if complete {
             metrics::gauge!("cma_warm_pool_ready_replicas", "kind" => kind).set(count.ready as f64);
+            metrics::gauge!("cma_warm_pool_capacity_degraded", "kind" => kind)
+                .set(f64::from(count.ready < count.desired));
             metrics::gauge!("cma_warm_pool_sample_success_timestamp_seconds", "kind" => kind)
                 .set(at);
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ObservedCapacity {
+    binding: NativePoolBinding,
+    revision: i64,
+    desired: u32,
+    degraded: bool,
+}
+
+fn observe_capacity_changes(
+    targets: &[&PoolTarget],
+    inventory: &[NativePoolStatus],
+    previous: &mut BTreeMap<String, ObservedCapacity>,
+) {
+    previous.retain(|id, _| targets.iter().any(|target| &target.id == id));
+    for target in targets {
+        if target.target_replicas == 0 {
+            previous.remove(&target.id);
+            continue;
+        }
+        let Some(ready) = startup::observed_capacity(target, inventory) else {
+            continue;
+        };
+        let Some(binding) = target.binding.clone() else {
+            continue;
+        };
+        let current = ObservedCapacity {
+            binding,
+            revision: target.revision,
+            desired: target.target_replicas,
+            degraded: ready < target.target_replicas,
+        };
+        let old = previous.insert(target.id.clone(), current.clone());
+        let kind = if target.machine { "machine" } else { "agent" };
+        if current.degraded && old.as_ref() != Some(&current) {
+            tracing::warn!(target: "cma_warm_pool_capacity", parent: None,
+                kind, desired = current.desired, ready,
+                reason = "provider_reports_insufficient_ready", "Native warm pool capacity degraded");
+        } else if !current.degraded
+            && old.is_some_and(|old| {
+                old.degraded
+                    && old.binding == current.binding
+                    && old.revision == current.revision
+                    && old.desired == current.desired
+            })
+        {
+            tracing::info!(target: "cma_warm_pool_capacity", parent: None,
+                kind, desired = current.desired, ready, "Native warm pool capacity recovered");
         }
     }
 }
@@ -142,6 +191,10 @@ pub(super) fn applied(target: &PoolTarget, success: bool) {
         metrics::gauge!("cma_warm_pool_revision_applied_timestamp_seconds", "kind" => kind)
             .set(crate::telemetry::timestamp());
     }
+}
+
+pub(crate) fn startup(outcome: &'static str) {
+    metrics::counter!("cma_warm_pool_startup_total", "outcome" => outcome).increment(1);
 }
 
 #[cfg(test)]

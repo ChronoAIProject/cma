@@ -117,7 +117,7 @@ mod gateway_reset_tests {
                     if request.headers().get("authorization").is_none_or(|v| v != "Bearer manager-fixture") {
                         return StatusCode::UNAUTHORIZED.into_response();
                     }
-                    let reset = request.uri().path().ends_with("/resets");
+                    let reset = request.uri().path().ends_with("/resets") || request.uri().path().ends_with("/profile-transfers");
                     request.extensions_mut().insert(layer1_public::AuthenticatedSubject(manager));
                     request.extensions_mut().insert(Authorization::new([Capability::ManageGatewayRecords, Capability::ManageProviderBindings]));
                     let app = apps.read().await[usize::from(gate.load(Ordering::SeqCst))].clone();
@@ -494,4 +494,5 @@ mod gateway_reset_tests {
         gateway_db.drop().await.unwrap();
         client.database(&database).drop().await.unwrap();
     }
+    include!("gateway_profile_transfer_tests.rs");
 }

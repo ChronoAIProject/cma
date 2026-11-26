@@ -35,6 +35,9 @@ pub(super) fn valid_prepare_receipt(
                     && (request.repository_connection_id.is_none()
                         || &receipt.source_commit == reference)
             }
+            layer3_adapter::WorkspaceSource::PublicRepositorySnapshot { commit, .. } => {
+                receipt.source_commit.as_ref() == Some(commit)
+            }
             _ => receipt.source_commit.is_none(),
         }
 }
@@ -103,6 +106,7 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
         ),
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
+        | AdapterError::NativePoolDefinitionAbsent { .. }
         | AdapterError::NativeClaimNotReady(_)
         | AdapterError::RuntimeStartupHold(_)
         | AdapterError::Unavailable(_) => {
@@ -132,6 +136,7 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
             "repository_source_invalid", "Repository files could not be safely prepared. The task has not run. Check source contents before starting another task.",
         ),
         AdapterError::Rejected(_)
+        | AdapterError::NativePoolConfigurationDrift
         | AdapterError::DesktopFailed
         | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)

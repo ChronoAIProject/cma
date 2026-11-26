@@ -1,6 +1,6 @@
 //! Verify a fresh, owner-scoped repository snapshot before paid allocation.
 
-use crate::store::RepositoryAccessPin;
+use crate::store::{PublicRepositoryPin, RepositoryAccessPin};
 use crate::trigger::{GitHubRepositoryCheck, GitHubScopeCheck, GITHUB_SERVICE};
 use layer1_public::rest::{
     AgentLifecycleRepository, GitHubRepositoryNeed, RepositoryAccessRefusal, RepositoryScopeRepair,
@@ -11,6 +11,10 @@ use layer2_core::sandbox::{
 };
 
 use super::*;
+
+mod public;
+#[cfg(test)]
+pub(super) use public::PublicRepositoryReadiness;
 
 #[async_trait]
 pub(super) trait RepositoryReadiness: Send + Sync {
@@ -63,6 +67,7 @@ impl InlineAgentLifecycle {
         caller: &Caller,
         input: &mut ProvisionInput,
         retained_commit: Option<&str>,
+        retained_public: Option<&PublicRepositoryPin>,
     ) -> Result<(), AgentLifecycleProvisioningError> {
         if !input.behavior.uses_repository_profile()
             || input.request.sandbox_id.is_some()
@@ -73,9 +78,51 @@ impl InlineAgentLifecycle {
         let Some(repository) = input.request.repository.as_ref() else {
             return Ok(());
         };
-        let requires_managed = input.behavior == LifecycleBehavior::ManagedRepository
-            || repository.operation.is_some()
-            || repository.connection_id.is_some();
+        let selected_authority =
+            repository.operation.is_some() || repository.connection_id.is_some();
+        if matches!(
+            input.behavior,
+            LifecycleBehavior::RepositoryChoice | LifecycleBehavior::PublicRepository
+        ) {
+            if let Some(pin) = retained_public {
+                if input.repository_access_pin.is_some()
+                    || retained_commit.is_some()
+                    || selected_authority
+                {
+                    return Err(AgentLifecycleProvisioningError::Conflict(
+                        "Public source preparation cannot carry selected connection authority."
+                            .into(),
+                    ));
+                }
+                return self.preflight_public_repository(caller, input, pin).await;
+            }
+            if input.repository_access_pin.is_none()
+                && retained_commit.is_none()
+                && !selected_authority
+                && self.try_public_repository(input).await?
+            {
+                return Ok(());
+            }
+            if input.behavior == LifecycleBehavior::PublicRepository {
+                return self
+                    .wait_for_managed_repository_access(
+                        caller,
+                        input,
+                        RepositoryAccessRefusal::VerificationUnavailable,
+                        None,
+                    )
+                    .await;
+            }
+            // No anonymous proof was established. Use the existing selected
+            // connection proof or typed repair, keyed to the original operation.
+            input.behavior = LifecycleBehavior::ManagedRepository;
+        } else if retained_public.is_some() {
+            return Err(AgentLifecycleProvisioningError::Conflict(
+                "The retained public source does not match the operation mode.".into(),
+            ));
+        }
+        let requires_managed =
+            input.behavior == LifecycleBehavior::ManagedRepository || selected_authority;
         if input.repository_access_pin.is_some() || requires_managed {
             if input.repository_access_pin.is_none()
                 && self.managed_repository_preflight.get() != Some(&true)
@@ -104,6 +151,11 @@ impl InlineAgentLifecycle {
                     return Ok(());
                 };
                 self.require_repository_connections(caller, input).await?;
+                let repository = input
+                    .request
+                    .repository
+                    .as_ref()
+                    .expect("repository checked above");
                 let commit = resolve(probe.as_ref(), &caller.subject, repository).await?;
                 self.operations
                     .pin_repository_commit(&input.lease, &commit)

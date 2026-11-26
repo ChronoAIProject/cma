@@ -104,6 +104,10 @@ pub(crate) struct InlineAgentLifecycle {
     managed_repository_preflight: OnceLock<bool>,
     managed_repository_broker: OnceLock<Arc<crate::trigger::CmaServiceConnectionBroker>>,
     managed_repository_runtime_images: OnceLock<(String, Vec<String>)>,
+    public_repository_images: OnceLock<std::collections::BTreeSet<String>>,
+    public_repository_writer: OnceLock<bool>,
+    #[cfg(test)]
+    public_repository_probe: OnceLock<Arc<dyn repository_preflight::PublicRepositoryReadiness>>,
     worker_slots: Arc<tokio::sync::Semaphore>,
     tasks: LifecycleDrain,
 }
@@ -167,6 +171,10 @@ impl InlineAgentLifecycle {
             managed_repository_preflight: OnceLock::new(),
             managed_repository_broker: OnceLock::new(),
             managed_repository_runtime_images: OnceLock::new(),
+            public_repository_images: OnceLock::new(),
+            public_repository_writer: OnceLock::new(),
+            #[cfg(test)]
+            public_repository_probe: OnceLock::new(),
             worker_slots: Arc::new(tokio::sync::Semaphore::new(crate::store::DISCOVERY_BATCH)),
             tasks: LifecycleDrain::new(crate::store::DISCOVERY_BATCH + 1),
         });
@@ -220,6 +228,7 @@ impl InlineAgentLifecycle {
             limits,
             behavior,
             sandbox_availability,
+            &lease.id,
         )
         .await;
         tracing::info!(

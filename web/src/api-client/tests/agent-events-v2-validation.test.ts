@@ -224,6 +224,32 @@ it.each(['delimiter', 'UTF-8'] as const)(
     expect(onCursor.mock.calls).toEqual([[cursor(1)]]);
   },
 );
+it('resumes the durable cursor after a severed UTF-8 SSE comment', async () => {
+  const t = harness();
+  const complete = frame('cma.agent.event', durable(1), cursor(1));
+  const interrupted = new TextEncoder().encode(complete + ': keepalive 🙂');
+  t.fetch.mockResolvedValueOnce(sse(interrupted.slice(0, -2), 19));
+  t.fetch.mockResolvedValueOnce(
+    sse(': keepalive 🙂\n\n' + frame('cma.agent.event', durable(2), cursor(2)), 1),
+  );
+  const onEvent = vi.fn();
+  const onCursor = vi.fn();
+  await expect(t.api.events(agent, { onEvent, onCursor })).rejects.toBeInstanceOf(TransportError);
+  expect(onEvent).toHaveBeenCalledOnce();
+  expect(onCursor.mock.calls).toEqual([[cursor(1)]]);
+  await t.api.events(agent, { afterCursor: cursor(1), follow: false, onEvent, onCursor });
+  expect(onEvent.mock.calls.map(([event]) => event.data.sequence)).toEqual([1, 2]);
+  expect(onCursor.mock.calls).toEqual([[cursor(1)], [cursor(2)]]);
+  expect(new URL(String(t.fetch.mock.calls[1]![0])).searchParams.get('after_cursor')).toBe(
+    cursor(1),
+  );
+});
+it('rejects malformed UTF-8 inside a comment during streaming', async () => {
+  const t = harness();
+  const bytes = new TextEncoder().encode(': malformed ');
+  t.fetch.mockResolvedValueOnce(sse(Uint8Array.from([...bytes, 0xf0, 0x28, 0x0a]), 1));
+  await expect(t.api.events(agent, { onEvent: vi.fn() })).rejects.toBeInstanceOf(ProtocolError);
+});
 it('rejects invalid UTF-8 and stops observation', async () => {
   const t = harness();
   t.fetch.mockResolvedValueOnce(sse(new Uint8Array([0xff])));

@@ -4,6 +4,8 @@ use layer3_adapter::sandbox_metrics::{RawPhysicalSeries, SourceMetric};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod batch;
+pub mod coverage;
 pub mod interval;
 
 const SCHEMA_VERSION: u32 = 1;
@@ -48,6 +50,18 @@ impl MeasuredObservation {
     }
 }
 
+/// Canonical searchable keys independently derived from validated custody.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustodyProjection {
+    pub physical_series_id: String,
+    pub physical_sample_id: String,
+    pub timestamp_ms: u64,
+    pub owner_id: String,
+    pub sandbox_id: String,
+    pub evidence_sha256: String,
+}
+
 /// A validated durable observation can prove replay without becoming input
 /// to the source-capture path.
 pub struct RetainedObservation(ObservationV1);
@@ -86,6 +100,17 @@ impl RetainedObservation {
         Ok(Self(observation))
     }
 
+    pub fn custody_projection(&self) -> Result<CustodyProjection, EvidenceError> {
+        Ok(CustodyProjection {
+            physical_series_id: self.0.series_id()?,
+            physical_sample_id: self.0.physical_sample_id.clone(),
+            timestamp_ms: self.0.timestamp_ms,
+            owner_id: self.0.binding.owner_subject.clone(),
+            sandbox_id: self.0.binding.sandbox_id.clone(),
+            evidence_sha256: digest(&self.0)?,
+        })
+    }
+
     pub fn timestamp_ms(&self) -> u64 {
         self.0.timestamp_ms
     }
@@ -117,6 +142,18 @@ struct Attribution<'a> {
 }
 
 impl ObservationV1 {
+    fn series_id(&self) -> Result<String, EvidenceError> {
+        let binding = &self.binding;
+        let identity = PhysicalIdentity::for_binding(binding, self.metric, self.mapping_revision)?;
+        digest(&(
+            &self.source,
+            &binding.cluster,
+            &binding.namespace,
+            self.metric,
+            identity,
+        ))
+    }
+
     fn shares_physical_series(&self, other: &Self) -> Result<bool, EvidenceError> {
         let a = &self.binding;
         let b = &other.binding;

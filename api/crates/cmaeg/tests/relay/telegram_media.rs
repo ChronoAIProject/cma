@@ -108,6 +108,68 @@ async fn nyxid_media_shapes_are_refused_off_and_admitted_on() {
 }
 
 #[tokio::test]
+async fn captioned_relay_photo_is_correlated_on_refusal_and_delivered_when_enabled() {
+    use axum::body::Body;
+    use cmaeg::{http::callbacks, turns::observer::ActivityObserver};
+    use cmaeg_core::ids::{EventId, RecordId};
+    use std::sync::{Arc, Mutex};
+    use tower::ServiceExt;
+
+    #[derive(Default)]
+    struct Refusals(Mutex<Vec<(Option<EventId>, String)>>);
+    impl ActivityObserver for Refusals {
+        fn refused(
+            &self,
+            _record: &RecordId,
+            _source: &'static str,
+            event: Option<&EventId>,
+            reason: &str,
+        ) {
+            self.0.lock().unwrap().push((event.cloned(), reason.into()));
+        }
+    }
+
+    let off = Fixture::new(|_| {}, Default::default()).await;
+    let on = Fixture::with_media(|_| {}, Default::default()).await;
+    let observer = Arc::new(Refusals::default());
+    let mut photo = telegram_photo();
+    caption(&mut photo, "Describe the text in this fixture image.");
+    let (body, token) = photo.signed();
+    let response = callbacks::router(off.state.clone().with_activity_observer(observer.clone()))
+        .oneshot(off.local_request(Body::from(body), &token))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 202);
+    let body = axum::body::to_bytes(response.into_body(), 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"status": "refused", "reason": "attachment_unsupported"})
+    );
+    assert_eq!(
+        *observer.0.lock().unwrap(),
+        vec![(
+            Some(EventId::new("message-1").unwrap()),
+            "attachment_unsupported".into()
+        )]
+    );
+    assert!(off.recorder.requests.lock().unwrap().is_empty());
+
+    accept(&on, &photo, "captioned photo").await;
+    let (text, attachments, _, _) = last(&on);
+    assert_eq!(text, "Describe the text in this fixture image.");
+    assert_eq!(attachments.len(), 1);
+    assert_eq!(
+        attachments[0].source,
+        Some(AttachmentSource::NyxidRelay { index: 0 })
+    );
+    accept(&off, &Envelope::new(), "adjacent plain text").await;
+    assert_eq!(last(&off).0, "hello");
+}
+
+#[tokio::test]
 async fn a_captioned_group_photo_mentioning_the_bot_carries_its_photo() {
     let fixture = Fixture::with_media(mention_policy, Default::default()).await;
     let mut envelope = telegram_photo();

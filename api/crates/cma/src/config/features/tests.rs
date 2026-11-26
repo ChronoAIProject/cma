@@ -32,6 +32,30 @@ fn startup_health_serving_requires_a_strict_opt_in() {
 }
 
 #[test]
+fn empty_warm_pool_startup_requires_early_http_and_explicit_opt_in() {
+    for (early, empty, expected) in [
+        (false, None, Some(false)),
+        (true, None, Some(false)),
+        (true, Some("false"), Some(false)),
+        (true, Some("true"), Some(true)),
+        (false, Some("true"), None),
+        (true, Some("yes"), None),
+    ] {
+        let flags = FeatureFlags::from_lookup(&mut |name| {
+            Ok(match name {
+                "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED" => Some(early.to_string()),
+                "CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED" => empty.map(str::to_owned),
+                _ => None,
+            })
+        });
+        assert_eq!(
+            flags.ok().map(|flags| flags.am_empty_warm_pool_startup),
+            expected
+        );
+    }
+}
+
+#[test]
 fn document_quotas_require_an_independent_strict_opt_in() {
     let key = "CHRONO_DOCUMENT_QUOTAS_ENABLED";
     for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {

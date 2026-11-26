@@ -11,6 +11,8 @@ export function fileNameIssue(name: string): string | undefined {
     name === '..'
   )
     return 'Enter a file or folder name without path separators.';
+  if (new TextEncoder().encode(name).byteLength > 255)
+    return 'File and folder names must be at most 255 UTF-8 bytes.';
 }
 
 export function FileCreateForm({
@@ -52,7 +54,6 @@ export function FileCreateForm({
           aria-describedby={issue ? errorId : undefined}
           value={name}
           onChange={(event) => onName(event.target.value)}
-          maxLength={255}
         />
       </label>
       {issue ? <p id={errorId}>{issue}</p> : null}

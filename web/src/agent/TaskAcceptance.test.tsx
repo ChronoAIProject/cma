@@ -120,7 +120,7 @@ it('shows an unmet task after reopen and verifies only its exact turn and output
 
 it.each([
   { outcome: 'failed', activity: 'failed', label: 'Failed' },
-  { outcome: 'interrupted', activity: 'stopped', label: 'Stopped' },
+  { outcome: 'interrupted', activity: 'interrupted', label: 'Response interrupted' },
   { outcome: 'completed', activity: 'completed', label: 'Turn ended' },
 ] as const)(
   'keeps an earlier accepted verdict on its turn after a later $outcome turn and reopen',
@@ -158,7 +158,7 @@ it.each([
               observedTaskStatus(
                 {
                   ...detail,
-                  taskStatus,
+                  taskStatus: taskStatus === 'interrupted' ? 'stopped' : taskStatus,
                   sandboxId: detail.sandbox.id,
                   workspaceId: detail.workspace.id,
                   worktreeId: detail.worktree.id,

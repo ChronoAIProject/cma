@@ -8,7 +8,10 @@ use layer1_public::rest::admin::warm_pools::{
 };
 use layer2_core::{Caller, Capability};
 use layer3_adapter::{
-    agent_sandbox::{NativePoolBinding, NativePoolConfiguration, NativePoolSpec, NativePoolStatus},
+    agent_sandbox::{
+        NativePoolBinding, NativePoolConfiguration, NativePoolDrain, NativePoolSpec,
+        NativePoolStatus,
+    },
     HomeVolumePolicy, RuntimeImage, SandboxAdapter,
 };
 use serde::{Deserialize, Serialize};
@@ -21,7 +24,8 @@ mod released;
 mod retirement;
 pub(crate) mod startup;
 mod supervision;
-mod telemetry;
+pub(crate) mod telemetry;
+mod view;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PoolTarget {
@@ -63,46 +67,6 @@ pub(crate) struct OperatorReplicas {
     pub at: mongodb::bson::DateTime,
 }
 
-impl PoolTarget {
-    pub fn view(&self, live: Option<&NativePoolStatus>, available: bool) -> WarmPoolView {
-        let exact = live.filter(|status| self.binding.as_ref() == Some(&status.binding));
-        let observed = exact.is_some_and(|status| {
-            status.observed && status.desired_replicas == self.target_replicas
-        });
-        let ready = exact
-            .filter(|_| observed)
-            .map(|status| status.ready_replicas);
-        let status = if !available || self.error.is_some() {
-            "unavailable"
-        } else if self.applied_revision != self.revision || !observed {
-            "pending"
-        } else {
-            match (self.target_replicas, ready) {
-                (0, Some(0)) => "disabled",
-                (target, Some(count)) if target > 0 && count >= target => "ready",
-                _ => "pending",
-            }
-        };
-        WarmPoolView {
-            id: self.id.clone(),
-            revision: self.revision as u64,
-            image: self.plan.spec.image.uri.clone(),
-            config_sha256: self.plan.config_sha256.clone(),
-            cpu_millis: self.plan.spec.cpu_millis,
-            memory_mib: self.plan.spec.memory_mib,
-            target_replicas: self.target_replicas,
-            ready_replicas: ready,
-            observed,
-            status: status.into(),
-            resource_name: self.binding.as_ref().map(|binding| binding.name.clone()),
-            error: self.error.clone().or_else(|| {
-                (!available).then(|| "Native warm pool inventory is unavailable.".into())
-            }),
-            machine: self.machine,
-        }
-    }
-}
-
 #[async_trait]
 pub(crate) trait PoolTargetStore: Send + Sync {
     async fn candidate_protected(&self, _target: &PoolTarget) -> Result<bool, WarmPoolError> {
@@ -131,7 +95,7 @@ pub(crate) trait PoolTargetStore: Send + Sync {
         &self,
         _target: &PoolTarget,
         _image: &str,
-    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
     async fn begin_retirement(&self, _target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
@@ -197,6 +161,7 @@ pub(crate) struct NativeWarmPools {
     default_target: u32,
     machine_target: u32,
     target_fencing: bool,
+    allow_empty_startup: bool,
 }
 
 impl NativeWarmPools {
@@ -219,6 +184,7 @@ impl NativeWarmPools {
             default_target,
             machine_target,
             target_fencing: false,
+            allow_empty_startup: false,
         })
         .with_target_fencing(false)
     }
@@ -245,7 +211,9 @@ impl NativeWarmPools {
             }
             return self.reconcile_candidate(provider, target).await;
         }
-        reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing).await
+        reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing)
+            .await
+            .map(|_| true)
     }
 }
 
@@ -447,7 +415,25 @@ async fn reconcile_one(
     let Some(target) = store.claim().await? else {
         return Ok(false);
     };
-    reconcile_claimed(store, provider, target, false).await
+    reconcile_claimed(store, provider, target, false)
+        .await
+        .map(|_| true)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PoolApply {
+    Settled,
+    ConfigurationDrift,
+    Failed,
+}
+
+fn provider_apply_error(error: layer3_adapter::AdapterError) -> WarmPoolError {
+    match error {
+        layer3_adapter::AdapterError::NativePoolConfigurationDrift => {
+            WarmPoolError::ProviderConfigurationDrift
+        }
+        _ => WarmPoolError::Unavailable,
+    }
 }
 
 async fn reconcile_claimed(
@@ -455,7 +441,7 @@ async fn reconcile_claimed(
     provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
     mut target: PoolTarget,
     target_fencing: bool,
-) -> Result<bool, WarmPoolError> {
+) -> Result<PoolApply, WarmPoolError> {
     if target.retiring {
         return Err(WarmPoolError::Conflict);
     }
@@ -484,14 +470,20 @@ async fn reconcile_claimed(
         } else {
             provider.resize(binding, target.target_replicas).await
         }
-        .map_err(|_| WarmPoolError::Unavailable)?;
+        .map_err(provider_apply_error)?;
         Ok::<(), WarmPoolError>(())
     };
-    let success = matches!(
-        tokio::time::timeout(Duration::from_secs(30), result).await,
-        Ok(Ok(()))
-    );
+    let result = tokio::time::timeout(Duration::from_secs(30), result).await;
+    let success = matches!(result, Ok(Ok(())));
     store.finish(&target, success).await?;
     telemetry::applied(&target, success);
-    Ok(true)
+    Ok(
+        if matches!(result, Ok(Err(WarmPoolError::ProviderConfigurationDrift))) {
+            PoolApply::ConfigurationDrift
+        } else if success {
+            PoolApply::Settled
+        } else {
+            PoolApply::Failed
+        },
+    )
 }

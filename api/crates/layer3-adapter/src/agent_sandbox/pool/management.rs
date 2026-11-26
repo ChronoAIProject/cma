@@ -276,48 +276,28 @@ impl AgentSandboxPools {
             return Err(rejected("native warm pool target exceeds its bound"));
         }
         require_canary_target(&binding.spec, replicas)?;
-        let (template, actual) = self.bound_resources(binding).await?;
-        if replicas > 0 {
+        let resources = self
+            .bound_resources_with(binding, |pool| {
+                super::target_fence::allow_unversioned(pool, replicas)
+            })
+            .await;
+        if replicas > 0
+            && (resources.is_ok()
+                || matches!(
+                    &resources,
+                    Err(crate::AdapterError::NativePoolConfigurationDrift)
+                ))
+        {
             self.verify_seed(&binding.spec.home).await?;
         }
+        let (template, actual) = resources?;
         let config = model::binding_config(&self.config, binding);
         let desired = model::pool(&config, &binding.spec, &template, replicas)?;
         let updated = self.apply_target(actual, &desired).await?;
         status(binding.clone(), &updated)
     }
 
-    pub(super) async fn bound_resources(
-        &self,
-        binding: &NativePoolBinding,
-    ) -> Result<(DynamicObject, DynamicObject)> {
-        let config = model::binding_config(&self.config, binding);
-        let desired = model::template(&config, &binding.spec)?;
-        if binding.config_sha256 != model::digest(&config, &binding.spec)?
-            || binding.template_name != desired.name_any()
-        {
-            return Err(rejected("native pool binding has another configuration"));
-        }
-        // Both names are persisted authority. Start the independent reads
-        // together, then preserve Template-before-Pool validation and errors.
-        let (template, actual) = tokio::join!(
-            self.templates.get(&binding.template_name),
-            self.pools.get(&binding.name),
-        );
-        let template = template.map_err(api_error)?;
-        model::verify(&template, &desired)?;
-        if template.uid().as_deref() != Some(&binding.template_uid) {
-            return Err(rejected("native pool template UID changed"));
-        }
-        let actual = actual.map_err(api_error)?;
-        let desired = model::pool(&config, &binding.spec, &template, target(&actual)?)?;
-        model::verify(&actual, &desired)?;
-        if actual.uid().as_deref() != Some(&binding.uid) {
-            return Err(rejected("native pool UID changed"));
-        }
-        Ok((template, actual))
-    }
-
-    async fn discover(&self, pool: &DynamicObject) -> Result<NativePoolStatus> {
+    pub(super) async fn discover(&self, pool: &DynamicObject) -> Result<NativePoolStatus> {
         let encoded = pool
             .annotations()
             .get(DEFINITION_ANNOTATION)
@@ -336,13 +316,44 @@ impl AgentSandboxPools {
         let desired = model::template(&config, &definition.spec)?;
         let template = self
             .templates
-            .get(&desired.name_any())
+            .get_opt(&desired.name_any())
             .await
             .map_err(api_error)?;
-        model::verify(&template, &desired)?;
-        let desired = model::pool(&config, &definition.spec, &template, target(pool)?)?;
-        model::verify(pool, &desired)?;
+        let Some(template) = template else {
+            let uid = pool
+                .annotations()
+                .get("cma/pool-template-uid")
+                .filter(|uid| !uid.is_empty())
+                .ok_or_else(|| rejected("native pool template identity is missing"))?;
+            let mut expected = desired;
+            expected.metadata.uid = Some(uid.clone());
+            let desired_pool = model::pool(&config, &definition.spec, &expected, target(pool)?)?;
+            model::verify_identity(pool, &desired_pool)?;
+            model::verify_spec(pool, &desired_pool)?;
+            return Err(crate::AdapterError::NativePoolDefinitionAbsent {
+                pool: false,
+                template: true,
+            });
+        };
+        model::verify_identity(&template, &desired)?;
+        let desired_pool = model::pool(&config, &definition.spec, &template, target(pool)?)?;
+        model::verify_identity(pool, &desired_pool)?;
+        Self::verify_pool_specs(&template, &desired, pool, &desired_pool)?;
         status(binding(&config, &definition.spec, &template, pool)?, pool)
+    }
+
+    pub(super) fn verify_pool_specs(
+        template: &DynamicObject,
+        desired_template: &DynamicObject,
+        pool: &DynamicObject,
+        desired_pool: &DynamicObject,
+    ) -> Result<()> {
+        let specs = model::verify_spec(template, desired_template)
+            .and_then(|()| model::verify_spec(pool, desired_pool));
+        if specs.is_err() {
+            super::retirement::admitting(pool)?;
+        }
+        specs
     }
 
     pub(super) async fn apply_target(

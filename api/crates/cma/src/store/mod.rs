@@ -77,6 +77,7 @@ pub(crate) mod bots;
 #[cfg(test)]
 mod bots_mongo_integration_tests;
 mod budget;
+pub(crate) use budget::inventory as turn_budget_inventory;
 mod channel_storage_retention;
 mod checkpoint_capture;
 mod checkpoint_objects;
@@ -240,7 +241,8 @@ pub(crate) use agent_lifecycle_operations::canary_key;
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
     CanaryProfiles, CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput,
-    LifecycleLease, MongoAgentLifecycleStore, RepositoryAccessPin, DISCOVERY_BATCH, HEARTBEAT,
+    LifecycleLease, MongoAgentLifecycleStore, PublicRepositoryPin, RepositoryAccessPin,
+    DISCOVERY_BATCH, HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};

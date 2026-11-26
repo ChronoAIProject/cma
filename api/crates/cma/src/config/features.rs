@@ -34,6 +34,7 @@ pub(crate) struct FeatureFlags {
     pub session_guidance_v4: bool,
     pub session_guidance_v5: bool,
     pub am_startup_health_serving: bool,
+    pub am_empty_warm_pool_startup: bool,
     pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
     pub usage_snapshot_cursors_enabled: bool,
@@ -106,6 +107,7 @@ pub(crate) struct FeatureFlags {
     pub sandbox_detail_timings: bool,
     pub agent_file_read_timings: bool,
     pub bounded_response_reads: bool,
+    pub active_log_proofs: bool,
     pub bounded_transcript_reads: bool,
     pub privacy_export_enabled: bool,
     pub bounded_usage_reads: bool,
@@ -160,6 +162,7 @@ impl FeatureFlags {
             session_guidance_v5: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V5_ENABLED")?,
             image_manager_retirement: flag(lookup, "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED")?,
             am_startup_health_serving: flag(lookup, "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED")?,
+            am_empty_warm_pool_startup: flag(lookup, "CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED")?,
             pending_home_reconciliation: flag(
                 lookup,
                 "CHRONO_PENDING_HOME_RECONCILIATION_ENABLED",
@@ -352,6 +355,7 @@ impl FeatureFlags {
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
+            active_log_proofs: flag(lookup, "CHRONO_AGENT_LOG_ACTIVE_PROOFS_ENABLED")?,
             bounded_transcript_reads: flag(
                 lookup,
                 "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED",
@@ -390,6 +394,9 @@ impl FeatureFlags {
         }
         if flags.am_startup_health_serving && flags.am_failure_containment_enabled {
             return Err("CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED cannot be combined with CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED".into());
+        }
+        if flags.am_empty_warm_pool_startup && !flags.am_startup_health_serving {
+            return Err("CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED requires CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED".into());
         }
         Ok(flags)
     }

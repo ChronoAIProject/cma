@@ -49,8 +49,6 @@ export class LocalAgentV2 {
   private readonly admittedInputs: CapturedWrite[] = [];
   private pendingSnapshot?: ServerResponse;
   private baseURL = '';
-  private origin = '';
-  private finishSignOut?: () => void;
   private readonly server = createServer((request, response) => {
     void this.handle(request, response).catch((error: unknown) => {
       this.errors.push(String(error));
@@ -65,7 +63,6 @@ export class LocalAgentV2 {
     const address = this.server.address();
     if (!address || typeof address === 'string') throw new Error('Missing local fixture port');
     const origin = `http://127.0.0.1:${address.port}`;
-    this.origin = origin;
     await this.boundary.route(page, baseURL);
     await page.route(`${origin}/**`, (route) => route.continue());
     await page.route('**/api/v2/**', (route) => {
@@ -95,10 +92,10 @@ export class LocalAgentV2 {
   }
 
   async routeSignOut(page: Page, onSignOut: () => void) {
-    this.finishSignOut = onSignOut;
-    await page.route(`${this.baseURL}/auth/logout`, (route) =>
-      route.continue({ url: `${this.origin}/auth/logout` }),
-    );
+    await page.route(`${this.baseURL}/auth/logout`, (route) => {
+      onSignOut();
+      return route.fulfill({ status: 303, headers: { location: '/' } });
+    });
   }
 
   async close(page: Page) {
@@ -283,11 +280,6 @@ export class LocalAgentV2 {
     if (request.method === 'OPTIONS') return response.end();
     const url = new URL(request.url!, 'http://localhost');
     const path = url.pathname;
-    if (request.method === 'GET' && path === '/auth/logout' && this.finishSignOut) {
-      this.finishSignOut();
-      response.writeHead(302, { Location: `${this.baseURL}/agents/${agent}` });
-      return response.end();
-    }
     if (request.method === 'POST') {
       let source = '';
       for await (const chunk of request) source += String(chunk);

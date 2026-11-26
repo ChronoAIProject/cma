@@ -99,6 +99,9 @@ pub(super) async fn persist(
             }
         }
     }
+    if let Some(proof) = prepared.active_proof {
+        proof.persist(store, session).await?;
+    }
     for write in prepared.evidence {
         let evidence = collection(store, EVIDENCE);
         if let Some(before) = write.before {
