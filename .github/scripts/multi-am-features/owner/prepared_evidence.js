@@ -39,9 +39,14 @@
       && Number(reserved.provision_generation) > 0
       && Number(reserved.provision_generation) === Number(active.provision_generation);
     const receipts = agent?.record?.work?.receipts;
-    const startupReceipts = ['add_worktree', 'materialize_home', 'open_conversation'].map(step => {
+    const operations = [
+      ['add_worktree', 'worktree:workspace:wt-1:add:v1'],
+      ['materialize_home', `agent:${agentId}:home:create:v1`],
+      ['open_conversation', `agent:${agentId}:open:v1`],
+    ];
+    const startupReceipts = operations.map(([step, operationId]) => {
       const matches = Array.isArray(receipts) ? receipts.filter(receipt => receipt?.step === step) : [];
-      return matches.every(receipt => typeof receipt.operation_id === 'string' && receipt.operation_id.length > 0
+      return matches.every(receipt => receipt.operation_id === operationId
         && /^[a-f0-9]{64}$/.test(receipt.request_sha256 ?? '')) ? matches.length : 0;
     });
     print(JSON.stringify({

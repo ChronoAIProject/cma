@@ -166,8 +166,11 @@ test('the snapshot binds the reservation installation digest to the original boo
   const runtime = {runtime_id: 'fixture-runtime', runtime_version: 'fixture-image',
     boot_id: 'fixture-boot', provision_generation: 1};
   const installed = 'a'.repeat(64);
-  const receipts = ['add_worktree', 'materialize_home', 'open_conversation'].map(step =>
-    ({step, operation_id: 'synthetic-' + step, request_sha256: installed}));
+  const receipts = [
+    ['add_worktree', 'worktree:workspace:wt-1:add:v1'],
+    ['materialize_home', `agent:${lineage.agentId}:home:create:v1`],
+    ['open_conversation', `agent:${lineage.agentId}:open:v1`],
+  ].map(([step, operation_id]) => ({step, operation_id, request_sha256: installed}));
   const owner = 'fixture-owner';
   const fields = {owner, document_schema_version: 1, agent_prepared_open_ready_fence: 1};
   const rows = {
@@ -203,6 +206,12 @@ test('the snapshot binds the reservation installation digest to the original boo
   assert.equal(valid.installation_bound, true);
   assert.deepEqual(valid.startup_receipts, [1, 1, 1]);
   assert.equal(JSON.stringify(valid).includes('fixture-boot'), false);
+  receipts[2].operation_id = 'agent:another-agent:open:v1';
+  assert.deepEqual((await read()).startup_receipts, [1, 1, 0]);
+  receipts[2].operation_id = `agent:${lineage.agentId}:open:v1`;
+  receipts.push({...receipts[2]});
+  assert.deepEqual((await read()).startup_receipts, [1, 1, 2]);
+  receipts.pop();
   rows.native_prepared_sandboxes.record.payload.runtime.boot_id = 'other-boot';
   assert.equal((await read()).installation_bound, false);
   rows.native_prepared_sandboxes.record.payload.runtime.boot_id = runtime.boot_id;
