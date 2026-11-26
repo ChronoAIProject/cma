@@ -113,6 +113,15 @@ async fn partial_split_receipt_replays_after_restart_without_new_delivery_and_mi
 
 #[tokio::test]
 async fn automatic_partial_split_keeps_receipt_without_acknowledgement_or_resend() {
+    check_automatic_partial_split(false).await;
+}
+
+#[tokio::test]
+async fn automatic_partial_split_recovers_paged_receipt_after_checkpoint_loss() {
+    check_automatic_partial_split(true).await;
+}
+
+async fn check_automatic_partial_split(lose_checkpoint: bool) {
     let h = Harness::new().await;
     let expected = partial(&h);
     h.setup.server.memory.clock.fetch_add(31, Ordering::SeqCst);
@@ -131,10 +140,40 @@ async fn automatic_partial_split_keeps_receipt_without_acknowledgement_or_resend
             let reply = command(&mut rx).await;
             let _permit = reply.gate.attempt().await.unwrap();
             assert!(reply.gate.commit());
+            if lose_checkpoint {
+                h.setup
+                    .server
+                    .fault(h.setup.target().id.clone(), false, true);
+            }
             reply.receipt.send(expected.clone()).unwrap();
         }
     );
-    assert!(matches!(result.unwrap(), FrameDelivery::Unknown));
+    if lose_checkpoint {
+        assert!(result.is_err());
+        assert!(matches!(
+            stored(&h.setup).await.delivery.unwrap().status,
+            DeliveryStatus::Intent
+        ));
+    } else {
+        assert!(matches!(result.unwrap(), FrameDelivery::Unknown));
+    }
+    assert_eq!(cursor(&lease.state), None);
+    h.setup.server.memory.clock.fetch_add(31, Ordering::SeqCst);
+    let mut lease = accepted(&h.setup).await;
+    let (restarted, mut restarted_rx) = lane(&h.setup);
+    assert!(matches!(
+        restarted
+            .deliver_frame(
+                &h.setup.plan.identity,
+                &h.setup.target().id,
+                &mut lease,
+                &frame,
+                effect()
+            )
+            .await
+            .unwrap(),
+        FrameDelivery::Unknown
+    ));
     assert_eq!(cursor(&lease.state), None);
     let state = stored(&h.setup).await;
     let DeliveryStatus::Partial { receipt } = &state.delivery.as_ref().unwrap().status else {
@@ -163,22 +202,6 @@ async fn automatic_partial_split_keeps_receipt_without_acknowledgement_or_resend
         storage::bytes(&expected).unwrap()
     );
     assert!(!state.delivery.as_ref().unwrap().status.settled());
-    h.setup.server.memory.clock.fetch_add(31, Ordering::SeqCst);
-    let mut lease = accepted(&h.setup).await;
-    let (restarted, mut restarted_rx) = lane(&h.setup);
-    assert!(matches!(
-        restarted
-            .deliver_frame(
-                &h.setup.plan.identity,
-                &h.setup.target().id,
-                &mut lease,
-                &frame,
-                effect()
-            )
-            .await
-            .unwrap(),
-        FrameDelivery::Unknown
-    ));
     assert!(rx.try_recv().is_err());
     assert!(restarted_rx.try_recv().is_err());
 }
