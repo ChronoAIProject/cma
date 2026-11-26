@@ -104,6 +104,17 @@ async fn exercise_owner_stop_restart(historical: bool, segmented: bool) {
         .admit("owner-stop-without-restart", Vec::new())
         .await;
     let ready = harness.drive_ready(&agent.id).await;
+    let tool_records = database.collection::<Document>("agent_access_tools");
+    let original_open = layer3_adapter::AgentProcessAction::Open.operation_id(agent.id.as_str(), 1);
+    let original_tool = tool_records
+        .find_one(doc! {
+            "agent_id": agent.id.as_str(),
+            "record.request.operation_id": original_open,
+            "record.conversation": ready.conversation.conversation_id.as_deref().unwrap(),
+        })
+        .await
+        .unwrap()
+        .expect("the original Open installed the managed access tool");
     if segmented {
         enable_segments(&store, &ready).await;
         let marker = AgentLogKind::WorkStepCompleted {
@@ -245,6 +256,17 @@ async fn exercise_owner_stop_restart(historical: bool, segmented: bool) {
             restarted.conversation.conversation_id,
             stopped.conversation.conversation_id
         );
+        let successor_open =
+            layer3_adapter::AgentProcessAction::Open.operation_id(agent.id.as_str(), 2);
+        assert!(tool_records
+            .find_one(doc! {
+                "_id": original_tool.get("_id").unwrap().clone(),
+                "record.request.operation_id": successor_open,
+                "record.conversation": restarted.conversation.conversation_id.as_deref().unwrap(),
+            })
+            .await
+            .unwrap()
+            .is_some());
         let retained = store
             .get_sandbox(&restarted.sandbox_id)
             .await
