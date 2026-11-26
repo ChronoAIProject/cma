@@ -51,14 +51,13 @@ impl SandboxReconciliationStore for Store {
     }
     async fn unowned_runtime_authority(
         &self,
-        _: &SandboxId,
+        id: &SandboxId,
         _: u64,
         _: &str,
     ) -> Result<bool, SandboxStoreError> {
-        assert_eq!(self.control.other_settled.load(Ordering::SeqCst), 8);
-        assert_eq!(self.control.other_active.load(Ordering::SeqCst), 0);
+        self.control.assert_siblings_settled();
         self.control.cleanup.fetch_add(1, Ordering::SeqCst);
-        self.control.record("ORPHAN_PHASE", "");
+        self.control.record("ORPHAN_PHASE", id.as_str());
         Ok(false)
     }
 }
@@ -69,7 +68,11 @@ impl SandboxMaintenanceStore for Store {
         &self,
         _: &PageRequest,
     ) -> Result<Page<SandboxId>, SandboxStoreError> {
-        panic!("startup must not run maintenance")
+        assert!(self.control.background_sweep.load(Ordering::SeqCst));
+        Ok(Page {
+            items: Vec::new(),
+            next: None,
+        })
     }
     async fn schedule_inactivity_pause(
         &self,

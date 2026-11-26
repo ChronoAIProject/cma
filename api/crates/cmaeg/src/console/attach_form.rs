@@ -89,6 +89,7 @@ pub(crate) fn parse(form: &[u8]) -> Result<Parsed, &'static str> {
                 topic_creation: false,
                 message_events: false,
                 channel_posts: false,
+                member_join_chat_ids: None,
                 bot_id: fields.required("bot_id", "Enter the bot id.")?,
                 bot_username: fields.optional("bot_username"),
                 admission: admission(&fields)?,
@@ -111,6 +112,7 @@ pub(crate) fn parse(form: &[u8]) -> Result<Parsed, &'static str> {
                 verify_raw_event: fields.checked("verify_raw_event"),
                 lark_message_effects: None,
                 lark_resources: None,
+                member_join_chat_ids: None,
                 admission: admission(&fields)?,
             }
         }

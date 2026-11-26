@@ -19,25 +19,32 @@ on:
       infra_ref:
         type: string
         required: true
+    # After a transient refusal before any change, every value is the retry's
+    # own (re-admission and second deployment), even where it is empty.
+    # fromJSON(c && toJSON(a) || toJSON(b)) selects a or b without letting an
+    # empty retry value fall back to the refused first attempt.
     outputs:
       component_result:
-        value: ${{ jobs.deploy.outputs.component_result }}
+        value: ${{ fromJSON(jobs.readmit.result == 'skipped' && toJSON(jobs.deploy.outputs.component_result) || toJSON(jobs.redeploy.outputs.component_result)) }}
       admit:
-        value: ${{ jobs.admit.outputs.status }}
+        value: ${{ fromJSON(jobs.readmit.result == 'skipped' && toJSON(jobs.admit.outputs.status) || toJSON(jobs.readmit.outputs.status)) }}
       deploy:
-        value: ${{ jobs.deploy.outputs.status }}
+        value: ${{ fromJSON(jobs.readmit.result == 'skipped' && toJSON(jobs.deploy.outputs.status) || toJSON(jobs.redeploy.outputs.status)) }}
       deploy_disposition:
-        value: ${{ jobs.deploy.outputs.disposition }}
+        value: ${{ fromJSON(jobs.readmit.result == 'skipped' && toJSON(jobs.deploy.outputs.disposition) || toJSON(jobs.redeploy.outputs.disposition)) }}
       admit_disposition:
-        value: ${{ jobs.admit.outputs.disposition }}
+        value: ${{ fromJSON(jobs.readmit.result == 'skipped' && toJSON(jobs.admit.outputs.disposition) || toJSON(jobs.readmit.outputs.disposition)) }}
       admitted:
-        value: ${{ jobs.admit.outputs.admitted }}
+        value: ${{ fromJSON(jobs.readmit.result == 'skipped' && toJSON(jobs.admit.outputs.admitted) || toJSON(jobs.readmit.outputs.admitted)) }}
       failures:
-        value: ${{ jobs.admit.outputs.failures }}
+        value: ${{ fromJSON(jobs.readmit.result == 'skipped' && toJSON(jobs.admit.outputs.failures) || toJSON(jobs.readmit.outputs.failures)) }}
+      retried:
+        value: ${{ jobs.readmit.result != 'skipped' }}
 
 permissions:
   contents: read
   actions: read
+  deployments: read
 
 jobs:
   admit:
@@ -47,6 +54,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     outputs:
       status: ${{ job.status }}
       release_set: ${{ steps.set.outputs.release_set }}
@@ -65,12 +73,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CD_RESOLVE_MODE: automatic
+          CD_STAGING_ENVIRONMENT: chrono-ai-staging
           CD_PROMOTION_LANE: ${{ inputs.lane }}
           CD_PUBLICATION_MATRIX: ${{ inputs.publication_matrix }}
         run: python3 -B .github/scripts/staging_cd_resolve.py
       - name: Retain public component admission evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: staging-admission-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.lane }}
           path: ${{ runner.temp }}/public-admission/admission.json
@@ -96,3 +105,67 @@ jobs:
       mode: release
       infra_ref: ${{ inputs.infra_ref }}
       evidence_suffix: ${{ format('-{0}', inputs.lane) }}
+      retry_allowed: true
+  readmit:
+    name: Re-admit after a transient refusal
+    needs: deploy
+    # One automatic retry: the first attempt was refused before any change
+    # for a catalogued transient cause. Admission runs again unchanged.
+    if: always() && !cancelled() && needs.deploy.outputs.retryable == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+    outputs:
+      status: ${{ job.status }}
+      release_set: ${{ steps.set.outputs.release_set }}
+      started_at: ${{ steps.set.outputs.started_at }}
+      changed: ${{ steps.set.outputs.changed }}
+      admitted: ${{ steps.set.outputs.admitted }}
+      failures: ${{ steps.set.outputs.failures }}
+      disposition: ${{ steps.set.outputs.disposition }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Qualify each component and record compatible admission
+        id: set
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_RESOLVE_MODE: automatic
+          CD_STAGING_ENVIRONMENT: chrono-ai-staging
+          CD_PROMOTION_LANE: ${{ inputs.lane }}
+          CD_PUBLICATION_MATRIX: ${{ inputs.publication_matrix }}
+        run: python3 -B .github/scripts/staging_cd_resolve.py
+      - name: Retain public component admission evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: staging-admission-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.lane }}-retry
+          path: ${{ runner.temp }}/public-admission/admission.json
+          if-no-files-found: ignore
+          retention-days: 90
+  redeploy:
+    name: Deploy admitted components again
+    needs: readmit
+    if: >-
+      always() && !cancelled() && needs.readmit.result == 'success' &&
+      needs.readmit.outputs.changed == 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/staging-deploy.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+    with:
+      release_set: ${{ needs.readmit.outputs.release_set }}
+      started_at: ${{ needs.readmit.outputs.started_at }}
+      mode: release
+      infra_ref: ${{ inputs.infra_ref }}
+      evidence_suffix: ${{ format('-{0}-retry', inputs.lane) }}
+      retry_allowed: false

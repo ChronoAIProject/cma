@@ -17,6 +17,7 @@ pub struct Memory {
 }
 pub struct App {
     pub backend: Arc<fake_cma::FakeCma>,
+    pub(super) platform_base: String,
     pub memory: Arc<Mutex<Memory>>,
     pub state: ToolsState,
     pub definition: ChannelDefinition,

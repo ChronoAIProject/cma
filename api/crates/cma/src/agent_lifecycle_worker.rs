@@ -2,6 +2,8 @@
 use super::*;
 use crate::store::HEARTBEAT;
 
+pub(super) const PREPARATION_FAILED: &str = "Agent runtime preparation failed";
+
 // Warm creation should observe committed readiness promptly. Bound the faster
 // polling window; sequential reads and the worker-slot limit cap its load.
 pub(super) fn readiness_delay(started: tokio::time::Instant) -> Duration {
@@ -61,7 +63,7 @@ impl InlineAgentLifecycle {
                     | AgentStatus::Paused => return Ok(()),
                     _ => {
                         return Err(AgentLifecycleProvisioningError::Conflict(
-                            "Agent runtime preparation failed".into(),
+                            PREPARATION_FAILED.into(),
                         ))
                     }
                 }
@@ -88,12 +90,49 @@ impl InlineAgentLifecycle {
         }
     }
 
-    async fn run_worker(&self, operation_id: &str) -> Result<(), layer2_core::StoreError> {
+    pub(super) async fn run_worker(
+        &self,
+        operation_id: &str,
+    ) -> Result<(), layer2_core::StoreError> {
         let Some(record) = self.operations.claim(operation_id).await? else {
             return Ok(());
         };
         let lease = record.lease()?;
+        let creation_fence = record.creation_fence.clone().map(|mut fence| {
+            fence.lifecycle_lease = Some((lease.id.clone(), lease.token.clone()));
+            fence
+        });
+        if layer1_public::rest::creation_outcomes::is_covered_key(&record.key)
+            != creation_fence.is_some()
+        {
+            return Err(layer2_core::StoreError::Malformed(
+                "lifecycle creation fence is missing or unsupported".into(),
+            ));
+        }
+        if creation_fence
+            .as_ref()
+            .is_some_and(|fence| !self.operations.supports_creation(fence))
+        {
+            return Err(layer2_core::StoreError::Unavailable(
+                "lifecycle creation epoch is unsupported".into(),
+            ));
+        }
         let attempts = record.attempts;
+        let canary_profiles = match record.verify_canary_worker() {
+            Ok(profiles) => profiles,
+            Err(error) => {
+                return self
+                    .operations
+                    .fail_with_metadata(&lease, &error.to_string(), None)
+                    .await;
+            }
+        };
+        let quota_refusals = record.sandbox_quota_refusals;
+        let fresh_sandbox = record.input.request.sandbox_id.is_none()
+            && record.input.request.workspace_id.is_none()
+            && record.sandbox_id.is_none()
+            && record.agent_id.is_none()
+            && canary_profiles.is_none();
         let capacity = record.input.captured_capacity(self.bounds);
         let limits = record.input.captured_limits();
         let first_message = validation::admitted_first_message(&record.input);
@@ -107,6 +146,7 @@ impl InlineAgentLifecycle {
         );
         let work = async {
             let mut input = ProvisionInput {
+                creation_fence: creation_fence.clone(),
                 behavior: record.input.behavior,
                 first_message,
                 request,
@@ -119,9 +159,16 @@ impl InlineAgentLifecycle {
                 existing_sandbox_id: record.sandbox_id,
                 existing_agent_id: record.agent_id,
                 actor: record.input.actor,
+                canary_profiles,
+                repository_access_pin: record.repository_access_pin,
             };
-            self.preflight_repository(&caller, &mut input, record.repository_commit.as_deref())
-                .await?;
+            self.preflight_repository(
+                &caller,
+                &mut input,
+                record.repository_commit.as_deref(),
+                record.public_repository.as_ref(),
+            )
+            .await?;
             self.provision(&caller, input).await
         };
         tokio::pin!(work);
@@ -150,10 +197,38 @@ impl InlineAgentLifecycle {
                 connection_target,
             }) => {
                 self.operations
-                    .wait_for_connection(&lease, services, connection_target)
+                    .wait_for_connection(&lease, services, connection_target, None)
+                    .await
+            }
+            Err(AgentLifecycleProvisioningError::RepositoryAccessRequired {
+                connection_target,
+                reason,
+                repair,
+            }) => {
+                self.operations
+                    .wait_for_repository_access(
+                        &lease,
+                        connection_target,
+                        reason,
+                        repair.map(|detail| *detail),
+                    )
                     .await
             }
             Err(error) => {
+                // The serialized Sandbox admission can refuse a slot seen at
+                // HTTP preflight. Requeue only that confirmed quota refusal.
+                if fresh_sandbox
+                    && matches!(
+                        &error,
+                        AgentLifecycleProvisioningError::SandboxLimitReached { .. }
+                    )
+                    && self
+                        .operations
+                        .retry_sandbox_quota(&lease, quota_refusals)
+                        .await?
+                {
+                    return Ok(());
+                }
                 let failure = self
                     .failure_metadata_enabled
                     .get()
@@ -171,8 +246,35 @@ impl InlineAgentLifecycle {
                         _ => None,
                     })
                     .flatten();
+                let message = error.to_string();
+                if let Some(fence) = &creation_fence {
+                    use layer1_public::rest::creation_outcomes::RefusalCode;
+                    let quota = matches!(
+                        error,
+                        AgentLifecycleProvisioningError::SandboxLimitReached { .. }
+                    );
+                    if (quota || self.operations.creation_terminal_settlement_enabled())
+                        && self
+                            .operations
+                            .fail_fenced_creation(
+                                &caller.subject,
+                                &lease,
+                                fence,
+                                &message,
+                                failure.clone(),
+                                if quota {
+                                    RefusalCode::SandboxLimitReached
+                                } else {
+                                    RefusalCode::CreationFailed
+                                },
+                            )
+                            .await?
+                    {
+                        return Ok(());
+                    }
+                }
                 self.operations
-                    .fail_with_metadata(&lease, &error.to_string(), failure)
+                    .fail_with_metadata(&lease, &message, failure)
                     .await
             }
         }

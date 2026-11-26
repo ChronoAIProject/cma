@@ -2,8 +2,11 @@
 //! Registered below binding_authority_tests to share its real Kubernetes fixture once.
 use super::*;
 use layer2_core::sandbox::store::SandboxStore;
-use layer3_adapter::agent_sandbox::{AgentSandboxClient, AgentSandboxConfig, NativeHomeVolumes};
+use layer3_adapter::agent_sandbox::{
+    AgentSandboxClient, AgentSandboxConfig, NativeFsGroupChangePolicy, NativeHomeVolumes,
+};
 use layer3_adapter::hosted::AgentSandboxBackend;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::Semaphore;
 
 #[path = "startup_native_order_backend.rs"]
@@ -15,11 +18,15 @@ struct Control {
     api: Arc<Mutex<api::ApiState>>,
     status_gate: Semaphore,
     status_entered: Notify,
+    hold_next_home_check: AtomicBool,
+    home_check_gate: Semaphore,
+    home_check_entered: Notify,
     other_gate: Semaphore,
     other_entered: Notify,
     other_started: AtomicUsize,
     other_settled: AtomicUsize,
     other_active: AtomicUsize,
+    background_sweep: AtomicBool,
     cancelled: AtomicUsize,
     cleanup: AtomicUsize,
     fenced: Notify,
@@ -31,11 +38,15 @@ impl Control {
             api,
             status_gate: Semaphore::new(0),
             status_entered: Notify::new(),
+            hold_next_home_check: AtomicBool::new(false),
+            home_check_gate: Semaphore::new(0),
+            home_check_entered: Notify::new(),
             other_gate: Semaphore::new(0),
             other_entered: Notify::new(),
             other_started: AtomicUsize::new(0),
             other_settled: AtomicUsize::new(0),
             other_active: AtomicUsize::new(0),
+            background_sweep: AtomicBool::new(false),
             cancelled: AtomicUsize::new(0),
             cleanup: AtomicUsize::new(0),
             fenced: Notify::new(),
@@ -65,6 +76,15 @@ impl Control {
             .iter()
             .any(|(kind, _)| kind == "HOME_PHASE"));
     }
+    fn assert_siblings_settled(&self) {
+        let settled = self.other_settled.load(Ordering::SeqCst);
+        if self.background_sweep.load(Ordering::SeqCst) {
+            assert!(settled >= 8);
+        } else {
+            assert_eq!(settled, 8);
+        }
+        assert_eq!(self.other_active.load(Ordering::SeqCst), 0);
+    }
 }
 
 struct NativeStartup {
@@ -77,8 +97,25 @@ struct NativeStartup {
 }
 impl NativeStartup {
     async fn new(record_boot: bool, refuse_status: bool) -> Self {
+        Self::with_fs_group_policy(record_boot, refuse_status, None).await
+    }
+
+    async fn with_fs_group_policy(
+        record_boot: bool,
+        refuse_status: bool,
+        policy: Option<NativeFsGroupChangePolicy>,
+    ) -> Self {
+        Self::with_default_image(record_boot, refuse_status, policy, None).await
+    }
+
+    async fn with_default_image(
+        record_boot: bool,
+        refuse_status: bool,
+        policy: Option<NativeFsGroupChangePolicy>,
+        released_image: Option<String>,
+    ) -> Self {
         let (original, mut active, now) = active_fixture().await;
-        let native = fixture::NativeFixture::new(&mut active).await;
+        let native = fixture::NativeFixture::with_fs_group_policy(&mut active, policy).await;
         active.revision = 1;
         if record_boot {
             active.runtime.as_mut().unwrap().boot_id = None;
@@ -116,7 +153,7 @@ impl NativeStartup {
             let handle = provisioning
                 .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
                     1,
-                    crate::sandbox::runtime_mapping::sandbox_spec(&sibling, "test"),
+                    crate::sandbox::runtime_mapping::sandbox_spec(&sibling, "test").unwrap(),
                 ))
                 .await
                 .unwrap();
@@ -131,7 +168,7 @@ impl NativeStartup {
             service_account: "cma-runtime".into(),
             image_pull_secrets: Vec::new(),
             template_network_policy: None,
-            template_fs_group_change_policy: None,
+            template_fs_group_change_policy: policy,
             native_claim_guard_enabled: false,
             runtime_startup_breaker_enabled: false,
             control_key: "fixture".repeat(8),
@@ -142,6 +179,9 @@ impl NativeStartup {
         let homes = Arc::new(
             NativeHomeVolumes::new(native.api.client.clone(), native_config, "fixture").unwrap(),
         );
+        if let Some(image) = &released_image {
+            config.deployment.image.uri.clone_from(image);
+        }
         let adapter = Arc::new(
             CodexAdapter::with_backend(
                 backend::Backend {
@@ -175,12 +215,15 @@ impl NativeStartup {
             .into_iter()
             .map(|row| (row.id.clone(), row))
             .collect();
-        let reconciler = SandboxReconciler::new(
+        let mut reconciler = SandboxReconciler::new(
             store.clone(),
             adapter,
             Arc::new(original.harness.policy.clone()),
             "test".into(),
         );
+        if let Some(image) = released_image {
+            reconciler = reconciler.with_runtime_version(image);
+        }
         assert_eq!(
             reconciler.startup_binding_schedule(&authority, &inventory, true),
             (8, "none")
@@ -301,6 +344,12 @@ async fn startup_native_proof_status_and_durable_fence_keep_order_with_held_sibl
             .any(|(kind, _)| kind == "HOME_PHASE"));
     }
 }
+
+#[path = "startup_native_pool_drift.rs"]
+mod pool_drift;
+
+#[path = "startup_admitted_spec.rs"]
+mod admitted_spec;
 
 #[path = "startup_native_conflict.rs"]
 mod conflicts;

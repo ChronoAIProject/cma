@@ -185,6 +185,7 @@ export async function boundaryScenario(h: TC117Client) {
   if (typed) h.counts.overquotaRejects++;
   const afterThird = await h.snapshot(['boundary']);
   h.observations.thirdHome = {
+    id: refused.id,
     state: refused.state,
     code: typed ? 'sandbox_limit_reached' : 'unexpected',
     live: afterThird.liveByVisitor.boundary,

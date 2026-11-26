@@ -34,28 +34,57 @@ describe('operator capabilities and record views', () => {
     expect(client.admin.retireSandbox).not.toHaveBeenCalled();
   });
 
-  it('uses explicit unavailable names for unknown Activity users without exposing their IDs', async () => {
+  it('uses stable references for unresolved Activity actors without exposing their IDs', async () => {
     const client = operatorClient();
-    client.admin.listActivitySummary.mockResolvedValue({
-      items: [
-        {
-          id: 'act-test',
-          at: now,
-          actor: 'unknown-person-id',
-          actor_name: null,
-          action: 'read',
-          target: { kind: 'subject', id: 'unknown-target-id' },
-          target_name: null,
-          outcome: { status: 'succeeded' },
-        },
-      ],
-      next: null,
-    });
+    const user = userEvent.setup();
+    const base = (await client.admin.listActivitySummary({})).items[0]!;
+    const unresolved = {
+      ...base,
+      actor: 'unknown-person-id',
+      actor_name: null,
+      actor_reference: 'actor-0123456789abcdef',
+      target: { kind: 'subject' as const, id: 'unknown-target-id' },
+      target_name: null,
+    };
+    const service = {
+      ...base,
+      id: 'act-service',
+      actor: 'service-principal-id',
+      actor_name: null,
+      actor_reference: 'actor-fedcba9876543210',
+    };
+    client.admin.listActivitySummary
+      .mockResolvedValueOnce({
+        items: [
+          unresolved,
+          { ...base, id: 'act-anonymous', actor: null, actor_name: null },
+          service,
+        ],
+        next: 'page-2',
+      })
+      .mockResolvedValue({ items: [{ ...unresolved, id: 'act-next' }], next: null });
     render(<Operations client={client} capabilities={['read_activity_log']} />);
-    expect(await screen.findByRole('cell', { name: 'Name unavailable' })).toBeInTheDocument();
+
+    const label = 'Unresolved actor · actor-0123456789abcdef';
+    expect(await screen.findByRole('cell', { name: label })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'No actor recorded' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('cell', { name: 'Unresolved actor · actor-fedcba9876543210' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('User Name unavailable')).toBeInTheDocument();
     expect(screen.queryByText('unknown-person-id')).not.toBeInTheDocument();
     expect(screen.queryByText('unknown-target-id')).not.toBeInTheDocument();
+    expect(screen.queryByText('service-principal-id')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() =>
+      expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: 'page-2' }),
+      ),
+    );
+    expect(await screen.findByRole('cell', { name: label })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Refresh records' }));
+    expect(await screen.findByRole('cell', { name: label })).toBeInTheDocument();
   });
 
   it('removes a destructive confirmation when control permission is revoked', async () => {

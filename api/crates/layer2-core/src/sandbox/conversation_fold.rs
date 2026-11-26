@@ -35,6 +35,12 @@ pub(super) fn fold_update(
         ));
     }
     let (update, prompt_evidence) = prompt_evidence(update.borrow());
+    let timeout = current.conversation.turn_timeout.as_ref();
+    if timeout.is_some_and(|timeout| timeout.blocks_dispatch()) {
+        // Preserve the real source receipt in the recorder, but late output
+        // cannot reopen a turn ended by service policy.
+        return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
+    }
     if let ConversationUpdate::TurnEndedForPrompt { prompt_id, .. }
     | ConversationUpdate::FailedForPrompt { prompt_id, .. } = update
     {
@@ -315,7 +321,7 @@ fn fold_semantic_update(
     observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
     let initial_output = match update {
         SessionUpdate::ToolCall(call)
-            if durable_tool_output && layer3_adapter::has_reported_file_changes(call) =>
+            if durable_tool_output && layer3_adapter::has_reported_initial_output(call) =>
         {
             recorded_initial_tool_output(call).map(|output| AgentLogKind::ToolOutputReported {
                 call_id: call.tool_call_id.0.to_string(),
@@ -447,13 +453,16 @@ fn fold_semantic_update(
 
 pub(super) fn changed(
     mut agent: Agent,
-    logs: Vec<AgentLogKind>,
+    mut logs: Vec<AgentLogKind>,
     assembly: AgentMessageAssembly,
     status: Option<AgentStatus>,
     active_turn: Option<u64>,
     turn_closed: bool,
     appended_at: &str,
 ) -> Result<FoldedConversationUpdate, AgentConversationError> {
+    if turn_closed {
+        super::conversation_fold_support::settle_turn_policy(&mut agent, &mut logs)?;
+    }
     if let Some(task) = agent.conversation.observations.task_acceptance.as_mut() {
         task.observe_execution(agent.conversation.active_turn, &logs);
     }

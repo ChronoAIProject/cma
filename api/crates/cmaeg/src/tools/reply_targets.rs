@@ -275,7 +275,7 @@ pub(crate) fn validate_current_target(
     Ok(())
 }
 
-fn destination(channel: &ResolvedChannel, reply: &ReplyAddress) -> Result<(), Problem> {
+pub(super) fn destination(channel: &ResolvedChannel, reply: &ReplyAddress) -> Result<(), Problem> {
     let valid = match reply {
         ReplyAddress::Whatsapp { .. } | ReplyAddress::WhatsappGroup(_) => crate::whatsapp::credentials(&channel.definition, reply).is_some(),
         ReplyAddress::Discord { bot_id, .. } => crate::discord::rest::token(channel, bot_id).is_some(),

@@ -22,6 +22,7 @@ pub(super) fn read(
     }
     Ok(crate::sandbox::SandboxCapacitySnapshot {
         counts,
+        public_owner_limit: None,
         observed_at: crate::now_rfc3339(),
     })
 }

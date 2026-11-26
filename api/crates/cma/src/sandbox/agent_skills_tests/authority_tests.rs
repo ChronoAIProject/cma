@@ -78,6 +78,7 @@ fn credential_material() -> CredentialMaterial {
     let sandbox = sandbox();
     CredentialMaterial {
         source: Default::default(),
+        github_route: None,
         sandbox_id: sandbox.id,
         owner: sandbox.owner,
         authority: sandbox.credential.current.unwrap(),

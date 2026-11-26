@@ -6,6 +6,8 @@ use layer2_core::agent_ownership::{
 };
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer3_adapter::owner_protocol::{ReceiverRevocation, TransportAuthority};
+#[path = "acquisition_backoff_tests.rs"]
+mod acquisition_backoff;
 #[path = "lifecycle_failure_store.rs"]
 pub(super) mod fixture;
 
@@ -85,7 +87,14 @@ async fn acquisition_stale_and_unavailable_keep_conflict_without_claiming() {
             worker.run_one(&agent.id, h.now).await,
             Err(SandboxStoreError::Conflict)
         );
-        assert!(store.calls.lock().unwrap().is_empty());
+        {
+            let calls = store.calls.lock().unwrap();
+            assert_eq!(
+                calls.get("get_agent").copied().unwrap_or(0),
+                if stale { 2 } else { 0 }
+            );
+            assert_eq!(calls.len(), usize::from(stale));
+        }
         assert_eq!(h.stored(&agent.id).await, agent);
     }
 }

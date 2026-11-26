@@ -27,7 +27,26 @@ impl Remote {
     }
 }
 #[derive(Default)]
-pub(super) struct External(pub Mutex<Remote>);
+pub(super) struct External(pub Mutex<Remote>, pub Mutex<Option<Arc<MintPause>>>);
+
+pub(super) struct MintPause {
+    pub after: bool,
+    pub entered: tokio::sync::Notify,
+    pub release: tokio::sync::Notify,
+}
+impl MintPause {
+    pub fn new(after: bool) -> Arc<Self> {
+        Arc::new(Self {
+            after,
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        })
+    }
+    async fn wait(&self) {
+        self.entered.notify_one();
+        self.release.notified().await;
+    }
+}
 #[async_trait::async_trait]
 impl BotExternal for External {
     async fn available(&self, _: &SubjectId) -> Result<Vec<ExternalBot>, BotError> {
@@ -37,21 +56,35 @@ impl BotExternal for External {
         self.0.lock().unwrap().visit("verify", false)
     }
     async fn mint(&self, _: &Bot, role: BotKeyRole) -> Result<BotKey, BotError> {
-        let mut remote = self.0.lock().unwrap();
-        let name = match role {
-            BotKeyRole::Agent => "mint_agent",
-            BotKeyRole::Route => "mint_route",
+        let pause = self.1.lock().unwrap().take();
+        if let Some(pause) = &pause {
+            if !pause.after {
+                pause.wait().await;
+            }
+        }
+        let key = {
+            let mut remote = self.0.lock().unwrap();
+            let name = match role {
+                BotKeyRole::Agent => "mint_agent",
+                BotKeyRole::Route => "mint_route",
+            };
+            remote.visit(name, false)?;
+            let key = BotKey {
+                id: uuid::Uuid::new_v4().to_string(),
+                value: ProvidedCredential::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+                expires_at: crate::rfc3339_at(SystemTime::now() + Duration::from_secs(30 * 86400)),
+            };
+            remote
+                .keys
+                .insert(key.id.clone(), (role, key.value.sha256()));
+            remote.visit(name, true)?;
+            key
         };
-        remote.visit(name, false)?;
-        let key = BotKey {
-            id: uuid::Uuid::new_v4().to_string(),
-            value: ProvidedCredential::new(uuid::Uuid::new_v4().to_string()).unwrap(),
-            expires_at: crate::rfc3339_at(SystemTime::now() + Duration::from_secs(30 * 86400)),
-        };
-        remote
-            .keys
-            .insert(key.id.clone(), (role, key.value.sha256()));
-        remote.visit(name, true)?;
+        if let Some(pause) = &pause {
+            if pause.after {
+                pause.wait().await;
+            }
+        }
         Ok(key)
     }
     async fn keys(&self, _: &Bot) -> Result<Vec<BotKeyRef>, BotError> {
@@ -222,12 +255,19 @@ impl Fixture {
         Self::with_request(tests::input()).await
     }
     pub async fn with_request(request: CreateBot) -> Self {
+        Self::with_policy(request, false).await
+    }
+    pub async fn fenced() -> Self {
+        Self::with_policy(tests::input(), true).await
+    }
+    pub async fn with_policy(request: CreateBot, fenced: bool) -> Self {
         let store = Arc::new(InMemoryBotStore::default());
         let service = BotService::new(
             store.clone(),
             Arc::new(tests::Profiles),
             "registered".into(),
-        );
+        )
+        .with_effect_reservations(fenced);
         let external = Arc::new(External::default());
         let worker = BotWorker::new(service.clone(), external.clone(), "worker".into());
         let bot = service

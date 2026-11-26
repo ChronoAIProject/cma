@@ -28,12 +28,14 @@ pub(crate) fn for_tag(tag: &str) -> Option<WireOperation> {
         "remove_agent_home" => WireOperation::RemoveAgentHome,
         "open_agent" => WireOperation::OpenAgent,
         "close_agent" => WireOperation::CloseAgent,
+        "prove_agent_process_closed" => WireOperation::ProveAgentProcessClosed,
+        "fence_agent_restart" => WireOperation::FenceAgentRestart,
         "capture_agent" => WireOperation::CaptureAgent,
         "checkpoint" => WireOperation::Checkpoint,
         "checkpoint_for_teardown" => WireOperation::CheckpointForTeardown,
         "resume_checkpoint_writers" => WireOperation::ResumeCheckpointWriters,
         "restore" => WireOperation::Restore,
-        "credential" => WireOperation::Credential,
+        "credential" | "credential_for_receiver" => WireOperation::Credential,
         "resources" => WireOperation::Resources,
         _ => return None,
     })
@@ -75,7 +77,10 @@ mod tests {
         let tags = RequestFrame::deserialize(unknown).unwrap_err().0.unwrap();
         assert!(!tags.is_empty());
         for tag in tags {
-            let operation = serde_json::from_value::<WireOperation>((*tag).into()).unwrap();
+            let operation = match *tag {
+                "credential_for_receiver" => WireOperation::Credential,
+                tag => serde_json::from_value::<WireOperation>(tag.into()).unwrap(),
+            };
             assert_eq!(
                 for_tag(tag),
                 Some(operation),

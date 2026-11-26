@@ -66,13 +66,20 @@ it('retains the v2 view on Stop, folds terminal events, and displays a rejected 
   await act(async () => h.durable(1, { type: 'stopped', reason: 'Owner requested stop' }));
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBe(title);
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
+  expect(composer).toBeDisabled();
+  expect(composer).toHaveAttribute(
+    'placeholder',
+    'This Agent has stopped and cannot be restarted.',
+  );
   expect(readAgent).toHaveBeenCalledTimes(2);
   expect(h.snapshot).toHaveBeenCalledTimes(beforeSnapshots);
   expect(h.client.readAgentTranscript).toHaveBeenCalledTimes(beforeTranscripts);
   expect(h.cancel).not.toHaveBeenCalled();
   await act(async () => screen.getByRole('button', { name: 'Submit after stop' }).click());
   expect(h.post).toHaveBeenCalledOnce();
-  await screen.findByText(/Agent is stopped/);
+  await screen.findByText(
+    'This Agent has stopped and cannot be restarted. To end only the current turn, use Stop response in the message composer.',
+  );
   view.unmount();
 });
 

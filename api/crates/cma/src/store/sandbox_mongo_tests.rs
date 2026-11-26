@@ -13,26 +13,48 @@ fn unknown_versions_include_missing_wrong_and_non_integer_values() {
 }
 
 #[test]
-fn transaction_server_requires_topology_and_snapshot_support() {
-    assert!(
-        validate_transaction_server(&doc! { "setName": "rs0", "maxWireVersion": 13_i32 }).is_ok()
-    );
-    assert!(
-        validate_transaction_server(&doc! { "msg": "isdbgrid", "maxWireVersion": 25_i64 }).is_ok()
-    );
+fn aggregate_record_round_trip_checks_the_version_and_bson_payload() {
+    #[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+    struct Record {
+        counter: i64,
+    }
 
-    let standalone = validate_transaction_server(&doc! { "maxWireVersion": 25_i32 })
-        .unwrap_err()
-        .to_string();
-    assert!(standalone.contains("replica set or mongos"));
-    let old = validate_transaction_server(&doc! { "setName": "rs0", "maxWireVersion": 12_i32 })
-        .unwrap_err()
-        .to_string();
-    assert!(old.contains("MongoDB 5.0 or later"));
-    let missing = validate_transaction_server(&doc! { "setName": "rs0" })
-        .unwrap_err()
-        .to_string();
-    assert!(missing.contains("maxWireVersion"));
+    let record = Record { counter: 37 };
+    let encoded = record_bson(&record).unwrap();
+    assert_eq!(
+        encoded,
+        mongodb::bson::Bson::Document(doc! { "counter": 37_i64 })
+    );
+    for version in [mongodb::bson::Bson::Int32(1), mongodb::bson::Bson::Int64(1)] {
+        let envelope = doc! { "document_schema_version": version, "record": &encoded };
+        assert_eq!(read_record::<Record>(&envelope).unwrap(), record);
+    }
+    assert_eq!(
+        read_record::<Record>(&doc! { "document_schema_version": 2_i32 }).unwrap_err(),
+        "unsupported document schema version 2"
+    );
+    assert_eq!(
+        read_record::<Record>(&doc! { "document_schema_version": 1_i32 }).unwrap_err(),
+        "stored document has no aggregate record"
+    );
+    assert!(
+        read_record::<Record>(&doc! { "document_schema_version": 1_i64, "record": false }).is_err()
+    );
+}
+
+#[test]
+fn integer_conversion_keeps_the_bson_signed_boundary() {
+    assert_eq!(signed(0, "revision"), Ok(0));
+    assert_eq!(signed(i64::MAX as u64, "revision"), Ok(i64::MAX));
+    assert_eq!(
+        signed(i64::MAX as u64 + 1, "revision"),
+        Err("revision exceeds the BSON integer range".into())
+    );
+    assert_eq!(unsigned(i64::MAX, "revision"), Ok(i64::MAX as u64));
+    assert_eq!(
+        unsigned(-1, "revision"),
+        Err("revision must not be negative".into())
+    );
 }
 
 #[tokio::test(start_paused = true)]

@@ -1,0 +1,55 @@
+name: "4 Web"
+on:
+  pull_request:
+    branches:
+      - "develop"
+      - "main"
+    types:
+      - "opened"
+      - "reopened"
+      - "synchronize"
+      - "edited"
+      - "labeled"
+      - "unlabeled"
+concurrency:
+  group: "pr-validation-${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+permissions:
+  contents: "read"
+  actions: "read"
+  issues: "read"
+jobs:
+  changes:
+    name: "4.1 Select changes"
+    uses: "./.github/workflows/ci-track-selection.yml"
+  web:
+    name: "4.2 Web checks"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.web == 'true'"
+    uses: "./.github/workflows/ci-web.yml"
+  web-images:
+    name: "4.3 Web image"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.web == 'true'"
+    uses: "./.github/workflows/ci-images.yml"
+    with:
+      components: "[\"web\"]"
+  gate-web:
+    name: "CI / Web"
+    needs:
+      - "changes"
+      - "web"
+      - "web-images"
+    if: "always()"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      -
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
+      -
+        name: "Validate track result"
+        env:
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/ci_tracks/gate.py web --split"

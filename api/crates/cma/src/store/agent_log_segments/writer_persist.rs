@@ -99,6 +99,9 @@ pub(super) async fn persist(
             }
         }
     }
+    if let Some(proof) = prepared.active_proof {
+        proof.persist(store, session).await?;
+    }
     for write in prepared.evidence {
         let evidence = collection(store, EVIDENCE);
         if let Some(before) = write.before {
@@ -195,7 +198,9 @@ fn aggregate_update(
 }
 
 fn classify(error: mongodb::error::Error) -> TransactionLogError {
-    if is_duplicate_key(&error) {
+    if !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
+        && is_duplicate_key(&error)
+    {
         SandboxStoreError::Conflict.into()
     } else {
         TransactionLogError::Driver(error)

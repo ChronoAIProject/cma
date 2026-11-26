@@ -1,6 +1,6 @@
 use layer2_core::sandbox::{
-    apply_retained_reopen, RetainedReopenAccepted, RetainedReopenReceipt, RetainedReopenRequest,
-    SandboxEvent, SandboxStoreError,
+    apply_retained_reopen, RetainedReopenAccepted, RetainedReopenPath, RetainedReopenReceipt,
+    RetainedReopenRequest, Sandbox, SandboxEvent, SandboxStatus, SandboxStoreError,
 };
 use mongodb::{
     bson::{doc, Document, Timestamp},
@@ -9,13 +9,12 @@ use mongodb::{
 };
 use sha2::{Digest, Sha256};
 
-use super::{domain, load, unavailable, ApplyError, MongoSandboxStore, FIELD};
+use super::{domain, history, unavailable, ApplyError, MongoSandboxStore, FIELD};
 use crate::store::{
     agent_log_integrity::IntegrityFailurePolicy,
     agent_log_segments::transaction_scope::TransactionScope,
-    sandbox_events::{append_in_transaction, reconcile_event_with_snapshot_session},
+    sandbox_events::{append_with_receipt, reconcile_event_with_snapshot_session},
     sandbox_mongo::{record_bson, signed, DOCUMENT_SCHEMA_VERSION},
-    sandbox_unpublished_recovery::transaction::NativeFacts,
     sandboxes::{read_sandbox, sandbox_replacement_fields},
 };
 
@@ -24,6 +23,7 @@ pub(super) enum Applied {
     Commit {
         receipt: Box<RetainedReopenReceipt>,
         event: SandboxEvent,
+        repeat: bool,
     },
 }
 
@@ -36,6 +36,14 @@ pub(super) fn read_receipt(
     };
     let receipt: RetainedReopenReceipt = mongodb::bson::deserialize_from_bson(value.clone())
         .map_err(|_| SandboxStoreError::Corrupt("retained reopening receipt is invalid".into()))?;
+    validate_receipt(&receipt, &parent)?;
+    Ok(Some(receipt))
+}
+
+pub(super) fn validate_receipt(
+    receipt: &RetainedReopenReceipt,
+    parent: &Sandbox,
+) -> Result<(), SandboxStoreError> {
     if receipt.version != 1
         || receipt.sandbox_id != parent.id
         || receipt.owner != parent.owner
@@ -59,15 +67,7 @@ pub(super) fn read_receipt(
             "retained reopening receipt authority is invalid".into(),
         ));
     }
-    Ok(Some(receipt))
-}
-
-pub(super) async fn apply(
-    store: &MongoSandboxStore,
-    request: &RetainedReopenRequest,
-    session: &mut ClientSession,
-) -> Result<Applied, ApplyError> {
-    apply_with_sources(store, request, session, None).await
+    Ok(())
 }
 
 pub(super) async fn apply_scoped(
@@ -81,51 +81,38 @@ pub(super) async fn apply_scoped(
         .await
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    if read_receipt(&row).map_err(ApplyError::Domain)?.is_some() {
-        return apply(store, request, scope.release()).await;
-    }
-    let facts = NativeFacts::capture_reopen(store, id, &mut scope).await?;
-    apply_with_sources(store, request, scope.release(), Some(&facts)).await
-}
-
-async fn apply_with_sources(
-    store: &MongoSandboxStore,
-    request: &RetainedReopenRequest,
-    session: &mut ClientSession,
-    sources: Option<&NativeFacts>,
-) -> Result<Applied, ApplyError> {
     let expected = &request.snapshot.retained.sandbox;
-    let row = store
-        .sandboxes
-        .find_one(doc! { "_id": expected.id.as_str() })
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?
-        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    if read_sandbox(&row).map_err(ApplyError::Domain)?.owner != expected.owner {
+    let parent = read_sandbox(&row).map_err(ApplyError::Domain)?;
+    if parent.owner != expected.owner {
         return Err(ApplyError::Domain(SandboxStoreError::NotFound));
     }
-    if let Some(receipt) = read_receipt(&row).map_err(ApplyError::Domain)? {
-        if receipt.key_sha256 != request.key_sha256
-            || receipt.expected_revision != expected.revision
-        {
+    let previous = scope
+        .retained_reopen_history(store, &row, &request.key_sha256)
+        .await?;
+    if let Some(receipt) = previous.replay {
+        if receipt.expected_revision != expected.revision {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
         return Ok(Applied::Replay(receipt.accepted));
     }
-    let (current, last_seq) = match sources {
-        Some(sources) => {
-            load::snapshot_with_sources(
-                store,
-                &expected.id,
-                session,
-                Some(sources),
-                IntegrityFailurePolicy::Quarantine,
-            )
-            .await?
-        }
-        None => load::snapshot(store, &expected.id, session).await?,
-    };
+    let repeat = previous.latest_revision.is_some();
+    if previous.latest_revision.is_some_and(|latest| {
+        !request.repeat_authorized
+            || parent.status != SandboxStatus::Failed
+            || parent.revision <= latest
+    }) || parent.revision != expected.revision
+    {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
+    let (current, last_seq) = scope
+        .retained_reopen_view(
+            store,
+            id,
+            RetainedReopenPath::Idle,
+            IntegrityFailurePolicy::Quarantine,
+        )
+        .await?;
+    let session = scope.release();
     let (next, receipt, event) =
         apply_retained_reopen(&current, request).map_err(ApplyError::Domain)?;
     for agent in &current.retained.agents {
@@ -139,31 +126,51 @@ async fn apply_with_sources(
     }
     fence_membership(store, &current, session).await?;
     let mut fields = sandbox_replacement_fields(&next).map_err(ApplyError::Domain)?;
-    fields.insert(
-        FIELD,
-        record_bson(&receipt).map_err(|_| domain("recovery receipt cannot be encoded"))?,
-    );
-    let written = store.sandboxes.update_one(crate::store::work_schema::query(doc! {
+    let mut filter = doc! {
         "_id": expected.id.as_str(), "owner": expected.owner.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION, "revision": number(expected.revision)?,
-        "last_seq": number(last_seq)?, FIELD: { "$exists": false },
+        "last_seq": number(last_seq)?,
         "channel_reuse_cleanup_execution": { "$exists": false },
         "channel_retirement_finalization": { "$exists": false },
-    }), crate::store::work_lease_update::replacement(fields)).session(&mut *session).await.map_err(ApplyError::Driver)?;
+    };
+    let event_receipt = if repeat {
+        let event_seq = last_seq
+            .checked_add(1)
+            .ok_or(ApplyError::Domain(SandboxStoreError::SequenceConflict))?;
+        Some(history::Receipt::Idle(receipt.clone()).document(event_seq)?)
+    } else {
+        fields.insert(
+            FIELD,
+            record_bson(&receipt).map_err(|_| domain("recovery receipt cannot be encoded"))?,
+        );
+        filter.insert(FIELD, doc! { "$exists": false });
+        None
+    };
+    let written = store
+        .sandboxes
+        .update_one(
+            crate::store::work_schema::query(filter),
+            crate::store::work_lease_update::replacement(fields),
+        )
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?;
     require_one(written.matched_count)?;
     crate::store::sandbox_usage::save::record_saved(store, session, &next, expected.revision)
         .await?;
-    let event = append_in_transaction(
+    let event = append_with_receipt(
         store,
         session,
         &expected.id,
         request.requested_at.clone(),
         event,
+        event_receipt,
     )
     .await?;
     Ok(Applied::Commit {
         receipt: Box::new(receipt),
         event,
+        repeat,
     })
 }
 
@@ -214,6 +221,7 @@ pub(super) async fn reconcile(
     receipt: &RetainedReopenReceipt,
     event: &SandboxEvent,
     time: Timestamp,
+    repeat: bool,
 ) -> Result<(), SandboxStoreError> {
     let mut session = store
         .client
@@ -232,7 +240,18 @@ pub(super) async fn reconcile(
         .ok_or_else(|| unavailable("recovery receipt is unresolved"))?;
     let parent = read_sandbox(&row)?;
     let bytes = serde_json::to_vec(&parent).map_err(unavailable)?;
-    if read_receipt(&row)?.as_ref() != Some(receipt)
+    let receipt_matches = if repeat {
+        history::matches_event_receipt(
+            store,
+            event,
+            history::Receipt::Idle(receipt.clone()),
+            &mut session,
+        )
+        .await?
+    } else {
+        read_receipt(&row)?.as_ref() == Some(receipt)
+    };
+    if !receipt_matches
         || format!("{:x}", Sha256::digest(bytes)) != receipt.result_sha256
         || reconcile_event_with_snapshot_session(store, event, &mut session)
             .await?

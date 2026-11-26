@@ -9,6 +9,7 @@ import { BotCreate, type CreationIntent } from './BotCreate';
 import { useCreationIntent } from './creationIntent';
 import { bot, botClient } from './fixtures.test-support';
 import type { BotClient } from './model';
+import { ImageManagerRetirement } from '../services/ImageManagerRetirement';
 
 function Form({ client, navigate }: { client: BotClient; navigate: () => void }) {
   const { intent, retain } = useCreationIntent('owner');
@@ -122,6 +123,22 @@ it('shows the public problem detail and permits correction after an explicit ref
   await user.click(screen.getByRole('button', { name: 'Create consumer' }));
   await screen.findByText('This Event Gateway connection already has a route.');
   expect(screen.getByRole('button', { name: 'Back' })).toBeEnabled();
+});
+
+it('creates a default-image consumer without contacting the catalog when retirement is enabled', async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response('true'));
+  vi.stubGlobal('fetch', fetcher);
+  const create = vi.fn().mockResolvedValue(bot);
+  render(
+    <ImageManagerRetirement>
+      <Form client={botClient({ create })} navigate={vi.fn()} />
+    </ImageManagerRetirement>,
+  );
+  const user = await fill();
+  expect(screen.queryByRole('group', { name: 'Runtime image' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Create consumer' }));
+  expect(create.mock.calls[0]?.[0]).not.toHaveProperty('image');
+  expect(fetcher).toHaveBeenCalledOnce();
 });
 
 it('submits image-free inline Agent setup without any profile authoring choice', async () => {

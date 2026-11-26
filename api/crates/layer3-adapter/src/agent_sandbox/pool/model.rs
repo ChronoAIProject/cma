@@ -12,6 +12,8 @@ use crate::{HomeVolumePolicy, HomeVolumeRequest, RuntimeImage};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativePoolSpec {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cold_canary: bool,
     pub image: RuntimeImage,
     pub cpu_millis: u32,
     pub memory_mib: u32,
@@ -22,6 +24,11 @@ impl NativePoolSpec {
     pub fn validate(&self) -> Result<()> {
         crate::runtime_bootstrap::admit_pool_image(&self.image)?;
         self.home.validate()?;
+        if self.cold_canary && !(self.home.is_native_vct() && self.home.mounts_full_home()) {
+            return Err(rejected(
+                "runtime canary pools require native full-home allocation",
+            ));
+        }
         if self.home.mounts_full_home()
             && self
                 .image
@@ -330,6 +337,11 @@ pub(super) fn binding_config(
 }
 
 pub(super) fn verify(actual: &DynamicObject, desired: &DynamicObject) -> Result<()> {
+    verify_identity(actual, desired)?;
+    verify_spec(actual, desired)
+}
+
+pub(super) fn verify_identity(actual: &DynamicObject, desired: &DynamicObject) -> Result<()> {
     if actual.name_any() != desired.name_any()
         || actual.namespace() != desired.namespace()
         || actual.types != desired.types
@@ -352,14 +364,28 @@ pub(super) fn verify(actual: &DynamicObject, desired: &DynamicObject) -> Result<
             .annotations()
             .iter()
             .any(|(k, v)| actual.annotations().get(k) != Some(v))
-        || !network_policy_matches(&actual.data["spec"], &desired.data["spec"])
-        || !contains(&actual.data["spec"], &desired.data["spec"])
     {
-        return Err(rejected(
-            "native pool resource conflicts with its recorded configuration",
-        ));
+        return Err(rejected("native pool resource identity does not match"));
     }
     Ok(())
+}
+
+pub(super) fn verify_spec(actual: &DynamicObject, desired: &DynamicObject) -> Result<()> {
+    if network_policy_matches(&actual.data["spec"], &desired.data["spec"])
+        && contains(&actual.data["spec"], &desired.data["spec"])
+    {
+        return Ok(());
+    }
+    if desired
+        .types
+        .as_ref()
+        .is_some_and(|types| matches!(types.kind.as_str(), "SandboxTemplate" | "SandboxWarmPool"))
+    {
+        return Err(crate::AdapterError::NativePoolConfigurationDrift);
+    }
+    Err(rejected(
+        "native pool resource conflicts with its recorded configuration",
+    ))
 }
 
 fn network_policy_matches(actual: &serde_json::Value, desired: &serde_json::Value) -> bool {

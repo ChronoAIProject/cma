@@ -7,6 +7,44 @@ use std::{
 };
 
 #[tokio::test]
+async fn relay_command_addressing_rejects_unknown_and_preserves_default_controls() {
+    for command in [true, false] {
+        for (text, refused) in [
+            ("/to absent-fixture hello", command),
+            ("/to default hello", false),
+            ("ordinary message", false),
+        ] {
+            let fixture = Fixture::new(
+                |value| {
+                    value["routing"] = serde_json::json!({
+                        "version": 1,
+                        "default_consumer": {"name": "default"},
+                        "default_targets": ["default"],
+                        "addressing": {"command": command}
+                    });
+                },
+                Default::default(),
+            )
+            .await;
+            fixture.recorder.outcome.store(1, Ordering::SeqCst);
+            let mut envelope = Envelope::new();
+            envelope.payload["content"]["text"] = text.into();
+            envelope.payload["raw_platform_data"]["message"]["text"] = text.into();
+            let response = fixture.send(&envelope).await;
+            if refused {
+                problem(response, 403, "target_unknown").await;
+                assert!(fixture.recorder.requests.lock().unwrap().is_empty());
+            } else {
+                assert_eq!(response.status().as_u16(), 202);
+                let requests = fixture.recorder.requests.lock().unwrap();
+                assert_eq!(requests.len(), 1);
+                assert!(requests[0].consumer.is_none());
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn rejects_missing_duplicate_invalid_and_mismatched_headers() {
     let fixture = Fixture::new(|_| {}, Default::default()).await;
     for header in [

@@ -121,6 +121,8 @@ impl From<ActivityRecord> for ActivitySummary {
 pub struct ActivityQuery {
     pub actor: Option<SubjectId>,
     pub action: Option<ActivityAction>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exclude_successful_reads: bool,
     pub limit: u32,
     pub cursor: Option<String>,
 }
@@ -130,6 +132,7 @@ impl Default for ActivityQuery {
         Self {
             actor: None,
             action: None,
+            exclude_successful_reads: false,
             limit: DEFAULT_ACTIVITY_LIMIT,
             cursor: None,
         }

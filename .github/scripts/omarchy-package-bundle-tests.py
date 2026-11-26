@@ -464,17 +464,25 @@ class AbsenceTests(unittest.TestCase):
         server = Server(respond)
         server.start()
         self.addCleanup(server.stop)
-        environment = {"REGISTRY_USER": "user", "REGISTRY_TOKEN": "secret"}
-        with unittest.mock.patch.dict(os.environ, environment):
+        environment = {"REGISTRY_USER": "user", "REGISTRY_TOKEN": "secret", "no_proxy": "127.0.0.1"}
+        with unittest.mock.patch.dict(os.environ, environment, clear=True):
             return BUNDLE.main(["absent", "--registry", server.url, "--repository", "owner/packages", "--tag", "2026-10-22-abc"])
 
     def test_only_a_registry_not_found_proves_absence(self):
-        self.assertEqual(self.check(404, unknown("MANIFEST_UNKNOWN")), 0)
-        self.assertEqual(self.check(404, unknown("NAME_UNKNOWN")), 0)
-        self.assertEqual(self.check(200, b"{}"), 1)
-        self.assertEqual(self.check(403, unknown("DENIED")), 1)
-        self.assertEqual(self.check(404, b"not json"), 1)
-        self.assertEqual(self.check(500, b""), 1)
+        for code in ("MANIFEST_UNKNOWN", "NAME_UNKNOWN", "NOT_FOUND"):
+            with self.subTest(code=code), contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(self.check(404, unknown(code)), 0)
+                self.assertEqual(output.getvalue(), "owner/packages:2026-10-22-abc is absent\n")
+
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(self.check(200, b"{}"), 1)
+        self.assertIn("tag 2026-10-22-abc already exists", errors.getvalue())
+
+        for status, body in ((403, unknown("DENIED")), (404, b"not json"), (500, b"")):
+            with self.subTest(status=status), contextlib.redirect_stderr(io.StringIO()) as errors:
+                self.assertEqual(self.check(status, body), 1)
+                self.assertIn(f"registry answered {status} for the tag; cannot prove it is absent",
+                              errors.getvalue())
 
     def test_a_redirect_is_refused_and_credentials_stay_with_the_registry(self):
         # Another host that would issue a token and report the tag unknown, if anything reached it.

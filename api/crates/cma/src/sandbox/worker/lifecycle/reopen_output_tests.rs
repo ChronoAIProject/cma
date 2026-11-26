@@ -53,6 +53,7 @@ impl AgentUpdateRecorder for Recorder {
 
 fn guard() -> AgentReopenGuard {
     AgentReopenGuard {
+        owner_restart: None,
         sandbox: SandboxMutationGuard {
             sandbox_id: layer2_core::SandboxId("sbx_reopen".into()),
             owner: layer2_core::SubjectId::new("owner"),
@@ -113,6 +114,7 @@ async fn expired_reopen_authority_never_polls_a_ready_effect() {
         &recorder,
         &AgentId("agt_reopen".into()),
         &observed,
+        false,
     )
     .await;
     assert_eq!(
@@ -148,6 +150,7 @@ async fn reopen_ack_follows_commit_even_when_handshake_then_fails() {
             task_recorder.as_ref(),
             &AgentId("agt_reopen".into()),
             &guard(),
+            false,
         )
         .await
     });
@@ -186,7 +189,8 @@ async fn rejected_startup_commit_never_acknowledges_and_disconnect_ends_drain() 
         &mut receiver,
         &recorder,
         &AgentId("agt_reopen".into()),
-        &guard()
+        &guard(),
+        false,
     )
     .await
     .is_err());
@@ -200,7 +204,8 @@ async fn rejected_startup_commit_never_acknowledges_and_disconnect_ends_drain() 
             &mut receiver,
             &recorder,
             &AgentId("agt_reopen".into()),
-            &guard()
+            &guard(),
+            false,
         )
     )
     .await
@@ -238,6 +243,7 @@ async fn failed_ack_preserves_available_open_failure_after_the_commit_finishes()
                 task_recorder.as_ref(),
                 &AgentId("agt_reopen".into()),
                 &guard(),
+                false,
             )
             .await
         });
@@ -274,6 +280,7 @@ async fn failed_ack_does_not_wait_for_an_unresolved_open_or_publish_success() {
             &recorder,
             &AgentId("agt_reopen".into()),
             &guard(),
+            false,
         ),
     )
     .await
@@ -307,6 +314,7 @@ async fn closed_update_receiver_preserves_an_open_failure_finishing_cleanup() {
         &recorder,
         &AgentId("agt_reopen".into()),
         &guard(),
+        false,
     )
     .await;
     assert_eq!(result, Err(error));

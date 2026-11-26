@@ -1,4 +1,7 @@
 //! CMA Event Gateway HTTP service.
+// Production commit and abort go through transaction_terminal (#3299); tests
+// may drive the raw driver as independent writers.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 pub mod activity;
 mod audit;
@@ -16,6 +19,7 @@ pub mod ingress;
 pub mod interactions;
 pub mod mcp;
 pub mod media;
+pub mod migrations;
 pub mod native_lark;
 pub mod native_media;
 pub mod net;
@@ -33,6 +37,8 @@ mod service_auth;
 pub mod telegram;
 pub mod telemetry;
 pub mod tools;
+mod transaction_start;
+mod transaction_terminal;
 pub mod turns;
 pub mod whatsapp;
 pub mod worker_credentials;
@@ -43,18 +49,18 @@ use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 use utoipa::OpenApi;
 
 pub use config::{
-    ChannelCacheConfig, Config, ConfigError, ConsoleConfig, ConsoleMemoryConfig, DeliveryConfig,
-    IngressConfig, ManagementConfig, MediaConfig, MediaToolProviders, NativeDiscordConfig,
-    RoutingConfig, ServiceAccountConfig, SttConfig, SttEndpoint, TransformerConfig, TurnConfig,
-    CMAEG_ACCEPT_BUDGET_MS, CMAEG_ACK_TEXT, CMAEG_ADVERTISE_PUBLIC_API_URL,
-    CMAEG_BUSY_RETRY_MAX_MS, CMAEG_CHANNEL_CACHE_MAX, CMAEG_CHANNEL_CACHE_TTL_MS,
-    CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE,
-    CMAEG_CONSOLE_ACTIVITY_MAX_BYTES, CMAEG_CONSOLE_ACTIVITY_PER_CHANNEL,
-    CMAEG_CONSOLE_CHANNEL_IDS_MAX, CMAEG_CONSOLE_CLIENT_ID, CMAEG_CONSOLE_CLIENT_SECRET,
-    CMAEG_CONSOLE_ENABLED, CMAEG_CONSOLE_INDEX_MAX_RECORDS, CMAEG_CONSOLE_INDEX_RESYNC_MS,
-    CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE, CMAEG_CONSOLE_NYXID_PUBLIC_URL,
-    CMAEG_CONSOLE_PRODUCERS_PER_CHANNEL, CMAEG_CONSOLE_PUBLIC_URL, CMAEG_CONSOLE_SESSIONS_MAX,
-    CMAEG_CONSOLE_SESSIONS_PER_SUBJECT, CMAEG_CONSOLE_SESSION_IDLE_MS,
+    ChannelCacheConfig, CommonmarkRelay, Config, ConfigError, ConsoleConfig, ConsoleMemoryConfig,
+    DeliveryConfig, IngressConfig, ManagementConfig, MediaConfig, MediaToolProviders,
+    NativeDiscordConfig, RoutingConfig, ServiceAccountConfig, SttConfig, SttEndpoint,
+    TransformerConfig, TurnConfig, CMAEG_ACCEPT_BUDGET_MS, CMAEG_ACK_TEXT,
+    CMAEG_ADVERTISE_PUBLIC_API_URL, CMAEG_BUSY_RETRY_MAX_MS, CMAEG_CHANNEL_CACHE_MAX,
+    CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL,
+    CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_CONSOLE_ACTIVITY_MAX_BYTES,
+    CMAEG_CONSOLE_ACTIVITY_PER_CHANNEL, CMAEG_CONSOLE_CHANNEL_IDS_MAX, CMAEG_CONSOLE_CLIENT_ID,
+    CMAEG_CONSOLE_CLIENT_SECRET, CMAEG_CONSOLE_ENABLED, CMAEG_CONSOLE_INDEX_MAX_RECORDS,
+    CMAEG_CONSOLE_INDEX_RESYNC_MS, CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE,
+    CMAEG_CONSOLE_NYXID_PUBLIC_URL, CMAEG_CONSOLE_PRODUCERS_PER_CHANNEL, CMAEG_CONSOLE_PUBLIC_URL,
+    CMAEG_CONSOLE_SESSIONS_MAX, CMAEG_CONSOLE_SESSIONS_PER_SUBJECT, CMAEG_CONSOLE_SESSION_IDLE_MS,
     CMAEG_CONSOLE_SESSION_TTL_MS, CMAEG_CONSOLE_SUMMARY_CACHE_MAX,
     CMAEG_CONSUMER_INTERACTIONS_ENABLED, CMAEG_COOKIE_KEY_FILE, CMAEG_DRAIN_SECONDS,
     CMAEG_FAILURE_TEXT, CMAEG_HEARTBEAT_MS, CMAEG_INGRESS_INFLIGHT, CMAEG_INGRESS_MAX_BODY,
@@ -148,7 +154,7 @@ async fn openapi() -> Json<utoipa::openapi::OpenApi> {
 
 /// Run CMAEG until a process termination signal arrives.
 pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let commonmark_relay = config::nyxid_commonmark_relay_from_env()?;
+    let commonmark_relay = config::CommonmarkRelay::from_env()?;
     let complete_replies = config::nyxid_complete_replies_from_env()?;
     let native_media = config::nyxid_native_media_from_env()?;
     let relay_text_edits = config::relay_text_edits_from_env()?;
@@ -227,13 +233,22 @@ pub fn init_logging() {
 /// Initialize the same logger on stderr, for operator commands whose stdout
 /// carries a machine-readable report.
 pub fn init_logging_to_stderr() {
-    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
+    use tracing_subscriber::{
+        filter::{FilterExt, LevelFilter, Targets},
+        fmt,
+        layer::SubscriberExt,
+        util::SubscriberInitExt,
+        Layer,
+    };
+    let migrations = Targets::new().with_target("cma_service_migrations", LevelFilter::WARN);
     tracing_subscriber::registry()
         .with(
             fmt::layer()
                 .with_ansi(false)
                 .with_writer(std::io::stderr)
-                .with_filter(log_layer_filter(std::env::var("RUST_LOG").ok().as_deref())),
+                .with_filter(
+                    log_layer_filter(std::env::var("RUST_LOG").ok().as_deref()).or(migrations),
+                ),
         )
         .init();
 }

@@ -127,6 +127,9 @@ impl AgentCommandService {
         self.fence(&message_authority, &target, ResourceCapability::Interact)
             .await?;
         let result = result???;
-        Ok(request.replay(result.control, result.message)?.into())
+        let result = request.replay(result.control, result.message)?;
+        self.notify_new_cancel(&request.control.command.envelope, &result.control.record)
+            .await;
+        Ok(result.into())
     }
 }

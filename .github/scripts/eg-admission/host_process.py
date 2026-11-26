@@ -118,6 +118,12 @@ def run(binary, application, directory, test_name):
     result.update(timed_out=False, censored=True, failure_phase=None, error_class=None,
                   exit_code=None, termination_signal=None, output_sha256=None)
     try:
+        # A pinned digest makes a repeated pull safe; one registry hiccup must
+        # not fail the fixture before any container exists.
+        phase = "image_pull"
+        command(["bash", str(Path(__file__).resolve().parent.parent / "pull-pinned-image.sh"), IMAGE],
+                environment, timeout=700)
+        phase = "container_create"
         # A failed/timed-out docker run may still have created the named container.
         attempted = True
         command(["docker", "run", "--detach", "--name", container, "--label", f"{label}={suffix}",

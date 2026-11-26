@@ -152,18 +152,21 @@ class CIEventSelectionTests(unittest.TestCase):
             'head': {'ref': 'feature', 'sha': head, 'repo': {'full_name': repository}}}}
         cd = selection.determine(self.root, push, 'push')
         selective = selection.determine_ci(self.root, pull, 'pull_request', repository)
-        self.assertEqual(selective, selection.determine(self.root, pull, 'pull_request'))
+        self.assertEqual(selective, dict(selection.determine(self.root, pull, 'pull_request'),
+                                         approval_contract=False))
         self.assertFalse(selective['am'])
         self.assertEqual(cd['deployables'], ['cma-web'])
         self.assertFalse(cd['eg'])
         pull['pull_request']['base']['ref'] = 'main'
         pull['pull_request']['head']['ref'] = 'develop'
-        for event, name in [(push, 'push'), (pull, 'pull_request')]:
+        candidate = dict(push, ref='refs/heads/tl/release/frozen-candidate', before='0' * 40)
+        for event, name in [(push, 'push'), (candidate, 'push'), (pull, 'pull_request')]:
             with self.subTest(event=name):
                 result = selection.determine_ci(self.root, event, name, repository)
                 baseline = selection.determine(self.root, event, name)
                 self.assertEqual(result['deployables'], baseline['deployables'])
                 self.assertEqual(result['test_tracks'], dict(repo=True, am=True, eg=True, web=True))
+                self.assertTrue(result['approval_contract'])
                 self.assertEqual(result['head'], head)
                 for track in ('am', 'eg'):
                     self.assertEqual(result[track + '_packages'], sorted(Workspace(metadata(self.root), self.root).owned[track] | SHARED))
@@ -178,6 +181,38 @@ class CIEventSelectionTests(unittest.TestCase):
         self.assertEqual(queued, selection.determine_ci(self.root, pull, 'pull_request', repository))
         self.assertFalse(queued['am'])
         self.assertEqual((queued['base'], queued['head']), (release_base, head))
+
+    def test_approval_contract_web_inputs_do_not_select_rust_product_tracks(self):
+        repository = 'example/repository'
+        for path in [
+            'web/src/api-client/agent-events-v2/index.ts',
+            'web/src/api-client/tests/external-approval-wire.contract.ts',
+            'web/src/agent/conversation.ts',
+            'web/src/agent/transport/projection.ts',
+            'web/build/identity.ts',
+            'web/vite.config.ts',
+            'web/package.json',
+            'web/package-lock.json',
+        ]:
+            with self.subTest(path=path):
+                base = self.git('rev-parse', 'HEAD')
+                if path.endswith('.json'):
+                    content = '{"name":"synthetic","private":true}'
+                else:
+                    content = 'export default { test: { globals: true } };'
+                self.write(path, content)
+                head = self.commit()
+                event = {'number': 7, 'repository': {'full_name': repository}, 'pull_request': {
+                    'base': {'ref': 'develop', 'sha': base, 'repo': {'full_name': repository}},
+                    'head': {'ref': 'feature', 'sha': head, 'repo': {'full_name': repository}},
+                }}
+                result = selection.determine_ci(self.root, event, 'pull_request', repository)
+                self.assertTrue(result['approval_contract'])
+                self.assertEqual(result['test_tracks'], dict(repo=True, am=False, eg=False, web=True))
+                self.assertEqual(result['am_packages'], [])
+                self.assertEqual(result['eg_packages'], [])
+                self.assertLessEqual(set(result['deployables']), {'cma-web'})
+                self.assertNotIn('input-analysis-uncertain', result['reasons'])
 
 
     def test_release_base_the_policy_cannot_model_selects_every_deployable(self):
@@ -223,6 +258,33 @@ class CIEventSelectionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 selection.determine_ci(self.root, pull('main', 'develop'), 'pull_request', repository)
 
+
+    def test_develop_verification_is_full_and_uses_the_exact_event_commit(self):
+        from unittest import mock
+        repository = 'example/repository'
+        event = {'repository': {'full_name': repository}}
+        environment = {'GITHUB_REF': 'refs/heads/develop', 'GITHUB_SHA': self.third}
+        for name in ('schedule', 'workflow_dispatch'):
+            with self.subTest(event=name), mock.patch.dict('os.environ', environment):
+                result = selection.determine_ci(self.root, event, name, repository)
+                self.assertEqual((result['base'], result['head']), (self.second, self.third))
+                self.assertEqual(result['test_tracks'], dict(repo=True, am=True, eg=True, web=True))
+            for change in ({'GITHUB_REF': 'refs/heads/main'}, {'GITHUB_SHA': '0' * 40}):
+                with self.subTest(event=name, change=change), mock.patch.dict('os.environ', environment | change):
+                    with self.assertRaises(ValueError):
+                        selection.determine_ci(self.root, event, name, repository)
+
+    def test_isolated_candidate_push_requires_a_live_commit_and_exact_namespace(self):
+        from ci_events import full_ci_required
+
+        repository = 'example/repository'
+        push = {'repository': {'full_name': repository}, 'ref': 'refs/heads/tl/release/candidate',
+                'before': '0' * 40, 'after': self.third, 'deleted': False}
+        for changes in ({'ref': 'refs/heads/tl/release-other/candidate'},
+                        {'ref': 'refs/heads/tl/release/'}, {'deleted': True},
+                        {'after': '0' * 40}, {'repository': {'full_name': 'fork/repository'}}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                full_ci_required(dict(push, **changes), 'push', repository)
 
     def test_release_branches_into_main_run_full_ci_and_others_refuse(self):
         from ci_events import full_ci_required

@@ -16,6 +16,9 @@ use super::*;
 use crate::desktop_process::transport::{connect, DISPLAY_URL};
 use crate::desktop_process::GenerationDirectory;
 
+mod startup_limit;
+
+const SHORT_STARTUP_LIMIT: Duration = Duration::from_secs(30);
 const LISTENER_FIXTURE: &str = "desktop_process::supervision::tests::owned_display_fixture";
 
 #[tokio::test]
@@ -54,34 +57,6 @@ async fn shutdown_cancels_pending_backoff() {
 }
 
 #[tokio::test]
-async fn the_extended_startup_limit_applies_only_to_the_first_supervised_desktop() {
-    let root = TestDirectory::new();
-    let never_ready = root.0.join("never-ready");
-    for (attempt, expected) in [(0, Duration::from_secs(90)), (1, STARTUP_LIMIT)] {
-        let mut child = serving_process(&never_ready, None, false);
-        let (_stop, shutdown) = watch::channel(false);
-        let (state, _) = watch::channel(State::Starting);
-        let mut driver = Recovery {
-            state,
-            shutdown,
-            budget: RestartBudget::new(),
-            initial_startup_limit: Duration::from_secs(90),
-        };
-
-        tokio::time::pause();
-        let started = Instant::now();
-        let (end, ready_since) = driver.drive(&mut child, attempt, None).await;
-        let elapsed = started.elapsed();
-        tokio::time::resume();
-
-        child.finish(false).await.unwrap();
-        assert!(matches!(end, End::StartupTimeout));
-        assert_eq!(ready_since, None);
-        assert!((expected..=expected + Duration::from_millis(1)).contains(&elapsed));
-    }
-}
-
-#[tokio::test]
 async fn an_exited_desktop_rotates_the_token_and_a_live_replacement_is_drained_on_shutdown() {
     let root = TestDirectory::new();
     let trigger = root.0.join("exit");
@@ -100,7 +75,7 @@ async fn an_exited_desktop_rotates_the_token_and_a_live_replacement_is_drained_o
             state,
             shutdown: signal,
             budget: RestartBudget::new(),
-            initial_startup_limit: STARTUP_LIMIT,
+            startup_limit: SHORT_STARTUP_LIMIT,
         };
         driver
             .run(
@@ -148,6 +123,67 @@ async fn an_exited_desktop_rotates_the_token_and_a_live_replacement_is_drained_o
 }
 
 #[tokio::test]
+async fn repeated_replacement_failures_leave_the_desktop_terminal() {
+    let root = TestDirectory::new();
+    let ready = root.0.join("ready");
+    let exit = root.0.join("exit");
+    std::fs::write(&ready, b"").unwrap();
+    let initial = serving_process(&ready, Some(&exit), false);
+    let launcher_pid = initial.child.id().unwrap() as i32;
+    let (_stop, shutdown) = watch::channel(false);
+    let (state, mut current) = watch::channel(State::Starting);
+    let (first_attempt, launched) = oneshot::channel();
+    let task = tokio::spawn(async move {
+        let mut recovery = Recovery {
+            state,
+            shutdown,
+            budget: RestartBudget::new(),
+            startup_limit: SHORT_STARTUP_LIMIT,
+        };
+        let mut launches = 0;
+        let mut first_attempt = Some(first_attempt);
+        recovery
+            .run(
+                initial,
+                || {
+                    launches += 1;
+                    assert_eq!(unsafe { libc::kill(launcher_pid, 0) }, -1);
+                    assert_eq!(
+                        std::io::Error::last_os_error().raw_os_error(),
+                        Some(libc::ESRCH)
+                    );
+                    if let Some(first_attempt) = first_attempt.take() {
+                        first_attempt.send(()).unwrap();
+                    }
+                    Err(crate::failure::RuntimeError::unavailable(
+                        "desktop_start_failed",
+                        "fixture launch failure",
+                    ))
+                },
+                None,
+            )
+            .await;
+        launches
+    });
+    let generation = ready_generation(&mut current).await;
+    std::fs::write(exit, b"").unwrap();
+    tokio::time::timeout(Duration::from_secs(2), generation.invalidated())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), launched)
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::pause();
+    let launches = tokio::time::timeout(Duration::from_secs(20), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(launches, 4);
+    assert!(matches!(*current.borrow(), State::Failed));
+}
+
+#[tokio::test]
 async fn exit_before_initial_readiness_does_not_start_recovery() {
     let mut command = Command::new("/bin/sh");
     command.args(["-c", r#"printf '\001\002'"#]);
@@ -158,7 +194,7 @@ async fn exit_before_initial_readiness_does_not_start_recovery() {
         state,
         shutdown,
         budget: RestartBudget::new(),
-        initial_startup_limit: STARTUP_LIMIT,
+        startup_limit: SHORT_STARTUP_LIMIT,
     };
     tokio::time::timeout(
         Duration::from_secs(2),
@@ -186,7 +222,7 @@ async fn an_unproved_cleanup_fences_the_desktop_without_launching_a_replacement(
             state,
             shutdown: signal,
             budget: RestartBudget::new(),
-            initial_startup_limit: STARTUP_LIMIT,
+            startup_limit: SHORT_STARTUP_LIMIT,
         };
         driver
             .run(

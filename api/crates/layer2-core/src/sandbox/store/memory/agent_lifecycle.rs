@@ -3,8 +3,8 @@ use crate::sandbox::store::{
     apply_agent_connection_recovery, apply_agent_sign_in,
     validate_agent_cleanup_capacity_log_with_retry, validate_agent_work_mutation_with_sandbox,
     AgentConnectionRecoveryApplication, AgentConnectionRecoveryCandidate,
-    AgentConnectionRecoveryOutcome, AgentConnectionRecoveryRequest, AgentWorkMutation,
-    AgentWorkerStore, StartupWorkFilter,
+    AgentConnectionRecoveryOutcome, AgentConnectionRecoveryRequest, AgentWorkDiscovery,
+    AgentWorkMutation, AgentWorkerStore, PendingAgentWork,
 };
 
 #[async_trait]
@@ -45,8 +45,7 @@ impl AgentWorkerStore for InMemorySandboxStore {
         &self,
         now: &str,
         limit: u16,
-        holds: &std::collections::BTreeSet<AgentId>,
-        startup: StartupWorkFilter<'_>,
+        filter: AgentWorkDiscovery<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
@@ -56,10 +55,16 @@ impl AgentWorkerStore for InMemorySandboxStore {
             .agents
             .values()
             .filter(|agent| agent.work.is_due(now))
-            .filter(|agent| startup.includes(agent))
+            .filter(|agent| filter.startup.includes(agent))
             .filter(|agent| {
-                !(holds.contains(&agent.id)
+                !(filter.receiver_holds.contains(&agent.id)
                     && crate::sandbox::AgentWorkStep::RECEIVER_PACED.contains(&agent.work.step))
+            })
+            .filter(|agent| {
+                !filter
+                    .acquisition_cooldowns
+                    .and_then(|cooldowns| cooldowns.get(&agent.id))
+                    .is_some_and(|work| PendingAgentWork::from_agent(agent).as_ref() == Some(work))
             })
             .map(|agent| agent.id.clone())
             .collect();

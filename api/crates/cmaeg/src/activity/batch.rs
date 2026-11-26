@@ -30,6 +30,12 @@ impl ActivityStore {
         if channel.record_id.as_str() != record || channel.owner.subject != expected_owner {
             return Err(malformed());
         }
+        for (event, change) in changes {
+            self.history
+                .change(expected_owner, record, event.as_str(), change)
+                .await
+                .map_err(history_error)?;
+        }
         let retained = try_join_all(
             (0..RETENTION_DAYS)
                 .map(|offset| self.read(&channel.owner.subject, record, today() - offset)),

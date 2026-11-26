@@ -138,11 +138,10 @@ export function MetricFilters({
         </label>
       )}
       <label className="usage-filter-field">
-        <span>Search name or ID</span>
+        <span>Sandbox name or ID starts with</span>
         <Input
           placement="usage-filter-control"
           type="search"
-          aria-label="Usage Sandbox search"
           value={draft.search}
           maxLength={200}
           onChange={(event) => update({ ...draft, search: event.target.value })}

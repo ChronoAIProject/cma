@@ -12,6 +12,13 @@ pub struct AgentLogFinalAnswer {
 
 #[async_trait]
 pub trait AgentLogStore: Send + Sync {
+    async fn agent_log_reply_preview(
+        &self,
+        _agent: &Agent,
+    ) -> Result<crate::sandbox::AgentReplyPreview, SandboxStoreError> {
+        Ok(crate::sandbox::AgentReplyPreview::Unavailable)
+    }
+
     /// Publish one exact durable operation. Implementations without keyed
     /// receipts refuse; silently delegating to unkeyed append would discard
     /// retry identity and could repeat an uncertain publication.
@@ -271,6 +278,16 @@ pub trait AgentLogStore: Send + Sync {
 
     /// Segmented bounded transcript page. None selects legacy compatibility.
     async fn agent_log_transcript_page(
+        &self,
+        _agent: &Agent,
+        _request: &crate::sandbox::AgentTranscriptPageRequest,
+    ) -> Result<Option<crate::sandbox::AgentTranscriptPage>, SandboxStoreError> {
+        Ok(None)
+    }
+
+    /// A transcript page with an explicit source-work bound for export.
+    /// Absence must never trigger the compatibility reader.
+    async fn agent_log_export_page(
         &self,
         _agent: &Agent,
         _request: &crate::sandbox::AgentTranscriptPageRequest,

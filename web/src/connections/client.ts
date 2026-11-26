@@ -106,6 +106,10 @@ export class ConnectionFailure extends ApiError {
   }
 }
 
+export function readRepositoryConnections(target: ConnectionTarget, signal: AbortSignal) {
+  return post<unknown>('repository-access', { target }, signal);
+}
+
 async function post<T>(action: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/auth/connections/${action}`, {
     method: 'POST',

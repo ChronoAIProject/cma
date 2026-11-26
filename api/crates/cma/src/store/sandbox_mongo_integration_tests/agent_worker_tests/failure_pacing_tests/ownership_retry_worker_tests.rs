@@ -17,6 +17,8 @@ use layer3_adapter as l3;
 #[path = "ownership_retry_runtime_fixture.rs"]
 mod runtime_fixture;
 use runtime_fixture::{Backend, Home, Runtime, HANDLE};
+#[path = "failed_inspection_takeover_tests.rs"]
+mod failed_inspection_takeover_tests;
 #[path = "legacy_receiver_handoff_tests.rs"]
 mod legacy_receiver_handoff;
 
@@ -267,33 +269,15 @@ async fn ownership_retry_hint_composed_transport_cancellation_and_restart_preser
             Err(SandboxStoreError::Conflict)
         );
         runtime.assert_counts_with_confirmation(1, usize::from(reason == "confirm_ambiguous"));
-        let mut row = store
+        // An injected write-concern error returns before the applied hint is
+        // majority-visible; settle it before reading the row.
+        crate::store::test_visibility::majority_barrier(&client, &name).await;
+        let row = store
             .agents
             .find_one(doc! {"_id": agent.id.as_str()})
             .await
             .unwrap()
             .unwrap();
-        if reason == "commit_unknown" {
-            // Injected write-concern failure does not wait for the majority
-            // commit point. Qualify the later committed hint independently.
-            row = tokio::time::timeout(Duration::from_secs(2), async {
-                for _ in 0..20 {
-                    if row.contains_key(HINT) {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    row = store
-                        .agents
-                        .find_one(doc! {"_id":agent.id.as_str()})
-                        .await
-                        .unwrap()
-                        .unwrap();
-                }
-                row
-            })
-            .await
-            .unwrap();
-        }
         let held = !matches!(
             reason,
             "malformed"

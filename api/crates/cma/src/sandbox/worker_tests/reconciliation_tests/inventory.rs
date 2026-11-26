@@ -51,7 +51,7 @@ async fn incomplete_provider_inventory_cannot_recover_or_reclaim_anything() {
 async fn incomplete_database_authority_cannot_reclaim_provider_only_runtimes() {
     let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
     let created = harness.create().await;
-    let mut spec = sandbox_spec(&created, "test");
+    let mut spec = sandbox_spec(&created, "test").unwrap();
     spec.sandbox_id = "sbx_orphan".into();
     let orphan = harness.adapter.provision(&spec).await.unwrap();
     let mut corrupt = created.clone();
@@ -74,7 +74,7 @@ async fn incomplete_database_authority_cannot_reclaim_provider_only_runtimes() {
 async fn bound_runtime_with_conflicting_sandbox_identity_is_not_adopted_or_reclaimed() {
     let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
     let (mut active, now) = active_with_exact_image(&harness).await;
-    let mut spec = sandbox_spec(&active, "test");
+    let mut spec = sandbox_spec(&active, "test").unwrap();
     spec.sandbox_id = "sbx_other".into();
     let other = harness.adapter.provision(&spec).await.unwrap();
     let revision = active.revision;

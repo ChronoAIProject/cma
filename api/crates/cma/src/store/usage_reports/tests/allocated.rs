@@ -427,3 +427,73 @@ async fn allocated_report_tolerates_multiple_bounded_database_reads() {
     store.finish_report(&lease, generated, true).await.unwrap();
     store.db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn personal_usage_matches_displayed_sandbox_prefixes() {
+    let store = fixture().await;
+    let from = (now() - 3600) / 60 * 60;
+    let mut own = state(1, from);
+    own.sandbox_id = SandboxId(format!("sbx_{:032x}", u128::MAX));
+    own.name = "  Research Workshop".into();
+    let mut control = state(13, from);
+    control.name = "Other Sandbox".into();
+    let mut foreign = state(2, from);
+    foreign.name = own.name.clone();
+    seed(&store, &[own.clone(), control, foreign]).await;
+
+    let path = "/api/v1/usage/metrics/reports";
+    for (search, expected) in [
+        ("  ReSEARch ", true),
+        ("sbx_ffff", true),
+        ("fffffff", true),
+        ("Research Workshop", true),
+        ("sbx_ffffffffffffffffffffffffffffffff", true),
+        ("ffffffffffffffffffffffffffffffff", true),
+        ("sbx_ffffffffff…ffffffff", true),
+        ("sbx_ffffffffff…fffffffe", false),
+        ("Workshop", false),
+    ] {
+        let (status, pending) = request(
+            &store,
+            "POST",
+            path,
+            "owner-1",
+            false,
+            serde_json::json!({"from":from,"to":from+60,"filters":{"search":search}}),
+        )
+        .await;
+        assert_eq!(status, 202, "{search}: {pending}");
+        let id = pending["report_id"].as_str().unwrap();
+        let lease = store
+            .claim_report("report:0", "prefix-search")
+            .await
+            .unwrap()
+            .unwrap();
+        let generated =
+            crate::sandbox_metrics::generate_fixture_with_collection(store.clone(), &lease, false)
+                .await
+                .unwrap();
+        assert_eq!(
+            generated.summary.as_ref().unwrap().sandbox_count,
+            u64::from(expected)
+        );
+        store.finish_report(&lease, generated, true).await.unwrap();
+        let (status, rows) = request(
+            &store,
+            "GET",
+            &format!("{path}/{id}/sandboxes"),
+            "owner-1",
+            false,
+            serde_json::Value::Null,
+        )
+        .await;
+        assert_eq!(status, 200, "{search}: {rows}");
+        let items = rows["items"].as_array().unwrap();
+        assert_eq!(items.len(), usize::from(expected), "{search}");
+        if expected {
+            assert_eq!(items[0]["sandbox_id"], own.sandbox_id.as_str());
+        }
+    }
+    store.db.drop().await.unwrap();
+}

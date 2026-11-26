@@ -65,13 +65,13 @@ impl SkillCatalog {
         if let Some(cursor) = &query.cursor {
             url.query_pairs_mut().append_pair("cursor", cursor);
         }
-        let response = self.get(url, bearer).await?;
+        let response = self.get(url, bearer, "skill search").await?;
         if response.status() == reqwest::StatusCode::BAD_REQUEST {
             return Err(AuthoringSourceError::InvalidQuery(
                 "skill search query was refused".into(),
             ));
         }
-        let page: SearchPage = envelope(response).await?;
+        let page: SearchPage = envelope(response, "skill search").await?;
         if page.items.len() > usize::from(query.limit) {
             return Err(invalid("skill search exceeded the page limit"));
         }
@@ -113,7 +113,11 @@ impl SkillCatalog {
             return Ok(None);
         }
         let url = self.url(&["skills", &item.guid, "versions"])?;
-        let versions: Versions = envelope(self.get(url, bearer).await?).await?;
+        let versions: Versions = envelope(
+            self.get(url, bearer, "skill versions").await?,
+            "skill versions",
+        )
+        .await?;
         if versions.items.len() > 1000 {
             return Err(invalid("skill versions exceeded the row limit"));
         }
@@ -154,23 +158,34 @@ impl SkillCatalog {
         &self,
         url: reqwest::Url,
         bearer: Option<&str>,
+        stage: &str,
     ) -> Result<reqwest::Response, AuthoringSourceError> {
         let mut request = self.http.get(url);
         if let Some(bearer) = bearer {
             request = request.bearer_auth(bearer);
         }
-        request
-            .send()
-            .await
-            .map_err(|_| unavailable("skill catalogue request failed"))
+        // Only the stage and the failure class are named; a transport error
+        // can carry internal addresses.
+        request.send().await.map_err(|error| {
+            unavailable(&if error.is_timeout() {
+                format!("{stage} request timed out")
+            } else {
+                format!("{stage} request failed")
+            })
+        })
     }
 }
 
 async fn envelope<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
+    stage: &str,
 ) -> Result<T, AuthoringSourceError> {
     if response.status() != reqwest::StatusCode::OK {
-        return Err(unavailable("skill catalogue refused the request"));
+        // The status separates a proxy or scope refusal from an Ornn outage.
+        return Err(unavailable(&format!(
+            "{stage} answered HTTP {}",
+            response.status().as_u16()
+        )));
     }
     let envelope: Envelope<T> = json(response).await?;
     if envelope.error.is_some() {

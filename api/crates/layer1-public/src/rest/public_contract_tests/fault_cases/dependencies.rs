@@ -117,6 +117,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             Capability::DeleteOwnSandbox,
             Capability::ConfigurePlatform,
             Capability::ReadActivityLog,
+            Capability::ReadUserDirectory,
             Capability::ReadAllSandboxes,
             Capability::ControlAnySandbox,
             Capability::ReadEventLog,

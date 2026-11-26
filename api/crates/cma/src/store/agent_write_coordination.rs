@@ -9,6 +9,12 @@ use std::sync::{Arc, Mutex, Weak};
 use layer2_core::AgentId;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
+tokio::task_local! {
+    /// Bound a cleanup preflight requeue and any reserve publication to the
+    /// same original work lease, independently of the Agent owner lease.
+    pub(crate) static CLEANUP_RETRY_DEADLINE: tokio::time::Instant;
+}
+
 #[derive(Default)]
 pub(super) struct AgentWrites {
     pending: Mutex<HashMap<AgentId, Weak<AsyncMutex<()>>>>,

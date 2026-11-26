@@ -1,5 +1,6 @@
 use super::*;
 use crate::store::sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::ClientSession;
 
 impl MongoSandboxStore {
@@ -12,7 +13,7 @@ impl MongoSandboxStore {
         let mut session = self.client.start_session().await.map_err(driver)?;
         start_transaction(&mut session).await.map_err(driver)?;
         if let Err(error) = apply(self, binding_revision, expected, &next, &mut session).await {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(error);
         }
         match commit_transaction(&mut session).await {

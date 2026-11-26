@@ -84,7 +84,16 @@ export function ReportSelector({
         ? 'Selected Sandbox unavailable'
         : (selected.name ?? 'Loading Sandbox…');
   return (
-    <div className="usage-metric-selector">
+    <div
+      className="usage-metric-selector"
+      onKeyDown={(event) => {
+        if (!open || event.key !== 'Escape' || event.defaultPrevented) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        event.currentTarget.querySelector('button')?.focus({ preventScroll: true });
+      }}
+    >
       <span className="usage-filter-label">{label}</span>
       <Button
         variant="outline"

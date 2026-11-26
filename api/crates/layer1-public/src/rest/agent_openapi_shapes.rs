@@ -152,7 +152,17 @@ pub(crate) struct SandboxContextView {
     name: String,
     #[schema(value_type = String)]
     status: SandboxStatus,
-    profile: InstanceProfileReferenceView,
+    profile: SandboxProfileReferenceView,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct SandboxProfileReferenceView {
+    #[serde(flatten)]
+    reference: InstanceProfileReferenceView,
+    /// Whether this caller could read the exact pinned revision through the public
+    /// Sandbox Profile API at the time of this response. Omitted when undetermined.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    readable: Option<bool>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -219,6 +229,9 @@ pub(crate) struct AgentView {
     failure: Option<AgentFailureView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stop_reason: Option<String>,
+    /// The owner may request a restart; admission still verifies the retained runtime.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) restart_available: Option<bool>,
     created_at: String,
     updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -237,6 +250,11 @@ pub(crate) struct AgentFailureView {
 }
 
 impl AgentView {
+    pub(super) fn with_sandbox_profile_readability(mut self, readable: Option<bool>) -> Self {
+        self.sandbox.profile.readable = readable;
+        self
+    }
+
     pub(crate) fn from_lineage(lineage: AgentLineage, paused_notice: Option<String>) -> Self {
         let AgentLineage {
             agent,
@@ -308,6 +326,7 @@ impl AgentView {
                 source: matches!(
                     workspace.source,
                     layer2_core::sandbox::WorkspaceSource::RepositorySnapshot { .. }
+                        | layer2_core::sandbox::WorkspaceSource::PublicRepositorySnapshot { .. }
                 )
                 .then(|| {
                     super::instances_openapi_shapes::WorkspaceSourceView::from(&workspace.source)
@@ -317,10 +336,13 @@ impl AgentView {
                 id: sandbox.id.to_string(),
                 name: sandbox.name,
                 status: sandbox.status,
-                profile: InstanceProfileReferenceView {
-                    id: sandbox.profile.id.to_string(),
-                    revision: sandbox.profile.revision,
-                    digest: sandbox.profile.digest,
+                profile: SandboxProfileReferenceView {
+                    reference: InstanceProfileReferenceView {
+                        id: sandbox.profile.id.to_string(),
+                        revision: sandbox.profile.revision,
+                        digest: sandbox.profile.digest,
+                    },
+                    readable: None,
                 },
             },
             conforms_to: agent_conformance(&agent.capabilities),
@@ -340,6 +362,7 @@ impl AgentView {
                 detail: failure.detail,
             }),
             stop_reason: agent.stop_reason.map(|reason| reason.as_str().into()),
+            restart_available: None,
             created_at: agent.created_at,
             updated_at: agent.updated_at,
             ready_at: agent.ready_at,

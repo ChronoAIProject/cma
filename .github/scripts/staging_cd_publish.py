@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
 import ci_retry
@@ -13,14 +14,16 @@ from staging_cd_admission import event_identity
 from staging_cd_artifacts import try_reuse
 from staging_cd_build import build, command, identity, inspect, snapshot
 from staging_cd_common import Refusal, matches, require
+from staging_cd_cargo_artifact import artifact_name as cargo_artifact_name, index_name as cargo_index_name
 from staging_cd_github import GitHub
+from staging_cd_release_archive import load as load_prepared_archive, path_for
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_resolve import output as step_output
 from staging_cd_receipts import canonical, published_receipt, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_reservations import Reservations, SourceAlreadyFinal, validate_reservation
 from staging_cd_publication_diagnostics import PublicationDiagnostics, run_publication
-from staging_cd_versions import DEPLOYABLES
+from staging_cd_versions import DEPLOYABLES, require_publishable_release
 from staging_cd_timing import Timings
 from staging_cd_build_cache import SCOPES, BuildCache
 from staging_cd_cache_save import report_layers
@@ -47,6 +50,7 @@ def validated_tasks(tasks, env):
             require(value["component"] == component, "Reservation component differs")
             require(value["run_id"] == int(env["GITHUB_RUN_ID"])
                     and value["run_attempt"] == int(env["GITHUB_RUN_ATTEMPT"]), "Reservation owner differs")
+        require_publishable_release(value["identity"] if mode == "resume" else value)
         validated.append((mode, value))
     return validated
 
@@ -113,7 +117,8 @@ def push(archive, repository, version, digest, auth, registry, runner, reservati
 
 def publish(archive, identity, directory, registry, credential, actor, *, scanner=None,
             runner=command, qualified=False, smoke=qualify_runtime, source=None, diagnostics=None, timings=None,
-            reservation_check, scan_evidence=None, retry=None):
+            reservation_check, scan_evidence=None, retry=None, prepared_checksum=None, on_verified_image=None):
+    require_publishable_release(identity)
     require(reservation_check() is True, "Publication reservation is not current")
     retry = dict(retry or {})
     timings = timings or Timings()
@@ -148,6 +153,8 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
                 "Verified scan component differs from the release")
         timings.detector_cache(report.get("detector_cache"))
         diagnostics.mark("archive_check")
+        require(prepared_checksum is None or prepared_checksum == scanned,
+                "Scanned archive differs from the producer archive")
         require(checksum(archive) == scanned, "Scanned archive changed before publication")
         retain_package_evidence(report, scan_evidence, identity["source"], digest)
     require(isinstance(credential, str) and credential and isinstance(actor, str) and actor,
@@ -166,6 +173,8 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     if proof is not None:
         receipt["runtime_smoke"] = proof
     validate_receipt(receipt)
+    if on_verified_image is not None:
+        on_verified_image()
     auth = directory / "registry-auth.json"
     try:
         diagnostics.mark("registry_login")
@@ -184,8 +193,9 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     with timings.stage("verify"):
         require(checksum(archive) == scanned, "Scanned archive changed during publication")
         diagnostics.mark("registry_verify")
-        remote = registry.manifest(repository, identity["version"])
-        require(remote is not None and remote[0] == digest and registry.exists(repository, digest),
+        # The copy just landed; read it back with the settle window, not the first edge answer.
+        remote = registry.manifest(repository, identity["version"], settle=True)
+        require(remote is not None and remote[0] == digest and registry.exists(repository, digest, settle=True),
                 "Registry digest differs from the scanned archive")
     # A started build ignores a successor's pending reservation, but it cannot
     # hand a receipt to finalization after a higher final has landed.
@@ -208,11 +218,41 @@ def emit_cache_metrics(component, cache_metrics, stream):
                   "above 75% of its bound in staging_cd_cargo_artifact.py", file=stream, flush=True)
 
 
+def record_cache_export(cache, accepted, env, metrics):
+    outputs = {}
+    if accepted:
+        component = env["CD_COMPONENT"]
+        outputs.update({
+            "build-cache-directory": str(cache.accepted),
+            "build-cache-key": cache.key.archive_key(env),
+            "build-cache-artifact": cargo_artifact_name(component, cache.key.family),
+            "build-cache-index": cargo_index_name(component, cache.key.family, cache.key.prefix),
+        })
+    outputs["build-cache-ready"] = "true" if accepted else "false"
+    try:
+        with Path(env["GITHUB_OUTPUT"]).open("a") as status:
+            status.write("".join(f"{key}={value}\n" for key, value in outputs.items()))
+    except (OSError, KeyError):
+        accepted = False
+        cache.export_reason = "invalid"
+
+    metric = {"operation": "export", "result": "accepted" if accepted else "withheld"}
+    if not accepted and isinstance(cache.export_reason, str):
+        metric["reason"] = cache.export_reason
+    if accepted and cache.export_headroom == "low":
+        metric["headroom"] = "low"
+    if accepted and cache.export_retained_groups is not None:
+        metric["retained_groups"] = cache.export_retained_groups
+    metrics.append(metric)
+
+
 def main():
     env, root = os.environ, Path.cwd()
     timings = Timings()
     build_metrics = []
     cache_metrics = []
+    reuse_misses = []
+    reused_prepared = []
     layer_exports = []
     skip = {"disposition": "reservation_superseded"}
     def operation(_masker, diagnostics):
@@ -225,6 +265,12 @@ def main():
         output.parent.mkdir(parents=True, exist_ok=True)
         registry = Registry(credential=env.get("GH_TOKEN"), actor=env.get("GITHUB_ACTOR"))
         api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(root))
+
+        def retain(receipt):
+            receipts.append(receipt)
+            diagnostics.mark("receipt")
+            output.write_text(canonical(receipts) + "\n", encoding="utf-8")
+
         for mode, value in tasks:
             cache = None
             diagnostics.mark("validate")
@@ -232,12 +278,17 @@ def main():
                 diagnostics.mark("resume")
                 receipt = value
                 require(registry.exists(receipt["repository"], receipt["digest"]), "Published digest is unavailable")
+                retain(receipt)
             else:
                 reservation = value
                 reservations = Reservations(api, env.get("GH_TOKEN"), root)
-                # A queued older reservation yields here, before any build work.
+                prepared_path = None
+                if env.get("CD_PREPARED_ARCHIVE") == "true":
+                    prepared_path = path_for(Path(env["RUNNER_TEMP"]) / "cma-prepared-release", reservation)
+                # A queued release can yield before a fallback build. A producer
+                # that already finished its build retains the same write fences.
                 try:
-                    reservations.require_current(reservation, build_started=False)
+                    reservations.require_current(reservation, build_started=prepared_path is not None)
                 except SourceAlreadyFinal:
                     # An older run published this source and no run is known to deploy
                     # this group, so the report fails this skip instead of handling it.
@@ -252,9 +303,23 @@ def main():
                         diagnostics.mark("validate")
                         release, _, _ = identity(reservation, source)
                     diagnostics.mark("reuse")
+                    qualified = False
+                    prepared_checksum = None
                     with timings.stage("reuse"):
-                        archive = try_reuse(release, directory, api, env.get("GH_TOKEN"))
-                    qualified = archive is not None
+                        if prepared_path is not None:
+                            prepared = load_prepared_archive(prepared_path, release)
+                            require(prepared is not None, "Prepared release archive is missing")
+                            archive = prepared.path
+                            prepared_checksum = prepared.sha256
+                            reused_prepared.append(True)
+                            if prepared.cache_day is not None:
+                                cache = BuildCache(root, env, source, reservation["component"],
+                                                   cache_day=prepared.cache_day)
+                                cache.namespace = prepared.cache_namespace
+                        else:
+                            archive = try_reuse(release, directory, api, env.get("GH_TOKEN"),
+                                                on_miss=reuse_misses.append, source_root=source)
+                            qualified = archive is not None
                     if archive is None:
                         if env.get("CD_BUILD_CACHE") == "enabled":
                             diagnostics.mark("cache_restore")
@@ -272,40 +337,41 @@ def main():
                         if cache is not None and cache.exports_layers() is True:
                             layer_exports.append((started, progress))
                     require(release["component"] == reservation["component"], "Built release component differs")
-                    try:
-                        receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
-                                          env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
-                                          diagnostics=diagnostics, timings=timings,
-                                          scan_evidence=output.parent / "package-policy",
-                                          reservation_check=lambda: reservations.require_current(
-                                              reservation, build_started=True))
-                    except CleanupIncomplete as error:
-                        # Preserve only fixed-schema cleanup status and the
-                        # synthetic campaign ID, never raw helper/daemon output.
-                        output.with_name("runtime-cleanup.json").write_text(
-                            canonical(error.receipt) + "\n", encoding="utf-8")
-                        raise
-            receipts.append(receipt)
-            # Publication receipts keep their existing schema; verified package
-            # decisions are retained separately from raw scan directory and image bytes.
-            diagnostics.mark("receipt")
-            output.write_text(canonical(receipts) + "\n", encoding="utf-8")
-            # Persist successful publication before optional cache work. A later
-            # cache timeout must not lose the receipt for an immutable pushed tag.
-            if cache is not None:
-                diagnostics.mark("cache_export")
-                with timings.stage("cache-export"):
-                    accepted = cache.export_mounts()
-                metric = {"operation": "export", "result": "accepted" if accepted else "withheld"}
-                if not accepted and isinstance(cache.export_reason, str):
-                    metric["reason"] = cache.export_reason
-                if accepted and cache.export_headroom == "low":
-                    metric["headroom"] = "low"
-                cache_metrics.append(metric)
-                with Path(env["GITHUB_OUTPUT"]).open("a") as status:
-                    if accepted:
-                        status.write("build-cache-key=" + cache.key.archive_key(env) + "\n")
-                    status.write("build-cache-ready=" + ("true" if accepted else "false") + "\n")
+                    needs_cache = cache is not None and cache.key is not None
+                    finish_export = None
+                    with ExitStack() as cache_work:
+                        def start_cache_export():
+                            nonlocal finish_export
+                            if needs_cache and cache.can_overlap_export(archive):
+                                finish_export = cache_work.enter_context(cache.background_export(directory))
+
+                        try:
+                            receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
+                                              env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
+                                              diagnostics=diagnostics, timings=timings,
+                                              scan_evidence=output.parent / "package-policy",
+                                              prepared_checksum=prepared_checksum,
+                                              on_verified_image=start_cache_export,
+                                              reservation_check=lambda: reservations.require_current(
+                                                  reservation, build_started=True))
+                        except CleanupIncomplete as error:
+                            # Keep only the fixed-schema cleanup receipt.
+                            output.with_name("runtime-cleanup.json").write_text(
+                                canonical(error.receipt) + "\n", encoding="utf-8")
+                            raise
+                        # The verified registry receipt precedes cache acceptance.
+                        retain(receipt)
+                        if finish_export is not None:
+                            diagnostics.mark("cache_export")
+                            with timings.stage("cache-export-wait"):
+                                accepted = finish_export()
+                            record_cache_export(cache, accepted, env, cache_metrics)
+                if needs_cache and finish_export is None:
+                    # Verification scratch has been released before serial export.
+                    diagnostics.mark("cache_export")
+                    with timings.stage("cache-export"):
+                        accepted = cache.export_mounts()
+                    record_cache_export(cache, accepted, env, cache_metrics)
         return True
     def superseded():
         require(env.get("CD_COMPONENT") in DEPLOYABLES, "Unexpected superseded component")
@@ -337,6 +403,10 @@ def main():
         # in it names its failing tests: names matched by fixed failure
         # patterns and re-validated here, never raw build output.
         annotate_failed_tests(label, build_metrics[-1], sys.stdout)
+    if reused_prepared:
+        print("Staging image reuse result=prepared-reservation", flush=True)
+    for reason in reuse_misses:
+        print("CI image reuse miss reason=" + reason, flush=True)
     if component in APP_TARGETS:
         emit_cache_metrics(component, cache_metrics, sys.stdout)
     if layer_exports and component in SCOPES:

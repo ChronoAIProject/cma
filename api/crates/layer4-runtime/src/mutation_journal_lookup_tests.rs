@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn owner_stop_close_proof_leaves_pending_journal_replacement_intact() {
+    let config = config("close-proof-read-only");
+    let operation = remove(5000);
+    let started = record(&config, &operation);
+    let path = write_record(&config, &started);
+    let original = std::fs::read(&path).unwrap();
+    let temporary = path.with_file_name(".mutation-journal-unkeyed.tmp");
+    let bytes = encode_record(&terminal(&config, &operation)).unwrap();
+    std::fs::write(&temporary, &bytes).unwrap();
+
+    assert_eq!(
+        find_proof_record(&config, &operation.operation_id, &operation.subject)
+            .unwrap_err()
+            .code,
+        "agent_process_close_journal_unsettled"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(std::fs::read(&temporary).unwrap(), bytes);
+    cleanup(&config);
+}
+
+#[test]
 fn direct_replay_recovers_a_matching_temporary_without_a_prior_started_scan() {
     let config = config("keyed-temporary");
     let operation = remove(5000);

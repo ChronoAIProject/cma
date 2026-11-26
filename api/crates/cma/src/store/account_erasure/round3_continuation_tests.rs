@@ -139,6 +139,7 @@ async fn continuation(organization: bool, finish_erasure: bool) {
             Options {
                 allocation_rollups_enabled: Some(false),
                 agent_shared_observation: Some(false),
+                retain_legal_consents: false,
                 drain_qualification: Some(TransactionDrainQualification::fixture()),
                 billing_enabled: false,
                 transaction_drain_minimum_secs: 120
@@ -317,12 +318,29 @@ async fn continuation(organization: bool, finish_erasure: bool) {
             .unwrap();
     }
     use sandbox::store::{SandboxInactivityPauseRequest, SandboxMaintenanceStore};
+    // Profile Agent admission records the owner's activity on the Sandbox at
+    // admission time; inactivity is measured a full interval after it (#1330).
+    let activity = store
+        .get_sandbox(&parent.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .last_activity_at;
+    let requested_at = layer2_core::rfc3339_at(
+        std::time::UNIX_EPOCH
+            + std::time::Duration::from_secs(
+                layer2_core::seconds_from_rfc3339(&activity)
+                    .unwrap()
+                    .saturating_add(901)
+                    .max(layer2_core::seconds_from_rfc3339("2026-11-14T01:00:00Z").unwrap()),
+            ),
+    );
     assert_eq!(
         store
             .schedule_inactivity_pause(SandboxInactivityPauseRequest {
                 expected_policy_revision: None,
                 sandbox_id: parent.id.clone(),
-                requested_at: "2026-11-14T01:00:00Z".into(),
+                requested_at: requested_at.clone(),
                 pause_after_seconds: 900,
                 auto_pause_enabled: false,
                 cause: Default::default(),
@@ -337,7 +355,7 @@ async fn continuation(organization: bool, finish_erasure: bool) {
         .schedule_inactivity_pause(SandboxInactivityPauseRequest {
             expected_policy_revision: None,
             sandbox_id: parent.id,
-            requested_at: "2026-11-14T01:00:00Z".into(),
+            requested_at,
             pause_after_seconds: 900,
             auto_pause_enabled: true,
             cause: Default::default(),

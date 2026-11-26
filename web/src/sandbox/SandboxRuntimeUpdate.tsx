@@ -1,10 +1,11 @@
 import { useId } from 'react';
 import type { CmaWebClient } from '../api/client';
-import type { SandboxRuntimeUpdate as RuntimeUpdate } from '../api/types';
+import type { SandboxDetail, SandboxRuntimeUpdate as RuntimeUpdate } from '../api/types';
 import { StateDot } from '../ui/StateDot';
 import { Button } from '../ui/Button';
 import { Presence } from '../ui/Presence';
 import { useRuntimeUpdate } from './useRuntimeUpdate';
+import { SandboxRuntimeFacts, runtimeLifecycleNotice } from './SandboxRuntimeFacts';
 import './SandboxRecoveryNotice.css';
 
 const statusCopy = {
@@ -25,9 +26,22 @@ const statusCopy = {
   },
   failed: {
     title: 'Runtime update needs attention',
-    detail: 'The update could not finish. Review the reported reason and retry when available.',
+    detail: 'The runtime update stopped at its current step.',
   },
 } as const;
+
+const legacyFailureMessage =
+  'The runtime update paused safely. Your home and conversations are retained. Retry the update to continue.';
+
+function failedUpdateMessage(update: RuntimeUpdate, canRetry: boolean): string {
+  const detail = statusCopy.failed.detail;
+  if (update.canUpdate && !canRetry) return `${detail} Retry is unavailable in this client.`;
+  const reported = update.failure?.message;
+  if (reported && reported !== legacyFailureMessage) return reported;
+  return canRetry
+    ? `${detail} Retry the runtime update to continue.`
+    : `${detail} Contact the deployment operator for recovery help.`;
+}
 
 export function SandboxRuntimeUpdate({
   client,
@@ -38,7 +52,11 @@ export function SandboxRuntimeUpdate({
   stale,
   busy,
   onAccepted,
+  sandboxStatus,
+  technicalDetails = 'inline',
 }: {
+  readonly sandboxStatus?: SandboxDetail['status'];
+  readonly technicalDetails?: 'inline' | 'disclosure';
   readonly client: CmaWebClient;
   readonly sandboxId: string;
   readonly ownerId: string;
@@ -65,81 +83,76 @@ export function SandboxRuntimeUpdate({
     command.intent !== undefined && !command.intent.receipt && !command.intent.refused;
   const submitting = command.busy;
   const state = current.state;
-  const copy = statusCopy[state];
-  const title = submitting ? 'Requesting runtime update' : copy.title;
-  const complete = state === 'up_to_date' && current.completedAt !== undefined;
+  const unavailableUpdate = state === 'available' && !current.canUpdate;
+  const copy = unavailableUpdate
+    ? {
+        title: 'Runtime update unavailable',
+        detail: 'A newer managed runtime version is available.',
+      }
+    : statusCopy[state];
+  const lifecycle = runtimeLifecycleNotice(sandboxStatus, current, stale);
+  const blockedReason =
+    sandboxStatus === 'failed' && unavailableUpdate
+      ? 'Runtime updates are blocked by the Sandbox failure. Open Technical details for the reported failure.'
+      : current.blockedReason;
+  const title =
+    lifecycle?.title ??
+    (submitting
+      ? 'Requesting runtime update'
+      : unresolved
+        ? 'Runtime update unconfirmed'
+        : copy.title);
+  const complete = !unresolved && state === 'up_to_date' && current.completedAt !== undefined;
   const animate = submitting || state === 'updating';
   const message = !submitting ? command.intent?.message : undefined;
   const target = unresolved ? command.intent?.target : current.targetVersion;
   const unavailable = client.updateSandboxRuntime === undefined || stale || busy || submitting;
+  const failure =
+    state === 'failed' && !unresolved && !submitting && !stale && !busy
+      ? failedUpdateMessage(current, current.canUpdate && !unavailable)
+      : undefined;
 
   return (
     <section className="sandbox-page__band" aria-label="Runtime">
       <h2>Runtime</h2>
-      <dl>
-        <div>
-          <dt>Current runtime</dt>
-          <dd>
-            {current.currentVersion === null ? (
-              'Not reported'
-            ) : (
-              <code>{current.currentVersion}</code>
-            )}
-          </dd>
-        </div>
-        <div>
-          <dt>Latest runtime</dt>
-          <dd>
-            <code>{current.latestVersion}</code>
-          </dd>
-        </div>
-        {target !== undefined && target !== current.latestVersion ? (
-          <div>
-            <dt>Requested runtime</dt>
-            <dd>
-              <code>{target}</code>
-            </dd>
-          </div>
-        ) : null}
-        <div>
-          <dt>Automatic updates</dt>
-          <dd>
-            Daily at {current.schedule.localTime} SGT ({current.schedule.timezone}), when idle
-          </dd>
-        </div>
-      </dl>
       <div className="sandbox-recovery" data-state={submitting ? 'requesting' : state}>
         <div className="sandbox-recovery__icon" aria-hidden="true">
           <StateDot
             size={10}
             state={
-              animate
-                ? 'ongoing'
-                : state === 'queued'
-                  ? 'neutral'
-                  : state === 'failed'
-                    ? 'error'
-                    : state === 'up_to_date'
-                      ? 'done'
-                      : 'warning'
+              lifecycle?.tone ??
+              (unresolved && !submitting
+                ? 'warning'
+                : animate
+                  ? 'ongoing'
+                  : state === 'queued'
+                    ? 'neutral'
+                    : state === 'failed' || (sandboxStatus === 'failed' && unavailableUpdate)
+                      ? 'error'
+                      : state === 'up_to_date'
+                        ? 'done'
+                        : 'warning')
             }
           />
         </div>
         <div className="sandbox-recovery__content">
           <p className="sandbox-recovery__title" role="status">
-            {complete && !submitting ? 'Runtime updated' : title}
+            {complete && !submitting && !lifecycle ? 'Runtime updated' : title}
           </p>
-          <p key={title} className="sandbox-recovery__stage">
-            {submitting ? 'Saving your update request.' : copy.detail}
-          </p>
-          {current.preservesHome ? (
+          {lifecycle || !failure ? (
+            <p key={title} className="sandbox-recovery__stage">
+              {lifecycle?.detail ??
+                (submitting
+                  ? 'Saving your update request.'
+                  : unresolved
+                    ? 'The result of your update request has not been confirmed.'
+                    : copy.detail)}
+            </p>
+          ) : null}
+          {current.preservesHome && sandboxStatus !== 'retired' && sandboxStatus !== 'retiring' ? (
             <p>Your existing home disk, files and conversations are preserved.</p>
           ) : null}
-          <Presence>
-            {state === 'failed' && current.failure ? (
-              <p role="alert">{current.failure.message}</p>
-            ) : null}
-          </Presence>
+          <Presence>{failure ? <p role="alert">{failure}</p> : null}</Presence>
           {current.completedAt !== undefined ? (
             <p>
               Last updated{' '}
@@ -152,7 +165,21 @@ export function SandboxRuntimeUpdate({
         </div>
       </div>
       <Presence>{message ? <p role="alert">{message}</p> : null}</Presence>
-      {current.blockedReason ? <p id={reasonId}>{current.blockedReason}</p> : null}
+      {blockedReason ? <p id={reasonId}>{blockedReason}</p> : null}
+      {technicalDetails === 'disclosure' ? (
+        <details className="sandbox-runtime-details">
+          <summary>Technical details</summary>
+          <SandboxRuntimeFacts
+            sandboxId={sandboxId}
+            update={current}
+            target={target}
+            sandboxStatus={sandboxStatus}
+            copyable
+          />
+        </details>
+      ) : (
+        <SandboxRuntimeFacts update={current} target={target} sandboxStatus={sandboxStatus} />
+      )}
       {unresolved ? (
         <Button disabled={unavailable} onClick={command.retry}>
           {submitting ? 'Requesting update…' : 'Retry update request'}
@@ -160,7 +187,7 @@ export function SandboxRuntimeUpdate({
       ) : state !== 'up_to_date' ? (
         <Button
           disabled={unavailable || !current.canUpdate}
-          aria-describedby={current.blockedReason ? reasonId : undefined}
+          aria-describedby={blockedReason ? reasonId : undefined}
           onClick={() =>
             command.start(
               state === 'failed'

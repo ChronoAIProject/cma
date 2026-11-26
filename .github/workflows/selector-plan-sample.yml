@@ -41,15 +41,14 @@ jobs:
           "$RUNNER_TEMP/selector-venv/bin/python" -m pip install -r .github/scripts/ci_tracks/requirements.txt
       - name: Restore only this benchmark's parent sample
         if: inputs.sample == 'warm'
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: ${{ runner.temp }}/selector-benchmark
           key: selector-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-parent
           fail-on-cache-miss: true
-      - name: Reconcile the develop adoption window with the shared planner
+      - name: Reconcile a bounded develop window with the shared planner
         id: plan
         env:
-          ADOPTION: ${{ vars.CMA_CD_ADOPTION_SHA }}
           BASE: ${{ github.event.pull_request.base.sha }}
           SAMPLE: ${{ inputs.sample }}
         run: |
@@ -58,34 +57,37 @@ jobs:
           from pathlib import Path
           sys.path.insert(0, '.github/scripts')
           from ci_tracks.selection_cache import canonical, fingerprint
-          from ci_tracks.git_comparison import check_sha, first_parent
-          from staging_cd_queue import release_queue
+          from ci_tracks.git_comparison import check_sha
+          from staging_cd_queue import git, release_queue
 
           root, sample = Path.cwd(), os.environ['SAMPLE']
           assert sample in {'parent', 'cold', 'warm'}
           head = check_sha(os.environ['BASE'])
-          adoption = check_sha(os.environ['ADOPTION'])
+          # Keep every sample on the same bounded history, even as the
+          # original adoption commit recedes. Cold and warm compare the full
+          # queue for this window. The parent sample omits only the tip.
+          revisions = git(root, 'rev-list', '--first-parent', '--max-count=16', head).splitlines()
+          assert 2 <= len(revisions) <= 16
+          start = check_sha(revisions[-1])
+          count = len(revisions)
           if sample == 'parent':
-              # The first adopted merge can still reuse its parent's input map.
-              previous = first_parent(root, head)
-              if head == adoption:
-                  adoption = previous
-              head = previous
+              head = check_sha(revisions[1])
+              count -= 1
           directory = Path(os.environ['RUNNER_TEMP']) / 'selector-benchmark'
           os.environ['CD_SELECTOR_CACHE'] = json.dumps({'policy': fingerprint(root), 'directory': str(directory)})
           metrics = {}
-          queue = release_queue(root, adoption, head, head, metrics)
+          queue = release_queue(root, start, head, head, metrics)
           if sample == 'warm':
-              assert metrics['misses'] == 1 and metrics['input_hits'] == 1
+              assert metrics['hits'] == count - 1 and metrics['misses'] == 1 and metrics['input_hits'] == 1
           else:
-              assert metrics['hits'] == 0 and metrics['misses'] >= 1
+              assert metrics['hits'] == 0 and metrics['misses'] == count
           print(json.dumps(metrics, sort_keys=True))
           digest = hashlib.sha256(canonical(queue)).hexdigest()
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               print('digest=' + digest, file=output)
           PY
       - name: Save this sample under the PR run only
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: ${{ runner.temp }}/selector-benchmark
           key: selector-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.sample }}

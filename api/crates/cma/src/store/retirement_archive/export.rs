@@ -52,23 +52,27 @@ pub(crate) async fn capture(
     let mut external = Vec::new();
     let mut total = 0;
     let mut document_count = 0;
+    let optional: Vec<_> = super::schema::manifest_collections()
+        .iter()
+        .copied()
+        .filter(|name| super::super::isolation::OPTIONAL_COLLECTIONS.contains(name))
+        .collect();
     let present_optional = store
         .database
         .list_collection_names()
-        .filter(doc! {"name":{"$in":super::super::isolation::OPTIONAL_COLLECTIONS}})
+        .filter(doc! {"name":{"$in":&optional}})
         .await
         .map_err(|_| REFUSED)?;
-    for name in super::super::isolation::COLLECTIONS {
+    for &name in super::schema::manifest_collections() {
         // Disabled features have no collection or grants. An absent optional
         // namespace contributes an explicit empty inventory without reading it.
-        // Existing namespaces still take the normal ownership/authority path.
-        if super::super::isolation::OPTIONAL_COLLECTIONS.contains(name)
+        if optional.contains(&name)
             && !present_optional
                 .iter()
-                .any(|present| present.as_str() == *name)
+                .any(|present| present.as_str() == name)
         {
             records.push(DatabaseRecord {
-                collection: (*name).into(),
+                collection: name.into(),
                 documents: 0,
                 bytes: 0,
                 sha256: digest(&[]),
@@ -89,7 +93,7 @@ pub(crate) async fn capture(
             .await
             .map_err(|_| REFUSED)?;
         let mut record = DatabaseRecord {
-            collection: (*name).into(),
+            collection: name.into(),
             documents: 0,
             bytes: 0,
             sha256: String::new(),
@@ -100,10 +104,10 @@ pub(crate) async fn capture(
         while cursor.advance(&mut session).await.map_err(|_| REFUSED)? {
             let raw = cursor.deserialize_current().map_err(|_| REFUSED)?;
             let document = Document::try_from(&raw).map_err(|_| REFUSED)?;
-            if *name == crate::document_artifacts::COLLECTION {
+            if name == crate::document_artifacts::COLLECTION {
                 external.extend(document_objects(&document, custody, blobs, request).await?);
             }
-            let data = if *name == "sandboxes" {
+            let data = if name == "sandboxes" {
                 mongodb::bson::serialize_to_vec(&original).map_err(|_| REFUSED)?
             } else {
                 raw.as_bytes().to_vec()
@@ -144,6 +148,14 @@ async fn document_objects(
     blobs: Option<&dyn DocumentBlobStore>,
     request: &Request,
 ) -> Result<Vec<ExternalRecord>> {
+    // A deleted Document retains immutable revision metadata, but its source
+    // bytes have no archive publication right. They may already be reclaimed.
+    if crate::document_artifacts::deletion::decode_audit(document)
+        .map_err(|_| REFUSED)?
+        .is_some()
+    {
+        return Ok(Vec::new());
+    }
     if document.get_i64("document_schema_version").ok() != Some(1) {
         return Err(REFUSED);
     }

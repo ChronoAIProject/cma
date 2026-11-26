@@ -130,14 +130,14 @@ class LayerTests(unittest.TestCase):
                 api.request.assert_not_called()
         self.assertEqual(self.check(Mock(), component=PRIVATE), [])
 
-    def test_only_a_develop_push_with_the_cache_runtime_exports_layers(self):
+    def test_legacy_remote_layer_exports_are_disabled(self):
         from staging_cd_build_cache import BuildCache
         with tempfile.TemporaryDirectory() as directory:
             base = dict(DEVELOP, GITHUB_SHA="a" * 40, GITHUB_RUN_ID="1", GITHUB_RUN_ATTEMPT="1",
                         CD_COMPONENT="runtime", RUNNER_TEMP=directory)
             runtime = {"ACTIONS_RUNTIME_TOKEN": "synthetic-runtime", "ACTIONS_RESULTS_URL": "https://example.invalid"}
             root = Path(directory)
-            self.assertIs(BuildCache(root, dict(base, **runtime), root, "runtime").exports_layers(), True)
+            self.assertIs(BuildCache(root, dict(base, **runtime), root, "runtime").exports_layers(), False)
             self.assertIs(BuildCache(root, base, root, "runtime").exports_layers(), False)
             cache = BuildCache(root, dict(base, **runtime), root, "runtime")
             cache.env = dict(cache.env, GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/12/merge")
@@ -246,7 +246,7 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(status, 0)
         layers.assert_called_once()
         [(component, scope, observed, started, env)] = layers.snapshots
-        self.assertEqual((component, scope, observed), ("web", "cma-web", summary))
+        self.assertEqual((component, scope, observed), ("web", "cma-cd-web", summary))
         self.assertGreaterEqual(started, before - 1)
         self.assertEqual(env["CD_COMPONENT"], "web")
         # The ignored export failure no longer reads as a failed Dockerfile step.

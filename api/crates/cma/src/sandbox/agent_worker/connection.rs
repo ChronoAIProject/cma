@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-use layer2_core::sandbox::store::SandboxStoreError;
+use layer2_core::sandbox::store::{AgentWorkPublicationParents, SandboxStoreError};
 use layer2_core::sandbox::{
     Agent, AgentStatus, AgentWorkStep, FirstMessageDelivery, SandboxStatus, WorkspaceStatus,
 };
@@ -42,7 +42,7 @@ impl AgentWorker {
             }
         };
         let fence = claimed_fence(&agent, &self.config.holder)?;
-        if let Err(failure) = super::startup::validated_open_request(&agent, &context) {
+        if let Err(failure) = self.recorded_open_request(&agent, &context).await {
             return self
                 .handle_failure(agent, failure, now + started.elapsed())
                 .await;
@@ -77,8 +77,13 @@ impl AgentWorker {
                 .handle_failure(agent, registry_failure(error), now + started.elapsed())
                 .await;
         }
-        self.finish_connection_publication(agent, &attachment, now + started.elapsed())
-            .await
+        self.finish_connection_publication(
+            agent,
+            &attachment,
+            Some(context.publication_parents()),
+            now + started.elapsed(),
+        )
+        .await
     }
 
     pub(super) async fn connection_context(
@@ -113,6 +118,7 @@ impl AgentWorker {
         &self,
         mut agent: Agent,
         attachment: &crate::sandbox::live_agents::LiveAgentAttachment,
+        parents: Option<AgentWorkPublicationParents>,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let fence = claimed_fence(&agent, &self.config.holder)?;
@@ -140,10 +146,17 @@ impl AgentWorker {
                 } else {
                     AgentWorkStep::None
                 };
-            match self
-                .progress(agent.clone(), next, at, None, Vec::new(), None, None)
-                .await
-            {
+            let mutation =
+                self.progress_mutation(agent.clone(), next, at, None, Vec::new(), None, None)?;
+            let result = if let Some(parents) = parents {
+                self.dependencies
+                    .store
+                    .commit_agent_connection_work(mutation, parents)
+                    .await
+            } else {
+                self.dependencies.store.commit_agent_work(mutation).await
+            };
+            match result {
                 Ok(()) => {
                     self.dependencies
                         .registry

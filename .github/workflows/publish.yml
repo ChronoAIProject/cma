@@ -1,8 +1,14 @@
 name: Publish release
 
 # Runs once a pull request from develop has been merged into main. It decides
-# the release version, publishes the five images under it, and then records
-# what happened as a tag and a release.
+# the release version, assigns it to the images staging already verified, and
+# then records what happened as a tag and a release.
+#
+# Nothing is rebuilt. Every published image (Agent Manager, Event Gateway,
+# web and both runtimes) is the newest staging-verified version whose source
+# is the merged develop commit or an earlier one, selected the way production
+# promotion selects, so each image is built and scanned once, by the reviewed
+# staging publication gate.
 #
 # The ordering is the point. The tag is the claim that a version exists and is
 # fetchable, so it is written last. Before a fresh release the planner computes
@@ -10,8 +16,9 @@ name: Publish release
 # tag peeled to this commit and reuses it only after its bump, target and exact
 # annotation have been verified.
 #
-# Nothing here changes how anything is deployed. Externally maintained manifests keep
-# naming whatever image they already name. `CHRONO_SANDBOX_IMAGE` is left
+# Nothing here changes how anything is deployed. prod-cd deploys the same
+# staging-verified digests after approval; externally maintained manifests
+# keep naming whatever image they already name. `CHRONO_SANDBOX_IMAGE` is left
 # alone: publishing an image is not a decision to adopt it, and the two must
 # stay separate steps.
 
@@ -28,7 +35,8 @@ on:
 # a queue behind it. Releasing three times inside one build window is not a
 # thing this branch does — every merge into main is a release — but if it
 # happens, the superseded run is re-runnable from the Actions tab and its
-# version is still unclaimed.
+# version is still unclaimed: version image tags are assigned only after the
+# runtime evidence and every short-SHA tag passed.
 concurrency:
   group: publish-release
   cancel-in-progress: false
@@ -109,42 +117,125 @@ jobs:
             "$GITHUB_SERVER_URL" "$RUNNER_TEMP/notes.md" \
             "$RUNNER_TEMP/release.md"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-notes
           path: ${{ runner.temp }}/release.md
           retention-days: 7
           overwrite: true
 
+  # The images a release records were built and scanned once, by the reviewed
+  # staging publication gate, and staging deployed and verified each exact
+  # digest. A release selects them the way production promotion does and
+  # never rebuilds, so the bytes behind a version tag are the bytes staging
+  # verified and production runs.
+  select:
+    name: Select the staging-verified images
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      images: ${{ steps.select.outputs.images }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Select every published image staging verified for the merged develop commit
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/release_promotion.py select
+
+  runtime-image-gate:
+    name: Runtime image evidence
+    needs: [plan, select]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 26
+      # Runs before any tag is assigned. The digest-pinned reference is content
+      # addressed, so the pull below receives exactly the bytes the release
+      # tags. The image records the develop commit staging built it from, not
+      # the release merge.
+      - name: Resolve the promoted runtime
+        id: runtime
+        env:
+          RELEASE_IMAGES: ${{ needs.select.outputs.images }}
+        run: |
+          set -euo pipefail
+          reference=$(jq -er '.runtime | select(.repository == "ghcr.io/chronoaiproject/cma-runtime") | .repository + "@" + .digest' <<< "$RELEASE_IMAGES")
+          source=$(jq -er '.runtime.source' <<< "$RELEASE_IMAGES")
+          [[ "$reference" =~ ^ghcr\.io/chronoaiproject/cma-runtime@sha256:[0-9a-f]{64}$ && "$source" =~ ^[0-9a-f]{40}$ ]]
+          {
+            echo "reference=$reference"
+            echo "source=$source"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull verified immutable runtime
+        env:
+          RUNTIME_REFERENCE: ${{ steps.runtime.outputs.reference }}
+        run: docker pull "$RUNTIME_REFERENCE"
+      - name: Execute published runtime image contract
+        env:
+          RUNTIME_REFERENCE: ${{ steps.runtime.outputs.reference }}
+          RUNTIME_SOURCE: ${{ steps.runtime.outputs.source }}
+        run: node .github/scripts/runtime-image-evidence.mjs run "$RUNTIME_REFERENCE" "$RUNTIME_SOURCE" "$RUNNER_TEMP/runtime-image-evidence.json"
+      - name: Qualify published runtime ledger storage
+        env:
+          RUNTIME_REFERENCE: ${{ steps.runtime.outputs.reference }}
+          RUNTIME_SOURCE: ${{ steps.runtime.outputs.source }}
+        run: node .github/scripts/runtime-ledger-evidence.mjs "$RUNTIME_REFERENCE" "$RUNTIME_SOURCE" "$RUNNER_TEMP/ledger-storage.json"
+      - name: Retain ledger storage evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-ledger-storage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ledger-storage.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Retain runtime image evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-runtime-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runtime-image-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Require passing runtime image evidence
+        if: always()
+        env:
+          RUNTIME_REFERENCE: ${{ steps.runtime.outputs.reference }}
+          RUNTIME_SOURCE: ${{ steps.runtime.outputs.source }}
+        run: node .github/scripts/runtime-image-evidence.mjs verify "$RUNTIME_REFERENCE" "$RUNTIME_SOURCE" "$RUNNER_TEMP/runtime-image-evidence.json"
+
   images:
     name: Images
-    needs: plan
+    needs: [plan, select, runtime-image-gate]
     runs-on: ubuntu-latest
-    # Well above a cold cacheless build, so this catches a stall rather than
-    # slowness, matching the equivalent job in ci.yml.
-    timeout-minutes: 90
+    timeout-minutes: 30
+    # The only job that may write packages. One job assigns every tag, so the
+    # version tags wait until all five short-SHA tags exist, and a rerun
+    # reuses every tag that already names its promoted digest.
     permissions:
       contents: read
       packages: write
-    strategy:
-      # One component failing must not strand the others half-published; the
-      # release job will not run either way.
-      fail-fast: false
-      matrix:
-        component: [api, web, runtime, cmaeg, runtime-omarchy]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-
-      - name: Resolve the image reference
-        id: image
-        run: |
-          set -euo pipefail
-          # GHCR rejects an uppercase path, and the organisation is spelled
-          # ChronoAIProject.
-          owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
-          image_name=$(python3 .github/scripts/deployables.py "${{ matrix.component }}")
-          echo "repository=ghcr.io/${owner}/${image_name}" >> "$GITHUB_OUTPUT"
-          echo "revision=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -162,363 +253,52 @@ jobs:
             exit 1
           fi
 
-          wrapper="$RUNNER_TEMP/skopeo-${{ matrix.component }}"
-          output_dir="$RUNNER_TEMP/release-image-${{ matrix.component }}"
-          mkdir -m 0700 "$output_dir"
+          wrapper="$RUNNER_TEMP/skopeo"
           cat > "$wrapper" <<'SKOPEO'
           #!/usr/bin/env bash
           set -euo pipefail
           : "${SKOPEO_HOST_AUTHFILE:?}"
-          : "${SKOPEO_OUTPUT_DIR:?}"
           exec docker run --rm \
             --user "$(id -u):$(id -g)" \
             --env HOME=/tmp \
             --volume "${SKOPEO_HOST_AUTHFILE}:/auth/config.json:ro" \
-            --volume "${SKOPEO_OUTPUT_DIR}:/output:ro" \
             quay.io/skopeo/stable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810 \
             "$@"
           SKOPEO
           chmod 0700 "$wrapper"
-          {
-            echo "command=$wrapper"
-            echo "auth_file=$auth_file"
-            echo "output_dir=$output_dir"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Reconcile existing release image tags
-        id: reconcile
-        env:
-          SKOPEO_COMMAND: ${{ steps.skopeo.outputs.command }}
-          SKOPEO_AUTHFILE: /auth/config.json
-          SKOPEO_HOST_AUTHFILE: ${{ steps.skopeo.outputs.auth_file }}
-          SKOPEO_OUTPUT_DIR: ${{ steps.skopeo.outputs.output_dir }}
-        run: |
-          set -euo pipefail
-          skopeo_version=$("$SKOPEO_COMMAND" --version)
+          # docker run would pull the pinned image implicitly and fail the release
+          # on one registry or CDN hiccup; pull it first with bounded retries.
+          bash .github/scripts/pull-pinned-image.sh \
+            quay.io/skopeo/stable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810
+          skopeo_version=$(SKOPEO_HOST_AUTHFILE="$auth_file" "$wrapper" --version)
           if ! printf '%s\n' "$skopeo_version" \
             | grep -Eq '^skopeo version 1\.22\.2( commit: [0-9a-f]{7,40})?$'; then
             echo "::error::unexpected pinned Skopeo version: $skopeo_version"
             exit 1
           fi
-          .github/reconcile-release-image.sh \
-            "${{ matrix.component }}" \
-            "${{ needs.plan.outputs.version }}" \
-            "$GITHUB_SHA" \
-            "${{ steps.image.outputs.repository }}"
-
-      - name: Validate the image reconciliation decision
-        env:
-          REUSE: ${{ steps.reconcile.outputs.reuse }}
-        run: |
-          set -euo pipefail
-          case "$REUSE" in
-            true | false) ;;
-            *)
-              echo "::error::image reconciliation did not return an exact reuse decision"
-              exit 1
-              ;;
-          esac
-
-      # arm64 builds run under emulation on the amd64 runner.
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
-        if: success() && steps.reconcile.outputs.reuse == 'false'
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-        if: success() && steps.reconcile.outputs.reuse == 'false'
-
-      # Built and scanned before anything is pushed. Runtime images install
-      # packages from the Dockerfile's pinned Debian snapshot, so their OS
-      # refresh is keyed on that snapshot and security updates arrive only when
-      # the snapshot is deliberately bumped and its catalog reviewed. Other
-      # images refresh their OS packages again for this workflow attempt, so a
-      # fix published after the pull-request scan is evaluated here before the
-      # image becomes a release artifact.
-      - name: Resolve OS security refresh key
-        id: os-refresh
-        if: success() && steps.reconcile.outputs.reuse == 'false'
-        env:
-          IMAGE_COMPONENT: ${{ matrix.component }}
-          PER_BUILD_KEY: ${{ github.run_id }}-${{ github.run_attempt }}
-        run: python3 .github/scripts/os_refresh_key.py "$IMAGE_COMPONENT" api/crates/layer4-runtime/Dockerfile "$PER_BUILD_KEY" >> "$GITHUB_OUTPUT"
-
-      - name: Build the native image for scanning
-        if: success() && steps.reconcile.outputs.reuse == 'false'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
-          target: ${{ matrix.component == 'runtime-omarchy' && 'omarchy' || matrix.component == 'runtime' && 'default-runtime' || 'runtime' }}
-          platforms: linux/amd64
-          push: false
-          load: true
-          outputs: ${{ startsWith(matrix.component, 'runtime') && 'type=docker,rewrite-timestamp=true' || '' }}
-          tags: cma-${{ matrix.component }}:release
-          build-args: |
-            RUNTIME_DESKTOP=${{ matrix.component == 'runtime-omarchy' && '1' || '0' }}
-            OMARCHY_CMA_BASE=runtime-tools
-            CHRONO_BUILD=${{ needs.plan.outputs.version }}
-            CHRONO_BUILD_SHA=${{ github.sha }}
-            OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
-            ${{ startsWith(matrix.component, 'runtime') && 'SOURCE_DATE_EPOCH=0' || '' }}
-          # Populated by ci.yml. A run on main can restore caches from main and
-          # from the default branch, and develop is the default branch, so the
-          # layers the merged pull request built are still warm here.
-          cache-from: type=gha,scope=${{ matrix.component }}
-          # A layer export is an optimisation. A failed or refused export (a
-          # read-only cache once the Actions budget is reached) must never fail
-          # the release build that already produced the image.
-          cache-to: type=gha,mode=max,ignore-error=true,scope=${{ matrix.component }}
-
-      - name: Verify web bundle identity against image metadata
-        if: success() && steps.reconcile.outputs.reuse == 'false' && matrix.component == 'web'
-        env:
-          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
-        run: python3 .github/scripts/web-build-identity.py cma-web:release "$GITHUB_SHA" "$RELEASE_VERSION"
-
-      - name: Vulnerability scan
-        if: success() && steps.reconcile.outputs.reuse == 'false'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: cma-${{ matrix.component }}:release
-          format: table
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-
-      - name: Install pinned image secret scanner dependency
-        if: success() && steps.reconcile.outputs.reuse == 'false'
-        run: bash .github/scripts/install-image-gitleaks.sh
-
-      # Export every platform first so the secret gate examines exactly the
-      # config, history and layers that will be published, including web arm64.
-      # No build occurs after this archive passes its scan.
-      - name: Build the complete publication archive
-        if: success() && steps.reconcile.outputs.reuse == 'false'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
-          target: ${{ matrix.component == 'runtime-omarchy' && 'omarchy' || matrix.component == 'runtime' && 'default-runtime' || 'runtime' }}
-          platforms: ${{ matrix.component == 'web' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
-          push: false
-          outputs: type=oci,dest=${{ steps.skopeo.outputs.output_dir }}/candidate.oci.tar${{ startsWith(matrix.component, 'runtime') && ',rewrite-timestamp=true' || '' }}
-          provenance: false
-          # These tags are intended to be assigned once. GHCR has no tag CAS;
-          # the second absence check only narrows stale-read overwrite risk.
-          # The audited writer/history fence is documented in private maintainer guidance.
-          # The version is what a deployment names; the short SHA traces an
-          # image already in hand back to its commit.
-          # web's status band and api's discovery responses bake the version
-          # so they name the release actually running. Ignored by runtime.
-          build-args: |
-            RUNTIME_DESKTOP=${{ matrix.component == 'runtime-omarchy' && '1' || '0' }}
-            OMARCHY_CMA_BASE=runtime-tools
-            CHRONO_BUILD=${{ needs.plan.outputs.version }}
-            CHRONO_BUILD_SHA=${{ github.sha }}
-            OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
-            ${{ startsWith(matrix.component, 'runtime') && 'SOURCE_DATE_EPOCH=0' || '' }}
-          # One archive reference avoids ambiguity in the OCI transport. The
-          # publisher assigns both registry tags to these exact scanned bytes.
-          tags: cma-${{ matrix.component }}:candidate
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
-          cache-from: type=gha,scope=${{ matrix.component }}
-
-      - name: Scan exact archive and publish without rebuilding
-        if: success() && steps.reconcile.outputs.reuse == 'false'
-        env:
-          SKOPEO_COMMAND: ${{ steps.skopeo.outputs.command }}
-          SKOPEO_AUTHFILE: /auth/config.json
-          SKOPEO_HOST_AUTHFILE: ${{ steps.skopeo.outputs.auth_file }}
-          SKOPEO_OUTPUT_DIR: ${{ steps.skopeo.outputs.output_dir }}
-          RELEASE_COMPONENT: ${{ matrix.component }}
-          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
-          RELEASE_REPOSITORY: ${{ steps.image.outputs.repository }}
-        run: python3 -B .github/scripts/release_image_publication.py "$SKOPEO_OUTPUT_DIR/candidate.oci.tar" "$RELEASE_COMPONENT" "$RELEASE_VERSION" "$GITHUB_SHA" "$RELEASE_REPOSITORY"
-
-      - name: Remove image archive and private scanner evidence
-        if: always()
-        env:
-          SCANNED_IMAGE_DIR: ${{ steps.skopeo.outputs.output_dir }}
-        run: |
-          if [[ "$SCANNED_IMAGE_DIR" == "$RUNNER_TEMP/release-image-${{ matrix.component }}" ]]; then
-            rm -rf -- "$SCANNED_IMAGE_DIR"
-          fi
-
-  image-exports:
-    name: Image export
-    needs: [plan, images]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: read
-    strategy:
-      # These are transfer artifacts for images already published above. A
-      # failed leg can be re-run without rebuilding or moving either image tag.
-      fail-fast: false
-      matrix:
-        component: [api, web, runtime, cmaeg, runtime-omarchy]
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-
-      - name: Resolve the image and export paths
-        id: image
-        env:
-          VERSION: ${{ needs.plan.outputs.version }}
-        run: |
-          set -euo pipefail
-          owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
-          image_name=$(python3 .github/scripts/deployables.py "${{ matrix.component }}")
-          revision=${GITHUB_SHA:0:7}
-          output="$RUNNER_TEMP/cma-${{ matrix.component }}-${VERSION}-${revision}-oci"
-          mkdir -p "$output"
-          {
-            echo "repository=ghcr.io/${owner}/${image_name}"
-            echo "revision=$revision"
-            echo "output=$output"
-          } >> "$GITHUB_OUTPUT"
-
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure pinned Skopeo
-        id: skopeo
-        run: |
-          set -euo pipefail
-          auth_file="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
-          if [ ! -f "$auth_file" ]; then
-            echo "::error::docker login did not create its authentication file"
-            exit 1
-          fi
-
-          wrapper="$RUNNER_TEMP/skopeo-${{ matrix.component }}"
-          cat > "$wrapper" <<'SKOPEO'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          : "${SKOPEO_HOST_AUTHFILE:?}"
-          : "${SKOPEO_OUTPUT_DIR:?}"
-          exec docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            --env HOME=/tmp \
-            --volume "${SKOPEO_HOST_AUTHFILE}:/auth/config.json:ro" \
-            --volume "${SKOPEO_OUTPUT_DIR}:/output:rw" \
-            --workdir /output \
-            quay.io/skopeo/stable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810 \
-            "$@"
-          SKOPEO
-          chmod 0700 "$wrapper"
           {
             echo "command=$wrapper"
             echo "auth_file=$auth_file"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Export the published image
+      # These tags are intended to be assigned once. GHCR has no tag CAS, so
+      # a tag that already names the promoted digest is reused and one that
+      # names anything else refuses the release. Every image first receives
+      # the release merge's short SHA, which no later release shares; only
+      # then does any image receive the version, which is what a deployment
+      # names, so a release that fails earlier claims no version.
+      - name: Assign the release tags to the staging-verified digests
         env:
+          RELEASE_IMAGES: ${{ needs.select.outputs.images }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
           SKOPEO_COMMAND: ${{ steps.skopeo.outputs.command }}
           SKOPEO_AUTHFILE: /auth/config.json
           SKOPEO_HOST_AUTHFILE: ${{ steps.skopeo.outputs.auth_file }}
-          SKOPEO_OUTPUT_DIR: ${{ steps.image.outputs.output }}
-        run: |
-          set -euo pipefail
-          skopeo_version=$("$SKOPEO_COMMAND" --version)
-          if ! printf '%s\n' "$skopeo_version" \
-            | grep -Eq '^skopeo version 1\.22\.2( commit: [0-9a-f]{7,40})?$'; then
-            echo "::error::unexpected pinned Skopeo version: $skopeo_version"
-            exit 1
-          fi
-          .github/export-release-image.sh \
-            "${{ matrix.component }}" \
-            "${{ needs.plan.outputs.version }}" \
-            "$GITHUB_SHA" \
-            "${{ steps.image.outputs.repository }}" \
-            "${{ steps.image.outputs.output }}"
-
-      - name: Upload the OCI transfer artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: cma-${{ matrix.component }}-${{ needs.plan.outputs.version }}-${{ steps.image.outputs.revision }}-oci
-          path: |
-            ${{ steps.image.outputs.output }}/cma-${{ matrix.component }}-${{ needs.plan.outputs.version }}-${{ steps.image.outputs.revision }}.oci.tar
-            ${{ steps.image.outputs.output }}/cma-${{ matrix.component }}-${{ needs.plan.outputs.version }}-${{ steps.image.outputs.revision }}.json
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
-          overwrite: true
-
-  runtime-image-gate:
-    name: Runtime image evidence
-    needs: [plan, images, image-exports]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
-        with:
-          node-version: 26
-      - name: Resolve exact runtime artifact
-        id: artifact
-        env:
-          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
-        run: echo "name=cma-runtime-${RELEASE_VERSION}-${GITHUB_SHA:0:7}-oci" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: ${{ steps.artifact.outputs.name }}
-          path: ${{ runner.temp }}/runtime-export
-      - name: Verify exact runtime artifact bytes and source
-        id: runtime
-        env:
-          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
-        run: node .github/scripts/release-runtime-input.mjs "$RUNNER_TEMP/runtime-export" "$GITHUB_SHA" "$RELEASE_VERSION"
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Pull verified immutable runtime
-        env:
-          RUNTIME_REFERENCE: ${{ steps.runtime.outputs.reference }}
-        run: docker pull "$RUNTIME_REFERENCE"
-      - name: Execute published runtime image contract
-        env:
-          RUNTIME_REFERENCE: ${{ steps.runtime.outputs.reference }}
-        run: node .github/scripts/runtime-image-evidence.mjs run "$RUNTIME_REFERENCE" "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"
-      - name: Qualify published runtime ledger storage
-        env:
-          RUNTIME_REFERENCE: ${{ steps.runtime.outputs.reference }}
-        run: node .github/scripts/runtime-ledger-evidence.mjs "$RUNTIME_REFERENCE" "$GITHUB_SHA" "$RUNNER_TEMP/ledger-storage.json"
-      - name: Retain ledger storage evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: release-ledger-storage-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ledger-storage.json
-          if-no-files-found: error
-          retention-days: 90
-      - name: Retain runtime image evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: release-runtime-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/runtime-image-evidence.json
-          if-no-files-found: error
-          retention-days: 90
-      - name: Require passing runtime image evidence
-        if: always()
-        env:
-          RUNTIME_REFERENCE: ${{ steps.runtime.outputs.reference }}
-        run: node .github/scripts/runtime-image-evidence.mjs verify "$RUNTIME_REFERENCE" "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"
+        run: python3 -B .github/scripts/release_promotion.py promote
 
   release:
     name: Tag and release
-    needs: [plan, images, image-exports, runtime-image-gate]
+    needs: [plan, select, runtime-image-gate, images]
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -528,58 +308,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - id: notes-download
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          digest-mismatch: error
           name: release-notes
           path: ${{ runner.temp }}/notes
+      - id: notes-download-retry
+        if: steps.notes-download.outcome == 'failure'
+        timeout-minutes: 2
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          digest-mismatch: error
+          name: release-notes
+          path: ${{ runner.temp }}/notes
+      - name: Explain the unavailable release notes artifact
+        if: failure() && steps.notes-download-retry.outcome == 'failure'
+        run: |
+          echo "::error title=Release notes artifact unavailable::The release-notes artifact was not downloaded: both attempts failed. Each attempt is limited to 2 minutes; an attempt that hit the limit shows 'has timed out' in its log. Nothing was tagged or released. Next step: re-run all jobs so the plan uploads the notes again."
+          exit 1
 
       - name: Show the assembled release notes
         run: cat "$RUNNER_TEMP/notes/release.md"
-
-      - name: Verify the current run's image artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.plan.outputs.version }}
-        run: |
-          set -euo pipefail
-          artifact_json="$RUNNER_TEMP/release-artifacts.json"
-          if ! gh api \
-            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
-            > "$artifact_json"; then
-            echo "::error::could not list artifacts for the current workflow run"
-            exit 1
-          fi
-
-          if ! jq -e '
-            type == "object"
-            and (.artifacts | type == "array")
-            and (.total_count | type == "number" and . >= 0 and floor == .)
-            and .total_count == (.artifacts | length)
-            and all(.artifacts[]; type == "object")
-          ' "$artifact_json" >/dev/null; then
-            echo "::error::artifact response is malformed or requires pagination"
-            exit 1
-          fi
-
-          revision=${GITHUB_SHA:0:7}
-          for component in api web runtime cmaeg runtime-omarchy; do
-            expected="cma-${component}-${VERSION}-${revision}-oci"
-            matches=$(jq -r --arg name "$expected" \
-              '[.artifacts[] | select(.name == $name)] | length' \
-              "$artifact_json")
-            if [ "$matches" -ne 1 ]; then
-              echo "::error::expected exactly one current-run artifact named $expected (found $matches)"
-              exit 1
-            fi
-            if ! jq -e --arg name "$expected" '
-              [.artifacts[] | select(.name == $name)][0]
-              | .expired == false
-                and (.size_in_bytes | type == "number" and . > 0 and floor == .)
-            ' "$artifact_json" >/dev/null; then
-              echo "::error::artifact $expected is expired, empty, or malformed"
-              exit 1
-            fi
-          done
 
       - name: Tag the release
         env:
@@ -600,75 +352,23 @@ jobs:
           .github/reconcile-github-release.sh \
             release "$VERSION" "$GITHUB_SHA" "$RUNNER_TEMP/notes/release.md"
 
-  # ── Carry the release merge back to develop ──────────────────────────────
-  #
-  # Merging develop into main creates a merge commit *on main* that develop
-  # never receives, so main ends every release one commit ahead. The next
-  # release PR then reads BEHIND and cannot merge until somebody notices and
-  # back-merges by hand.
-  #
-  # That happened after v0.1.0 (#196), after v0.2.0 (#221) and after v0.3.0
-  # (#239) — three releases, three identical manual fixes, each one clearing
-  # the instance and none of them the cause. This is the cause.
-  #
-  # A pull request rather than a push: develop is protected, and §"Never force
-  # push" is not negotiable for a convenience. A conflicting back-merge is left
-  # open rather than resolved, because a conflict means develop moved during
-  # the release and guessing at it is how a release silently reverts something.
+  # The next release needs main's merge commit in develop's ancestry. The
+  # publisher can prepare a verified branch with contents permission. A
+  # maintainer opens the PR because the workflow token cannot create one.
   back-merge:
-    name: Back-merge into develop
-    needs: [plan, release]
+    name: Prepare the release back-merge
+    needs: release
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
 
-      - name: Open or update the back-merge
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.plan.outputs.version }}
+      - name: Publish the verified back-merge branch
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # Nothing to do when develop already contains this commit, which is
-          # the case for a release cut from a develop that nothing has moved.
-          if git merge-base --is-ancestor "$GITHUB_SHA" origin/develop; then
-            echo "develop already contains $VERSION; nothing to carry back"
-            exit 0
-          fi
-
-          branch="chore/back-merge-$VERSION"
-          git checkout -B "$branch" origin/develop
-          if ! git merge --no-edit "$GITHUB_SHA"; then
-            # Left for a person. develop moved during the release, and a
-            # resolution chosen here could revert something silently.
-            git merge --abort
-            echo "::error::$VERSION conflicts with develop; back-merge by hand"
-            exit 1
-          fi
-          git push origin "$branch"
-
-          existing_pr="$(
-            gh pr list --base develop --head "$branch" --state open \
-              --json url --jq '.[0].url // empty'
-          )"
-          if [[ -n "$existing_pr" ]]; then
-            echo "back-merge pull request already open: $existing_pr"
-            exit 0
-          fi
-
-          gh pr create --base develop --head "$branch" \
-            --title "chore: take $VERSION's release merge back into develop" \
-            --body "Opened by the publish workflow.
-
-          Merging \`develop\` into \`main\` leaves a merge commit on \`main\` that
-          \`develop\` never receives, so every release ends with \`main\` one commit
-          ahead and the next release PR reading \`BEHIND\`.
-
-          Carries no content — only the merge commit."
+          bash .github/prepare-release-back-merge.sh "$GITHUB_SHA"

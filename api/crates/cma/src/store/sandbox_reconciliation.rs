@@ -1,5 +1,6 @@
 //! Complete Mongo runtime authority and atomic recovery from runtime loss.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::store::{
     validate_sandbox_runtime_loss_request, Page, PageRequest, SandboxReconciliationStore,
@@ -8,6 +9,7 @@ use layer2_core::sandbox::store::{
 use layer2_core::sandbox::Sandbox;
 use mongodb::bson::doc;
 
+use super::native_retirement_action::RetirementAction;
 use super::sandbox_mongo::{
     commit_transaction, is_transient, start_transaction, wait_for_reconciliation, CommitOutcome,
     MongoSandboxStore, TRANSACTION_ATTEMPTS,
@@ -143,13 +145,14 @@ impl SandboxReconciliationStore for MongoSandboxStore {
         request: SandboxRuntimeLossRequest,
     ) -> Result<SandboxRuntimeLossOutcome, SandboxStoreError> {
         validate_sandbox_runtime_loss_request(&request)?;
-        recover(self, request).await
+        recover(self, request, None).await
     }
 }
 
 async fn recover(
     store: &MongoSandboxStore,
     request: SandboxRuntimeLossRequest,
+    retirement: Option<&RetirementAction>,
 ) -> Result<SandboxRuntimeLossOutcome, SandboxStoreError> {
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
@@ -164,23 +167,23 @@ async fn recover(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        let receipt = match apply_attempt(store, &request, &mut session).await {
+        let receipt = match apply_attempt(store, &request, retirement, &mut session).await {
             Ok(RecoveryApplication::Complete(outcome)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(outcome);
             }
             Ok(RecoveryApplication::Persist(receipt)) => receipt,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
@@ -234,22 +237,32 @@ async fn recover(
 async fn apply_attempt(
     store: &MongoSandboxStore,
     request: &SandboxRuntimeLossRequest,
+    retirement: Option<&RetirementAction>,
     session: &mut mongodb::ClientSession,
 ) -> Result<RecoveryApplication, ApplyError> {
     if sandbox_uses_segments(store, &request.sandbox_id).await? {
         let scope = TransactionScope::start(session)
             .await
             .map_err(ApplyError::Driver)?;
-        transaction::apply_scoped(store, request, scope).await
+        transaction::apply_scoped(store, request, retirement, scope).await
     } else {
         start_transaction(session)
             .await
             .map_err(ApplyError::Driver)?;
-        apply(store, request, session).await
+        apply(store, request, retirement, session).await
     }
 }
 
 impl MongoSandboxStore {
+    pub(crate) async fn settle_retirement_action(
+        &self,
+        request: SandboxRuntimeLossRequest,
+        action: &RetirementAction,
+    ) -> Result<SandboxRuntimeLossOutcome, SandboxStoreError> {
+        validate_sandbox_runtime_loss_request(&request)?;
+        recover(self, request, Some(action)).await
+    }
+
     pub(crate) fn with_runtime_loss_bounded_proof(mut self, enabled: bool) -> Self {
         self.runtime_loss_bounded_proof_enabled = enabled;
         self

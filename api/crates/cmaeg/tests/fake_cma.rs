@@ -33,6 +33,8 @@ struct StateData {
     put_failures: Arc<AtomicU64>,
     pub get_delay_ms: Arc<AtomicU64>,
     pub gets: Arc<AtomicU64>,
+    /// Attempts to mutate a retained record, including refused writes.
+    pub writes: Arc<AtomicU64>,
     get_failure_at: Arc<Mutex<Option<u64>>>,
     get_gate: Arc<Mutex<Option<Arc<tokio::sync::Semaphore>>>>,
     put_conflicts: Arc<AtomicU64>,
@@ -46,6 +48,8 @@ pub struct FakeCma {
     pub put_failures: Arc<AtomicU64>,
     pub get_delay_ms: Arc<AtomicU64>,
     pub gets: Arc<AtomicU64>,
+    /// Attempts to mutate a retained record, including refused writes.
+    pub writes: Arc<AtomicU64>,
     /// Fail one zero-based record read, independently of provider availability.
     pub get_failure_at: Arc<Mutex<Option<u64>>>,
     /// Optional fixture coordination before the configured read delay starts.
@@ -69,6 +73,7 @@ impl FakeCma {
             put_failures: Arc::default(),
             get_delay_ms: Arc::default(),
             gets: Arc::default(),
+            writes: Arc::default(),
             get_failure_at: Arc::default(),
             get_gate: Arc::default(),
             put_conflicts: Arc::default(),
@@ -123,6 +128,7 @@ impl FakeCma {
             put_failures: state.put_failures.clone(),
             get_delay_ms: state.get_delay_ms.clone(),
             gets: state.gets.clone(),
+            writes: state.writes.clone(),
             get_failure_at: state.get_failure_at.clone(),
             get_gate: state.get_gate.clone(),
             put_conflicts: state.put_conflicts.clone(),
@@ -212,6 +218,7 @@ async fn put_record(
     uri: axum::http::Uri,
     body: Result<Json<PutRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
+    state.writes.fetch_add(1, Ordering::SeqCst);
     if state.fail_put.load(Ordering::SeqCst)
         || state
             .put_failures
@@ -327,6 +334,7 @@ async fn delete_record(
     Path(record_id): Path<String>,
     query: axum::extract::Query<BTreeMap<String, u64>>,
 ) -> Response {
+    state.writes.fetch_add(1, Ordering::SeqCst);
     let expected = query.0.get("expected_version").copied().unwrap_or_default();
     let mut records = state.records.lock().unwrap();
     let Some(record) = records.get(&record_id) else {

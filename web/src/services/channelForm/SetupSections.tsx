@@ -83,7 +83,7 @@ export function SetupReview({ value }: { value: Fields }) {
       <dl className="channel-inspector__facts">
         <div>
           <dt>Channel</dt>
-          <dd>{text(value.name) || 'Name required'}</dd>
+          <dd>{text(value.name).trim() || 'Name required'}</dd>
         </div>
         <div>
           <dt>Connection</dt>
@@ -116,9 +116,11 @@ export function SetupReview({ value }: { value: Fields }) {
         <div>
           <dt>Replies</dt>
           <dd>
-            {reply.auto_final === true
-              ? 'Final answers sent automatically'
-              : 'Explicit reply tool calls only'}
+            {reply.auto_final !== true
+              ? 'Explicit reply tool calls only'
+              : records(reply.sinks).length > 0
+                ? 'Final answers sent automatically'
+                : 'Final answers have no reply destination. Add one or turn off automatic answers.'}
           </dd>
         </div>
       </dl>

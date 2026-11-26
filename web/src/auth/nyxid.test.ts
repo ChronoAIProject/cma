@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { capabilitiesFrom, createNyxidAuthProvider, handleFor } from './nyxid';
+import { capabilitiesFrom, createNyxidAuthProvider, handleFor, legalTermsFrom } from './nyxid';
+import { SIGN_OUT_NOTICE_KEY } from './signOutNotice';
 
 /**
  * The identity adapter decides what the whole app believes about who is
@@ -9,6 +10,7 @@ import { capabilitiesFrom, createNyxidAuthProvider, handleFor } from './nyxid';
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  localStorage.removeItem(SIGN_OUT_NOTICE_KEY);
 });
 
 function stubFetch(impl: (url?: unknown, init?: RequestInit) => Promise<Response> | Response) {
@@ -20,6 +22,12 @@ function jsonResponse(status: number, body: unknown): Response {
     status,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+function opaqueRedirect(): Response {
+  const response = new Response();
+  Object.defineProperty(response, 'type', { value: 'opaqueredirect' });
+  return response;
 }
 
 describe('handleFor', () => {
@@ -104,7 +112,50 @@ describe('the identity adapter', () => {
 
   it('reports 401 as signed out', async () => {
     stubFetch(() => jsonResponse(401, { authenticated: false }));
-    expect((await createNyxidAuthProvider().current()).status).toBe('anonymous');
+    expect(await createNyxidAuthProvider().current()).toEqual({ status: 'anonymous' });
+  });
+
+  it('carries published legal terms signed out and signed in', async () => {
+    const wire = {
+      version: '2026-11-30',
+      terms_url: 'https://legal.example.test/terms',
+      privacy_url: 'https://legal.example.test/privacy',
+    };
+    const legalTerms = {
+      version: '2026-11-30',
+      termsUrl: 'https://legal.example.test/terms',
+      privacyUrl: 'https://legal.example.test/privacy',
+    };
+    stubFetch(() => jsonResponse(401, { authenticated: false, legal_terms: wire }));
+    expect(await createNyxidAuthProvider().current()).toEqual({ status: 'anonymous', legalTerms });
+    stubFetch(() =>
+      jsonResponse(200, { authenticated: true, subject: '76fe9d91', legal_terms: wire }),
+    );
+    const state = await createNyxidAuthProvider().current();
+    expect(state.status === 'authenticated' && state.user.legalTerms).toEqual(legalTerms);
+  });
+
+  it('ignores legal terms it cannot use', () => {
+    const valid = {
+      version: '1',
+      terms_url: 'https://legal.example.test/t',
+      privacy_url: 'https://legal.example.test/p',
+    };
+    expect(legalTermsFrom(valid)).toEqual({
+      version: '1',
+      termsUrl: 'https://legal.example.test/t',
+      privacyUrl: 'https://legal.example.test/p',
+    });
+    for (const raw of [
+      undefined,
+      null,
+      'terms',
+      { ...valid, version: 'two words' },
+      { ...valid, terms_url: 'http://legal.example.test/t' },
+      { ...valid, privacy_url: 'javascript:alert(1)' },
+      { ...valid, terms_url: 42 },
+    ])
+      expect(legalTermsFrom(raw)).toBeUndefined();
   });
 
   it('treats an unreachable control plane as an error, not as signed out', async () => {
@@ -254,12 +305,46 @@ describe('silent sign-in', () => {
     expect(replace).toHaveBeenCalledTimes(1);
   });
 
-  it('navigates to server-owned logout and suppresses another tab attempt locally', async () => {
+  it('publishes confirmed server logout before navigating and suppresses silent sign-in', async () => {
     const { assign } = stubLocation('/agent-manager');
     const provider = await anonymous();
+    stubFetch((url) => {
+      expect(localStorage.getItem(SIGN_OUT_NOTICE_KEY)).toBeNull();
+      return url === '/auth/logout'
+        ? opaqueRedirect()
+        : jsonResponse(401, { authenticated: false, silent_sign_in: false });
+    });
     await provider.signOut();
-    expect(assign).toHaveBeenCalledWith('/auth/logout');
+    expect(fetch).toHaveBeenCalledWith(
+      '/auth/logout',
+      expect.objectContaining({ mode: 'same-origin', redirect: 'manual' }),
+    );
+    expect(localStorage.getItem(SIGN_OUT_NOTICE_KEY)).toMatch(/^[0-9a-f-]{36}$/);
+    expect(assign).toHaveBeenCalledWith('/');
     expect(provider.signInSilently?.()).toBe(false);
+  });
+
+  it('keeps a failed logout local', async () => {
+    const { assign } = stubLocation('/agent-manager');
+    const provider = await anonymous();
+    stubFetch(() => jsonResponse(503, {}));
+    await expect(provider.signOut()).rejects.toThrow('Sign-out did not complete');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(SIGN_OUT_NOTICE_KEY)).toBeNull();
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [200, { authenticated: true }],
+    [401, { authenticated: false, silent_sign_in: true }],
+    [401, { code: 'unexpected_response' }],
+    [503, { code: 'store_failed' }],
+  ])('requires a signed-out session result after a redirect (%s, %j)', async (status, body) => {
+    const { assign } = stubLocation('/agent-manager');
+    stubFetch((url) => (url === '/auth/logout' ? opaqueRedirect() : jsonResponse(status, body)));
+    await expect(createNyxidAuthProvider().signOut()).rejects.toThrow('Sign-out did not complete');
+    expect(localStorage.getItem(SIGN_OUT_NOTICE_KEY)).toBeNull();
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it('leaves visitor journeys, share links and pages it cannot return to', async () => {

@@ -207,6 +207,14 @@ pub struct SandboxLifecycleState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_update: Option<super::SandboxRuntimeUpdateState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_image_origin: Option<super::SandboxRuntimeImageOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_startup_policy: Option<Box<super::RetainedRuntimePolicyBinding>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_runtime: Option<Box<super::SandboxCustomRuntimeState>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_migration_admission: Option<Box<super::store::RuntimeMigrationAdmissionBasis>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unpublished_recovery: Option<Box<super::SandboxUnpublishedRecoveryState>>,
     /// Remains set until this recovery incident succeeds or is explicitly retired.
     #[serde(default, skip_serializing_if = "recovery_not_attempted")]
@@ -244,6 +252,10 @@ impl Default for SandboxLifecycleState {
             paused_notice: None,
             rotation: SandboxRotationAccounting::default(),
             runtime_update: None,
+            runtime_image_origin: None,
+            retained_startup_policy: None,
+            custom_runtime: None,
+            runtime_migration_admission: None,
             unpublished_recovery: None,
             unpublished_recovery_attempted: false,
         }
@@ -254,6 +266,8 @@ impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
         self.validate_home_restore(sandbox)?;
         sandbox.validate_retirement_archive()?;
+        sandbox.validate_runtime_image_origin()?;
+        sandbox.validate_custom_runtime()?;
         sandbox.validate_suspended_runtime()?;
         if let Some(failed) = &self.failed_provision {
             failed.validate_for(sandbox)?;
@@ -271,6 +285,11 @@ impl SandboxLifecycleState {
         }
         if let Some(update) = &self.runtime_update {
             update.validate()?;
+            if let Some(request) = &update.request {
+                if let Some(retained) = &request.retained_transition {
+                    retained.validate_for(sandbox, request)?;
+                }
+            }
         }
         if let Some(interruption) = &self.interruption {
             interruption.validate()?;
@@ -471,14 +490,6 @@ fn paused_notice_is_invalid(notice: Option<&str>) -> bool {
             || notice.len() > MAX_PAUSED_NOTICE_BYTES
             || notice.chars().any(char::is_control)
     })
-}
-
-fn validate_writer_token(authority: &SandboxLifecycleAuthority) -> Result<(), SandboxModelError> {
-    let expected = authority.expected_writer_resume_token();
-    if authority.writer_resume_token.as_deref() != Some(expected.as_str()) {
-        return Err(invalid_lifecycle());
-    }
-    Ok(())
 }
 
 const fn invalid_lifecycle() -> SandboxModelError {

@@ -60,6 +60,68 @@ async fn policy_revision_is_fenced_without_aggregate_changes_and_retries_recover
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn ledger_hold_refuses_new_command_and_retains_exact_replay() {
+    use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
+
+    let (client, name) = database("command_admission_ledger_hold").await;
+    let (store, agent, parent) = fixture(&name, &client).await;
+    let retained = request(&agent, &parent, "retained");
+    let fresh = request(&agent, &parent, "fresh");
+    let admitted = record(store.reserve_command(retained.clone()).await.unwrap());
+    let agent_key = doc! {"_id": agent.id.as_str()};
+    let parent_key = doc! {"_id": parent.id.as_str()};
+    let agent_before = store.agents.find_one(agent_key.clone()).await.unwrap();
+    let lane_before = store
+        .agent_command_orders
+        .find_one(agent_key.clone())
+        .await
+        .unwrap();
+    let mut fields = Document::new();
+    fields.insert(LEDGER_MAINTENANCE_FIELD, Bson::Null);
+    store
+        .sandboxes
+        .update_one(parent_key.clone(), doc! {"$set": fields})
+        .await
+        .unwrap();
+    let parent_before = store.sandboxes.find_one(parent_key.clone()).await.unwrap();
+
+    assert_eq!(
+        store.reserve_command(fresh.clone()).await,
+        Err(CommandLedgerError::Conflict)
+    );
+    assert_eq!(
+        store.reserve_command(retained).await.unwrap(),
+        CommandReservationResult::Existing(Box::new(admitted))
+    );
+    assert_eq!(
+        store.agents.find_one(agent_key.clone()).await.unwrap(),
+        agent_before
+    );
+    assert_eq!(
+        store.sandboxes.find_one(parent_key).await.unwrap(),
+        parent_before
+    );
+    assert_eq!(
+        store
+            .agent_command_orders
+            .find_one(agent_key)
+            .await
+            .unwrap(),
+        lane_before
+    );
+    assert_eq!(
+        store
+            .get_admitted_command(&fresh.scope(), &fresh.key_sha256)
+            .await
+            .unwrap(),
+        None
+    );
+
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn owner_kind_incarnation_and_corrupt_policy_cannot_consume_admission_order() {
     let (client, name) = database("command_admission_integrity").await;
     let (store, agent, parent) = fixture(&name, &client).await;

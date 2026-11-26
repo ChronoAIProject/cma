@@ -247,6 +247,21 @@ export function openTaskDraftStore(owner?: string, workspaceId?: string, sandbox
       return dirty;
     },
     save: (draft: TaskDraft) => write({ ...record, draft }),
+    importText: (text: string, preserve: boolean) => {
+      if (sessionStorage.getItem(legacyKey) !== record.legacyObserved)
+        throw new Error('Another saved draft changed. Review it before importing this request.');
+      const next: DraftRecord = {
+        ...record,
+        draft: { ...emptyTaskDraft, text, revision: crypto.randomUUID() },
+        recoverable: preserve
+          ? [...record.recoverable, { id: crypto.randomUUID(), draft: record.draft }]
+          : record.recoverable,
+      };
+      const saved = write(next);
+      if (sessionStorage.getItem(key) !== expected)
+        throw new Error('The imported request could not be verified in browser storage.');
+      return saved;
+    },
     restore: (id: string, current: TaskDraft) => {
       const saved = record.recoverable.find((value) => value.id === id);
       if (!saved) throw new Error('Saved draft is unavailable');

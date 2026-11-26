@@ -7,6 +7,7 @@ import { recoverQueuedCancellation } from './queuedCancellation';
 import { observeRead } from './readObserver';
 import { QueuedCommandTracker } from './queuedCommandTracker';
 import type { QueuedInputOutcome } from './queuedCommandOutcomes';
+import type { ConversationMessage } from '../model';
 
 export interface QueuedInputRow {
   readonly responseId: string;
@@ -16,6 +17,7 @@ export interface QueuedInputRow {
   readonly busy?: boolean;
   readonly error?: string;
   readonly needsRecovery?: boolean;
+  readonly pendingEdit?: string;
 }
 export interface QueuedInputsControl {
   readonly items: readonly QueuedInputRow[];
@@ -25,6 +27,8 @@ export interface QueuedInputsControl {
   readonly edit: (item: QueuedInputRow, input: string) => Promise<void>;
   readonly remove: (item: QueuedInputRow) => Promise<void>;
   readonly recover: (item: QueuedInputRow) => Promise<void>;
+  readonly unappliedEdits?: readonly { key: string; text: string }[];
+  readonly dismissUnappliedEdit?: (key: string) => void;
   readonly refresh: () => void;
 }
 
@@ -35,6 +39,7 @@ export function useQueuedInputs(
   eventRevision: string,
   onIdentityChange: (error: unknown) => boolean,
   requestRevision = 0,
+  messages?: readonly ConversationMessage[],
 ): QueuedInputsControl {
   const tracker = useMemo(
     () => (session && enabled ? new QueuedCommandTracker(session) : undefined),
@@ -52,9 +57,11 @@ export function useQueuedInputs(
   const actions = useRef(new Map<string, AbortController>());
   const errors = useRef(new Map<string, string>());
   const active = useRef(activeTurn);
+  const scope = useRef({ session, enabled, messages });
   useLayoutEffect(() => {
     active.current = activeTurn;
-  }, [activeTurn]);
+    scope.current = { session, enabled, messages };
+  }, [session, enabled, activeTurn, messages]);
   const schedule = useRef<ReturnType<typeof observeRead> | undefined>(undefined);
   const refresh = useCallback(() => {
     tracker?.refresh();
@@ -96,14 +103,33 @@ export function useQueuedInputs(
         if (changed) setStored(undefined);
         return changed;
       };
+      const current = () =>
+        !signal.aborted && scope.current.enabled && scope.current.session === session;
       try {
-        const result = await tracker.observe(signal, active.current, identityChanged);
-        if (signal.aborted || changed) return;
+        const result = await tracker.observe(
+          signal,
+          active.current,
+          identityChanged,
+          (commandId, responseId) =>
+            scope.current.messages?.some(
+              (message) =>
+                message.role === 'user' &&
+                message.status === 'complete' &&
+                !message.liveOnly &&
+                message.commandId === commandId &&
+                message.responseId === responseId,
+            ) ?? false,
+          (responseId) => {
+            if (errors.current.delete(responseId)) bump();
+          },
+          current,
+        );
+        if (!current() || changed) return;
         publish();
         failures = 0;
         return result;
       } catch (error) {
-        if (signal.aborted || changed || identityChanged(error)) return;
+        if (!current() || changed || identityChanged(error)) return;
         const next = rateLimitDelay(error, Math.min(2000 * 2 ** ++failures, 10000), failures);
         setStored({
           tracker,
@@ -120,7 +146,7 @@ export function useQueuedInputs(
       observer.dispose();
       if (schedule.current === observer) schedule.current = undefined;
     };
-  }, [tracker, enabled, onIdentityChange, publish]);
+  }, [tracker, session, enabled, onIdentityChange, publish, bump]);
 
   useEffect(() => {
     const previous = observed.current;
@@ -132,9 +158,11 @@ export function useQueuedInputs(
   }, [session, eventRevision, activeTurn, requestRevision]);
 
   let intents: readonly QueuedInputIntent[] = [];
+  let unappliedEdits: readonly QueuedInputIntent[] = [];
   let storageError: string | undefined;
   try {
     intents = session?.journal.queuedInputs.read() ?? [];
+    unappliedEdits = session?.journal.queuedInputs.unappliedEdits() ?? [];
     session?.journal.queuedInputs.managedCommands();
     const legacy = session?.journal.queuedCancellation.read();
     if (legacy?.commandId === null) {
@@ -158,6 +186,7 @@ export function useQueuedInputs(
     storageError = 'Queue recovery is unavailable. Refresh status.';
   }
   const items = [...(current?.items ?? [])];
+  const unappliedByResponse = new Map(unappliedEdits.map((intent) => [intent.responseId, intent]));
   for (const intent of intents)
     if (!items.some((item) => item.responseId === intent.responseId))
       items.push({
@@ -236,13 +265,40 @@ export function useQueuedInputs(
     managedCommandIds: enabled ? (current?.managedCommandIds ?? new Set()) : new Set(),
     outcomes: enabled ? (current?.outcomes ?? []) : [],
     items: enabled
-      ? items.map((item) => ({
-          ...item,
-          busy: item.busy || local?.busy.has(item.responseId),
-          needsRecovery: intents.some((intent) => intent.responseId === item.responseId),
-          error: local?.errors.get(item.responseId),
-        }))
+      ? items.map((item) => {
+          const stale = unappliedByResponse.get(item.responseId);
+          return {
+            ...item,
+            busy:
+              item.busy ||
+              local?.busy.has(item.responseId) ||
+              (stale?.commandId === item.commandId && item.revision <= stale.revision),
+            needsRecovery: intents.some((intent) => intent.responseId === item.responseId),
+            pendingEdit: storageError
+              ? undefined
+              : intents.find(
+                  (intent) =>
+                    intent.action === 'edit' &&
+                    intent.responseId === item.responseId &&
+                    intent.commandId === item.commandId,
+                )?.text,
+            error: local?.errors.get(item.responseId),
+          };
+        })
       : [],
+    unappliedEdits:
+      enabled && !storageError
+        ? unappliedEdits.flatMap(({ key, text }) =>
+            text !== undefined && !intents.some((intent) => intent.key === key)
+              ? [{ key, text }]
+              : [],
+          )
+        : [],
+    dismissUnappliedEdit: (key) => {
+      if (!enabled || !session) return;
+      session.journal.queuedInputs.dismissUnappliedEdit(key);
+      bump();
+    },
     error: enabled ? (storageError ?? current?.error) : undefined,
     edit: (item, input) => mutate(item, 'edit', input),
     remove: (item) => mutate(item, 'remove'),

@@ -268,3 +268,54 @@ fn ledger_import_cli_configuration_failures_are_content_free_and_never_start_rec
         .join("state/mutation-ledger-v2.current.json")
         .exists());
 }
+
+#[test]
+fn evidence_export_requires_an_explicit_destination_and_valid_configuration() {
+    let fixture = Fixture::new();
+    for args in [
+        vec!["--export-ledger-v1-evidence"],
+        vec!["--export-ledger-v1-evidence", "one", "two"],
+    ] {
+        let result = fixture.run(&args, false);
+        assert_eq!(result.status.code(), Some(2));
+        assert!(result.stdout.is_empty());
+        assert!(String::from_utf8(result.stderr)
+            .unwrap()
+            .contains("ledger_evidence_arguments_invalid"));
+    }
+    let destination = fixture.0.join("evidence");
+    let result = fixture.run(
+        &["--export-ledger-v1-evidence", destination.to_str().unwrap()],
+        false,
+    );
+    assert_eq!(result.status.code(), Some(2));
+    assert!(result.stdout.is_empty());
+    assert!(String::from_utf8(result.stderr)
+        .unwrap()
+        .contains("ledger_evidence_configuration_invalid"));
+    assert!(!destination.exists());
+}
+
+#[test]
+fn evidence_export_refuses_writable_sources_without_output_or_recovery() {
+    let fixture = Fixture::new();
+    let destination = fixture.0.join("evidence");
+    let result = fixture.run(
+        &["--export-ledger-v1-evidence", destination.to_str().unwrap()],
+        true,
+    );
+    assert_eq!(result.status.code(), Some(2));
+    assert!(result.stdout.is_empty());
+    let message = String::from_utf8(result.stderr).unwrap();
+    assert!(message.contains("ledger_evidence_readonly_required"));
+    assert!(!message.contains(fixture.0.to_str().unwrap()));
+    assert!(!destination.exists());
+    assert_eq!(
+        std::fs::read(fixture.0.join("home/wanted-file")).unwrap(),
+        b"preserved home bytes"
+    );
+    assert_eq!(
+        std::fs::read(fixture.0.join("state/mutation-authority/.authority-1.tmp")).unwrap(),
+        b"unpublished authority"
+    );
+}

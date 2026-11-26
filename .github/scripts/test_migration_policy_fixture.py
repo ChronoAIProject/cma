@@ -97,6 +97,29 @@ class PolicyFixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'usage response changed'):
             self.read()
 
+    def test_retained_usage_rows_ignore_only_projected_observation_clocks(self):
+        row = {'sandbox_id': 'sbx_fixture', 'status': 'failed', 'created_at': 100,
+               'tracking_started_at': 100, 'totals': {'uptime_seconds': 0},
+               'allocation': {'running': False}, 'as_of': 200}
+        for key in ('owner_page', 'admin_page'):
+            self.usage[key]['items'] = [copy.deepcopy(row)]
+        expected = copy.deepcopy(self.expected)
+        for key in ('owner_page', 'admin_page'):
+            expected['usage'][key]['items'][0].pop('as_of')
+        (self.fixture.output/'new-write-policy.private.json').write_text(json.dumps(expected))
+        self.assertEqual(self.read(), expected)
+        for change in ({'sandbox_id': 'changed'}, {'created_at': 101},
+                       {'totals': {'uptime_seconds': 1}}, {'allocation': {'running': True}}):
+            self.usage['owner_page']['items'][0] = {**row, **change}
+            with self.subTest(change=change), self.assertRaisesRegex(RuntimeError, 'usage response changed'):
+                self.read()
+
+    def test_malformed_row_clock_is_not_discarded(self):
+        for value in (None, True, -1, '200'):
+            self.usage['owner_page']['items'] = [{'sandbox_id': 'sbx_fixture', 'as_of': value}]
+            with self.subTest(value=value), self.assertRaisesRegex(RuntimeError, 'timestamp'):
+                self.read()
+
     def write(self, *, stale_activity=False, bad_patch=False):
         before = {'revision': 1, 'settings': {
             'usage_reporting': {'measured_visible': True}}}

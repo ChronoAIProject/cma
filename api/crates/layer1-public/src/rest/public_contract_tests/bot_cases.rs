@@ -199,6 +199,8 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     }
     if mode == "busy" {
         bot.work = Some(BotWork {
+            effect_protocol: 1,
+            effect: None,
             id: "work-contract".into(),
             operation: BotOperation::Rotate,
             step: "admitted".into(),

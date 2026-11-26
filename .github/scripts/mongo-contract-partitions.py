@@ -29,12 +29,14 @@ BSON_CEILING_TEST = ("store::sandbox_mongo_integration_tests::resource_access_te
                      "personal_agent_list_preserves_sources_near_the_bson_document_ceiling")
 FIRST_RESPONSE_TEST = ("store::usage_reports::tests::submission::"
                        "default_day_report_serves_four_hundred_sandboxes_without_polling")
+HISTORY_TEST = ("store::usage_reports::tests::history_batch::"
+                "seven_day_history_generates_and_reuses_complete_421_member_report")
 # The audit keeps its 30-second bound; competing fixtures must not consume its
 # resource window while it validates and promotes a full 10,000-row unit.
 ISOLATED_TESTS = (("--scale", SCALE_TEST), ("--owner-allocation", OWNER_ALLOCATION_TEST),
                   ("--audit-bounds", AUDIT_BOUNDS_TEST), ("--diagnostics", DIAGNOSTICS_TEST),
                   ("--scan-cooperation", SCAN_COOPERATION_TEST), ("--bson-ceiling", BSON_CEILING_TEST),
-                  ("--first-response", FIRST_RESPONSE_TEST))
+                  ("--first-response", FIRST_RESPONSE_TEST), ("--history", HISTORY_TEST))
 CLEANUP_FAILURE = 125
 DISCOVERY_TIMEOUT_SECONDS = 120
 SCHEDULE = runpy.run_path(str(Path(__file__).with_name("mongo-contract-schedule.py")))
@@ -181,6 +183,7 @@ def run(script, shard=None):
     children = []
     interrupted = 0
     cleanup_failed = False
+    fixture_env = dict(os.environ, CMA_MONGO_COORDINATOR_SHARD=shard or "all")
     print(f"Mongo shard {shard or 'all'}: {len(isolated_tests)} isolated contracts, "
           f"partitions {partitions} of {count}", flush=True)
 
@@ -196,7 +199,7 @@ def run(script, shard=None):
         for option, _ in isolated_tests:
             if interrupted:
                 break
-            isolated = subprocess.Popen(["bash", str(script), option], start_new_session=True)
+            isolated = subprocess.Popen(["bash", str(script), option], env=fixture_env, start_new_session=True)
             children.append(isolated)
             while not interrupted and isolated.poll() is None:
                 time.sleep(0.1)
@@ -216,7 +219,7 @@ def run(script, shard=None):
             while not interrupted and active < CONCURRENT_FIXTURES and next_partition < len(partitions):
                 partition = f"count:{partitions[next_partition]}/{count}"
                 children.append(subprocess.Popen(
-                    ["bash", str(script), partition], start_new_session=True,
+                    ["bash", str(script), partition], env=fixture_env, start_new_session=True,
                 ))
                 next_partition += 1
                 active += 1

@@ -1,0 +1,41 @@
+name: "Omarchy package key expiry"
+
+# Fails by name once a key that signs a package pinned by
+# .github/scripts/omarchy-packages.lock.json expires within 30 days, so that
+# GitHub's failed-run notification reaches someone in time. Once such a key
+# has expired, pacman refuses the packages it signed and the bundle cannot be
+# rebuilt; the remedy is a deliberate ARCH_SNAPSHOT bump (#3040).
+#
+# The Omarchy CI job checks offline, from the committed
+# omarchy-signing-keys.json, and only warns until a key has expired. This
+# weekly run also derives that record again from the locked URLs and fails
+# when the committed record differs. It reads the repository and public
+# package servers only, and changes nothing.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omarchy-key-expiry
+  cancel-in-progress: false
+
+jobs:
+  expiry:
+    name: "Arch packager key expiry"
+    if: github.repository == 'ChronoAIProject/cma'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Check Arch packager key expiry
+        run: python3 -B .github/scripts/omarchy_key_expiry.py --verify-record --fail-days 30

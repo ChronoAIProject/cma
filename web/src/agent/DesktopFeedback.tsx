@@ -42,32 +42,36 @@ export function DesktopFeedback({
   readonly error: string;
   readonly notice: { text: string } | null;
 }) {
+  if (phase === 'error')
+    return (
+      <p className="agent-desktop__loading agent-desktop__loading--error" aria-hidden="true">
+        {error}
+      </p>
+    );
   return (
     <>
       {phase !== 'ready' && (
         <div className="agent-desktop__loading" aria-hidden="true">
-          {phase !== 'error' && (
-            <div className="agent-desktop__placeholder">
-              <div className="agent-desktop__placeholder-bar">
-                <Skeleton width="28%" height={8} />
-                <Skeleton width="12%" height={8} />
-              </div>
-              <div className="agent-desktop__placeholder-window">
-                <Skeleton width="40%" />
-                <Skeleton width="80%" />
-                <Skeleton width="60%" />
-              </div>
+          <div className="agent-desktop__placeholder">
+            <div className="agent-desktop__placeholder-bar">
+              <Skeleton width="28%" height={8} />
+              <Skeleton width="12%" height={8} />
             </div>
-          )}
+            <div className="agent-desktop__placeholder-window">
+              <Skeleton width="40%" />
+              <Skeleton width="80%" />
+              <Skeleton width="60%" />
+            </div>
+          </div>
           <div className="agent-desktop__loading-label">
-            <StateDot state={phase === 'error' ? 'error' : 'ongoing'} />
+            <StateDot state="ongoing" />
             <span>
               {phase === 'waiting'
                 ? 'Waiting for your machine'
                 : phase === 'connecting'
                   ? 'Connecting to your machine'
                   : phase === 'recovering'
-                    ? 'Restoring your desktop'
+                    ? 'Reconnecting…'
                     : phase === 'loading'
                       ? 'Loading your desktop'
                       : error}

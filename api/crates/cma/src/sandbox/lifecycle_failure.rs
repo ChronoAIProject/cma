@@ -1,6 +1,10 @@
 //! Private, bounded diagnostic projection; never format the compatibility error.
 
-use layer2_core::{agent_ownership::OwnershipError, sandbox::store::SandboxStoreError, AgentId};
+use layer2_core::{
+    agent_ownership::OwnershipError,
+    sandbox::store::{AgentWorkClaimDetail, AgentWorkClaimError, SandboxStoreError},
+    AgentId,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::sync::{
@@ -43,7 +47,10 @@ closed_codes!(CauseClass {
 closed_codes!(DetailCode {
     NotApplicable => "not_applicable", Suppressed => "unstructured_detail_suppressed",
     DiscoveryDeadline => "discovery_deadline", OwnershipDeadline => "ownership_deadline",
-    ReceiverRevocationUnconfirmed => "receiver_revocation_unconfirmed"
+    ReceiverRevocationUnconfirmed => "receiver_revocation_unconfirmed",
+    ClaimRetryExhausted => "claim_retry_exhausted", ClaimReadFailed => "claim_read_failed",
+    ClaimDriverFailed => "claim_driver_failed",
+    ClaimPublicationCustodyFailed => "claim_publication_custody_failed"
 });
 
 pub(super) const DISCOVERY_DEADLINE: &str = "discovery deadline";
@@ -123,6 +130,28 @@ impl LifecycleAttempt {
         LifecycleTaskFailure {
             compatibility_error: error,
             observation: self.observe(origin, cause, detail),
+        }
+    }
+
+    pub(super) fn claim(&self, error: AgentWorkClaimError) -> LifecycleTaskFailure {
+        let detail = match (&error.store_error, error.detail) {
+            (SandboxStoreError::Unavailable(_), Some(AgentWorkClaimDetail::RetryExhausted)) => {
+                DetailCode::ClaimRetryExhausted
+            }
+            (SandboxStoreError::Unavailable(_), Some(AgentWorkClaimDetail::Read)) => {
+                DetailCode::ClaimReadFailed
+            }
+            (SandboxStoreError::Unavailable(_), Some(AgentWorkClaimDetail::Driver)) => {
+                DetailCode::ClaimDriverFailed
+            }
+            (SandboxStoreError::Unavailable(_), Some(AgentWorkClaimDetail::PublicationCustody)) => {
+                DetailCode::ClaimPublicationCustodyFailed
+            }
+            _ => return self.store(Origin::Claim, error.store_error),
+        };
+        LifecycleTaskFailure {
+            compatibility_error: error.store_error,
+            observation: self.observe(Origin::Claim, CauseClass::StoreUnavailable, detail),
         }
     }
 

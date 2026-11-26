@@ -1,5 +1,5 @@
 //! Reservations outlive uncertain object writes and metadata commits.
-use super::{digest, valid_id, DocumentError, MAX_DOCUMENT_BYTES};
+use super::{digest, valid_id, DocumentError, DocumentSourceFence, MAX_DOCUMENT_BYTES};
 use serde::{Deserialize, Serialize};
 
 pub const OWNER_DOCUMENT_LIMIT: u64 = 100;
@@ -58,4 +58,12 @@ pub trait DocumentQuotaStore: Send + Sync {
     /// Atomically reserve a document slot and immutable object bytes. Exact
     /// object retries are free; timeouts/cancellation never release reservations.
     async fn reserve(&self, source: &DocumentSourceReservation) -> Result<(), DocumentError>;
+
+    async fn reserve_source(
+        &self,
+        source: &DocumentSourceReservation,
+    ) -> Result<Option<DocumentSourceFence>, DocumentError> {
+        self.reserve(source).await?;
+        Ok(None)
+    }
 }

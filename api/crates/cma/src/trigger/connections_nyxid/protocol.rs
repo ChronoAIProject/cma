@@ -58,6 +58,8 @@ pub(super) struct UserServiceRow {
     pub(super) id: String,
     pub(super) slug: String,
     #[serde(default)]
+    pub(super) catalog_service_id: Option<String>,
+    #[serde(default)]
     pub(super) is_active: Option<bool>,
     #[serde(default)]
     credential_source: Option<UserServiceCredentialSource>,
@@ -252,6 +254,7 @@ mod tests {
         UserServiceRow {
             id: id.to_owned(),
             slug: slug.to_owned(),
+            catalog_service_id: None,
             is_active,
             credential_source,
         }

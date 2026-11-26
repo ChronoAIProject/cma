@@ -57,7 +57,10 @@ const sandboxKinds = new Set([
   'agent_deleted',
   'credential_changed',
   'checkpoint_sealed',
+  'runtime_recovery_admitted',
+  'runtime_recovery_quiesced',
   'revived',
+  'home_restored',
   'rotated',
   'failed',
 ]);
@@ -80,8 +83,23 @@ export function activityEntry(
         ? (kind.step as { kind?: unknown }).kind
         : kind.step;
     const label = known(steps, step);
-    if (label !== undefined)
-      message = `${label}: ${kind.type === 'work_step_completed' ? 'completed' : 'needs attention'}`;
+    if (label !== undefined) {
+      const failure = kind.failure;
+      const provisioningRetry =
+        source === 'sandbox' &&
+        step === 'provision_runtime' &&
+        typeof failure === 'object' &&
+        failure !== null &&
+        'class' in failure &&
+        failure.class === 'retryable_transient';
+      const status =
+        kind.type === 'work_step_completed'
+          ? 'completed'
+          : provisioningRetry
+            ? 'retry scheduled'
+            : 'needs attention';
+      message = `${label}: ${status}`;
+    }
   } else if (
     kind.type === 'status_changed' ||
     (source === 'sandbox' && kind.type === 'agent_status_changed')
@@ -111,4 +129,20 @@ export function activityEntries(
       return entry === undefined ? [] : [entry];
     })
     .slice(-activityLimit);
+}
+
+/** Order a display copy; sequence ingestion and the retained window keep their owners. */
+export function activityDisplayEntries(entries: readonly ActivityEntry[]): ActivityEntry[] {
+  const identity = (id: string) => {
+    const match = /^(agent|sandbox)-(\d+)$/.exec(id);
+    return { source: match?.[1] ?? id, sequence: Number(match?.[2] ?? 0) };
+  };
+  return entries.slice(-activityLimit).sort((left, right) => {
+    const byTime = Date.parse(left.at) - Date.parse(right.at);
+    if (Number.isFinite(byTime) && byTime !== 0) return byTime;
+    const a = identity(left.id);
+    const b = identity(right.id);
+    if (a.source !== b.source) return a.source < b.source ? -1 : 1;
+    return a.sequence - b.sequence;
+  });
 }

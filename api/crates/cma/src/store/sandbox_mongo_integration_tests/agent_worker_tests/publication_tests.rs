@@ -221,3 +221,5 @@ async fn agent_work_consumes_only_the_exact_durable_stop_intent() {
 
     client.database(&name).drop().await.unwrap();
 }
+
+mod owner_stop;

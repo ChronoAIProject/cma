@@ -15,6 +15,7 @@ mod counter_accounting;
 #[cfg(test)]
 mod counter_tests;
 mod counters;
+pub(crate) mod inventory;
 mod period;
 mod period_storage;
 mod requests;
@@ -23,6 +24,7 @@ mod spend_ledger;
 pub(super) use spend_ledger::RegistrationReader;
 mod stop_authority;
 mod transitions;
+mod turns;
 pub(super) use cancellation::release_unexecuted;
 pub(super) use period::require_open_protected;
 pub(super) use period::{now_seconds, require_open};
@@ -30,6 +32,7 @@ pub(super) use period::{now_seconds, require_open};
 pub(super) use period::{period_key, require_open_with};
 pub(super) use source::PlatformStopCache;
 pub(super) use stop_authority::fence_stop;
+pub(super) use turns::{settle_owner_stop, settle_runtime_loss};
 
 pub(super) const COLLECTION: &str = "model_budget_reservations";
 
@@ -129,8 +132,30 @@ async fn owner_budget(
 fn owner_key(agent: &Agent) -> String {
     format!("owner:{}", agent.owner.as_str())
 }
-fn turn_key(agent: &Agent, turn: u64) -> String {
+pub(super) fn turn_key(agent: &Agent, turn: u64) -> String {
     format!("turn:{}:{turn}", agent.id.as_str())
+}
+
+pub(super) fn validate_stale_turn_reservation(
+    row: &Document,
+    agent: &Agent,
+    turn: u64,
+    settled: bool,
+) -> Result<(), ApplyError> {
+    let record: TurnRecord = decode(row)?;
+    if record.agent_id != agent.id
+        || record.owner != agent.owner
+        || record.turn_sequence != Some(turn)
+        || record.runtime_generation != agent.conversation.runtime_generation
+    {
+        return Err(domain(BudgetError::Unavailable));
+    }
+    if record.reservation.settled != settled || (!settled && record.reservation.stop.is_some()) {
+        return Err(ApplyError::Domain(
+            layer2_core::sandbox::store::SandboxStoreError::Conflict,
+        ));
+    }
+    Ok(())
 }
 fn command_key(command: &str) -> String {
     format!("command:{command}")
@@ -261,100 +286,7 @@ pub(super) async fn apply(
             start_turn(store, current, mutation, *turn_sequence, now, session).await?;
         }
     }
-    let Some(turn) = current.conversation.active_turn else {
-        return Ok(());
-    };
-    let key = turn_key(current, turn);
-    let Some(document) = store
-        .model_budget
-        .find_one(doc! {"_id": &key})
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?
-    else {
-        return Ok(());
-    };
-    let mut record: TurnRecord = decode(&document)?;
-    if record.reservation.settled {
-        return Ok(());
-    }
-    if record.owner != current.owner || record.turn_sequence != Some(turn) {
-        return Err(domain(BudgetError::Unavailable));
-    }
-    if let Some(usage) = mutation
-        .agent
-        .conversation
-        .observations
-        .usage
-        .as_ref()
-        .and_then(|usage| usage.current_turn.as_ref())
-        .filter(|usage| usage.turn_sequence == turn)
-    {
-        // Only a new usage observation refreshes freshness, never a text/tool frame.
-        if mutation
-            .agent_logs
-            .iter()
-            .any(|log| matches!(log, AgentLogKind::UsageUpdated { .. }))
-        {
-            if let Err(reason) =
-                record
-                    .reservation
-                    .observe(usage.input_tokens, usage.output_tokens, now)
-            {
-                record.reservation.stop.get_or_insert(reason);
-            }
-        }
-    }
-    if mutation.agent.conversation.active_turn != Some(turn)
-        || record
-            .reservation
-            .observed
-            .saturating_add(record.reservation.policy.max_unobserved_units)
-            > record.reservation.reserved_units
-    {
-        let mut owner: OwnerBudget = store
-            .model_budget
-            .find_one(doc! {"_id": owner_key(current)})
-            .session(&mut *session)
-            .await
-            .map_err(ApplyError::Driver)?
-            .as_ref()
-            .map(decode)
-            .transpose()?
-            .ok_or_else(|| domain(BudgetError::Unavailable))?;
-        // Existing observations do not prove a complete provider settlement.
-        // Keep the full allowance as a debit until an authoritative source can reconcile.
-        let before = record.reservation.reserved_units;
-        owner
-            .retain_observed_liability(&mut record.reservation)
-            .map_err(domain)?;
-        let extra = record.reservation.reserved_units - before;
-        let ended = mutation.agent.conversation.active_turn != Some(turn);
-        if ended {
-            owner.settle(&record.reservation, now).map_err(domain)?;
-            record.reservation.settled = true;
-        }
-        if extra > 0 || ended {
-            let (reserved, debit) = (
-                record.reservation.reserved_units,
-                record.reservation.settlement_debit(),
-            );
-            counter_accounting::mirror(
-                store,
-                record.period_start,
-                record.period_shard,
-                counters::Change {
-                    retained: extra,
-                    released: if ended { reserved } else { 0 },
-                    debit: if ended { debit } else { 0 },
-                },
-                session,
-            )
-            .await?;
-        }
-        save(store, &owner_key(current), &owner, session).await?;
-    }
-    save(store, &key, &record, session).await
+    turns::apply_conversation(store, current, mutation, now, session).await
 }
 
 async fn start_turn(

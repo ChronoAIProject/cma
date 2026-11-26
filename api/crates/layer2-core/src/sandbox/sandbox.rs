@@ -144,6 +144,11 @@ impl Sandbox {
     }
 
     pub fn begin_retirement(&mut self, at: String) -> Result<(), SandboxModelError> {
+        if self.admitted_retained_runtime_transition().is_some() {
+            return Err(SandboxModelError::invalid_value(
+                "sandbox.retained_runtime_transition",
+            ));
+        }
         let mut next = self.clone();
         next.preserve_lifecycle_checkpoint_debt(at.clone())?;
         next.lifecycle.cancel_operation();
@@ -271,6 +276,7 @@ impl Sandbox {
         identity: SandboxRotationIdentity,
         at: String,
     ) -> Result<(), SandboxModelError> {
+        self.validate_custom_rotation(&target_runtime_version)?;
         let was_paused = self.status == SandboxStatus::Paused;
         if !matches!(self.status, SandboxStatus::Active | SandboxStatus::Paused)
             || (was_paused && self.lifecycle.suspended_runtime.is_none())

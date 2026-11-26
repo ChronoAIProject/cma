@@ -1,4 +1,5 @@
 //! Owner-only channel metadata and bounded route mutations.
+use super::EffectAdmission;
 use crate::auth::{keys::valid_provider_key_id, provider_http::read_json};
 use layer2_core::bots::{Bot, BotError};
 use reqwest::{Client, Method};
@@ -94,11 +95,12 @@ impl NyxidClient {
         )?;
         Ok(result.conversations)
     }
-    pub async fn create_route(
+    pub(super) async fn create_route(
         &self,
         token: &str,
         bot: &Bot,
         key: &str,
+        admission: Option<&EffectAdmission>,
     ) -> Result<String, BotError> {
         // No route owned by another integration may be silently overridden.
         if self.routes_for_bot(token, bot).await?.iter().any(|r| {
@@ -107,6 +109,9 @@ impl NyxidClient {
             return Err(BotError::Invalid(
                 "the selected external bot already has an active route".into(),
             ));
+        }
+        if let Some(admission) = admission {
+            admission.check(bot)?;
         }
         let mut body = json!({
             "channel_bot_id":bot.request.external_bot_id,"agent_api_key_id":key,"default_agent":true,"platform_conversation_id":"*"
@@ -127,13 +132,14 @@ impl NyxidClient {
         route.require(bot, &[key.to_owned()])?;
         Ok(route.id)
     }
-    pub async fn set_route_key(
+    pub(super) async fn set_route_key(
         &self,
         token: &str,
         bot: &Bot,
         route: &str,
         key: &str,
         owned: &[String],
+        admission: Option<&EffectAdmission>,
     ) -> Result<(), BotError> {
         identifier(route)?;
         let routes = self.routes_for_bot(token, bot).await?;
@@ -142,6 +148,9 @@ impl NyxidClient {
             .find(|r| r.id == route)
             .ok_or(BotError::Unavailable)?;
         current.require(bot, owned)?;
+        if let Some(admission) = admission {
+            admission.check(bot)?;
+        }
         let updated: Route = self
             .json(
                 token,
@@ -181,11 +190,12 @@ impl NyxidClient {
         }
         Ok(retained)
     }
-    pub async fn delete_routes(
+    pub(super) async fn delete_routes(
         &self,
         token: &str,
         bot: &Bot,
         keys: &[String],
+        admission: Option<&EffectAdmission>,
     ) -> Result<(), BotError> {
         let routes = self.routes_for_bot(token, bot).await?;
         let selected: Vec<_> = routes
@@ -196,6 +206,9 @@ impl NyxidClient {
             route.require(bot, keys)?;
         }
         for route in selected {
+            if let Some(admission) = admission {
+                admission.check(bot)?;
+            }
             self.delete(
                 token,
                 &format!("/api/v1/channel-conversations/{}", route.id),

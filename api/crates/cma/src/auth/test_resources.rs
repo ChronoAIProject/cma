@@ -159,6 +159,7 @@ pub(crate) fn agent(
         ]),
         status,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

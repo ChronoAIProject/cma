@@ -163,6 +163,9 @@ pub struct AgentOpenRequest {
     pub options: RuntimeOptions,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_conversation: Option<String>,
+    /// Transport authority for a numbered Open. Excluded from the launch digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_runtime: Option<crate::AgentRestartRuntime>,
 }
 
 impl AgentOpenRequest {
@@ -176,6 +179,7 @@ impl AgentOpenRequest {
             request_sha256: String::new(),
             options,
             resume_conversation,
+            restart_runtime: None,
         };
         request.request_sha256 = request.computed_sha256();
         request

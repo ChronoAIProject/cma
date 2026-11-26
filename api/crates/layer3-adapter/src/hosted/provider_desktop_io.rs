@@ -116,9 +116,11 @@ impl Captured {
                 // Preparation can await Kubernetes while the assignment changes.
                 // Keep this exact stream and revalidate before sending credentials.
                 self.current(transport).await?;
-                tokio_tungstenite::client_async_with_config(request, stream, Some(config))
-                    .await
-                    .map_err(|_| refused())
+                let handshake =
+                    tokio_tungstenite::client_async_with_config(request, stream, Some(config))
+                        .await;
+                self.current(transport).await?;
+                handshake.map_err(handshake_failure)
             };
             let (socket, _) = tokio::select! { biased;
                 _ = cancelled.wait_for(|cancelled| *cancelled) => return Err(refused()),
@@ -126,15 +128,29 @@ impl Captured {
             };
             Box::new(Connection { socket, control })
         } else {
-            let (socket, _) =
-                tokio_tungstenite::connect_async_with_config(request, Some(config), true)
-                    .await
-                    .map_err(|_| refused())?;
+            let handshake =
+                tokio_tungstenite::connect_async_with_config(request, Some(config), true).await;
+            self.current(transport).await?;
+            let (socket, _) = handshake.map_err(handshake_failure)?;
             Box::new(Connection { socket, control })
         };
-        self.current(transport).await?;
         Ok(connection)
     }
+}
+
+fn handshake_failure(error: tokio_tungstenite::tungstenite::Error) -> AdapterError {
+    if let tokio_tungstenite::tungstenite::Error::Http(response) = error {
+        let mut states = response.headers().get_all(DESKTOP_STATE_HEADER).iter();
+        if response.status() == http::StatusCode::SERVICE_UNAVAILABLE
+            && states
+                .next()
+                .is_some_and(|state| state == DESKTOP_STATE_FAILED)
+            && states.next().is_none()
+        {
+            return AdapterError::DesktopFailed;
+        }
+    }
+    refused()
 }
 
 struct Connection<S> {

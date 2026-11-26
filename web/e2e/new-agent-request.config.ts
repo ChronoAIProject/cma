@@ -25,6 +25,8 @@ export default defineConfig({
     'task-draft-ownership.check.ts',
     'task-templates.check.ts',
     'public-journeys.check.ts',
+    'home-simplification.check.ts',
+    'preparation-simplification.check.ts',
   ],
   workers: 1,
   retries: 0,

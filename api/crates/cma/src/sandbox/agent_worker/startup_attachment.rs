@@ -19,7 +19,7 @@ impl AgentWorker {
                     "agent lifecycle lease is no longer held",
                 )
             })?;
-        let request = validated_open_request(agent, context)?;
+        let request = self.recorded_open_request(agent, context).await?;
         let recovered_prompt = agent.conversation.active_turn.map(|turn| {
             layer3_adapter::PromptIdentity::new(
                 &target.conversation_id,
@@ -129,6 +129,46 @@ impl AgentWorker {
             }
             Ok(channel)
         };
+        if recovered_prompt.is_some() {
+            runtime_capabilities(self.dependencies.adapter.capabilities())
+                .require(agent.capabilities.iter())
+                .map_err(|capability| {
+                    WorkerFailure::terminal(
+                        "agent_capability_grant_unavailable",
+                        format!("replacement runtime does not provide {capability:?}"),
+                    )
+                })?;
+            let mut recovery = self
+                .dependencies
+                .registry
+                .begin_recovery(
+                    target,
+                    connection_fence,
+                    agent.capabilities.clone(),
+                    receiver,
+                    self.dependencies.updates.clone(),
+                )
+                .map_err(registry_failure)?;
+            let restoring = tokio::time::timeout(self.config.open_timeout, restoring);
+            tokio::pin!(restoring);
+            let channel = tokio::select! {
+                biased;
+                result = &mut restoring => result.map_err(|_| WorkerFailure::retryable(
+                    "agent_conversation_open_timeout", "active conversation recovery timed out",
+                ))??,
+                _ = recovery.stopped() => return Err(WorkerFailure::retryable(
+                    "agent_connection_output_unavailable", "active recovery output stopped",
+                )),
+            };
+            let conversation_id = valid_conversation_id(channel.conversation_id)?;
+            if conversation_id != target.conversation_id {
+                return Err(WorkerFailure::terminal(
+                    "agent_conversation_identity_mismatch",
+                    "runtime replay returned another conversation",
+                ));
+            }
+            return recovery.finish(channel.input).map_err(registry_failure);
+        }
         let channel = if quiet {
             self.drain_connection_output(agent, restoring, &mut receiver)
                 .await?
@@ -206,7 +246,58 @@ impl AgentWorker {
         }
     }
 
-    pub(super) fn attach(
+    pub(in super::super) async fn recorded_open_request(
+        &self,
+        agent: &Agent,
+        context: &AgentContext,
+    ) -> Result<AgentOpenRequest, WorkerFailure> {
+        let open = agent
+            .work
+            .receipts
+            .iter()
+            .find(|receipt| receipt.step == AgentWorkStep::OpenConversation);
+        let numbered = open
+            .and_then(|receipt| {
+                layer3_adapter::AgentProcessAction::Open
+                    .incarnation(agent.id.as_str(), &receipt.operation_id)
+            })
+            .is_some_and(|incarnation| incarnation > 1);
+        if !numbered {
+            return validated_open_request(agent, context);
+        }
+        let invalid = || {
+            WorkerFailure::retryable(
+                "agent_restart_open_unavailable",
+                "the exact numbered Agent Open could not be verified",
+            )
+        };
+        let request = self
+            .dependencies
+            .store
+            .restart_connection_open(agent)
+            .await
+            .map_err(|_| invalid())?
+            .ok_or_else(invalid)?;
+        if !request.has_valid_sha256()
+            || open.is_none_or(|receipt| {
+                receipt.operation_id != request.operation_id
+                    || receipt.request_sha256 != request.request_sha256
+            })
+            || request.resume_conversation != agent.conversation.conversation_id
+            || request.options != runtime_options(agent, &context.sandbox, &context.worktree)
+            || request.restart_runtime.as_ref().is_none_or(|pin| {
+                context.sandbox.runtime.as_ref().is_none_or(|binding| {
+                    binding.boot_id.as_ref() != Some(&pin.boot_id)
+                        || binding.provision_generation != Some(pin.runtime.generation)
+                })
+            })
+        {
+            return Err(invalid());
+        }
+        Ok(request)
+    }
+
+    pub(in crate::sandbox::agent_worker) fn attach(
         &self,
         agent: &Agent,
         conversation_id: String,

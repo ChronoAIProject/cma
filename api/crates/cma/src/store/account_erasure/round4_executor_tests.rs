@@ -148,6 +148,7 @@ async fn observed_lifetime_above_qualification_is_a_permanent_cohort_block() {
         Options {
             allocation_rollups_enabled: Some(false),
             agent_shared_observation: Some(false),
+            retain_legal_consents: false,
             drain_qualification: Some(qualification),
             billing_enabled: false,
             transaction_drain_minimum_secs: 120,
@@ -175,6 +176,7 @@ async fn observed_lifetime_above_qualification_is_a_permanent_cohort_block() {
         Options {
             allocation_rollups_enabled: Some(false),
             agent_shared_observation: Some(false),
+            retain_legal_consents: false,
             drain_qualification: Some(TransactionDrainQualification::fixture()),
             billing_enabled: false,
             transaction_drain_minimum_secs: 120
@@ -203,6 +205,7 @@ async fn absurd_configured_drain_is_permanent_instead_of_an_infinite_retry() {
         Options {
             allocation_rollups_enabled: Some(false),
             agent_shared_observation: Some(false),
+            retain_legal_consents: false,
             drain_qualification: Some(TransactionDrainQualification::fixture()),
             billing_enabled: false,
             transaction_drain_minimum_secs: u64::MAX,

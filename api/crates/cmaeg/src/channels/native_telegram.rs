@@ -5,6 +5,101 @@ use cmaeg_core::{
     ValidationError,
 };
 
+pub(super) fn check_write(
+    current: Option<&ChannelDefinition>,
+    next: &ChannelDefinition,
+    flags: super::write_gate::WriteFlags,
+) -> Result<(), ValidationError> {
+    if !flags.telegram_member_joins {
+        check_member_join_write(current, next)?;
+    }
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::Telegram {
+                topic_creation: true,
+                ..
+            }
+        ) && !flags.telegram_topic_creation
+            && !current.is_some_and(|old| retains_creation_opt_in(old, source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/topic_creation"),
+            "native_telegram_topic_creation_disabled",
+        ));
+    }
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::Telegram {
+                topic_lifecycle: true,
+                ..
+            }
+        ) && !flags.telegram_topic_lifecycle
+            && !current.is_some_and(|old| retains_topic_opt_in(old, source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/topic_lifecycle"),
+            "native_telegram_topic_lifecycle_disabled",
+        ));
+    }
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::Telegram {
+                message_events: true,
+                ..
+            }
+        ) && !flags.telegram_message_events
+            && !current.is_some_and(|old| retains_opt_in(old, source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/message_events"),
+            "native_telegram_message_events_writes_disabled",
+        ));
+    }
+    Ok(())
+}
+
+fn check_member_join_write(
+    current: Option<&ChannelDefinition>,
+    next: &ChannelDefinition,
+) -> Result<(), ValidationError> {
+    for (index, source) in next.sources.iter().enumerate() {
+        let Source::Telegram {
+            bot_id,
+            admission,
+            member_join_chat_ids,
+            ..
+        } = source
+        else {
+            continue;
+        };
+        if member_join_chat_ids.is_empty() {
+            continue;
+        }
+        let retained = current.is_some_and(|old| {
+            old.sources.iter().any(|prior| {
+                matches!(prior, Source::Telegram {
+                    bot_id: prior_bot,
+                    admission: prior_admission,
+                    member_join_chat_ids: prior_chats,
+                    ..
+                } if prior_bot == bot_id && prior_admission == admission
+                    && member_join_chat_ids.iter().all(|chat| prior_chats.contains(chat)))
+            }) && old.secrets.telegram_bot_token == next.secrets.telegram_bot_token
+                && old.secrets.telegram_webhook_secret == next.secrets.telegram_webhook_secret
+        });
+        if !retained {
+            return Err(ValidationError::new(
+                format!("/sources/{index}/member_join_chat_ids"),
+                "native_telegram_member_joins_disabled",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Retaining a saved source or removing only channel-post access is an opt-out.
 pub(super) fn retains_opt_in(current: &ChannelDefinition, source: &Source) -> bool {
     let source = crate::telegram::messaging_source(source);
@@ -35,6 +130,7 @@ pub(super) fn retains_topic_opt_in(current: &ChannelDefinition, source: &Source)
         message_events,
         channel_posts,
         topic_creation,
+        member_join_chat_ids,
         ..
     } = source
     else {
@@ -46,6 +142,7 @@ pub(super) fn retains_topic_opt_in(current: &ChannelDefinition, source: &Source)
             message_events: old_events,
             channel_posts: old_posts,
             topic_creation: old_creation,
+            member_join_chat_ids: old_member_join_chat_ids,
             ..
         } = &mut retained
         else {
@@ -57,6 +154,7 @@ pub(super) fn retains_topic_opt_in(current: &ChannelDefinition, source: &Source)
         *old_creation = *topic_creation;
         *old_events = *message_events;
         *old_posts = *channel_posts;
+        old_member_join_chat_ids.clone_from(member_join_chat_ids);
         retained == *source
     })
 }
@@ -69,12 +167,14 @@ pub(super) fn retains_creation_opt_in(current: &ChannelDefinition, source: &Sour
             topic_lifecycle,
             message_events,
             channel_posts,
+            member_join_chat_ids,
             ..
         } = &mut source
         {
             *topic_lifecycle = false;
             *message_events = false;
             *channel_posts = false;
+            member_join_chat_ids.clear();
         }
         source
     };
@@ -90,21 +190,22 @@ pub(super) fn initialize(
     definition: &mut ChannelDefinition,
 ) -> Result<(), ManagementError> {
     let opted = |value: &ChannelDefinition| {
-        value.sources.iter().any(|source| {
-            matches!(
-                source,
-                Source::Telegram {
-                    message_events: true,
-                    ..
-                } | Source::Telegram {
-                    topic_lifecycle: true,
-                    ..
-                } | Source::Telegram {
-                    topic_creation: true,
-                    ..
-                }
-            )
-        })
+        super::relay_telegram::opted_in(value)
+            || value.sources.iter().any(|source| {
+                matches!(
+                    source,
+                    Source::Telegram {
+                        message_events: true,
+                        ..
+                    } | Source::Telegram {
+                        topic_lifecycle: true,
+                        ..
+                    } | Source::Telegram {
+                        topic_creation: true,
+                        ..
+                    }
+                )
+            })
     };
     if !opted(definition) || current.is_some_and(|old| opted(old) && old.routing.is_some()) {
         return Ok(());
@@ -136,6 +237,13 @@ pub(super) fn initialize(
             }
         )
     });
+    if super::relay_telegram::opted_in(definition) && !state.relay_telegram_member_join_authoring()
+    {
+        return Err(ManagementError::Invalid(ValidationError::new(
+            "/sources",
+            "Telegram relay member joins require enabled authoring and durable admission",
+        )));
+    }
     if (creation && !state.native_telegram_topic_creation_enabled)
         || (events && !state.native_telegram_message_events_writes_enabled)
         || (topics && !state.native_telegram_topic_lifecycle_enabled)
@@ -222,3 +330,7 @@ mod tests {
         assert!(crate::channels::write_gate::check(Some(&definition), &prior, flags).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "native_telegram_member_join_tests.rs"]
+mod member_join_tests;

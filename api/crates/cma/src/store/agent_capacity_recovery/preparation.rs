@@ -1,5 +1,6 @@
 //! Admission preparation occurs before the sole publication transaction. A
 //! preexisting admission with no proven publication is never treated as fresh.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::{
     resource_access::AuthorizedResource,
     sandbox::agent_capacity_recovery::{
@@ -74,7 +75,7 @@ pub(super) async fn prepare(
         ))
     }
     .await;
-    let _ = scope.release().abort_transaction().await;
+    let _ = scope.release().abort_guarded().await;
     let (agent, operation, legacy) = source
         .inspect_err(|_error| {
             #[cfg(test)]

@@ -344,3 +344,157 @@ async fn runtime_update_operator_queues_foreign_owner_without_changing_live_iden
         "pending update cannot be retargeted"
     );
 }
+
+/// A release that moves after the caller captured it, as a replica that missed
+/// a refresh would observe.
+#[derive(Debug)]
+struct MovingRelease {
+    releases: std::sync::Mutex<std::collections::VecDeque<layer3_adapter::ReleasedRuntime>>,
+}
+
+impl layer3_adapter::ReleasedRuntimeSource for MovingRelease {
+    fn snapshot(&self) -> layer3_adapter::ReleasedRuntime {
+        self.releases.lock().unwrap().front().cloned().unwrap()
+    }
+
+    fn require_current(
+        &self,
+        released: &layer3_adapter::ReleasedRuntime,
+    ) -> Result<(), layer3_adapter::StaleReleasedRuntime> {
+        let mut releases = self.releases.lock().unwrap();
+        if releases.len() > 1 {
+            // The release moved between capture and admission.
+            releases.pop_front();
+        }
+        if releases.front() == Some(released) {
+            Ok(())
+        } else {
+            Err(layer3_adapter::StaleReleasedRuntime)
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_update_admitted_against_a_superseded_release_retries_instead_of_writing_it() {
+    use super::store::{InMemorySandboxStore, SandboxStore};
+    use crate::{Authorization, Caller, Capability};
+    use std::sync::Arc;
+    let store = Arc::new(InMemorySandboxStore::default());
+    let mut value = native();
+    value.revision = 1;
+    store.create_sandbox(value.clone()).await.unwrap();
+    let release = |revision, agent: &str| layer3_adapter::ReleasedRuntime {
+        revision,
+        agent: agent.into(),
+        machine: None,
+        lane_revisions: None,
+    };
+    let service = SandboxRuntimeUpdateService::with_released(
+        store.clone(),
+        Arc::new(MovingRelease {
+            releases: std::sync::Mutex::new(
+                [release(1, "image-v2"), release(2, "image-v3")].into(),
+            ),
+        }),
+    );
+    let owner = Caller {
+        subject: value.owner.clone(),
+        authorization: Authorization::new([Capability::UseOwnSandboxes]),
+    };
+    // Captured v2, but v3 was released before the write: nothing is admitted
+    // against v2, and the retry sees that v2 is no longer the latest.
+    assert!(matches!(
+        service.request(&owner, &value.id, "image-v2").await,
+        Err(SandboxRuntimeUpdateError::TargetChanged)
+    ));
+    assert!(store
+        .get_sandbox(&value.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_update_request()
+        .is_none());
+    let saved = service
+        .request(&owner, &value.id, "image-v3")
+        .await
+        .unwrap();
+    assert_eq!(
+        saved
+            .runtime_update_request()
+            .map(|r| r.target_version.as_str()),
+        Some("image-v3")
+    );
+}
+
+#[test]
+fn recorded_managed_selection_enables_retained_update_without_rewriting_its_pin() {
+    let mut sandbox = native();
+    let original = sandbox.runtime.as_ref().unwrap().runtime_version.clone();
+    sandbox.origin = SandboxOrigin::Lifecycle {
+        operation_id: "desktop-creation".into(),
+    };
+    sandbox.profile.content.runtime_image = Some(original.clone());
+
+    for origin in [None, Some(SandboxRuntimeImageOrigin::UserSelected)] {
+        sandbox.lifecycle.runtime_image_origin = origin;
+        assert!(!sandbox.supports_retained_runtime_update());
+        assert!(sandbox
+            .request_runtime_update("image-v2".into(), false, NOW.into())
+            .is_err());
+    }
+
+    use crate::released_runtime::ReleasedLane;
+    for (origin, lane) in [
+        (
+            SandboxRuntimeImageOrigin::ManagedDesktop,
+            ReleasedLane::Agent,
+        ),
+        (
+            SandboxRuntimeImageOrigin::ManagedMachine,
+            ReleasedLane::Machine,
+        ),
+    ] {
+        let mut sandbox = sandbox.clone();
+        sandbox.lifecycle.runtime_image_origin = Some(origin);
+        assert_eq!(sandbox.managed_runtime_lane(), Some(lane));
+        let profile = sandbox.profile.clone();
+        let home = sandbox.lifecycle.home.clone();
+        assert!(sandbox.managed_desktop_runtime_confirmed());
+        assert!(sandbox.supports_retained_runtime_update());
+        let request = SandboxImageRotationRequest {
+            sandbox_id: sandbox.id.clone(),
+            requested_at: NOW.into(),
+            expected_runtime_version: "image-v2".into(),
+        };
+        assert!(matches!(
+            apply_image_rotation(&sandbox, &[], &request).unwrap(),
+            SandboxMaintenanceApplication::Complete(SandboxMaintenanceOutcome::NotEligible)
+        ));
+        assert!(sandbox
+            .request_runtime_update("image-v2".into(), false, NOW.into())
+            .unwrap());
+        let SandboxMaintenanceApplication::Persist { sandbox: next, .. } =
+            apply_image_rotation(&sandbox, &[], &request).unwrap()
+        else {
+            panic!("idle managed Sandbox must admit its exact queued update");
+        };
+        assert_eq!(next.profile, profile);
+        assert_eq!(next.lifecycle.home, home);
+        assert_eq!(next.admitted_runtime_update_target(), Some("image-v2"));
+        assert_eq!(
+            next.lifecycle.runtime_image_origin,
+            sandbox.lifecycle.runtime_image_origin
+        );
+        assert_eq!(
+            next.custom_runtime_image_for_binding().unwrap(),
+            Some(original.as_str())
+        );
+        let mut changed = sandbox.clone();
+        changed.lifecycle.runtime_image_origin = None;
+        assert!(sandbox
+            .validate_runtime_generation_successor(&changed)
+            .is_err());
+        sandbox.runtime.as_mut().unwrap().boot_id = None;
+        assert!(!sandbox.managed_desktop_runtime_confirmed());
+    }
+}

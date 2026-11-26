@@ -1,0 +1,137 @@
+{
+  "waiting_snapshot": {
+    "object": "cma.agent.event_page",
+    "schema_version": 1,
+    "agent_id": "agt_timeout_fixture",
+    "incarnation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "through_cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.3",
+    "items": [
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.1",
+        "sequence": 1,
+        "appended_at": "2026-01-01T00:00:00Z",
+        "kind": {
+          "type": "turn_started",
+          "turn_sequence": 1
+        },
+        "response_binding": {
+          "command_id": "cmd_timeout_fixture",
+          "response_id": "resp_timeout_fixture",
+          "turn_sequence": 1
+        }
+      },
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.2",
+        "sequence": 2,
+        "appended_at": "2026-01-01T00:00:02Z",
+        "kind": {
+          "type": "message",
+          "role": "user",
+          "content": "Synthetic task input."
+        },
+        "response_binding": null
+      },
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.3",
+        "sequence": 3,
+        "appended_at": "2026-01-01T00:01:00Z",
+        "kind": {
+          "type": "message",
+          "role": "assistant",
+          "content": "Synthetic retained partial output."
+        },
+        "response_binding": null
+      }
+    ],
+    "next_page_cursor": null
+  },
+  "terminal_snapshot": {
+    "object": "cma.agent.event_page",
+    "schema_version": 1,
+    "agent_id": "agt_timeout_fixture",
+    "incarnation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "through_cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.4",
+    "items": [
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.1",
+        "sequence": 1,
+        "appended_at": "2026-01-01T00:00:00Z",
+        "kind": {
+          "type": "turn_started",
+          "turn_sequence": 1
+        },
+        "response_binding": {
+          "command_id": "cmd_timeout_fixture",
+          "response_id": "resp_timeout_fixture",
+          "turn_sequence": 1
+        }
+      },
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.2",
+        "sequence": 2,
+        "appended_at": "2026-01-01T00:00:02Z",
+        "kind": {
+          "type": "message",
+          "role": "user",
+          "content": "Synthetic task input."
+        },
+        "response_binding": null
+      },
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.3",
+        "sequence": 3,
+        "appended_at": "2026-01-01T00:01:00Z",
+        "kind": {
+          "type": "message",
+          "role": "assistant",
+          "content": "Synthetic retained partial output."
+        },
+        "response_binding": null
+      },
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.4",
+        "sequence": 4,
+        "appended_at": "2026-01-01T00:17:00Z",
+        "kind": {
+          "type": "turn_failed",
+          "turn_sequence": 1,
+          "failure": {
+            "class": "agent_turn_timeout",
+            "detail": "The server ended this turn because its time limit was reached. Earlier work may have completed. Review the conversation before sending a new message; this turn will not be replayed automatically."
+          }
+        },
+        "response_binding": null
+      }
+    ],
+    "next_page_cursor": null
+  },
+  "live_terminal": {
+    "type": "cma.agent.event",
+    "data": {
+      "agent_id": "agt_timeout_fixture",
+      "incarnation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.4",
+      "sequence": 4,
+      "appended_at": "2026-01-01T00:17:00Z",
+      "kind": {
+        "type": "turn_failed",
+        "turn_sequence": 1,
+        "failure": {
+          "class": "agent_turn_timeout",
+          "detail": "The server ended this turn because its time limit was reached. Earlier work may have completed. Review the conversation before sending a new message; this turn will not be replayed automatically."
+        }
+      },
+      "response_binding": null
+    }
+  },
+  "late_gap": {
+    "type": "cma.agent.live_gap",
+    "data": {
+      "agent_id": "agt_timeout_fixture",
+      "incarnation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "turn_sequence": 1,
+      "frames": null,
+      "reason": "reconnected"
+    }
+  }
+}

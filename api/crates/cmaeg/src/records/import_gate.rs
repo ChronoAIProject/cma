@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use cmaeg_core::{
     channel::ChannelDefinition,
-    seal::{open_blob, MasterKeyRing},
+    seal::{open_retained_channel, MasterKeyRing},
 };
 
 use super::RecordError;
@@ -71,7 +71,12 @@ impl ImportGate {
 
     /// Refuse a sealed channel row that the destination does not already
     /// hold unchanged and that introduces a GitHub source while disabled.
-    pub(super) fn check_new_channel(&self, blob: &[u8]) -> Result<(), RecordError> {
+    pub(super) fn check_new_channel(
+        &self,
+        record_id: &str,
+        version: u64,
+        blob: &[u8],
+    ) -> Result<(), RecordError> {
         if self.github_enabled {
             return Ok(());
         }
@@ -80,7 +85,8 @@ impl ImportGate {
             .as_deref()
             .ok_or_else(|| RecordError::Rejected(GITHUB_IMPORT_KEYS_REQUIRED.into()))?;
         let unreadable = || RecordError::Rejected(GITHUB_IMPORT_UNREADABLE.into());
-        let opened = open_blob(keys, blob).map_err(|_| unreadable())?;
+        let (opened, _) =
+            open_retained_channel(keys, record_id, version, blob).map_err(|_| unreadable())?;
         let definition: ChannelDefinition =
             serde_json::from_slice(&opened.payload).map_err(|_| unreadable())?;
         // Import is insert-only, so a row it may store has no current definition.

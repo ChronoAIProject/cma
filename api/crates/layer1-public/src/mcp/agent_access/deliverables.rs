@@ -20,7 +20,9 @@ pub(super) async fn invoke(
     };
     let resource: DeliverableResource = match serde_json::from_value(arguments) {
         Ok(resource) => resource,
-        Err(_) => return rpc_error(id, -32602, "Invalid deliverable arguments"),
+        // The MCP envelope identifies a known tool. Keep its input refusal in
+        // the tool result so the runtime can preserve the typed diagnostic.
+        Err(_) => return result(id, failure(DeliverableError::Invalid)),
     };
     match service
         .describe_for_agent(state.auth.as_ref(), capability, resource)
@@ -56,11 +58,11 @@ pub(super) fn failure(error: DeliverableError) -> Value {
     let (code, retryable, instruction) = match error {
         DeliverableError::Invalid => (
             "invalid_resource", false,
-            "Check the resource kind, exact home-relative file path or published Agent artifact ID. The request or its verification data is invalid. Document references come from publish_document or update_document receipts.",
+            "Check the resource kind, exact file path (relative to your working directory or the Sandbox home) or published Agent artifact ID. The request or its verification data is invalid. Document references come from publish_document or update_document receipts.",
         ),
         // Invalid file requests also include runtime permission refusals.
         DeliverableError::NotFound
-        | DeliverableError::File(AgentFileError::NotFound | AgentFileError::Invalid)
+        | DeliverableError::File(AgentFileError::NotFound | AgentFileError::Invalid | AgentFileError::NameTooLong)
         | DeliverableError::Answer(AgentReadError::NotFound | AgentReadError::Forbidden)
         | DeliverableError::Document(DocumentError::NotFound) => NOT_ACCESSIBLE,
         DeliverableError::File(AgentFileError::TooLarge) => (
@@ -114,7 +116,7 @@ pub(super) fn failure(error: DeliverableError) -> Value {
 
 pub(super) fn tool() -> Value {
     json!({"name":"describe_deliverable","title":"Verify an answer deliverable",
-        "description":"After actually producing a file, verify its exact home-relative path, or select an already published Agent artifact by its exact ID. Copy the returned marker unchanged on a standalone line in the final answer delivering that result. This reads and hashes bounded bytes; it never publishes private files, takes a snapshot, scans a directory, infers a name, or grants sharing. Do not use absolute paths or credentials. A changed live file cannot later be downloaded as its old result. Document markers come from publish_document/update_document receipts. Failures return a safe error.code and error.retryable; retryable means a delayed retry may succeed, not that the resource was verified. Follow the error's guidance and never retry indefinitely.",
+        "description":"After actually producing a file, verify its exact path: relative to your working directory or to the Sandbox home, or absolute under /home/cma. Or select an already published Agent artifact by its exact ID. Copy the returned marker unchanged on a standalone line in the final answer delivering that result. This reads and hashes bounded bytes; it never publishes private files, takes a snapshot, scans a directory, infers a name, or grants sharing. Do not use paths outside /home/cma or credentials. A changed live file cannot later be downloaded as its old result. Document markers come from publish_document/update_document receipts. Failures return a safe error.code and error.retryable; retryable means a delayed retry may succeed, not that the resource was verified. Follow the error's guidance and never retry indefinitely.",
         "inputSchema":{"type":"object","additionalProperties":false,"required":["kind"],"properties":{
             "kind":{"type":"string","enum":["live_file","agent_artifact"]},
             "path":{"type":"string","minLength":1,"maxLength":1024},

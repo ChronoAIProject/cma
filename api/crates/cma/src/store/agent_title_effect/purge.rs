@@ -8,13 +8,17 @@ pub(in crate::store) async fn require_finality(
     rows: &[Document],
     session: &mut mongodb::ClientSession,
 ) -> Result<(), TransactionLogError> {
+    let mut server_now = None;
     for row in rows {
         let effect = read(row).map_err(|_| SandboxStoreError::Conflict)?;
-        if effect.unknown() {
-            tracing::warn!("sandbox purge refused: unresolved automatic title provider effect");
+        let unresolved = effect.unknown();
+        if unresolved && !capability_expired(store, &effect, &mut server_now).await? {
+            tracing::warn!(
+                "sandbox purge deferred: automatic title provider effect is within its claim deadline"
+            );
             return Err(SandboxStoreError::Conflict.into());
         }
-        if effect.accepted().is_some() {
+        if unresolved || effect.accepted().is_some() {
             let id = row
                 .get_str("_id")
                 .map_err(|_| SandboxStoreError::Conflict)?;
@@ -32,4 +36,42 @@ pub(in crate::store) async fn require_finality(
         }
     }
     Ok(())
+}
+
+/// An unresolved effect is final once nothing can still accept its result
+/// (#3275). Acceptance is fenced on server time before the claim deadline
+/// that the retained intent records; a legacy attempt retains no capability.
+/// Nothing resolves an unresolved effect, so without this a Sandbox whose
+/// title request failed could never be purged. No redispatch is possible:
+/// permanent creation provenance still prevents the identity's reuse.
+async fn capability_expired(
+    store: &MongoSandboxStore,
+    effect: &AgentTitleEffectState,
+    server_now: &mut Option<i64>,
+) -> Result<bool, TransactionLogError> {
+    let deadline = match effect {
+        AgentTitleEffectState::LegacyUnknown => return Ok(true),
+        AgentTitleEffectState::Retained(effect) if effect.result.is_none() => {
+            i64::try_from(effect.intent.expires_ms).map_err(|_| SandboxStoreError::Conflict)?
+        }
+        _ => return Ok(false),
+    };
+    let now = match *server_now {
+        Some(now) => now,
+        None => {
+            let reply = store
+                .client
+                .database(&store.agents.namespace().db)
+                .run_command(doc! {"hello": 1})
+                .await
+                .map_err(TransactionLogError::Driver)?;
+            let now = reply
+                .get_datetime("localTime")
+                .map_err(|_| SandboxStoreError::Conflict)?
+                .timestamp_millis();
+            *server_now = Some(now);
+            now
+        }
+    };
+    Ok(now >= deadline)
 }

@@ -14,23 +14,7 @@ impl ProviderFundingAdapter {
             Some(receipt) => receipt,
             None => self.provider.reserve(request.clone()).await?,
         };
-        validate_receipt(&request, &receipt, state.current.as_ref())?;
-        if state
-            .current
-            .as_ref()
-            .is_none_or(|p| p.runtime_generation != receipt.runtime_generation)
-        {
-            state.coverage_start = receipt.covered_from;
-        }
-        state.current = Some(receipt.clone());
-        state.windows.push(RetainedWindow {
-            window: receipt,
-            evidence: None,
-        });
-        state.pending = None;
-        state.attempts = 0;
-        state.last_error = None;
-        self.state.save(state).await
+        self.adopt_pending(state, &request, receipt).await
     }
 
     pub(super) async fn fund(

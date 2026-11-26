@@ -36,8 +36,7 @@
   overflow: hidden;
   color: var(--dsw-alias-label-primary);
   font-weight: 400;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .agent-skills__installed span {
   flex: none;
@@ -124,8 +123,7 @@
 .agent-skills__entries > li > p {
   min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .agent-skills__entries > li > strong {
   color: var(--dsw-alias-label-primary);
@@ -140,7 +138,7 @@
 }
 .agent-skills__actions {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   min-width: 0;
@@ -157,4 +155,54 @@
   .agent-skills__add > summary > span {
     transition: none;
   }
+}
+
+.agent-skills__catalog-failure {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 8px;
+  padding: 16px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-1);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.agent-skills__catalog-failure > span,
+.agent-skills__catalog-failure > h3,
+.agent-skills__catalog-failure > p {
+  flex-basis: 100%;
+  margin: 0;
+}
+.agent-skills__catalog-failure h3 {
+  font: var(--dsw-font-base-strong-16);
+}
+.agent-skills__catalog-failure p {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+.agent-skills__entries > li {
+  padding: 16px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+}
+.agent-skills__installed > li {
+  padding: 8px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+}
+
+.agent-skills__catalog-diagnostics {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  flex-basis: 100%;
+  gap: 4px 12px;
+}
+.agent-skills__catalog-diagnostics p {
+  font-size: 12px;
 }

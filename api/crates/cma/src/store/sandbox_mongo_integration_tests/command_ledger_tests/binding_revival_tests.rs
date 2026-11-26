@@ -139,6 +139,7 @@ async fn binding_revival_with_shares(share_count: usize) {
                 .unwrap();
             let transaction = SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: Some(proof),
+                released_runtime: None,
                 expected_revision: parent.revision,
                 sandbox: Box::new(next),
                 event_at: at,

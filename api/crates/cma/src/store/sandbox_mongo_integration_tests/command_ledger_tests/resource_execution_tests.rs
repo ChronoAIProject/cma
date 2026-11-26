@@ -2,7 +2,7 @@ use super::super::work_tests::message_mutation;
 use super::*;
 
 #[path = "command_revival_tests.rs"]
-mod revival;
+pub(in crate::store::sandbox_mongo_integration_tests) mod revival;
 
 struct Membership(Duration);
 

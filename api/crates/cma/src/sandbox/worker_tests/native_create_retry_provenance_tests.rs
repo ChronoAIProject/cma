@@ -114,28 +114,47 @@ async fn native_create_retry_publishes_due_time_from_typed_observation_result() 
 #[tokio::test(start_paused = true)]
 async fn native_create_retry_home_observation_outcomes_publish_due_time_without_changing_authority()
 {
-    for (error, delay) in [
-        (pending_deadline(), 1),
+    for (error, delay, from_observation) in [
+        (pending_deadline(), 1, true),
         (
             AdapterError::NativeClaimNotReady(NativeClaimGuardReason::TimedOut),
             30,
+            false,
         ),
-        (AdapterError::Unavailable("transport".into()), 30),
+        (AdapterError::Unavailable("transport".into()), 30, false),
     ] {
         let h = Harness::new(vec![], 0, Duration::from_secs(60)).await;
         let created = h.create().await;
         let pools = pools(&h, &[]);
         *pools.adopt_error.lock().unwrap() = Some(error);
         let now = start_time(&created);
+        let observing = tokio::time::Instant::now();
         cold_worker(&h, pools.clone(), true)
             .run_one(&created.id, now)
             .await
             .unwrap();
+        let observed = observing.elapsed();
         let stored = h.stored(&created.id).await;
-        assert_eq!(
-            stored.work.ready_at,
-            rfc3339_at(now + Duration::from_secs(delay))
-        );
+        let due = stamp_time(&stored.work.ready_at);
+        if from_observation {
+            // The shortened native delay starts when the observation completes,
+            // rounded up to whole seconds. The paused clock can auto-advance
+            // while the worker waits, so bound it by this test's own clock.
+            let earliest = now + Duration::from_secs(delay);
+            let latest = whole_seconds_up(now + observed) + Duration::from_secs(delay);
+            assert!(
+                due >= earliest && due <= latest,
+                "due {} outside [{}, {}] after {observed:?}",
+                stored.work.ready_at,
+                rfc3339_at(earliest),
+                rfc3339_at(latest)
+            );
+        } else {
+            assert_eq!(
+                stored.work.ready_at,
+                rfc3339_at(now + Duration::from_secs(delay))
+            );
+        }
         let home = stored.lifecycle.home.as_deref().unwrap();
         let native = home.native_pool.as_ref().unwrap();
         let original = native.claim.as_ref().unwrap();
@@ -146,7 +165,7 @@ async fn native_create_retry_home_observation_outcomes_publish_due_time_without_
         assert_eq!(call_count(&pools, "adopt"), 0);
         assert_eq!(call_count(&pools, "reclaim"), 0);
         cold_worker(&h, pools.clone(), true)
-            .run_one(&created.id, now + Duration::from_secs(delay))
+            .run_one(&created.id, due)
             .await
             .unwrap();
         let recovered = h.stored(&created.id).await;
@@ -198,4 +217,10 @@ async fn native_create_retry_delayed_assignment_keeps_deadline_provenance() {
         assert_eq!(call_count(&pools, "adopt"), 0);
         assert_eq!(call_count(&pools, "reclaim"), 0);
     }
+}
+
+fn whole_seconds_up(at: SystemTime) -> SystemTime {
+    let elapsed = at.duration_since(SystemTime::UNIX_EPOCH).unwrap();
+    SystemTime::UNIX_EPOCH
+        + Duration::from_secs(elapsed.as_secs() + u64::from(elapsed.subsec_nanos() > 0))
 }

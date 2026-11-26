@@ -55,7 +55,7 @@ async fn adopted(store: &MongoSandboxStore, id: &str) -> (Sandbox, Agent) {
     (sandbox, agent)
 }
 
-async fn admit(store: &MongoSandboxStore, agent: &Agent, revision: i64) -> Agent {
+pub(super) async fn admit(store: &MongoSandboxStore, agent: &Agent, revision: i64) -> Agent {
     let db = store.client.database(&store.agents.namespace().db);
     let mut session = store.client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();

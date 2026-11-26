@@ -59,7 +59,7 @@ it.each([
   const target = screen.getByLabelText(label);
   expect(target).toHaveFocus();
   expect(target).toHaveValue(value);
-  expect(target).toHaveAccessibleDescription(`${path}: values must be unique`);
+  expect(target).toHaveAccessibleDescription('Channel settings: values must be unique');
   fireEvent.click(screen.getByRole('button', { name: 'Review channel fields' }));
   expect(target).toHaveFocus();
   expect(screen.getByLabelText('Route').closest('details')).not.toHaveAttribute('open');
@@ -96,11 +96,11 @@ for (const prefix of ['/connection_admission', '/sources/0/admission']) {
   );
 }
 
-it('preserves summary and whole-form review for an unknown error', () => {
+it('keeps unknown errors at the summary without opening unrelated settings', () => {
   render(<Form value={draft} error="/unmapped: invalid configuration" onChange={vi.fn()} />);
   fireEvent.click(screen.getByRole('button', { name: 'Show refusal' }));
   expect(screen.getByRole('alert')).toHaveFocus();
   fireEvent.click(screen.getByRole('button', { name: 'Review channel fields' }));
-  expect(screen.getByLabelText('Channel name')).toHaveFocus();
-  expect(screen.getByLabelText('Route').closest('details')).toHaveAttribute('open');
+  expect(screen.getByRole('alert')).toHaveFocus();
+  expect(screen.getByLabelText('Route').closest('details')).not.toHaveAttribute('open');
 });

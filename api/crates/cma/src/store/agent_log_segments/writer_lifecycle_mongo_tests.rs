@@ -167,7 +167,9 @@ async fn lifecycle_reconciliation_requires_original_parent_events_and_child_fenc
     let request = begin(&parent, QUIET);
     let mut session = transaction(&f).await;
     let scope = TransactionScope::start(&mut session).await.unwrap();
-    let aborted = apply_lifecycle(&f.store, &request, scope).await.unwrap();
+    let aborted = apply_lifecycle(&f.store, &request, scope, None)
+        .await
+        .unwrap();
     session.abort_transaction().await.unwrap();
     let mut snapshot = f.client.start_session().snapshot(true).await.unwrap();
     assert!(!reconciliation::snapshot(&f.store, &aborted, &mut snapshot)
@@ -176,7 +178,9 @@ async fn lifecycle_reconciliation_requires_original_parent_events_and_child_fenc
     assert_eq!(fence(&f).await, None);
 
     let scope = TransactionScope::start(&mut session).await.unwrap();
-    let receipt = apply_lifecycle(&f.store, &request, scope).await.unwrap();
+    let receipt = apply_lifecycle(&f.store, &request, scope, None)
+        .await
+        .unwrap();
     assert!(matches!(
         commit_transaction(&mut session).await,
         CommitOutcome::Committed

@@ -74,6 +74,7 @@ impl ManagedSandboxCredentials {
         services.sort();
         services.dedup();
         let material = CredentialMaterial {
+            github_route: None,
             source: SandboxCredentialSource::Provided {
                 key_sha256: hash.clone(),
             },

@@ -1,5 +1,6 @@
 //! Majority-durable Mongo execution for agent control plans.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::{
     AgentControlResult, AgentControlStoreError, AgentDeleteRequest, AgentStopRequest,
     SandboxStoreError,
@@ -19,7 +20,18 @@ use super::sandbox_mongo::{
 };
 
 const CONTROL_ATTEMPTS: usize = 8;
+pub(super) mod restart;
+pub(super) mod restart_cancel;
+pub(super) mod restart_dispatch;
+mod restart_publication;
+mod restart_receipt;
+pub(super) mod restart_teardown;
 mod segmented;
+pub(super) use restart::schedule_restart;
+pub(super) use restart_dispatch::{
+    live_lease_expression as restart_live_lease_expression, load_restart_connection,
+    load_restart_work, prepare_restart_dispatch,
+};
 
 enum ApplyError {
     Domain(AgentControlStoreError),
@@ -71,6 +83,11 @@ async fn schedule_control(
         .await
         .map_err(unavailable)?
         .ok_or(AgentControlStoreError::NotFound)?;
+    if operation.request.target().expected_status == layer2_core::sandbox::AgentStatus::Starting
+        && row.contains_key(restart::ACTIVE_RESTART_FIELD)
+    {
+        return Box::pin(restart_cancel::schedule(store, &operation)).await;
+    }
     if super::agent_log_segments::read_format(&row)
         .map_err(store_error)?
         .is_some()
@@ -120,13 +137,13 @@ async fn schedule_control(
                 },
                 Err(ApplyError::Domain(error)) => ControlAttempt::ReadOnly(Box::new(Err(error))),
                 Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_was_conflict = false;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(unavailable(error));
                 }
             };
@@ -143,22 +160,22 @@ async fn schedule_control(
                 match replace_agent(store, &current, &next, &operation, &mut session).await {
                     Ok(true) => {}
                     Ok(false) => {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         last_was_conflict = true;
                         continue;
                     }
                     Err(ApplyError::Domain(error)) => {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         return Err(error);
                     }
                     Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         last_was_conflict = false;
                         last_transient = Some(error.to_string());
                         continue;
                     }
                     Err(ApplyError::Driver(error)) => {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         return Err(unavailable(error));
                     }
                 }

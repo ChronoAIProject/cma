@@ -1,6 +1,59 @@
 import { test, expect } from '@playwright/test';
 import type { Launch } from '../src/api-client/index';
 import { LocalStartup, recorded } from './agent-startup-fixtures';
+import { noEffects } from './resource-lifecycle.fixture';
+
+test('LOCAL a Launch refused by the Sandbox cutoff stays terminal through refresh and reload', async ({
+  page,
+  baseURL,
+}) => {
+  const boundary = new LocalStartup();
+  await boundary.route(page, baseURL!);
+  const original = recorded<Launch>('launches.json', 'launch-ready-create');
+  const record: Launch = {
+    ...original,
+    state: 'failed_terminal',
+    failure: {
+      code: 'sandbox_limit_reached',
+      safe_detail: 'Sandbox limit reached',
+      retryable: false,
+      occurred_at: original.updated_at,
+    },
+    review: { needs: [], can_start_now: false },
+    steps: original.steps.map((step) =>
+      step.key === 'sandbox' ? { ...step, status: 'failed' } : step,
+    ),
+  };
+  let reads = 0;
+  await page.route(`**/api/v1/launches/${record.id}`, (route) => {
+    expect(route.request().method()).toBe('GET');
+    reads++;
+    return route.fulfill({ json: record });
+  });
+  await page.clock.install();
+  await page.goto(`/launches/${record.id}`);
+  const check = page.getByRole('button', { name: 'Check again', exact: true });
+  await expect(check).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: "Didn't work" })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Start over', exact: true })).toBeEnabled();
+  const beforeRefresh = reads;
+  await check.click();
+  await expect.poll(() => reads).toBeGreaterThan(beforeRefresh);
+  await page.reload();
+  await expect(check).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: "Didn't work" })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.getByRole('button', { name: 'Copy support code', exact: true }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(record.id);
+  const settledReads = reads;
+  await page.clock.runFor(30_000);
+  await page.waitForLoadState('networkidle');
+  expect(reads).toBe(settledReads);
+  await expect(page).toHaveURL(`/launches/${record.id}`);
+  noEffects(boundary);
+});
 
 for (const width of [1440, 390]) {
   for (const surface of ['launch', 'sandbox'] as const) {

@@ -33,7 +33,7 @@ module PublicTree
   end
 
   def self.violation(path, content)
-    return "private repository path" if path.match?(%r{\A(?:infra|docs|sdk)(?:/|\z)})
+    return "private repository path" if path.match?(%r{\A(?:infra|docs|sdk|\.github/(?:evidence|scripts/cma_scale))(?:/|\z)})
     return "Terraform state" if File.basename(path).match?(/\.tfstate(?:\..*)?\z/i)
     # Bytecode is generated (CLAUDE.md section 8) and embeds the absolute path
     # of the tree that compiled it, which publishes a local home directory.

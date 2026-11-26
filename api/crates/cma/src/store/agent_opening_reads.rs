@@ -7,6 +7,12 @@ use mongodb::{
     ClientSession,
 };
 
+#[cfg(test)]
+#[path = "agent_opening_reads/diagnostics_tests.rs"]
+mod diagnostics_tests;
+#[cfg(test)]
+#[path = "agent_opening_reads/privacy.rs"]
+mod privacy;
 pub(super) mod transcript;
 const INDEX: &str = "agent_log_kind_sequence";
 const MAX_BYTES: usize = 4 * 1024 * 1024;
@@ -166,7 +172,22 @@ async fn selected(
 }
 
 fn decision(outcome: &'static str) {
-    tracing::debug!(parent: None, outcome, "Agent opening legacy projection decision");
+    use crate::diagnostic_format::{OPENING_DECISION_ROOT, OPENING_DECISION_TARGET};
+
+    // The JSON formatter can include the current span even for a root event.
+    let root = tracing::debug_span!(
+        target: OPENING_DECISION_TARGET,
+        parent: None,
+        OPENING_DECISION_ROOT
+    );
+    if root.is_disabled() {
+        return;
+    }
+    let _entered = root.enter();
+    tracing::debug!(
+        target: OPENING_DECISION_TARGET, parent: &root, outcome,
+        "Agent opening legacy projection decision"
+    );
 }
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
     SandboxStoreError::Unavailable(error.to_string())

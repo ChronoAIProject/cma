@@ -30,6 +30,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 function show() {
@@ -90,6 +91,9 @@ it('opens only a durable request, keeps required scopes fixed, and submits only 
   show();
   await screen.findByRole('dialog', { name: 'Agent key access' });
   expect(screen.getByText(request.reason)).toBeVisible();
+  expect(
+    screen.getByText('GitHub connection selection is separate from service approval.'),
+  ).toBeVisible();
   expect(decide).not.toHaveBeenCalled();
   for (const scope of ['chrono-llm-public', 'ornn-api']) {
     expect(screen.getByRole('checkbox', { name: `${scope} Required` })).toBeChecked();
@@ -106,7 +110,65 @@ it('opens only a durable request, keeps required scopes fixed, and submits only 
     expect.any(String),
     ['chrono-llm-public', 'ornn-api', 'api-github', 'storage'],
     expect.any(AbortSignal),
+    undefined,
   );
+});
+
+it('opens owner-scoped GitHub connection management without submitting an approval', async () => {
+  const decide = vi.spyOn(accessRequests, 'decide');
+  const manageUrl = 'https://nyx.example/keys';
+  const fetch = vi.fn(async () =>
+    Response.json({
+      owner: 'owner',
+      github: {
+        manage_url: manageUrl,
+        connections: [
+          {
+            id: 'profile-only',
+            label: 'Profile access',
+            granted_scopes: ['read:user'],
+            manage_url: `${manageUrl}/profile-only`,
+          },
+          {
+            id: 'repository-access',
+            label: 'Repository access',
+            granted_scopes: ['repo'],
+            manage_url: `${manageUrl}/repository-access`,
+          },
+        ],
+      },
+    }),
+  );
+  vi.stubGlobal('fetch', fetch);
+  show();
+  const manage = await screen.findByRole('button', { name: 'Manage GitHub connections' });
+  expect(fetch).not.toHaveBeenCalled();
+  await userEvent.click(manage);
+  expect(fetch).toHaveBeenCalledExactlyOnceWith(
+    '/auth/connections/repository-access',
+    expect.objectContaining({
+      body: JSON.stringify({
+        target: {
+          type: 'agent_service_access',
+          id: 'agent-one',
+          services: ['api-github', 'chrono-llm-public', 'ornn-api'],
+        },
+      }),
+    }),
+  );
+  expect(
+    await screen.findByRole('link', { name: 'Repository access (repository-access)' }),
+  ).toHaveAttribute('href', `${manageUrl}/repository-access`);
+  expect(screen.getByRole('link', { name: 'Profile access (profile-only)' })).toHaveAttribute(
+    'href',
+    `${manageUrl}/profile-only`,
+  );
+  expect(screen.getByText('Reported scopes: repo')).toBeVisible();
+  expect(screen.getByText('Reported scopes: read:user')).toBeVisible();
+  expect(screen.getByText(/CMA has not verified the Agent/)).toBeVisible();
+  expect(decide).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Hide GitHub connections' }));
+  expect(screen.queryByRole('link', { name: /Repository access/ })).not.toBeInTheDocument();
 });
 it('retains the exact approval after a lost response and locks edits during recovery', async () => {
   const decide = vi

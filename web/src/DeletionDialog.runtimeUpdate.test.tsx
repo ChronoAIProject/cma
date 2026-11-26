@@ -5,7 +5,11 @@ import { ApiError } from '@cma/client';
 import { DeletionDialog } from './DeletionDialog';
 import { restoreDeletion, type DeletionRequest } from './deletion';
 import { agentClient } from './test/agent';
-import { parkedRuntimeUpdateFixture, sandboxFixture } from './test/hierarchy';
+import {
+  delayedRetirementFixture,
+  parkedRuntimeUpdateFixture,
+  sandboxFixture,
+} from './test/hierarchy';
 import type { CmaWebClient } from './api/client';
 
 const initial: DeletionRequest = {
@@ -51,7 +55,7 @@ it('confirms a freshly read parked update using the existing deletion command', 
   );
   const actor = userEvent.setup();
   await actor.click(await screen.findByRole('checkbox'));
-  const confirm = screen.getByRole('button', { name: 'Delete Sandbox' });
+  const confirm = screen.getByRole('button', { name: 'Request deletion' });
   expect(confirm).toBeEnabled();
   expect(screen.getByText(/stop the paused runtime update/)).toHaveTextContent(
     'This cannot be undone.',
@@ -73,7 +77,7 @@ it.each(['updating', 'checkpoint', 'unavailable', 'foreign-id'] as const)(
     show(agentClient({ readSandbox, deleteSandbox }));
     await act(async () => {});
     fireEvent.click(screen.getByRole('checkbox'));
-    expect(screen.getByRole('button', { name: 'Delete Sandbox' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Request deletion' })).toBeEnabled();
     if (condition === 'unavailable')
       readSandbox.mockRejectedValue(new ApiError(503, 'Unavailable'));
     else
@@ -93,7 +97,7 @@ it.each(['updating', 'checkpoint', 'unavailable', 'foreign-id'] as const)(
         },
       });
     await act(() => vi.advanceTimersByTimeAsync(1500));
-    const confirm = screen.getByRole('button', { name: 'Delete Sandbox' });
+    const confirm = screen.getByRole('button', { name: 'Request deletion' });
     expect(confirm).toBeDisabled();
     fireEvent.click(confirm);
     expect(deleteSandbox).not.toHaveBeenCalled();
@@ -116,7 +120,7 @@ it.each(['retiring', 'retired'] as const)(
         name: status === 'retiring' ? 'Deleting Sandbox' : 'Sandbox deleted',
       }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Delete Sandbox' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Request deletion' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Check request' })).not.toBeInTheDocument();
     expect(deleteSandbox).not.toHaveBeenCalled();
     if (status === 'retiring') {
@@ -137,7 +141,7 @@ it.each([
   show(agentClient({ readSandbox, deleteSandbox, updateSandboxRuntime }));
   const actor = userEvent.setup();
   await actor.click(await screen.findByRole('checkbox'));
-  await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
+  await actor.click(screen.getByRole('button', { name: 'Request deletion' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(failure.message);
   expect(restoreDeletion('owner')).toEqual(initial);
   expect(deleteSandbox).toHaveBeenCalledOnce();
@@ -148,4 +152,25 @@ it.each([
     ['sbx_1', { idempotencyKey: initial.key }],
   ]);
   expect(updateSandboxRuntime).not.toHaveBeenCalled();
+});
+
+it('explains an overdue retirement until the exact Sandbox reports retired', async () => {
+  vi.useFakeTimers();
+  const readSandbox = vi.fn(async () => parkedRuntimeUpdateFixture());
+  const deleteSandbox = vi.fn();
+  show(agentClient({ readSandbox, deleteSandbox }));
+  await act(async () => {});
+  readSandbox.mockResolvedValue(delayedRetirementFixture());
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(screen.getByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
+  expect(screen.getByText('Cleanup taking longer')).toBeVisible();
+  expect(screen.getByText(/exceeded its expected deletion time/)).toBeVisible();
+  expect(screen.getByText(/still uses one Sandbox slot/)).toBeVisible();
+  expect(restoreDeletion('owner')).toEqual({ ...initial, accepted: true });
+  expect(screen.queryByRole('button', { name: 'Check request' })).not.toBeInTheDocument();
+  readSandbox.mockResolvedValue(sandboxFixture('retired'));
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(screen.getByRole('dialog', { name: 'Sandbox deleted' })).toBeInTheDocument();
+  expect(screen.queryByText(/exceeded its expected deletion time/)).not.toBeInTheDocument();
+  expect(deleteSandbox).not.toHaveBeenCalled();
 });

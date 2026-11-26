@@ -1,6 +1,6 @@
 //! Public projections and sanitized management refusals.
 use super::{
-    management::{ChannelListItem, ChannelResponse, EndpointResponse, ProviderResponse},
+    management::{ChannelListItem, ChannelResponse, ProviderResponse},
     problems::{no_store, problem},
 };
 use crate::channels::management::{ManagementError, ManagementState};
@@ -31,39 +31,7 @@ pub(super) fn channel_response(
         record_id: record_id.to_string(),
         version,
         provider,
-        endpoints: EndpointResponse {
-            native_lark_webhook_url: definition
-                .sources
-                .iter()
-                .any(|s| matches!(s, cmaeg_core::channel::Source::NativeLark(_)))
-                .then(|| {
-                    format!(
-                        "{}/v1/native-lark/{}",
-                        state.advertised_api_url(),
-                        channel_id
-                    )
-                }),
-            whatsapp_webhook_url: definition
-                .sources
-                .iter()
-                .any(|source| matches!(source, cmaeg_core::channel::Source::Whatsapp { .. }))
-                .then(|| format!("{}/v1/whatsapp/{}", state.advertised_api_url(), channel_id)),
-            nyxid_callback_url: format!(
-                "{}/v1/callbacks/{}",
-                state.advertised_api_url(),
-                channel_id
-            ),
-            telegram_webhook_url: definition
-                .sources
-                .iter()
-                .any(|source| matches!(source, cmaeg_core::channel::Source::Telegram { .. }))
-                .then(|| format!("{}/v1/telegram/{}", state.advertised_api_url(), channel_id)),
-            custom_event_url: format!(
-                "{}/v1/channels/{}/events",
-                state.advertised_api_url(),
-                channel_id
-            ),
-        },
+        endpoints: super::channel_endpoints::channel_endpoints(state, channel_id, definition),
         definition: super::schema::PublicChannelDefinition::new(definition, version),
     })
 }
@@ -157,10 +125,61 @@ pub(super) fn service_authorized(headers: &HeaderMap, expected: &str) -> bool {
     token.as_bytes().ct_eq(expected.as_bytes()).into()
 }
 
+/// Why a provider request failed. Only closed phrases and an HTTP status leave
+/// the gateway: transport text can name internal addresses.
+pub(super) fn provider_failure_detail(error: &crate::providers::ProviderError) -> String {
+    use crate::providers::ProviderError;
+    let reason = match error {
+        ProviderError::Capacity => {
+            "the gateway's provider concurrency is exhausted; retry later".to_owned()
+        }
+        ProviderError::ConversationMissing => "the provider conversation is missing".to_owned(),
+        ProviderError::Unavailable(detail) => match detail.as_str() {
+            "provider request timed out" => "the provider request timed out".to_owned(),
+            "provider transport failed" => "the provider was unreachable".to_owned(),
+            other => match other
+                .strip_prefix("provider returned HTTP ")
+                .and_then(|status| status.parse::<u16>().ok())
+                .filter(|status| (100..=599).contains(status))
+            {
+                Some(status) => format!("the provider answered HTTP {status}"),
+                None => "the provider or its service credential was unavailable".to_owned(),
+            },
+        },
+        ProviderError::ResponseMalformed(_) => "the provider response is malformed".to_owned(),
+        ProviderError::Sse(_) => "the provider stream ended before a terminal answer".to_owned(),
+        _ => return "provider request failed".to_owned(),
+    };
+    format!("provider request failed: {reason}")
+}
+
+/// Name the provider's answer without echoing arbitrary provider text.
+fn release_refused_detail(status: u16, code: &str) -> String {
+    let named = !code.is_empty()
+        && code.len() <= 64
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+    let answer = if named {
+        format!("HTTP {status} {code}")
+    } else {
+        format!("HTTP {status}")
+    };
+    format!(
+        "The provider refused to release this channel's binding ({answer}). The channel was not deleted and keeps its version. A channel whose creation never became ready cannot process events. The provider must release the binding, or report it absent with 404, before deletion can complete."
+    )
+}
+
+#[cfg(test)]
+#[path = "management_release_tests.rs"]
+mod release_tests;
+
 pub(super) fn management_error(error: ManagementError) -> Response {
     use crate::telemetry::http_failure::FailureStage;
     let stage = match &error {
-        ManagementError::Provider(_) => FailureStage::ChannelProvider,
+        ManagementError::Provider(_) | ManagementError::ReleaseRefused { .. } => {
+            FailureStage::ChannelProvider
+        }
         ManagementError::Record(_) | ManagementError::NotFound => FailureStage::ChannelRecord,
         ManagementError::Invalid(_) => FailureStage::RequestValidation,
         _ => FailureStage::ChannelOperation,
@@ -221,15 +240,32 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             ProblemCode::ProviderBusy,
             format!("provider is busy; retry_after={retry_after:?}"),
         ),
-        ManagementError::Provider(_) => (
+        // Closed details only: a transport error can name internal addresses.
+        ManagementError::Provider(error) => (
             StatusCode::SERVICE_UNAVAILABLE,
             ProblemCode::ProviderUnavailable,
-            "provider request failed".into(),
+            provider_failure_detail(&error),
         ),
         ManagementError::Record(crate::records::RecordError::Conflict { expected, actual }) => (
             StatusCode::CONFLICT,
             ProblemCode::Conflict,
             format!("expected version {expected}, actual {actual:?}"),
+        ),
+        ManagementError::Record(crate::records::RecordError::GuardConflict {
+            scope: "channel_create",
+            ..
+        }) => (
+            StatusCode::CONFLICT,
+            ProblemCode::Conflict,
+            "channel_create_fenced".into(),
+        ),
+        ManagementError::Record(crate::records::RecordError::GuardConflict {
+            scope: "connection",
+            ..
+        }) => (
+            StatusCode::CONFLICT,
+            ProblemCode::Conflict,
+            "connection_claim_changed".into(),
         ),
         ManagementError::Record(crate::records::RecordError::NotFound)
         | ManagementError::NotFound => (
@@ -247,6 +283,16 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             ProblemCode::Conflict,
             format!("expected version {expected}, actual {actual:?}"),
         ),
+        ManagementError::CreationPending => (
+            StatusCode::CONFLICT,
+            ProblemCode::Conflict,
+            crate::channels::creation::PENDING_DETAIL.into(),
+        ),
+        ManagementError::ReleaseRefused { status, code } => (
+            StatusCode::CONFLICT,
+            ProblemCode::ProviderRejected,
+            release_refused_detail(status, &code),
+        ),
         ManagementError::Unauthorized => (
             StatusCode::UNAUTHORIZED,
             ProblemCode::NotAuthenticated,
@@ -262,108 +308,8 @@ pub(super) fn management_error(error: ManagementError) -> Response {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn known_removed_binding_has_actionable_conflict_instead_of_generic_bad_gateway() {
-        let response = management_error(ManagementError::Provider(
-            crate::providers::ProviderError::Rejected {
-                status: 409,
-                code: "binding_resources_unavailable".into(),
-            },
-        ));
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        let bytes = axum::body::to_bytes(response.into_body(), 4096)
-            .await
-            .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert!(body["detail"]
-            .as_str()
-            .unwrap()
-            .contains("Reconnect the channel"));
-    }
-
-    #[tokio::test]
-    async fn unsupported_skill_version_update_stays_a_typed_conflict() {
-        let response = management_error(ManagementError::Provider(
-            crate::providers::ProviderError::Rejected {
-                status: 409,
-                code: "binding_skill_version_update_unsupported".into(),
-            },
-        ));
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        let bytes = axum::body::to_bytes(response.into_body(), 4096)
-            .await
-            .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(body["code"], "conflict");
-        assert_eq!(
-            body["detail"],
-            "The selected skill version cannot be changed through a channel profile update. Keep the channel profile unchanged and use the existing Agent's skills endpoint (POST /api/v1/agents/{id}/skills) when upgrades are enabled and supported."
-        );
-    }
-
-    #[tokio::test]
-    async fn known_reconfiguration_refusal_is_actionable_and_keeps_its_conflict_status() {
-        let response = management_error(ManagementError::Provider(
-            crate::providers::ProviderError::Rejected {
-                status: 409,
-                code: "binding_reconfiguration_unsupported".into(),
-            },
-        ));
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        assert_eq!(
-            response.headers()["content-type"],
-            "application/problem+json"
-        );
-        assert_eq!(response.headers()["cache-control"], "no-store");
-        let bytes = axum::body::to_bytes(response.into_body(), 4096)
-            .await
-            .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(body["code"], "provider_rejected");
-        assert_eq!(body["status"], 409);
-        let detail = body["detail"].as_str().unwrap();
-        assert!(detail.contains("service scope"));
-        assert!(detail.contains("create a new binding with the required scope"));
-        assert!(detail.contains("have not been changed"));
-        assert!(detail.contains("Keep the current profile"));
-    }
-
-    #[tokio::test]
-    async fn unrecognized_refusals_do_not_expose_provider_error_text() {
-        for (status, code) in [
-            (409, "private-provider-credential-must-not-leak"),
-            (400, "binding_reconfiguration_unsupported"),
-        ] {
-            let response = management_error(ManagementError::Provider(
-                crate::providers::ProviderError::Rejected {
-                    status,
-                    code: code.into(),
-                },
-            ));
-            assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-            let bytes = axum::body::to_bytes(response.into_body(), 4096)
-                .await
-                .unwrap();
-            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(body["detail"], "provider rejected the channel request");
-            assert!(!String::from_utf8_lossy(&bytes).contains(code));
-        }
-    }
-
-    #[test]
-    fn unrelated_provider_conflicts_keep_the_existing_error_mapping() {
-        let response = management_error(ManagementError::Provider(
-            crate::providers::ProviderError::Rejected {
-                status: 409,
-                code: "another_provider_failure".into(),
-            },
-        ));
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-    }
-}
+#[path = "management_response_tests.rs"]
+mod tests;
 
 #[cfg(test)]
 mod telemetry_tests {

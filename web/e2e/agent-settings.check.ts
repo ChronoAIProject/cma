@@ -154,6 +154,78 @@ test('LOCAL composer settings and message feedback remain usable across screen s
   expect(boundary.errors).toEqual([]);
 });
 
+test('LOCAL choosing the checked model preserves reasoning effort through a settings refresh', async ({
+  page,
+  baseURL,
+}) => {
+  const boundary = new LocalStartup();
+  await boundary.route(page, baseURL!);
+  await page.route('**/api/v1/agents/agt_contract/models', (route) =>
+    route.fulfill({
+      json: {
+        models: [
+          { id: 'gpt-6', label: 'GPT-6', available: true },
+          { id: 'fast', label: 'Fast model', available: true },
+        ],
+      },
+    }),
+  );
+  const settings = {
+    model: 'gpt-6',
+    reasoning_effort: 'high',
+    permission_mode: 'autonomous',
+  };
+  let reads = 0;
+  let refreshRequested = false;
+  let releaseRefresh!: () => void;
+  const refresh = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  await page.route('**/api/agent-manager/v1/agents/agt_contract/settings', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    if (refreshRequested) {
+      reads += 1;
+      await refresh;
+      return route.fulfill({ json: { ...settings, permission_mode: 'guarded' } });
+    }
+    return route.fulfill({ json: settings });
+  });
+  await page.goto('/agents/agt_contract');
+  const composer = page.getByRole('form', { name: 'Message Agent' });
+  await composer.getByRole('button', { name: /^Agent settings:/ }).click();
+  const chip = composer.getByRole('button', { name: /^Model and reasoning effort/ });
+  await expect(chip).toHaveText('GPT-6 High');
+  await chip.click();
+  const card = page.getByRole('dialog', { name: 'Model and reasoning effort' });
+  const model = card.getByRole('button', { name: 'Model', exact: true });
+  const effort = card.getByRole('slider', { name: 'Reasoning effort' });
+  const menu = page.getByRole('menu', { name: 'Model', exact: true });
+  await model.click();
+  const selected = menu.getByRole('menuitemradio', { name: 'GPT-6', exact: true });
+  await expect(selected).toHaveAttribute('aria-checked', 'true');
+  try {
+    refreshRequested = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect.poll(() => reads).toBe(1);
+    await selected.click();
+    await expect(model).toHaveAttribute('aria-expanded', 'false');
+  } finally {
+    releaseRefresh();
+  }
+  const apply = composer.getByRole('button', { name: 'Apply settings' });
+  await expect(composer.getByRole('button', { name: 'Permission mode' })).toHaveText('Guarded');
+  await expect(chip).toHaveText('GPT-6 High');
+  await expect(apply).toHaveCount(0);
+  await model.click();
+  await menu.getByRole('menuitemradio', { name: 'Fast model', exact: true }).click();
+  await expect(chip).toHaveText('Fast model High');
+  await effort.press('ArrowLeft');
+  await expect(chip).toHaveText('Fast model Medium');
+  await expect(apply).toBeEnabled();
+  expect(boundary.writes).toEqual([]);
+  expect(boundary.unexpected).toEqual([]);
+});
+
 test('LOCAL composer settings apply only after a confirmed runtime response and replay an uncertain command', async ({
   page,
   baseURL,
@@ -377,3 +449,52 @@ test('LOCAL composer and Details use model and skill catalogs in responsive cont
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.errors).toEqual([]);
 });
+
+for (const colorScheme of ['dark', 'light'] as const) {
+  test(`LOCAL prompt action explains unsupported runtime before opening an editor in ${colorScheme}`, async ({
+    page,
+    baseURL,
+  }, info) => {
+    const boundary = new LocalStartup();
+    await boundary.route(page, baseURL!);
+    await page.emulateMedia({ colorScheme });
+    await page.addInitScript((theme) => localStorage.setItem('cma:appearance', theme), colorScheme);
+    let supported = false;
+    let reads = 0;
+    const writes: string[] = [];
+    await page.route('**/api/v1/agents/agt_contract/preferences', (route) => {
+      if (route.request().method() !== 'GET') {
+        writes.push(route.request().method());
+        return route.abort();
+      }
+      reads += 1;
+      return route.fulfill({
+        json: {
+          revision: 0,
+          system_prompt: 'Synthetic instructions',
+          prompt_pending: false,
+          prompt_supported: supported,
+        },
+      });
+    });
+    await page.goto('/agents/agt_contract');
+    const more = page.getByRole('button', { name: 'More Agent actions', exact: true });
+    await more.click();
+    const prompt = page.getByRole('menuitem', { name: /^Update system prompt/ });
+    await expect(prompt).toContainText('This runtime does not support system prompt updates.');
+    await expect(prompt).toHaveAttribute('aria-disabled', 'true');
+    await prompt.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog', { name: 'Update system prompt' })).toHaveCount(0);
+    expect(reads).toBe(1);
+    expect(writes).toEqual([]);
+    await capture(page, info, `prompt-unsupported-${colorScheme}`, page.getByRole('menu'));
+    await page.keyboard.press('Escape');
+    supported = true;
+    await more.click();
+    await expect(prompt).toHaveAttribute('aria-disabled', 'false');
+    await prompt.click();
+    await expect(page.getByRole('textbox', { name: 'Agent system prompt' })).toBeEditable();
+    expect(writes).toEqual([]);
+  });
+}

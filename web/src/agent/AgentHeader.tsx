@@ -18,7 +18,7 @@ import {
 } from '../ui/icons';
 import './AgentHeader.css';
 import { SETUP_ENVIRONMENT_NOTICE } from './setupEnvironment';
-import { OPEN_SANDBOX_TO_RESUME } from '../shell/treeActions';
+import { OPEN_RUNTIME_UPDATE, OPEN_SANDBOX_TO_RESUME } from '../shell/treeActions';
 
 export const AGENT_DETAILS = 'agent-details';
 
@@ -35,6 +35,7 @@ export function AgentHeader({
   onDetailsOpenChange,
   menu = [],
   onMenuSelect,
+  onActionsOpenChange,
   moreActions = [],
   onMoreAction,
   filesOpen = false,
@@ -57,6 +58,7 @@ export function AgentHeader({
   readonly onDetailsOpenChange: (open: boolean) => void;
   readonly menu?: readonly MenuEntry[];
   readonly onMenuSelect?: (id: string) => void;
+  readonly onActionsOpenChange?: (open: boolean) => void;
   readonly moreActions?: readonly MenuEntry[];
   readonly onMoreAction?: (id: string) => void;
   readonly sandbox?: ReactNode;
@@ -70,16 +72,22 @@ export function AgentHeader({
   const acceptance = status === 'ready' ? acceptanceForTurn(taskAcceptance, turnId) : undefined;
   const acceptanceLabel = taskAcceptanceLabel(acceptance);
   const acceptanceReason = taskAcceptanceReason(acceptance);
-  const [open, setOpen] = useState(false);
+  const [open, setMenuOpen] = useState(false);
+  const setOpen = (value: boolean) => {
+    setMenuOpen(value);
+    onActionsOpenChange?.(value);
+  };
   const sidebar = useContext(SidebarContext);
   const remove = moreActions.find((item) => item.id === 'delete_agent');
+  const removeEnvironment = moreActions.find((item) => item.id === 'delete_sandbox');
   const stop = moreActions.find((item) => item.id === 'stop_agent' && !('type' in item));
   const resume = moreActions.find((item) => item.id === OPEN_SANDBOX_TO_RESUME);
+  const runtimeUpdate = moreActions.find((item) => item.id === OPEN_RUNTIME_UPDATE);
   const action = (id: string, label: string, reason: string): MenuEntry => {
     const item = [...menu, ...moreActions].find((item) => item.id === id && !('type' in item));
     return item ? { ...item, label } : { id, label, disabled: true, reason };
   };
-  const items: MenuEntry[] = [
+  const taskItems: MenuEntry[] = [
     action('rename-agent', 'Rename', 'Only the task owner can rename it.'),
     action(
       'update-prompt',
@@ -101,16 +109,22 @@ export function AgentHeader({
       ? [{ id: 'view_environment', label: 'Review environment', reason: SETUP_ENVIRONMENT_NOTICE }]
       : []),
     ...(resume ? [resume] : []),
+    ...(runtimeUpdate ? [runtimeUpdate] : []),
     {
       id: 'deletion-status',
       label: 'View deletion status',
       disabled: !onViewDeletionStatus,
       reason: !onViewDeletionStatus ? 'No deletion is in progress.' : undefined,
     },
-    ...(stop || remove ? [{ type: 'separator', id: 'before-delete' } as const] : []),
+    ...(stop || remove || removeEnvironment
+      ? [{ type: 'separator', id: 'before-delete' } as const]
+      : []),
     ...(stop ? [stop] : []),
     ...(remove && !('type' in remove) ? [{ ...remove, label: 'Delete task', danger: true }] : []),
+    ...(removeEnvironment ? [removeEnvironment] : []),
   ];
+  const taskItemIds = new Set(taskItems.map(({ id }) => id));
+  const suppliedItems = menu.filter(({ id }) => !taskItemIds.has(id));
   return (
     <header className="agent-toolbar">
       <div className="agent-toolbar__identity">
@@ -165,8 +179,9 @@ export function AgentHeader({
         <Menu
           open={open}
           align="end"
+          placement="agent-toolbar__menu"
           label="More Agent actions"
-          items={items}
+          items={[...suppliedItems, ...taskItems]}
           anchor={
             <Button
               size="sm"
@@ -186,12 +201,19 @@ export function AgentHeader({
             else if (
               id === 'stop_agent' ||
               id === 'delete_agent' ||
+              id === 'delete_sandbox' ||
               id === OPEN_SANDBOX_TO_RESUME ||
+              id === OPEN_RUNTIME_UPDATE ||
               id === 'export_history' ||
               id === 'export_retained_conversation'
             )
               onMoreAction?.(id);
-            else onMenuSelect?.(id);
+            else {
+              const item = suppliedItems.find((entry) => entry.id === id);
+              if (item && !('type' in item) && item.href !== undefined)
+                window.location.assign(item.href);
+              else onMenuSelect?.(id);
+            }
           }}
         />
       </div>

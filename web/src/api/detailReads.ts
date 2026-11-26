@@ -12,25 +12,27 @@ export function coalesceDetailReads(client: CmaWebClient) {
   const controllers = new Set<AbortController>();
   const wrap = <T>(read: (id: string, options?: ReadOptions) => Promise<T>) => {
     const pending = new Map<
-      string,
+      string | symbol,
       { controller: AbortController; result: Promise<T>; subscribers: number }
     >();
     return (id: string, options?: ReadOptions): Promise<T> => {
       const signal = options?.signal;
       if (signal?.aborted) return Promise.reject(signal.reason);
-      let entry = pending.get(id);
+      // Bounds/cache options belong to this caller; only plain detail reads coalesce.
+      const key = Object.keys(options ?? {}).some((field) => field !== 'signal') ? Symbol(id) : id;
+      let entry = pending.get(key);
       if (!entry) {
         const controller = new AbortController();
         controllers.add(controller);
         const result = Promise.resolve().then(() => {
           controller.signal.throwIfAborted();
-          return read(id, { signal: controller.signal });
+          return read(id, { ...options, signal: controller.signal });
         });
         entry = { controller, result, subscribers: 0 };
-        pending.set(id, entry);
+        pending.set(key, entry);
         const settled = entry;
         const clear = () => {
-          if (pending.get(id) === settled) pending.delete(id);
+          if (pending.get(key) === settled) pending.delete(key);
           controllers.delete(controller);
         };
         void result.then(clear, clear);
@@ -46,7 +48,7 @@ export function coalesceDetailReads(client: CmaWebClient) {
           shared.controller.signal.removeEventListener('abort', abort);
           shared.subscribers -= 1;
           if (!shared.subscribers) {
-            if (pending.get(id) === shared) pending.delete(id);
+            if (pending.get(key) === shared) pending.delete(key);
             shared.controller.abort();
           }
           complete();

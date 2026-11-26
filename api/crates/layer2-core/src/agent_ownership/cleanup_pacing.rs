@@ -69,11 +69,11 @@ impl CleanupPacing {
         }
     }
 
-    fn begin<'a>(&'a self, authority: &Authority) -> Option<Attempt<'a>> {
+    pub(super) fn begin<'a>(&'a self, authority: &'a Authority) -> Option<Attempt<'a>> {
         if !self.enabled {
             return Some(Attempt {
                 pacing: None,
-                token: authority.token.clone(),
+                authority,
                 binding: None,
                 acknowledged: false,
             });
@@ -100,13 +100,13 @@ impl CleanupPacing {
         state.active.insert(id.clone(), authority.token.clone());
         Some(Attempt {
             pacing: Some(self),
-            token: authority.token.clone(),
+            authority,
             binding: binding.map(|(binding, _)| binding),
             acknowledged: false,
         })
     }
 
-    fn deferred(&self, id: &AgentId) -> bool {
+    pub(super) fn deferred(&self, id: &AgentId) -> bool {
         if !self.enabled {
             return false;
         }
@@ -152,15 +152,15 @@ impl CleanupPacing {
     }
 }
 
-struct Attempt<'a> {
+pub(super) struct Attempt<'a> {
     pacing: Option<&'a CleanupPacing>,
-    token: OwnershipToken,
+    authority: &'a Authority,
     binding: Option<[u8; 32]>,
     acknowledged: bool,
 }
 
 impl Attempt<'_> {
-    fn confirmed(&mut self) {
+    pub(super) fn confirmed(&mut self) {
         self.acknowledged = true;
     }
 }
@@ -171,13 +171,14 @@ impl Drop for Attempt<'_> {
             return;
         };
         let mut state = pacing.state.lock().unwrap();
-        let id = &self.token.agent_id;
+        let token = &self.authority.token;
+        let id = &token.agent_id;
         state.active.remove(id);
         if self.acknowledged {
             if state
                 .bindings
                 .get(id)
-                .is_none_or(|episode| self.token.epoch >= episode.epoch)
+                .is_none_or(|episode| token.epoch >= episode.epoch)
             {
                 state.schedule.recovered(id);
                 state.bindings.remove(id);
@@ -189,10 +190,10 @@ impl Drop for Attempt<'_> {
             state
                 .bindings
                 .entry(id.clone())
-                .and_modify(|episode| episode.epoch = episode.epoch.max(self.token.epoch))
+                .and_modify(|episode| episode.epoch = episode.epoch.max(token.epoch))
                 .or_insert(Episode {
                     binding,
-                    epoch: self.token.epoch,
+                    epoch: token.epoch,
                 });
             let keys: Vec<_> = state.bindings.keys().cloned().collect();
             for key in keys {
@@ -200,16 +201,18 @@ impl Drop for Attempt<'_> {
                     state.bindings.remove(&key);
                 }
             }
-            // No identity, payload or error text enters this operational signal.
+            // Keep the existing pacing signal joinable without recording payloads.
             if failures >= 10 {
-                use sha2::{Digest, Sha256};
-                let agent_hash = format!("{:x}", Sha256::digest(id.as_str().as_bytes()));
-                let root = tracing::warn_span!(target: "ownership_cleanup_pacing", parent: None, "ownership_cleanup");
-                if !root.is_disabled() {
-                    let _entered = root.enter();
-                    tracing::warn!(target: "ownership_cleanup_pacing", parent: None, %agent_hash, failures, retry_after_ms = delay.as_millis() as u64,
+                drop(state);
+                let fields = self.authority.receiver_correlation();
+                super::receiver_diagnostics::with_root(|| {
+                    tracing::warn!(target: super::receiver_diagnostics::TARGET, parent: None,
+                        agent_sha256 = %fields.agent_sha256, sandbox_sha256 = fields.sandbox_sha256.as_deref(),
+                        instance_sha256 = %fields.instance_sha256, receiver_sha256 = fields.receiver_sha256.as_deref(),
+                        epoch = token.epoch, stage = "cleanup_pacing", reason = "unconfirmed",
+                        failures, retry_after_ms = delay.as_millis() as u64,
                         intervention_required = true, "Ownership receiver cleanup still requires confirmation");
-                }
+                });
             }
         }
     }
@@ -249,6 +252,12 @@ impl OwnershipCoordinator {
         &self,
         authority: &Arc<Authority>,
     ) -> Result<bool, OwnershipError> {
+        if self.contains_failures() {
+            return self
+                .retirement_background(authority)
+                .await
+                .map(|result| result.is_some());
+        }
         let Some(mut attempt) = self.cleanup_pacing.begin(authority) else {
             return Ok(false);
         };

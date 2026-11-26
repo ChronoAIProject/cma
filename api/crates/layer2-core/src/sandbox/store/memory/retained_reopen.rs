@@ -114,21 +114,31 @@ pub(super) fn admit(
     request: RetainedReopenRequest,
 ) -> Result<RetainedReopenAccepted, SandboxStoreError> {
     let id = &request.snapshot.retained.sandbox.id;
-    if state
+    let parent = state
         .sandboxes
         .get(id)
-        .is_none_or(|s| s.owner != request.snapshot.retained.sandbox.owner)
-    {
-        return Err(SandboxStoreError::NotFound);
-    }
-    if let Some(receipt) = state.retained_reopen_receipts.get(id) {
-        if receipt.key_sha256 != request.key_sha256
-            || receipt.expected_revision != request.snapshot.retained.sandbox.revision
-            || receipt.owner != request.snapshot.retained.sandbox.owner
+        .filter(|parent| parent.owner == request.snapshot.retained.sandbox.owner)
+        .ok_or(SandboxStoreError::NotFound)?;
+    if let Some(receipts) = state.retained_reopen_receipts.get(id) {
+        if let Some(receipt) = receipts
+            .iter()
+            .find(|receipt| receipt.key_sha256 == request.key_sha256)
         {
+            if receipt.expected_revision != request.snapshot.retained.sandbox.revision
+                || receipt.owner != parent.owner
+            {
+                return Err(SandboxStoreError::Conflict);
+            }
+            return Ok(receipt.accepted.clone());
+        }
+        if receipts.last().is_some_and(|latest| {
+            !request.repeat_authorized
+                || parent.status != crate::sandbox::SandboxStatus::Failed
+                || parent.revision <= latest.accepted.revision
+                || parent.revision != request.snapshot.retained.sandbox.revision
+        }) {
             return Err(SandboxStoreError::Conflict);
         }
-        return Ok(receipt.accepted.clone());
     }
     let current = snapshot(state, id)?;
     let (next, receipt, event) = apply_retained_reopen(&current, &request)?;
@@ -136,7 +146,9 @@ pub(super) fn admit(
     candidate.sandboxes.insert(id.clone(), next);
     candidate
         .retained_reopen_receipts
-        .insert(id.clone(), receipt.clone());
+        .entry(id.clone())
+        .or_default()
+        .push(receipt.clone());
     append_sandbox_event(&mut candidate, id, request.requested_at, event)?;
     *state = candidate;
     Ok(receipt.accepted)

@@ -144,6 +144,7 @@ impl SourceChanges for RecordingSources {
                     topic_creation,
                     message_events,
                     channel_posts,
+                    member_join_chat_ids,
                     bot_id,
                     bot_username,
                     admission,
@@ -152,6 +153,7 @@ impl SourceChanges for RecordingSources {
                     topic_creation,
                     message_events,
                     channel_posts,
+                    member_join_chat_ids: member_join_chat_ids.unwrap_or_default(),
                     bot_id,
                     bot_username,
                     admission,
@@ -182,6 +184,7 @@ impl SourceChanges for RecordingSources {
                     verify_raw_event,
                     lark_message_effects,
                     lark_resources,
+                    member_join_chat_ids,
                     admission,
                 } => Source::NyxidRelay {
                     jwks_url: format!("{issuer}/jwks"),
@@ -195,6 +198,7 @@ impl SourceChanges for RecordingSources {
                     verify_raw_event,
                     lark_message_effects,
                     lark_resources,
+                    member_join_chat_ids: member_join_chat_ids.unwrap_or_default(),
                     admission,
                 },
                 SourceRequest::Custom {

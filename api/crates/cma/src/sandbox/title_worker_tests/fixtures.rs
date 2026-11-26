@@ -1,6 +1,44 @@
 use super::*;
+use crate::sandbox::title_scheduler::AgentTitleScheduler;
+use crate::store::request_limits::MongoRequestLimits;
 
-pub(super) fn sandbox() -> Sandbox {
+pub(crate) fn scheduled_title_fixture() -> (Sandbox, Agent) {
+    (sandbox(), agent())
+}
+
+pub(crate) fn start_title_scheduler(
+    service: Arc<AgentTitleService>,
+    store: Arc<dyn AgentLifecycleStore>,
+    sandbox: &Sandbox,
+    budget: Arc<MongoRequestLimits>,
+    origin: String,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    let credentials = Arc::new(Credentials(
+        Mutex::new(Some(CredentialMaterial {
+            source: Default::default(),
+            github_route: None,
+            sandbox_id: sandbox.id.clone(),
+            owner: sandbox.owner.clone(),
+            authority: sandbox.credential.current.clone().unwrap(),
+            value: SecretValue::new(KEY.into()),
+        })),
+        AtomicUsize::new(0),
+    ));
+    let worker = AgentTitleWorker::new(
+        service,
+        store,
+        credentials,
+        Arc::new(PlatformTitleEndpoint {
+            platform_base_url: origin,
+        }),
+        MODEL.into(),
+        budget,
+    );
+    AgentTitleScheduler::new(worker).spawn(shutdown)
+}
+
+pub(in crate::sandbox) fn sandbox() -> Sandbox {
     Sandbox {
         id: SandboxId("sbx_title".into()),
         owner: SubjectId::new("owner"),
@@ -71,7 +109,7 @@ pub(super) fn sandbox() -> Sandbox {
     }
 }
 
-pub(super) fn agent() -> Agent {
+pub(in crate::sandbox) fn agent() -> Agent {
     Agent {
         id: AgentId("agt_title".into()),
         worktree_id: WorktreeId("wkt_title".into()),
@@ -96,6 +134,7 @@ pub(super) fn agent() -> Agent {
         capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

@@ -201,3 +201,6 @@ async fn real_mongo_reserves_once_replays_and_reuses_expired_keys() {
         .await;
     database.drop().await.unwrap();
 }
+
+#[path = "operation_tests/independent_claim_owner.rs"]
+mod independent_claim_owner;

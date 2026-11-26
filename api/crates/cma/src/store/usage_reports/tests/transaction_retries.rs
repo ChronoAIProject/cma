@@ -96,8 +96,7 @@ impl Fixture {
         }));
         let client = Client::with_options(options).unwrap();
         let mut store = (*successor).clone();
-        store.db = client.database(successor.db.name());
-        store.client = client;
+        store.persistence = store.persistence.with_client(client);
         Self {
             store: Arc::new(store),
             successor,
@@ -427,3 +426,6 @@ async fn admission_retry_reuses_committed_identity_before_charging_budget() {
     );
     f.store.db.drop().await.unwrap();
 }
+
+#[path = "projection_replay_tests.rs"]
+mod projection_replay;

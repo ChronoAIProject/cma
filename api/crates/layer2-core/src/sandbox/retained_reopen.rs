@@ -204,6 +204,7 @@ pub struct RetainedReopenRequest {
     pub proof: RetainedReopenProof,
     pub key_sha256: String,
     pub requested_at: String,
+    pub repeat_authorized: bool,
 }
 
 /// Immutable accepted response, independent of subsequent lifecycle progress.
@@ -220,6 +221,14 @@ pub struct RetainedReopenReplay {
     pub expected_revision: u64,
     pub key_sha256: String,
     pub accepted: RetainedReopenAccepted,
+}
+
+#[derive(Default)]
+pub struct RetainedReopenHistory {
+    /// Present only when the parent and receipt lookup used one durable snapshot.
+    pub observed_parent: Option<(crate::SubjectId, u64)>,
+    pub latest_revision: Option<u64>,
+    pub replay: Option<RetainedReopenReplay>,
 }
 
 /// Stored outside the serialized Sandbox record. Old readers ignore this receipt;

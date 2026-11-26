@@ -101,6 +101,110 @@ fn runtime_resume_does_not_add_updates_for_loss_custom_images_or_current_version
 }
 
 #[test]
+fn cold_canary_keeps_its_exact_runtime_across_daily_updates_and_revive() {
+    use super::custom_runtime::test_support::{finish, image, pause, provision};
+
+    for (digit, desktop) in [('a', "0"), ('b', "1")] {
+        let mut sandbox = native();
+        let pinned = image(digit);
+        sandbox.origin = SandboxOrigin::Lifecycle {
+            operation_id: format!("canary-fixture-{digit}"),
+        };
+        sandbox.profile.revision = 1;
+        sandbox.profile.content.runtime_image = Some(pinned.clone());
+        sandbox.profile.digest = crate::profiles::content_digest(&sandbox.profile.content).unwrap();
+        sandbox.runtime.as_mut().unwrap().runtime_version = pinned.clone();
+
+        let home = sandbox.lifecycle.home.as_mut().unwrap();
+        let native_pool = home.native_pool.as_mut().unwrap();
+        native_pool.request.pool.spec.cold_canary = true;
+        native_pool.request.pool.spec.image.uri = pinned.clone();
+        native_pool
+            .request
+            .pool
+            .spec
+            .image
+            .labels
+            .insert("dev.chrono.cma.runtime-desktop".into(), desktop.into());
+        native_pool.claim.as_mut().unwrap().request = native_pool.request.clone();
+        home.receipt
+            .as_mut()
+            .unwrap()
+            .native_authority
+            .as_mut()
+            .unwrap()
+            .claim = native_pool.claim.clone().unwrap();
+        sandbox.validate().unwrap();
+        assert!(!sandbox.has_managed_runtime_image());
+
+        let original = sandbox.clone();
+        for (target, at) in [
+            (image('c'), "2026-10-19T06:00:00Z"),
+            (pinned.clone(), "2026-10-19T18:00:00Z"),
+            (pinned.clone(), "2026-10-20T18:00:00Z"),
+            (image('d'), "2026-10-21T18:00:00Z"),
+            (image('d'), "2026-10-22T18:00:00Z"),
+        ] {
+            assert!(!sandbox.check_daily_runtime_update(&target, at).unwrap());
+            assert_eq!(sandbox, original);
+        }
+
+        pause(&mut sandbox);
+        let paused = sandbox.clone();
+        let newer = image('d');
+        assert!(!sandbox
+            .check_daily_runtime_update(&newer, "2026-10-23T18:00:00Z")
+            .unwrap());
+        assert_eq!(sandbox, paused);
+
+        // Both the manual and ordinary child-admission paths may observe a
+        // newer global release. Neither may turn a cold canary into a managed home.
+        for cause in [
+            SandboxReviveCause::ExplicitRequest,
+            SandboxReviveCause::AgentCreation,
+        ] {
+            let mut resumed = paused.clone();
+            if cause == SandboxReviveCause::ExplicitRequest {
+                resumed
+                    .begin_revive_with_managed_runtime(cause, Some(&newer), NOW.into())
+                    .unwrap();
+            } else {
+                assert_eq!(
+                    resumed
+                        .record_creation_admission_with_managed_runtime(
+                            cause,
+                            Some(&newer),
+                            NOW.into(),
+                        )
+                        .unwrap(),
+                    Some(SandboxEventKind::StatusChanged {
+                        from: SandboxStatus::Paused,
+                        to: SandboxStatus::Reviving,
+                    }),
+                );
+            }
+            assert!(resumed.runtime_update_request().is_none());
+            assert_eq!(resumed.admitted_runtime_update_target(), None);
+            assert_eq!(
+                resumed.custom_runtime_image_for_binding().unwrap(),
+                Some(pinned.as_str())
+            );
+            provision(&mut resumed, digit);
+            finish(&mut resumed);
+            assert_eq!(resumed.status, SandboxStatus::Active);
+            assert_eq!(resumed.profile, original.profile);
+            assert_eq!(resumed.lifecycle.home, original.lifecycle.home);
+            assert_eq!(resumed.runtime.as_ref().unwrap().runtime_version, pinned);
+            assert_eq!(
+                resumed.runtime.as_ref().unwrap().runtime_id,
+                original.runtime.as_ref().unwrap().runtime_id
+            );
+            assert!(resumed.runtime_update_request().is_none());
+        }
+    }
+}
+
+#[test]
 fn runtime_resume_creation_uses_same_admission_and_leaves_active_work_unchanged() {
     let mut value = paused();
     let revision = value.revision;

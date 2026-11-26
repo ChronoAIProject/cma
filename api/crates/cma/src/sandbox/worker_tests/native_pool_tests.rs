@@ -15,6 +15,7 @@ pub(super) struct Pools {
     disk: Mutex<Option<HomeVolumeAttachment>>,
     failures: Mutex<VecDeque<&'static str>>,
     calls: Mutex<Vec<&'static str>>,
+    released_selections: Option<Mutex<Vec<String>>>,
     delay_claim: AtomicBool,
     delay_claim_reply: AtomicBool,
     pending_claim: AtomicBool,
@@ -57,6 +58,7 @@ impl Pools {
     pub(super) fn binding(home: &HomeVolumeRequest) -> NativePoolBinding {
         NativePoolBinding {
             spec: NativePoolSpec {
+                cold_canary: false,
                 image: layer3_adapter::RuntimeImage {
                     uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
                     labels: BTreeMap::from([
@@ -345,25 +347,29 @@ impl HostedBackend for Backend {
     }
     async fn select_native_pool(
         &self,
-        _: &layer3_adapter::provider::ProviderSandboxRequest,
-        _: &layer3_adapter::RuntimeImage,
+        request: &layer3_adapter::provider::ProviderSandboxRequest,
+        image: &layer3_adapter::RuntimeImage,
         home: &HomeVolumeRequest,
     ) -> layer3_adapter::Result<Option<NativePoolBinding>> {
         self.pools.lose("select")?;
-        Ok(Some(Pools::binding(home)))
+        let mut binding = Pools::binding(home);
+        if let Some(selections) = &self.pools.released_selections {
+            assert_eq!(request.image.uri, image.uri);
+            selections.lock().unwrap().push(image.uri.clone());
+            binding.spec.image = image.clone();
+        }
+        Ok(Some(binding))
     }
     async fn provision(
         &self,
         request: layer3_adapter::provider::ProviderSandboxRequest,
     ) -> layer3_adapter::Result<RuntimeHandle> {
         let home = self.pools.disk.lock().unwrap().clone().unwrap();
-        assert_eq!(
-            self.pools.home(&home.request).await.attachment().as_ref(),
-            Some(&home)
-        );
+        let reserved = self.pools.home(&home.request).await;
+        assert_eq!(reserved.attachment().as_ref(), Some(&home));
         assert_eq!(
             request.image.uri,
-            Pools::binding(&home.request).spec.image.uri
+            reserved.native_pool.unwrap().request.pool.spec.image.uri
         );
         self.backend.provision(request).await
     }
@@ -405,6 +411,20 @@ impl HostedBackend for Backend {
 }
 
 fn worker(harness: &Harness, pools: Arc<Pools>) -> Arc<SandboxWorker> {
+    let config = SandboxWorkerConfig::new(
+        "native-test",
+        "test",
+        runtime_image(),
+        harness.policy.clone(),
+    );
+    worker_with_config(harness, pools, config)
+}
+
+fn worker_with_config(
+    harness: &Harness,
+    pools: Arc<Pools>,
+    config: SandboxWorkerConfig,
+) -> Arc<SandboxWorker> {
     let adapter = Arc::new(
         CodexAdapter::with_backend(
             Backend {
@@ -430,13 +450,7 @@ fn worker(harness: &Harness, pools: Arc<Pools>) -> Arc<SandboxWorker> {
             updates: DurableAgentUpdateRecorder::new(harness.store.clone()),
             operations: AgentOperationService::new(harness.store.clone(), harness.registry.clone()),
         },
-        SandboxWorkerConfig::new(
-            "native-test",
-            "test",
-            runtime_image(),
-            harness.policy.clone(),
-        )
-        .with_home_policy(Some(home_tests::home_policy())),
+        config.with_home_policy(Some(home_tests::home_policy())),
     )
 }
 
@@ -447,6 +461,7 @@ pub(super) fn pools(harness: &Harness, failures: &[&'static str]) -> Arc<Pools> 
         disk: Mutex::new(None),
         failures: Mutex::new(failures.iter().copied().collect()),
         calls: Mutex::new(vec![]),
+        released_selections: None,
         delay_claim: AtomicBool::new(false),
         delay_claim_reply: AtomicBool::new(false),
         pending_claim: AtomicBool::new(false),
@@ -474,3 +489,6 @@ mod assignment;
 
 #[path = "native_claim_cadence_tests.rs"]
 mod cadence;
+
+#[path = "native_pool_release_admission_tests.rs"]
+mod release_admission;

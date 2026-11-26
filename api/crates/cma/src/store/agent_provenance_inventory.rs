@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::time::Duration;
 
 use layer2_core::resource_access::{ResourceAccessStoreError, ResourceOwner};
@@ -42,7 +43,7 @@ impl AgentProvenanceInventoryStore for MongoSandboxStore {
                 .await
                 .map_err(|_| unavailable())?;
             let result = scan(self, scope, query, page, &mut session).await;
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             match result {
                 Ok(rows) => return Ok(rows),
                 Err(ReadError::Driver(error)) if is_transient(&error) => continue,
@@ -94,7 +95,7 @@ impl AgentProvenanceInventoryStore for MongoSandboxStore {
                 Ok::<_, ReadError>(rows)
             }
             .await;
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             match result {
                 Ok(rows) => return Ok(rows),
                 Err(ReadError::Driver(error)) if is_transient(&error) => continue,

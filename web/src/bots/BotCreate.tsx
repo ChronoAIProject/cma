@@ -18,6 +18,7 @@ import type { SkillReference } from '../profiles/client';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { connectionTargetFrom } from './connectionTarget';
 import type { ConnectionTarget } from '../connections/client';
+import { useImageManagerAvailability } from '../services/ImageManagerRetirement';
 import {
   imageVisibilityLabel,
   listAgentImages,
@@ -56,9 +57,9 @@ export function BotCreate({
   readonly initialName?: string;
   readonly initialProfile?: CreationProfile;
 }) {
-  // The creation client remains in the boundary for historical setup links;
-  // new consumers use Image Manager and inline Agent configuration directly.
+  // Keep the creation client in the boundary for historical setup links.
   void _profiles;
+  const imageManager = useImageManagerAvailability();
   const [step, setStep] = useState(intent === undefined ? 0 : 3);
   const [name, setName] = useState(initialName);
   const [botId, setBotId] = useState('');
@@ -115,6 +116,7 @@ export function BotCreate({
     ack <= 60000;
   const ready = [validName && selected !== undefined && choices.fresh, true, validPolicy];
   useEffect(() => {
+    if (imageManager !== 'legacy') return;
     const request = new AbortController();
     void listAgentImages(request.signal)
       .then((catalogue) => {
@@ -132,7 +134,7 @@ export function BotCreate({
         if (!request.signal.aborted) setImagesLoading(false);
       });
     return () => request.abort();
-  }, []);
+  }, [imageManager]);
   useEffect(() => () => active.current?.abort(), []);
   useEffect(() => {
     heading.current?.focus();
@@ -271,37 +273,40 @@ export function BotCreate({
           )}
           {step !== 1 ? null : (
             <div className="agent-lifecycle-step">
-              <fieldset className="agent-lifecycle-choices">
-                <legend>Runtime image</legend>
-                <p className="profile-field__help">
-                  Image Manager provides private, shared and public images. The system default is
-                  always available.
-                </p>
-                {imagesLoading ? <p role="status">Loading images…</p> : null}
-                {imagesError ? (
-                  <p role="status">{imagesError} Using the system default image.</p>
-                ) : null}
-                {images.map((candidate) => (
-                  <label key={candidate.id} className="agent-lifecycle-choice">
-                    <input
-                      type="radio"
-                      name="consumer-image"
-                      value={candidate.id}
-                      checked={selectedImage === candidate.id}
-                      onChange={() => setSelectedImage(candidate.id)}
-                    />
-                    <span>
-                      <strong>{candidate.name}</strong>
-                      <small>
-                        {candidate.description ?? 'No description'}
-                        {candidate.id === SYSTEM_IMAGE.id
-                          ? ''
-                          : ` · ${imageVisibilityLabel(candidate.visibility)}`}
-                      </small>
-                    </span>
-                  </label>
-                ))}
-              </fieldset>
+              {imageManager !== 'retired' ? (
+                <fieldset className="agent-lifecycle-choices">
+                  <legend>Runtime image</legend>
+                  <p className="profile-field__help">
+                    Image Manager provides private, shared and public images. The system default is
+                    always available.
+                  </p>
+                  {imagesLoading ? <p role="status">Loading images…</p> : null}
+                  {imagesError ? (
+                    <p role="status">{imagesError} Using the system default image.</p>
+                  ) : null}
+                  {images.map((candidate) => (
+                    <label key={candidate.id} className="agent-lifecycle-choice">
+                      <input
+                        type="radio"
+                        name="consumer-image"
+                        value={candidate.id}
+                        checked={selectedImage === candidate.id}
+                        disabled={imageManager === 'loading'}
+                        onChange={() => setSelectedImage(candidate.id)}
+                      />
+                      <span>
+                        <strong>{candidate.name}</strong>
+                        <small>
+                          {candidate.description ?? 'No description'}
+                          {candidate.id === SYSTEM_IMAGE.id
+                            ? ''
+                            : ` · ${imageVisibilityLabel(candidate.visibility)}`}
+                        </small>
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
+              ) : null}
               <label className="bots__field">
                 GitHub repository workspace (optional)
                 <Input

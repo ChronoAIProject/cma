@@ -3,6 +3,7 @@ use super::*;
 use crate::store::sandbox_mongo::{
     commit_transaction, is_transient, start_transaction, CommitOutcome, TRANSACTION_ATTEMPTS,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::ClientSession;
 
 pub(super) enum Mutation<'a> {
@@ -105,7 +106,7 @@ impl MongoAuthStore {
             };
             match result {
                 Ok(false) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Ok(false);
                 }
                 Ok(true) => match commit_transaction(&mut session).await {
@@ -116,7 +117,7 @@ impl MongoAuthStore {
                     }
                 },
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     match error {
                         Failure::Driver(error) if is_transient(&error) => continue,
                         Failure::Driver(error) => return Err(unavailable(error)),

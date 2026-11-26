@@ -1,6 +1,6 @@
 use crate::store::agent_log_telemetry::ScanCaller;
 use futures_util::TryStreamExt;
-use layer2_core::sandbox::store::SandboxStoreError;
+use layer2_core::sandbox::store::{SandboxStore, SandboxStoreError};
 use layer2_core::sandbox::{
     apply_unpublished_runtime_recovery, AgentLogKind, Sandbox, SandboxEvent,
     SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoverySnapshot,
@@ -371,6 +371,16 @@ async fn apply_with_sources(
     })?;
     let mutation =
         apply_unpublished_runtime_recovery(&current, request).map_err(ApplyError::Domain)?;
+    if let Some(release) = &request.released_runtime {
+        let (lane, _) = store
+            .managed_runtime_for_release(&current.sandbox, release)
+            .filter(|(_, image)| *image == request.target_runtime_version)
+            .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
+        store
+            .fence_released_admission(release, lane, session)
+            .await
+            .map_err(ApplyError::Domain)?;
+    }
     validate_in_transaction(store, &current.sandbox.id, last_seq, session).await?;
     // Actual writes to every child serialize native proof with dispatch, cleanup,
     // Workspace setup and lifecycle publication. Preserve every child byte.

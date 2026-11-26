@@ -7,7 +7,7 @@ fn frozen_pre_backup_census_matches_the_previous_release_descriptor() {
         .copied()
         .filter(|(name, _)| pre_backup::COLLECTIONS.contains(name))
         .collect();
-    let names: Vec<_> = crate::store::isolation::COLLECTIONS
+    let names: Vec<_> = crate::store::retirement_archive::manifest_collections()
         .iter()
         .copied()
         .filter(|name| pre_backup::COLLECTIONS.contains(name))

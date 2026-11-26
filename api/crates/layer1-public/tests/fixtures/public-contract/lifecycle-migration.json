@@ -305,6 +305,164 @@
       "captures": {}
     },
     {
+      "id": "lifecycle-cancel-owner",
+      "operation": "POST /api/v1/agent-lifecycle/{id}/cancel",
+      "scenario": "lifecycle_contract_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-lifecycle/operation-contract/cancel",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "operation-contract",
+          "status": "failed",
+          "phase": "failed",
+          "events": [
+            {
+              "sequence": 2,
+              "phase": "sandbox_ready",
+              "status": "ready",
+              "message": "Sandbox ready",
+              "occurred_at": "2026-10-13T00:00:00Z"
+            }
+          ],
+          "error": "Creation cancelled before Sandbox allocation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-cancel-anonymous",
+      "operation": "POST /api/v1/agent-lifecycle/{id}/cancel",
+      "scenario": "lifecycle_contract_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-lifecycle/operation-contract/cancel",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-cancel-foreign",
+      "operation": "POST /api/v1/agent-lifecycle/{id}/cancel",
+      "scenario": "lifecycle_contract_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-lifecycle/operation-contract/cancel",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-lifecycle-operation-not-found",
+          "title": "agent lifecycle operation not found",
+          "status": 404,
+          "detail": "the Agent lifecycle operation does not exist",
+          "code": "not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-cancel-unavailable",
+      "operation": "POST /api/v1/agent-lifecycle/{id}/cancel",
+      "scenario": "lifecycle_contract_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-lifecycle/operation-contract/cancel",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-lifecycle-operation-unavailable",
+          "title": "agent lifecycle operation unavailable",
+          "status": 503,
+          "detail": "the Agent lifecycle operation store is unavailable",
+          "code": "temporarily_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-cancel-forbidden",
+      "operation": "POST /api/v1/agent-lifecycle/{id}/cancel",
+      "scenario": "lifecycle_contract_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-lifecycle/operation-contract/cancel",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-lifecycle-operation-forbidden",
+          "title": "agent lifecycle operation forbidden",
+          "status": 403,
+          "detail": "the authenticated caller cannot read this Agent lifecycle operation",
+          "code": "permission_denied"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-cancel-allocated",
+      "operation": "POST /api/v1/agent-lifecycle/{id}/cancel",
+      "scenario": "lifecycle_contract_allocated",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-lifecycle/operation-contract/cancel",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-lifecycle-operation-conflict",
+          "title": "agent lifecycle operation conflict",
+          "status": 409,
+          "detail": "Creation is already allocated",
+          "code": "creation_cancellation_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "consumer-connections-owner",
       "operation": "GET /api/v1/bots/connections",
       "scenario": "bot_contract_owner",

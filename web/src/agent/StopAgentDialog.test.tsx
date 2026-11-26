@@ -28,6 +28,9 @@ it('sends one request in StrictMode and waits for observed stopped status after 
     </StrictMode>,
   );
   expect(screen.getByRole('dialog', { name: 'Stop Agent' })).toBeVisible();
+  expect(screen.getByText(/Stopping this Agent ends its active work/)).toBeVisible();
+  expect(screen.getByText(/conversation history and Worktree are retained/)).toBeVisible();
+  expect(screen.getByText(/end only the current turn, use Stop response/)).toBeVisible();
   expect(stop).not.toHaveBeenCalled();
   await userEvent.dblClick(screen.getByRole('button', { name: 'Stop Agent' }));
   await waitFor(() => expect(stop).toHaveBeenCalledOnce());

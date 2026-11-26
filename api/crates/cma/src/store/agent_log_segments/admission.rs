@@ -50,7 +50,7 @@ pub(in crate::store) async fn apply_catalogue(
         .bindings
         .admit_agent(admission, scope.session())
         .await
-        .map_err(ApplyError::Domain)?;
+        .map_err(ApplyError::from)?;
     let persisted_launch = trigger_protocol::selected(store, admission, scope.session()).await?;
     let common_launch = persisted_launch
         .as_ref()
@@ -280,13 +280,12 @@ pub(in crate::store) async fn apply_catalogue(
         | AgentOrigin::WorkspaceProfile { .. } => SandboxReviveCause::AgentCreation,
         AgentOrigin::Trigger { .. } => SandboxReviveCause::TriggerLaunch,
     };
+    let destination = store
+        .managed_resume_destination(&sandbox, scope.session())
+        .await
+        .map_err(ApplyError::Domain)?;
     let revival = admission
-        .record_parent_admission(
-            &mut next_sandbox,
-            &workspace,
-            cause,
-            store.managed_runtime_version.as_deref(),
-        )
+        .record_parent_admission(&mut next_sandbox, &workspace, cause, destination.as_deref())
         .map_err(ApplyError::Domain)?;
     advance_workspace(store, &workspace, &next_workspace, scope.session()).await?;
     advance_sandbox(store, &sandbox, &next_sandbox, scope.session()).await?;

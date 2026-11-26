@@ -57,6 +57,7 @@ export class Journal {
   observe(path: string, method: string, status: number, body: unknown, subject: string) {
     if (status < 200 || status >= 300 || body === null || typeof body !== 'object') return;
     path = publicApiPath(path);
+    if (method === 'GET' && Array.isArray(body)) return;
     const row = object(body);
     if (path === '/api/v1/agents' && method === 'POST' && status === 202)
       this.own('agent-lifecycle', row.id, subject);
@@ -72,7 +73,7 @@ export class Journal {
       row.agent_id !== undefined
     )
       this.own('agents', row.agent_id, subject);
-    if (/^\/api\/v1\/triggers\/public\/[^/]+\/launches$/.test(path) && method === 'POST')
+    if (/^\/api\/v[12]\/triggers\/public\/[^/]+\/launches$/.test(path) && method === 'POST')
       this.own('launches', row.id, subject);
     const direct = path.match(
       /^\/api\/v1\/(sandboxes|agent-profiles|workspace-profiles|sandbox-profiles|triggers)$/,

@@ -6,16 +6,27 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("staging_cd_transport.sh")
-# Package fetches repeat transient mirror failures before publication gives up.
-UPDATE = ["apt-get -o Acquire::Retries=5 update -qq"]
-INSTALL = ["apt-get -o Acquire::Retries=5 install -y -qq skopeo libarchive-tools zstd"]
+# Package fetches repeat transient mirror failures, and every call is bounded
+# (request timeouts, dpkg lock wait, wall clock) before publication gives up.
+BOUNDED = ("apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 "
+           "-o DPkg::Lock::Timeout=60")
+UPDATE = [BOUNDED + " update -qq"]
+INSTALL = [BOUNDED + " install -y -qq skopeo libarchive-tools zstd"]
+# The runner's coreutils: `timeout` runs the bounded command, `sleep` waits between attempts.
+TIMEOUT = 'while [ $# -gt 0 ]; do case "$1" in --*) shift;; [0-9]*) shift; break;; *) break;; esac; done\nexec "$@"'
+SLEEP = 'exit 0'
 
 
 class TransportTests(unittest.TestCase):
-    def check_transport(self, component, skopeo=None, apt_status=0, *, zstd="exit 0", python="exit 0"):
+    def check_transport(self, component, skopeo=None, apt_status=0, *, zstd="exit 0", python="exit 0",
+                        fail_first=False):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            for name, script in {"sudo": f'echo "$*" >> "$CALLS"\nexit {apt_status}',
+            # fail_first: only the first apt call fails, as a dropped mirror connection would.
+            status = (f'[ -e "$CALLS.failed" ] && exit 0; touch "$CALLS.failed"; exit {apt_status}'
+                      if fail_first else f"exit {apt_status}")
+            for name, script in {"sudo": f'echo "$*" >> "$CALLS"\n{status}', "timeout": TIMEOUT, "sleep": SLEEP,
+                                 "touch": ': > "$1"',
                                  "skopeo": skopeo, "zstd": zstd, "python3": python}.items():
                 if script is not None:
                     path = root / name
@@ -42,5 +53,9 @@ class TransportTests(unittest.TestCase):
                 self.assertEqual(self.check_transport("web", 'echo "--preserve-digests"', **missing),
                                  (0, UPDATE + INSTALL))
 
-    def test_install_failure_stops_publication(self):
-        self.assertEqual(self.check_transport("web", apt_status=4), (4, UPDATE))
+    def test_install_failure_retries_once_then_stops_publication(self):
+        # A lasting failure is retried once, then stops with the named error.
+        self.assertEqual(self.check_transport("web", apt_status=4), (1, UPDATE + UPDATE))
+
+    def test_one_transient_apt_failure_is_repeated(self):
+        self.assertEqual(self.check_transport("am", apt_status=100, fail_first=True), (0, UPDATE + UPDATE + INSTALL))

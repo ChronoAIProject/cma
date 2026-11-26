@@ -119,8 +119,10 @@ async fn authorize(
             headers: &HeaderMap::new(),
             context,
             credential: None,
+            capture_write_target: false,
         })
         .await
+        .map(|_| ())
 }
 
 #[tokio::test]

@@ -18,6 +18,7 @@ export const ConfigurationSections = createContext<
   ((section: ConfigurationSection) => () => void) | undefined
 >(undefined);
 export const ConfigurationDepth = createContext(0);
+export const OpenProducerConfiguration = createContext<(() => void) | undefined>(undefined);
 
 export function useConfigurationSections() {
   const [sections, setSections] = useState<readonly ConfigurationSection[]>([]);

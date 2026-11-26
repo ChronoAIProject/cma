@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { Channel } from './ChannelEditor';
+import { ChannelEditor, type Channel } from './ChannelEditor';
 import { ChannelOutboundMessage } from './ChannelOutboundMessage';
+import { NodeInspector } from './NodeInspector';
 import { outboundStorageKey } from './outboundJournal';
 import { RelayCapabilitiesContext, type RelayDiscovery } from './RelayCapabilities';
 const channel = {
@@ -12,10 +13,18 @@ const channel = {
     sources: [{ type: 'nyxid_relay', platform: 'telegram', route_ids: ['saved-route'] }],
   },
 } as unknown as Channel;
-const capabilities = {
+const capabilities: RelayDiscovery = {
   status: 'ready',
-  authoring: { outbound_messages_writes_enabled: true },
-} as RelayDiscovery;
+  authoring: {
+    outbound_messages_writes_enabled: true,
+    dynamic_sources_writes_enabled: false,
+    relay_raw_verification_writes_enabled: false,
+    multi_consumer_writes_enabled: false,
+    native_bot_mentions_writes_enabled: false,
+    thread_contract_writes_enabled: false,
+    platforms: [{ id: 'telegram', label: 'Telegram', verification_modes: [] }],
+  },
+};
 const receipt = (status = 'prepared', delivery: unknown = null) => ({
   delivery_id: 'delivery',
   route_id: 'saved-route',
@@ -47,6 +56,9 @@ it('requires preparation and explicit send and shows the saved destination', asy
     .mockResolvedValueOnce(json(receipt('committed', { outcome: 'confirmed' })));
   vi.stubGlobal('fetch', fetch);
   const mounted = view();
+  expect(screen.getByRole('button', { name: 'Saved destination' })).toHaveTextContent(
+    'saved-route',
+  );
   fireEvent.change(screen.getByLabelText('Message text'), { target: { value: 'hello' } });
   fireEvent.click(screen.getByRole('button', { name: 'Review message' }));
   await screen.findByRole('button', { name: 'Send message' });
@@ -60,6 +72,51 @@ it('requires preparation and explicit send and shows the saved destination', asy
   expect(screen.getByText('The platform accepted the message.')).toBeVisible();
   expect(fetch).toHaveBeenCalledTimes(2);
 });
+
+it.each([{ routeIds: undefined }, { routeIds: ['', '  '] }])(
+  'offers route configuration when no saved destination exists ($routeIds)',
+  ({ routeIds }) => {
+    const fetcher = vi.fn();
+    vi.stubGlobal('fetch', fetcher);
+    const current: Channel = {
+      ...channel,
+      provider: { slug: 'cma_codex', level: 'l2' },
+      definition: {
+        name: 'Relay channel',
+        sources: [{ type: 'nyxid_relay', platform: 'telegram', route_ids: routeIds }],
+      },
+      endpoints: { custom_event_url: '', nyxid_callback_url: 'https://example.test/relay' },
+    };
+    const selection = { kind: 'producer', index: 0 } as const;
+    render(
+      <RelayCapabilitiesContext value={capabilities}>
+        <NodeInspector
+          channel={current}
+          id="relay-inspector"
+          selection={selection}
+          send={
+            <ChannelOutboundMessage
+              owner="alice"
+              channel={current}
+              selection={selection}
+              denied={vi.fn()}
+            />
+          }
+        >
+          <ChannelEditor channel={current} section={selection} onDone={vi.fn()} denied={vi.fn()} />
+        </NodeInspector>
+      </RelayCapabilitiesContext>,
+    );
+    expect(screen.getByText(/No saved destinations/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Saved destination' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Review message' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Configure routes' }));
+    expect(screen.getByRole('group', { name: 'NyxID connection' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Add Route IDs' })).toBeVisible();
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);
 
 it('shows the QA provider error through send, two status reads and remount with no extra sends', async () => {
   const failed = {
@@ -230,25 +287,37 @@ it('does not offer initiated sends without capability confirmation', () => {
   expect(screen.queryByRole('button', { name: 'Review message' })).not.toBeInTheDocument();
 });
 
-it('recovers an uncertain preparation after remount with its exact original key and body', async () => {
-  const fetch = vi
-    .fn<typeof globalThis.fetch>()
-    .mockRejectedValueOnce(new TypeError('lost'))
-    .mockResolvedValueOnce(json(receipt(), 201));
-  vi.stubGlobal('fetch', fetch);
-  const mounted = view();
-  fireEvent.change(screen.getByLabelText('Message text'), { target: { value: 'retained text' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Review message' }));
-  await screen.findByText('lost');
-  mounted.unmount();
-  view();
-  expect(fetch).toHaveBeenCalledTimes(1);
-  expect(screen.getByText('retained text')).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'Check saved request' }));
-  await screen.findByRole('button', { name: 'Send message' });
-  expect(fetch.mock.calls[1]?.[1]?.headers).toEqual(fetch.mock.calls[0]?.[1]?.headers);
-  expect(fetch.mock.calls[1]?.[1]?.body).toEqual(fetch.mock.calls[0]?.[1]?.body);
-});
+it.each([
+  ['retained', ['saved-route']],
+  ['removed', []],
+] as const)(
+  'recovers an uncertain preparation after remount with its exact original key and body when routes are %s',
+  async (_label, routeIds) => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockRejectedValueOnce(new TypeError('lost'))
+      .mockResolvedValueOnce(json(receipt(), 201));
+    vi.stubGlobal('fetch', fetch);
+    const mounted = view();
+    fireEvent.change(screen.getByLabelText('Message text'), { target: { value: 'retained text' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review message' }));
+    await screen.findByText('lost');
+    mounted.unmount();
+    view('alice', {
+      ...channel,
+      definition: {
+        ...channel.definition,
+        sources: [{ type: 'nyxid_relay', platform: 'telegram', route_ids: routeIds }],
+      },
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('retained text')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Check saved request' }));
+    await screen.findByRole('button', { name: 'Send message' });
+    expect(fetch.mock.calls[1]?.[1]?.headers).toEqual(fetch.mock.calls[0]?.[1]?.headers);
+    expect(fetch.mock.calls[1]?.[1]?.body).toEqual(fetch.mock.calls[0]?.[1]?.body);
+  },
+);
 it('isolates account and channel state and restores only the original owner slot', async () => {
   const fetch = vi.fn<typeof globalThis.fetch>().mockRejectedValue(new TypeError('lost'));
   vi.stubGlobal('fetch', fetch);

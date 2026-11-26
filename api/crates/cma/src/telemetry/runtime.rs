@@ -92,7 +92,7 @@ pub(super) fn initialize() {
     );
     metrics::describe_histogram!(
         "cma_mongo_checkout_wait_seconds",
-        "Successful checkout wait, classified by tracked occupancy at completion"
+        "Successful checkout wait, classified by tracked server-pool occupancy at completion"
     );
 }
 

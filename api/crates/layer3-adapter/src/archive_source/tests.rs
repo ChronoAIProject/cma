@@ -1,8 +1,10 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
-struct Temp(std::path::PathBuf);
+mod publication;
+mod sockets;
+pub(super) struct Temp(pub(super) std::path::PathBuf);
 impl Temp {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let root = std::fs::canonicalize(std::env::temp_dir())
             .unwrap()
             .join(format!("retirement-source-{}", uuid::Uuid::new_v4()));

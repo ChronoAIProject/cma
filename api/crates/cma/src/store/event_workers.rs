@@ -6,6 +6,7 @@ use super::{
         CommitOutcome,
     },
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use layer2_core::{
     bots::BotError,
@@ -135,7 +136,7 @@ impl EventWorkerProfileStore for MongoEventWorkerProfileStore {
             if previous.is_none_or(|previous| {
                 previous.source != value.source || previous.profiles != value.profiles
             }) {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(BotError::Conflict);
             }
             true
@@ -145,7 +146,7 @@ impl EventWorkerProfileStore for MongoEventWorkerProfileStore {
         if let Some(revision) = expected {
             let changed=self.records.replace_one(doc!{"_id":&value.id,"owner":value.owner.as_str(),"revision":i64::from(revision),"retired":false},row.clone()).session(&mut session).await.map_err(classify)?;
             if changed.matched_count != 1 {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(BotError::Conflict);
             }
         } else {
@@ -161,7 +162,7 @@ impl EventWorkerProfileStore for MongoEventWorkerProfileStore {
                 .await
                 .map_err(unavailable)?
             {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(BotError::Conflict);
             }
         }

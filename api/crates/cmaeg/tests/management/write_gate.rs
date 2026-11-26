@@ -209,10 +209,11 @@ fn seed(gateway: &Gateway, edit: impl FnOnce(&mut Value)) -> (String, String) {
     (channel_id.as_str().to_owned(), record_id)
 }
 
-/// A full PUT that repeats the seeded sources and changes `edit`.
-fn full_put(edit: impl FnOnce(&mut Value)) -> Value {
+/// A full PUT that carries forward the pinned profile and the seeded sources.
+fn full_put(profile: &Value, edit: impl FnOnce(&mut Value)) -> Value {
     let mut body = create_body();
     body.as_object_mut().unwrap().remove("credentials");
+    body["profile"] = profile.clone();
     body["sources"] = json!([
         relay_request("lark", "route-1"),
         relay_request("feishu", "route-2")
@@ -236,9 +237,10 @@ async fn an_old_clients_full_put_carries_an_extended_channel_through() {
     assert_eq!(read.status(), 200);
     let read: Value = read.json().await.unwrap();
     assert_eq!(read["definition"]["sources"].as_array().unwrap().len(), 2);
+    let profile = &read["definition"]["profile"];
 
     // Adding a third relay modifies the extension and gets the legacy error.
-    let third = full_put(|body| {
+    let third = full_put(profile, |body| {
         body["sources"]
             .as_array_mut()
             .unwrap()
@@ -248,7 +250,7 @@ async fn an_old_clients_full_put_carries_an_extended_channel_through() {
     assert_eq!(gateway.cma.records()[&record_id].version, 1);
 
     // Changing only the name carries the sources through with the flag off.
-    let renamed = full_put(|body| body["name"] = "renamed-bot".into());
+    let renamed = full_put(profile, |body| body["name"] = "renamed-bot".into());
     let response = gateway.update(&channel_id, &renamed).await;
     assert_eq!(response.status(), 200);
     let stored = gateway.cma.records()[&record_id].clone();

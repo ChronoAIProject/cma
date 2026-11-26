@@ -6,72 +6,7 @@ import { Operations } from './Operations';
 import { WarmPools } from './WarmPools';
 import { operatorClient, warmPool } from './testFixtures';
 
-/** The cell of `row` under the column headed `header`. */
-function cell(row: HTMLElement, header: string) {
-  const table = row.closest('table')!;
-  const index = within(table)
-    .getAllByRole('columnheader')
-    .findIndex((column) => column.textContent === header);
-  return within(row).getAllByRole('cell')[index]!;
-}
-
-describe('warm pool tables', () => {
-  it('names each column, draws the status badge and edits the target in its own cell', async () => {
-    render(<WarmPools client={operatorClient()} />);
-    const row = await screen.findByRole('row', { name: 'Warm pool 1000 millicores / 4096 MiB' });
-    const table = screen.getByRole('table', { name: 'Current runtime pools' });
-    expect(
-      within(table)
-        .getAllByRole('columnheader')
-        .map((column) => column.textContent),
-    ).toEqual(['Size', 'Status', 'Desired', 'Ready', 'Pending', 'Target', 'Actions']);
-    expect(within(cell(row, 'Status')).getByText('Pending').closest('.badge')).toHaveAttribute(
-      'data-tone',
-      'active',
-    );
-    expect(within(cell(row, 'Target')).getByLabelText('Ready Sandbox target')).toHaveValue(3);
-    expect(within(row).getByRole('button', { name: 'Disable pool' })).toBeEnabled();
-    // A settled, observed pool has nothing to say beneath its row.
-    expect(table.querySelector('.table__note')).toBeNull();
-    expect(screen.getAllByText(/Set a target to 0 to disable spare capacity/)).toHaveLength(1);
-  });
-
-  it('says what the controller has not confirmed in the pool’s note row', async () => {
-    const client = operatorClient();
-    client.admin.listWarmPools.mockResolvedValue({
-      items: [{ ...warmPool, observed: false, ready_replicas: null, status: 'unavailable' }],
-      default_cpu_millis: 1000,
-      default_memory_mib: 1024,
-      default_image: warmPool.image,
-      available: true,
-    });
-    render(<WarmPools client={client} />);
-    const row = await screen.findByRole('row', { name: /Warm pool/ });
-    expect(within(cell(row, 'Status')).getByText('Unavailable').closest('.badge')).toHaveAttribute(
-      'data-tone',
-      'warning',
-    );
-    const note = row.nextElementSibling!;
-    expect(note).toHaveClass('table__note');
-    expect(note).toHaveTextContent('Waiting for the controller to confirm current capacity.');
-  });
-
-  it('says an empty current runtime has no pools in the table, keeping its headers', async () => {
-    const client = operatorClient();
-    client.admin.listWarmPools.mockResolvedValue({
-      items: [],
-      default_cpu_millis: 1000,
-      default_memory_mib: 1024,
-      default_image: warmPool.image,
-      available: true,
-    });
-    render(<WarmPools client={client} />);
-    expect(
-      await screen.findByRole('cell', { name: /No warm pools configured for the current runtime/ }),
-    ).toBeVisible();
-    expect(screen.getAllByRole('columnheader')).toHaveLength(7);
-  });
-});
+import { cell } from './warmPoolTestHelpers';
 
 describe('native warm pool operations', () => {
   it('gates the view by platform configuration capability and revokes the form immediately', async () => {
@@ -180,6 +115,8 @@ describe('native warm pool operations', () => {
     const card = within(history).getByRole('row', { name: /Warm pool/ });
     expect(within(card).queryByRole('button', { name: 'Update target' })).not.toBeInTheDocument();
     await user.click(within(card).getByRole('button', { name: 'Disable pool' }));
+    expect(client.admin.resizeWarmPool).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Confirm disable' }));
     expect(client.admin.resizeWarmPool).toHaveBeenCalledWith('previous', {
       expected_revision: 1,
       target_replicas: 0,
@@ -369,6 +306,8 @@ describe('native warm pool operations', () => {
     const user = userEvent.setup();
     render(<WarmPools client={client} />);
     await user.click(await screen.findByRole('button', { name: 'Disable pool' }));
+    expect(client.admin.resizeWarmPool).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Confirm disable' }));
     await waitFor(() =>
       expect(client.admin.resizeWarmPool).toHaveBeenCalledWith('pool-1', {
         expected_revision: 1,
@@ -431,6 +370,8 @@ describe('native warm pool operations', () => {
     client.admin.resizeWarmPool.mockRejectedValue(new TypeError('Disconnected'));
     render(<WarmPools client={client} />);
     await user.click(await screen.findByRole('button', { name: 'Disable pool' }));
+    expect(client.admin.resizeWarmPool).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Confirm disable' }));
     await screen.findByText(/Read the current target before/);
     expect(screen.getByRole('row', { name: /Warm pool/ })).toHaveTextContent('Pending');
     expect(screen.getByRole('button', { name: 'Disable pool' })).toBeDisabled();
@@ -492,6 +433,8 @@ describe('native warm pool operations', () => {
     await screen.findByRole('row', { name: /Warm pool/ });
     await user.click(screen.getByRole('button', { name: 'Refresh pools' }));
     await user.click(screen.getByRole('button', { name: 'Disable pool' }));
+    expect(client.admin.resizeWarmPool).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Confirm disable' }));
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Disable pool' })).toBeDisabled(),
     );

@@ -190,7 +190,7 @@ impl ScheduledTitles {
                     .await
                     .map_err(|_| "title work timed out")?
                     .map(|_| TaskOutput::Complete)
-                    .map_err(|_| "title work failed")
+                    .map_err(failure_reason)
             });
             self.kinds.insert(task.id(), TaskKind::Agent(id));
         }
@@ -223,6 +223,20 @@ impl ScheduledTitles {
             Ok((_, Err(reason))) => tracing::warn!(reason, "agent title task deferred"),
             Err(_) => tracing::warn!("agent title task terminated unexpectedly"),
         }
+    }
+}
+
+/// A bounded, content-free class for the deferral log (#2266).
+fn failure_reason(error: AgentTitleServiceError) -> &'static str {
+    match error {
+        AgentTitleServiceError::InvalidHolder => "title work failed: invalid holder",
+        AgentTitleServiceError::InconsistentEvidence => "title work failed: inconsistent evidence",
+        AgentTitleServiceError::GenerationUnavailable => {
+            "title work failed: generation unavailable"
+        }
+        AgentTitleServiceError::EffectUnknown => "title work failed: provider effect unresolved",
+        AgentTitleServiceError::Budget(_) => "title work failed: budget refused",
+        AgentTitleServiceError::Store(_) => "title work failed: store unavailable",
     }
 }
 

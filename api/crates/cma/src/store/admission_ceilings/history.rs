@@ -98,7 +98,7 @@ impl MongoAdmissionCeilingsStore {
                     }
                 },
                 Err(ReadError::Census(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     match error {
                         super::super::pending_launch_homes::Error::Driver(error) => {
                             tracing::warn!(target: "cma::admission", error = %error, "pending home census unavailable")
@@ -115,14 +115,14 @@ impl MongoAdmissionCeilingsStore {
                         .unwrap_or(PendingHomesObservation::Unavailable));
                 }
                 Err(ReadError::Ordinary(ApplyError::Driver(error))) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if is_transient(&error) {
                         continue;
                     }
                     return Err(unavailable(&format!("read admission history: {error}")));
                 }
                 Err(ReadError::Ordinary(ApplyError::Domain(error))) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
             }

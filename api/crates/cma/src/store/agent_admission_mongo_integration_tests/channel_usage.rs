@@ -461,3 +461,6 @@ async fn channel_usage_inventory_reopens_filters_without_relabeling_and_refuses_
     );
     client.database(&database).drop().await.unwrap();
 }
+
+#[path = "channel_usage/uncertain_commit.rs"]
+mod uncertain_commit;

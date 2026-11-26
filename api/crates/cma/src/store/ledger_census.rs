@@ -88,6 +88,7 @@ pub(crate) async fn command(request: &Path, output: &Path) -> Result<()> {
         )
         .map_err(|_| INVALID)?;
         let mut options = ClientOptions::parse(uri).await.map_err(|_| INVALID)?;
+        super::transaction_barrier::bind(&mut options, &name);
         options.server_selection_timeout = Some(Duration::from_secs(5));
         options.connect_timeout = Some(Duration::from_secs(5));
         let client = Client::with_options(options).map_err(|_| INVALID)?;

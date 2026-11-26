@@ -12,10 +12,16 @@ use crate::store::{
     schema::{inspect_collection, Assessment, SchemaFinding},
 };
 
+#[derive(Default)]
+pub(super) struct PageIndexes {
+    pub(super) global: bool,
+    pub(super) audit: bool,
+}
+
 pub(super) async fn inspect(
     database: &Database,
     retention: Duration,
-) -> Result<Assessment<()>, SchemaFinding> {
+) -> Result<Assessment<PageIndexes>, SchemaFinding> {
     let mut assessment = Assessment::default();
     let Some(existing) = inspect_collection(database, super::ACTIVITY).await? else {
         assessment.findings.insert(SchemaFinding::MissingCollection);
@@ -35,6 +41,15 @@ pub(super) async fn inspect(
     if let Some(finding) = ttl_finding(&existing, retention) {
         assessment.findings.insert(finding);
     }
+    match migrations::activity_audit_index::ready(&existing) {
+        Ok(ready) => assessment.capability.audit = ready,
+        Err(_) => {
+            assessment
+                .findings
+                .insert(SchemaFinding::DefinitionMismatch);
+        }
+    }
+    assessment.capability.global = migrations::activity_page_index_ready(&existing);
     Ok(assessment)
 }
 

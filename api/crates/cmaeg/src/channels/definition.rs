@@ -14,6 +14,16 @@ use super::definition_sources::{build_secrets, build_sources, validate_credentia
 pub use super::requests::*;
 use super::write_gate::{self, WriteFlags};
 
+pub(super) fn project_default_profile(
+    definition: &mut ChannelDefinition,
+    view: cmaeg_core::channel::ProfileRevisionView<'_>,
+) {
+    definition.provider = view.provider.clone();
+    definition.profile_digest = view.profile_digest.to_owned();
+    definition.profile = view.profile;
+    definition.secrets.provider_credential = Some(view.credential.clone());
+}
+
 pub fn build_definition(
     request: &ChannelCreateRequest,
     owner: &str,
@@ -52,7 +62,7 @@ pub fn build_definition(
             binding_id,
             level,
         },
-        sources: build_sources(&request.sources)?,
+        sources: build_sources(&request.sources, None)?,
         connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
@@ -84,7 +94,7 @@ pub fn validate_create_request(request: &ChannelCreateRequest) -> Result<(), Val
     request.profile.validate().map_err(|error| {
         ValidationError::new(format!("/profile{}", error.pointer), error.message)
     })?;
-    build_sources(&request.sources)?;
+    build_sources(&request.sources, None)?;
     validate_credentials(&request.credentials)
 }
 
@@ -102,7 +112,7 @@ pub fn validate_update_request(request: &ChannelUpdateRequest) -> Result<(), Val
     request.profile.validate().map_err(|error| {
         ValidationError::new(format!("/profile{}", error.pointer), error.message)
     })?;
-    build_sources(&request.sources)?;
+    build_sources(&request.sources, None)?;
     if let Some(credentials) = &request.credentials {
         if let Some(agent_key) = &credentials.agent_key {
             if agent_key.as_str().is_empty() {
@@ -152,6 +162,19 @@ pub fn build_update(
             "organization ownership is immutable",
         ));
     }
+    if current.secrets.profile_revisions.is_some()
+        && (request.profile != current.profile
+            || request.partition != current.partition
+            || request
+                .credentials
+                .as_ref()
+                .is_some_and(|patch| patch.agent_key.is_some()))
+    {
+        return Err(ValidationError::new(
+            "/profile",
+            "use profile revision publication to change a retained worker profile",
+        ));
+    }
     let mut credentials = current.secrets.clone();
     if let Some(patch) = &request.credentials {
         if let Some(value) = &patch.native_lark {
@@ -189,7 +212,7 @@ pub fn build_update(
                 .collect();
         }
     }
-    let sources = build_sources(&request.sources)?;
+    let sources = build_sources(&request.sources, Some(current))?;
     if !sources.iter().any(|s| matches!(s, Source::NativeLark(_))) {
         credentials.native_lark = None;
     }

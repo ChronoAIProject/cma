@@ -202,3 +202,67 @@ async fn ledger_hold_keeps_legacy_floor_and_parks_only_maintenance() {
         assert_eq!(h.stored(&initial.id).await.work.attempts, 0);
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn startup_retry_keeps_its_delay_after_slow_parent_reads() {
+    for delay_seconds in [2, 61] {
+        let h = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+        let initial = ledger_hold_tests::prepare(&h, AgentWorkStep::OpenConversation).await;
+        let now = ledger_hold_tests::due(&initial);
+        let claimed = claim(&h, &initial, "slow-retry", now).await;
+        let store = lifecycle_failure_tests::fixture::Store::new(h.store.clone());
+        store.delay_read("get_sandbox", 1, Duration::from_secs(delay_seconds));
+        let mut config = AgentWorkerConfig::new("slow-retry", DEPLOYMENT_ID);
+        config.retry_delay = Duration::from_secs(1);
+        let worker = AgentWorker::new(
+            AgentWorkerDependencies {
+                store,
+                adapter: h.adapter.clone(),
+                skills: Arc::new(EmptyAgentSkillResolver),
+                registry: h.registry.clone(),
+                updates: h.updates.clone(),
+                operations: AgentOperationService::new(h.store.clone(), h.registry.clone()),
+            },
+            config,
+        );
+        let before = h.backend.requests().await.len();
+        let result = worker.handle_failure(claimed.clone(), failure(), now).await;
+        let stored = h.stored(&initial.id).await;
+        assert_eq!(h.backend.requests().await.len(), before);
+        if delay_seconds == 61 {
+            assert_eq!(result, Err(SandboxStoreError::Conflict));
+            assert_eq!(
+                stored, claimed,
+                "expired authority must not publish a retry"
+            );
+            continue;
+        }
+        result.unwrap();
+        assert_eq!(
+            stored.work.ready_at,
+            rfc3339_at(now + Duration::from_secs(3))
+        );
+        assert_eq!(stored.updated_at, rfc3339_at(now + Duration::from_secs(2)));
+        assert_eq!(stored.work.attempts, claimed.work.attempts + 1);
+        assert_eq!(stored.work.step, claimed.work.step);
+        assert_eq!(stored.work.receipts, claimed.work.receipts);
+        assert_eq!(stored.work.cleanup_debt, claimed.work.cleanup_debt);
+        assert_eq!(
+            stored.conversation.first_message,
+            claimed.conversation.first_message
+        );
+        assert!(stored.work.lease.is_none());
+        assert!(!worker
+            .run_one(&initial.id, now + Duration::from_secs(2))
+            .await
+            .unwrap());
+        assert!(worker
+            .run_one(&initial.id, now + Duration::from_secs(3))
+            .await
+            .unwrap());
+        assert_eq!(
+            h.stored(&initial.id).await.work.step,
+            AgentWorkStep::PublishReady
+        );
+    }
+}

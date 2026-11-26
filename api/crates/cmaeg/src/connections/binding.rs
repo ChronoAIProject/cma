@@ -6,6 +6,7 @@ use crate::{
         management::{ManagementError, ManagementState},
         ChannelCreateRequest, ChannelUpdateRequest, SourceRequest,
     },
+    records::CreateConnectionClaim,
 };
 use cmaeg_core::{
     channel::{AdmissionPolicy, ChannelDefinition, Secret, Source},
@@ -61,18 +62,19 @@ fn source(
         topic_creation: false,
         message_events: false,
         channel_posts: false,
+        member_join_chat_ids: None,
         bot_id: material.bot_id.clone(),
         bot_username: Some(material.username.clone()),
         admission: admission.ok_or_else(|| invalid("connection_admission is required"))?,
     })
 }
-pub async fn expand_create(
+pub(crate) async fn expand_create(
     state: &ManagementState,
     creator: &Creator,
     request: &mut ChannelCreateRequest,
-) -> Result<(), ManagementError> {
+) -> Result<Option<CreateConnectionClaim>, ManagementError> {
     let Some(id) = request.connection_ref.clone() else {
-        return Ok(());
+        return Ok(None);
     };
     if !request.sources.is_empty()
         || request.credentials.telegram_bot_token.is_some()
@@ -95,6 +97,9 @@ pub async fn expand_create(
     {
         return Err(invalid("connection is already bound to another channel"));
     }
+    if connection.channel_record.is_none() && !state.managed_telegram_setup_enabled {
+        return Err(invalid("managed_telegram_setup_disabled"));
+    }
     let material = connection.material.as_ref().ok_or_else(failed)?;
     request.sources = vec![source(material, request.connection_admission.clone())?];
     request.credentials.telegram_bot_token = Some(Secret::new(material.token.clone()));
@@ -111,12 +116,18 @@ pub async fn expand_create(
     }
     if connection.channel_record.is_none() {
         connection.channel_record = Some(record_id.to_string());
+        if state.records.channel_creates_fenced() {
+            return store(state)
+                .prepare_create_claim(connection, version)
+                .map(Some)
+                .map_err(error);
+        }
         store(state)
             .save_connection(&connection, Some(version))
             .await
             .map_err(error)?;
     }
-    Ok(())
+    Ok(None)
 }
 pub async fn expand_update(
     state: &ManagementState,
@@ -172,47 +183,57 @@ fn updated_source(
     if bot_id != &material.bot_id {
         return Err(invalid("managed connection bot identity changed"));
     }
-    let (topic_lifecycle, topic_creation, message_events, channel_posts, admission) =
-        match request.sources.as_slice() {
-            [] => (
+    let (
+        topic_lifecycle,
+        topic_creation,
+        message_events,
+        channel_posts,
+        member_join_chat_ids,
+        admission,
+    ) = match request.sources.as_slice() {
+        [] => (
+            *topic_lifecycle,
+            *topic_creation,
+            *message_events,
+            *channel_posts,
+            None,
+            admission.clone(),
+        ),
+        [SourceRequest::Telegram {
+            bot_id,
+            bot_username,
+            topic_lifecycle,
+            topic_creation,
+            message_events,
+            channel_posts,
+            member_join_chat_ids,
+            admission,
+        }] if bot_id == &material.bot_id
+            && bot_username
+                .as_ref()
+                .is_none_or(|name| name == &material.username) =>
+        {
+            (
                 *topic_lifecycle,
                 *topic_creation,
                 *message_events,
                 *channel_posts,
+                member_join_chat_ids.clone(),
                 admission.clone(),
-            ),
-            [SourceRequest::Telegram {
-                bot_id,
-                bot_username,
-                topic_lifecycle,
-                topic_creation,
-                message_events,
-                channel_posts,
-                admission,
-            }] if bot_id == &material.bot_id
-                && bot_username
-                    .as_ref()
-                    .is_none_or(|name| name == &material.username) =>
-            {
-                (
-                    *topic_lifecycle,
-                    *topic_creation,
-                    *message_events,
-                    *channel_posts,
-                    admission.clone(),
-                )
-            }
-            _ => {
-                return Err(invalid(
-                    "managed connection accepts only its original Telegram source",
-                ))
-            }
-        };
+            )
+        }
+        _ => {
+            return Err(invalid(
+                "managed connection accepts only its original Telegram source",
+            ))
+        }
+    };
     Ok(SourceRequest::Telegram {
         topic_lifecycle,
         topic_creation,
         message_events,
         channel_posts,
+        member_join_chat_ids,
         bot_id: material.bot_id.clone(),
         bot_username: Some(material.username.clone()),
         admission: request.connection_admission.clone().unwrap_or(admission),
@@ -326,33 +347,60 @@ pub(crate) async fn disconnect_custodied(
     definition: &ChannelDefinition,
     channel_id: &ChannelId,
 ) -> Result<(), CustodyError> {
+    disconnect_owned(state, definition, Some(channel_id)).await
+}
+
+pub(crate) async fn disconnect_owned(
+    state: &ManagementState,
+    definition: &ChannelDefinition,
+    channel_id: Option<&ChannelId>,
+) -> Result<(), CustodyError> {
     let Some(id) = definition.connection_ref.as_deref() else {
         return Ok(());
     };
-    let (mut record, version) = store(state).connection(id).await.map_err(error)?;
+    let (mut record, version) = match store(state).connection(id).await {
+        Ok(value) => value,
+        Err(Error::NotFound) if channel_id.is_none() => return Ok(()),
+        Err(value) => return Err(CustodyError::before_send(error(value))),
+    };
     if (record.organization
         != (definition.owner.kind == cmaeg_core::profile::NyxIdIdentityKind::Organization))
         || record.owner != definition.owner.subject
         || record.channel_record.as_deref() != Some(definition.record_id.as_str())
-        || record
+    {
+        return Err(CustodyError::before_send(ManagementError::NotFound));
+    }
+    if let Some(channel_id) = channel_id {
+        if record
             .channel_id
             .as_deref()
             .is_some_and(|id| id != channel_id.as_str())
-    {
-        return Err(ManagementError::NotFound.into());
+        {
+            return Err(CustodyError::before_send(ManagementError::NotFound));
+        }
+        // Keep the exact pointer even when deletion wins before activation started.
+        record.channel_id = Some(channel_id.to_string());
+    } else if let Some(retained) = &record.channel_id {
+        let retained = ChannelId::new(retained.as_str())
+            .map_err(|_| CustodyError::before_send(ManagementError::NotFound))?;
+        crate::console::channel_ids::opens_to(
+            &retained,
+            &definition.record_id,
+            &state.master_keys,
+            &state.records,
+        )
+        .map_err(|_| CustodyError::before_send(ManagementError::NotFound))?;
     }
-    // Keep the exact pointer even when deletion wins before activation started.
-    record.channel_id = Some(channel_id.to_string());
     record.webhook_retiring = true;
     store(state)
         .save_connection(&record, Some(version))
         .await
-        .map_err(error)?;
+        .map_err(|value| CustodyError::before_send(error(value)))?;
     match webhook::cleanup_custodied(state, id, false).await {
         // A live activation is not a reason to lose the delete intent. It or the
         // durable worker will clean up after the platform operation settles.
         Ok(()) => Ok(()),
-        Err(value) if matches!(value.error, Error::Conflict) => Ok(()),
+        Err(value) if channel_id.is_some() && matches!(value.error, Error::Conflict) => Ok(()),
         Err(value) => Err(CustodyError {
             error: error(value.error),
             unconfirmed: value.unconfirmed,
@@ -364,10 +412,22 @@ pub async fn release(
     state: &ManagementState,
     definition: &ChannelDefinition,
 ) -> Result<(), ManagementError> {
+    release_owned(state, definition, false).await
+}
+
+pub(crate) async fn release_owned(
+    state: &ManagementState,
+    definition: &ChannelDefinition,
+    legacy: bool,
+) -> Result<(), ManagementError> {
     let Some(id) = definition.connection_ref.as_deref() else {
         return Ok(());
     };
-    let (record, version) = store(state).connection(id).await.map_err(error)?;
+    let (record, version) = match store(state).connection(id).await {
+        Ok(value) => value,
+        Err(Error::NotFound) if legacy => return Ok(()),
+        Err(value) => return Err(error(value)),
+    };
     if (record.organization
         != (definition.owner.kind == cmaeg_core::profile::NyxIdIdentityKind::Organization))
         || record.owner != definition.owner.subject
@@ -393,6 +453,15 @@ pub(crate) struct CustodyError {
     pub(crate) error: ManagementError,
     pub(crate) unconfirmed: bool,
 }
+impl CustodyError {
+    fn before_send(error: ManagementError) -> Self {
+        Self {
+            error,
+            unconfirmed: false,
+        }
+    }
+}
+
 impl From<ManagementError> for CustodyError {
     fn from(error: ManagementError) -> Self {
         Self {

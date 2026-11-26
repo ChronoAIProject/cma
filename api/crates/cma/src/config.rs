@@ -19,12 +19,19 @@ mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
 mod account_deletion;
 pub(crate) use account_deletion::require_execution as require_account_deletion_execution;
+mod control_admission;
+mod creation_outcomes;
+mod legal_terms;
+pub(crate) use control_admission::ControlAdmissionConfig;
+pub(crate) use creation_outcomes::CreationOutcomesConfig;
 mod admission_log;
 mod anonymous_public;
 mod auth_mode;
 mod debug;
 mod global_admission;
+mod http_connections;
 mod provider_tool_relay;
+mod public_owner_sandbox_limit;
 pub(crate) use access_migration::AgentAccessMigration;
 #[cfg(test)]
 pub(crate) use anonymous_public::AnonymousPublicConfig;
@@ -44,16 +51,20 @@ pub use rate_limits::RateLimitConfig;
 mod relay_capacity;
 mod runtime;
 mod runtime_capacity;
+mod runtime_migration;
 mod shell_settings;
 pub(crate) use relay_capacity::RelayCapacityConfig;
 pub(crate) use shell_settings::BackendFreeConfig;
 
 mod features;
 mod quiet_output;
+pub(crate) mod task_audit;
 mod task_experience;
 pub(crate) use features::home_backup::HomeBackupConfig;
-pub(crate) use features::FeatureFlags;
+pub(crate) use features::{FeatureFlags, ManagedMachineUpdates};
+mod service_authorization;
 pub(crate) use gateway::GatewayConfig;
+pub(crate) use service_authorization::ServiceAuthorizationConfig;
 mod bot_father;
 mod browser_session;
 mod documents;
@@ -67,7 +78,7 @@ mod usage_transport;
 pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
-pub(crate) use runtime::RuntimeConfig;
+pub(crate) use runtime::{canary as runtime_canary, RuntimeConfig};
 pub(crate) use sandbox_billing::SandboxBillingConfig;
 pub(crate) use sandbox_metrics::MetricsConfig;
 pub(crate) use usage_billing::UsageBillingConfig;
@@ -144,13 +155,21 @@ impl TrustedProxyConfig {
 /// Complete process configuration for the temporary discovery boundary.
 #[derive(Clone)]
 pub struct Config {
+    pub(crate) creation_outcomes: Option<CreationOutcomesConfig>,
+    pub(crate) creation_writer_epoch: Option<String>,
     pub(crate) account_deletion_enabled: bool,
+    /// Published terms and privacy notice; `None` records no consent.
+    pub(crate) legal_terms: Option<layer2_core::legal_consent::LegalTerms>,
+    pub(crate) retain_legal_consents: bool,
     pub(crate) account_erasure_transaction_drain_seconds: u64,
     pub(crate) global_sandbox_limit: u16,
+    pub(crate) public_owner_sandbox_limit: Option<std::num::NonZeroU16>,
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
     pub bind: SocketAddr,
+    pub(crate) http_connection_max_age: Option<std::time::Duration>,
     pub metrics_bind: SocketAddr,
+    pub(crate) task_audit: Option<task_audit::Selection>,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
     pub agent_access_retained_origins: Vec<String>,
@@ -167,6 +186,7 @@ pub struct Config {
     pub nyxid_proxy_audience: Option<String>,
     pub cors_origins: Vec<HeaderValue>,
     pub rate_limits: RateLimitConfig,
+    pub(crate) control_admission: ControlAdmissionConfig,
     pub(crate) public_stream_limit: usize,
     pub(crate) relay_capacity: RelayCapacityConfig,
     pub trusted_proxies: TrustedProxyConfig,
@@ -186,10 +206,13 @@ pub struct Config {
     pub default_profiles: DefaultProfileConfig,
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
+    pub(crate) public_repository_verified_runtime_images: BTreeSet<String>,
+    pub(crate) public_repository_snapshot_enabled: bool,
     pub auth_mode: AuthMode,
     pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
     pub(crate) home_backup: HomeBackupConfig,
+    pub(crate) service_authorization: Option<ServiceAuthorizationConfig>,
     pub(crate) agent_manager_replicas: Option<AgentManagerReplicas>,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
@@ -223,6 +246,22 @@ impl StartupConfig {
                 .map(|config| Self::BackendFree(Box::new(config))),
         }
     }
+}
+
+fn parse_public_repository_images(raw: Option<String>) -> Result<BTreeSet<String>, String> {
+    let mut images = BTreeSet::new();
+    for image in raw
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .into_iter()
+        .flat_map(|value| value.split(','))
+    {
+        if !crate::agent_lifecycle::valid_immutable_image(image) || !images.insert(image.to_owned())
+        {
+            return Err("CHRONO_PUBLIC_REPOSITORY_VERIFIED_RUNTIME_IMAGES requires unique immutable image references".into());
+        }
+    }
+    Ok(images)
 }
 
 impl Config {
@@ -278,10 +317,17 @@ impl Config {
             return Err("CHRONO_HOME_BACKUP_EXPIRY_ENABLED requires a qualified deletion provider; retention preparation cannot be enabled".into());
         }
         let home_backup = HomeBackupConfig::from_lookup(&mut lookup, features.home_backup_enabled)?;
+        let service_authorization =
+            ServiceAuthorizationConfig::from_lookup(&mut lookup, features.service_authorization)?;
         let account_deletion_enabled = account_deletion::enabled(&mut lookup)?;
+        let legal_terms = legal_terms::from_lookup(&mut lookup)?;
+        let creation_outcomes = CreationOutcomesConfig::from_lookup(&mut lookup)?;
+        let creation_writer_epoch = CreationOutcomesConfig::writer_epoch(&mut lookup)?;
+        let retain_legal_consents = account_deletion::retain_legal_consents(&mut lookup)?;
         let account_erasure_transaction_drain_seconds =
             account_deletion::transaction_drain(&mut lookup)?;
         let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
+        let public_owner_sandbox_limit = public_owner_sandbox_limit::from_lookup(&mut lookup)?;
         let bounded_admission_agents = admission_log::from_lookup(&mut lookup)?;
         let agent_log_fleet_percent =
             admission_log::fleet_percent(&mut lookup, &bounded_admission_agents)?;
@@ -332,10 +378,17 @@ impl Config {
         }
         Ok(Self {
             global_sandbox_limit,
+            public_owner_sandbox_limit,
             account_deletion_enabled,
+            legal_terms,
+            creation_outcomes,
+            creation_writer_epoch,
+            retain_legal_consents,
             account_erasure_transaction_drain_seconds,
             bind,
+            http_connection_max_age: http_connections::max_age(&mut lookup)?,
             metrics_bind,
+            task_audit: task_audit::Selection::from_lookup(&mut lookup)?,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
             relay_capacity: RelayCapacityConfig::from_lookup(&mut lookup)?,
             public_url,
@@ -353,6 +406,7 @@ impl Config {
             nyxid_proxy_audience: lookup("CHRONO_NYXID_PROXY_AUDIENCE")?,
             cors_origins,
             rate_limits,
+            control_admission: ControlAdmissionConfig::from_lookup(&mut lookup)?,
             trusted_proxies,
             mongodb_uri,
             mongodb_database,
@@ -371,10 +425,18 @@ impl Config {
             agent_manager_sandbox_capacity,
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?
                 .filter(|value| !value.is_empty()),
+            public_repository_snapshot_enabled: features::flag(
+                &mut lookup,
+                "CHRONO_PUBLIC_REPOSITORY_SNAPSHOT_ENABLED",
+            )?,
+            public_repository_verified_runtime_images: parse_public_repository_images(lookup(
+                "CHRONO_PUBLIC_REPOSITORY_VERIFIED_RUNTIME_IMAGES",
+            )?)?,
             auth_mode,
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
             home_backup,
+            service_authorization,
             agent_manager_replicas,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,
@@ -401,6 +463,8 @@ use validation::{
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::{desktop_canary_config, retained_runtime_config};
 
 #[cfg(test)]
 mod graduation_tests;

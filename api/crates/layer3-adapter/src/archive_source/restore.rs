@@ -12,6 +12,7 @@ pub struct RestoreTree {
     root: PathBuf,
     expected: BTreeMap<Vec<String>, Kind>,
     links: BTreeMap<(u64, u64), PathBuf>,
+    failed: bool,
 }
 impl RestoreTree {
     pub fn create(path: &Path) -> Result<Self> {
@@ -31,6 +32,7 @@ impl RestoreTree {
             root: path.to_path_buf(),
             expected: BTreeMap::new(),
             links: BTreeMap::new(),
+            failed: false,
         })
     }
     pub fn path(&self) -> &Path {
@@ -47,6 +49,11 @@ impl RestoreTree {
         Ok(path)
     }
     pub fn add(&mut self, entry: &Entry) -> Result<Option<File>> {
+        let result = self.add_entry(entry);
+        self.failed |= result.is_err();
+        result
+    }
+    fn add_entry(&mut self, entry: &Entry) -> Result<Option<File>> {
         if self
             .expected
             .insert(entry.path.clone(), entry.kind.clone())
@@ -98,8 +105,8 @@ impl RestoreTree {
             // Sockets are ephemeral processes, not durable file data. The
             // manifest retains their metadata; reconstruct a closed socket.
             Kind::Socket => {
-                let socket = std::os::unix::net::UnixListener::bind(path).map_err(|_| INVALID)?;
-                drop(socket);
+                let parent = Directory::root(path.parent().ok_or(INVALID)?)?;
+                parent.socket(&decode(entry.path.last().ok_or(INVALID)?)?)?;
                 Ok(None)
             }
             Kind::Fifo => {
@@ -140,6 +147,9 @@ impl RestoreTree {
             .map_err(|_| INVALID)
     }
     pub fn finish(&self) -> Result<()> {
+        if self.failed {
+            return Err(INVALID);
+        }
         let tree = SnapshotTree::open(&self.root)?;
         let found = tree
             .entries

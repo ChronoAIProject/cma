@@ -1,7 +1,8 @@
-import type { UsageMetricReport } from '@cma/client';
+import type { UsageInitialData, UsageInitialProjection, UsageMetricReport } from '@cma/client';
 import type { MetricsClient, Selection } from './model';
 import type { MetricsFailure } from './failure';
 import type { UsageRetryState } from './retry';
+import { clearDisabledViews } from './viewCapability';
 
 export type CommittedUsageReport = UsageMetricReport & {
   /** Optional fields supplied by the cached-report API when available. */
@@ -17,6 +18,9 @@ export interface ReportEntry {
   stopped: boolean;
   background: boolean;
   report?: CommittedUsageReport;
+  initial?: UsageInitialData;
+  initialProjection?: UsageInitialProjection;
+  initialPending: boolean;
   generatedAt?: number;
   stale: boolean;
   refreshing: boolean;
@@ -66,6 +70,7 @@ export function reportKey(selection: Selection, admin: boolean, owner: string): 
 }
 
 export function clearReportOwner(api: MetricsClient, owner: string, failure?: MetricsFailure) {
+  clearDisabledViews(api, owner);
   const entries = reportCache.get(api);
   if (!entries) return;
   for (const [key, entry] of entries) {
@@ -75,6 +80,8 @@ export function clearReportOwner(api: MetricsClient, owner: string, failure?: Me
     entry.inFlight = undefined;
     liveEntries.delete(entry);
     entry.report = undefined;
+    entry.initial = undefined;
+    entry.initialProjection = undefined;
     entry.pending = undefined;
     entry.generatedAt = undefined;
     entry.stale = false;
@@ -85,6 +92,7 @@ export function clearReportOwner(api: MetricsClient, owner: string, failure?: Me
     entry.stopped = true;
     entry.pollAt = 0;
     entry.latestPending = false;
+    entry.initialPending = false;
     entry.refreshReportId = undefined;
     entry.error = failure;
     entry.authorityBlocked = true;
@@ -150,6 +158,7 @@ export function entryFor(api: MetricsClient, key: string, owner: string): Report
       retryAt: 0,
       pollAt: 0,
       latestPending: false,
+      initialPending: false,
       lastStarted: 0,
       completedAt: 0,
       attempted: false,

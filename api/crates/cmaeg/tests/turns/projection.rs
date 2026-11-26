@@ -157,3 +157,64 @@ async fn legacy_turn_activity_preserves_provider_native_identity_without_extra_r
         fixture.fake.close().await;
     }
 }
+
+#[tokio::test]
+async fn a_terminal_answer_before_acceptance_is_delivered_once_and_acknowledged() {
+    for (terminal, kind) in [
+        (
+            json!({"type":"response.failed","error":{"code":"rejected","message":"provider rejected turn"}}),
+            "failed",
+        ),
+        (
+            json!({"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"done"}]}]}}),
+            "completed",
+        ),
+    ] {
+        let mut fixture = Fixture::new(
+            FakeProviderConfig {
+                frames: Some(vec![terminal]),
+                ..Default::default()
+            },
+            Default::default(),
+            4,
+        )
+        .await;
+        // The answer reaches delivery, so the source must not be told to
+        // redeliver an event whose answer its user already has.
+        let outcome = fixture.runner.launch(fixture.request("unaccepted")).await;
+        assert!(
+            matches!(outcome, LaunchOutcome::Deferred),
+            "{kind}: {outcome:?}"
+        );
+        let outcomes = fixture.terminal().await;
+        assert_eq!(outcomes.len(), 1, "{kind}: {outcomes:?}");
+        assert_eq!(outcomes[0].kind(), kind);
+        fixture.fake.close().await;
+    }
+}
+
+#[tokio::test]
+async fn a_terminal_answer_before_acceptance_is_refused_when_delivery_cannot_take_it() {
+    let mut fixture = Fixture::new(
+        FakeProviderConfig {
+            frames: Some(vec![
+                json!({"type":"response.failed","error":{"code":"rejected","message":"provider rejected turn"}}),
+            ]),
+            ..Default::default()
+        },
+        Default::default(),
+        4,
+    )
+    .await;
+    let (_, closed) = tokio::sync::mpsc::channel(1);
+    drop(std::mem::replace(&mut fixture.outcomes, closed));
+    match fixture
+        .runner
+        .launch(fixture.request("undeliverable"))
+        .await
+    {
+        LaunchOutcome::Refused(problem) => assert_eq!(problem.status, 503),
+        other => panic!("expected a retryable refusal, got {other:?}"),
+    }
+    fixture.fake.close().await;
+}

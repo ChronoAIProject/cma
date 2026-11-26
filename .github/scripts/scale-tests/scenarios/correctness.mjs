@@ -1,6 +1,40 @@
-import { check, clock, isHash, reconcile, waitFor } from '../lib/checks.mjs';
+import { check, clock, hash, isHash, reconcile, waitFor, withinDeadline } from '../lib/checks.mjs';
 
 export const paths = ['create', 'open', 'send', 'interrupt', 'stream', 'desktop'];
+
+export function sw04Cancel(observation) {
+  check(observation?.schema === 'cma-sw04-cancel-v1', 'sw04_observation_missing', true);
+  const { replicas, owner, admission, replay, durable, effectsBeforeReplay, effectsAfterReplay } = observation;
+  check(Array.isArray(replicas) && replicas.length === 2 && replicas.every(isHash)
+    && new Set(replicas).size === 2, 'sw04_replica_identity_missing', true);
+  check(replicas.includes(owner?.processHash) && Number.isSafeInteger(owner.epoch) && owner.epoch > 0,
+    'sw04_owner_authority_missing', true);
+  check(admission?.status === 202 && replicas.includes(admission.processHash)
+    && admission.processHash !== owner.processHash, 'sw04_wrong_ingress');
+  check(replay?.status === 202 && replay.processHash === owner.processHash, 'sw04_wrong_replay_ingress');
+  const { commandHash, responseHash } = admission;
+  check(isHash(commandHash) && isHash(responseHash) && replay.commandHash === commandHash
+    && replay.responseHash === responseHash, 'sw04_replay_identity_changed');
+  check(durable?.commandHash === commandHash && durable.responseHash === responseHash
+    && durable.status === 'completed' && durable.holderHash === owner.processHash
+    && Number.isSafeInteger(durable.runtimeGeneration) && durable.runtimeGeneration > 0,
+    'sw04_durable_outcome_invalid');
+  for (const effects of [effectsBeforeReplay, effectsAfterReplay]) {
+    check(Array.isArray(effects), 'sw04_receiver_observation_missing', true);
+    check(effects.length > 0, 'sw04_effect_missing');
+    check(effects.length === 1, 'sw04_effect_duplicate');
+    const [effect] = effects;
+    check(effect?.processHash === owner.processHash && effect.ownerProcessHash === owner.processHash
+      && effect.epoch === owner.epoch, 'sw04_effect_owner_invalid');
+    check(effect.kind === 'interrupt' && effect.commandHash === commandHash
+      && effect.runtimeGeneration === durable.runtimeGeneration, 'sw04_effect_identity_invalid');
+  }
+  return {
+    commands: 1, effects: 1, additional_replay_effects: 0,
+    evidence_hash: hash(JSON.stringify([admission.processHash, owner.processHash, owner.epoch,
+      commandHash, responseHash, durable.runtimeGeneration])),
+  };
+}
 
 function pathProof(value, replicaHash) {
   check(value?.ok === true && value.completed === true, 'client_path_failed');
@@ -60,21 +94,7 @@ export async function suddenLoss(driver, mode, config, time = clock) {
     check(work?.accepted === true && work.inFlight === true && isHash(work.commandHash)
       && isHash(work.ownerHash) && isHash(work.evidenceHash), 'inflight_boundary_not_proven', true);
     if (mode !== 'eg_inbound') check(work.leaseJustRenewed === true, 'worst_case_lease_not_proven', true);
-    const lossStarted = time.now();
-    const loss = await driver.killOwner(work);
-    check(loss?.ownerHash === work.ownerHash && loss.abrupt === true
-      && loss.processDeathObserved === true && isHash(loss.evidenceHash), 'abrupt_process_death_unproven', true);
-    const observations = [];
-    await waitFor(async (remaining) => {
-      const result = await driver.observeRecovery(work, { timeoutMs: remaining });
-      observations.push(result);
-      return result;
-    }, (row) => row?.clientRecovered === true && row.sustainedSuccess === true, {
-      timeoutMs: Math.max(1, config.recoveryMs - (time.now() - lossStarted)), time,
-    });
-    const recoveredMs = time.now() - lossStarted;
-    check(recoveredMs <= config.recoveryMs, 'recovery_deadline_exceeded');
-    check(observations.every((row) => row.accounted === true), 'fault_window_unaccounted', true);
+    const { recoveredMs, observations } = await observeLoss(driver, work, config.recoveryMs, time);
     const oracle = await driver.reconcile(work);
     const proof = reconcile(oracle);
     check(oracle.acceptedHashes.includes(work.commandHash), 'original_fault_command_missing');
@@ -83,8 +103,32 @@ export async function suddenLoss(driver, mode, config, time = clock) {
       const stream = await driver.confirmStream(work);
       check(stream.durableContinuity === true && stream.liveEvent === true, 'stream_replay_gap');
     }
-    return { mode, recovery_ms: recoveredMs, observations: observations.length, ...proof };
+    return { mode, recovery_ms: recoveredMs, observations, ...proof };
   } finally {
     if (work) await driver.cleanup(work);
   }
+}
+
+async function observeLoss(driver, work, recoveryMs, time) {
+  const lossStarted = time.now();
+  return withinDeadline(async (signal) => {
+    const loss = await driver.killOwner(work, { timeoutMs: recoveryMs, signal });
+    signal.throwIfAborted();
+    check(loss?.ownerHash === work.ownerHash && loss.abrupt === true
+      && loss.processDeathObserved === true && isHash(loss.evidenceHash), 'abrupt_process_death_unproven', true);
+    const remaining = recoveryMs - (time.now() - lossStarted);
+    check(remaining > 0, 'recovery_deadline_exceeded');
+    const observations = [];
+    await waitFor(async (timeoutMs) => {
+      signal.throwIfAborted();
+      const result = await driver.observeRecovery(work, { timeoutMs, signal });
+      signal.throwIfAborted();
+      observations.push(result);
+      return result;
+    }, (row) => row?.clientRecovered === true && row.sustainedSuccess === true, { timeoutMs: remaining, time });
+    const recoveredMs = time.now() - lossStarted;
+    check(recoveredMs <= recoveryMs, 'recovery_deadline_exceeded');
+    check(observations.every((row) => row?.accounted === true), 'fault_window_unaccounted', true);
+    return { recoveredMs, observations: observations.length };
+  }, recoveryMs, 'recovery_deadline_exceeded');
 }

@@ -1,4 +1,5 @@
 //! Transactional Mongo admission and removal for workspace aggregates.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 mod commit;
 pub(super) mod retry;
 use super::sandbox_events::{append_in_transaction, reconcile_event};
@@ -93,23 +94,23 @@ impl WorkspaceAdmissionStore for MongoSandboxStore {
             let workspace = match apply_removal(self, id, owner, &now, &mut session).await {
                 Ok(workspace) => workspace,
                 Err(ApplyError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(ApplyError::Retry(error)) | Err(ApplyError::Driver(error))
                     if is_transient(&error) =>
                 {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(ApplyError::Retry(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };
@@ -295,10 +296,14 @@ async fn apply_admission(
             WorkspaceAdmissionKind::Trigger => SandboxReviveCause::TriggerLaunch,
             _ => SandboxReviveCause::WorkspaceCreation,
         };
+        let destination = store
+            .managed_resume_destination(&sandbox, session)
+            .await
+            .map_err(ApplyError::Domain)?;
         let revival = next
             .record_creation_admission_with_managed_runtime(
                 cause,
-                store.managed_runtime_version.as_deref(),
+                destination.as_deref(),
                 admission.event_at.clone(),
             )
             .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
@@ -371,6 +376,7 @@ pub(super) async fn lock_sandbox(
                 "_id": sandbox_id,
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "channel_reuse_cleanup_execution": { "$exists": false },
+                super::native_retirement_action::FIELD: { "$exists": false },
             }),
             doc! { "$inc": { "workspace_admission_fence": 1_i64 } },
         )

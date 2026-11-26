@@ -60,6 +60,7 @@ async fn open_database() -> Result<(
     let mut options = ClientOptions::parse(uri)
         .await
         .map_err(|_| "database configuration")?;
+    crate::store::transaction_barrier::bind(&mut options, &name);
     options.server_selection_timeout = Some(IO);
     options.connect_timeout = Some(IO);
     let client = Client::with_options(options).map_err(|_| "database configuration")?;

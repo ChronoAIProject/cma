@@ -99,13 +99,17 @@ pub(super) async fn read_root(
     start: u64,
     session: &mut ClientSession,
 ) -> Result<Option<PeriodState>, ApplyError> {
-    rows.find_one(doc! {"_id": period_key(start)})
-        .session(session)
-        .await
-        .map_err(ApplyError::Driver)?
-        .as_ref()
-        .map(PeriodState::root)
-        .transpose()
+    crate::store::stale_turns::find_with_proof_budget(
+        rows,
+        doc! {"_id": period_key(start)},
+        session,
+        false,
+    )
+    .await
+    .map_err(ApplyError::Driver)?
+    .as_ref()
+    .map(PeriodState::root)
+    .transpose()
 }
 
 pub(super) async fn read(

@@ -32,12 +32,18 @@ impl Sandbox {
         if let Some(reservation) = self.lifecycle.runtime_provision.as_ref() {
             return Ok(reservation.generation);
         }
-        let generation = self
-            .lifecycle
-            .runtime_generation_high_water
-            .checked_add(1)
-            .ok_or_else(invalid_generation)?
-            .max(minimum_generation);
+        let generation = if let Some(transition) = self.admitted_retained_runtime_transition() {
+            if minimum_generation > transition.successor_generation {
+                return Err(invalid_generation());
+            }
+            transition.successor_generation
+        } else {
+            self.lifecycle
+                .runtime_generation_high_water
+                .checked_add(1)
+                .ok_or_else(invalid_generation)?
+                .max(minimum_generation)
+        };
         let operation_id = self
             .lifecycle
             .operation
@@ -99,6 +105,11 @@ impl Sandbox {
         next: &Sandbox,
     ) -> Result<(), SandboxModelError> {
         self.validate_unpublished_recovery_successor(next)?;
+        if self.lifecycle.runtime_image_origin != next.lifecycle.runtime_image_origin {
+            return Err(SandboxModelError::invalid_value(
+                "sandbox.runtime_image_origin",
+            ));
+        }
         next.validate_runtime_generation()?;
         if next.lifecycle.runtime_generation_high_water
             < self.lifecycle.runtime_generation_high_water

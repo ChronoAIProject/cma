@@ -143,3 +143,64 @@ async fn registering_a_native_image_requires_its_own_pinned_contract_and_bootstr
     }
     assert!(fixture.state.lock().unwrap().calls.is_empty());
 }
+
+#[tokio::test]
+async fn canary_uses_zero_target_distinct_from_the_same_released_image() {
+    let fixture = Fixture::new().await;
+    let mut released = spec();
+    released.home.mode = crate::HomeVolumeMode::NativeVctFullHomeV2;
+    released.image.labels.insert(
+        crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
+        crate::runtime_versions::RUNTIME_HOME_LAYOUT_VERSION.into(),
+    );
+    let pools = &fixture.client;
+    let ordinary = pools.configure(&released, 2).await.unwrap();
+    let home = crate::HomeVolumeRequest {
+        volume_id: "canary-home".into(),
+        sandbox_id: "sbx_canary".into(),
+        policy: released.home.clone(),
+        scope: homes(&fixture).allocation_scope(),
+    };
+    let mut request = RuntimeProvisionRequest::new(
+        1,
+        SandboxSpec {
+            sandbox_id: home.sandbox_id.clone(),
+            created_by: Some("cma-test".into()),
+            runtime_image: Some(released.image.uri.clone()),
+            capacity: SandboxCapacity {
+                cpu_millis: released.cpu_millis,
+                memory_mib: released.memory_mib,
+            },
+            ..Default::default()
+        },
+    );
+    let adapter = adapter(&fixture, released.image.clone());
+    request.native_canary_image = Some(released.image.clone());
+    let canary = adapter
+        .select_native_pool(&request, &home)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(canary.spec.cold_canary);
+    assert_eq!(canary.spec.image, released.image);
+    assert_ne!(ordinary.binding.name, canary.name);
+    assert_ne!(ordinary.binding.template_name, canary.template_name);
+    assert_eq!(
+        fixture.row("sandboxwarmpools", &canary.name)["spec"]["replicas"],
+        0
+    );
+    assert_eq!(
+        fixture.row("sandboxwarmpools", &ordinary.binding.name)["spec"]["replicas"],
+        2
+    );
+    assert!(pools.resize(&canary, 1).await.is_err());
+    request.native_canary_image = None;
+    assert_eq!(
+        adapter
+            .select_native_pool(&request, &home)
+            .await
+            .unwrap()
+            .unwrap(),
+        ordinary.binding
+    );
+}

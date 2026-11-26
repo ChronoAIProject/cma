@@ -5,6 +5,8 @@ use std::{
 };
 mod connections;
 mod disabled_rotation;
+mod effect_custody;
+mod effect_store_failures;
 mod fixture;
 use fixture::Fixture;
 

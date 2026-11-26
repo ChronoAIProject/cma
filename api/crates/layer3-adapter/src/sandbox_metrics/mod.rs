@@ -1,7 +1,7 @@
 //! Fixed, bounded monitoring reads; no caller-supplied query language.
 mod export;
 mod transport;
-pub use export::{decode_export, selector};
+pub use export::{decode_export, decode_raw_export, selector};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 pub use transport::{MetricsClient, MetricsTransport};
@@ -60,6 +60,39 @@ pub struct PhysicalSeries {
     pub name: String,
     pub labels: BTreeMap<String, String>,
     pub samples: Vec<Sample>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RawSample {
+    pub timestamp_ms: u64,
+    pub value: f64,
+}
+
+/// Raw values and provenance admitted by the bounded export decoder.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RawPhysicalSeries {
+    metric: SourceMetric,
+    name: String,
+    labels: BTreeMap<String, String>,
+    samples: Vec<RawSample>,
+}
+
+impl RawPhysicalSeries {
+    pub fn metric(&self) -> SourceMetric {
+        self.metric
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn label(&self, key: &str) -> Option<&str> {
+        self.labels.get(key).map(String::as_str)
+    }
+
+    pub fn samples(&self) -> &[RawSample] {
+        &self.samples
+    }
 }
 #[derive(Clone, Debug)]
 pub struct Selection {

@@ -106,11 +106,8 @@ impl RetainedRecoverySnapshot {
             .ok_or(D::UnsupportedImageAuthority)?;
         if !hex(digest, 64)
             || sandbox
-                .profile
-                .content
-                .runtime_image
-                .as_ref()
-                .is_some_and(|image| image != &binding.runtime_version)
+                .effective_custom_runtime_image()
+                .is_some_and(|image| image != binding.runtime_version)
             || sandbox.runtime_update_request().is_some_and(|request| {
                 request.completed_at.is_none() && request.target_version != binding.runtime_version
             })

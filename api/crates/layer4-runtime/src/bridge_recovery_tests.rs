@@ -147,7 +147,20 @@ async fn recovery_full_output_window_refuses_promptly_then_rebinds_after_drain()
     let publishing = {
         let bridge = bridge.clone();
         tokio::spawn(async move {
-            publish(serde_json::to_vec(&json!({"method":"session/update","params":{"sessionId":"conversation","padding":"x".repeat(4096)}})).unwrap(), &bridge.output, &bridge.pending, &bridge.retained_output, &bridge.observation).await;
+            let frame = serde_json::to_vec(&json!({
+                "method": "session/update",
+                "params": {"sessionId": "conversation", "padding": "x".repeat(4096)}
+            }))
+            .unwrap();
+            publish(
+                frame,
+                &bridge.output,
+                &bridge.pending,
+                &bridge.retained_output,
+                &bridge.observation,
+                None,
+            )
+            .await;
         })
     };
     tokio::time::timeout(Duration::from_secs(2), async {

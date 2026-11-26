@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use layer2_core::StoreError;
-use mongodb::{bson::doc, options::ClientOptions, Client};
+use mongodb::{bson::doc, Client};
 
 use super::{
     AuthEncryptionKey, MongoActivityStore, MongoAdmissionControlStore, MongoAuthStore,
@@ -11,6 +11,12 @@ use super::{
     MongoSandboxCredentialStore, MongoSandboxStore, MongoTriggerDefinitionStore,
     MongoUserDirectoryStore,
 };
+
+mod creation_outcomes;
+mod options;
+use options::connection_options;
+#[cfg(test)]
+pub(super) use options::STARTUP_COMMANDS;
 
 #[path = "account_mongo.rs"]
 mod account;
@@ -22,10 +28,16 @@ pub(crate) struct MongoConnectionPolicy {
     pub startup_schema: crate::config::StartupSchemaMode,
     pub shared_observation: bool,
     pub initial_settings: super::settings_defaults::InitialSettings,
+    /// The process's single released-default authority; fixtures may omit it.
+    pub released: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
+    pub runtime_pointer_required: bool,
 }
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
+    /// The one released-default authority for new work in this process.
+    pub(crate) released_runtime: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+    pub(crate) runtime_pointer: Option<Arc<super::released_runtimes::StoreReleasedRuntime>>,
     pub(crate) account_deletions: Arc<super::account_deletions::MongoAccountDeletionStore>,
     pub(crate) request_limits: Arc<super::request_limits::MongoRequestLimits>,
     pub(crate) document_artifacts: Arc<crate::document_artifacts::MongoDocumentStore>,
@@ -49,6 +61,8 @@ pub struct MongoStores {
     pub(crate) codex_subscriptions: Arc<super::MongoSubscriptionStore>,
     pub activity: Arc<MongoActivityStore>,
     pub users: Arc<MongoUserDirectoryStore>,
+    /// Legal-document acceptances on the same retained directory rows.
+    pub(crate) legal_consents: Arc<super::legal_consents::MongoLegalConsentStore>,
     pub settings: Arc<MongoPlatformSettingsStore>,
     pub admission_control: Arc<MongoAdmissionControlStore>,
     pub admission_ceilings: Arc<super::MongoAdmissionCeilingsStore>,
@@ -157,6 +171,8 @@ impl MongoStores {
                 startup_schema: Default::default(),
                 shared_observation: false,
                 initial_settings: Default::default(),
+                released: None,
+                runtime_pointer_required: false,
             },
         )
         .await
@@ -171,7 +187,7 @@ impl MongoStores {
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
         policy: MongoConnectionPolicy,
     ) -> Result<Self, StoreError> {
-        let options = connection_options(uri).await?;
+        let options = connection_options(uri, database).await?;
         let client = Client::with_options(options)
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
         super::isolation::replicas::verify(
@@ -194,6 +210,8 @@ impl MongoStores {
                 runtime,
                 schema: super::schema::StartupObserver::new(policy.startup_schema),
                 initial_settings: policy.initial_settings,
+                released: policy.released,
+                runtime_pointer_required: policy.runtime_pointer_required,
             },
         )
         .await
@@ -220,6 +238,8 @@ impl MongoStores {
                 runtime,
                 schema: super::schema::StartupObserver::new(Default::default()),
                 initial_settings: Default::default(),
+                released: None,
+                runtime_pointer_required: false,
             },
         )
         .await
@@ -244,6 +264,35 @@ impl MongoStores {
         )
         .await?
         .with_managed_runtime_version(startup.runtime.0.into());
+        let released_runtime = startup.released.clone().unwrap_or_else(|| {
+            Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+                startup.runtime.0,
+                None,
+            ))
+        });
+        let runtime_pointer = match &startup.released {
+            Some(_) => super::released_runtimes::StoreReleasedRuntime::open(
+                &client.database(database),
+                deployment,
+                released_runtime.snapshot(),
+                startup.runtime_pointer_required,
+            )
+            .await?
+            .map(Arc::new),
+            None => None,
+        };
+        let (released_runtime, mut sandbox_model) = match &runtime_pointer {
+            Some(source) => {
+                let mut sandbox_model = sandbox_model;
+                sandbox_model.released_lanes = Some(source.lanes.clone());
+                (
+                    source.clone() as Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+                    sandbox_model,
+                )
+            }
+            None => (released_runtime, sandbox_model),
+        };
+        sandbox_model = sandbox_model.with_released_runtime(released_runtime.clone());
         let sandbox_model = Arc::new(sandbox_model);
         let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let sandbox_credentials = Arc::new(
@@ -272,6 +321,9 @@ impl MongoStores {
             .await?,
         );
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
+        let legal_consents = Arc::new(super::legal_consents::MongoLegalConsentStore::new(
+            &client.database(database),
+        ));
         let settings = Arc::new(
             MongoPlatformSettingsStore::open_with_defaults(
                 &client,
@@ -308,8 +360,11 @@ impl MongoStores {
             .with_activation(registration_capacity.activation_observation()),
         );
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
-        let agent_lifecycle =
-            Arc::new(super::MongoAgentLifecycleStore::open(&client.database(database)).await?);
+        let mut agent_lifecycle =
+            super::MongoAgentLifecycleStore::open(&client.database(database)).await?;
+        agent_lifecycle.released_lanes =
+            runtime_pointer.as_ref().map(|source| source.lanes.clone());
+        let agent_lifecycle = Arc::new(agent_lifecycle);
         let bot_setups = Arc::new(
             super::bot_setups::MongoBotSetupStore::open(
                 &client,
@@ -338,13 +393,14 @@ impl MongoStores {
                 .await
                 .map_err(|_| StoreError::Unavailable("open event worker profiles".into()))?,
         );
-        let native_warm_pools = Arc::new(
-            super::native_warm_pools::MongoNativeWarmPools::open(
-                &client.database(database),
-                deployment,
-            )
-            .await?,
-        );
+        let mut native_warm_pools = super::native_warm_pools::MongoNativeWarmPools::open(
+            &client.database(database),
+            deployment,
+        )
+        .await?;
+        native_warm_pools.released_lanes =
+            runtime_pointer.as_ref().map(|source| source.lanes.clone());
+        let native_warm_pools = Arc::new(native_warm_pools);
         let message_feedback = Arc::new(
             super::message_feedback::MongoMessageFeedbackStore::open(&client.database(database))
                 .await?,
@@ -376,6 +432,8 @@ impl MongoStores {
             super::request_limits::MongoRequestLimits::open(&client.database(database)).await?,
         );
         let stores = Self {
+            released_runtime,
+            runtime_pointer,
             account_deletions,
             request_limits,
             document_artifacts,
@@ -394,6 +452,7 @@ impl MongoStores {
             codex_subscriptions,
             activity,
             users,
+            legal_consents,
             settings,
             admission_control,
             admission_ceilings,
@@ -414,18 +473,9 @@ impl MongoStores {
             .run_command(doc! { "ping": 1 })
             .await
             .map_err(|error| StoreError::Unavailable(format!("ping MongoDB: {error}")))?;
-        Ok(())
+        super::billing_authority::require_legacy_compatible(&self.client.database(&self.database))
+            .await
     }
-}
-
-async fn connection_options(uri: &str) -> Result<ClientOptions, StoreError> {
-    let mut options = ClientOptions::parse(uri)
-        .await
-        .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
-    // Replica ownership changes authority, not the deployment's connection
-    // budget. Preserve explicit URI options and driver defaults in both modes.
-    super::mongo_latency::observe(&mut options);
-    Ok(options)
 }
 
 #[cfg(test)]
@@ -437,4 +487,6 @@ struct StoreStartup<'a> {
     runtime: (&'a str, Option<&'a layer3_adapter::HomeVolumePolicy>),
     schema: super::schema::StartupObserver,
     initial_settings: super::settings_defaults::InitialSettings,
+    released: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
+    runtime_pointer_required: bool,
 }

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
@@ -82,6 +82,22 @@ it('edits the Sandbox-wide scope with the required services locked and saves thr
     expect.any(String),
     expect.any(AbortSignal),
   );
+});
+
+it('matches the same Sandbox services with or without surrounding search whitespace', async () => {
+  show({ workspaces: [workspaceFixture()], agents: [AGENT_DETAIL], failed: false });
+  await screen.findByRole('checkbox', { name: 'GitHub' });
+
+  const search = screen.getByRole('textbox', { name: 'Search services' });
+  const services = within(screen.getByRole('list', { name: 'Services' }));
+  for (const name of ['GitHub', 'Chrono Storage']) {
+    for (const query of [name, ` ${name}`, `${name} `]) {
+      fireEvent.change(search, { target: { value: query } });
+      expect(services.getAllByRole('checkbox')).toEqual([services.getByRole('checkbox', { name })]);
+    }
+  }
+  fireEvent.change(search, { target: { value: 'no matching service' } });
+  expect(services.queryByRole('checkbox')).not.toBeInTheDocument();
 });
 
 it('continues a retained scope update through the Agent that holds it', async () => {

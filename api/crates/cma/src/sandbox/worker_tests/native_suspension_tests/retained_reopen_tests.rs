@@ -7,6 +7,19 @@ use layer2_core::sandbox::{
 
 pub(super) async fn restored_reopen() -> (Fixture, Sandbox, layer2_core::sandbox::Agent, SystemTime)
 {
+    restored_reopen_after_pause(false).await
+}
+
+pub(super) async fn restored_reopen_after_pause(
+    inactivity: bool,
+) -> (Fixture, Sandbox, layer2_core::sandbox::Agent, SystemTime) {
+    restored_reopen_with_settings(inactivity, None).await
+}
+
+pub(super) async fn restored_reopen_with_settings(
+    inactivity: bool,
+    settings: Option<layer2_core::sandbox::AgentSettings>,
+) -> (Fixture, Sandbox, layer2_core::sandbox::Agent, SystemTime) {
     let mut fixture = Fixture::native().await;
     let created = fixture.harness.create().await;
     let mut now = start_time(&created);
@@ -33,6 +46,7 @@ pub(super) async fn restored_reopen() -> (Fixture, Sandbox, layer2_core::sandbox
         now,
         1,
         Some(uuid::Uuid::new_v4().to_string()),
+        settings,
     )
     .await;
     fixture
@@ -41,7 +55,54 @@ pub(super) async fn restored_reopen() -> (Fixture, Sandbox, layer2_core::sandbox
         .create_workspace(lifecycle_recovery_tests::workspace_for(&agent, now))
         .await
         .unwrap();
-    let paused = fixture.pause(&active, &mut now).await;
+    let paused = if inactivity {
+        use layer2_core::sandbox::store::{
+            InactivityPauseCause, SandboxInactivityPauseRequest, SandboxMaintenanceOutcome,
+            SandboxMaintenanceStore,
+        };
+        now += Duration::from_secs(15 * 60 + 1);
+        let admitted_at = now;
+        let wall_clock = std::time::Instant::now();
+        assert_eq!(
+            fixture
+                .harness
+                .store
+                .schedule_inactivity_pause(SandboxInactivityPauseRequest {
+                    sandbox_id: active.id.clone(),
+                    requested_at: rfc3339_at(now),
+                    pause_after_seconds: 15 * 60,
+                    auto_pause_enabled: true,
+                    expected_policy_revision: None,
+                    cause: InactivityPauseCause::Inactivity,
+                })
+                .await
+                .unwrap(),
+            SandboxMaintenanceOutcome::Scheduled,
+        );
+        assert_eq!(
+            fixture.harness.stored(&active.id).await.status,
+            SandboxStatus::Pausing
+        );
+        let paused = fixture
+            .drive(
+                &active.id,
+                &mut now,
+                SandboxStatus::Paused,
+                &runtime_image(),
+            )
+            .await;
+        assert_eq!(paused.lifecycle.home, active.lifecycle.home);
+        eprintln!(
+            "idle=901s; Pausing -> Paused logical={}s wall={}ms",
+            now.duration_since(admitted_at).unwrap().as_secs(),
+            wall_clock.elapsed().as_millis()
+        );
+        paused
+    } else {
+        fixture.pause(&active, &mut now).await
+    };
+    let revive_at = now;
+    let wall_clock = std::time::Instant::now();
     fixture
         .harness
         .store
@@ -75,6 +136,13 @@ pub(super) async fn restored_reopen() -> (Fixture, Sandbox, layer2_core::sandbox
             ..
         })
     ));
+    if inactivity {
+        eprintln!(
+            "Reviving -> ConversationReopen logical={}s wall={}ms",
+            now.duration_since(revive_at).unwrap().as_secs(),
+            wall_clock.elapsed().as_millis()
+        );
+    }
     let child = fixture
         .harness
         .store
@@ -147,6 +215,7 @@ async fn request(fixture: &Fixture, failed: &Sandbox, now: SystemTime) -> Retain
     );
     let proof = verifier.verify(&snapshot).await.unwrap();
     RetainedReopenRequest {
+        repeat_authorized: false,
         snapshot,
         proof,
         key_sha256: "e".repeat(64),

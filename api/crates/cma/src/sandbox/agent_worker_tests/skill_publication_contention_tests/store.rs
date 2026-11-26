@@ -55,12 +55,9 @@ impl AgentWorkerStore for PublicationStore {
         &self,
         now: &str,
         limit: u16,
-        holds: &std::collections::BTreeSet<AgentId>,
-        startup: StartupWorkFilter<'_>,
+        filter: AgentWorkDiscovery<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
-        self.inner
-            .due_agent_work_filtered(now, limit, holds, startup)
-            .await
+        self.inner.due_agent_work_filtered(now, limit, filter).await
     }
     async fn live_agent_connections(
         &self,

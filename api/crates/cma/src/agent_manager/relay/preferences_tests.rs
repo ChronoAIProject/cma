@@ -10,6 +10,9 @@ use fixture::*;
 #[path = "preferences_tests/settings_receipts.rs"]
 mod settings_receipts;
 
+#[path = "preferences_tests/process_recovery.rs"]
+mod process_recovery;
+
 #[path = "settings_tests.rs"]
 mod settings;
 

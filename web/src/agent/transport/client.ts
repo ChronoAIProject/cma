@@ -25,6 +25,15 @@ export interface AgentTransportOptions {
 }
 
 export class AgentV2Session {
+  private approvalProjectionInvalidated = false;
+
+  invalidateApprovalProjection() {
+    this.approvalProjectionInvalidated = true;
+  }
+  get approvalProjectionAvailable() {
+    return !this.approvalProjectionInvalidated;
+  }
+
   readonly events: Cma['agentEventsV2'];
   readonly responses: Cma['responsesV2'];
   private entryHandoff?: () => boolean;
@@ -150,6 +159,7 @@ export class AgentV2Session {
     signal?: AbortSignal,
     onReceiptObserved?: (receipt: V2ResponseReceipt) => void,
     answerContext?: AnswerContext,
+    onRetained?: (key: string) => void,
   ) {
     return this.withRecovery(signal, async (recovery) => {
       await recovery.retry(() => this.checkIdentity(this.inputUser, recovery.signal));
@@ -159,6 +169,7 @@ export class AgentV2Session {
           onAccepted(receipt);
         },
         onReceiptObserved,
+        onRetained,
         answerContext,
         signal: recovery.signal,
         recovery,

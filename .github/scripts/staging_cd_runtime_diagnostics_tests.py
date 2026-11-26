@@ -59,7 +59,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
 
     def test_runtime_refusals_emit_only_safe_stages_before_any_registry_writer(self):
         cases = {"scan": ("scan", "scan_refused"), "smoke": ("runtime_smoke", "validation_refused"),
-                 "cleanup": ("runtime_smoke", "validation_refused"),
+                 "cleanup": ("runtime_smoke", "runtime_cleanup_incomplete"),
                  "changed": ("archive_check", "validation_refused"),
                  "missing": ("archive_check", "validation_refused"),
                  "source": ("receipt", "validation_refused")}

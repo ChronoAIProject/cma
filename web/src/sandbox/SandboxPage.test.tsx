@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { SandboxDetail } from '../api/types';
 import type { TreePermissions } from '../shell/Tree';
 import { agentClient } from '../test/agent';
-import { sandboxFixture } from '../test/hierarchy';
+import { sandboxFixture, workspaceFixture } from '../test/hierarchy';
 import { NamedReferences } from '../test/references';
 import { SandboxPage } from './SandboxPage';
 
@@ -129,41 +129,44 @@ it('does not replace a missing creator name with their subject ID', async () => 
   expect(screen.queryByText('creator-private-subject')).not.toBeInTheDocument();
 });
 
-it('shows granted service names for a paused Sandbox without relying on Agent reads', async () => {
-  render(
-    <NamedReferences>
-      <SandboxPage
-        client={agentClient({
-          readSandbox: async () => ({
-            ...sandboxFixture('paused'),
-            nyxidServices: ['github', 'storage'],
-            workspaces: [],
-          }),
-          readAgent: async () => {
-            throw new Error('Agent unavailable');
-          },
-        })}
-        sandboxId="sbx_1"
-        revision={0}
-        permissions={permissions}
-        busy={false}
-        onAction={vi.fn()}
-        onNavigate={vi.fn()}
-      />
-    </NamedReferences>,
-  );
-  fireEvent.click(await screen.findByRole('tab', { name: 'Access' }));
-  expect(await screen.findByRole('link', { name: 'Chrono Storage' })).toHaveAttribute(
-    'href',
-    'https://nyxid.ai/services/catalog-storage',
-  );
-  expect(screen.getByRole('link', { name: 'GitHub' })).toHaveAttribute(
-    'href',
-    'https://nyxid.ai/services/catalog-github',
-  );
-  expect(screen.queryByText('Access not yet confirmed')).not.toBeInTheDocument();
-  expect(screen.queryByText('Requested services')).not.toBeInTheDocument();
-});
+it.each(['https://catalog.example.test', 'https://second.example.test'])(
+  'links a paused Sandbox’s services through %s without relying on Agent reads',
+  async (catalogOrigin) => {
+    render(
+      <NamedReferences catalogOrigin={catalogOrigin}>
+        <SandboxPage
+          client={agentClient({
+            readSandbox: async () => ({
+              ...sandboxFixture('paused'),
+              nyxidServices: ['github', 'storage'],
+              workspaces: [],
+            }),
+            readAgent: async () => {
+              throw new Error('Agent unavailable');
+            },
+          })}
+          sandboxId="sbx_1"
+          revision={0}
+          permissions={permissions}
+          busy={false}
+          onAction={vi.fn()}
+          onNavigate={vi.fn()}
+        />
+      </NamedReferences>,
+    );
+    fireEvent.click(await screen.findByRole('tab', { name: 'Access' }));
+    expect(await screen.findByRole('link', { name: 'Chrono Storage' })).toHaveAttribute(
+      'href',
+      `${catalogOrigin}/services/catalog-storage`,
+    );
+    expect(screen.getByRole('link', { name: 'GitHub' })).toHaveAttribute(
+      'href',
+      `${catalogOrigin}/services/catalog-github`,
+    );
+    expect(screen.queryByText('Access not yet confirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Requested services')).not.toBeInTheDocument();
+  },
+);
 
 it('explains persistent PV storage in Technical details and exposes no snapshot controls', async () => {
   const sandbox = savingSandbox('capture');
@@ -362,6 +365,50 @@ it.each(['paused', 'reviving', 'rotating', 'provisioning', 'pausing', 'retiring'
       expect(screen.getByRole('button', { name: 'Resume' })).toBeEnabled();
       expect(screen.getByText(/Your work is preserved/)).toBeInTheDocument();
     }
+  },
+);
+
+it.each(['atlas', 'boreal'])(
+  'opens the retained failed repository Workspace for %s while creation is disabled',
+  async (name) => {
+    const sandboxId = `sbx_${name}`;
+    const workspace = {
+      ...workspaceFixture(),
+      id: `wsp_${name}`,
+      sandboxId,
+      name: `${name}-repository`,
+      status: 'failed' as const,
+      path: `/workspaces/${name}`,
+      agents: [],
+      worktrees: [],
+      agentCount: 0,
+      worktreeCount: 0,
+    };
+    const sandbox = { ...sandboxFixture('failed'), id: sandboxId, workspaces: [workspace] };
+    const onNavigate = vi.fn();
+    render(
+      <SandboxPage
+        client={agentClient({
+          readSandbox: async () => sandbox,
+          readWorkspace: async () => workspace,
+        })}
+        sandboxId={sandboxId}
+        revision={0}
+        permissions={{ ...permissions, createWorkspace: true, createAgent: true }}
+        busy={false}
+        onAction={vi.fn()}
+        onNavigate={onNavigate}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('tab', { name: 'Workspaces' }));
+    const link = await screen.findByRole('link', { name: workspace.name });
+    expect(link).toHaveAttribute('href', `/workspaces/${workspace.id}`);
+    expect(link.closest('tr')).toHaveTextContent('Needs attention');
+    expect(link.closest('tr')).toHaveTextContent(workspace.path);
+    expect(screen.getByRole('button', { name: 'New workspace' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: `New agent in ${workspace.name}` })).toBeDisabled();
+    fireEvent.click(link);
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'workspace', workspaceId: workspace.id });
   },
 );
 

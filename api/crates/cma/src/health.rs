@@ -17,6 +17,8 @@ const CHECK_DEADLINE: Duration = Duration::from_secs(2);
 const CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_CHECK_AGE: Duration = Duration::from_secs(5);
 
+mod build_info;
+
 #[async_trait::async_trait]
 pub trait ReadinessProbe: Send + Sync {
     /// Must release its resources when dropped. This is a read-only ping, not
@@ -121,6 +123,7 @@ fn health_routes(state: HealthState) -> Router {
         .route("/livez", get(liveness))
         .route("/ready", get(readiness))
         .with_state(state)
+        .merge(build_info::router())
 }
 
 async fn monitor(
@@ -184,7 +187,7 @@ async fn monitor(
     }
 }
 
-async fn liveness() -> &'static str {
+pub(crate) async fn liveness() -> &'static str {
     "ok"
 }
 

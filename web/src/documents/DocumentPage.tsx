@@ -11,12 +11,14 @@ import { usePresence } from '../ui/Presence';
 import { IconChevronLeftOutline14, IconShareOutline16, IconDownloadOutline16 } from '../ui/icons';
 import { DocumentComments } from './DocumentComments';
 import { DocumentSharing } from './DocumentSharing';
+import { DocumentSaveNotice } from './DocumentSaveNotice';
 import { documentDraft, retainDocumentDraft, type DocumentSaveIntent } from './drafts';
 import { readDocumentShareToken, retainDocumentShareToken } from './shareToken';
 import {
   downloadSavedDocument,
   ownsSavedDocument,
   prepareSavedDocumentExport,
+  SavedDocumentAccessError,
   SavedDocumentExportError,
 } from './savedExport';
 import { savedDocumentExportEnabled } from './savedExportFeature';
@@ -53,21 +55,24 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
   const [conflict, setConflict] = useState(false);
   const [busy, setBusy] = useState(false);
   const [intent, setIntent] = useState<DocumentSaveIntent>();
+  const loadRequest = useRef<AbortController | undefined>(undefined);
   const mutation = useRef<AbortController | undefined>(undefined);
   const exportRequest = useRef<AbortController | undefined>(undefined);
   const [exporting, setExporting] = useState<AbortController>();
   const owner = loaded?.document.access === 'owner';
   const dirty = owner && (title !== loaded.document.title || markdown !== loaded.markdown);
   const canChange = owner && !preview && !busy && !conflict;
-  const canEdit = canChange && intent === undefined;
+  const canEdit = canChange;
   const canSave =
     canChange &&
-    (dirty || intent !== undefined) &&
-    title.trim().length > 0 &&
-    new TextEncoder().encode(title.trim()).length <= 240 &&
-    markdown.trim().length > 0 &&
-    new TextEncoder().encode(markdown).length <= 1024 * 1024;
+    (intent !== undefined ||
+      (dirty &&
+        title.trim().length > 0 &&
+        new TextEncoder().encode(title.trim()).length <= 240 &&
+        markdown.trim().length > 0 &&
+        new TextEncoder().encode(markdown).length <= 1024 * 1024));
   const revoke = () => {
+    loadRequest.current?.abort();
     mutation.current?.abort();
     exportRequest.current?.abort();
     retainDocumentDraft(viewer, id);
@@ -86,8 +91,10 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
   useEffect(() => () => exportRequest.current?.abort(), [client, id, viewer]);
   useEffect(() => {
     const request = new AbortController();
+    loadRequest.current = request;
     void (async () => {
       const document = await client.read(id, { shareToken, signal: request.signal });
+      if (request.signal.aborted) return;
       const source = await client.source(id, {
         shareToken,
         revision: document.source_revision,
@@ -114,7 +121,10 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
       if (!request.signal.aborted)
         setError(cause instanceof Error ? cause.message : 'This document could not be loaded.');
     });
-    return () => request.abort();
+    return () => {
+      request.abort();
+      if (loadRequest.current === request) loadRequest.current = undefined;
+    };
   }, [client, id, viewer, shareToken, revision]);
   useEffect(() => {
     if (!loaded || !owner) return;
@@ -134,6 +144,7 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
     };
     const request = new AbortController();
     mutation.current = request;
+    const submittedTitle = intent ? retained.body.title : title;
     setBusy(true);
     setIntent(retained);
     setError(undefined);
@@ -148,7 +159,7 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
         markdown: retained.body.markdown,
         baseSourceRevision: document.source_revision,
       });
-      setTitle(document.title);
+      setTitle((current) => (current === submittedTitle ? document.title : current));
       // FileReader may have inserted an image while this snapshot was saving.
       // Keep that newer local source; the acknowledged snapshot is the new baseline.
       setIntent(undefined);
@@ -218,8 +229,12 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
       console.info('Saved document export download started.');
     } catch (cause) {
       if (!request.signal.aborted) {
+        const accessLost = cause instanceof SavedDocumentAccessError;
+        if (accessLost) revoke();
+        const failure = accessLost ? cause.cause : cause;
         console.warn('Saved document export failed.', {
-          status: cause instanceof DocumentError ? cause.status : undefined,
+          status: failure instanceof DocumentError ? failure.status : undefined,
+          accessLost,
         });
         setError(
           cause instanceof SavedDocumentExportError
@@ -235,103 +250,119 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
     }
   };
   return (
-    <section className="document-workspace" aria-label="Document">
+    <section className="document-workspace document-page" aria-label="Document">
       <DocumentNavigationGuard
         id={id}
         protectedChanges={Boolean(owner && (dirty || intent))}
         saving={intent !== undefined}
       />
-      <header className="document-workspace__header">
-        <Button
-          size="sm"
-          variant="ghost"
-          icon={<IconChevronLeftOutline14 />}
-          aria-label="Back to artifacts"
-          onClick={() => onNavigate({ kind: 'artifacts' })}
-        />
-        {loaded ? (
-          <input
-            className="document-title"
-            aria-label="Document title"
-            value={title}
-            maxLength={240}
-            disabled={!canEdit}
-            onChange={(event) => setTitle(event.target.value)}
+      <header className="document-workspace__header document-page__header">
+        <div className="document-page__heading">
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<IconChevronLeftOutline14 />}
+            aria-label="Back to artifacts"
+            onClick={() => onNavigate({ kind: 'artifacts' })}
           />
-        ) : (
-          <h1>Opening document</h1>
-        )}
-        <span
-          className="document-workspace__save-status"
-          role="status"
-          data-dirty={dirty || undefined}
-        >
-          {busy
-            ? 'Saving…'
-            : conflict
-              ? 'Version changed'
-              : dirty
-                ? 'Unsaved changes'
-                : loaded
-                  ? 'Saved'
-                  : ''}
-          {preview && dirty && !busy && !conflict ? (
-            <>
-              {' · '}
-              <span>Switch to Edit to save</span>
-            </>
-          ) : null}
-        </span>
-        {owner ? (
-          <div className="document-workspace__mode" role="group" aria-label="Document mode">
-            <Button size="sm" aria-pressed={!preview} onClick={() => setPreview(false)}>
-              Edit
+          {loaded ? (
+            <input
+              className="document-title document-page__title"
+              aria-label="Document title"
+              value={title}
+              maxLength={240}
+              disabled={!canEdit}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          ) : (
+            <h1>Opening document</h1>
+          )}
+        </div>
+        {loaded ? (
+          <p className="document-page__subtitle">
+            Artifacts · {owner ? (preview ? 'You’re previewing' : 'You’re editing') : 'Read only'}
+          </p>
+        ) : null}
+        <div className="document-page__controls">
+          <span
+            className="document-workspace__save-status document-page__save-status"
+            role="status"
+            data-dirty={dirty || undefined}
+            data-unconfirmed={(intent !== undefined && !busy) || undefined}
+          >
+            {busy
+              ? 'Saving…'
+              : conflict
+                ? 'Version changed'
+                : intent
+                  ? 'Save not confirmed'
+                  : dirty
+                    ? 'Unsaved changes'
+                    : loaded
+                      ? 'Saved'
+                      : ''}
+            {preview && dirty && !busy && !conflict ? (
+              <>
+                {' · '}
+                <span>Switch to Edit to save</span>
+              </>
+            ) : null}
+          </span>
+          <div className="document-page__actions">
+            {owner ? (
+              <div className="document-workspace__mode" role="group" aria-label="Document mode">
+                <Button size="sm" aria-pressed={!preview} onClick={() => setPreview(false)}>
+                  Edit
+                </Button>
+                <Button size="sm" aria-pressed={preview} onClick={() => setPreview(true)}>
+                  Preview
+                </Button>
+              </div>
+            ) : null}
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-expanded={commentsOpen}
+              onClick={() => setCommentsOpen(!commentsOpen)}
+            >
+              Comments
             </Button>
-            <Button size="sm" aria-pressed={preview} onClick={() => setPreview(true)}>
-              Preview
-            </Button>
+            {owner ? (
+              <Button
+                size="sm"
+                icon={<IconShareOutline16 />}
+                disabled={busy || intent !== undefined}
+                onClick={() => setShareOpen(true)}
+              >
+                Share
+              </Button>
+            ) : null}
+            {savedDocumentExportEnabled() &&
+            loaded?.document.id === id &&
+            ownsSavedDocument(loaded.document, viewer) ? (
+              <Button
+                size="sm"
+                icon={<IconDownloadOutline16 />}
+                disabled={(exporting && !exporting.signal.aborted) || busy || intent !== undefined}
+                onClick={() => void exportSaved()}
+              >
+                {exporting && !exporting.signal.aborted
+                  ? 'Exporting saved JSON…'
+                  : 'Export saved JSON'}
+              </Button>
+            ) : null}
+            {owner && !intent ? (
+              <Button size="sm" variant="primary" disabled={!canSave} onClick={() => void save()}>
+                Save
+              </Button>
+            ) : null}
           </div>
-        ) : null}
-        <Button
-          size="sm"
-          variant="ghost"
-          aria-expanded={commentsOpen}
-          onClick={() => setCommentsOpen(!commentsOpen)}
-        >
-          Comments
-        </Button>
-        {owner ? (
-          <Button
-            size="sm"
-            icon={<IconShareOutline16 />}
-            disabled={busy || intent !== undefined}
-            onClick={() => setShareOpen(true)}
-          >
-            Share
-          </Button>
-        ) : null}
-        {savedDocumentExportEnabled() &&
-        loaded?.document.id === id &&
-        ownsSavedDocument(loaded.document, viewer) ? (
-          <Button
-            size="sm"
-            icon={<IconDownloadOutline16 />}
-            disabled={(exporting && !exporting.signal.aborted) || busy || intent !== undefined}
-            onClick={() => void exportSaved()}
-          >
-            {exporting && !exporting.signal.aborted ? 'Exporting saved JSON…' : 'Export saved JSON'}
-          </Button>
-        ) : null}
-        {owner ? (
-          <Button size="sm" variant="primary" disabled={!canSave} onClick={() => void save()}>
-            {intent && !busy ? 'Retry save' : 'Save'}
-          </Button>
-        ) : null}
+        </div>
       </header>
       {owner && new TextEncoder().encode(title.trim()).length > 240 ? (
         <Alert tone="warning">Keep the document title within 240 bytes.</Alert>
       ) : null}
-      {error ? (
+      {error && !intent ? (
         <Alert
           tone="error"
           actions={
@@ -366,8 +397,20 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
           before loading the latest version.
         </Alert>
       ) : null}
-      <div className="document-workspace__body" data-comments={commentsOpen || undefined}>
-        <div className="document-workspace__canvas">
+      {owner && intent ? (
+        <DocumentSaveNotice
+          text={markdown}
+          busy={busy}
+          canRetry={canSave}
+          error={error}
+          onRetry={() => void save()}
+        />
+      ) : null}
+      <div
+        className="document-workspace__body document-page__body"
+        data-comments={commentsOpen || undefined}
+      >
+        <div className="document-workspace__canvas document-page__canvas">
           {loaded ? (
             <Suspense
               fallback={
@@ -412,30 +455,32 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
           onClose={() => setShareOpen(false)}
         />
       ) : null}
-      <Modal
-        open={discardOpen}
-        title="Load the latest document?"
-        onClose={() => setDiscardOpen(false)}
-        footer={
-          <>
-            <Button onClick={download}>Download draft</Button>
-            <Button
-              variant="danger"
-              onClick={() => {
-                retainDocumentDraft(viewer, id);
-                setDiscardOpen(false);
-                setIntent(undefined);
-                setLoaded(undefined);
-                setRevision((value) => value + 1);
-              }}
-            >
-              Discard draft and reload
-            </Button>
-          </>
-        }
-      >
-        <p>Your unsaved changes will be replaced by the latest saved version.</p>
-      </Modal>
+      {loaded ? (
+        <Modal
+          open={discardOpen}
+          title="Load the latest document?"
+          onClose={() => setDiscardOpen(false)}
+          footer={
+            <>
+              <Button onClick={download}>Download draft</Button>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  retainDocumentDraft(viewer, id);
+                  setDiscardOpen(false);
+                  setIntent(undefined);
+                  setLoaded(undefined);
+                  setRevision((value) => value + 1);
+                }}
+              >
+                Discard draft and reload
+              </Button>
+            </>
+          }
+        >
+          <p>Your unsaved changes will be replaced by the latest saved version.</p>
+        </Modal>
+      ) : null}
     </section>
   );
 }

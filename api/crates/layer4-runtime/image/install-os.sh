@@ -24,9 +24,9 @@ if [ "$1" = install ]; then
         bash \
         bubblewrap \
         ca-certificates \
-        chromium=156.0.8078.79-1~deb13u1 \
-        chromium-common=156.0.8078.79-1~deb13u1 \
-        chromium-sandbox=156.0.8078.79-1~deb13u1 \
+        chromium=156.0.8078.108-1~deb13u1 \
+        chromium-common=156.0.8078.108-1~deb13u1 \
+        chromium-sandbox=156.0.8078.108-1~deb13u1 \
         curl \
         build-essential \
         git \

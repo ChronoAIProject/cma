@@ -120,7 +120,22 @@ pub fn is_inactivity_pause_candidate(
     pause_after_seconds: u64,
 ) -> bool {
     (MIN_PAUSE_AFTER_SECONDS..=MAX_PAUSE_AFTER_SECONDS).contains(&pause_after_seconds)
+        && sandbox_activity_idle(sandbox, now, pause_after_seconds)
         && is_quiet_pause_candidate(sandbox, live_agents, now, pause_after_seconds)
+}
+
+/// Owner work admitted on the Sandbox itself, such as an added Workspace or
+/// Agent, is recorded in `last_activity_at`. A quiet Agent's old log does not
+/// prove that work is a full interval old (#1330). Fails closed on a malformed
+/// timestamp. The platform spend stop keeps its own zero-threshold predicate.
+fn sandbox_activity_idle(sandbox: &Sandbox, now: &str, pause_after_seconds: u64) -> bool {
+    match (
+        seconds_from_rfc3339(now),
+        seconds_from_rfc3339(&sandbox.last_activity_at),
+    ) {
+        (Some(now), Some(at)) => now > at.saturating_add(pause_after_seconds),
+        _ => false,
+    }
 }
 
 /// The quiet-pause eligibility predicate without an inactivity threshold

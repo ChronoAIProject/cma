@@ -15,7 +15,18 @@ pub(super) async fn reserve(
     home.request = adapter.reserve_home_request(request, &home.request).await?;
     home.validate(&layer2_core::SandboxId(home.request.sandbox_id.clone()))
         .map_err(|error| AdapterError::Rejected(error.to_string()))?;
-    if let Some(pool) = adapter.select_native_pool(request, &home.request).await? {
+    let pool = adapter.select_native_pool(request, &home.request).await?;
+    if let Some(image) = &request.native_canary_image {
+        if pool
+            .as_ref()
+            .is_none_or(|binding| !binding.spec.cold_canary || &binding.spec.image != image)
+        {
+            return Err(rejected(
+                "canary Sandbox native pool does not match its exact image",
+            ));
+        }
+    }
+    if let Some(pool) = pool {
         home.native_pool = Some(Box::new(SandboxNativePool {
             request: NativePoolClaimRequest {
                 pool,

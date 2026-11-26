@@ -67,7 +67,7 @@ async function setup(
           />
         ) : surface === 'landing' ? (
           <PublicJourney
-            client={{ requests: { ...client.requests, createOrResume: command } }}
+            client={{ requests: { ...client.requests, createOrResumeBound: command } }}
             route={{
               kind: 'public_trigger',
               publicId: 'public-example',
@@ -136,7 +136,14 @@ for (const surface of ['sandbox', 'landing', 'review'] as const) {
     const login = new URL(test.popup.location.href, window.location.origin);
     expect(login.pathname).toBe('/auth/login');
     expect([...login.searchParams]).toEqual([
-      ['return_to', surface === 'sandbox' ? '/' : '/t/public-example'],
+      [
+        'return_to',
+        surface === 'sandbox'
+          ? '/'
+          : surface === 'landing'
+            ? '/t/public-example/plc_readme'
+            : '/t/public-example',
+      ],
     ]);
     expect(test.command).toHaveBeenCalledOnce();
     await test.actor.click(screen.getByRole('button', { name: 'Check signed-in account' }));
@@ -286,6 +293,7 @@ it('keeps Start fresh choice, placement, referrer, owner and retry key through r
     key: expect.any(String),
     owner: PUBLIC_USER.id,
     submitted: true,
+    wireBody: JSON.stringify(original.body),
     credentialRecovery: 'retry',
   });
   expect(retained.key).not.toBe(original.key);

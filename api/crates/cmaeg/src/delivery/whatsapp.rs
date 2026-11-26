@@ -145,7 +145,10 @@ impl Sender {
             rendering,
             ..rejected("empty_message")
         };
-        let deadline = Instant::now() + Duration::from_secs(60);
+        let deadline = ctx
+            .gate
+            .transport_deadline()
+            .unwrap_or_else(|| Instant::now() + Duration::from_secs(60));
         if structured.is_some() {
             let Some(interactions) = &self.relay.interactions else {
                 return (unsupported(), effects);
@@ -364,7 +367,13 @@ impl Sender {
                         retained_until: now + RETENTION,
                     };
                     confirmed += 1;
-                    if store.put(&receipt).await.is_err() {
+                    if !super::gate::within_deadline(
+                        ctx.gate,
+                        async { store.put(&receipt).await.is_ok() },
+                        false,
+                    )
+                    .await
+                    {
                         result.delivery = DeliveryOutcome::Unknown {
                             reason: "native_whatsapp_receipt_unconfirmed".into(),
                         };

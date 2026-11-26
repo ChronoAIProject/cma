@@ -3,6 +3,7 @@ use super::{worker_guard as guard, worker_records as records};
 use crate::store::sandbox_mongo::{
     commit_transaction, is_transient, start_transaction, CommitOutcome,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(super) async fn resolve(
     store: &MongoErasureJournal,
@@ -49,7 +50,7 @@ pub(super) async fn resolve(
         let result = match result {
             Ok(Ok(value)) => value,
             other => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 match other {
                     Ok(Err(AttemptError::Driver(error))) if is_transient(&error) => continue,
                     Ok(Err(AttemptError::Domain(error))) => return Err(error),
@@ -59,13 +60,13 @@ pub(super) async fn resolve(
             }
         };
         if !matches!(result, JournalResolution::NotCommittedAfterFence { .. }) {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Ok(result);
         }
         let remaining = match budget.remaining() {
             Ok(value) => value,
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
         };

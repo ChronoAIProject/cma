@@ -1,13 +1,15 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { unavailableClient, type CmaWebClient } from '../api/client';
 import { taskExperience } from '../test/taskExperience';
+import { selectTaskTemplate } from '../test/taskTemplateSelection';
 import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { TaskHome } from './TaskHome';
 import {
   taskDraftStorageKey,
   legacyTaskDraftStorageKey,
   discardSubmittedTaskDraft,
+  useTaskDraft,
 } from './taskDraft';
 import { lifecycleStorageKey } from './lifecycleIntent';
 import { compileTaskTemplate, parseTaskTemplate, taskTemplates } from './taskTemplateModel';
@@ -23,6 +25,7 @@ function setup(overrides: Partial<CmaWebClient> = {}, viewerId = 'owner', worksp
     taskExperience: taskExperience(viewerId),
     readTaskCreationSupport: async () => true,
     readTaskTemplateSupport: async () => true,
+    readTaskTemplateV2Support: async () => true,
     readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     createAgentLifecycle: create,
     ...overrides,
@@ -44,7 +47,7 @@ it.each(taskTemplates)(
   async (definition) => {
     const { create } = setup();
     await ready();
-    fireEvent.click(screen.getByRole('button', { name: definition.name }));
+    selectTaskTemplate(definition.name);
     await waitFor(() => expect(screen.getByLabelText(definition.fields[0]!.label)).toHaveFocus());
     const start = screen.getByRole('button', { name: 'Start task' });
     const form = start.closest('form')!;
@@ -59,7 +62,10 @@ it.each(taskTemplates)(
         expect(create).not.toHaveBeenCalled();
         expect(screen.getByLabelText(field.label)).toHaveFocus();
       }
-      fill(field.label, `Synthetic ${field.key}`);
+      fill(
+        field.label,
+        field.key === 'link' ? 'https://example.com/synthetic.csv' : `Synthetic ${field.key}`,
+      );
     }
     expect(start).toBeEnabled();
     expect(screen.getByRole('region', { name: 'Task preview · read-only' })).toBeVisible();
@@ -71,8 +77,13 @@ it.each(taskTemplates)(
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     const template = parseTaskTemplate({
       id: definition.id,
-      version: 1,
-      fields: Object.fromEntries(definition.fields.map(({ key }) => [key, `Synthetic ${key}`])),
+      version: 2,
+      fields: Object.fromEntries(
+        definition.fields.map(({ key }) => [
+          key,
+          key === 'link' ? 'https://example.com/synthetic.csv' : `Synthetic ${key}`,
+        ]),
+      ),
     });
     expect(create.mock.calls[0]![0]).toMatchObject({
       template,
@@ -85,6 +96,7 @@ it.each([false, undefined, 'failure'] as const)(
   'preserves fields when template support is %s',
   async (support) => {
     const { create } = setup({
+      readTaskTemplateV2Support: async () => false,
       readTaskTemplateSupport:
         support === undefined
           ? undefined
@@ -94,7 +106,7 @@ it.each([false, undefined, 'failure'] as const)(
             },
     });
     await ready();
-    fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+    selectTaskTemplate('Research a topic');
     fill('Topic', 'Synthetic topic');
     expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
     fireEvent.submit(screen.getByLabelText('Topic').closest('form')!);
@@ -112,7 +124,7 @@ it('restores fields, isolates owner/context, and returns to free text without gu
   const view = setup();
   await ready();
   fill('Your task', 'Discuss [topic], [1, 2] and [label](https://example.com)');
-  fireEvent.click(screen.getByRole('button', { name: 'Write a document' }));
+  selectTaskTemplate('Write a document');
   fill('Subject', 'Retained subject');
   view.unmount();
   const restored = setup();
@@ -134,12 +146,13 @@ it('restores fields, isolates owner/context, and returns to free text without gu
 it('requires fresh template support when the client changes', async () => {
   const view = setup();
   await ready();
-  fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+  selectTaskTemplate('Research a topic');
   fill('Topic', 'Synthetic topic');
   expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
   const client = {
     ...view.props.client,
     readTaskTemplateSupport: () => new Promise<boolean>(() => {}),
+    readTaskTemplateV2Support: () => new Promise<boolean>(() => {}),
   };
   view.rerender(<TaskHome {...view.props} client={client} />);
   expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
@@ -153,7 +166,7 @@ it.each(['ctrlKey', 'metaKey'])(
   async (modifier) => {
     const { create } = setup({ readTaskRepositorySupport: async () => true });
     await ready();
-    fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+    selectTaskTemplate('Research a topic');
     fill('Topic', 'Synthetic topic');
     fireEvent.click(screen.getByRole('button', { name: 'Add git repo' }));
     fill('GitHub repository', 'owner/repository');
@@ -188,12 +201,20 @@ it('restores exact untouched version-1 template drafts as unfilled fields', asyn
 it('replays the original body and key after reload without recompiling or clearing a newer draft', async () => {
   const view = setup();
   await ready();
-  fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+  selectTaskTemplate('Research a topic');
   fill('Topic', '  Original topic  ');
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await screen.findByRole('button', { name: 'Recover original task' });
   const original = view.create.mock.calls[0]!;
-  fill('Topic', 'A later draft');
+  expect(screen.queryByLabelText('Topic')).not.toBeInTheDocument();
+  const later = renderHook(() => useTaskDraft('owner'));
+  act(() =>
+    later.result.current.changeTemplate({
+      id: 'research',
+      version: 1,
+      fields: { topic: 'A later draft' },
+    }),
+  );
   const saved = JSON.parse(sessionStorage.getItem(lifecycleStorageKey('owner'))!) as {
     intent: { body: { initial_message: string }; draftRevision: string };
   };
@@ -210,7 +231,13 @@ it('replays the original body and key after reload without recompiling or cleari
   });
   expect(restored.create.mock.calls[0]![1].idempotencyKey).toBe(original[1].idempotencyKey);
   discardSubmittedTaskDraft('owner', original[0], saved.intent.draftRevision);
-  expect(screen.getByLabelText('Topic')).toHaveValue('A later draft');
+  expect(later.result.current.template).toMatchObject({ fields: { topic: 'A later draft' } });
+  expect(
+    JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!).template.fields.topic,
+  ).toBe('A later draft');
+  expect(screen.getByRole('region', { name: 'Original request' }).textContent).toBe(
+    saved.intent.body.initial_message,
+  );
 });
 
 it.each([false, true])(
@@ -218,18 +245,29 @@ it.each([false, true])(
   async (edited) => {
     const view = setup();
     await ready();
-    fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+    selectTaskTemplate('Research a topic');
     fill('Topic', 'Synthetic topic');
     fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
     await screen.findByRole('button', { name: 'Recover original task' });
     const submitted = view.create.mock.calls[0]![0];
-    if (edited) fill('Topic', ' Synthetic topic ');
+    expect(screen.queryByLabelText('Topic')).not.toBeInTheDocument();
+    const retained = renderHook(() => useTaskDraft('owner'));
+    if (edited)
+      act(() =>
+        retained.result.current.changeTemplate({
+          id: 'research',
+          version: 1,
+          fields: { topic: ' Synthetic topic ' },
+        }),
+      );
     const revision = JSON.parse(sessionStorage.getItem(lifecycleStorageKey('owner'))!).intent
       .draftRevision;
     act(() => discardSubmittedTaskDraft('owner', submitted, revision));
     if (edited) {
       expect(sessionStorage.getItem(taskDraftStorageKey('owner'))).not.toBeNull();
-      expect(screen.getByLabelText('Topic')).toHaveValue(' Synthetic topic ');
+      expect(retained.result.current.template).toMatchObject({
+        fields: { topic: ' Synthetic topic ' },
+      });
     } else {
       expect(JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!)).toEqual({
         version: 3,
@@ -240,7 +278,114 @@ it.each([false, true])(
         legacyObserved: null,
         recoverable: [],
       });
-      await waitFor(() => expect(screen.getByLabelText('Your task')).toHaveValue(''));
+      expect(retained.result.current.template).toBeUndefined();
+      expect(retained.result.current.text).toBe('');
     }
+  },
+);
+
+it.each([
+  {
+    name: 'Research a topic',
+    fields: [
+      [
+        'Topic',
+        'Compare three established methods. Cite public sources and provide a concise table.',
+      ],
+    ],
+    expected:
+      'Research the following topic:\n\nCompare three established methods. Cite public sources and provide a concise table.\n\nSummarize the key findings, with links to sources.',
+  },
+  {
+    name: 'Write code',
+    fields: [
+      ['Language', 'JavaScript'],
+      ['What should the code do?', 'Create a small accessible form on a new branch.'],
+    ],
+    expected:
+      'Write a JavaScript script for the following task:\n\nCreate a small accessible form on a new branch.',
+  },
+])(
+  'previews and submits grammatical $name instructions without rewriting user sentences',
+  async ({ name, fields, expected }) => {
+    const { create } = setup();
+    await ready();
+    selectTaskTemplate(name);
+    for (const [label, value] of fields) fill(label!, value!);
+    expect(screen.getByRole('region', { name: 'Task preview · read-only' })).toHaveTextContent(
+      expected.replace(/\s+/g, ' '),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(create.mock.calls[0]![0]).toMatchObject({
+      initial_message: expected,
+      template: { version: 2 },
+    });
+  },
+);
+
+const researchTopic =
+  'Compare three established methods for testing AI agent browser reliability. Cite public sources and provide a concise table.';
+const codeBehavior = 'Create a small accessible page on a new branch.';
+
+describe.each([
+  {
+    id: 'research',
+    name: 'Research a topic',
+    values: [['Topic', researchTopic]],
+    fields: { topic: researchTopic },
+    corrected: `Research the following topic:\n\n${researchTopic}\n\nSummarize the key findings, with links to sources.`,
+    legacy: `Research ${researchTopic} and summarize the key findings, with links to sources.`,
+  },
+  {
+    id: 'code',
+    name: 'Write code',
+    values: [
+      ['Language', 'JavaScript'],
+      ['What should the code do?', codeBehavior],
+    ],
+    fields: { language: 'JavaScript', behavior: codeBehavior },
+    corrected: `Write a JavaScript script for the following task:\n\n${codeBehavior}`,
+    legacy: `Write a JavaScript script that ${codeBehavior}.`,
+  },
+] as const)(
+  '$name before template support settles',
+  ({ id, name, values, fields, corrected, legacy }) => {
+    it.each([true, false])(
+      'previews and submits the same text when v2 support is %s',
+      async (supportsV2) => {
+        let finishDiscovery!: (supported: boolean) => void;
+        const { create } = setup({
+          readTaskTemplateV2Support: () =>
+            new Promise<boolean>((resolve) => {
+              finishDiscovery = resolve;
+            }),
+        });
+        await ready();
+        selectTaskTemplate(name);
+        for (const [label, value] of values) fill(label, value);
+        const preview = screen.getByRole('region', { name: 'Task preview · read-only' });
+        const start = screen.getByRole('button', { name: 'Start task' });
+        expect(preview.textContent).toBe(corrected);
+        expect(start).toBeDisabled();
+        fireEvent.submit(start.closest('form')!);
+        expect(create).not.toHaveBeenCalled();
+
+        await act(async () => finishDiscovery(supportsV2));
+        const expected = supportsV2 ? corrected : legacy;
+        expect(preview.textContent).toBe(expected);
+        expect(start).toBeEnabled();
+        expect(
+          JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!).template.version,
+        ).toBe(1);
+        fireEvent.click(start);
+        await waitFor(() => expect(create).toHaveBeenCalledOnce());
+        const template = { id, version: supportsV2 ? 2 : 1, fields };
+        expect(create.mock.calls[0]![0]).toMatchObject({ initial_message: expected, template });
+        expect(JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!).template).toEqual(
+          template,
+        );
+      },
+    );
   },
 );

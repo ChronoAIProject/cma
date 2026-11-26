@@ -10,9 +10,20 @@ pub(crate) struct ConnectionPrerequisite {
     identity: Arc<dyn SandboxCredentialPrerequisite>,
     connections: Arc<dyn ServiceConnectionBroker>,
     policy: Arc<dyn layer2_core::sandbox::SandboxPolicySource>,
+    exact_github: Option<Arc<crate::trigger::CmaServiceConnectionBroker>>,
 }
 
 impl ConnectionPrerequisite {
+    pub(crate) fn with_exact_github(
+        mut self: Arc<Self>,
+        broker: Arc<crate::trigger::CmaServiceConnectionBroker>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("connection prerequisite is configured before sharing")
+            .exact_github = Some(broker);
+        self
+    }
+
     pub(crate) fn new(
         identity: Arc<dyn SandboxCredentialPrerequisite>,
         connections: Arc<dyn ServiceConnectionBroker>,
@@ -22,12 +33,59 @@ impl ConnectionPrerequisite {
             identity,
             connections,
             policy,
+            exact_github: None,
         })
     }
 }
 
 #[async_trait::async_trait]
 impl SandboxCredentialPrerequisite for ConnectionPrerequisite {
+    async fn check_sandbox(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+    ) -> Result<(), SandboxCredentialPrerequisiteError> {
+        if !sandbox.credential.source.is_managed() {
+            return if sandbox.credential.validate() && sandbox.credential.current.is_some() {
+                Ok(())
+            } else {
+                Err(SandboxCredentialPrerequisiteError::SetupRequired)
+            };
+        }
+        let reaches = sandbox.credential.effective_reaches();
+        let mut services = sandbox
+            .profile
+            .content
+            .connection_services_for_grants(&reaches);
+        if let Some(initial) = sandbox.credential.selected_repository_connection() {
+            use crate::trigger::{GitHubRepositoryNeed, GitHubScopeCheck};
+            use layer2_core::sandbox::RepositoryCredentialRequirement;
+            let broker = self.exact_github.as_ref().ok_or_else(unavailable)?;
+            let need = match initial.requirement {
+                RepositoryCredentialRequirement::PublicRepositoryWrite => {
+                    GitHubRepositoryNeed::PublicRepositoryWrite
+                }
+                RepositoryCredentialRequirement::PrivateRepositoryRead => {
+                    GitHubRepositoryNeed::PrivateRepositoryRead
+                }
+            };
+            match broker
+                .exact_github_scope_check(&sandbox.owner, &initial.selection.connection_id, need)
+                .await
+            {
+                GitHubScopeCheck::ScopeSatisfied { .. } => (),
+                GitHubScopeCheck::InsufficientScope { .. }
+                | GitHubScopeCheck::MissingConnection => {
+                    return Err(SandboxCredentialPrerequisiteError::ConnectionsRequired {
+                        services: vec![initial.selection.service.clone()],
+                    });
+                }
+                GitHubScopeCheck::VerificationUnavailable => return Err(unavailable()),
+            }
+            services.retain(|service| service != &initial.selection.service);
+        }
+        self.check_services(&sandbox.owner, &services).await
+    }
+
     async fn connection_services(
         &self,
         profile: &layer2_core::profiles::SandboxProfileContent,

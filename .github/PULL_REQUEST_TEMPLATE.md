@@ -1,3 +1,7 @@
+<!-- The first OSS release is source-only, uses Apache-2.0 and accepts DCO
+contributions. Vulnerability details belong only in the private GitHub reporting
+channel; read .github/SECURITY.md before including potentially sensitive data. -->
+
 ## Change
 
 Describe the concrete problem and resulting behavior. Reference the tracking
@@ -43,3 +47,19 @@ still needs an explicit assessment.
 State the authorized verification plan, expected observations, stop conditions
 and retained-data checks. Distinguish executed evidence from planned checks.
 Do not imply that merge authorizes production writes or closes the issue.
+
+## Third-party materials and contribution terms
+
+- **Dependencies, copied code, fonts or media:** List additions/changes, public
+  provenance and retained notices, or explain why this change has none.
+- **License inventory:** For affected materials, describe the source inventory
+  result and unresolved declarations; keep private evidence outside the PR.
+- **Project license / DCO:** Apache-2.0 applies to the first-party source scope;
+  every commit from a contributor carries the DCO `Signed-off-by` trailer.
+- **Release scope and restricted materials:** The first release is source-only;
+  the restricted decoration and derived SVGs were removed and no
+  replacement is included. Identify any other third-party material touched and
+  preserve its terms.
+- **Review:** **[PENDING: designated maintainer roles]**. The proposed community
+  process requires a non-author approval and designated review of CI/security
+  changes; this template does not assert that branch rules enforce it today.

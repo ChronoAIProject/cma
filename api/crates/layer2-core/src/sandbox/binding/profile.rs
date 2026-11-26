@@ -103,6 +103,21 @@ pub struct BindingEnvironmentPlan {
     pub workspace: WorkspaceProfileContent,
 }
 
+impl BindingEnvironmentPlan {
+    pub(super) fn include_baseline_services(&mut self, baseline: Vec<ServiceId>) {
+        let routes = self.sandbox.agent_provider.connection_services();
+        let services = &mut self.sandbox.nyxid_services;
+        // The profile's selected model route takes precedence over platform defaults.
+        services.extend(
+            baseline
+                .into_iter()
+                .filter(|service| !routes.contains(service.as_str())),
+        );
+        services.sort();
+        services.dedup();
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingProfilePlan {
@@ -366,7 +381,8 @@ fn map_environment(
     let name = match &input.workspace {
         WorkspaceLocation::Directory { name } => name.clone(),
         WorkspaceLocation::GitRepository { .. } => String::new(),
-        WorkspaceLocation::RepositorySnapshot { .. } => "workspace".into(),
+        WorkspaceLocation::RepositorySnapshot { .. }
+        | WorkspaceLocation::PublicRepositorySnapshot { .. } => "workspace".into(),
     };
     let workspace = WorkspaceProfileContent {
         name,

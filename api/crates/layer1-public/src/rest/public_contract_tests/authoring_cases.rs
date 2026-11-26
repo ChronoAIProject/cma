@@ -183,7 +183,7 @@ pub(super) fn scenario(name: &str) -> Option<Scenario> {
         },
         Arc::new(Source { mode: mode.into() }),
     );
-    let mut router = super::super::profile_authoring_router(service);
+    let mut router = super::super::profile_authoring_router(service, None);
     if mode.starts_with("credential_") {
         router = router.layer(axum::Extension(crate::DelegatedCredential::new(
             "test-request-authority".into(),

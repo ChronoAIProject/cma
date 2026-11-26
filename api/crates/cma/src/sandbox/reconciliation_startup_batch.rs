@@ -14,6 +14,7 @@ pub(super) struct Report<E> {
 pub(super) async fn run<T, E, F, Fut>(
     items: impl IntoIterator<Item = T>,
     limit: usize,
+    stopping: impl Fn() -> bool,
     mut operation: F,
 ) -> Report<E>
 where
@@ -32,7 +33,7 @@ where
     };
     loop {
         // An observed error permanently closes admission, including while draining.
-        while report.error.is_none() && active.len() < limit {
+        while report.error.is_none() && active.len() < limit && !stopping() {
             let Some(item) = items.next() else { break };
             active.push(operation(item));
             report.started += 1;

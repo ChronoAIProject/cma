@@ -46,6 +46,10 @@ impl AgentEventStreamAuthorization {
         self.personal_caller.is_some()
     }
 
+    pub fn can_review_external_approval(&self) -> bool {
+        self.is_personal_owner() && self.held.decision.allows(ResourceCapability::Interact)
+    }
+
     pub fn revalidation_deadline(&self) -> Option<tokio::time::Instant> {
         self.held
             .decision

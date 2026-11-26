@@ -1,3 +1,4 @@
+import { selectTaskTemplate } from '../test/taskTemplateSelection';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createClient } from '@cma/client';
@@ -100,7 +101,7 @@ it('opens ordinary contextual creation as editable task templates without admitt
   );
   expect(screen.getByLabelText('Your task')).toHaveValue('');
   expect(screen.getByText('Creating in Workspace workspace-owned')).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+  selectTaskTemplate('Research a topic');
   expect(screen.getByLabelText('Topic')).toHaveValue('');
   await waitFor(() => expect(screen.getByLabelText('Topic')).toHaveFocus());
   await waitFor(() =>

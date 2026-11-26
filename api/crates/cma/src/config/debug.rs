@@ -15,6 +15,7 @@ impl std::fmt::Debug for Config {
             .field("nyxid_public_url", &self.nyxid_public_url)
             .field("cors_origins", &self.cors_origins)
             .field("rate_limits", &self.rate_limits)
+            .field("control_admission", &self.control_admission)
             .field("public_stream_limit", &self.public_stream_limit)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("mongodb_uri", &"<redacted>")

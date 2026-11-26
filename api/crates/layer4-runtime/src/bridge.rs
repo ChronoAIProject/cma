@@ -24,6 +24,9 @@ pub(crate) use retained_output::OutputRetention;
 #[path = "bridge_input.rs"]
 mod input;
 use input::{spawn_writer, BridgeInput};
+#[path = "bridge_stale_turn.rs"]
+mod stale_turn;
+pub(crate) use stale_turn::FLAG as STALE_TURN_SEAL_FLAG;
 
 const BUFFER_BYTES: usize = 8 * 1024 * 1024;
 const INPUT_BUFFER: usize = 256;
@@ -97,6 +100,7 @@ pub(crate) struct Bridge {
     writer_session_root: Option<i32>,
     observation: Option<Arc<Mutex<observation::NativeObservation>>>,
     capacity_recovery: Mutex<recovery::LeaseState>,
+    stale_turn: Option<Arc<Mutex<Option<stale_turn::Stop>>>>,
 }
 
 impl Bridge {
@@ -154,7 +158,11 @@ impl Bridge {
         let pending = Arc::new(Mutex::new(Pending::default()));
         let retained_output = Arc::new(OutputRetention::default());
         let (ended, _) = tokio::sync::watch::channel(false);
-        let observation = recovery_enabled
+        let stale_turn = environment
+            .get(stale_turn::FLAG)
+            .is_some_and(|value| value == "1")
+            .then(|| Arc::new(Mutex::new(None)));
+        let observation = (recovery_enabled || stale_turn.is_some())
             .then(|| Arc::new(Mutex::new(observation::NativeObservation::default())));
         spawn_writer(stdin, input_rx);
         let reader = spawn_reader(
@@ -163,6 +171,7 @@ impl Bridge {
             Arc::clone(&pending),
             Arc::clone(&retained_output),
             observation.clone(),
+            stale_turn.clone(),
         );
         observation::spawn_diagnostics(stderr);
         observation::spawn_reaper(child, managed, ended.clone());
@@ -178,6 +187,7 @@ impl Bridge {
             writer_session_root,
             observation,
             capacity_recovery: Mutex::new(recovery::LeaseState::default()),
+            stale_turn,
         })
     }
 
@@ -199,7 +209,7 @@ impl Bridge {
         frame: Vec<u8>,
         authority: Option<crate::manager_ownership::OwnerSession>,
     ) -> bool {
-        if frame.len() > MAX_FRAME_BYTES {
+        if frame.len() > MAX_FRAME_BYTES || stale_turn::is_untrusted_stop(&frame) {
             return false;
         }
         if let Some(authority) = &authority {
@@ -212,7 +222,11 @@ impl Bridge {
         }
         if self
             .input
-            .send(BridgeInput { frame, authority })
+            .send(BridgeInput {
+                frame,
+                authority,
+                stop: None,
+            })
             .await
             .is_err()
         {
@@ -295,6 +309,7 @@ fn spawn_reader(
     pending: Arc<Mutex<Pending>>,
     retained_output: Arc<OutputRetention>,
     observation: Option<Arc<Mutex<observation::NativeObservation>>>,
+    stale_turn: Option<Arc<Mutex<Option<stale_turn::Stop>>>>,
 ) -> tokio::task::AbortHandle {
     let reader = tokio::spawn(async move {
         let mut stdout = BufReader::new(stdout);
@@ -323,6 +338,7 @@ fn spawn_reader(
                             &pending,
                             &retained_output,
                             &observation,
+                            stale_turn.as_deref(),
                         )
                         .await;
                     }
@@ -342,7 +358,20 @@ fn spawn_reader(
             retained_output.gap().await;
             pending.lock().await.gap();
         } else if !frame.is_empty() {
-            publish(frame, &output, &pending, &retained_output, &observation).await;
+            if stale_turn.is_some() {
+                // A partially delivered fence cannot establish the end of output.
+                retained_output.gap().await;
+            } else {
+                publish(
+                    frame,
+                    &output,
+                    &pending,
+                    &retained_output,
+                    &observation,
+                    None,
+                )
+                .await;
+            }
         }
         retained_output.finish().await;
     });
@@ -355,7 +384,13 @@ async fn publish(
     pending: &Arc<Mutex<Pending>>,
     retained_output: &OutputRetention,
     observation: &Option<Arc<Mutex<observation::NativeObservation>>>,
+    stale_turn: Option<&Mutex<Option<stale_turn::Stop>>>,
 ) {
+    if let (Some(stale_turn), Some(observation)) = (stale_turn, observation) {
+        if stale_turn::observe_fence(stale_turn, retained_output, observation, &frame).await {
+            return;
+        }
+    }
     if let Some(observation) = observation {
         // A full output window can await an ACK. Mark the in-flight boundary
         // instead of holding a state lock across backpressure.

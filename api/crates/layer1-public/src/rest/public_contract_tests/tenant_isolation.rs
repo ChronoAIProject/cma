@@ -26,6 +26,8 @@ pub(super) fn selected(case: &Case) -> bool {
     let private = matches!(
         case.scenario.as_str(),
         "agents_owner"
+            | "read_projection_owner"
+            | "read_projection_missing"
             | "agents_stopped"
             | "agents_operating"
             | "agents_approval"

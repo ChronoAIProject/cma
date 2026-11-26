@@ -3,6 +3,38 @@ import { expect, it } from 'vitest';
 import { agent, transport } from './resource-fixtures.js';
 import type { AgentLifecycleCreateRequest } from '../index.js';
 
+it.each([undefined, '2026-11-23T08:00:00Z'])(
+  'preserves the optional durable acceptance time %s without deriving one from progress',
+  async (accepted_at) => {
+    const test = transport();
+    const operation = {
+      id: 'original-operation',
+      status: 'running',
+      phase: 'agent_startup',
+      events: [],
+      ...(accepted_at === undefined ? {} : { accepted_at }),
+    };
+    test.answer(operation);
+    for (let attempt = 0; attempt < 2; attempt += 1)
+      expect(await test.client.agents.readLifecycle(operation.id)).toEqual(operation);
+  },
+);
+
+it.each([null, 123, 'not a timestamp'])(
+  'rejects an invalid acceptance time %j',
+  async (accepted_at) => {
+    const test = transport();
+    test.answer({
+      id: 'original-operation',
+      status: 'running',
+      phase: 'agent_startup',
+      events: [],
+      accepted_at,
+    });
+    await expect(test.client.agents.readLifecycle('original-operation')).rejects.toThrow();
+  },
+);
+
 it.each(['inferred', true, { mode: 'automatic' }])(
   'rejects invalid title mode %j before admitting a lifecycle request',
   async (title_mode) => {
@@ -110,16 +142,21 @@ it('retains the selected Workspace and exact inline intent when replaying Agent 
   }
 });
 
-it('preserves typed template fields and compiled text exactly on replay', async () => {
-  const test = transport();
-  test.answer({ id: 'template-operation', status: 'provisioning' }, 202);
-  const body: AgentLifecycleCreateRequest = {
-    name: 'Task',
-    template: { id: 'research', version: 1, fields: { topic: '  Synthetic topic  ' } },
-    initial_message:
-      'Research Synthetic topic and summarize the key findings, with links to sources.',
-  };
-  for (let attempt = 0; attempt < 2; attempt += 1)
-    await test.client.agents.createLifecycle(body, { idempotencyKey: 'template-key' });
-  expect(test.calls.map((call) => JSON.parse(String(call.init.body)))).toEqual([body, body]);
-});
+it.each([1, 2] as const)(
+  'preserves version %s template fields and compiled text exactly on replay',
+  async (version) => {
+    const test = transport();
+    test.answer({ id: 'template-operation', status: 'provisioning' }, 202);
+    const body: AgentLifecycleCreateRequest = {
+      name: 'Task',
+      template: { id: 'research', version, fields: { topic: '  Synthetic topic  ' } },
+      initial_message:
+        version === 1
+          ? 'Research Synthetic topic and summarize the key findings, with links to sources.'
+          : 'Research the following topic:\n\nSynthetic topic\n\nSummarize the key findings, with links to sources.',
+    };
+    for (let attempt = 0; attempt < 2; attempt += 1)
+      await test.client.agents.createLifecycle(body, { idempotencyKey: 'template-key' });
+    expect(test.calls.map((call) => JSON.parse(String(call.init.body)))).toEqual([body, body]);
+  },
+);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import vectors from '../../../api/crates/layer2-core/src/sandbox/task_template_vectors.json';
 import {
   compileTaskTemplate,
+  changeTemplateField,
   emptyTemplate,
   legacyTemplate,
   parseTaskTemplate,
@@ -46,9 +47,26 @@ describe('versioned task templates', () => {
   });
   it.each([
     { id: 'unknown', version: 1, fields: {} },
-    { id: 'research', version: 2, fields: { topic: 'valid' } },
+    { id: 'research', version: 3, fields: { topic: 'valid' } },
     { id: 'research', version: 1, fields: {} },
     { id: 'research', version: 1, fields: { topic: 'valid', extra: 'value' } },
     { id: 'research', version: 1, fields: { topic: 'valid' }, extra: true },
   ])('rejects malformed metadata: %j', (value) => expect(() => parseTaskTemplate(value)).toThrow());
+});
+
+it('preserves legacy compilation until the owner edits a draft', () => {
+  const retained = parseTaskTemplate({
+    id: 'research',
+    version: 1,
+    fields: { topic: 'Saved topic.' },
+  });
+  expect(compileTaskTemplate(retained).text).toBe(
+    'Research Saved topic. and summarize the key findings, with links to sources.',
+  );
+  const edited = changeTemplateField(retained, 'topic', 'Updated topic.', true);
+  expect(edited.version).toBe(2);
+  expect(compileTaskTemplate(edited).text).toBe(
+    'Research the following topic:\n\nUpdated topic.\n\nSummarize the key findings, with links to sources.',
+  );
+  expect(retained.fields).toEqual({ topic: 'Saved topic.' });
 });

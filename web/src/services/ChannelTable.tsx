@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Table, TableCell } from '../ui/Table';
 import type { ChannelListItem } from './ChannelEditor';
+import { duplicateChannelLabels } from './channelLabels';
 
 const COLUMNS = [
   { header: 'Name' },
@@ -29,6 +30,7 @@ export function ChannelTable({
   readonly unavailable?: ReactNode;
   readonly onSelect: (recordId: string) => void;
 }) {
+  const labels = duplicateChannelLabels(channels);
   return (
     <Table
       label="Your channels"
@@ -53,7 +55,7 @@ export function ChannelTable({
               className="gateway-channels__open"
               onClick={() => onSelect(channel.record_id)}
             >
-              {channel.definition.name}
+              {labels.get(channel.record_id) ?? channel.definition.name}
             </button>
           </TableCell>
           <TableCell mono>{channel.provider.slug}</TableCell>

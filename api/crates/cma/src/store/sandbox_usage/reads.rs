@@ -2,9 +2,15 @@ use super::*;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::store::{Page, PageRequest, MAX_PAGE_SIZE};
 use layer2_core::sandbox_usage::UsageTotals;
+use layer2_core::sandbox_usage_cursor::UsageSnapshot;
 use layer2_core::sandbox_usage_service::{SandboxUsageStore, UsageSummary};
 use layer2_core::{SandboxId, SubjectId};
-use mongodb::bson::Bson;
+use mongodb::{
+    bson::{Bson, Timestamp},
+    error::ErrorKind,
+    Collection,
+};
+use std::time::Duration;
 
 #[async_trait::async_trait]
 impl SandboxUsageStore for MongoSandboxStore {
@@ -23,29 +29,31 @@ impl SandboxUsageStore for MongoSandboxStore {
         owner: Option<&SubjectId>,
         page: &PageRequest,
     ) -> Result<Page<SandboxUsage>, SandboxStoreError> {
-        validate_page(page)?;
-        let mut filter = owner_filter(owner);
-        if let Some(cursor) = &page.cursor {
-            filter.insert("_id", doc! { "$gt": cursor });
-        }
-        let mut cursor = self
-            .sandbox_usage
-            .find(filter)
-            .sort(doc! { "_id": 1 })
-            .limit(i64::from(page.limit) + 1)
-            .await
-            .map_err(unavailable)?;
-        let mut items = Vec::new();
-        while let Some(document) = cursor.try_next().await.map_err(unavailable)? {
-            items.push(read_state(&document)?);
-        }
-        let next = if items.len() > usize::from(page.limit) {
-            items.pop();
-            items.last().map(|state| state.sandbox_id.to_string())
-        } else {
-            None
-        };
-        Ok(Page { items, next })
+        let (filter, sort) = sandbox_page_query(owner, page)?;
+        live_page(
+            &self.sandbox_usage,
+            filter,
+            sort,
+            page.limit,
+            read_state,
+            |state| state.sandbox_id.to_string(),
+        )
+        .await
+    }
+
+    async fn usage_snapshot_page(
+        &self,
+        owner: Option<&SubjectId>,
+        page: &PageRequest,
+        snapshot: Option<UsageSnapshot>,
+    ) -> Result<(Page<SandboxUsage>, UsageSnapshot), SandboxStoreError> {
+        let (filter, sort) = sandbox_page_query(owner, page)?;
+        let (rows, observed) =
+            snapshot_rows(&self.sandbox_usage, filter, sort, page.limit, snapshot).await?;
+        let result = project_page(rows, page.limit, read_state, |state| {
+            state.sandbox_id.to_string()
+        })?;
+        Ok((result, observed))
     }
 
     async fn usage_summary(
@@ -118,35 +126,180 @@ impl SandboxUsageStore for MongoSandboxStore {
         id: &SandboxId,
         page: &PageRequest,
     ) -> Result<Page<UsageEvent>, SandboxStoreError> {
-        validate_page(page)?;
-        let mut filter = doc! { "sandbox_id": id.as_str() };
-        if let Some(cursor) = &page.cursor {
-            let revision = cursor
-                .parse::<i64>()
-                .ok()
-                .filter(|v| *v > 0)
-                .ok_or(SandboxStoreError::InvalidPage)?;
-            filter.insert("revision", doc! { "$gt": revision });
+        let (filter, sort) = event_page_query(id, page)?;
+        live_page(
+            &self.sandbox_usage_events,
+            filter,
+            sort,
+            page.limit,
+            read_event,
+            |event| event.revision.to_string(),
+        )
+        .await
+    }
+
+    async fn usage_snapshot_events(
+        &self,
+        id: &SandboxId,
+        page: &PageRequest,
+        snapshot: Option<UsageSnapshot>,
+    ) -> Result<(Page<UsageEvent>, UsageSnapshot), SandboxStoreError> {
+        let (filter, sort) = event_page_query(id, page)?;
+        let (rows, observed) = snapshot_rows(
+            &self.sandbox_usage_events,
+            filter,
+            sort,
+            page.limit,
+            snapshot,
+        )
+        .await?;
+        let result = project_page(rows, page.limit, read_event, |event| {
+            event.revision.to_string()
+        })?;
+        Ok((result, observed))
+    }
+}
+
+fn sandbox_page_query(
+    owner: Option<&SubjectId>,
+    page: &PageRequest,
+) -> Result<(Document, Document), SandboxStoreError> {
+    validate_page(page)?;
+    let mut filter = owner_filter(owner);
+    if let Some(cursor) = &page.cursor {
+        filter.insert("_id", doc! { "$gt": cursor });
+    }
+    Ok((filter, doc! { "_id": 1 }))
+}
+
+fn event_page_query(
+    id: &SandboxId,
+    page: &PageRequest,
+) -> Result<(Document, Document), SandboxStoreError> {
+    validate_page(page)?;
+    let mut filter = doc! { "sandbox_id": id.as_str() };
+    if let Some(cursor) = &page.cursor {
+        let revision = cursor
+            .parse::<i64>()
+            .ok()
+            .filter(|v| *v > 0)
+            .ok_or(SandboxStoreError::InvalidPage)?;
+        filter.insert("revision", doc! { "$gt": revision });
+    }
+    Ok((filter, doc! { "revision": 1 }))
+}
+
+async fn live_page<T>(
+    source: &Collection<Document>,
+    filter: Document,
+    sort: Document,
+    limit: u16,
+    read: impl Fn(&Document) -> Result<T, SandboxStoreError>,
+    key: impl Fn(&T) -> String,
+) -> Result<Page<T>, SandboxStoreError> {
+    let rows = source
+        .find(filter)
+        .sort(sort)
+        .limit(i64::from(limit) + 1)
+        .await
+        .map_err(unavailable)?
+        .try_collect()
+        .await
+        .map_err(unavailable)?;
+    project_page(rows, limit, read, key)
+}
+
+async fn snapshot_rows(
+    source: &Collection<Document>,
+    filter: Document,
+    sort: Document,
+    limit: u16,
+    snapshot: Option<UsageSnapshot>,
+) -> Result<(Vec<Document>, UsageSnapshot), SandboxStoreError> {
+    let collection = crate::store::snapshot_collection::collection(source, true);
+    let expected = snapshot.map(|snapshot| Timestamp {
+        time: snapshot.time,
+        increment: snapshot.increment,
+    });
+    let start = source.client().start_session().snapshot(true);
+    let mut session = match expected {
+        Some(timestamp) => start.snapshot_time(timestamp).await,
+        None => start.await,
+    }
+    .map_err(unavailable)?;
+    let map_error = |error: mongodb::error::Error| {
+        // SnapshotTooOld is definitive for the timestamp in a continuation.
+        if expected.is_some()
+            && matches!(error.kind.as_ref(), ErrorKind::Command(command) if command.code == 286)
+        {
+            SandboxStoreError::InvalidPage
+        } else {
+            unavailable(error)
         }
-        let mut cursor = self
-            .sandbox_usage_events
-            .find(filter)
-            .sort(doc! { "revision": 1 })
-            .limit(i64::from(page.limit) + 1)
+    };
+    let mut cursor = collection
+        .find(filter)
+        .sort(sort)
+        .limit(i64::from(limit) + 1)
+        .max_time(Duration::from_secs(10))
+        .session(&mut session)
+        .await
+        .map_err(map_error)?;
+    let rows: Vec<Document> = cursor
+        .stream(&mut session)
+        .try_collect()
+        .await
+        .map_err(map_error)?;
+    // Account erasure can remove usage while the historical view still exists.
+    // Verify current ownership and presence for the entire page and its lookahead.
+    if !rows.is_empty() {
+        let identities = rows
+            .iter()
+            .map(|row| {
+                let invalid = |_| SandboxStoreError::Corrupt("invalid usage row identity".into());
+                Ok(doc! { "_id": row.get_str("_id").map_err(invalid)?,
+                "owner": row.get_str("owner").map_err(invalid)? })
+            })
+            .collect::<Result<Vec<_>, SandboxStoreError>>()?;
+        let current_count = source
+            .count_documents(doc! { "$or": identities })
+            .max_time(Duration::from_secs(10))
             .await
             .map_err(unavailable)?;
-        let mut items = Vec::new();
-        while let Some(document) = cursor.try_next().await.map_err(unavailable)? {
-            items.push(read_event(&document)?);
+        if current_count != rows.len() as u64 {
+            return Err(if expected.is_some() {
+                SandboxStoreError::InvalidPage
+            } else {
+                SandboxStoreError::Unavailable("usage changed while opening its snapshot".into())
+            });
         }
-        let next = if items.len() > usize::from(page.limit) {
-            items.pop();
-            items.last().map(|event| event.revision.to_string())
-        } else {
-            None
-        };
-        Ok(Page { items, next })
     }
+    let observed = session.snapshot_time().ok_or_else(|| {
+        SandboxStoreError::Unavailable("usage read did not establish a snapshot".into())
+    })?;
+    Ok((
+        rows,
+        UsageSnapshot {
+            time: observed.time,
+            increment: observed.increment,
+        },
+    ))
+}
+
+fn project_page<T>(
+    rows: Vec<Document>,
+    limit: u16,
+    read: impl Fn(&Document) -> Result<T, SandboxStoreError>,
+    key: impl Fn(&T) -> String,
+) -> Result<Page<T>, SandboxStoreError> {
+    let mut items = rows.iter().map(read).collect::<Result<Vec<_>, _>>()?;
+    let next = if items.len() > usize::from(limit) {
+        items.pop();
+        items.last().map(key)
+    } else {
+        None
+    };
+    Ok(Page { items, next })
 }
 
 fn validate_page(page: &PageRequest) -> Result<(), SandboxStoreError> {

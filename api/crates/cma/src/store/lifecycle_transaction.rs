@@ -1,16 +1,18 @@
 //! Atomic Mongo publication for one sandbox lifecycle phase.
 
 use crate::store::agent_log_telemetry::ScanCaller;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::collections::BTreeMap;
 mod checkpoint_receipt;
 mod integrity_write;
 pub(super) mod reconciliation;
+mod reopen_refusal;
 mod segmented;
 use integrity_write::{advance_agent, classify_aggregate_write, classify_log_write};
 
 use layer2_core::sandbox::store::{
-    validate_lifecycle_mutation, SandboxLifecycleAgentMutation, SandboxLifecycleMutation,
-    SandboxStoreError,
+    validate_lifecycle_mutation, ReopenRefusalFence, SandboxLifecycleAgentMutation,
+    SandboxLifecycleMutation, SandboxStoreError,
 };
 use layer2_core::sandbox::{Agent, AgentLogEntry, Sandbox, SandboxEvent};
 use mongodb::bson::{doc, Bson, Timestamp};
@@ -76,6 +78,7 @@ impl From<TransactionLogError> for ApplyError {
 pub(super) async fn commit_lifecycle(
     store: &MongoSandboxStore,
     mutation: SandboxLifecycleMutation,
+    refusal: Option<ReopenRefusalFence>,
 ) -> Result<(), SandboxStoreError> {
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
@@ -100,20 +103,20 @@ pub(super) async fn commit_lifecycle(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        let applied = apply_lifecycle(store, &mutation, scope).await;
+        let applied = apply_lifecycle(store, &mutation, scope, refusal.as_ref()).await;
         let receipt = match applied {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
@@ -166,11 +169,15 @@ pub(super) async fn apply_lifecycle(
     store: &MongoSandboxStore,
     mutation: &SandboxLifecycleMutation,
     mut scope: TransactionScope<'_>,
+    refusal: Option<&ReopenRefusalFence>,
 ) -> Result<LifecycleReceipt, ApplyError> {
     scope
         .fence_ordinary_work(store)
         .await
-        .map_err(ApplyError::Domain)?;
+        .map_err(|error| match error {
+            super::work_publication::FenceError::Domain(error) => ApplyError::Domain(error),
+            super::work_publication::FenceError::Driver(error) => ApplyError::Driver(error),
+        })?;
     let current = load_sandbox(store, &mutation.guard.sandbox_id, &mut scope).await?;
     let agents =
         super::agent_capacity_recovery::lineage::agents(store, &current.id, &mut scope).await?;
@@ -206,6 +213,9 @@ pub(super) async fn apply_lifecycle(
     // any later validation/write error is aborted by the root above.
     let segment_receipts = segmented::publish(store, &agents, mutation, &mut scope).await?;
     let session = scope.release();
+    if let Some(refusal) = refusal {
+        reopen_refusal::fence(store, &current, refusal, session).await?;
+    }
     if !segmented {
         super::checkpoint_capture::validate_and_fence_begin(
             store,
@@ -297,7 +307,10 @@ pub(super) async fn apply_lifecycle(
     store
         .fence_reopened_owners(mutation, session)
         .await
-        .map_err(ApplyError::Domain)?;
+        .map_err(|error| match error {
+            crate::store::agent_ownership::FenceError::Domain(error) => ApplyError::Domain(error),
+            crate::store::agent_ownership::FenceError::Driver(error) => ApplyError::Driver(error),
+        })?;
 
     advance_sandbox(store, &current, &mutation.sandbox, session).await?;
     for change in &mutation.agents {
@@ -402,21 +415,26 @@ async fn advance_sandbox(
     next: &Sandbox,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
+    let mut filter = doc! {
+        "_id": current.id.as_str(),
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "channel_reuse_cleanup_execution": { "$exists": false },
+        "revision": signed(current.revision, "sandbox lifecycle revision")
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+    };
+    if current.admitted_retained_runtime_transition().is_some() {
+        // A retained transition must hold its original, unexpired claim even
+        // when renewable work is disabled on this worker.
+        let claim = crate::store::work_claim_authority::sandbox_claim(current)
+            .map_err(ApplyError::Domain)?;
+        filter = doc! {"$and":[filter, claim]};
+    }
     let advanced = store
         .sandboxes
         .update_one(
             crate::store::work_schema::query(
-                crate::store::work_publication::sandbox(
-                    doc! {
-                        "_id": current.id.as_str(),
-                        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                        "channel_reuse_cleanup_execution": { "$exists": false },
-                        "revision": signed(current.revision, "sandbox lifecycle revision")
-                            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                    },
-                    current.id.as_str(),
-                )
-                .map_err(ApplyError::Domain)?,
+                crate::store::work_publication::sandbox(filter, current.id.as_str())
+                    .map_err(ApplyError::Domain)?,
             ),
             crate::store::work_lease_update::replacement(
                 sandbox_replacement_fields(next).map_err(ApplyError::Domain)?,

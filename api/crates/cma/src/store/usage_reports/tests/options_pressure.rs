@@ -34,10 +34,8 @@ async fn metrics_options_honor_circuit_without_commands_and_recover_with_polling
     }));
     let client = Client::with_options(config).unwrap();
     let store = Arc::new(ReportingStore {
-        db: client.database(fixture.db.name()),
-        client,
+        persistence: fixture.persistence.with_client(client),
         budgets: fixture.budgets.clone(),
-        signer: fixture.signer.clone(),
         circuit: fixture.circuit.clone(),
         notifications: fixture.notifications.clone(),
         view_policy: fixture.view_policy.clone(),

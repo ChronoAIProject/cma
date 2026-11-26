@@ -55,7 +55,19 @@ describe('TC-117 redacted campaign summary', () => {
         const reporter = new TC117Reporter();
         writeFileSync(
           join(output, 'tc117-shared.json'),
-          JSON.stringify({ status, counts: newCounts() }),
+          JSON.stringify({
+            schema: 'cma-tc117-scenario-v1',
+            campaign: 'TC-117',
+            run,
+            case: 'shared',
+            journalRun: 'journal-shared',
+            startedAt: '2026-01-01T00:00:00Z',
+            endedAt: '2026-01-01T00:00:01Z',
+            N: 1,
+            requests: [{}],
+            status,
+            counts: newCounts(),
+          }),
         );
         reporter.onTestEnd(
           { title: 'TC117-shared static case' } as TestCase,

@@ -5,7 +5,8 @@ use layer2_core::{
         AccessPurpose, CallerContext, ResourceAccessService, ResourceCapability, ResourceTarget,
     },
     sandbox::{
-        agent_attachments::AgentAttachmentService, agent_filesystem::AgentFileService,
+        agent_attachments::AgentAttachmentService,
+        agent_filesystem::{AgentFileService, FileWriteTarget},
         AgentReadService,
     },
     AgentId,
@@ -19,11 +20,15 @@ pub(super) struct PublicRequest<'a> {
     pub headers: &'a HeaderMap,
     pub context: &'a CallerContext,
     pub credential: Option<&'a str>,
+    pub capture_write_target: bool,
 }
 
 #[async_trait::async_trait]
 pub(super) trait PublicAuthorization: Send + Sync {
-    async fn authorize(&self, request: PublicRequest<'_>) -> Result<(), PublicRefusal>;
+    async fn authorize(
+        &self,
+        request: PublicRequest<'_>,
+    ) -> Result<Option<FileWriteTarget>, PublicRefusal>;
 }
 
 #[derive(Debug)]
@@ -63,7 +68,10 @@ impl PublicAccess {
 
 #[async_trait::async_trait]
 impl PublicAuthorization for PublicAccess {
-    async fn authorize(&self, request: PublicRequest<'_>) -> Result<(), PublicRefusal> {
+    async fn authorize(
+        &self,
+        request: PublicRequest<'_>,
+    ) -> Result<Option<FileWriteTarget>, PublicRefusal> {
         let PublicRequest {
             id,
             method,
@@ -71,6 +79,7 @@ impl PublicAuthorization for PublicAccess {
             headers,
             context,
             credential,
+            capture_write_target,
         } = request;
         let operation = operation(method, uri)?;
         let caller = crate::auth::relay::RelayCaller::verify(
@@ -80,6 +89,7 @@ impl PublicAuthorization for PublicAccess {
             credential,
         )
         .await?;
+        let mut write_target = None;
         match operation {
             Operation::Preferences | Operation::Settings => {
                 if !context.validate_principal()
@@ -153,8 +163,16 @@ impl PublicAuthorization for PublicAccess {
                 } else {
                     AccessPurpose::Read
                 };
-                self.files
-                    .authorize_runtime_operation(context, credential, id, capability, purpose)
+                write_target = self
+                    .files
+                    .authorize_runtime_operation(
+                        context,
+                        credential,
+                        id,
+                        capability,
+                        purpose,
+                        capture_write_target,
+                    )
                     .await
                     .map_err(|error| match error {
                         layer2_core::sandbox::agent_filesystem::AgentFileError::Access(error) => {
@@ -164,7 +182,8 @@ impl PublicAuthorization for PublicAccess {
                     })?;
             }
         }
-        caller.current().await.map_err(Into::into)
+        caller.current().await.map_err(PublicRefusal::from)?;
+        Ok(write_target)
     }
 }
 

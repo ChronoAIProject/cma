@@ -3,6 +3,7 @@ pub(super) use super::*;
 use crate::store::sandbox_mongo::{
     commit_transaction, is_transient, start_transaction, CommitOutcome,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 pub(super) use layer2_core::account_deletion::worker::*;
 pub(super) use mongodb::ClientSession;
 
@@ -124,7 +125,7 @@ impl MongoErasureJournal {
             let (outcome, wrote) = match staged {
                 Ok(Ok(value)) => value,
                 failure => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     match failure {
                         Err(_) => return Err(JournalError::Cancelled),
                         Ok(Err(AttemptError::Domain(error))) => return Err(error),
@@ -134,7 +135,7 @@ impl MongoErasureJournal {
                 }
             };
             if !wrote {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(outcome);
             }
             #[cfg(test)]
@@ -142,7 +143,7 @@ impl MongoErasureJournal {
             let remaining = match budget.remaining() {
                 Ok(value) => value,
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
             };

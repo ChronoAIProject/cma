@@ -100,7 +100,7 @@ it('preserves a requested Operations tab during loading and redirects only after
   expect(screen.getByRole('tab', { name: 'Operations' })).toHaveAttribute('aria-selected', 'true');
   expect(select).not.toHaveBeenCalled();
   view.rerender(draw([], false, 'activity', select));
-  await waitFor(() => expect(select).toHaveBeenCalledWith('browser'));
+  await waitFor(() => expect(select).toHaveBeenCalledWith('browser', 'activity'));
 });
 it('clears fullscreen errors on tab changes, reconnect, and successful fullscreen events', async () => {
   Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', {

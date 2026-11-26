@@ -455,3 +455,31 @@ fn independent_basis_preserves_provenance_without_reusing_a_share_or_binding_gen
         None
     );
 }
+
+// #3296: erasure recomputes exactly the digests the writers store.
+#[test]
+fn subject_execution_digests_match_the_stored_actor_and_owner_digests() {
+    let subject = crate::SubjectId::new("acct:erased");
+    let launch = crate::LaunchId("lch_erased".into());
+    let values = subject_execution_digests(&subject, std::slice::from_ref(&launch)).unwrap();
+    let human = ResourceActor::Human {
+        subject: subject.clone(),
+    };
+    let trigger = ResourceActor::Trigger {
+        subject: subject.clone(),
+        launch_id: launch,
+    };
+    let person = super::super::ResourceOwner::Person {
+        subject: subject.clone(),
+    };
+    for expected in [
+        actor_digest(&human).unwrap().as_str().to_owned(),
+        actor_digest(&trigger).unwrap().as_str().to_owned(),
+        super::digest(&person).unwrap().as_str().to_owned(),
+    ] {
+        assert!(values.contains(&expected));
+    }
+    assert_eq!(values.len(), 5);
+    let other = subject_execution_digests(&crate::SubjectId::new("acct:other"), &[]).unwrap();
+    assert!(other.iter().all(|value| !values.contains(value)));
+}

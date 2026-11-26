@@ -1,5 +1,5 @@
 use super::support::App;
-use cmaeg::{auth::AgentCaller, delivery::intents::DeliveryOutcome};
+use cmaeg::{auth::AgentCaller, delivery::intents::DeliveryOutcome, CommonmarkRelay};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{sync::atomic::Ordering, time::Duration};
@@ -15,7 +15,7 @@ async fn complete_relay_tool_waits_for_receipt_but_keeps_a_finite_owning_deadlin
         check_wait(
             "telegram",
             enabled,
-            false,
+            CommonmarkRelay::default(),
             delay,
             expected_elapsed,
             confirmed,
@@ -33,14 +33,18 @@ async fn commonmark_tool_wait_extends_only_telegram_replies_and_keeps_its_deadli
         ("feishu", true, 9, 8, false),
         ("lark", true, 9, 8, false),
     ] {
-        check_wait(platform, false, commonmark, delay, elapsed, confirmed).await;
+        let platforms = CommonmarkRelay {
+            telegram: commonmark,
+            ..Default::default()
+        };
+        check_wait(platform, false, platforms, delay, elapsed, confirmed).await;
     }
 }
 
 async fn check_wait(
     platform: &str,
     enabled: bool,
-    commonmark: bool,
+    commonmark: CommonmarkRelay,
     delay: u64,
     expected_elapsed: u64,
     confirmed: bool,
@@ -51,7 +55,7 @@ async fn check_wait(
         App::on(platform).await
     };
     app.state.complete_replies_enabled = enabled;
-    app.state.commonmark_relay_enabled = commonmark;
+    app.state.commonmark_relay = commonmark;
     let caller = AgentCaller {
         key_hash: Sha256::digest(app.key.as_bytes()).into(),
     };

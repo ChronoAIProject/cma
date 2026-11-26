@@ -62,6 +62,14 @@ impl ActivityStore for MemoryActivity {
                     .as_ref()
                     .is_none_or(|actor| record.actor.as_ref() == Some(actor))
                     && query.action.is_none_or(|action| record.action == action)
+                    && !(query.exclude_successful_reads
+                        && matches!(
+                            record.action,
+                            ActivityAction::Read
+                                | ActivityAction::List
+                                | ActivityAction::GatewayRecordRead
+                        )
+                        && record.outcome == ActivityOutcome::Succeeded)
             })
             .take(query.limit as usize)
             .cloned()
@@ -136,7 +144,7 @@ pub(crate) struct Fixture {
     pub(crate) sandboxes: Arc<InMemorySandboxStore>,
     pub(crate) profiles: Arc<InMemoryProfileStore>,
     activity: Arc<MemoryActivity>,
-    names: Arc<crate::rest::public_names::tests::Names>,
+    pub(crate) names: Arc<crate::rest::public_names::tests::Names>,
 }
 
 pub(crate) fn fixture(inventory: bool) -> Fixture {
@@ -146,6 +154,25 @@ pub(crate) fn fixture(inventory: bool) -> Fixture {
 pub(crate) fn fixture_with_pools(
     inventory: bool,
     pools: Option<Arc<dyn warm_pools::WarmPoolAdministration>>,
+) -> Fixture {
+    fixture_with_configure(inventory, pools, |state, _| state)
+}
+
+fn fixture_with_options(
+    inventory: bool,
+    pools: Option<Arc<dyn warm_pools::WarmPoolAdministration>>,
+    diagnostics: Option<Arc<layer2_core::binding_diagnostics::BindingDiagnosticsService>>,
+) -> Fixture {
+    fixture_with_configure(inventory, pools, |state, _| match diagnostics {
+        Some(service) => state.with_binding_diagnostics(service),
+        None => state,
+    })
+}
+
+pub(crate) fn fixture_with_configure(
+    inventory: bool,
+    pools: Option<Arc<dyn warm_pools::WarmPoolAdministration>>,
+    configure: impl FnOnce(AdminState, &Arc<InMemorySandboxStore>) -> AdminState,
 ) -> Fixture {
     let activity = Arc::new(MemoryActivity::default());
     let activity_service = ActivityService::new(activity.clone());
@@ -182,13 +209,16 @@ pub(crate) fn fixture_with_pools(
         state = state.with_warm_pools(pools);
     }
     Fixture {
-        app: router(state),
+        app: router(configure(state, &sandboxes)),
         sandboxes,
         profiles,
         activity,
         names,
     }
 }
+
+#[path = "admin/binding_holds_tests.rs"]
+pub(in crate::rest) mod binding_holds_tests;
 
 fn request(
     method: Method,
@@ -363,3 +393,5 @@ mod route_contract_1;
 
 #[path = "admin/route_contract_2_tests.rs"]
 mod route_contract_2;
+#[path = "admin/runtime_migration_tests.rs"]
+mod runtime_migration_tests;

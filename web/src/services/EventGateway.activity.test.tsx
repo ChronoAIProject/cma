@@ -205,15 +205,14 @@ it('shows a receipt without consumers and preserves each reported consumer outco
   const page = snapshot('Build service');
   const event = page.items[0]!;
   const consumer = event.consumers[0]!;
-  event.consumers = [];
-  act(() => Feed.instances[0]!.snapshot(page));
+  act(() => Feed.instances[0]!.snapshot({ ...page, items: [{ ...event, consumers: [] }] }));
   expect(within(preview()).getByText('Received', { selector: 'p' })).toBeVisible();
   expect(within(preview()).queryByRole('list')).not.toBeInTheDocument();
-  event.consumers = [
+  const consumers = [
     consumer,
-    { ...consumer, consumer_id: 'auditor', display_name: 'Auditor', state: 'refused' },
+    { ...consumer, consumer_id: 'auditor', display_name: 'Auditor', state: 'refused' as const },
   ];
-  act(() => Feed.instances[0]!.snapshot(page));
+  act(() => Feed.instances[0]!.snapshot({ ...page, items: [{ ...event, consumers }] }));
   expect(within(preview()).getByText('Reviewer · Queued')).toBeVisible();
   expect(within(preview()).getByText('Auditor · Refused')).toBeVisible();
   expect(within(preview()).queryByText('Delivery confirmed')).not.toBeInTheDocument();
@@ -223,10 +222,10 @@ it('shows only the latest three receipts beside Activity without adding a subscr
   setup();
   await choose('First channel');
   const page = snapshot('Latest receipt');
-  page.items = ['Latest receipt', 'Second receipt', 'Third receipt', 'Older receipt'].map(
+  const items = ['Latest receipt', 'Second receipt', 'Third receipt', 'Older receipt'].map(
     (name) => snapshot(name).items[0]!,
   );
-  act(() => Feed.instances[0]!.snapshot(page));
+  act(() => Feed.instances[0]!.snapshot({ ...page, items }));
   const latest = preview();
   expect(receiptTime(latest, 'Latest receipt')).toBeVisible();
   expect(receiptTime(latest, 'Second receipt')).toBeVisible();

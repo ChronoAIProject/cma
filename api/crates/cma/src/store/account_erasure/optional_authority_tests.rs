@@ -17,6 +17,7 @@ use fixture::Fixture;
 mod observers;
 
 pub(crate) async fn verify_runtime() {
+    retained_consent_census_works_without_read_authority().await;
     missing_drain_qualification().await;
     observers::verify().await;
     disabled_absent().await;
@@ -28,6 +29,41 @@ pub(crate) async fn verify_runtime() {
     enabled_or_unknown().await;
     resumed_absence_is_rechecked().await;
     resumed_appearance_restarts_effects().await;
+}
+
+async fn retained_consent_census_works_without_read_authority() {
+    use crate::store::retained_consents::{self, COLLECTION};
+    for enabled in [false, true] {
+        let fixture = Fixture::for_collection(COLLECTION, enabled, None, None).await;
+        assert!(fixture
+            .runtime
+            .collection::<Document>(COLLECTION)
+            .find_one(doc! {})
+            .await
+            .is_err());
+        if enabled {
+            super::legal_consent_tests::user(&fixture.admin, "acct:retained").await;
+            retained_consents::prepare(&fixture.runtime).await.unwrap();
+            assert!(
+                retained_consents::erase_user(&fixture.runtime, "acct:retained")
+                    .await
+                    .unwrap()
+            );
+        }
+        fixture.commands.lock().unwrap().clear();
+        crate::store::retirement_archive::verify_legal_consent_census(
+            &fixture.admin,
+            &fixture.runtime,
+        )
+        .await;
+        assert!(!fixture.commands.lock().unwrap().iter().any(|command| {
+            ["find", "aggregate", "count"]
+                .iter()
+                .any(|name| command.get_str(*name).ok() == Some(COLLECTION))
+        }));
+        assert_eq!(count(&fixture.admin, COLLECTION).await, u64::from(enabled));
+        fixture.admin.drop().await.unwrap();
+    }
 }
 
 async fn missing_drain_qualification() {
@@ -54,6 +90,7 @@ async fn missing_drain_qualification() {
             billing_enabled: false,
             allocation_rollups_enabled: Some(false),
             agent_shared_observation: Some(false),
+            retain_legal_consents: false,
             transaction_drain_minimum_secs: 86_400,
             drain_qualification: None,
         },
@@ -201,6 +238,7 @@ async fn once_with(
             billing_enabled: false,
             allocation_rollups_enabled: mode,
             agent_shared_observation: Some(false),
+            retain_legal_consents: false,
         },
     )
     .await

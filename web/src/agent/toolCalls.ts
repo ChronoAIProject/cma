@@ -22,6 +22,7 @@ export function updateTool(
       : {
           ...current,
           ...item,
+          title: item.title.trim() ? item.title : (current?.title ?? item.title),
           status:
             current !== undefined && !isPendingTool(current) && isPendingTool(item)
               ? current.status

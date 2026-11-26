@@ -24,8 +24,8 @@ async fn compatibility_admission_replays_across_clients_without_reappending_comp
     let left = h.nodes[0].plans();
     let right = h.nodes[1].plans();
     let (a, b) = tokio::join!(
-        left.replay_compatibility(&request, &h.plan.source_body),
-        right.replay_compatibility(&request, &h.plan.source_body)
+        left.replay_compatibility(&request, &h.plan.source_body, false),
+        right.replay_compatibility(&request, &h.plan.source_body, false)
     );
     assert_eq!(a.unwrap(), Some(h.plan.clone()));
     assert_eq!(b.unwrap(), Some(h.plan.clone()));
@@ -33,7 +33,7 @@ async fn compatibility_admission_replays_across_clients_without_reappending_comp
     h.finish_parent(owner, &mut lease).await;
     assert_eq!(
         right
-            .replay_compatibility(&request, &h.plan.source_body)
+            .replay_compatibility(&request, &h.plan.source_body, false)
             .await
             .unwrap(),
         Some(h.plan.clone())

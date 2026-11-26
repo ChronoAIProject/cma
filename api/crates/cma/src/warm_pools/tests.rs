@@ -3,6 +3,7 @@ use layer3_adapter::agent_sandbox::{
     NativePoolClaim, NativePoolClaimRequest, NativePoolCleanup, NativePoolControl,
     NativePoolPodPolicy,
 };
+use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex,
@@ -10,6 +11,7 @@ use std::sync::{
 
 pub(crate) fn target() -> PoolTarget {
     let spec = NativePoolSpec {
+        cold_canary: false,
         image: RuntimeImage {
             uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
             labels: BTreeMap::from([
@@ -84,7 +86,7 @@ impl PoolTargetStore for Memory {
         &self,
         _: &PoolTarget,
         _: &str,
-    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
         self.calls.lock().unwrap().push("drain-scan".into());
         Ok((!self
             .drain_block
@@ -92,7 +94,7 @@ impl PoolTargetStore for Memory {
             .unwrap()
             .pop_front()
             .unwrap_or(false))
-        .then_some(vec![]))
+        .then_some(NativePoolDrain::default()))
     }
     async fn retirement_homes(
         &self,
@@ -215,7 +217,7 @@ impl NativePoolControl for Provider {
     async fn drain_pool(
         &self,
         binding: &NativePoolBinding,
-        _: &[layer3_adapter::HomeVolumeAttachment],
+        _: &NativePoolDrain,
     ) -> layer3_adapter::Result<()> {
         self.calls.lock().unwrap().push("prove-drain".into());
         self.resize(binding, 0).await.map(|_| ())
@@ -437,40 +439,8 @@ fn inventory_identifies_original_and_current_default_policy_even_with_identical_
     );
 }
 
-#[test]
-fn readiness_requires_original_binding_and_observed_current_target() {
-    let mut original = target();
-    let provider = Provider {
-        calls: Arc::default(),
-        original: original.plan.clone(),
-        refuse_replaced_uid: AtomicBool::new(false),
-        retired: AtomicBool::new(false),
-    };
-    let mut live = NativePoolStatus {
-        binding: provider.binding(),
-        desired_replicas: 3,
-        ready_replicas: 3,
-        observed: true,
-    };
-    original.binding = Some(live.binding.clone());
-    original.applied_revision = original.revision;
-    assert_eq!(original.view(Some(&live), true).status, "ready");
-    live.binding.uid = "replacement".into();
-    assert_eq!(original.view(Some(&live), true).ready_replicas, None);
-    live.binding = original.binding.clone().unwrap();
-    live.observed = false;
-    assert_eq!(original.view(Some(&live), true).status, "pending");
-    live.observed = true;
-    live.desired_replicas = 2;
-    assert!(!original.view(Some(&live), true).observed);
-    let missing = original.view(None, false);
-    assert_eq!(missing.status, "unavailable");
-    assert_eq!(missing.ready_replicas, None);
-    live.desired_replicas = 0;
-    live.ready_replicas = 0;
-    original.target_replicas = 0;
-    assert_eq!(original.view(Some(&live), true).status, "disabled");
-}
+#[path = "view_tests.rs"]
+mod view;
 
 #[test]
 fn ordinary_and_inventory_only_users_cannot_manage_pools() {
@@ -523,4 +493,7 @@ mod resize;
 mod retirement_tests;
 
 #[path = "startup_tests.rs"]
-mod startup_tests;
+pub(crate) mod startup_tests;
+
+#[path = "runtime_pointer_tests.rs"]
+pub(crate) mod runtime_pointer;

@@ -1,5 +1,6 @@
 //! Workspace renewal retains the parent boundary of its original acquisition.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::{SandboxStoreError, WorkLeaseGrant};
 use layer2_core::sandbox::{SandboxStatus, Workspace};
 use mongodb::bson::doc;
@@ -9,6 +10,7 @@ use super::sandbox_mongo::{
     DOCUMENT_SCHEMA_VERSION,
 };
 use super::sandboxes::read_sandbox;
+use super::work_publication::FenceError;
 
 pub(super) async fn grant(
     store: &MongoSandboxStore,
@@ -59,7 +61,7 @@ pub(super) async fn grant(
         },
         other => {
             // An unacknowledged abort still never grants renewed authority.
-            if let Err(error) = session.abort_transaction().await {
+            if let Err(error) = session.abort_guarded().await {
                 tracing::warn!(error = %error, "Workspace renewal abort was not acknowledged");
             }
             other
@@ -76,12 +78,21 @@ pub(super) async fn fence_parent(
     claimed: &Workspace,
     session: &mut mongodb::ClientSession,
 ) -> Result<bool, SandboxStoreError> {
+    fence_parent_transaction(store, claimed, session)
+        .await
+        .map_err(FenceError::into_domain)
+}
+
+pub(super) async fn fence_parent_transaction(
+    store: &MongoSandboxStore,
+    claimed: &Workspace,
+    session: &mut mongodb::ClientSession,
+) -> Result<bool, FenceError> {
     let parent = store
         .sandboxes
         .find_one(doc! {"_id":claimed.sandbox_id.as_str()})
         .session(&mut *session)
-        .await
-        .map_err(unavailable)?
+        .await?
         .ok_or(SandboxStoreError::NotFound)?;
     let parent = read_sandbox(&parent)?;
     if parent.owner != claimed.owner
@@ -111,10 +122,9 @@ pub(super) async fn fence_parent(
             doc! {"$inc":{"runtime_writer_claim_fence":1_i64}},
         )
         .session(&mut *session)
-        .await
-        .map_err(unavailable)?;
+        .await?;
     if locked.matched_count != 1 {
-        return Err(SandboxStoreError::Conflict);
+        return Err(SandboxStoreError::Conflict.into());
     }
     Ok(true)
 }

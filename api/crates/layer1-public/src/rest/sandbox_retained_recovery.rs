@@ -128,6 +128,7 @@ pub(super) async fn recover(
             E::NotFound => HierarchyProblem::SandboxNotFound,
             E::InvalidConsent => HierarchyProblem::Invalid("retained_recovery_consent_required"),
             E::Conflict => HierarchyProblem::Conflict("retained_recovery_authority_changed"),
+            E::StaleRequest => HierarchyProblem::Conflict("retained_recovery_revision_passed"),
             E::Refused => HierarchyProblem::Conflict("retained_recovery_not_proved"),
             E::Unavailable => {
                 HierarchyProblem::SandboxLifecycleUnavailable("retained_recovery_unavailable")

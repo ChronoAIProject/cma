@@ -1,7 +1,7 @@
 use super::*;
 use layer2_core::{
     ActivityAction, ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityStore,
-    ActivitySummary, ActivityTarget, DetailKey, SubjectId,
+    ActivitySummary, ActivityTarget, DetailKey, Page, SubjectId,
 };
 
 pub(super) fn row(index: usize) -> ActivityRecord {
@@ -32,6 +32,71 @@ pub(super) fn document(index: usize, at: DateTime) -> Document {
 
 #[tokio::test]
 #[ignore = "requires disposable replica-set MongoDB"]
+async fn audit_filter_excludes_successful_reads_before_pagination() {
+    let (client, name) = database().await;
+    let store = MongoActivityStore::open(&client, &name, Duration::from_secs(90 * 86400))
+        .await
+        .unwrap();
+    use ActivityAction::{Configure, GatewayRecordRead, List, Read};
+    use ActivityOutcome::{Failed, Refused, Succeeded};
+    let records = [
+        row(0),
+        ActivityRecord::new(Read, Succeeded),
+        ActivityRecord::new(List, Succeeded),
+        ActivityRecord::new(GatewayRecordRead, Succeeded),
+        ActivityRecord::new(Read, Refused("forbidden".into())),
+        ActivityRecord::new(GatewayRecordRead, Failed("source_unavailable".into())),
+        ActivityRecord::new(Configure, Succeeded),
+    ];
+    let db = client.database(&name);
+    let at = DateTime::now();
+    db.collection::<Document>(ACTIVITY)
+        .insert_many(records.iter().enumerate().map(|(offset, row)| {
+            doc! {
+                "_id": &row.id.0,
+                "document_schema_version": 1_i64,
+                "recorded_at": DateTime::from_millis(at.timestamp_millis() + offset as i64),
+                "record": mongodb::bson::serialize_to_bson(row).unwrap(),
+            }
+        }))
+        .await
+        .unwrap();
+
+    let mut query = ActivityQuery {
+        exclude_successful_reads: true,
+        limit: 2,
+        ..Default::default()
+    };
+    let ids = |page: Page<ActivitySummary>| -> Vec<ActivityId> {
+        page.items.into_iter().map(|item| item.id).collect()
+    };
+    let first = store.list_summaries(&query).await.unwrap();
+    query.cursor = first.next_cursor.clone();
+    assert!(query.cursor.is_some());
+    assert_eq!(
+        ids(first),
+        vec![records[6].id.clone(), records[5].id.clone()]
+    );
+    let second = store.list_summaries(&query).await.unwrap();
+    assert!(second.next_cursor.is_none());
+    assert_eq!(
+        ids(second),
+        vec![records[4].id.clone(), records[0].id.clone()]
+    );
+    let read_query = ActivityQuery {
+        action: Some(Read),
+        ..Default::default()
+    };
+    let reads = store.list_summaries(&read_query).await.unwrap();
+    assert_eq!(
+        ids(reads),
+        vec![records[4].id.clone(), records[1].id.clone()]
+    );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable replica-set MongoDB"]
 async fn activity_pages_keep_ties_filters_and_live_keyset_without_changing_audits() {
     let (client, name) = database().await;
     let store = MongoActivityStore::open(&client, &name, Duration::from_secs(90 * 86400))
@@ -57,7 +122,7 @@ async fn activity_pages_keep_ties_filters_and_live_keyset_without_changing_audit
             actor: actor.clone(),
             action,
             limit: 17,
-            cursor: None,
+            ..Default::default()
         };
         let mut actual = Vec::new();
         loop {

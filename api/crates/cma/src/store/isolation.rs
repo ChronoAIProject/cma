@@ -1,14 +1,26 @@
 //! Agent Manager's exact schema authority. Legacy names retain existing data IDs.
+use super::retained_consents;
 use layer2_core::StoreError;
 use mongodb::{
     bson::{doc, Document},
     Database,
 };
 use std::collections::{BTreeMap, BTreeSet};
+mod observation;
+#[cfg(test)]
+use observation::validate_observation_grants;
+pub(crate) use observation::verify_observation;
 pub(crate) mod replicas;
 pub(crate) const COLLECTIONS: &[&str] = &[
     "account_deletions",
     "account_deletion_events",
+    retained_consents::COLLECTION,
+    super::migrations::measured_custody::COLLECTION,
+    super::migrations::measured_batches::COLLECTION,
+    super::migrations::measured_index::PROJECTIONS,
+    super::migrations::measured_index::MANIFESTS,
+    super::migrations::measured_index::BATCHES,
+    super::agent_log_segments::active_proof::COLLECTION,
     super::budget::COLLECTION,
     super::agent_observation::COLLECTION,
     super::sandbox_metric_bindings::COLLECTION,
@@ -18,6 +30,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     super::usage_reports::JOBS,
     super::usage_reports::ROWS,
     super::usage_reports::CHARTS,
+    super::migrations::usage_projections::COLLECTION,
     super::usage_reports::CONTROL,
     super::request_limits::COLLECTION,
     "visitor_launch_days",
@@ -132,10 +145,15 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "provider_binding_preparations",
     "provider_tool_opens",
     "provider_tool_relays",
+    "resource_execution_effects_v1",
+    "resource_execution_grants_v1",
+    "resource_execution_records_v1",
     "resource_policies",
+    "resource_revocation_operations_v1",
     "resource_share_commands",
     "resource_shares",
     "sandbox_admissions",
+    super::creation_outcomes::COLLECTION,
     super::sandbox_mongo::SANDBOX_BILLING,
     super::sandbox_colors::COLLECTION,
     "sandbox_controls",
@@ -170,15 +188,23 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "workspace_profiles",
     "workspaces",
     "worktrees",
+    super::released_runtimes::COLLECTION,
+    super::released_runtimes::TRANSITIONS_COLLECTION,
 ];
-// Journal authority is retained independently of Sandbox archive and restore.
 pub(crate) const JOURNAL_COLLECTIONS: &[&str] =
     super::account_deletions::worker_schema::COLLECTIONS;
-// These derived stores are activated separately. Existing credentials must
-// still start while the feature is disabled; partial grants remain invalid.
+// These stores activate separately. Existing credentials still start while disabled.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
-    "account_erasure_work_v1",
-    "account_erasure_effects_v1",
+    super::account_deletions::worker_schema::WORK,
+    super::account_deletions::worker_schema::EFFECTS,
+    super::migrations::usage_projections::COLLECTION,
+    retained_consents::COLLECTION,
+    super::migrations::measured_custody::COLLECTION,
+    super::migrations::measured_batches::COLLECTION,
+    super::migrations::measured_index::PROJECTIONS,
+    super::migrations::measured_index::MANIFESTS,
+    super::migrations::measured_index::BATCHES,
+    super::agent_log_segments::active_proof::COLLECTION,
     super::sandbox_usage_export::CAPTURES,
     super::sandbox_usage_export::EVIDENCE,
     super::sandbox_usage_export::OUTBOX,
@@ -188,7 +214,24 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     super::home_backups::BACKUPS_COLLECTION,
     super::allocation_buckets::COLLECTION,
     super::agent_observation::COLLECTION,
+    super::released_runtimes::COLLECTION,
+    super::released_runtimes::TRANSITIONS_COLLECTION,
+    super::creation_outcomes::COLLECTION,
+    // Resource execution reads its activation record on ordinary share and
+    // revocation paths; credentials issued before it still start.
+    "resource_execution_effects_v1",
+    "resource_execution_grants_v1",
+    "resource_execution_records_v1",
+    "resource_revocation_operations_v1",
 ];
+const USAGE_PROJECTIONS: &str = super::migrations::usage_projections::COLLECTION;
+const USAGE_PROJECTION_ACTIONS: &[&str] = &["find", "insert", "remove", "listIndexes"];
+mod measured;
+#[cfg(test)]
+use measured::MEASURED_CUSTODY;
+use measured::{MEASURED_APPEND_ONLY, MEASURED_MANIFESTS};
+pub(super) const MEASURED_MANIFEST_ACTIONS: &[&str] = &["find", "insert", "update", "listIndexes"];
+pub(super) const MEASURED_CUSTODY_ACTIONS: &[&str] = &["find", "insert", "listIndexes"];
 const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
 const MIGRATION_ACTIONS: &[&str] = &["find", "insert", "update", "createCollection"];
 // Existing AM stores initialize their own indexes and schemas at startup.
@@ -205,13 +248,6 @@ const ACTIONS: &[&str] = &[
 ];
 // The Activity operation roles add metadata reads and, for build mode, ledger
 // writes. Ordinary startup keeps the original runtime role below.
-fn collection_actions(name: &str) -> &'static [&'static str] {
-    if super::account_deletions::worker_schema::COLLECTIONS.contains(&name) {
-        &["find", "insert", "update", "listIndexes"]
-    } else {
-        ACTIONS
-    }
-}
 const ACTIVITY_INSPECTION_ACTIONS: &[&str] = &["collStats"];
 pub(crate) fn role(database: &str) -> Document {
     role_with_index_operation(database, &[], false, true)
@@ -227,35 +263,9 @@ pub(crate) fn activity_index_job_role(database: &str) -> Document {
     role_with_index_operation(database, &["activity"], true, true)
 }
 
-fn role_with_index_operation(
-    database: &str,
-    metadata_collections: &[&str],
-    migration_ledger: bool,
-    include_optional: bool,
-) -> Document {
-    let mut grants: Vec<_> = COLLECTIONS
-        .iter()
-        .chain(JOURNAL_COLLECTIONS)
-        .filter(|name| include_optional || !OPTIONAL_COLLECTIONS.contains(name))
-        .map(|name| {
-            let mut actions = collection_actions(name).to_vec();
-            if *name == "binding_conversations" {
-                actions.push("dropIndex");
-            }
-            if metadata_collections.contains(name) {
-                actions.extend_from_slice(ACTIVITY_INSPECTION_ACTIONS);
-            }
-            doc! {"resource":{"db":database,"collection":*name},"actions":actions}
-        })
-        .collect();
-    if migration_ledger {
-        grants.push(
-            doc! {"resource":{"db":database,"collection":MIGRATION_COLLECTION},"actions":MIGRATION_ACTIONS},
-        );
-    }
-    grants.push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});
-    doc! {"createRole":"cma_am_runtime","privileges":grants,"roles":[]}
-}
+mod runtime_role;
+use runtime_role::{role_with_index_operation, validate_index_role};
+
 pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreError> {
     validate_index_role(status, database, &[], false)
 }
@@ -276,108 +286,6 @@ pub(crate) fn validate_activity_index_job(
     validate_index_role(status, database, &["activity"], true)
 }
 
-fn validate_index_role(
-    status: &Document,
-    database: &str,
-    metadata_collections: &[&str],
-    migration_ledger: bool,
-) -> Result<(), StoreError> {
-    let denied = || {
-        StoreError::Unavailable(
-            "Agent Manager database credential is not isolated to its schema".into(),
-        )
-    };
-    let info = status.get_document("authInfo").map_err(|_| denied())?;
-    if info
-        .get_array("authenticatedUsers")
-        .map_err(|_| denied())?
-        .len()
-        != 1
-    {
-        return Err(denied());
-    }
-    let mut grants = BTreeMap::<String, BTreeSet<String>>::new();
-    for grant in info
-        .get_array("authenticatedUserPrivileges")
-        .map_err(|_| denied())?
-    {
-        let grant = grant.as_document().ok_or_else(&denied)?;
-        let resource = grant.get_document("resource").map_err(|_| denied())?;
-        let collection = resource.get_str("collection").map_err(|_| denied())?;
-        if resource.len() != 2
-            || resource.get_str("db").ok() != Some(database)
-            || (!collection.is_empty()
-                && !COLLECTIONS.contains(&collection)
-                && !JOURNAL_COLLECTIONS.contains(&collection)
-                && !replicas::COLLECTIONS.contains(&collection)
-                && collection != MIGRATION_COLLECTION
-                && collection != super::provenance_progress::COLLECTION)
-        {
-            return Err(denied());
-        }
-        for action in grant.get_array("actions").map_err(|_| denied())? {
-            let action = action.as_str().ok_or_else(&denied)?;
-            if !(if collection.is_empty() {
-                action == "listCollections"
-            } else if collection == super::provenance_progress::COLLECTION {
-                super::provenance_progress::ACTIONS.contains(&action)
-            } else if collection == MIGRATION_COLLECTION {
-                if migration_ledger {
-                    MIGRATION_ACTIONS.contains(&action)
-                } else {
-                    action == "find"
-                }
-            } else if metadata_collections.contains(&collection)
-                && (ACTIONS.contains(&action) || ACTIVITY_INSPECTION_ACTIONS.contains(&action))
-            {
-                true
-            } else {
-                collection_actions(collection).contains(&action)
-                    || (collection == "binding_conversations" && action == "dropIndex")
-            }) {
-                return Err(denied());
-            }
-            grants
-                .entry(collection.into())
-                .or_default()
-                .insert(action.into());
-        }
-    }
-    if grants
-        .get(super::provenance_progress::COLLECTION)
-        .is_some_and(|actions| {
-            !super::provenance_progress::ACTIONS
-                .iter()
-                .all(|action| actions.contains(*action))
-        })
-    {
-        return Err(denied());
-    }
-    if !COLLECTIONS.iter().chain(JOURNAL_COLLECTIONS).all(|name| {
-        (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
-            || collection_actions(name)
-                .iter()
-                .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
-    }) || !metadata_collections.iter().all(|collection| {
-        grants.get(*collection).is_some_and(|actions| {
-            ACTIVITY_INSPECTION_ACTIONS
-                .iter()
-                .all(|action| actions.contains(*action))
-        })
-    }) || (migration_ledger
-        && !grants.get(MIGRATION_COLLECTION).is_some_and(|actions| {
-            MIGRATION_ACTIONS
-                .iter()
-                .all(|action| actions.contains(*action))
-        }))
-        || !grants
-            .get("binding_conversations")
-            .is_some_and(|actions| actions.contains("dropIndex"))
-    {
-        return Err(denied());
-    }
-    Ok(())
-}
 fn required_role(database: &str) -> Document {
     role_with_index_operation(database, &[], false, false)
 }
@@ -415,16 +323,6 @@ pub(crate) async fn verify_with_authority(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn verify_activity_index_authority(
-    status: &Document,
-    database: &str,
-    authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
-    build: bool,
-) -> Result<(), StoreError> {
-    verify_index_operation_authority(status, database, authority, &["activity"], build)
-}
-
 pub(crate) fn verify_index_operation_authority(
     status: &Document,
     database: &str,
@@ -460,6 +358,9 @@ mod allocation_tests;
 #[path = "lifecycle_children_contract.rs"]
 mod lifecycle_children_contract;
 #[cfg(test)]
+#[path = "isolation/measured_tests.rs"]
+mod measured_tests;
+#[cfg(test)]
 #[path = "profile_internal_contract.rs"]
 mod profile_internal_contract;
 #[cfg(test)]
@@ -469,19 +370,3 @@ mod segments;
 mod shared_schema_contract;
 #[cfg(test)]
 mod tests;
-
-/// Required only by the enabled read service; installation remains additive.
-pub(crate) async fn verify_observation(database: &Database) -> Result<(), StoreError> {
-    let status = database
-        .run_command(doc! {"connectionStatus": 1, "showPrivileges": true})
-        .await
-        .map_err(|_| StoreError::Unavailable("cannot verify observation grants".into()))?;
-    validate_observation_grants(&status, database.name())
-}
-fn validate_observation_grants(status: &Document, database: &str) -> Result<(), StoreError> {
-    let role = doc! {"privileges": [{"resource": {"db": database, "collection": super::agent_observation::COLLECTION}, "actions": ACTIONS}]};
-    cma_service_auth::mongodb_authority::verify_shared_schema(status, database, &role)
-        .map_err(|error| StoreError::Unavailable(error.into()))
-}
-#[cfg(test)]
-mod observation_grants_tests;

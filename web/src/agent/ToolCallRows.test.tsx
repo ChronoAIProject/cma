@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from './model';
+import { conversationFromTranscript, foldAgentEvent } from './conversation';
+import type { AgentEvent } from '../api/types';
 import { ToolCallGroup, ToolCallRow } from './ToolCallRows';
 import type { ToolGroup } from './timeline';
 import { AgentComputerObservation } from './environment/observation';
@@ -108,6 +110,55 @@ describe('ToolCallGroup', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
     fireEvent.click(toggle);
     expect(toggle).not.toHaveAttribute('aria-controls');
+  });
+
+  it('keeps command names after sparse failure updates and accepts a recorded replacement title', () => {
+    const appendedAt = '2026-11-05T14:33:00.000Z';
+    const calls = [
+      { id: 'a', title: 'Run tests', status: 'failed', update: '' },
+      { id: 'b', title: 'Check formatting', status: 'failed', update: '   ' },
+      { id: 'c', title: 'Read lockfile', status: 'completed', update: 'Verify lockfile' },
+    ];
+    const history: AgentEvent[] = calls.flatMap((entry, index) => [
+      {
+        seq: index * 2 + 1,
+        appendedAt,
+        kind: {
+          type: 'tool_call_started',
+          call_id: entry.id,
+          kind: 'execute',
+          title: entry.title,
+          status: 'running',
+        },
+      },
+      {
+        seq: index * 2 + 2,
+        appendedAt,
+        kind: {
+          type: 'tool_call_updated',
+          call_id: entry.id,
+          title: entry.update,
+          status: entry.status,
+        },
+      },
+    ]);
+    const state = history.reduce(
+      foldAgentEvent,
+      conversationFromTranscript({ agentId: 'agt_1', throughSeq: 0, turns: [] }),
+    );
+    render(<ToolCallGroup group={group(state.toolCalls)} />);
+    fireEvent.click(screen.getByRole('button', { name: /Ran 3 commands/ }));
+    for (const name of ['Run tests', 'Check formatting', 'Verify lockfile']) {
+      const row = screen.getByRole('article', { name: `Tool call: ${name}` });
+      expect(within(row).getByRole('button', { name: new RegExp(name) })).toBeVisible();
+    }
+  });
+
+  it('names a command card when the transcript has no title', () => {
+    render(<ToolCallRow tool={call('legacy', 'failed', { title: ' ' })} />);
+    fireEvent.click(screen.getByRole('button', { name: /Ran 1 command/ }));
+    const row = screen.getByRole('article', { name: 'Tool call: Command' });
+    expect(within(row).getByRole('button', { name: /^Command/ })).toBeVisible();
   });
 
   it('summarizes commands, reads and edits with only valid recorded durations', () => {

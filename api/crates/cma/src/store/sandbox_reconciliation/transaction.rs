@@ -9,6 +9,7 @@ use mongodb::ClientSession;
 
 use super::super::agent_log_integrity::TransactionLogError;
 use super::super::lifecycle_execution::LifecycleLoadError;
+use super::super::native_retirement_action::{self, RetirementAction};
 use super::super::sandbox_events::{
     append_in_transaction, validate_in_transaction, TransactionEventError,
 };
@@ -73,6 +74,7 @@ pub(super) enum RecoveryApplication {
 pub(super) async fn apply(
     store: &MongoSandboxStore,
     request: &SandboxRuntimeLossRequest,
+    retirement: Option<&RetirementAction>,
     session: &mut ClientSession,
 ) -> Result<RecoveryApplication, ApplyError> {
     let document = measure("sandbox_read", async {
@@ -86,6 +88,7 @@ pub(super) async fn apply(
     .map_err(ApplyError::Driver)?
     .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_sandbox(&document).map_err(ApplyError::Domain)?;
+    validate_retirement(&document, &current, request, retirement)?;
     if store.runtime_loss_bounded_proof_enabled {
         if let Some(outcome) =
             precheck_sandbox_runtime_loss(&current, request).map_err(ApplyError::Domain)?
@@ -118,6 +121,7 @@ pub(super) async fn apply(
         .iter()
         .map(|(agent, source)| (agent.clone(), source.through()))
         .collect::<Vec<_>>();
+    validate_retirement_children(&current, &evidence, retirement)?;
     let mutation = match apply_sandbox_runtime_loss(&current, &evidence, request)
         .map_err(ApplyError::Domain)?
     {
@@ -132,7 +136,7 @@ pub(super) async fn apply(
     )
     .await?;
     persist_sandbox(
-        store, request, &current, last_seq, *mutation, agents, logs, session,
+        store, request, retirement, &current, last_seq, *mutation, agents, logs, session,
     )
     .await
 }
@@ -141,6 +145,7 @@ pub(super) async fn apply(
 async fn persist_sandbox(
     store: &MongoSandboxStore,
     request: &SandboxRuntimeLossRequest,
+    retirement: Option<&RetirementAction>,
     current: &Sandbox,
     last_seq: u64,
     mutation: layer2_core::sandbox::store::SandboxRuntimeLossMutation,
@@ -154,6 +159,17 @@ async fn persist_sandbox(
     )
     .await?;
     measure("sandbox_writes", async {
+        let retirement_filter = match retirement {
+            Some(action) => record_bson(action)
+                .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
+            None => mongodb::bson::Bson::Document(doc! {"$exists": false}),
+        };
+        let mut change = crate::store::work_lease_update::replacement(
+            sandbox_replacement_fields(&mutation.sandbox).map_err(ApplyError::Domain)?,
+        );
+        if retirement.is_some() {
+            change.push(doc! {"$unset": [native_retirement_action::FIELD, native_retirement_action::OBSERVATION]});
+        }
         let advanced = store
             .sandboxes
             .update_one(
@@ -161,6 +177,7 @@ async fn persist_sandbox(
                     "_id": current.id.as_str(),
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "channel_reuse_cleanup_execution": { "$exists": false },
+                    native_retirement_action::FIELD: retirement_filter,
                     "revision": signed(mutation.expected_revision, "runtime-loss Sandbox revision")
                         .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
                     "record.runtime": record_bson(&request.expected_runtime)
@@ -168,9 +185,7 @@ async fn persist_sandbox(
                     "last_seq": signed(last_seq, "runtime-loss Sandbox event sequence")
                         .map_err(|_| ApplyError::Domain(SandboxStoreError::SequenceConflict))?,
                 }),
-                crate::store::work_lease_update::replacement(
-                    sandbox_replacement_fields(&mutation.sandbox).map_err(ApplyError::Domain)?,
-                ),
+                change,
             )
             .session(&mut *session)
             .await
@@ -208,4 +223,37 @@ async fn persist_sandbox(
         })))
     })
     .await
+}
+
+fn validate_retirement(
+    row: &mongodb::bson::Document,
+    parent: &Sandbox,
+    request: &SandboxRuntimeLossRequest,
+    retirement: Option<&RetirementAction>,
+) -> Result<(), ApplyError> {
+    let current = native_retirement_action::action_from(row).map_err(ApplyError::Domain)?;
+    if current.as_ref() != retirement
+        || retirement
+            .is_some_and(|action| !request.native_retirement_finality || !action.matches(parent))
+    {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
+    Ok(())
+}
+
+fn validate_retirement_children(
+    parent: &Sandbox,
+    evidence: &[(Agent, u64)],
+    retirement: Option<&RetirementAction>,
+) -> Result<(), ApplyError> {
+    if let Some(action) = retirement {
+        let agents = evidence
+            .iter()
+            .map(|(agent, _)| agent.clone())
+            .collect::<Vec<_>>();
+        if !action.covers(parent, &agents).map_err(ApplyError::Domain)? {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+    }
+    Ok(())
 }

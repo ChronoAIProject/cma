@@ -7,6 +7,7 @@ pub(in super::super) fn receipt(home: &HomeVolumeRequest) -> HomeVolumeReceipt {
             request: NativePoolClaimRequest {
                 pool: NativePoolBinding {
                     spec: NativePoolSpec {
+                        cold_canary: false,
                         image: RuntimeImage {
                             uri: super::super::desktop::image(),
                             labels: std::collections::BTreeMap::from([

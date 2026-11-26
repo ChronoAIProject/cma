@@ -15,6 +15,9 @@ use layer2_core::AgentId;
 
 use super::*;
 
+#[path = "titles/content_type_tests.rs"]
+mod content_type_tests;
+
 const NOW: &str = "2026-09-05T00:00:00Z";
 const BEARER: &str = "sandbox-title-bearer";
 const DEPLOYMENT_MODEL: &str = "deployment-model";
@@ -381,6 +384,33 @@ async fn reflected_sandbox_bearer_is_never_accepted_as_title_content() {
         assert_eq!(outcome, Err(AgentTitleServiceError::GenerationUnavailable));
         assert!(stored.is_none());
         server.abort();
+    }
+}
+
+#[test]
+fn nyxid_model_services_use_the_service_relative_responses_path() {
+    for (base_path, expected_path) in [
+        (
+            "/api/v1/proxy/s/chrono-llm-public/",
+            "/api/v1/proxy/s/chrono-llm-public/responses",
+        ),
+        (
+            "/api/v1/proxy/s/chrono-llm",
+            "/api/v1/proxy/s/chrono-llm/responses",
+        ),
+        (
+            "/api/v1/proxy/s/chrono-llm-public-preview",
+            "/api/v1/proxy/s/chrono-llm-public-preview/v1/responses",
+        ),
+    ] {
+        let endpoint = ProviderEndpoint {
+            endpoint: format!("https://identity.example{base_path}"),
+        };
+        let generator = HttpAgentTitleGenerator::new(&endpoint, DEPLOYMENT_MODEL).unwrap();
+        assert_eq!(
+            generator.endpoint.as_str(),
+            format!("https://identity.example{expected_path}")
+        );
     }
 }
 

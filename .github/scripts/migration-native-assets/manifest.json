@@ -1,0 +1,259 @@
+{
+  "controller_conversion": "JSON objects preserve the pinned YAML release semantics; canonical JSON uses sorted keys and compact separators.",
+  "controller_release": {
+    "license": {
+      "file": "LICENSE.agent-sandbox.txt",
+      "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+      "url": "https://raw.githubusercontent.com/kubernetes-sigs/agent-sandbox/v1.0.2/LICENSE"
+    },
+    "sha256": "e3dda8359fee2b1bb6f4a9448d7004888286482b17670c581dee976f370fd165",
+    "url": "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.2/sandbox-with-extensions.yaml",
+    "version": "v1.0.2"
+  },
+  "images": {
+    "agent-sandbox-controller": {
+      "architecture": "amd64",
+      "config": "sha256:dadc7a88420e4c455896b19e7c74c05c1ccc7f04d404e0bca83f453b2231cb01",
+      "image": "registry.k8s.io/agent-sandbox/agent-sandbox-controller@sha256:e38c6b2e5daeb2681f8f5ab172671de19d4d3d7052c88a40a34f298bb84649f8",
+      "manifest": "sha256:e38c6b2e5daeb2681f8f5ab172671de19d4d3d7052c88a40a34f298bb84649f8",
+      "os": "linux"
+    },
+    "csi-attacher": {
+      "architecture": "amd64",
+      "config": "sha256:db75e0f40b422cab72e3b0f45e64541ff660c947e19503a1accabc904df4f40d",
+      "image": "registry.k8s.io/sig-storage/csi-attacher@sha256:bb39afd6bbacade951f5a4319eb5397244d2dcc144059b2f990ab0d342819b55",
+      "manifest": "sha256:bb39afd6bbacade951f5a4319eb5397244d2dcc144059b2f990ab0d342819b55",
+      "os": "linux",
+      "registry_pin": "registry.k8s.io/sig-storage/csi-attacher@sha256:bb39afd6bbacade951f5a4319eb5397244d2dcc144059b2f990ab0d342819b55"
+    },
+    "csi-provisioner": {
+      "architecture": "amd64",
+      "config": "sha256:656e8e61e9219130a42109638faec39251f8e9d048107bce4d019ee3ce85b215",
+      "image": "registry.k8s.io/sig-storage/csi-provisioner@sha256:dc19aa1aab93f9ac8a729ba9c40b87e09bf93a6f06d9d066a7ba6ba3550160a0",
+      "manifest": "sha256:dc19aa1aab93f9ac8a729ba9c40b87e09bf93a6f06d9d066a7ba6ba3550160a0",
+      "os": "linux",
+      "registry_pin": "registry.k8s.io/sig-storage/csi-provisioner@sha256:dc19aa1aab93f9ac8a729ba9c40b87e09bf93a6f06d9d066a7ba6ba3550160a0"
+    },
+    "hostpath": {
+      "architecture": "amd64",
+      "config": "sha256:21d347ef973ae3eb06db9c3a6b7794e7191b36f1e0810d22e7c0cc5777c6fc1f",
+      "image": "registry.k8s.io/sig-storage/hostpathplugin@sha256:1bb05702410e1960247af31fc4483c68467d1c29b4e8d96c3ccdf7c9b839dc23",
+      "manifest": "sha256:1bb05702410e1960247af31fc4483c68467d1c29b4e8d96c3ccdf7c9b839dc23",
+      "os": "linux",
+      "registry_pin": "registry.k8s.io/sig-storage/hostpathplugin@sha256:1bb05702410e1960247af31fc4483c68467d1c29b4e8d96c3ccdf7c9b839dc23"
+    },
+    "node-driver-registrar": {
+      "architecture": "amd64",
+      "config": "sha256:82d682baaacdc6902133ec494bbfb01b3884c4a98efac59391880253012c96b9",
+      "image": "registry.k8s.io/sig-storage/csi-node-driver-registrar@sha256:1ca23bdbb1504e41233d527e826d02dac98571c45a6cd74c5fb28be485d680fa",
+      "manifest": "sha256:1ca23bdbb1504e41233d527e826d02dac98571c45a6cd74c5fb28be485d680fa",
+      "os": "linux",
+      "registry_pin": "registry.k8s.io/sig-storage/csi-node-driver-registrar@sha256:1ca23bdbb1504e41233d527e826d02dac98571c45a6cd74c5fb28be485d680fa"
+    }
+  },
+  "objects": [
+    {
+      "file": "controller-00.json",
+      "group": "controller",
+      "kind": "Namespace",
+      "name": "agent-sandbox-system",
+      "namespace": "",
+      "sha256": "305b858894330a5e6a3a0634d7d52cb3d3ae6d1b4a231c7e722bbc39b8fda040"
+    },
+    {
+      "file": "controller-01.json",
+      "group": "controller",
+      "kind": "CustomResourceDefinition",
+      "name": "sandboxclaims.extensions.agents.x-k8s.io",
+      "namespace": "",
+      "sha256": "e1a99e988085e534fea6ea4f9476378eacd9d3eb3bb00ccf1915ac2fb5d03573"
+    },
+    {
+      "file": "controller-02.json",
+      "group": "controller",
+      "kind": "CustomResourceDefinition",
+      "name": "sandboxes.agents.x-k8s.io",
+      "namespace": "",
+      "sha256": "e2a8ac110e6473fa96053bf3898d607f415029596bedc62819f86bf02fe03206"
+    },
+    {
+      "file": "controller-03.json",
+      "group": "controller",
+      "kind": "CustomResourceDefinition",
+      "name": "sandboxtemplates.extensions.agents.x-k8s.io",
+      "namespace": "",
+      "sha256": "b0f501c5ba2622578da4b404be54d0a00489d0fd09f80df617ecc610601d71f9"
+    },
+    {
+      "file": "controller-04.json",
+      "group": "controller",
+      "kind": "CustomResourceDefinition",
+      "name": "sandboxwarmpools.extensions.agents.x-k8s.io",
+      "namespace": "",
+      "sha256": "db79770c5c296cb008494cd56dc8503d53ca42172a3640c4fe68a6bc1754b3d6"
+    },
+    {
+      "file": "controller-05.json",
+      "group": "controller",
+      "kind": "ServiceAccount",
+      "name": "agent-sandbox-controller",
+      "namespace": "agent-sandbox-system",
+      "sha256": "f823e2c3be3fb6dc90c3524e08ba700c058573172d1af2e187f9fd70a4e9af43"
+    },
+    {
+      "file": "controller-06.json",
+      "group": "controller",
+      "kind": "ClusterRole",
+      "name": "agent-sandbox-controller",
+      "namespace": "",
+      "sha256": "bf0b3051fe9aa1460d0693ea47ab3b08121d23e41ce4a6f3d4d1cd4d1287976c"
+    },
+    {
+      "file": "controller-07.json",
+      "group": "controller",
+      "kind": "ClusterRole",
+      "name": "agent-sandbox-controller-extensions",
+      "namespace": "",
+      "sha256": "46f6792e7ceec5b4a94c098d1368fa63a36ae91222e0c8a1f3551db1dbc1f234"
+    },
+    {
+      "file": "controller-08.json",
+      "group": "controller",
+      "kind": "ClusterRoleBinding",
+      "name": "agent-sandbox-controller",
+      "namespace": "",
+      "sha256": "fbe10d75f2f0949015485368a5613fbd3b4a284bf681d7ef43d1e44fa55cffcc"
+    },
+    {
+      "file": "controller-09.json",
+      "group": "controller",
+      "kind": "ClusterRoleBinding",
+      "name": "agent-sandbox-controller-extensions",
+      "namespace": "",
+      "sha256": "d661ff2ef9cf5a67d36e461cc769b14711c3ff926d36e7a5d7ad6f3d71b0d0a8"
+    },
+    {
+      "file": "controller-10.json",
+      "group": "controller",
+      "kind": "Service",
+      "name": "agent-sandbox-controller",
+      "namespace": "agent-sandbox-system",
+      "sha256": "4d26654cda9b6dd871fcca9dd710cf83831aaf264c13f9ba846bbc5964f60633"
+    },
+    {
+      "file": "controller-11.json",
+      "group": "controller",
+      "kind": "Deployment",
+      "name": "agent-sandbox-controller",
+      "namespace": "agent-sandbox-system",
+      "sha256": "c6a38753b4ddb5bd63e6b1c0c6b50a6a1027010d54d85ba331560924e5a59822"
+    },
+    {
+      "file": "storage-00.json",
+      "group": "storage",
+      "kind": "Namespace",
+      "name": "cma-native-storage",
+      "namespace": "",
+      "sha256": "3096fbb6a2146c5d6626077e6988628352d1a3f4e4adc2d6ba4b9eeb35a8e681"
+    },
+    {
+      "file": "storage-01.json",
+      "group": "storage",
+      "kind": "ServiceAccount",
+      "name": "csi-hostpathplugin-sa",
+      "namespace": "cma-native-storage",
+      "sha256": "70362114ef59f7cf4165e1e8149c47d506872c29e883923616a7a1a2e6d1ac7a"
+    },
+    {
+      "file": "storage-02.json",
+      "group": "storage",
+      "kind": "ClusterRole",
+      "name": "external-provisioner-runner",
+      "namespace": "",
+      "sha256": "da7cfe4ed9bb99b6b74c42facdaf463f4faed0fca0a6f3dafe177edc8ad4ba0a"
+    },
+    {
+      "file": "storage-03.json",
+      "group": "storage",
+      "kind": "ClusterRoleBinding",
+      "name": "csi-provisioner-role",
+      "namespace": "",
+      "sha256": "75c039930ad11968679836494801ad7ae9860f744b82cfdc34ffde81cf073aaa"
+    },
+    {
+      "file": "storage-04.json",
+      "group": "storage",
+      "kind": "Role",
+      "name": "external-provisioner-cfg",
+      "namespace": "cma-native-storage",
+      "sha256": "e3d606b599b4193558598944e8b5d06ab975870e0fd4fe497b6abd72f99ab635"
+    },
+    {
+      "file": "storage-05.json",
+      "group": "storage",
+      "kind": "RoleBinding",
+      "name": "csi-provisioner-role-cfg",
+      "namespace": "cma-native-storage",
+      "sha256": "4674ed568a395d32c57abc18ac081d4d9478e0d799f5203853bb2092a70c03ac"
+    },
+    {
+      "file": "storage-06.json",
+      "group": "storage",
+      "kind": "ClusterRole",
+      "name": "external-attacher-runner",
+      "namespace": "",
+      "sha256": "fd724b61217db36f6a795d6a673598b25fbec002c116a477804320e5b4140331"
+    },
+    {
+      "file": "storage-07.json",
+      "group": "storage",
+      "kind": "ClusterRoleBinding",
+      "name": "csi-attacher-role",
+      "namespace": "",
+      "sha256": "47832dcfe55fb2a148b2444877201628c50c97ae5a617b374f0b1f524882c42f"
+    },
+    {
+      "file": "storage-08.json",
+      "group": "storage",
+      "kind": "Role",
+      "name": "external-attacher-cfg",
+      "namespace": "cma-native-storage",
+      "sha256": "f3f1cdca8db327739dcc58ea591924b86b59a08f47fac9dfa2525f49d20d687e"
+    },
+    {
+      "file": "storage-09.json",
+      "group": "storage",
+      "kind": "RoleBinding",
+      "name": "csi-attacher-role-cfg",
+      "namespace": "cma-native-storage",
+      "sha256": "ee1f2980f388da54526738a358c8cdd1d52872cc2aed31d3a7aae94e9719bbdb"
+    },
+    {
+      "file": "storage-10.json",
+      "group": "storage",
+      "kind": "CSIDriver",
+      "name": "hostpath.csi.k8s.io",
+      "namespace": "",
+      "sha256": "59b860604abbb1b77a245220357f384ab3adfd636566ec9cb0271f7b453e78b1"
+    },
+    {
+      "file": "storage-11.json",
+      "group": "storage",
+      "kind": "StatefulSet",
+      "name": "csi-hostpathplugin",
+      "namespace": "cma-native-storage",
+      "sha256": "d8e779094da6b205fc0a49ae5a875c65451305d08f9c43dae8bbf92a6cdd50d4"
+    },
+    {
+      "file": "storage-12.json",
+      "group": "storage",
+      "kind": "StorageClass",
+      "name": "cma-native-rwop",
+      "namespace": "",
+      "sha256": "ac2722d8a1b2fb9b08a5e9020114d4ae285973698242050718b024f885a1baa5"
+    }
+  ],
+  "schema": "migration-native-assets-v1",
+  "storage_origin": ".github/scripts/multi-am-features/infra/storage-00.json through storage-12.json; canonicalized without semantic edits",
+  "storage_source_commit": "935a8cf551a6bdefbdd578f008026a2e9bd18160"
+}

@@ -3,6 +3,7 @@
 # Keep Omarchy independent of the Backend graph, including its archive split.
 module OmarchyCIContract
   EXPORT_IF = "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
+  SCAN_IF = "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
   CACHE_MISS = "steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true'"
   DEVELOP_PUSH = "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
   CACHE_WRITE = "#{DEVELOP_PUSH} && (#{CACHE_MISS})"
@@ -43,14 +44,14 @@ module OmarchyCIContract
         python3 .github/scripts/omarchy-browser-input-tests.py
         node --test .github/scripts/omarchy-browser-page.test.cjs
       SH
-      { "uses" => "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+      { "uses" => "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
         "with" => { "cache-binary" => "${{ #{DEVELOP_PUSH} }}" } },
       { "name" => "Set immutable Omarchy image version", "id" => "identity",
         "run" => 'echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"' },
       { "name" => "Identify pinned Omarchy dependency cache", "id" => "cache",
         "run" => 'python3 .github/scripts/omarchy-cache-key.py "$RUNNER_TEMP/omarchy-evidence/cache-inputs.json" >> "$GITHUB_OUTPUT"' },
       { "name" => "Restore complete Omarchy layer cache", "id" => "omarchy-cache-restore",
-        "uses" => "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830", "timeout-minutes" => 5,
+        "uses" => "actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25", "timeout-minutes" => 5,
         "continue-on-error" => true, "with" => { "path" => CACHE_PATH, "key" => CACHE_KEY, "fail-on-cache-miss" => false } },
       { "name" => "Discard incomplete Omarchy cache restore", "if" => CACHE_MISS,
         "run" => 'rm -rf "$RUNNER_TEMP/omarchy-layer-cache"' },
@@ -93,25 +94,34 @@ module OmarchyCIContract
       { "name" => "Verify Omarchy production temporary directory", "env" => { "CMA_OMARCHY_TEST_IMAGE_TMP" => "1" },
         "run" => 'node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/image-tmp"' },
       { "name" => "Restore Trivy databases", "if" => "github.event_name != 'push' || github.ref != 'refs/heads/develop'",
-        "uses" => "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
+        "uses" => "actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25",
         "with" => { "path" => "${{ github.workspace }}/.cache/trivy", "key" => "cache-trivy-readonly", "restore-keys" => "cache-trivy-" } },
       { "name" => "Scan tested Omarchy image", "uses" => "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
         "with" => { "cache" => "${{ #{DEVELOP_PUSH} }}", "image-ref" => "cma-runtime-omarchy:ci", "format" => "json",
           "output" => "${{ runner.temp }}/omarchy-evidence/vulnerabilities.json", "severity" => "HIGH,CRITICAL",
-          "exit-code" => "1", "ignore-unfixed" => true } },
+          "exit-code" => "0", "ignore-unfixed" => true } },
+      { "name" => "Omarchy vulnerability gate", "timeout-minutes" => 5,
+        "env" => { "BASE_SHA" => "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}",
+          "GH_TOKEN" => "${{ github.token }}" },
+        "run" => 'python3 -B .github/scripts/image_vulnerability_gate.py --component runtime-omarchy --report "$RUNNER_TEMP/omarchy-evidence/vulnerabilities.json" --base "$BASE_SHA"' },
       { "name" => "Retain Omarchy image evidence", "if" => "always() && steps.build.outcome == 'success'",
         "uses" => "actions/upload-artifact@v4", "with" => {
           "name" => "omarchy-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
           "path" => "${{ runner.temp }}/omarchy-evidence/", "if-no-files-found" => "error", "retention-days" => 90 } },
       { "name" => "Export tested Omarchy image", "if" => EXPORT_IF, "timeout-minutes" => 10,
         "run" => 'python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"' },
+      { "name" => "Install pinned image secret scanner", "if" => SCAN_IF, "timeout-minutes" => 5,
+        "env" => { "CD_COMPONENT" => "runtime-omarchy" },
+        "run" => "bash .github/scripts/staging_cd_transport.sh\nbash .github/scripts/install-image-gitleaks.sh\n" },
+      { "name" => "Scan tested Omarchy image as staging publication does", "if" => SCAN_IF, "timeout-minutes" => 30,
+        "run" => 'python3 -B .github/scripts/ci_image_secret_scan.py runtime-omarchy "$RUNNER_TEMP/ci-native-image" "$GITHUB_SHA"' },
       { "name" => "Retain tested Omarchy image", "if" => EXPORT_IF, "timeout-minutes" => 10,
         "uses" => "actions/upload-artifact@v4", "with" => {
           "name" => "ci-native-image-runtime-omarchy-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
           "path" => "${{ runner.temp }}/ci-native-image/", "if-no-files-found" => "error",
           "compression-level" => 0, "retention-days" => 1 } },
       { "name" => "Save qualified Omarchy layer cache", "if" => "success() && #{CACHE_WRITE}",
-        "uses" => "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830", "timeout-minutes" => 5,
+        "uses" => "actions/cache/save@caa296126883cff596d87d8935842f9db880ef25", "timeout-minutes" => 5,
         "continue-on-error" => true, "with" => { "path" => CACHE_PATH, "key" => CACHE_KEY } },
     ]
     contract.require!(row["steps"] == expected,

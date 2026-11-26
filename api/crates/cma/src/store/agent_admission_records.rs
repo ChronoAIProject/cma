@@ -19,6 +19,8 @@ use super::workspaces::read_workspace;
 use super::worktrees::read_worktree;
 
 mod source;
+mod unknown_existing;
+pub(super) use unknown_existing::reconcile_existing;
 
 pub(super) struct CreatedReceipt {
     pub(super) creation: AgentCreation,
@@ -105,6 +107,7 @@ pub(super) async fn replay_at_snapshot(
 enum ReplayRead {
     Transaction,
     Snapshot,
+    UncertainSnapshot,
 }
 
 async fn load_replay_with_session(
@@ -119,7 +122,9 @@ async fn load_replay_with_session(
         .find_one(doc! { "_id": &binding_id });
     let binding_find = match read {
         ReplayRead::Transaction => binding_find,
-        ReplayRead::Snapshot => binding_find.read_concern(ReadConcern::snapshot()),
+        ReplayRead::Snapshot | ReplayRead::UncertainSnapshot => {
+            binding_find.read_concern(ReadConcern::snapshot())
+        }
     };
     let binding = binding_find
         .session(&mut *session)
@@ -150,7 +155,9 @@ async fn load_replay_with_session(
     let agent_find = store.agents.find_one(agent_query);
     let agent_find = match read {
         ReplayRead::Transaction => agent_find,
-        ReplayRead::Snapshot => agent_find.read_concern(ReadConcern::snapshot()),
+        ReplayRead::Snapshot | ReplayRead::UncertainSnapshot => {
+            agent_find.read_concern(ReadConcern::snapshot())
+        }
     };
     let Some(agent_document) = agent_find
         .session(&mut *session)
@@ -174,7 +181,7 @@ async fn load_replay_with_session(
             &agent_document,
             binding,
             session,
-            matches!(read, ReplayRead::Snapshot),
+            matches!(read, ReplayRead::Snapshot | ReplayRead::UncertainSnapshot),
         ))
         .await?;
     }
@@ -183,7 +190,7 @@ async fn load_replay_with_session(
         ReplayRead::Transaction => {
             super::trigger_first_messages::require_command_receipt(store, &agent, session).await
         }
-        ReplayRead::Snapshot => {
+        ReplayRead::Snapshot | ReplayRead::UncertainSnapshot => {
             super::trigger_first_messages::require_command_receipt_snapshot(store, &agent, session)
                 .await
         }
@@ -195,7 +202,9 @@ async fn load_replay_with_session(
         .find_one(doc! { "_id": agent.worktree_id.as_str() });
     let worktree_find = match read {
         ReplayRead::Transaction => worktree_find,
-        ReplayRead::Snapshot => worktree_find.read_concern(ReadConcern::snapshot()),
+        ReplayRead::Snapshot | ReplayRead::UncertainSnapshot => {
+            worktree_find.read_concern(ReadConcern::snapshot())
+        }
     };
     let worktree_document = worktree_find
         .session(&mut *session)
@@ -207,7 +216,7 @@ async fn load_replay_with_session(
         session,
         0,
         1,
-        matches!(read, ReplayRead::Snapshot),
+        matches!(read, ReplayRead::Snapshot | ReplayRead::UncertainSnapshot),
     )
     .await
     .map_err(LoadError::Domain)?

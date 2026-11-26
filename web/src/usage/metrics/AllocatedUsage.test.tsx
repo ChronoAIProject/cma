@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError } from '@cma/client';
 import { MetricsDashboard } from './MetricsDashboard';
 import { defaultSelection, type Selection } from './model';
-import { metricsClient, reportFixture } from './testFixtures';
+import { metricRow, metricsClient, reportFixture } from './testFixtures';
 
 afterEach(() => vi.useRealTimers());
 
@@ -94,6 +94,31 @@ it.each([false, true])(
     ).not.toBeInTheDocument();
   },
 );
+
+it('uses singular Agent only for a count of one in the operations Usage inventory', async () => {
+  const api = metricsClient(true);
+  api.sandboxes.mockResolvedValue({
+    report_id: 'report-one',
+    as_of: 1_700_000_000,
+    items: [0, 1, 4].map((count) => ({
+      ...metricRow,
+      sandbox_id: `sbx-count-${count}`,
+      name: `Sandbox ${count}`,
+      agent_count: count,
+    })),
+    next: null,
+    total_count: 3,
+  });
+  setup(true, defaultSelection, api);
+  for (const [count, text] of [
+    [0, '0 Agents'],
+    [1, '1 Agent'],
+    [4, '4 Agents'],
+  ]) {
+    const row = within(await screen.findByRole('row', { name: new RegExp(`Sandbox ${count} `) }));
+    expect(row.getByText(`Details · ${text}`, { exact: true })).toBeInTheDocument();
+  }
+});
 
 it.each(['cpu_mean_cores', 'memory_mean_bytes', 'disk_latest_bytes'] as const)(
   'does not request hidden measured sort %s from an old URL selection',

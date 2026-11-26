@@ -118,6 +118,118 @@ async fn disabled_inheritance_keeps_unrelated_work_unaccounted() {
     assert_eq!(*result, 42);
 }
 
+#[test]
+fn scope_and_result_custody_domains_are_exact_and_allocation_free() {
+    let make_policy = || {
+        let root = IngressBudget::new(64 * 1024);
+        let floor = AllocationPlan::checked("domain floor", &[4096]).unwrap();
+        let bounds = ClassBounds::new(root.capacity_bytes(), floor, floor)
+            .unwrap()
+            .with_attachment_limit(2)
+            .unwrap();
+        let policy = IngressOwnershipPolicy::new(root.clone(), bounds).unwrap();
+        (root, policy)
+    };
+    let (root, process) = make_policy();
+    let (foreign_root, foreign) = make_policy();
+    let first = process.admit_attachment().unwrap();
+    let second = process.admit_attachment().unwrap();
+    let policies = [
+        process.clone(),
+        first.policy().clone(),
+        second.policy().clone(),
+        foreign,
+    ];
+    let scopes = policies.each_ref().map(|policy| {
+        IngressWorkScope::new(
+            policy
+                .admit(
+                    IngressClass::Data,
+                    AllocationPlan::checked("domain scope", &[2048]).unwrap(),
+                )
+                .unwrap(),
+        )
+    });
+    let results = scopes
+        .each_ref()
+        .map(|scope| scope.initialize_owned(|| None::<usize>));
+    let available = root.available_bytes();
+    let mut probe = crate::allocation_probe::AllocationProbe::new();
+    probe.track(|| {
+        for (source, (scope, result)) in scopes.iter().zip(&results).enumerate() {
+            for (target, policy) in policies.iter().enumerate() {
+                assert_eq!(scope.shares_custody_domain(policy), source == target);
+                assert_eq!(result.shares_custody_domain(policy), source == target);
+                let directional = source == target || (target == 0 && matches!(source, 1 | 2));
+                assert_eq!(scope.belongs_to(policy), directional);
+                assert_eq!(result.belongs_to(policy), directional);
+            }
+        }
+    });
+    assert_eq!(probe.allocated(), 0);
+    assert_eq!(root.available_bytes(), available);
+    drop((results, scopes, policies, first, second));
+    root.assert_idle();
+    foreign_root.assert_idle();
+}
+
+#[test]
+fn result_custody_checks_envelope_without_certifying_nested_owners() {
+    let root = IngressBudget::new(64 * 1024);
+    let plan = AllocationPlan::checked("nested domain", &[2048]).unwrap();
+    let bounds = ClassBounds::new(root.capacity_bytes(), plan, plan)
+        .unwrap()
+        .with_attachment_limit(1)
+        .unwrap();
+    let process = IngressOwnershipPolicy::new(root.clone(), bounds).unwrap();
+    let attachment = process.admit_attachment().unwrap();
+    let attached_policy = attachment.policy().clone();
+    let scope = IngressWorkScope::new(process.admit(IngressClass::Data, plan).unwrap());
+    let nested = attached_policy
+        .admit(IngressClass::Data, plan)
+        .unwrap()
+        .initialize(|| 7);
+    let envelope = scope.initialize_owned(|| nested);
+    assert!(envelope.shares_custody_domain(&process));
+    assert!(!envelope.shares_custody_domain(&attached_policy));
+    assert!(!(*envelope).shares_custody_domain(&process));
+    assert!((*envelope).shares_custody_domain(&attached_policy));
+    let error = envelope.map(Err::<(), _>).transpose().unwrap_err();
+    assert!(error.shares_custody_domain(&process));
+    assert!((*error).shares_custody_domain(&attached_policy));
+    drop((scope, attachment, attached_policy));
+    assert!(process.admit_attachment().is_err());
+    drop(error);
+    drop(process.admit_attachment().unwrap());
+    root.assert_idle();
+}
+
+#[test]
+fn unowned_results_never_match_a_custody_domain() {
+    use futures_util::FutureExt;
+    let root = IngressBudget::new(64 * 1024);
+    let floor = AllocationPlan::checked("unowned domain", &[4096]).unwrap();
+    let bounds = ClassBounds::new(root.capacity_bytes(), floor, floor)
+        .unwrap()
+        .with_attachment_limit(1)
+        .unwrap();
+    let process = IngressOwnershipPolicy::new(root.clone(), bounds).unwrap();
+    let attachment = process.admit_attachment().unwrap();
+    let value = IngressWorkScope::inherit_owned(async { None::<usize> })
+        .now_or_never()
+        .unwrap();
+    let mut probe = crate::allocation_probe::AllocationProbe::new();
+    probe.track(|| {
+        assert!(!value.shares_custody_domain(&process));
+        assert!(!value.shares_custody_domain(attachment.policy()));
+        assert!(!value.belongs_to(&process));
+        assert!(!value.is_admitted());
+    });
+    assert_eq!(probe.allocated(), 0);
+    drop((value, attachment));
+    root.assert_idle();
+}
+
 #[tokio::test]
 async fn result_transfer_releases_work_only_after_retained_admission() {
     let plan = |n| AllocationPlan::new("result transfer", &[n]).unwrap();

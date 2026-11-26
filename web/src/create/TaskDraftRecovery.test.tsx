@@ -1,3 +1,4 @@
+import { selectTaskTemplate } from '../test/taskTemplateSelection';
 import {
   act,
   fireEvent,
@@ -133,7 +134,7 @@ it.each(['template', 'recovery'])(
     if (mode === 'recovery') {
       showRecovery();
       restore();
-    } else fireEvent.click(screen.getByRole('button', { name: 'Write a document' }));
+    } else selectTaskTemplate('Write a document');
     const subject = screen.getByLabelText('Subject');
     subject.focus();
     fireEvent.change(subject, { target: { value: 'User chose this field' } });

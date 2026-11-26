@@ -16,7 +16,10 @@ async function openEditor(page: Page, mode: Mode) {
   await page.getByRole('button', { name: 'More Agent actions' }).click();
   await page
     .getByRole('menuitem', {
-      name: mode === 'rename' ? 'Rename' : 'Update system prompt',
+      name:
+        mode === 'rename'
+          ? 'Rename'
+          : /^Update system prompt(?:$| Review the pending system prompt change\.)/,
       exact: true,
     })
     .click();
@@ -80,6 +83,7 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
       const deniedReplay = failure === 'lost-then-denied' || failure === '503-then-denied';
       const lostResponse = failure === 'lost' || failure === 'lost-then-denied';
       const unavailable = failure === 'unavailable' || failure === '503-then-denied';
+      const acceptedEffort = failure === 'conflict' ? 'low' : 'high';
       await page.route('**/api/v1/agents/agt_contract/models', (route) =>
         route.fulfill({
           json: { models: [{ id: 'gpt-6', label: 'GPT-6', available: true }] },
@@ -138,11 +142,10 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
         if (mode === 'settings') {
           expect(body).toEqual({
             model: 'gpt-6',
-            reasoning_effort: 'high',
+            reasoning_effort: acceptedEffort,
             permission_mode: 'guarded',
           });
-          settings.reasoning_effort = 'high';
-          settings.permission_mode = 'guarded';
+          Object.assign(settings, body);
         } else {
           expect(body).toEqual({
             expected_revision: failure === 'conflict' ? 4 : 3,
@@ -198,7 +201,14 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
             exact: true,
           });
           await expect(apply).toBeEnabled();
-          if (mode !== 'settings') {
+          if (mode === 'settings') {
+            await expect(
+              editor.getByRole('button', { name: /Agent settings:.*Low.*Autonomous/ }),
+            ).toBeVisible();
+            await expect(
+              editor.getByRole('button', { name: /Model and reasoning effort:.*Low/ }),
+            ).toBeVisible();
+          } else {
             await expect(field()).toHaveValue(proposal);
             await expect(editor).toContainText('Current preferences revision: 4.');
           }
@@ -277,9 +287,13 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
       if (deniedReplay) expect(writes[2]).toEqual(writes[0]);
       await page.reload();
       editor = await openEditor(page, mode);
-      if (mode === 'settings')
+      if (mode === 'settings') {
         await expect(editor.getByRole('button', { name: 'Permission mode' })).toHaveText('Guarded');
-      else await expect(field()).toHaveValue(proposal);
+        if (failure === 'conflict')
+          await expect(
+            editor.getByRole('button', { name: /Agent settings:.*Low.*Guarded/ }),
+          ).toBeVisible();
+      } else await expect(field()).toHaveValue(proposal);
       expect(writes).toHaveLength(writeCount);
       if (mode === 'prompt') {
         expect(storageWrites.length).toBeGreaterThan(0);

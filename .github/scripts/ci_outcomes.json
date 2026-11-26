@@ -173,6 +173,18 @@
           "meaning": "The copy to the registry failed in transport and its tag could not be read back to settle the outcome.",
           "cause": "unknown",
           "next": "Read the reserved tag in the registry: if it holds the scanned digest the copy landed; otherwise push again for a new version."
+        },
+    "registry_not_visible": {
+      "title": "Pushed image not visible yet",
+      "meaning": "The image copy finished, but reading its tag or digest back kept returning 404 for the whole settle window (about 45 s). The registry had not yet served the write at the edge that answered.",
+      "cause": "transient",
+      "next": "Re-run the failed jobs; the reserved version is read back again before anything is rewritten. If it repeats, check GitHub Packages status and that the tag exists in the package."
+    },
+        "runtime_cleanup_incomplete": {
+          "title": "Runtime canary cleanup incomplete",
+          "meaning": "The runtime canary's Docker containers, volume or local image could not be proven removed after two cleanup passes; nothing was published.",
+          "cause": "transient",
+          "next": "Re-run the release; runtime-cleanup.json names the smoke result and failed cleanup step. failure=identity_refused means the runner held containers or a volume this run did not create: inspect its Docker inventory, do not re-run."
         }
       }
     },
@@ -582,10 +594,10 @@
           "next": "Re-run the failed jobs."
         },
         "VERSION_LABEL_REQUIRED": {
-          "title": "Version label required",
-          "meaning": "The merged pull request does not carry exactly one of version-upgrade:major, version-upgrade:minor or version-upgrade:patch.",
+          "title": "Conflicting or unsupported version labels",
+          "meaning": "The merged pull request carries multiple version-upgrade labels or an unsupported version-upgrade label.",
           "cause": "change",
-          "next": "Add exactly one version-upgrade label to the merged pull request, then re-run the failed jobs."
+          "next": "Keep one supported version-upgrade label or remove all version-upgrade labels to use patch, then re-run the failed jobs."
         },
         "VERSION_LABELS_INVALID": {
           "title": "Version labels malformed",
@@ -682,6 +694,12 @@
           "meaning": "The version tag inventory could not be read completely.",
           "cause": "transient",
           "next": "Re-run the failed jobs."
+        },
+        "DEVELOP_ADVERTISEMENT_UNSETTLED": {
+          "title": "Advertised develop history does not settle the push",
+          "meaning": "The live ref and its available first-parent history did not establish that this push is current or superseded.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs after develop's ref and history agree with the push."
         },
         "INVENTORY_CLAIM_CONFLICT": {
           "title": "Claim and reservation differ",
@@ -1022,6 +1040,24 @@
           "meaning": "New release pods restarted during verification, usually from a crash or failing liveness probe. A runtime or runtime-omarchy release only reconfigures the Agent Manager, so its restarted pods are Agent Manager pods.",
           "cause": "change",
           "next": "Check the restarted pods' logs (Agent Manager's for a runtime release). \"native warm pool startup readiness failed\" means the new runtime's warm pool was not ready in time, not a broken image; if this change caused it, fix it."
+        },
+        "pod-restarts-membership": {
+          "title": "Agent Manager restarted after losing authority",
+          "meaning": "Agent Manager reported lost membership or ownership before the restart.",
+          "cause": "change",
+          "next": "Use the previous Agent Manager container log to investigate membership or ownership renewal."
+        },
+        "pod-restarts-startup-gate": {
+          "title": "Agent Manager restarted at the warm-pool startup gate",
+          "meaning": "The active runtime pool did not reach startup readiness before the Agent Manager stopped.",
+          "cause": "operator",
+          "next": "Check active warm-pool readiness, provider capacity and quota for the Sandbox namespace."
+        },
+        "pod-restarts-panic": {
+          "title": "A release container restarted after a panic",
+          "meaning": "The previous container log recorded a panic before the restart.",
+          "cause": "change",
+          "next": "Open the restarted container's previous log and inspect the panic."
         },
         "rollout-ownership": {
           "title": "Rollout ownership unproven",
@@ -1458,6 +1494,12 @@
           "meaning": "The deployment finished without a verified controller outcome for this component.",
           "cause": "unknown",
           "next": "Open the Deploy job: its FAIL line and summary state what the controller proved."
+        },
+        "retry-not-run": {
+          "title": "Automatic deployment retry did not run",
+          "meaning": "The first deployment was refused before any change for a transient reason and handed over to one automatic re-admission and retry, but that retry never started or never reported. Nothing is deployed for this component in this run.",
+          "cause": "unknown",
+          "next": "Open the lane's Re-admit and Deploy again jobs. If they were cancelled or skipped, dispatch redeploy-staging for the component or push to develop; a re-run of failed jobs reuses an expired admission."
         }
       }
     },

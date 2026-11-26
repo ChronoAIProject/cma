@@ -72,6 +72,14 @@ impl SandboxStore for MongoSandboxStore {
         super::super::retained_reopen::replay(self, id).await
     }
 
+    async fn retained_reopen_history(
+        &self,
+        id: &SandboxId,
+        key_sha256: Option<&str>,
+    ) -> Result<layer2_core::sandbox::RetainedReopenHistory, SandboxStoreError> {
+        super::super::retained_reopen::read_for_service(self, id, key_sha256).await
+    }
+
     async fn retained_suspended_reopen_snapshot(
         &self,
         id: &SandboxId,
@@ -106,8 +114,29 @@ impl SandboxStore for MongoSandboxStore {
         super::super::sandbox_unpublished_recovery::retained_snapshot(self, id).await
     }
 
-    fn managed_runtime_version(&self) -> Option<&str> {
-        self.managed_runtime_version.as_deref()
+    fn managed_runtime_version(&self) -> Option<String> {
+        self.managed_agent_release()
+    }
+
+    fn desktop_runtime_target_is_qualified(&self, target: &str) -> bool {
+        self.desktop_verified_runtime_image.as_deref() == Some(target)
+    }
+
+    fn machine_runtime_target_is_qualified(&self, id: &SandboxId, target: &str) -> bool {
+        self.managed_machine_updates.includes(id)
+            && crate::agent_lifecycle::valid_immutable_image(target)
+    }
+
+    fn managed_runtime_target_is_held(&self, target: &str) -> bool {
+        self.default_pool_holds.image(target)
+    }
+
+    async fn qualify_retained_machine(
+        &self,
+        sandbox: &Sandbox,
+        at: &str,
+    ) -> Result<Option<Sandbox>, SandboxStoreError> {
+        crate::store::managed_machine_origin::qualify(self, sandbox, at).await
     }
 
     async fn unpublished_runtime_recovery_snapshot(
@@ -125,6 +154,18 @@ impl SandboxStore for MongoSandboxStore {
     }
 
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
+        if sandbox.lifecycle.runtime_image_origin.is_some() {
+            return Err(SandboxStoreError::InvalidTransaction(
+                "runtime image origin requires lifecycle admission",
+            ));
+        }
+        if sandbox.lifecycle.custom_runtime.is_some()
+            || sandbox.lifecycle.runtime_migration_admission.is_some()
+        {
+            return Err(SandboxStoreError::InvalidTransaction(
+                "custom runtime authority requires retained migration admission",
+            ));
+        }
         if self.global_sandbox_limit != 0 {
             return Err(SandboxStoreError::InvalidTransaction(
                 "global capacity requires transactional sandbox admission",
@@ -173,6 +214,40 @@ impl SandboxStore for MongoSandboxStore {
             .await
     }
 
+    fn capture_released_runtime(&self) -> Option<layer3_adapter::ReleasedRuntime> {
+        let release = self.released_runtime();
+        (!release.agent.is_empty()).then_some(release)
+    }
+
+    async fn refresh_released_runtime(&self) {
+        if let Some(source) = &self.released {
+            source.refresh_after_stale().await;
+        }
+    }
+
+    async fn reserve_initial_runtime_image(
+        &self,
+        sandbox: &Sandbox,
+        generation: u64,
+        image: &str,
+    ) -> Result<String, SandboxStoreError> {
+        super::super::released_runtimes::reserve_initial_runtime_image(
+            self, sandbox, generation, image,
+        )
+        .await
+    }
+
+    async fn save_sandbox_against_release(
+        &self,
+        expected_revision: u64,
+        sandbox: Sandbox,
+        release: &layer3_adapter::ReleasedRuntime,
+        lane: layer2_core::released_runtime::ReleasedLane,
+    ) -> Result<(), SandboxStoreError> {
+        self.save_sandbox_inner(expected_revision, sandbox, None, Some((release, lane)))
+            .await
+    }
+
     async fn list_sandboxes(
         &self,
         owner: &SubjectId,
@@ -205,6 +280,20 @@ impl MongoSandboxStore {
         sandbox: Sandbox,
         acquisition: Option<&Document>,
     ) -> Result<(), SandboxStoreError> {
+        self.save_sandbox_inner(expected_revision, sandbox, acquisition, None)
+            .await
+    }
+
+    async fn save_sandbox_inner(
+        &self,
+        expected_revision: u64,
+        sandbox: Sandbox,
+        acquisition: Option<&Document>,
+        release: Option<(
+            &layer3_adapter::ReleasedRuntime,
+            layer2_core::released_runtime::ReleasedLane,
+        )>,
+    ) -> Result<(), SandboxStoreError> {
         let next = expected_revision
             .checked_add(1)
             .ok_or(SandboxStoreError::Conflict)?;
@@ -215,7 +304,11 @@ impl MongoSandboxStore {
             .get_sandbox(&sandbox.id)
             .await?
             .ok_or(SandboxStoreError::NotFound)?;
-        if current.revision != expected_revision {
+        if current.revision != expected_revision
+            || current.lifecycle.custom_runtime != sandbox.lifecycle.custom_runtime
+            || current.lifecycle.runtime_migration_admission
+                != sandbox.lifecycle.runtime_migration_admission
+        {
             return Err(SandboxStoreError::Conflict);
         }
         current
@@ -240,8 +333,14 @@ impl MongoSandboxStore {
             .map_err(|_| SandboxStoreError::Conflict)?;
         // Even a metadata-only revision must advance the usage watermark;
         // otherwise the next lifecycle edge looks like an unmetered writer gap.
-        super::super::sandbox_usage::save::save(self, expected_revision, &sandbox, acquisition)
-            .await
+        super::super::sandbox_usage::save::save(
+            self,
+            expected_revision,
+            &sandbox,
+            acquisition,
+            release,
+        )
+        .await
     }
 
     async fn sandbox_page(

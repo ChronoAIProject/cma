@@ -4,8 +4,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post, put},
-    Json, Router,
+    Json,
 };
 use cmaeg_core::{channel::ConformanceLevel, problem::ProblemCode};
 use serde::{Deserialize, Serialize};
@@ -20,59 +19,11 @@ use crate::{
 };
 
 use super::management_responses::*;
-use super::problems::{no_store, problem, protocol_headers};
+use super::problems::{no_store, problem};
 
-pub fn management_router(state: ManagementState) -> Router {
-    Router::new()
-        .merge(crate::github::http::routes())
-        .route(
-            "/v1/channels/{channel_id}/partition",
-            get(super::partitions::inspect),
-        )
-        .route(
-            "/v1/channels/{channel_id}/partition/resets",
-            post(super::partition_resets::reset),
-        )
-        .route(
-            "/v1/channels/{channel_id}/activity",
-            get(super::activity::latest),
-        )
-        .route(
-            "/v1/channels/{channel_id}/activity/stream",
-            get(super::activity::stream),
-        )
-        .merge(super::outbound::routes())
-        .route(
-            "/v1/channels/{channel_id}/events/{event_id}/media-responses",
-            get(super::media_responses::list),
-        )
-        .route("/v1/permissions", get(permission_catalog))
-        .route("/v1/channels", get(list_channels).post(create_channel))
-        .route(
-            "/v1/channel-records/{record_id}",
-            get(super::creation::recover_channel),
-        )
-        .route(
-            "/v1/channels/{channel_id}",
-            get(get_channel).put(update_channel).delete(delete_channel),
-        )
-        .route("/v1/channels/{channel_id}/test", post(test_channel))
-        .route(
-            "/v1/channels/{channel_id}/sources/{source_index}/test",
-            post(super::channel_nodes::test_source),
-        )
-        .route(
-            "/v1/channels/{channel_id}/consumers/{consumer_id}/test",
-            post(super::channel_nodes::test_consumer),
-        )
-        .route(
-            "/v1/channels/{channel_id}/routing",
-            put(super::channel_nodes::update_routing),
-        )
-        .route("/v1/channels/{channel_id}/rekey", post(rekey_channel))
-        .with_state(state)
-        .layer(axum::middleware::from_fn(protocol_headers))
-}
+#[path = "management_router.rs"]
+mod router;
+pub use router::management_router;
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ChannelResponse {
@@ -129,6 +80,9 @@ pub struct TestChannelResponse {
 pub struct DeleteQuery {
     #[param(required = true, nullable = false)]
     pub expected_version: Option<u64>,
+    /// Retain the provider cleanup intent for an incomplete channel.
+    #[serde(default)]
+    pub retire_unready: bool,
 }
 
 #[utoipa::path(
@@ -137,7 +91,7 @@ pub struct DeleteQuery {
     operation_id = "createChannel",
     tag = "channels",
     security(("creatorBearer" = [])),
-    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("Idempotency-Key" = Option<String>, Header, description = "1..=256 ASCII bytes; identical creates replay locally for ten minutes")),
+    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("Idempotency-Key" = Option<String>, Header, description = "1..=256 ASCII bytes; identical creates replay locally for ten minutes. For a supplied record_id, replay requires the original channel to remain ready and unretired.")),
     request_body = ChannelCreateRequest,
     responses((status = 201, body = ChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
 )]
@@ -165,7 +119,7 @@ pub async fn create_channel(
     };
     if let (Some(key), Some(cache)) = (&key, cache_guard.as_mut()) {
         cache.retain(|_, entry| entry.expires_at > std::time::Instant::now());
-        if let Some(entry) = cache.get(&(creator.subject.clone(), key.clone())) {
+        if let Some(entry) = cache.get(&(creator.subject.clone(), key.clone())).cloned() {
             if entry.fingerprint != fingerprint {
                 return problem(
                     StatusCode::CONFLICT,
@@ -173,7 +127,29 @@ pub async fn create_channel(
                     "Idempotency-Key was used for another request",
                 );
             }
-            return (StatusCode::CREATED, Json(entry.body.clone())).into_response();
+            drop(cache_guard);
+            if let Some(record_id) = &body.record_id {
+                // A different replica can retire this identity while this
+                // replica still has its original successful response.
+                let retained =
+                    match crate::channels::creation::load_record(&state, &creator, record_id).await
+                    {
+                        Ok(retained) => Some(retained),
+                        Err(ManagementError::NotFound) => None,
+                        Err(error) => return management_error(error),
+                    };
+                if !retained.is_some_and(|current| {
+                    entry.body["channel_id"].as_str() == Some(current.channel_id.as_str())
+                        && current.create_replayable()
+                }) {
+                    return problem(
+                        StatusCode::CONFLICT,
+                        ProblemCode::Conflict,
+                        "Idempotency-Key no longer has a ready channel for this record_id",
+                    );
+                }
+            }
+            return no_store((StatusCode::CREATED, Json(entry.body)).into_response());
         }
         if cache.len() >= 10_000 {
             return problem(
@@ -240,8 +216,8 @@ pub async fn get_channel(
         Ok(channel_id) => channel_id,
         Err(error) => return management_error(error),
     };
-    let loaded = match management::load(&state, &creator, &channel_id).await {
-        Ok(loaded) => loaded,
+    let loaded = match management::inspect(&state, &creator, &channel_id).await {
+        Ok((loaded, _)) => loaded,
         Err(error) => return management_error(error),
     };
     let response = channel_response(
@@ -305,7 +281,7 @@ pub async fn update_channel(
     tag = "channels",
     security(("creatorBearer" = [])),
     params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("channel_id" = String, Path), DeleteQuery),
-    responses((status = 204), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
+    responses((status = 204), (status = 202, description = "Incomplete channel retired, provider cleanup pending"), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
 )]
 pub async fn delete_channel(
     State(state): State<ManagementState>,
@@ -334,6 +310,14 @@ pub async fn delete_channel(
             "expected_version is required",
         ));
     };
+    if query.retire_unready {
+        return match management::retire_unready(&state, &creator, &channel_id, expected_version)
+            .await
+        {
+            Ok(()) => no_store(StatusCode::ACCEPTED.into_response()),
+            Err(error) => management_error(error),
+        };
+    }
     match management::delete(&state, &creator, &channel_id, expected_version).await {
         Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
         Err(error) => management_error(error),

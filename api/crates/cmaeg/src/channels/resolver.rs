@@ -26,6 +26,8 @@ use tokio::sync::Notify;
 use tracing::{instrument::WithSubscriber, Instrument};
 
 pub use crate::telemetry::names::RESTORE_DURATION as RESTORE_DURATION_METRIC;
+#[path = "resolver_current.rs"]
+mod current;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedChannel {
@@ -63,11 +65,7 @@ impl ResolveError {
                 503,
                 "stored channel is invalid",
             ),
-            Self::CreationPending => (
-                ProblemCode::Conflict,
-                409,
-                "channel_creation_pending: the channel owner must complete the original creation request before sending events",
-            ),
+            Self::CreationPending => (ProblemCode::Conflict, 409, super::creation::PENDING_DETAIL),
             Self::RateLimited => (
                 ProblemCode::RateLimited,
                 429,
@@ -90,13 +88,15 @@ impl std::fmt::Display for ResolveError {
 impl std::error::Error for ResolveError {}
 
 struct Flight {
+    record_id: cmaeg_core::ids::RecordId,
     notify: Notify,
     result: Mutex<Option<Result<Arc<ResolvedChannel>, ResolveError>>>,
     invalidated: std::sync::atomic::AtomicBool,
 }
 impl Flight {
-    fn new() -> Self {
+    fn new(record_id: cmaeg_core::ids::RecordId) -> Self {
         Self {
+            record_id,
             notify: Notify::new(),
             result: Mutex::new(None),
             invalidated: false.into(),
@@ -131,6 +131,7 @@ struct Inner {
     // Invalidation and restore publication share a short synchronous critical section.
     publication: Mutex<()>,
     restores: std::sync::atomic::AtomicUsize,
+    profile_revision_writer: std::sync::atomic::AtomicBool,
 }
 impl ChannelResolver {
     pub fn new(
@@ -160,38 +161,20 @@ impl ChannelResolver {
                 limiter: RateLimiter::keyed(quota),
                 publication: Mutex::new(()),
                 restores: 0.into(),
+                profile_revision_writer: false.into(),
             }),
         }
+    }
+    pub(crate) fn require_current_profile_reads(&self, enabled: bool) {
+        self.inner
+            .profile_revision_writer
+            .store(enabled, std::sync::atomic::Ordering::Release);
     }
     pub fn cache_len(&self) -> usize {
         self.inner.cache.len()
     }
     pub(crate) fn record_client(&self) -> RecordClient {
         (*self.inner.records).clone()
-    }
-    /// Recheck live channel authority without accepting a cached definition.
-    pub async fn resolve_current(
-        &self,
-        raw_id: &str,
-    ) -> Result<Arc<ResolvedChannel>, ResolveError> {
-        let id = ChannelId::new(raw_id).map_err(|_| ResolveError::Invalid)?;
-        let pointer = id
-            .open(&self.inner.keys)
-            .map_err(|_| ResolveError::Tampered)?
-            .payload;
-        if self
-            .inner
-            .records
-            .record_url(pointer.record_id.as_str())
-            .map_err(|_| ResolveError::Invalid)?
-            .as_str()
-            != pointer.record_url
-        {
-            return Err(ResolveError::Tampered);
-        }
-        tokio::time::timeout(self.inner.config.restore_timeout, self.fetch(id, pointer))
-            .await
-            .unwrap_or(Err(ResolveError::Unavailable))
     }
     pub fn invalidate(&self, id: &str) {
         let _guard = self.inner.publication.lock().unwrap();
@@ -200,6 +183,17 @@ impl ChannelResolver {
             flight
                 .invalidated
                 .store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+    pub(crate) fn invalidate_record(&self, id: &cmaeg_core::ids::RecordId) {
+        let _guard = self.inner.publication.lock().unwrap();
+        self.inner.cache.invalidate_record(id);
+        for flight in &self.inner.flights {
+            if flight.record_id == *id {
+                flight
+                    .invalidated
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
         }
     }
     pub async fn resolve(&self, raw_id: &str) -> Result<Arc<ResolvedChannel>, ResolveError> {
@@ -211,6 +205,13 @@ impl ChannelResolver {
         timing: Option<&crate::telemetry::timing::IngressTiming>,
     ) -> Result<Arc<ResolvedChannel>, ResolveError> {
         let _duration = timing.map(|timing| timing.restore());
+        if self
+            .inner
+            .profile_revision_writer
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return self.resolve_current(raw_id).await;
+        }
         loop {
             let stale = match self.inner.cache.lookup(raw_id) {
                 Lookup::Fresh(channel) => return Ok(channel),
@@ -224,13 +225,14 @@ impl ChannelResolver {
                 _ => ResolveError::Tampered,
             })?;
             let pointer = opened.payload;
-            if self
-                .inner
+            self.inner
                 .records
                 .record_url(pointer.record_id.as_str())
-                .map_err(|_| ResolveError::Invalid)?
-                .as_str()
-                != pointer.record_url
+                .map_err(|_| ResolveError::Invalid)?;
+            if !self
+                .inner
+                .records
+                .names_record(&pointer.record_url, pointer.record_id.as_str())
             {
                 return Err(ResolveError::Tampered);
             }
@@ -248,7 +250,7 @@ impl ChannelResolver {
                         if let Some(timing) = timing {
                             timing.triggered_restore();
                         }
-                        let flight = Arc::new(Flight::new());
+                        let flight = Arc::new(Flight::new(pointer.record_id.clone()));
                         entry.insert(flight.clone());
                         let resolver = self.clone();
                         let pending = flight.clone();
@@ -394,7 +396,7 @@ impl ChannelResolver {
 }
 
 /// The bytes of a validated `sha256:<64 lowercase hex>` key hash.
-fn decode_key_hash(hash: &str) -> Result<[u8; 32], ResolveError> {
+pub(super) fn decode_key_hash(hash: &str) -> Result<[u8; 32], ResolveError> {
     let mut bytes = [0; 32];
     for (index, byte) in bytes.iter_mut().enumerate() {
         *byte = hash
@@ -448,9 +450,7 @@ impl ChannelResolver {
         )
         .await
     }
-}
 
-impl ChannelResolver {
     pub(crate) async fn whatsapp_flow_current(
         &self,
         channel: &ResolvedChannel,
@@ -466,9 +466,7 @@ impl ChannelResolver {
         )
         .await
     }
-}
 
-impl ChannelResolver {
     pub(crate) async fn whatsapp_message_change_current(
         &self,
         channel: &ResolvedChannel,
@@ -483,3 +481,7 @@ impl ChannelResolver {
         .await
     }
 }
+
+#[cfg(test)]
+#[path = "resolver_retained_origin_tests.rs"]
+mod retained_origin_tests;

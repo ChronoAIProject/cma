@@ -35,6 +35,7 @@ pub(super) fn setup(f: &Fixture) -> (Sender, Arc<ResolvedChannel>, EventRefPaylo
         topic_creation: false,
         message_events: false,
         channel_posts: false,
+        member_join_chat_ids: Vec::new(),
         bot_id: "77".into(),
         bot_username: None,
         admission: AdmissionPolicy::All {},

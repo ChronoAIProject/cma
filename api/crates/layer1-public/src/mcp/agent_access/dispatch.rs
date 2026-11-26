@@ -48,7 +48,7 @@ pub(super) async fn invoke(state: &AccessState, capability: &str, rpc: Rpc) -> R
                     AgentAccessError::NotFound | AgentAccessError::Forbidden => {
                         "This Agent can no longer request access"
                     }
-                    AgentAccessError::OwnerAuthorityRequired | AgentAccessError::ServiceConnectionRequired => {
+                    AgentAccessError::OwnerAuthorityRequired | AgentAccessError::ServiceConnectionRequired | AgentAccessError::StaleGithubApproval => {
                         "The owner must authorize the requested service and backing resources"
                     }
                     AgentAccessError::Unavailable => {

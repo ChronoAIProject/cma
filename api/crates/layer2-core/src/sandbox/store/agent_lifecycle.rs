@@ -1,11 +1,10 @@
 use async_trait::async_trait;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ids::{AgentId, SandboxId};
 use crate::sandbox::{Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, Worktree};
-use crate::seconds_from_rfc3339;
 
-use super::{Page, PageRequest, SandboxStoreError};
+use super::{AgentWorkClaimError, Page, PageRequest, SandboxStoreError};
 
 /// Advisory discovery for runtime-dependent background steps. A directed
 /// probe remains discoverable even when its Sandbox is hidden in ordinary work.
@@ -46,6 +45,50 @@ impl StartupWorkFilter<'_> {
     }
 }
 
+/// Identifies the pending task associated with a local acquisition refusal.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PendingAgentWork {
+    pub step: AgentWorkStep,
+    pub status: AgentStatus,
+    pub ready_at: String,
+    pub attempts: u32,
+    pub next_fence: u64,
+    pub control_revision: Option<u64>,
+}
+
+impl PendingAgentWork {
+    pub fn from_agent(agent: &Agent) -> Option<Self> {
+        let work = &agent.work;
+        work.step.is_pending().then(|| Self {
+            step: work.step,
+            status: agent.status,
+            ready_at: work.ready_at.clone(),
+            attempts: work.attempts,
+            next_fence: work.next_fence,
+            control_revision: (!AgentWorkStep::RECEIVER_PACED.contains(&work.step))
+                .then_some(agent.revision),
+        })
+    }
+}
+
+/// Advisory filters applied to current work before the discovery result limit.
+#[derive(Clone, Copy)]
+pub struct AgentWorkDiscovery<'a> {
+    pub receiver_holds: &'a BTreeSet<AgentId>,
+    pub startup: StartupWorkFilter<'a>,
+    pub acquisition_cooldowns: Option<&'a BTreeMap<AgentId, PendingAgentWork>>,
+}
+
+impl<'a> AgentWorkDiscovery<'a> {
+    pub fn new(receiver_holds: &'a BTreeSet<AgentId>, startup: StartupWorkFilter<'a>) -> Self {
+        Self {
+            receiver_holds,
+            startup,
+            acquisition_cooldowns: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct VersionedWorktree {
     pub expected_revision: u64,
@@ -65,189 +108,12 @@ pub struct AgentWorkMutation {
     pub agent_logs: Vec<AgentLogKind>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentConnectionRecoveryCause {
-    ControlPlaneRestart,
-    UpdateStreamLost,
-}
-
-/// Content-free durable identity used to reconcile runtime attachments.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentConnectionRecoveryCandidate {
-    pub agent_id: AgentId,
-    pub sandbox_id: SandboxId,
-    pub conversation_id: String,
-    pub runtime_generation: u64,
-    pub revision: u64,
-    pub work_step: AgentWorkStep,
-    /// A validated discovery observation may skip a no-op recovery read. This
-    /// is not write authority: eligible recovery still rereads and fences state.
-    pub recovery_eligible: bool,
-    /// Monotonic applied revision from the same validated Agent observation.
-    /// This can skip completed maintenance, never authorize a new write.
-    pub managed_guidance_revision: u64,
-    /// Discovery may defer maintenance at a busy or unconfigured boundary.
-    /// A true value never authorizes a write; admission rereads and fences it.
-    pub managed_context_eligible: bool,
-}
-
-impl AgentConnectionRecoveryCandidate {
-    pub fn from_agent(agent: &Agent) -> Option<Self> {
-        let conversation_id = agent
-            .conversation
-            .conversation_id
-            .as_ref()
-            .filter(|id| !id.trim().is_empty() && id.len() <= 512)?;
-        let runtime_generation = agent
-            .conversation
-            .runtime_generation
-            .filter(|value| *value > 0)?;
-        agent.status.is_live().then(|| Self {
-            agent_id: agent.id.clone(),
-            sandbox_id: agent.sandbox_id.clone(),
-            conversation_id: conversation_id.clone(),
-            runtime_generation,
-            revision: agent.revision,
-            work_step: agent.work.step,
-            recovery_eligible: matches!(
-                agent.status,
-                AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval
-            ) && agent.requested_stop_reason.is_none()
-                && agent.work.step == AgentWorkStep::None
-                && agent.work.lease.is_none(),
-            managed_guidance_revision: agent.conversation.managed_guidance_revision,
-            managed_context_eligible: crate::sandbox::agent_live_skills::idle(agent)
-                && agent.settings().validate().is_ok(),
-        })
-    }
-
-    pub fn restart_request(&self, requested_at: String) -> AgentConnectionRecoveryRequest {
-        AgentConnectionRecoveryRequest {
-            agent_id: self.agent_id.clone(),
-            conversation_id: self.conversation_id.clone(),
-            runtime_generation: self.runtime_generation,
-            expected_revision: self.revision,
-            expected_work_step: self.work_step,
-            expected_authority_fence: None,
-            requested_at,
-            cause: AgentConnectionRecoveryCause::ControlPlaneRestart,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentConnectionRecoveryRequest {
-    pub agent_id: AgentId,
-    pub conversation_id: String,
-    pub runtime_generation: u64,
-    pub expected_revision: u64,
-    pub expected_work_step: AgentWorkStep,
-    pub expected_authority_fence: Option<u64>,
-    pub requested_at: String,
-    pub cause: AgentConnectionRecoveryCause,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentConnectionRecoveryOutcome {
-    Scheduled,
-    AlreadyScheduled,
-    Superseded,
-    NotEligible,
-}
-
-#[doc(hidden)]
-pub enum AgentConnectionRecoveryApplication {
-    Persist(Box<Agent>),
-    Complete(AgentConnectionRecoveryOutcome),
-}
-
-#[doc(hidden)]
-pub fn apply_agent_connection_recovery(
-    current: &Agent,
-    request: &AgentConnectionRecoveryRequest,
-) -> Result<AgentConnectionRecoveryApplication, SandboxStoreError> {
-    let requested_at = seconds_from_rfc3339(&request.requested_at).ok_or(
-        SandboxStoreError::InvalidTransaction("agent connection recovery request is invalid"),
-    )?;
-    let authority_shape = matches!(
-        (request.cause, request.expected_authority_fence),
-        (AgentConnectionRecoveryCause::ControlPlaneRestart, None)
-            | (AgentConnectionRecoveryCause::UpdateStreamLost, Some(_))
-    );
-    if request.agent_id != current.id
-        || request.conversation_id.trim().is_empty()
-        || request.conversation_id.len() > 512
-        || request.runtime_generation == 0
-        || !authority_shape
-        || request
-            .expected_authority_fence
-            .is_some_and(|fence| fence == 0)
-    {
-        return Err(SandboxStoreError::InvalidTransaction(
-            "agent connection recovery request is invalid",
-        ));
-    }
-    if current.conversation.conversation_id.as_deref() != Some(&request.conversation_id)
-        || current.conversation.runtime_generation != Some(request.runtime_generation)
-    {
-        return Ok(AgentConnectionRecoveryApplication::Complete(
-            AgentConnectionRecoveryOutcome::Superseded,
-        ));
-    }
-    let eligible_status = matches!(
-        current.status,
-        AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval
-    );
-    if !eligible_status || current.requested_stop_reason.is_some() {
-        return Ok(AgentConnectionRecoveryApplication::Complete(
-            AgentConnectionRecoveryOutcome::NotEligible,
-        ));
-    }
-    if request
-        .expected_authority_fence
-        .is_some_and(|fence| current.work.next_fence <= fence)
-    {
-        return Ok(AgentConnectionRecoveryApplication::Complete(
-            AgentConnectionRecoveryOutcome::Superseded,
-        ));
-    }
-    if current.work.step == AgentWorkStep::PublishConnection {
-        return Ok(AgentConnectionRecoveryApplication::Complete(
-            AgentConnectionRecoveryOutcome::AlreadyScheduled,
-        ));
-    }
-    if current.revision != request.expected_revision
-        || current.work.step != request.expected_work_step
-    {
-        return Ok(AgentConnectionRecoveryApplication::Complete(
-            AgentConnectionRecoveryOutcome::Superseded,
-        ));
-    }
-    if current.work.step != AgentWorkStep::None
-        || current.work.lease.is_some()
-        || seconds_from_rfc3339(&current.updated_at).is_none_or(|updated| updated > requested_at)
-    {
-        return Ok(AgentConnectionRecoveryApplication::Complete(
-            AgentConnectionRecoveryOutcome::NotEligible,
-        ));
-    }
-    let mut scheduled = current.clone();
-    scheduled.work.schedule(
-        AgentWorkStep::PublishConnection,
-        request.requested_at.clone(),
-    );
-    scheduled.updated_at = request.requested_at.clone();
-    scheduled.revision = current
-        .revision
-        .checked_add(1)
-        .ok_or(SandboxStoreError::Conflict)?;
-    scheduled
-        .validate_conversation()
-        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-    Ok(AgentConnectionRecoveryApplication::Persist(Box::new(
-        scheduled,
-    )))
-}
+mod connection_recovery;
+pub use connection_recovery::{
+    apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
+    AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
+    AgentConnectionRecoveryRequest,
+};
 
 /// Work admission and authority observed before a failed read-only attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -267,32 +133,57 @@ pub struct AgentCreateAdmission {
     pub machine_included: Option<bool>,
 }
 
-/// Compare-and-set proof for the parents observed while rebuilding a publication.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AgentWorkPublicationParents {
-    pub sandbox_revision: u64,
-    pub workspace_revision: u64,
-    pub worktree_revision: u64,
-    pub lineage: AgentWorkPublicationLineage,
-}
-
-/// A preflight rejection carries the exact versions that demonstrated invalid lineage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentWorkPublicationLineage {
-    Authorized,
-    Rejected { workspace_foreign: bool },
-}
-
-/// Publication disposition before authorizing a fresh mutation body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentWorkPublication {
-    Published,
-    KnownAborted,
-}
+mod publication;
+pub use publication::{
+    AgentWorkPublication, AgentWorkPublicationLineage, AgentWorkPublicationParents,
+};
 
 /// Durable agent work discovery, lease fencing, and atomic publication.
 #[async_trait]
 pub trait AgentWorkerStore: Send + Sync {
+    /// Read the restart admission and any immutable dispatch from this claim.
+    async fn agent_restart_work(
+        &self,
+        _claimed: &Agent,
+    ) -> Result<super::AgentRestartWork, SandboxStoreError> {
+        Err(SandboxStoreError::Conflict)
+    }
+
+    /// Persist the exact Open before authorizing a send on this claim.
+    async fn prepare_agent_restart_dispatch(
+        &self,
+        _request: super::AgentRestartDispatch,
+    ) -> Result<Agent, SandboxStoreError> {
+        Err(SandboxStoreError::Conflict)
+    }
+
+    async fn agent_restart_teardown(
+        &self,
+        _claimed: &Agent,
+    ) -> Result<super::AgentRestartTeardown, SandboxStoreError> {
+        Err(SandboxStoreError::Conflict)
+    }
+
+    async fn publish_agent_restart_teardown(
+        &self,
+        _publication: super::AgentRestartTeardownPublication,
+    ) -> Result<(), SandboxStoreError> {
+        Err(SandboxStoreError::Conflict)
+    }
+
+    /// Read the immutable Open request for a previously restarted live Agent.
+    async fn restart_connection_open(
+        &self,
+        _agent: &Agent,
+    ) -> Result<Option<layer3_adapter::AgentOpenRequest>, SandboxStoreError> {
+        Ok(None)
+    }
+
+    /// Receipt for the exact admitted owner Stop on the captured revision.
+    async fn has_owner_stop_receipt(&self, _agent: &Agent) -> Result<bool, SandboxStoreError> {
+        Ok(false)
+    }
+
     /// Original lifecycle admission in BSON millisecond precision, when this
     /// store can resolve the operation that admitted the Agent. Legacy and
     /// existing-workspace records intentionally return no boundary.
@@ -394,16 +285,19 @@ pub trait AgentWorkerStore: Send + Sync {
         limit: u16,
         holds: &BTreeSet<AgentId>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
-        self.due_agent_work_filtered(now, limit, holds, StartupWorkFilter::All)
-            .await
+        self.due_agent_work_filtered(
+            now,
+            limit,
+            AgentWorkDiscovery::new(holds, StartupWorkFilter::All),
+        )
+        .await
     }
 
     async fn due_agent_work_filtered(
         &self,
         now: &str,
         limit: u16,
-        holds: &BTreeSet<AgentId>,
-        startup: StartupWorkFilter<'_>,
+        filter: AgentWorkDiscovery<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError>;
 
     async fn claim_agent_work(
@@ -413,6 +307,47 @@ pub trait AgentWorkerStore: Send + Sync {
         now: String,
         lease_expires_at: String,
     ) -> Result<Option<Agent>, SandboxStoreError>;
+
+    fn agent_inspection_parking_enabled(&self) -> bool {
+        false
+    }
+
+    /// Check a durable inspection park before attempting ownership acquisition.
+    async fn agent_inspection_parked(&self, _id: &AgentId) -> Result<bool, SandboxStoreError> {
+        Ok(false)
+    }
+
+    /// Persist a failed read against its original claim and runtime observation.
+    async fn park_agent_inspection(
+        &self,
+        _owner: &crate::agent_ownership::OwnershipToken,
+        _claimed: &Agent,
+        _binding: &crate::sandbox::RuntimeBinding,
+        _failure: crate::agent_ownership::OwnershipFailure,
+    ) -> Result<bool, SandboxStoreError> {
+        Ok(false)
+    }
+
+    /// Retire the consumed inspection park before attempting another effect.
+    async fn confirm_agent_inspection(
+        &self,
+        _claimed: &Agent,
+        _binding: &crate::sandbox::RuntimeBinding,
+    ) -> Result<(), SandboxStoreError> {
+        Ok(())
+    }
+
+    async fn claim_agent_work_observed(
+        &self,
+        id: &AgentId,
+        holder: &str,
+        now: String,
+        lease_expires_at: String,
+    ) -> Result<Option<Agent>, AgentWorkClaimError> {
+        self.claim_agent_work(id, holder, now, lease_expires_at)
+            .await
+            .map_err(Into::into)
+    }
 
     /// Publish a skill result under the captured parent environment. Unsupported
     /// stores must refuse rather than discard the parent authority.
@@ -428,4 +363,14 @@ pub trait AgentWorkerStore: Send + Sync {
 
     async fn commit_agent_work(&self, mutation: AgentWorkMutation)
         -> Result<(), SandboxStoreError>;
+
+    /// Publish an original startup or connection result with the parent
+    /// revisions observed while proving its native attachment.
+    async fn commit_agent_connection_work(
+        &self,
+        mutation: AgentWorkMutation,
+        _parents: AgentWorkPublicationParents,
+    ) -> Result<(), SandboxStoreError> {
+        self.commit_agent_work(mutation).await
+    }
 }

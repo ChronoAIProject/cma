@@ -120,7 +120,7 @@ pub(super) async fn adapter(sandbox: &Sandbox, context: &Value) -> Arc<dyn Sandb
     let request = RuntimeAdoptionRequest::new(
         observation.generation,
         observation.handle.clone(),
-        crate::sandbox::runtime_mapping::sandbox_spec(sandbox, DEPLOYMENT_ID),
+        crate::sandbox::runtime_mapping::sandbox_spec(sandbox, DEPLOYMENT_ID).unwrap(),
     )
     .with_expected_image(&sandbox.runtime.as_ref().unwrap().runtime_version);
     assert_eq!(

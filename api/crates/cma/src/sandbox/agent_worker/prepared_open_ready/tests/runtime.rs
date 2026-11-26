@@ -69,7 +69,8 @@ async fn prepared_open_ready_uses_one_fresh_inspection_and_real_handshake_throug
         .attachment()
         .unwrap();
     let adapter = Arc::new(adapter.with_home_volumes(Arc::new(Storage(home))));
-    let spec = crate::sandbox::runtime_mapping::sandbox_spec(&fixture.context.sandbox, "test");
+    let spec =
+        crate::sandbox::runtime_mapping::sandbox_spec(&fixture.context.sandbox, "test").unwrap();
     let runtime = adapter
         .provision_runtime(&RuntimeProvisionRequest::new(1, spec))
         .await
@@ -88,6 +89,7 @@ async fn prepared_open_ready_uses_one_fresh_inspection_and_real_handshake_throug
                 operation_id: "prepared-open-credential".into(),
                 value: RuntimeCredential::new("opaque-sandbox-key"),
                 custody_generation: Some(3),
+                github_route: None,
             },
         )
         .await

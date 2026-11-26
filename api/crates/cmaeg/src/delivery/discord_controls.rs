@@ -2,7 +2,7 @@
 use super::{
     gate::expired,
     intents::{DeliveryOutcome, IntentReceipt},
-    render::{RelayText, Renderer},
+    render::{LiteralText, Renderer},
     send::{refused, unsupported, SendContext, SendEffects, Sender},
 };
 use crate::{
@@ -70,7 +70,7 @@ impl Sender {
             buttons: "inline_keyboard".into(),
             ..Capabilities::native_discord()
         };
-        let (parts, mut rendering) = RelayText.render(message, &capabilities);
+        let (parts, mut rendering) = LiteralText.render(message, &capabilities);
         if form {
             interactions::discord_form::report(message, &mut rendering);
         }
@@ -241,7 +241,7 @@ impl Sender {
 /// Decide representational eligibility before native form state or platform I/O.
 pub(super) fn form_eligible(message: &OutboundMessage) -> bool {
     interactions::discord_form::schema(message).is_ok()
-        && RelayText
+        && LiteralText
             .render(message, &Capabilities::native_discord())
             .0
             .len()

@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { ActivityEntry } from './activity';
-import { activityLimit } from './activity';
+import { activityDisplayEntries } from './activity';
 import './LiveActivity.css';
 
 export function LiveActivity({
@@ -16,8 +16,9 @@ export function LiveActivity({
 }) {
   const scroll = useRef<HTMLDivElement>(null);
   const following = useRef(true);
-  const last = entries.at(-1)?.id;
-  const hasEntries = entries.length > 0;
+  const displayed = useMemo(() => activityDisplayEntries(entries), [entries]);
+  const last = displayed.at(-1)?.id;
+  const hasEntries = displayed.length > 0;
   useEffect(() => {
     const node = scroll.current;
     if (node === null || typeof ResizeObserver === 'undefined') return;
@@ -58,11 +59,11 @@ export function LiveActivity({
           following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
         }}
       >
-        {entries.length === 0 ? (
+        {displayed.length === 0 ? (
           <p>No activity recorded yet.</p>
         ) : (
           <ol>
-            {entries.slice(-activityLimit).map((entry) => (
+            {displayed.map((entry) => (
               <li key={entry.id}>
                 <time dateTime={entry.at} title={new Date(entry.at).toLocaleString()}>
                   {new Date(entry.at).toLocaleTimeString()}

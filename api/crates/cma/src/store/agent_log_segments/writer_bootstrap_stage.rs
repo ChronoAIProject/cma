@@ -1,5 +1,6 @@
 //! Invisible evidence generations, built in bounded lease-fenced transactions.
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agent_log_integrity::TransactionLogError,
     agent_log_segments::{
@@ -217,7 +218,7 @@ async fn persist_batch(
     let renewed = match result {
         Ok(renewed) => renewed,
         Err(error) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(error);
         }
     };
@@ -228,7 +229,7 @@ async fn persist_batch(
         )
         .into()),
         CommitOutcome::Retry(error) | CommitOutcome::Failed(error) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             Err(TransactionLogError::Driver(error))
         }
     }

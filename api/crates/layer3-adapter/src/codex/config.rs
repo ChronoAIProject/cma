@@ -18,7 +18,27 @@ impl Default for CodexConfig {
     }
 }
 
+/// Wait for stream activity before Codex treats the connection as lost. This
+/// is Codex's own default, kept explicit so a Codex upgrade cannot change it
+/// silently. Long reasoning can be quiet for minutes, so it is not shortened.
+pub const MANAGED_STREAM_IDLE_TIMEOUT_MS: u64 = 300_000;
+/// Re-run a sampling request at most once after its stream fails or goes
+/// idle. Codex's default of five re-runs kept a turn whose upstream had
+/// stalled in `Working` for about thirty minutes before it reported a failure.
+pub const MANAGED_STREAM_MAX_RETRIES: u64 = 1;
+/// Retry a failed HTTP request (5xx or transport) twice per sampling attempt.
+/// Fast refusals are still covered, but a slow gateway timeout is not repeated
+/// five times inside every sampling attempt.
+pub const MANAGED_REQUEST_MAX_RETRIES: u64 = 2;
+
 /// Render the exact config.toml for one agent home.
+///
+/// Managed access through the loopback provider states bounded stream and
+/// request limits. A stalled model call then ends the turn with a reported
+/// failure in about ten minutes in the worst case, and an accepted turn is
+/// never resubmitted. Changing these bytes changes the rendered home, so a
+/// caller that replays a prepared home must give it a new preparation
+/// identity.
 pub fn render_config(options: &RuntimeOptions, config: &CodexConfig) -> crate::Result<String> {
     let model = options.model.as_deref().unwrap_or(&config.default_model);
     if model.trim().is_empty() {
@@ -57,7 +77,10 @@ pub fn render_config(options: &RuntimeOptions, config: &CodexConfig) -> crate::R
          name = \"CMA Loopback\"\n\
          base_url = {base_url}\n\
          env_key = \"{environment_name}\"\n\
-         wire_api = {wire_api}\n"
+         wire_api = {wire_api}\n\
+         request_max_retries = {MANAGED_REQUEST_MAX_RETRIES}\n\
+         stream_max_retries = {MANAGED_STREAM_MAX_RETRIES}\n\
+         stream_idle_timeout_ms = {MANAGED_STREAM_IDLE_TIMEOUT_MS}\n"
     ))
 }
 

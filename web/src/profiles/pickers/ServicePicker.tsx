@@ -27,6 +27,7 @@ export function ServicePicker({
   const searchId = useId();
   const helpId = useId();
   const [query, setQuery] = useState('');
+  const searchTerm = query.trim().toLocaleLowerCase();
   const [reload, setReload] = useState(0);
   const [state, setState] = useState<{
     catalog: ServiceCatalogClient | undefined;
@@ -76,6 +77,7 @@ export function ServicePicker({
             name: entry.id,
             description: entry.reason,
             catalogId: undefined,
+            detailUrl: undefined,
           })),
           ...state.entries.filter((entry) => !fixed.some((item) => item.id === entry.id)),
           ...value
@@ -84,12 +86,17 @@ export function ServicePicker({
                 !state.entries.some((entry) => entry.id === id) &&
                 !fixed.some((entry) => entry.id === id),
             )
-            .map((id) => ({ id, name: 'Service unavailable', catalogId: undefined })),
+            .map((id) => ({
+              id,
+              name: 'Service unavailable',
+              catalogId: undefined,
+              detailUrl: undefined,
+            })),
         ]
           .filter(
             (entry) => fixed.some((item) => item.id === entry.id) || !isCodexConnection(entry.id),
           )
-          .filter((entry) => entry.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+          .filter((entry) => entry.name.toLocaleLowerCase().includes(searchTerm))
           .map((entry) => (
             <li key={entry.id}>
               <label>
@@ -115,6 +122,7 @@ export function ServicePicker({
                     id={entry.id}
                     name={entry.name}
                     catalogId={entry.catalogId}
+                    detailUrl={entry.detailUrl}
                   />{' '}
                   {'description' in entry && entry.description !== undefined ? (
                     <small> {entry.description}</small>

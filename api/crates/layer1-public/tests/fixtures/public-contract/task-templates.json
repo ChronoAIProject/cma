@@ -394,7 +394,7 @@
           "name": "Task",
           "template": {
             "id": "research",
-            "version": 2,
+            "version": 3,
             "fields": {
               "topic": "synthetic"
             }

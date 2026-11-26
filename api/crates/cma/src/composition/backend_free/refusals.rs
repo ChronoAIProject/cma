@@ -86,6 +86,7 @@ pub(super) fn router(stores: Arc<MongoAccountStores>, desktop_origins: Vec<Strin
     }
     for path in [
         "/auth/connections/check",
+        "/auth/connections/repository-access",
         "/auth/connections/start",
         "/auth/connections/cancel",
     ] {

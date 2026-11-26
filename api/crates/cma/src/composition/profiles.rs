@@ -1,4 +1,24 @@
 use super::*;
+use crate::profile_authoring::CmaProfileAuthoringSource;
+use layer2_core::profiles::{authoring::ProfileAuthoringService, ProfileCapacityBounds};
+
+pub(super) fn authoring_router(
+    config: &Config,
+    auth: &Arc<AuthState>,
+    bounds: ProfileCapacityBounds,
+) -> Result<axum::Router, String> {
+    let service = ProfileAuthoringService::new(
+        bounds,
+        CmaProfileAuthoringSource::production(config, Arc::clone(auth))?,
+    );
+    let public_origin = config
+        .nyxid_public_url
+        .as_deref()
+        .map(reqwest::Url::parse)
+        .transpose()
+        .map_err(|_| "NyxID public origin is invalid".to_string())?;
+    Ok(rest::profile_authoring_router(service, public_origin))
+}
 
 pub(super) async fn seed_profiles(
     stores: &MongoStores,
@@ -35,6 +55,16 @@ pub(super) async fn seed_profiles(
         .map_err(|error| format!("default profiles are not usable: {error}"))
 }
 
+pub(super) fn live_policy(
+    config: &Config,
+    settings: &Arc<layer2_core::PlatformSettingsService>,
+) -> Arc<crate::sandbox::LiveSandboxPolicy> {
+    Arc::new(crate::sandbox::LiveSandboxPolicy::new(
+        Arc::clone(settings),
+        config.baseline_services.clone(),
+    ))
+}
+
 pub(super) fn platform_settings(
     config: &Config,
     stores: &MongoStores,
@@ -47,5 +77,19 @@ pub(super) fn platform_settings(
                 config.features.model_request_budget_writes_enabled,
             )
             .with_platform_spend_writes_enabled(config.features.platform_spend_writes_enabled),
+    )
+}
+
+pub(super) fn route_state(
+    stores: &MongoStores,
+    operations: &Arc<dyn OperationStore>,
+    settings: &Arc<PlatformSettingsService>,
+    policy: layer1_public::rest::ProfileRoutePolicy,
+) -> ProfilesState {
+    ProfilesState::new(
+        stores.sandbox_profiles.clone(),
+        Arc::clone(operations),
+        Arc::clone(settings),
+        policy,
     )
 }

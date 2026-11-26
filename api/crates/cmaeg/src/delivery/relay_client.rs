@@ -52,7 +52,7 @@ pub struct RelayClient {
     endpoint: Url,
     timeout: Duration,
     complete_replies: bool,
-    commonmark_relay: bool,
+    commonmark_relay: crate::config::CommonmarkRelay,
     native_media: bool,
     pub(super) native_lark_outbound_media: bool,
     pub(super) native_lark_sticker_replies: bool,
@@ -173,7 +173,14 @@ impl RelayClient {
     }
     /// Enable only after every serving NyxID replica supports the explicit routes.
     pub fn with_commonmark_relay(mut self, enabled: bool) -> Self {
-        self.commonmark_relay = enabled;
+        self.commonmark_relay.telegram = enabled;
+        self
+    }
+    pub(crate) fn with_commonmark_platforms(
+        mut self,
+        platforms: crate::config::CommonmarkRelay,
+    ) -> Self {
+        self.commonmark_relay = platforms;
         self
     }
     pub(super) fn commonmark_for(&self, address: &ReplyAddress) -> bool {
@@ -181,7 +188,7 @@ impl RelayClient {
             if self.commonmark_for_platform(*platform))
     }
     pub(super) fn commonmark_for_platform(&self, platform: cmaeg_core::channel::Platform) -> bool {
-        self.commonmark_relay && platform == cmaeg_core::channel::Platform::Telegram
+        self.commonmark_relay.enabled_for(platform)
     }
     pub fn with_interactions(
         mut self,
@@ -208,7 +215,7 @@ impl RelayClient {
             endpoint,
             timeout,
             complete_replies: false,
-            commonmark_relay: false,
+            commonmark_relay: Default::default(),
             native_media: false,
             native_lark_outbound_media: false,
             native_lark_sticker_replies: false,

@@ -1,5 +1,7 @@
 import { previewDeadline } from './previewDeadline';
-import { ProtocolError } from '@cma/client';
+import { readBusinessProblem } from './businessReadProblem';
+import { readGate } from '../readRetry';
+import { ProtocolError, readBytes } from '@cma/client';
 import { AgentFileError, MAX_FILE_BYTES, PREVIEW_BYTES } from '../agentFiles';
 import type {
   AgentFileContent,
@@ -11,14 +13,18 @@ import type {
 function route(agent: string, suffix: string, path?: string): string {
   return `/api/v1/agents/${encodeURIComponent(agent)}/files${suffix}${path === undefined ? '' : `?${new URLSearchParams({ path })}`}`;
 }
-async function request(url: string, init: RequestInit): Promise<Response> {
+async function request(
+  url: string,
+  init: RequestInit,
+  fallback = 'Files could not be accessed. Try again.',
+): Promise<Response> {
   const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', ...init });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { detail?: unknown; code?: unknown };
     throw new AgentFileError(
-      typeof body.detail === 'string' ? body.detail : 'Files could not be accessed. Try again.',
+      typeof body?.detail === 'string' && body.detail.trim() !== '' ? body.detail : fallback,
       response.status,
-      typeof body.code === 'string' ? body.code : undefined,
+      typeof body?.code === 'string' ? body.code : undefined,
     );
   }
   return response;
@@ -42,7 +48,7 @@ function decodedSize(value: string): number {
   return (value.length / 4) * 3 - padding;
 }
 export function agentFilesClient(): AgentFilesClient {
-  return {
+  const client: AgentFilesClient = {
     async list(agent, path, options) {
       const response = await request(route(agent, '/tree', path), { signal: options?.signal });
       const value = (await response.json()) as { path: string; entries: AgentFileEntry[] };
@@ -67,32 +73,87 @@ export function agentFilesClient(): AgentFilesClient {
       return value.entries;
     },
     async read(agent, path, options) {
-      return previewDeadline(async (signal) => {
-        const response = await request(
-          `${route(agent, '/content', path)}&max_bytes=${PREVIEW_BYTES}`,
-          { signal },
-        );
-        const value = (await response.json()) as AgentFileContent;
-        if (
-          value.path !== path ||
-          !validDigest(value.sha256) ||
-          !Number.isSafeInteger(value.size_bytes) ||
-          value.size_bytes < 0 ||
-          value.size_bytes > PREVIEW_BYTES ||
-          typeof value.content_base64 !== 'string' ||
-          value.content_base64.length > Math.ceil(PREVIEW_BYTES / 3) * 4 ||
-          decodedSize(value.content_base64) !== value.size_bytes
-        )
-          throw new ProtocolError('Agent Manager returned an invalid file preview.');
-        return value;
-      }, options?.signal);
+      return previewDeadline(
+        (signal) =>
+          readGate(client, agent).run(signal, async (signal) => {
+            const response = await fetch(
+              `${route(agent, '/content', path)}&max_bytes=${PREVIEW_BYTES}`,
+              { signal, credentials: 'same-origin', cache: 'no-store' },
+            );
+            signal.throwIfAborted();
+            if (!response.ok) {
+              const problem = await readBusinessProblem(response, signal);
+              throw new AgentFileError(
+                'Files could not be accessed. Try again.',
+                response.status,
+                problem.code,
+                problem,
+              );
+            }
+            const value = (await response.json().catch((error: unknown) => {
+              if (error instanceof SyntaxError)
+                throw new ProtocolError('Agent Manager returned an invalid file preview.');
+              throw error;
+            })) as AgentFileContent;
+            if (
+              !value ||
+              typeof value !== 'object' ||
+              value.path !== path ||
+              !validDigest(value.sha256) ||
+              !Number.isSafeInteger(value.size_bytes) ||
+              value.size_bytes < 0 ||
+              value.size_bytes > PREVIEW_BYTES ||
+              typeof value.content_base64 !== 'string' ||
+              value.content_base64.length > Math.ceil(PREVIEW_BYTES / 3) * 4 ||
+              decodedSize(value.content_base64) !== value.size_bytes
+            )
+              throw new ProtocolError('Agent Manager returned an invalid file preview.');
+            return value;
+          }),
+        options?.signal,
+      );
     },
     async download(agent, path, options) {
-      const response = await request(route(agent, '/download', path), { signal: options?.signal });
-      const blob = await response.blob();
-      if (blob.size > MAX_FILE_BYTES)
-        throw new ProtocolError('The file exceeds the download limit.');
-      return blob;
+      const deadline = AbortSignal.timeout(65_000);
+      const parent = options?.signal;
+      const signal = parent ? AbortSignal.any([parent, deadline]) : deadline;
+      const retry = 'Download failed. Try downloading the file again.';
+      try {
+        const response = await request(
+          route(agent, '/download', path),
+          { signal, redirect: 'error', headers: { Accept: 'application/octet-stream' } },
+          retry,
+        );
+        const mime = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+        if (response.status !== 200 || mime !== 'application/octet-stream') {
+          void response.body?.cancel().catch(() => undefined);
+          throw new AgentFileError(retry, response.status, 'invalid_file_download');
+        }
+        const bytes = await readBytes(response, signal, MAX_FILE_BYTES);
+        signal.throwIfAborted();
+        return new Blob([bytes.slice()], { type: mime });
+      } catch (cause) {
+        parent?.throwIfAborted();
+        if (deadline.aborted)
+          throw new AgentFileError(
+            'The file download timed out. Try downloading the file again.',
+            408,
+            'file_download_timeout',
+          );
+        if (cause instanceof AgentFileError) {
+          const { status, code } = cause;
+          if (status === 401)
+            throw new AgentFileError('Sign in again to download the file.', status, code);
+          if (status === 403 || code === 'resource_not_found')
+            throw new AgentFileError(
+              'File access is no longer available. Ask the Agent owner to check your access.',
+              status,
+              code,
+            );
+          throw cause;
+        }
+        throw new AgentFileError(retry, 0, 'file_download_failed');
+      }
     },
     async write(agent, input, options) {
       const response = await request(route(agent, ''), {
@@ -121,4 +182,5 @@ export function agentFilesClient(): AgentFilesClient {
         throw new ProtocolError('Agent Manager did not confirm this file deletion.');
     },
   };
+  return client;
 }

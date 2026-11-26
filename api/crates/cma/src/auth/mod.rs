@@ -20,6 +20,7 @@ mod browser_login;
 mod browser_origins;
 mod browser_session;
 mod cookie_authorization;
+mod creation_outcomes;
 pub mod deferred_commands;
 mod desktop;
 #[cfg(test)]
@@ -132,19 +133,24 @@ impl std::fmt::Debug for AuthMode {
 }
 
 pub struct AuthState {
+    pub(crate) creation_outcomes_enabled: bool,
     standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
     account_deletion_enabled: bool,
+    privacy_export_enabled: bool,
+    binding_diagnostics_enabled: bool,
     platform_settings: Option<Arc<layer2_core::PlatformSettingsService>>,
     bot_father_username: Option<String>,
     agent_key_service_id: Option<String>,
     oauth_api_resource: Option<String>,
     resource_request_enabled: bool,
     silent_sign_in_enabled: bool,
+    pub(super) legal_terms: Option<layer2_core::legal_consent::LegalTerms>,
     browser_session_join_enabled: bool,
     service_authorization: Option<Arc<dyn service_authorization::GrantAuthority>>,
     #[cfg(test)]
     preference_clock: fn() -> SystemTime,
     identity_proxy: Option<nyxid_proxy::jwt::Verifier>,
+    proxy_replay_principal_enabled: bool,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     pub(super) mode: AuthMode,
     /// Browser-facing NyxID origin used for registration handoffs.
@@ -215,6 +221,8 @@ impl AuthState {
         Arc::new(Self {
             standing: Arc::new(layer2_core::account_deletion::AvailableAccounts),
             account_deletion_enabled: false,
+            privacy_export_enabled: false,
+            binding_diagnostics_enabled: false,
             platform_settings: None,
             bot_father_username: None,
             bindings: None,
@@ -222,11 +230,13 @@ impl AuthState {
             oauth_api_resource: None,
             resource_request_enabled: false,
             silent_sign_in_enabled: false,
+            legal_terms: None,
             browser_session_join_enabled: false,
             service_authorization: None,
             #[cfg(test)]
             preference_clock: SystemTime::now,
             identity_proxy: None,
+            proxy_replay_principal_enabled: false,
             mode,
             nyxid_public_url,
             browser_origins,
@@ -246,6 +256,7 @@ impl AuthState {
             cookie_verifications: cookie_authorization::VerificationFlights::default(),
             bearer_verifications: bearer_authorization::VerificationFlights::default(),
             signup_options_cache: signup_options::SignupOptionsCache::default(),
+            creation_outcomes_enabled: false,
         })
     }
 
@@ -303,8 +314,11 @@ impl AuthState {
         &self,
         headers: &HeaderMap,
     ) -> Result<Option<RequestAuth>, StoreError> {
-        if self.identity_proxy.is_some() && headers.contains_key(nyxid_proxy::HEADER) {
-            return self.proxy_request(headers).await;
+        if headers.contains_key(nyxid_proxy::HEADER) {
+            if self.identity_proxy.is_some() {
+                return self.proxy_request(headers).await;
+            }
+            nyxid_proxy::note_disabled();
         }
         if let Some(token) = bearer::bearer_token(headers) {
             if agent_keys::is_agent_key(&token) {
@@ -445,47 +459,4 @@ fn rebase(endpoint: &str, base: &str) -> Result<String, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn trusted_mode_attaches_only_daily_authority() {
-        let auth = AuthState::in_memory(
-            AuthMode::Trusted {
-                subject: "developer".into(),
-            },
-            None,
-        );
-        let resolved = auth
-            .resolve_request(&HeaderMap::new())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(resolved.subject.as_str(), "developer");
-        assert!(resolved.authorization.allows(Capability::UseOwnSandboxes));
-        assert!(!resolved.authorization.allows(Capability::ConfigurePlatform));
-    }
-
-    #[test]
-    fn provider_diagnostics_redact_the_client_secret() {
-        let mode = AuthMode::Provider {
-            base_url: "https://identity.example".into(),
-            client_id: "client".into(),
-            client_secret: "never-print-me".into(),
-            public_url: "https://cma.example".into(),
-        };
-        assert!(!format!("{mode:?}").contains("never-print-me"));
-    }
-
-    #[test]
-    fn endpoint_rebasing_preserves_only_the_provider_path_and_query() {
-        assert_eq!(
-            rebase(
-                "https://public.example/oauth/token?audience=cma",
-                "http://identity.internal:9090"
-            )
-            .unwrap(),
-            "http://identity.internal:9090/oauth/token?audience=cma"
-        );
-    }
-}
+mod tests;

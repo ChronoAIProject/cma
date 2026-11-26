@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { BotManagement, canManageBots, isBotRoute } from '../BotManagement';
 import { useCmaClient } from '../api/context';
 import { useAuth } from '../auth/context';
+import { IdentityError } from '../auth/IdentityNotice';
 import type { BotRoute } from '../bots/BotPage';
 import { retainFatherDraftForSignIn } from '../bots/fatherDraft';
 import { ShellLoading } from '../ui/Skeleton';
@@ -34,7 +35,7 @@ export function EventGatewayPortal({
   readonly sidebarCollapsed: boolean;
   readonly onSidebarCollapsedChange: (collapsed: boolean) => void;
 }) {
-  const { state } = useAuth();
+  const { state, signIn, explicitlySignedOut } = useAuth();
   const client = useCmaClient();
   const consumers = isBotRoute(route);
   const [visitedChannels, setVisitedChannels] = useState(!consumers);
@@ -90,6 +91,22 @@ export function EventGatewayPortal({
       {content}
     </PortalFrame>
   );
+  if (explicitlySignedOut) {
+    return (
+      <ServiceBody visible={visible}>
+        {frame(
+          state.status === 'error' ? (
+            <IdentityError state={state} />
+          ) : (
+            <SignInLanding
+              legalTerms={state.status === 'anonymous' ? state.legalTerms : undefined}
+              onSignIn={() => signIn(routePath(route))}
+            />
+          ),
+        )}
+      </ServiceBody>
+    );
+  }
   return (
     <>
       {visitedChannels ? (
@@ -173,6 +190,7 @@ function Consumers({
   if (state.status === 'anonymous')
     return (
       <SignInLanding
+        legalTerms={state.legalTerms}
         onSignIn={async () => {
           retainFatherDraftForSignIn();
           await signIn(routePath(route));

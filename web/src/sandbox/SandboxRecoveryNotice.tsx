@@ -3,7 +3,8 @@ import { StateDot } from '../ui/StateDot';
 import { Button } from '../ui/Button';
 import { IconCloseOutline16 } from '../ui/icons';
 import { Presence } from '../ui/Presence';
-import { lifecycleStageCopy } from '../vocabulary/sandboxProgress';
+import { lifecycleStageCopy, sandboxProgressCopy } from '../vocabulary/sandboxProgress';
+import { sandboxHasParkedRuntimeUpdate } from './parkedRuntimeUpdate';
 import { useRecoveryCompletion } from './useRecoveryCompletion';
 import './SandboxRecoveryNotice.css';
 
@@ -44,6 +45,7 @@ export function SandboxRecoveryNotice({
   const operation = sandbox.lifecycle?.operation;
   const interruption = sandbox.lifecycle?.interruption;
   const recovering = sandbox.status === 'reviving' || operation?.purpose === 'revive';
+  const parked = sandboxHasParkedRuntimeUpdate(sandbox);
   const failed = sandboxRecoveryFailed(sandbox);
   const cause = interruptionReason(sandbox);
   const stage = operation === undefined ? undefined : lifecycleStageCopy[operation.phase];
@@ -52,14 +54,16 @@ export function SandboxRecoveryNotice({
     operation !== undefined &&
     Date.parse(interruption.detectedAt) === Date.parse(operation.startedAt);
   const prolonged = sandbox.lifecycle?.result?.state === 'recoverable_pending';
-  const title = failed
-    ? 'Sandbox recovery needs attention'
-    : completion.completed
-      ? 'Sandbox ready'
-      : activeCause
-        ? 'Recovering your sandbox'
-        : 'Resuming — about 30 seconds';
-  const visible = recovering || failed || completion.completed;
+  const title = parked
+    ? 'Runtime update needs attention'
+    : failed
+      ? 'Sandbox recovery needs attention'
+      : completion.completed
+        ? 'Sandbox ready'
+        : activeCause
+          ? 'Recovering your sandbox'
+          : 'Resuming — about 30 seconds';
+  const visible = parked || recovering || failed || completion.completed;
   return (
     <>
       <Presence>
@@ -67,12 +71,14 @@ export function SandboxRecoveryNotice({
           <section
             className="sandbox-recovery"
             aria-label="Sandbox recovery"
-            data-state={failed ? 'failed' : completion.completed ? 'complete' : 'recovering'}
+            data-state={
+              parked || failed ? 'failed' : completion.completed ? 'complete' : 'recovering'
+            }
           >
             <div className="sandbox-recovery__icon" aria-hidden="true">
               <StateDot
                 size={10}
-                state={failed ? 'error' : completion.completed ? 'done' : 'ongoing'}
+                state={parked || failed ? 'error' : completion.completed ? 'done' : 'ongoing'}
               />
             </div>
             <div className="sandbox-recovery__content">
@@ -85,7 +91,12 @@ export function SandboxRecoveryNotice({
                   {cause}
                 </p>
               ) : null}
-              {failed ? (
+              {parked ? (
+                <>
+                  <p>{sandboxProgressCopy.parked}</p>
+                  <p>Last confirmed stage: {stage?.label ?? sandboxProgressCopy.unknown}</p>
+                </>
+              ) : failed ? (
                 <p role="alert">
                   {sandbox.failure?.remediation ??
                     'Recovery could not finish. Your conversation history remains available; review Sandbox details for the recorded failure.'}
@@ -97,7 +108,7 @@ export function SandboxRecoveryNotice({
                   {stage?.label ?? 'Waiting for the next recorded recovery stage'}
                 </p>
               )}
-              {recovering && prolonged ? (
+              {recovering && prolonged && !parked ? (
                 <p>
                   Resume is taking longer. Your conversation is preserved; recovery is continuing.
                 </p>

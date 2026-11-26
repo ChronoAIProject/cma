@@ -187,12 +187,9 @@ async fn initial_read_and_pending_polls_share_one_deadline_and_metric() {
             assert_eq!(result.unwrap().receipt.storage_generation, "pvc-uid");
             metric(&handle, "ready", Duration::from_millis(1400));
         } else {
-            assert_eq!(
-                result.unwrap_err(),
-                AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Pending)
-            );
+            let outcome = super::not_ready_outcome(&result.unwrap_err());
             assert!(started.elapsed() < Duration::from_millis(2700));
-            metric(&handle, "pending", Duration::from_millis(1800));
+            metric(&handle, outcome, Duration::from_millis(1800));
         }
         let authority = published(&fixture, &claim);
         retry(&fixture, &claim, &authority).await;
@@ -281,10 +278,7 @@ async fn disabled_policy_keeps_initial_read_and_five_second_pending_wait() {
         );
         let result = result.unwrap();
         if pending {
-            assert_eq!(
-                result.unwrap_err(),
-                AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Pending)
-            );
+            super::not_ready_outcome(&result.unwrap_err());
             assert!(started.elapsed() >= delay + Duration::from_secs(5));
         } else {
             assert_eq!(result.unwrap().receipt.storage_generation, "pvc-uid");

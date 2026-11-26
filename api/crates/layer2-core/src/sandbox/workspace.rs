@@ -8,6 +8,9 @@ use super::{
     WorkspaceWorkStep,
 };
 
+/// The Sandbox home that every Workspace, Worktree and Agent file path is under.
+pub(crate) const SANDBOX_HOME: &str = "/home/cma/";
+
 /// Why this workspace was admitted. Profile entries use the stable index as
 /// their replay identity; a sandbox worker fence is deliberately excluded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +29,12 @@ pub enum WorkspaceSource {
         url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reference: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_commit: Option<String>,
+    },
+    PublicRepositorySnapshot {
+        url: String,
+        commit: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source_commit: Option<String>,
     },
@@ -122,7 +131,7 @@ impl Workspace {
         validate_workspace_name(&self.name)
             .map_err(|_| SandboxModelError::invalid_value("workspace.name"))?;
         self.validate_origin()?;
-        if self.path != format!("/home/cma/{}", self.name) || self.revision == 0 {
+        if self.path != format!("{SANDBOX_HOME}{}", self.name) || self.revision == 0 {
             return Err(SandboxModelError::invalid_value("workspace.path"));
         }
         if self.work.next_fence == 0 || self.next_worktree_number == 0 {

@@ -142,6 +142,7 @@ pub(in crate::store) async fn reopen_fixture(
         }],
     };
     RetainedReopenRequest {
+        repeat_authorized: false,
         snapshot,
         proof,
         key_sha256: "e".repeat(64),

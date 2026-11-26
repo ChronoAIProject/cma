@@ -39,3 +39,8 @@ export const MessageEffectReceiptSchema = object({ delivery: DeliveryOutcomeSche
 export type MessageEffectReceipt = Output<typeof MessageEffectReceiptSchema>;
 export const EmptyEffectRequestSchema = object({});
 export type EmptyEffectRequest = Output<typeof EmptyEffectRequestSchema>;
+
+export const SideMessageBodySchema = object({ text });
+export type SideMessageBody = Output<typeof SideMessageBodySchema>;
+export const SideMessageCapabilitySchema = object({ available: boolean });
+export type SideMessageCapability = Output<typeof SideMessageCapabilitySchema>;

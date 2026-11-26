@@ -1,4 +1,8 @@
 {
+  "agent_manager::relay::tests::mongo::preferences::process_recovery::child::preferences_replica_child": {
+    "kind": "helper",
+    "reason": "Invoked only by rename_replays_after_owner_process_loss with its owned Mongo fixture and pipe protocol."
+  },
   "auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure": {
     "kind": "fixture",
     "reason": "Requires enforced Mongo authorization; selected exactly by image-manager-mongo-contract.sh am on its owned authenticated replica set."
@@ -18,6 +22,10 @@
   "auth::resource_request::tests::paired::real_nyxid_keys_and_egress_authorize_only_current_owner_reads": {
     "kind": "fixture",
     "reason": "Requires the real NyxID loopback acceptance fixture and dedicated MongoDB."
+  },
+  "commands::resource_execution::tests::process_child::revocation_worker_child": {
+    "kind": "helper",
+    "reason": "Invoked only by worker_process_death_recovers_original_revocation with its owned Mongo fixture and process inputs."
   },
   "gateway::tests::compiled_gateway_accepts_cma_profiles_and_full_lifecycle_after_restart": {
     "kind": "fixture",
@@ -71,7 +79,15 @@
     "kind": "fixture",
     "reason": "Requires enforced Mongo authorization; selected exactly by image-manager-mongo-contract.sh am with the owned authenticated fixture URI."
   },
+  "store::agent_log_segments::active_proof::prepare::tests::active_proof_operator_cli_uses_generated_isolated_role": {
+    "kind": "fixture",
+    "reason": "Requires the built CMA binary and authenticated Mongo fixture; selected exactly by image-manager-mongo-contract.sh am."
+  },
   "store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors": {
+    "kind": "fixture",
+    "reason": "Requires the authenticated service Mongo fixture and compiled gateway; selected explicitly by image-manager-mongo-contract.sh am with the M1 fixture URI."
+  },
+  "store::bindings::reset_tests::gateway_reset_tests::profile_reset_receipt_replays_after_a_later_channel_revision": {
     "kind": "fixture",
     "reason": "Requires the authenticated service Mongo fixture and compiled gateway; selected explicitly by image-manager-mongo-contract.sh am with the M1 fixture URI."
   },
@@ -87,17 +103,37 @@
     "kind": "fixture",
     "reason": "Requires authenticated disposable service Mongo fixture; selected by image-manager-mongo-contract.sh."
   },
+  "store::isolation::tests::real_cancelled_terminal_command_can_end_its_own_session_under_the_exact_runtime_grant": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture; selected by image-manager-mongo-contract.sh."
+  },
   "store::isolation::tests::real_erasure_optional_authority_preserves_disabled_deployments": {
     "kind": "fixture",
     "reason": "Requires actual restricted credentials in the authenticated disposable replica set; selected by image-manager-mongo-contract.sh."
+  },
+  "store::isolation::tests::real_measured_custody_role_can_be_added_and_revoked_with_capture_off": {
+    "kind": "fixture",
+    "reason": "Requires the authenticated disposable service Mongo fixture. The image-manager Mongo contract runner selects this test."
   },
   "store::isolation::tests::real_progress_grants_cannot_delete_receipts_or_access_another_service": {
     "kind": "fixture",
     "reason": "Requires authenticated disposable service Mongo fixture."
   },
+  "store::isolation::tests::real_transaction_barrier_is_authorized_by_the_exact_runtime_grant": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture; selected by image-manager-mongo-contract.sh."
+  },
+  "store::isolation::tests::real_transaction_opening::collectionless_and_indexed_transaction_opening_under_runtime_grants": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture; selected by image-manager-mongo-contract.sh am."
+  },
   "store::migrations::tests::segments_runtime::canonical_migrator_and_isolated_runtime_cover_controls_and_format2_work": {
     "kind": "fixture",
     "reason": "Requires authenticated disposable service Mongo fixture."
+  },
+  "store::sandbox_mongo_integration_tests::command_ledger_tests::execution_tests::stale_turn_tests::native_stop_trace::native_stop_trace_recorder_ack_matches_a_fresh_checkpoint": {
+    "kind": "fixture",
+    "reason": "Run explicitly on a disposable replica set with the isolated native ACP capture at CMA_NATIVE_STOP_TRACE and the authenticated Supervisor observation at CMA_NATIVE_STOP_ACK_EVIDENCE."
   },
   "store::sandbox_mongo_integration_tests::resource_access_tests::history_measurement::observation_budget::observation_one_hundred_observers_on_two_replicas_for_thirty_minutes": {
     "kind": "fixture",
@@ -162,11 +198,6 @@
   "store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison": {
     "kind": "fixture",
     "reason": "Bounded pure CPU comparison of the legacy and raw BSON decoders; explicit invocation in the usage qualification runner, no MongoDB."
-  },
-  "store::trigger_definitions::reference_integration_tests::publication_uses_current_visibility_but_preview_uses_exact_revision": {
-    "kind": "deferred",
-    "reason": "Existing trigger-reference refusal mismatch; restore selection with its separately owned fix.",
-    "issue": "https://github.com/ChronoAIProject/cma/issues/1854"
   },
   "store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration": {
     "kind": "fixture",

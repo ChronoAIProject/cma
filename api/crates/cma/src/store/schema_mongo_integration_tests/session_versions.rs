@@ -2,17 +2,23 @@
 
 use std::sync::{Arc, Mutex};
 
+use futures_util::TryStreamExt;
 use tracing::instrument::WithSubscriber;
 
 use layer2_core::sandbox::store::{SandboxSessionStore, SandboxStore, SandboxStoreError};
+use layer2_core::sandbox::RuntimeBinding;
 use layer2_core::{SandboxId, StoreError};
 use layer3_adapter::hosted::RuntimeRoutingStore;
 use mongodb::bson::{doc, Bson, Document};
+use mongodb::{Client, Collection};
 
 use super::database;
 use crate::store::runtime_routing::MongoRuntimeRouting;
-use crate::store::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, SANDBOX_SESSIONS};
+use crate::store::sandbox_mongo::{
+    MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, SANDBOXES, SANDBOX_SESSIONS,
+};
 use crate::store::sandbox_mongo_integration_tests::sandbox;
+use crate::store::sandboxes::sandbox_document;
 use crate::store::schema::refuse_unknown_versions;
 
 #[derive(Clone, Default)]
@@ -284,5 +290,114 @@ async fn routing_upserts_persist_version_on_insert_and_keep_existing_rows() {
         .await
         .unwrap();
     assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 2);
+    db.drop().await.unwrap();
+}
+
+async fn routing_choices(rows: &Collection<Document>) -> Vec<Document> {
+    rows.find(doc! {"sandbox_id":{"$exists":true}})
+        .sort(doc! {"sandbox_id":1})
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
+async fn routing_migration_resumes_after_initialization_marker_write_fails() {
+    const DEPLOYMENT: &str = "routing-recovery";
+    const ROUTES: &str = "runtime_backend_routes";
+    let (client, name) = database().await;
+    let db = client.database(&name);
+    let marker_id = format!("provider-routing-initialized:{DEPLOYMENT}");
+
+    let mut bound = sandbox("sbx_route_bound");
+    bound.lifecycle.runtime_generation_high_water = 5;
+    bound.runtime = Some(RuntimeBinding {
+        boot_id: None,
+        runtime_id: "agent-sandbox:fixture:runtime".into(),
+        runtime_version: "fixture-image".into(),
+        provision_generation: Some(5),
+        bound_at: bound.created_at.clone(),
+    });
+    let mut unbound = sandbox("sbx_route_unbound");
+    unbound.lifecycle.runtime_generation_high_water = 3;
+    db.collection::<Document>(SANDBOXES)
+        .insert_many([
+            sandbox_document(&bound, 0).unwrap(),
+            sandbox_document(&unbound, 0).unwrap(),
+        ])
+        .await
+        .unwrap();
+
+    // Let every route write commit while rejecting only this deployment's
+    // final marker in the disposable database.
+    db.create_collection(ROUTES)
+        .validator(doc! {"_id":{"$ne":&marker_id}})
+        .await
+        .unwrap();
+    assert_eq!(
+        MongoRuntimeRouting::open(&db, DEPLOYMENT, false)
+            .await
+            .err()
+            .as_deref(),
+        Some("cannot record provider routing migration")
+    );
+
+    let marker = doc! {"_id":&marker_id};
+    let rows = db.collection::<Document>(ROUTES);
+    assert_eq!(rows.find_one(marker.clone()).await.unwrap(), None);
+    let retained = routing_choices(&rows).await;
+    let expected = [
+        (bound.id.as_str(), 5_u64, true, "agent-sandbox"),
+        (unbound.id.as_str(), 3, false, "opensandbox"),
+    ];
+    assert_eq!(retained.len(), expected.len());
+    assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 2);
+    for (row, (sandbox_id, generation, _, backend)) in retained.iter().zip(expected) {
+        let id =
+            layer3_adapter::provider_request_digest(&(DEPLOYMENT, sandbox_id, generation)).unwrap();
+        assert_eq!(
+            row,
+            &doc! {
+                "_id":id,"document_schema_version":DOCUMENT_SCHEMA_VERSION,
+                "sandbox_id":sandbox_id,"generation":Bson::Int64(generation.try_into().unwrap()),
+                "deployment":DEPLOYMENT,"backend":backend
+            }
+        );
+    }
+
+    db.run_command(doc! {"collMod":ROUTES,"validator":{}})
+        .await
+        .unwrap();
+    let restarted = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let db = restarted.database(&name);
+    let routing = MongoRuntimeRouting::open(&db, DEPLOYMENT, true)
+        .await
+        .unwrap();
+    let rows = db.collection::<Document>(ROUTES);
+    assert_eq!(routing_choices(&rows).await, retained);
+    for (sandbox_id, generation, selected, _) in expected {
+        assert_eq!(
+            routing
+                .select(sandbox_id, generation, !selected)
+                .await
+                .unwrap(),
+            selected
+        );
+    }
+    assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 3);
+    assert_eq!(rows.count_documents(marker.clone()).await.unwrap(), 1);
+    assert_eq!(
+        rows.find_one(marker).await.unwrap(),
+        Some(doc! {
+            "_id":marker_id,"deployment":DEPLOYMENT,
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION
+        })
+    );
+    assert_eq!(routing_choices(&rows).await, retained);
     db.drop().await.unwrap();
 }

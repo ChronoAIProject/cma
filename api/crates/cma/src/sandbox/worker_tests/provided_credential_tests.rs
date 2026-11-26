@@ -29,6 +29,7 @@ async fn supplied_key_is_delivered_and_survives_pause_revival_without_scheduled_
     let now = start_time(&created);
     harness.credentials.restore(CredentialMaterial {
         source: created.credential.source.clone(),
+        github_route: None,
         sandbox_id: created.id.clone(),
         owner: created.owner.clone(),
         authority: SandboxCredentialAuthority {

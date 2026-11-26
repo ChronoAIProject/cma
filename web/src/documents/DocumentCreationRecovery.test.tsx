@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { DocumentError, type DocumentsClient, type DocumentView } from '../api/documents';
 import { BUILD_INFO } from '../shell/build';
 import { DocumentRegistry } from './DocumentRegistry';
@@ -45,7 +45,9 @@ const created: DocumentView = {
   access: 'owner',
 };
 function begin(api: DocumentsClient, onNavigate = vi.fn()) {
-  const view = render(<DocumentRegistry client={api} canCreate onNavigate={onNavigate} />);
+  const view = render(
+    <DocumentRegistry client={api} viewer="owner" canCreate onNavigate={onNavigate} />,
+  );
   fireEvent.click(screen.getByRole('button', { name: 'New document' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
     target: { value: 'Original title' },
@@ -54,6 +56,7 @@ function begin(api: DocumentsClient, onNavigate = vi.fn()) {
   return { ...view, onNavigate };
 }
 const retry = () => fireEvent.click(screen.getByRole('button', { name: 'Retry creation' }));
+beforeEach(() => sessionStorage.clear());
 afterEach(() => vi.unstubAllGlobals());
 
 it.each([
@@ -193,7 +196,9 @@ it('blocks retry when creation permission is removed', async () => {
   api.create.mockRejectedValue(new DocumentError('Unavailable', 503));
   const { rerender, onNavigate } = begin(api);
   await screen.findByText('Creation not confirmed');
-  rerender(<DocumentRegistry client={api} canCreate={false} onNavigate={onNavigate} />);
+  rerender(
+    <DocumentRegistry client={api} viewer="owner" canCreate={false} onNavigate={onNavigate} />,
+  );
   expect(screen.getByRole('button', { name: 'Retry creation' })).toBeDisabled();
   retry();
   expect(api.create).toHaveBeenCalledTimes(1);
@@ -208,4 +213,72 @@ it('aborts on unmount and ignores a late success', async () => {
   expect(api.create.mock.calls[0]![1].signal?.aborted).toBe(true);
   await act(() => pending.resolve(created));
   expect(onNavigate).not.toHaveBeenCalled();
+});
+
+it('recovers an in-flight request on reload and dispatches only when the same owner retries', async () => {
+  const api = client();
+  const pending = pendingDocument();
+  api.create.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(created);
+  const { unmount, onNavigate } = begin(api);
+  unmount();
+  const other = render(
+    <DocumentRegistry client={api} viewer="other" canCreate onNavigate={onNavigate} />,
+  );
+  expect(screen.getByRole('button', { name: 'New document' })).toBeVisible();
+  expect(screen.queryByText('Creation request: Original title')).not.toBeInTheDocument();
+  other.unmount();
+
+  const owner = render(
+    <DocumentRegistry client={api} viewer="owner" canCreate onNavigate={onNavigate} />,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Resume creation' }));
+  expect(api.create).toHaveBeenCalledOnce();
+  expect(screen.getByRole('textbox', { name: 'Title' })).toHaveValue('Original title');
+  expect(screen.getByRole('textbox', { name: 'Title' })).toBeDisabled();
+  await screen.findByText('Creation has not been confirmed. Retry uses the same request.');
+  retry();
+  await waitFor(() =>
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({
+      kind: 'document',
+      documentId: created.id,
+    }),
+  );
+  expect(api.create.mock.calls[1]![0]).toEqual(api.create.mock.calls[0]![0]);
+  expect(api.create.mock.calls[1]![1].idempotencyKey).toBe(
+    api.create.mock.calls[0]![1].idempotencyKey,
+  );
+  owner.unmount();
+  render(<DocumentRegistry client={api} viewer="owner" canCreate onNavigate={onNavigate} />);
+  expect(screen.getByRole('button', { name: 'New document' })).toBeVisible();
+});
+
+it('keeps a confirmed refusal distinct after reload without persisting the response text', async () => {
+  const api = client();
+  api.create.mockRejectedValue(new DocumentError('Private response detail', 400));
+  const { unmount, onNavigate } = begin(api);
+  await screen.findByText('Creation request refused');
+  unmount();
+
+  render(<DocumentRegistry client={api} viewer="owner" canCreate onNavigate={onNavigate} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Resume creation' }));
+  expect(screen.getByText('Creation request refused')).toBeVisible();
+  expect(screen.queryByText('Private response detail')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Edit as a new request' })).toBeEnabled();
+  expect(api.create).toHaveBeenCalledOnce();
+});
+
+it('blocks dispatch when session storage cannot retain the original request', () => {
+  const api = client();
+  const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new DOMException('Quota exhausted', 'QuotaExceededError');
+  });
+  try {
+    begin(api);
+    expect(
+      screen.getByText(/Document creation recovery needs browser session storage/),
+    ).toBeVisible();
+    expect(api.create).not.toHaveBeenCalled();
+  } finally {
+    write.mockRestore();
+  }
 });

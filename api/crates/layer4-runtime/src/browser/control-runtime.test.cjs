@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { spawn } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { once } = require('node:events');
 const { mkdtemp, rm } = require('node:fs/promises');
@@ -9,6 +9,9 @@ const { join } = require('node:path');
 const { createInterface } = require('node:readline');
 const { test } = require('node:test');
 const { setTimeout: delay } = require('node:timers/promises');
+const { promisify } = require('node:util');
+
+const run = promisify(execFile);
 
 async function fixture(test) {
   const directory = await mkdtemp(join(tmpdir(), 'cma-control-policy-'));
@@ -43,6 +46,27 @@ async function fixture(test) {
       for await (const chunk of request) value += chunk;
       values.push(value);
       response.end('ok');
+    } else if (request.url === '/heading-redirect') {
+      response.writeHead(302, { location: '/heading-final' }).end('<h1>Redirect response</h1>');
+    } else if (request.url === '/heading-final') {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1 id="heading">Example Domain</h1><h1>Second heading</h1>' +
+        '<script>document.querySelector = () => ({ textContent: "Page override" });</script>');
+    } else if (request.url === '/iframe-heading') {
+      response.setHeader('content-type', 'text/html');
+      response.end('<iframe src="/heading-final"></iframe>');
+    } else if (request.url === '/empty-heading') {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1> </h1>');
+    } else if (request.url === '/long-heading') {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1>' + 'H'.repeat(2000) + '</h1>');
+    } else if (request.url === '/superseded-heading') {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1>Superseded document</h1><img src="/hold-load">' +
+        '<script>setTimeout(() => location.replace("/form"), 200);</script>');
+    } else if (request.url === '/hold-load') {
+      response.writeHead(200, { 'content-type': 'image/png' }).flushHeaders();
     } else {
       response.setHeader('content-type', 'text/html');
       response.end('<input autofocus style="position:absolute;left:20px;top:20px;width:500px;height:40px" oninput="fetch(\'/value\',{method:\'POST\',body:this.value})">');
@@ -72,6 +96,98 @@ async function fixture(test) {
   const command = (command, revision, extra = {}) => ({ ...base, command, expected_revision: revision, operation_id: randomUUID(), ...extra });
   return { call, rpc, agent, command, base, values, directory, url: `http://127.0.0.1:${page.address().port}/form` };
 }
+
+test('Agent navigation reports the first H1 of the committed main document', { timeout: 30000 }, async test => {
+  const browser = await fixture(test);
+  const navigate = async path => {
+    const { stdout } = await run(process.execPath, [
+      join(__dirname, 'command.cjs'), 'navigate', new URL(path, browser.url).href,
+    ], { env: { ...process.env, CMA_BROWSER_SOCKET: join(browser.directory, 'browser.sock') } });
+    return JSON.parse(stdout);
+  };
+
+  for (const [path, heading] of [
+    ['/heading-redirect', 'Example Domain'],
+    ['/heading-final#heading', 'Example Domain'],
+    ['/iframe-heading', null],
+    ['/empty-heading', ''],
+    ['/long-heading', 'H'.repeat(512)],
+    ['/form', null],
+  ]) {
+    assert.deepEqual(await navigate(path), {
+      navigated: true, location: 'Local page', first_heading: heading,
+    }, path);
+  }
+  await assert.rejects(navigate('/superseded-heading'), {
+    code: 1, stdout: /^\{"error":"browser_navigation_(unconfirmed|failed)"\}$/,
+  });
+  const status = await browser.call({ operation: 'status' });
+  assert.equal(Object.hasOwn(status, 'first_heading'), false);
+  const lease = await browser.call(browser.command('acquire', 0));
+  assert.equal(lease.state, 'user');
+  await assert.rejects(navigate('/heading-final'), {
+    code: 1, stdout: '{"error":"browser_control_conflict"}',
+  });
+});
+
+test('invalid navigation gives the Agent a recovery path and an unavailable browser reports disconnect', { timeout: 30000 }, async test => {
+  const browser = await fixture(test);
+  const navigate = url => run(process.execPath, [join(__dirname, 'command.cjs'), 'navigate', url], {
+    env: { ...process.env, CMA_BROWSER_SOCKET: join(browser.directory, 'browser.sock') },
+  });
+  const overEnvelopeLimit = 'http://127.0.0.1/' + 'a'.repeat(16384);
+  const refused = await browser.agent('/navigate', { url: overEnvelopeLimit });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.error, 'browser_navigation_invalid');
+
+  const partialBody = Buffer.from('{"url":"' + overEnvelopeLimit);
+  let pendingRequest;
+  try {
+    const streamed = await new Promise((resolve, reject) => {
+      pendingRequest = httpRequest({
+        socketPath: join(browser.directory, 'browser.sock'),
+        path: '/navigate',
+        method: 'POST',
+        headers: { 'content-length': partialBody.length + 2 },
+        signal: AbortSignal.timeout(5000),
+      }, response => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', chunk => { body += chunk; });
+        response.on('error', reject);
+        response.on('end', () => resolve({
+          status: response.statusCode, connection: response.headers.connection, ...JSON.parse(body),
+        }));
+      });
+      pendingRequest.on('error', reject);
+      // Leave the closing quote and brace outstanding until the refusal arrives.
+      pendingRequest.write(partialBody);
+    });
+    assert.equal(streamed.status, 400);
+    assert.equal(streamed.connection, 'close');
+    assert.equal(streamed.error, 'browser_navigation_invalid');
+    assert.match(streamed.message, /HTTP or HTTPS URL without credentials/);
+  } finally {
+    pendingRequest?.destroy();
+  }
+
+  for (const url of ['file:///workspace/preview.html', 'not-a-url', 'https://user:placeholder@example.test/',
+    'http://127.0.0.1/' + 'a'.repeat(8192), overEnvelopeLimit]) {
+    await assert.rejects(navigate(url), error => {
+      assert.equal(error.code, 1);
+      const result = JSON.parse(error.stdout);
+      assert.equal(result.error, 'browser_navigation_invalid');
+      assert.match(result.message, /HTTP or HTTPS URL without credentials/);
+      assert.match(result.message, /serve it over HTTP on 127\.0\.0\.1/);
+      return true;
+    });
+  }
+  assert.equal(JSON.parse((await navigate(browser.url)).stdout).navigated, true);
+  await browser.call({ operation: 'disable' });
+  await assert.rejects(navigate(browser.url), {
+    code: 1, stdout: '{"error":"browser_disconnected"}',
+  });
+});
 
 test('live observations report only the current origin and reset it with the browser context', { timeout: 30000 }, async test => {
   const browser = await fixture(test);

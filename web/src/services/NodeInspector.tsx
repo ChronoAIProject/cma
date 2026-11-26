@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
   ConfigurationSections,
+  OpenProducerConfiguration,
   scrollToConfiguration,
   useConfigurationSections,
 } from './ConfigurationSections';
@@ -101,7 +102,7 @@ function ProducerFacts({ channel, index }: { readonly channel: Channel; readonly
     facts.push(
       ['Sender rule', words(object(admission.senders).type)],
       ['Chat rule', words(object(admission.chats).type)],
-      ['Group rule', words(object(admission.groups).type)],
+      ['Group rule', words(admission.groups)],
     );
   return (
     <>
@@ -197,6 +198,11 @@ export function NodeInspector({
         : newProducer
           ? 'New producer'
           : (selected?.title ?? 'Node unavailable');
+  function navigate(section: string) {
+    requestedSection.current = section;
+    setActiveSection(section);
+    scrollToConfiguration(section);
+  }
   const sections = [
     ['overview', 'Overview', true],
     ['configuration', 'Configuration', children],
@@ -286,11 +292,7 @@ export function NodeInspector({
               type="button"
               key={entry.id}
               aria-current={activeSection === entry.id ? 'location' : undefined}
-              onClick={() => {
-                requestedSection.current = entry.id;
-                setActiveSection(entry.id);
-                scrollToConfiguration(entry.id);
-              }}
+              onClick={() => navigate(entry.id)}
             >
               {entry.label}
             </button>
@@ -365,7 +367,15 @@ export function NodeInspector({
                       : undefined
                   }
                 >
-                  {content}
+                  {key === 'send' ? (
+                    <OpenProducerConfiguration
+                      value={() => navigate(settings[0]?.id ?? `${id}-configuration`)}
+                    >
+                      {content}
+                    </OpenProducerConfiguration>
+                  ) : (
+                    content
+                  )}
                 </ConfigurationSections>
               </section>
             ) : null,

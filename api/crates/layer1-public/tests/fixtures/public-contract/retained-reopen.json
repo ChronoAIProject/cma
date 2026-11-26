@@ -91,7 +91,7 @@
           "title": "resource conflict",
           "status": 409,
           "detail": "The operation conflicts with current resource state.",
-          "code": "retained_recovery_authority_changed"
+          "code": "retained_recovery_revision_passed"
         },
         "bodyKind": "json"
       },

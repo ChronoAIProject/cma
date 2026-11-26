@@ -5,7 +5,10 @@ use layer2_core::sandbox::{agent_io::CommandRevivalAuthorization, Sandbox};
 pub(super) async fn apply(
     store: &MongoSandboxStore,
     session: &mut mongodb::ClientSession,
-    command_revival: Option<&CommandRevivalAuthorization>,
+    revival: (
+        Option<&CommandRevivalAuthorization>,
+        Option<&layer3_adapter::ReleasedRuntime>,
+    ),
     expected_revision: u64,
     sandbox: &Sandbox,
     event_at: &str,
@@ -45,12 +48,22 @@ pub(super) async fn apply(
     if current.revision != expected_revision {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
+    crate::store::native_retirement_action::preserve_custody(&aggregate, &current, sandbox)
+        .map_err(ApplyError::Domain)?;
     current
         .validate_retirement_archive_successor(sandbox)
         .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
     channel_reuse::require(store, &current, sandbox, session).await?;
+    if revival.0.is_none() && current.runtime_update_request() != sandbox.runtime_update_request() {
+        if let (Some(release), Some(lane)) = (revival.1, current.managed_runtime_lane()) {
+            store
+                .fence_released_admission(release, lane, session)
+                .await
+                .map_err(ApplyError::Domain)?;
+        }
+    }
     let revival_receipt =
-        command_revival::fence(store, session, command_revival, sandbox, event_at, event).await?;
+        command_revival::fence(store, session, revival, sandbox, event_at, event).await?;
     current
         .validate_service_access_transaction(sandbox, event, event_at)
         .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;

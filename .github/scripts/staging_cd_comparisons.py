@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 
-from ci_tracks.git_comparison import first_parent as comparison_parent
+from ci_tracks.git_comparison import first_parents as comparison_parents
 from ci_tracks.uncertainty import REASONS
 from staging_cd_common import matches, require
 from staging_cd_versions import DEPLOYABLES
@@ -63,10 +63,11 @@ def batch_selection(root, revisions, metrics=None, budget=None, *, cached=True):
             "Shared batch selector failed closed")
     values = json.loads(result.stdout)
     require(isinstance(values, list) and len(values) == len(revisions), "Selector comparison count differs")
+    parents = comparison_parents(root, revisions)
     selections = {}
     for revision, value in zip(revisions, values):
         require(isinstance(value, dict) and value.get("head") == revision
-                and value.get("base") == (comparison_parent(root, revision) or revision),
+                and value.get("base") == (parents[revision] or revision),
                 "Selector comparison identity differs")
         deployables = value.get("deployables")
         require(isinstance(deployables, list) and all(isinstance(item, str) for item in deployables)

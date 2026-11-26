@@ -1,6 +1,7 @@
 //! Publish only a fully validated generation under exact Agent/head CAS.
 use super::super::{projection, PROJECTIONS};
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(crate) async fn install(
     client: &Client,
@@ -17,7 +18,7 @@ pub(crate) async fn install(
             Ok(status)
         }
         Err(error) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             Err(error)
         }
     }

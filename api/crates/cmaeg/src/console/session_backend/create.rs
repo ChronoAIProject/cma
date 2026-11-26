@@ -1,14 +1,15 @@
 //! Admission and quota eviction share one short transaction, serialized by a
 //! sentinel. No network call outside Mongo is made while this transaction lives.
 use super::{
-    mongo::{binary, bounded, live_all, majority, stored},
+    mongo::{binary, bounded, live_all, stored},
     schema::QUOTA,
     *,
 };
+use crate::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{doc, DateTime, Document},
-    options::{ReadConcern, ReturnDocument},
+    options::ReturnDocument,
     ClientSession,
 };
 
@@ -60,11 +61,7 @@ impl MongoSessionBackend {
                     .start_session()
                     .await
                     .map_err(|_| StoreError::Unavailable)?;
-                session
-                    .start_transaction()
-                    .read_concern(ReadConcern::snapshot())
-                    .write_concern(majority())
-                    .max_commit_time(SERVER_TIMEOUT)
+                crate::transaction_start::start_write(&self.db, &mut session, Some(SERVER_TIMEOUT))
                     .await
                     .map_err(|_| StoreError::Unavailable)?;
                 let result = self
@@ -79,7 +76,7 @@ impl MongoSessionBackend {
                     )
                     .await;
                 match result {
-                    Ok(row) => match session.commit_transaction().await {
+                    Ok(row) => match session.commit_guarded().await {
                         Ok(()) => return Ok(row),
                         Err(error) if known_abort(&error) && attempt < 4 => {}
                         Err(_) => return Err(StoreError::Unavailable),
@@ -87,7 +84,7 @@ impl MongoSessionBackend {
                     Err(error) => {
                         // An abort is cleanup, never evidence that an uncertain
                         // commit failed. This branch has not attempted commit.
-                        if session.abort_transaction().await.is_err() {
+                        if session.abort_guarded().await.is_err() {
                             tracing::warn!(
                                 "console session transaction abort acknowledgement unavailable"
                             );

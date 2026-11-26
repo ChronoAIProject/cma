@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "revocation-success-revoke",
+      "operation": "DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "revocation_effective_sandbox_revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/resource-shares/sandbox/sandbox/share?expected_revision=1",
+        "headers": {
+          "idempotency-key": "original"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "no-store"
+        },
+        "body": {
+          "operation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "share": {
+            "id": "share",
+            "owner": {
+              "kind": "person",
+              "subject": "owner-a"
+            },
+            "selector": {
+              "kind": "sandbox",
+              "sandbox_id": "sandbox"
+            },
+            "target_org_id": "org",
+            "mode": "view",
+            "issuer_actor": {
+              "kind": "human",
+              "subject": "owner-a"
+            },
+            "created_at": "2026-01-01T00:00:00Z",
+            "revoked_at": "2026-01-01T00:00:01Z",
+            "revision": 2
+          },
+          "actor": {
+            "kind": "human",
+            "subject": "owner-a"
+          },
+          "at": "2026-01-01T00:00:01Z",
+          "policy_revision": 2,
+          "revocation": {
+            "operation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "kind": "sandbox",
+            "id": "sandbox",
+            "share_id": "share",
+            "expected_revision": 1
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-success-set_mode",
+      "operation": "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "revocation_effective_sandbox_set_mode",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/resource-shares/sandbox/sandbox/share",
+        "headers": {
+          "idempotency-key": "original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "no-store"
+        },
+        "body": {
+          "operation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "share": {
+            "id": "share",
+            "owner": {
+              "kind": "person",
+              "subject": "owner-a"
+            },
+            "selector": {
+              "kind": "sandbox",
+              "sandbox_id": "sandbox"
+            },
+            "target_org_id": "org",
+            "mode": "view",
+            "issuer_actor": {
+              "kind": "human",
+              "subject": "owner-a"
+            },
+            "created_at": "2026-01-01T00:00:00Z",
+            "revoked_at": null,
+            "revision": 2
+          },
+          "actor": {
+            "kind": "human",
+            "subject": "owner-a"
+          },
+          "at": "2026-01-01T00:00:01Z",
+          "policy_revision": 2,
+          "revocation": {
+            "operation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "kind": "sandbox",
+            "id": "sandbox",
+            "share_id": "share",
+            "expected_revision": 1
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

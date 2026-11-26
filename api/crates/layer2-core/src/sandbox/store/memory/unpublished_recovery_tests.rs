@@ -109,6 +109,7 @@ fn stalled_reopen_fixture() -> (InMemorySandboxStore, SandboxId) {
                 started_at: None,
                 completed_at: None,
                 failure: None,
+                retained_transition: None,
             }),
         });
         sandbox
@@ -270,6 +271,7 @@ async fn recovery_commit_preserves_admitted_queue_logs_and_original_child_rows()
         proof: proof(&before),
         snapshot: before.clone(),
         target_runtime_version: "image-latest".into(),
+        released_runtime: None,
         automatic: false,
         requested_at: NOW.into(),
     };
@@ -301,6 +303,7 @@ async fn native_verification_race_refuses_new_child_and_preserves_all_state() {
         proof: proof(&before),
         snapshot: before.clone(),
         target_runtime_version: "image-latest".into(),
+        released_runtime: None,
         automatic: false,
         requested_at: NOW.into(),
     };
@@ -353,6 +356,7 @@ async fn prior_publication_in_logs_cannot_be_hidden_by_an_older_agent_projection
                     proof: proof(&before),
                     snapshot: before.clone(),
                     target_runtime_version: "image-latest".into(),
+                    released_runtime: None,
                     automatic: false,
                     requested_at: NOW.into(),
                 };

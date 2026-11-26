@@ -21,8 +21,14 @@ struct Intervention {
     write: InterveningWrite,
 }
 
+struct WorkspaceAdvance {
+    id: layer2_core::ids::WorkspaceId,
+    transaction: usize,
+}
+
 #[derive(Default)]
 struct Trace {
+    workspace_advance: Mutex<Option<WorkspaceAdvance>>,
     repair_after_abort: Mutex<Option<AgentId>>,
     intervention: Mutex<Option<Intervention>>,
     replace_before_failure: Mutex<Option<(AgentId, layer3_adapter::hosted::InMemoryHostedBackend)>>,
@@ -90,7 +96,23 @@ impl Fixture {
                     }
                 }
                 if event.command.get_bool("startTransaction").ok() == Some(true) {
-                    callback.bodies.fetch_add(1, Ordering::SeqCst);
+                    let transaction = callback.bodies.fetch_add(1, Ordering::SeqCst) + 1;
+                    let advance = {
+                        let mut pending = callback.workspace_advance.lock().unwrap();
+                        pending.take_if(|advance| advance.transaction == transaction)
+                    };
+                    if let Some(advance) = advance {
+                        tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(async {
+                                let mut workspace =
+                                    observer.get_workspace(&advance.id).await.unwrap().unwrap();
+                                let revision = workspace.revision;
+                                workspace.revision += 1;
+                                workspace.next_worktree_number += 1;
+                                observer.save_workspace(revision, workspace).await.unwrap();
+                            });
+                        });
+                    }
                 }
                 if event.command_name == "commitTransaction" {
                     callback.commits.fetch_add(1, Ordering::SeqCst);
@@ -428,6 +450,9 @@ async fn failure_publication_uses_one_native_result_after_abort_or_unknown_ack()
 
 #[path = "lifecycle_publication/native_failure_tests.rs"]
 mod native_failure;
+
+#[path = "lifecycle_publication/workspace_binding.rs"]
+mod workspace_binding;
 
 #[path = "lifecycle_publication/lineage_tests.rs"]
 mod lineage;

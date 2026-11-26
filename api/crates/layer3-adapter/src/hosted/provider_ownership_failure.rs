@@ -95,6 +95,7 @@ impl OwnershipFailure {
 pub(crate) struct OwnershipExchangeFailure {
     pub observation: OwnershipFailure,
     pub error: crate::AdapterError,
+    settlement_origin: Option<crate::owner_protocol::ReceiverSettlementFailure>,
 }
 
 impl OwnershipFailure {
@@ -102,6 +103,7 @@ impl OwnershipFailure {
         OwnershipExchangeFailure {
             observation: self,
             error,
+            settlement_origin: None,
         }
     }
 }
@@ -111,5 +113,34 @@ impl From<OwnershipFailure> for OwnershipExchangeFailure {
         observation.with_error(crate::AdapterError::Rejected(
             "runtime ownership negotiation failed or is unsupported".into(),
         ))
+    }
+}
+
+impl OwnershipExchangeFailure {
+    pub(crate) fn with_settlement_origin(
+        mut self,
+        origin: crate::owner_protocol::ReceiverSettlementFailure,
+    ) -> Self {
+        self.settlement_origin = Some(origin);
+        self
+    }
+
+    pub(crate) fn settlement_failure(&self) -> crate::owner_protocol::ReceiverSettlementFailure {
+        use crate::owner_protocol::ReceiverSettlementFailure as Failure;
+        if let Some(origin) = self.settlement_origin {
+            return origin;
+        }
+        match self.observation.reason {
+            OwnershipFailureReason::Deadline => Failure::Deadline,
+            OwnershipFailureReason::ProtocolMismatch | OwnershipFailureReason::LeaseMismatch => {
+                Failure::IncompatibleProtocol
+            }
+            OwnershipFailureReason::AuthorityLost => Failure::AuthorityLost,
+            OwnershipFailureReason::MalformedReply
+            | OwnershipFailureReason::HttpAuthRefused
+            | OwnershipFailureReason::HttpRefused
+            | OwnershipFailureReason::MissingRoute => Failure::Invalid,
+            OwnershipFailureReason::TransportUnavailable => Failure::Unclassified,
+        }
     }
 }

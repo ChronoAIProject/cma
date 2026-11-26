@@ -14,6 +14,7 @@ pub struct IngressState {
     pub native_lark_media_enabled: bool,
     pub native_lark_stickers_enabled: bool,
     pub resolver: ChannelResolver,
+    pub profile_revisions_enabled: bool,
     pub master_keys: Arc<MasterKeyRing>,
     pub jwks: Arc<JwksCache>,
     pub launcher: Arc<dyn TurnLauncher>,
@@ -22,6 +23,7 @@ pub struct IngressState {
     pub interactions: Option<Arc<crate::interactions::InteractionStore>>,
     pub inflight: Arc<Semaphore>,
     pub telegram: Option<Arc<crate::telegram::TelegramClient>>,
+    pub(crate) routing_notice_relay: Option<Arc<crate::delivery::relay_client::RelayClient>>,
     pub whatsapp_receipts: Option<Arc<crate::whatsapp::receipts::Store>>,
     pub receipt_observer: Option<Arc<dyn super::receipts::PlatformReceiptObserver>>,
     /// Shared media admission; native WhatsApp additionally requires its issuance gate.
@@ -31,6 +33,8 @@ pub struct IngressState {
     pub native_whatsapp_groups_enabled: bool,
     pub native_whatsapp_message_events_enabled: bool,
     pub telegram_effects_issuance_enabled: bool,
+    pub native_telegram_member_joins_enabled: bool,
+    pub relay_telegram_member_joins_enabled: bool,
     /// Receives authenticated refusals, producers and authentication
     /// failures; a no-op unless the console is on.
     pub activity: Arc<dyn ActivityObserver>,
@@ -58,6 +62,10 @@ impl IngressState {
     }
     pub fn with_whatsapp_media(mut self, enabled: bool) -> Self {
         self.native_whatsapp_media_enabled = enabled;
+        self
+    }
+    pub(crate) fn with_profile_revisions(mut self, enabled: bool) -> Self {
+        self.profile_revisions_enabled = enabled;
         self
     }
     pub fn with_routed(mut self, routed: Option<Arc<super::routed::RoutedIngress>>) -> Self {
@@ -116,6 +124,13 @@ impl IngressState {
         self.telegram = Some(client);
         self
     }
+    pub fn with_routing_notice_relay(
+        mut self,
+        relay: Option<crate::delivery::relay_client::RelayClient>,
+    ) -> Self {
+        self.routing_notice_relay = relay.map(Arc::new);
+        self
+    }
     pub fn with_receipt_observer(
         mut self,
         observer: Arc<dyn super::receipts::PlatformReceiptObserver>,
@@ -138,8 +153,10 @@ impl IngressState {
             native_lark_media_enabled: false,
             native_lark_stickers_enabled: false,
             routed: None,
+            profile_revisions_enabled: false,
             interactions: None,
             telegram: None,
+            routing_notice_relay: None,
             whatsapp_receipts: None,
             receipt_observer: None,
             media_enabled: false,
@@ -147,6 +164,8 @@ impl IngressState {
             native_whatsapp_groups_enabled: false,
             native_whatsapp_message_events_enabled: false,
             telegram_effects_issuance_enabled: false,
+            native_telegram_member_joins_enabled: false,
+            relay_telegram_member_joins_enabled: false,
             activity: Arc::new(NoopObserver),
             resolver,
             master_keys,

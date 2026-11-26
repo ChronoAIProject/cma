@@ -7,6 +7,7 @@ import {
   type QueuedInputOutcome,
 } from './queuedCommandOutcomes';
 import { rateLimitDelay, readRetryDelay } from './readRetry';
+import { pendingRemovals, type PendingRemoval } from './queuedRemoval';
 
 interface KnownCommand {
   commandId: string;
@@ -19,6 +20,7 @@ interface KnownCommand {
   mutating: boolean;
   due: number;
   failures: number;
+  delivered?: boolean;
 }
 const queueError = 'The message queue could not be refreshed. Your messages are retained.';
 
@@ -70,6 +72,7 @@ export class QueuedCommandTracker {
   }
 
   private seed() {
+    let removals: PendingRemoval[] = [];
     for (const { receipt, input } of this.session.knownInputs())
       this.retain(receipt.commandId, receipt.responseId, input);
     try {
@@ -84,12 +87,16 @@ export class QueuedCommandTracker {
           interruption.receipt.responseId,
           interruption.body.text,
         );
-      for (const intent of this.session.journal.queuedInputs.read())
+      const intents = this.session.journal.queuedInputs.read();
+      for (const intent of intents)
         this.retain(intent.commandId, intent.responseId, intent.original);
+      removals = pendingRemovals(this.session, intents);
+      for (const intent of removals) this.retain(intent.commandId, intent.responseId, intent.input);
       this.storageError = undefined;
     } catch {
       this.storageError = 'Queued message recovery is unavailable. Your messages are retained.';
     }
+    return removals;
   }
 
   private remember() {
@@ -106,6 +113,7 @@ export class QueuedCommandTracker {
     const outcomes: QueuedInputOutcome[] = [];
     let unresolvedIdentity = false;
     for (const entry of this.known.values()) {
+      if (entry.delivered && !entry.outcome.terminal) continue;
       if (entry.present && entry.row && !entry.outcome.terminal) items.push(entry.row);
       else if (entry.responseId)
         outcomes.push({
@@ -160,10 +168,28 @@ export class QueuedCommandTracker {
     signal: AbortSignal,
     active: boolean,
     identityChanged: (error: unknown) => boolean,
+    hasDelivered?: (commandId: string, responseId: string) => boolean,
+    resolved?: (responseId: string) => void,
+    isCurrent = () => !signal.aborted,
   ) {
-    if (Date.now() < this.throttleUntil) return this.schedule();
+    if (Date.now() < this.throttleUntil)
+      return { next: Math.max(2000, this.throttleUntil - Date.now()), cooldown: 2000 };
     await this.session.authorize(signal);
-    this.seed();
+    if (!isCurrent()) return;
+    const removals = this.seed();
+    for (const intent of removals) {
+      const entry = this.known.get(intent.commandId);
+      if (
+        hasDelivered?.(intent.commandId, intent.responseId) &&
+        entry?.responseId === intent.responseId &&
+        !entry.mutating &&
+        this.resolve(intent, resolved)
+      ) {
+        entry.delivered = true;
+        entry.present = false;
+        entry.row = undefined;
+      }
+    }
     if (Date.now() >= this.discoveryRetryAt) {
       const generation = this.generation;
       try {
@@ -176,11 +202,15 @@ export class QueuedCommandTracker {
           // Validate all identities before changing any queue membership.
           for (const item of page.data)
             this.validate(this.retain(item.response.receipt.command_id), item.response);
-          for (const entry of this.known.values()) entry.present = false;
+          const listed = new Set(page.data.map((item) => item.response.receipt.command_id));
+          for (const entry of this.known.values()) {
+            if (entry.present && !listed.has(entry.commandId)) entry.due = 0;
+            entry.present = false;
+          }
           for (const item of page.data) {
             const receipt = item.response.receipt;
             const entry = this.retain(receipt.command_id, receipt.response_id!, item.text);
-            if (entry.outcome.terminal || entry.mutating) continue;
+            if (entry.delivered || entry.outcome.terminal || entry.mutating) continue;
             if (entry.row && entry.row.revision > item.command_revision) {
               entry.present = true;
               continue;
@@ -195,7 +225,7 @@ export class QueuedCommandTracker {
             entry.input = item.text;
             entry.present = true;
             entry.outcome = commandOutcome(item.response);
-            entry.due = 0;
+            if (!removals.some((intent) => intent.commandId === entry.commandId)) entry.due = 0;
           }
           this.discoveryError = undefined;
           this.discoveryFailures = 0;
@@ -221,9 +251,9 @@ export class QueuedCommandTracker {
       this.discoveryNext = Math.min(this.discoveryNext, this.discoveryRetryAt);
     }
     this.remember();
-    await this.reconcile(signal, identityChanged);
+    await this.reconcile(signal, identityChanged, removals, resolved, isCurrent);
     signal.throwIfAborted();
-    return this.schedule();
+    return this.schedule(removals);
   }
 
   private throttle(error: unknown, delay: number) {
@@ -231,14 +261,30 @@ export class QueuedCommandTracker {
       this.throttleUntil = Math.max(this.throttleUntil, Date.now() + delay);
   }
 
-  private async reconcile(signal: AbortSignal, identityChanged: (error: unknown) => boolean) {
+  private resolve(intent: PendingRemoval, resolved?: (responseId: string) => void) {
+    try {
+      if (!intent.resolve()) return false;
+      resolved?.(intent.responseId);
+      return true;
+    } catch {
+      this.storageError = 'Queued message recovery is unavailable. Your messages are retained.';
+      return false;
+    }
+  }
+
+  private async reconcile(
+    signal: AbortSignal,
+    identityChanged: (error: unknown) => boolean,
+    removals: readonly PendingRemoval[],
+    resolved: ((responseId: string) => void) | undefined,
+    isCurrent: () => boolean,
+  ) {
     const entries = [...this.known.values()];
     const batch: KnownCommand[] = [];
     for (let scanned = 0; scanned < entries.length && batch.length < 8; scanned++) {
       const entry = entries[this.cursor % entries.length]!;
       this.cursor = (this.cursor + 1) % entries.length;
-      if (!entry.present && !entry.outcome.terminal && !entry.mutating && entry.due <= Date.now())
-        batch.push(entry);
+      if (this.needsRead(entry, removals) && entry.due <= Date.now()) batch.push(entry);
     }
     let index = 0;
     const worker = async () => {
@@ -249,16 +295,32 @@ export class QueuedCommandTracker {
           await this.session.authorize(signal);
           const status = await this.session.responses.readCommand(entry.commandId, { signal });
           await this.session.authorize(signal);
-          signal.throwIfAborted();
+          if (!isCurrent()) return;
           if (entry.revision !== revision || entry.mutating) continue;
           entry.responseId = this.validate(entry, status);
-          entry.outcome = commandOutcome(status);
+          const outcome = commandOutcome(status);
+          if (!entry.outcome.terminal || outcome.terminal) entry.outcome = outcome;
+          if (outcome.terminal || status.delivery === 'execution_observed') {
+            for (const intent of removals)
+              if (
+                intent.commandId === entry.commandId &&
+                intent.responseId === entry.responseId &&
+                this.resolve(intent, resolved)
+              ) {
+                entry.present = false;
+                if (status.delivery === 'execution_observed') entry.delivered = true;
+              }
+          }
           entry.failures = 0;
-          entry.due = entry.outcome.terminal ? Infinity : Date.now() + 10000;
+          entry.due =
+            entry.outcome.terminal &&
+            !removals.some((intent) => intent.commandId === entry.commandId)
+              ? Infinity
+              : Date.now() + 10000;
         } catch (error) {
           if (signal.aborted || identityChanged(error)) throw error;
           if (entry.revision !== revision || entry.mutating) continue;
-          entry.outcome = { kind: 'unknown', terminal: false };
+          if (!entry.outcome.terminal) entry.outcome = { kind: 'unknown', terminal: false };
           const delay = readRetryDelay(error, ++entry.failures, 2000);
           entry.due = Date.now() + delay;
           this.throttle(error, delay);
@@ -268,13 +330,20 @@ export class QueuedCommandTracker {
     await Promise.all([worker(), worker()]);
   }
 
-  private schedule() {
+  private schedule(removals: readonly PendingRemoval[] = []) {
     let nextAt = this.discoveryNext;
     for (const entry of this.known.values())
-      if (!entry.present && !entry.outcome.terminal && !entry.mutating)
-        nextAt = Math.min(nextAt, entry.due);
+      if (this.needsRead(entry, removals)) nextAt = Math.min(nextAt, entry.due);
     nextAt = Math.max(nextAt, this.throttleUntil);
     const next = Number.isFinite(nextAt) ? Math.max(2000, nextAt - Date.now()) : undefined;
     return { next, cooldown: 2000 };
+  }
+
+  private needsRead(entry: KnownCommand, removals: readonly PendingRemoval[]) {
+    return (
+      !entry.mutating &&
+      ((!entry.present && !entry.outcome.terminal) ||
+        removals.some((intent) => intent.commandId === entry.commandId))
+    );
   }
 }

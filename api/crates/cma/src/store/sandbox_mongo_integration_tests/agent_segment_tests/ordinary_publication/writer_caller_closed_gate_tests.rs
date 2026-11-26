@@ -53,7 +53,7 @@ async fn disabled_adoption_matches_original_mongo_commands_for_both_roots() {
         let mut session = store.client.start_session().await.unwrap();
         let mut scope = TransactionScope::start(&mut session).await.unwrap();
         scoped::apply(
-            crate::store::agent_log_telemetry::ScanCaller::ConversationPublication,
+            scoped::PublicationSource::Conversation,
             &store,
             &mutation,
             None,

@@ -1,4 +1,10 @@
 use super::*;
+#[path = "budget_contract_tests.rs"]
+mod budget_contracts;
+#[path = "evidence/artifact_tests.rs"]
+mod evidence_artifacts;
+#[path = "evidence/tests.rs"]
+mod evidence_contracts;
 #[path = "isolation_tests.rs"]
 mod output_isolation;
 use crate::config::RuntimeConfig;

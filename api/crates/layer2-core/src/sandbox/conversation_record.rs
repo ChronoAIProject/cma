@@ -65,6 +65,9 @@ impl DurableAgentUpdateRecorder {
                 Some(guard) => guard
                     .project(&persisted)
                     .map_err(|_| AgentConversationError::StaleGeneration)?,
+                None if persisted.work.step.fences_conversation_output() => {
+                    return Err(AgentConversationError::StaleGeneration);
+                }
                 None => persisted.clone(),
             };
             if current.conversation.runtime_generation != Some(runtime_generation) {
@@ -82,8 +85,13 @@ impl DurableAgentUpdateRecorder {
                 .filter(|checkpoint| checkpoint.update_id == update_id);
             let identity_terminal = is_identity_terminal_for_current(&current, update);
             let (replayed, buffered_replay) = if let Some(source) = &source {
-                let (replayed, buffered) =
-                    coalesce::replay_state(source, &current, previous.as_ref(), assembly)?;
+                let (replayed, buffered) = coalesce::replay_state(
+                    source,
+                    &current,
+                    previous.as_ref(),
+                    assembly,
+                    guard.is_some(),
+                )?;
                 // An older observer may have durably recorded this exact
                 // terminal as a quiet receipt. Preserve the validated source
                 // position, but let the replacement observer apply its
@@ -228,6 +236,13 @@ impl DurableAgentUpdateRecorder {
                 return Err(AgentConversationError::InvalidState(
                     "conversation updates require a live agent",
                 ));
+            }
+            if guard.is_some_and(|guard| guard.owner_restart.is_some())
+                && update.is_some_and(|effect| {
+                    !matches!(effect, layer3_adapter::ConversationUpdate::Metadata(_))
+                })
+            {
+                return Err(AgentConversationError::ReopenOutputDiscontinuity);
             }
             let folded = match &update {
                 Some(update) => fold_update(

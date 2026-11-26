@@ -1,6 +1,7 @@
 //! Atomic Mongo persistence for runtime conversation updates.
 
 use crate::store::agent_log_telemetry::ScanCaller;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{
     AgentConversationMutation, AgentConversationStore, SandboxStoreError,
@@ -102,7 +103,7 @@ async fn commit_conversation_inner(
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
         let applied = Box::pin(scoped::apply(
-            ScanCaller::ConversationPublication,
+            scoped::PublicationSource::Conversation,
             store,
             &mutation,
             None,
@@ -115,16 +116,16 @@ async fn commit_conversation_inner(
         let receipt = match applied {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
@@ -259,9 +260,13 @@ async fn replace_agent(
     current: &Agent,
     mutation: &AgentConversationMutation,
     integrity: mongodb::bson::Document,
+    exact_checkpoint: Option<&layer2_core::sandbox::store::AgentMessageCheckpoint>,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     let mut fields = agent_replacement_fields(&mutation.agent).map_err(ApplyError::Domain)?;
+    if let Some(value) = exact_checkpoint {
+        checkpoint::set_field(&mut fields, value).map_err(ApplyError::Domain)?;
+    }
     fields.insert("agent_log_integrity_v1", integrity);
     fields.insert(
         "last_seq",

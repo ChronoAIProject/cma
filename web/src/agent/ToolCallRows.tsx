@@ -25,13 +25,14 @@ function ToolCallLine({
   const computer = useContext(ComputerContext);
   const outcome = toolOutcome(tool, activeRunId);
   const category = toolCategory(tool);
+  const title = tool.title.trim() ? tool.title : category === 'command' ? 'Command' : 'Tool call';
   const screen = screenOperation(tool);
   const duration = toolTimingLabel(tool);
   const detailsId = useId();
   return (
     <article
       className="agent-event--tool"
-      aria-label={`Tool call: ${tool.title}`}
+      aria-label={`Tool call: ${title}`}
       data-outcome={outcome}
     >
       {screen ? (
@@ -39,7 +40,7 @@ function ToolCallLine({
           <span className="tool-call__icon" aria-hidden="true">
             <ToolIcon kind={screen.action} />
           </span>
-          <span className="tool-call__literal" title={tool.title}>
+          <span className="tool-call__literal" title={title}>
             {screen.description}
           </span>
           {duration ? (
@@ -65,8 +66,8 @@ function ToolCallLine({
             <span className="tool-call__icon" aria-hidden="true">
               <ToolIcon kind={category} />
             </span>
-            <span className="tool-call__literal" title={tool.title}>
-              {tool.title}
+            <span className="tool-call__literal" title={title}>
+              {title}
             </span>
             {duration === undefined ? null : (
               <span className="tool-call__duration" title="Recorded tool interval">
@@ -111,7 +112,7 @@ function ToolCallLine({
       {outcome === 'failed' ? <p className="tool-call__error">{conciseToolError(tool)}</p> : null}
       {open ? (
         <div id={detailsId} className="tool-call__details">
-          <pre>{tool.detail ?? tool.title}</pre>
+          <pre>{tool.detail ?? title}</pre>
           {tool.output ? (
             <>
               <pre aria-label={category === 'edit' ? 'Recorded diff' : 'Recorded output'}>

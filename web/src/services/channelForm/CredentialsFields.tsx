@@ -1,6 +1,7 @@
 import { Button } from '../../ui/Button';
 import { Section, TextField, Toggle } from './Fields';
 import { records, type Fields } from './model';
+import { hmacCredentialIdMessage, hmacSecretMessage } from './hmacCredentials';
 const labels: Record<string, string> = {
   agent_key: 'Provider agent key',
   channel_key: 'NyxID channel key',
@@ -47,21 +48,32 @@ export function CredentialsFields({
       ))}
       {hmac ? (
         <>
-          <Toggle
-            label="Replace HMAC credentials"
-            value={value.replace_hmac}
-            onChange={(replace_hmac) => onChange({ ...value, replace_hmac })}
-          />
-          {value.replace_hmac === true ? (
+          {create ? (
+            <p className="channel-field-hint">
+              Set the initial HMAC credentials for this channel. Each HMAC producer must use one of
+              these key IDs.
+            </p>
+          ) : (
+            <Toggle
+              label="Replace HMAC credentials"
+              value={value.replace_hmac}
+              onChange={(replace_hmac) => onChange({ ...value, replace_hmac })}
+            />
+          )}
+          {create || value.replace_hmac === true ? (
             <>
-              <p className="channel-field-hint">
-                This replaces the whole HMAC key list. Include every key you want to keep.
-              </p>
+              {!create ? (
+                <p className="channel-field-hint">
+                  This replaces the whole HMAC key list. Include every key you want to keep.
+                </p>
+              ) : null}
               {rows.map((row, index) => (
                 <Section key={index} title={`HMAC credential ${index + 1}`}>
                   <TextField
+                    path={`/credentials/hmac_secrets/${index}/key_id`}
                     label={`HMAC ${index + 1} key ID`}
                     value={row.key_id}
+                    validationMessage={hmacCredentialIdMessage(row.key_id, rows, index)}
                     onChange={(key_id) =>
                       onChange({
                         ...value,
@@ -71,8 +83,11 @@ export function CredentialsFields({
                     required
                   />
                   <TextField
+                    path={`/credentials/hmac_secrets/${index}/secret`}
                     label={`HMAC ${index + 1} secret`}
                     value={row.secret}
+                    validationMessage={hmacSecretMessage(row.secret)}
+                    hint="Standard base64, including required = padding, up to 4,096 characters. No spaces or line breaks."
                     onChange={(secret) =>
                       onChange({
                         ...value,

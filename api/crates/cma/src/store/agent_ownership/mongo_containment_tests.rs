@@ -151,3 +151,140 @@ async fn isolated_renewal(fault: Fault) {
     streaming.await.unwrap().unwrap();
     fixture.close().await;
 }
+
+#[cfg(feature = "qualification-hooks")]
+#[tokio::test]
+#[ignore = "requires disposable failpoint-enabled Mongo replica set"]
+async fn qualification_routes_the_exact_renewal_to_the_isolated_mongo_client() {
+    let fixture = Fixture::new().await;
+    let original = fixture.lease(&fixture.faulted).await;
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").expect("use disposable Mongo");
+    let isolated =
+        MongoAgentOwnership::prepare_qualification_renewal(&uri, fixture.store.database.name())
+            .await
+            .unwrap();
+    let capture = fixture
+        .manager
+        .capture_qualification_owner(&fixture.faulted.token)
+        .await
+        .unwrap();
+    let registry = cma_qualification::Registry::default();
+    assert!(fixture
+        .manager
+        .attach_qualification_renewal(Arc::new(registry.clone())));
+    let arm = registry
+        .arm_renewal(capture, isolated, Duration::from_secs(6))
+        .unwrap();
+    let started = tokio::time::Instant::now();
+    fixture.manager.maintain().await.unwrap();
+    assert!(started.elapsed() >= Duration::from_millis(1900));
+    assert_eq!(
+        arm.evidence(),
+        cma_qualification::RenewalEvidence {
+            started: true,
+            result: Some(cma_qualification::RenewalOutcome::Committed),
+            caller_dropped: true,
+        }
+    );
+    assert_eq!(fixture.router.calls.load(Ordering::SeqCst), 0);
+    let durable = fixture.lease(&fixture.faulted).await;
+    assert_eq!(durable.token, original.token);
+    assert!(durable.expires_at_ms > original.expires_at_ms);
+    assert!(fixture.faulted.receiver_cancelled());
+    assert!(fixture.healthy.is_current());
+    fixture
+        .healthy_effect("qualification-renewal-healthy")
+        .await;
+    fixture.verify_cleanup(&durable, Fault::WithheldReply).await;
+    fixture.close().await;
+}
+
+#[cfg(feature = "qualification-hooks")]
+#[tokio::test]
+#[ignore = "requires disposable failpoint-enabled Mongo replica set"]
+async fn qualification_retirement_retains_the_selected_renewal_until_its_store_result() {
+    use super::super::mongo_renewal_faults::RoutedStore;
+    use layer2_core::agent_ownership::MaintenancePolicy;
+
+    let fixture = Fixture::with_policy(MaintenancePolicy::ContainFailures).await;
+    let selected = RoutedStore::new(
+        fixture.store.clone(),
+        fixture.faulted.token.agent_id.clone(),
+    )
+    .await;
+    selected.arm(Fault::WithheldReply).await;
+    let capture = fixture
+        .manager
+        .capture_qualification_owner(&fixture.faulted.token)
+        .await
+        .unwrap();
+    let registry = cma_qualification::Registry::default();
+    assert!(fixture
+        .manager
+        .attach_qualification_renewal(Arc::new(registry.clone())));
+    let mut armed = registry
+        .arm_renewal(capture, selected.clone(), Duration::from_secs(8))
+        .unwrap();
+
+    let maintenance = tokio::spawn({
+        let manager = fixture.manager.clone();
+        async move { manager.maintain().await }
+    });
+    tokio::time::timeout(Duration::from_secs(3), selected.wait_for_held_reply())
+        .await
+        .expect("the selected Mongo renewal issued and its result is held");
+    assert!(!maintenance.is_finished());
+    assert!(tokio::time::timeout(
+        Duration::from_millis(150),
+        TransportAuthority::renew_for_challenge(fixture.faulted.as_ref()),
+    )
+    .await
+    .is_err());
+    assert_eq!(fixture.router.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(selected.calls.load(Ordering::SeqCst), 1);
+
+    maintenance.await.unwrap().unwrap();
+    assert!(armed.evidence().caller_dropped);
+    assert!(armed.evidence().result.is_none());
+    assert!(fixture.faulted.receiver_cancelled());
+    fixture.acknowledge_receiver();
+    let retained = fixture.lease(&fixture.faulted).await;
+    assert!(fixture
+        .manager
+        .handoff(&fixture.faulted, fixture.faulted.revoke_transports())
+        .await
+        .is_err());
+    assert_eq!(fixture.lease(&fixture.faulted).await, retained);
+    assert_eq!(fixture.router.releases.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.router.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(selected.calls.load(Ordering::SeqCst), 1);
+    fixture
+        .healthy_effect("while-selected-renewal-unresolved")
+        .await;
+
+    selected.allow_held_reply();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while armed.evidence().result.is_none() {
+            armed.changed().await.expect("selected renewal evidence");
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        armed.evidence().result,
+        Some(cma_qualification::RenewalOutcome::Committed)
+    );
+    fixture
+        .manager
+        .handoff(&fixture.faulted, fixture.faulted.revoke_transports())
+        .await
+        .unwrap();
+    assert_eq!(fixture.router.releases.load(Ordering::SeqCst), 1);
+    assert!(fixture
+        .store
+        .owner(&fixture.faulted.token.agent_id)
+        .await
+        .unwrap()
+        .is_none());
+    fixture.close().await;
+}

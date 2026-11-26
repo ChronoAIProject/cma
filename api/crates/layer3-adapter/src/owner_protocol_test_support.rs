@@ -11,6 +11,9 @@ pub(crate) struct TestAuthority {
     pub events: Arc<Mutex<Vec<&'static str>>>,
     pub confirmed_bindings: Mutex<Vec<String>>,
     pub failure: std::sync::OnceLock<OwnershipFailure>,
+    pub diagnostics_enabled: AtomicBool,
+    pub diagnostic_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
+    pub diagnostic_entered: tokio::sync::Notify,
     pub failure_before_revocation: AtomicBool,
     pub receivers: Mutex<Vec<Arc<dyn ReceiverRevocation>>>,
     revoked: tokio::sync::watch::Sender<bool>,
@@ -30,6 +33,9 @@ impl TestAuthority {
             events: Arc::default(),
             confirmed_bindings: Mutex::default(),
             failure: Default::default(),
+            diagnostics_enabled: AtomicBool::new(true),
+            diagnostic_gate: Mutex::new(None),
+            diagnostic_entered: tokio::sync::Notify::new(),
             failure_before_revocation: AtomicBool::new(false),
             receivers: Mutex::default(),
             revoked: tokio::sync::watch::channel(false).0,
@@ -91,11 +97,19 @@ impl TransportAuthority for TestAuthority {
         let _ = self.revoked.subscribe().wait_for(|revoked| *revoked).await;
     }
     async fn record_failure(&self, failure: OwnershipFailure) {
+        if !self.diagnostics_enabled.load(Ordering::SeqCst) {
+            return;
+        }
         self.failure.get_or_init(|| {
             self.failure_before_revocation
                 .store(self.is_current(), Ordering::SeqCst);
             failure
         });
+        let gate = self.diagnostic_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            self.diagnostic_entered.notify_one();
+            gate.notified().await;
+        }
     }
     fn revoke(&self) {
         self.revoked.send_replace(true);

@@ -308,6 +308,11 @@ fn reference_problem(error: TriggerReferenceError) -> ProblemParts {
             "Sign in again to authorize the selected Image Manager image.",
             field,
         ),
+        TriggerReferenceError::ImageSelectionUnsupported { field } => (
+            "trigger_image_selection_unsupported",
+            "New custom image selections are unavailable.",
+            field,
+        ),
     };
     (
         status,

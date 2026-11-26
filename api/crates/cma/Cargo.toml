@@ -5,10 +5,15 @@ edition.workspace = true
 publish = false
 
 [features]
+qualification-hooks = ["dep:cma-qualification", "layer1-public/qualification-hooks"]
 real-model-suggestion-samples = []
 
 [dependencies]
+cma-qualification = { path = "../cma-qualification", optional = true }
 cma-allocator-qualification = { path = "../cma-allocator-qualification" }
+cma-am-auth = { path = "../cma-am-auth" }
+cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
+cma-am-reporting = { path = "../cma-am-reporting" }
 async-trait = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
@@ -29,10 +34,12 @@ sha1 = { workspace = true }
 layer1-public = { workspace = true }
 layer2-core = { workspace = true }
 layer3-adapter = { workspace = true }
+libc = { workspace = true }
 mongodb = { workspace = true, features = ["opentelemetry"] }
 opentelemetry = { workspace = true }
 reqwest = { workspace = true }
 ring = { workspace = true }
+semver = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 similar = { workspace = true }
@@ -41,6 +48,9 @@ url = { workspace = true }
 thiserror = { workspace = true }
 tower-http = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
+# Bounded-age HTTP connection serving (startup only; axum::serve otherwise).
+hyper = { workspace = true, features = ["server", "http1", "http2"] }
+hyper-util = { workspace = true, features = ["server-auto", "service", "http1", "http2"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 # For its CSPRNG-backed v4 generator, which is what session cookies, OAuth
@@ -50,6 +60,7 @@ zeroize = { workspace = true }
 serde_json_canonicalizer = "=0.3.2"
 
 [dev-dependencies]
+cma-am-reporting = { path = "../cma-am-reporting", features = ["test-support"] }
 jsonschema = { version = "0.33.0", default-features = false }
 tracing-subscriber = { workspace = true, features = ["json"] }
 http-body-util = { workspace = true }
@@ -60,5 +71,5 @@ layer2-core = { workspace = true, features = ["test-support"] }
 # Holds PTY receipt, output, and disconnect boundaries so socket races are
 # proved without sleeps or scheduler assumptions.
 layer1-public = { workspace = true, features = ["test-support"] }
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["io-std", "test-util"] }
 tokio-tungstenite = { workspace = true }

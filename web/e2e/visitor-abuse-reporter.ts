@@ -5,6 +5,10 @@ import RedactedReporter from './reporter';
 import { object, outsideRepository } from './environment';
 import { evidenceDirectoryIsReady } from './security';
 import { blocked, count, metrics, newCounts, type Counts } from './visitor-abuse-model';
+import {
+  evidenceHash,
+  validateScenarioBinding,
+} from '../../.github/scripts/visitor-abuse-evidence.mjs';
 
 const scenarioNames = ['TC117-boundary', 'TC117-shared', 'TC117-load-controls', 'TC117-utc'];
 
@@ -39,6 +43,8 @@ export default class TC117Reporter extends RedactedReporter {
       return unqualified;
     const output = outsideRepository(path, 'CMA_E2E_OUTPUT_DIR');
     const counts = newCounts();
+    const run = process.env.CMA_E2E_EVIDENCE_RUN!;
+    const evidence: { case: string; file: string; sha256: string }[] = [];
     let incomplete = result.status !== 'passed';
     const seen = new Set<string>();
     for (const row of this.cases) {
@@ -49,13 +55,12 @@ export default class TC117Reporter extends RedactedReporter {
       seen.add(row.case);
       if (row.status !== 'passed' || row.retry !== 0) incomplete = true;
       try {
-        const evidence = object(
-          JSON.parse(
-            readFileSync(join(output, `tc117-${row.case.replace('TC117-', '')}.json`), 'utf8'),
-          ),
-        );
-        if (evidence.status !== 'passed') incomplete = true;
-        const observed = object(evidence.counts);
+        const name = row.case.replace('TC117-', '');
+        const file = `tc117-${name}.json`;
+        const bytes = readFileSync(join(output, file));
+        const record = validateScenarioBinding(bytes, { run, case: name });
+        evidence.push({ case: row.case, file, sha256: evidenceHash(bytes) });
+        const observed = object(record.counts);
         const combined = newCounts();
         for (const key of Object.keys(counts) as (keyof Counts)[])
           combined[key] = count(counts[key] + count(observed[key]));
@@ -68,7 +73,10 @@ export default class TC117Reporter extends RedactedReporter {
     writeFileSync(
       join(output, 'tc117-summary.json'),
       JSON.stringify({
+        schema: 'cma-tc117-summary-v1',
         campaign: 'TC-117',
+        run,
+        evidence,
         evidenceScope: 'Issue1485Task5Harness',
         authorityBinding: 'external_attestation_required',
         status: incomplete ? 'failed' : full ? 'blocked' : 'partial',

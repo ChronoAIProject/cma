@@ -47,6 +47,13 @@ impl Workspace {
                     source_commit: None,
                 }
             }
+            WorkspaceSource::PublicRepositorySnapshot { url, commit, .. } => {
+                WorkspaceSource::PublicRepositorySnapshot {
+                    url: url.clone(),
+                    commit: commit.clone(),
+                    source_commit: None,
+                }
+            }
             source => source.clone(),
         };
         content_digest(&serde_json::json!({
@@ -70,11 +77,23 @@ impl Workspace {
                     reference: reference.clone(),
                 }
             }
+            WorkspaceSource::PublicRepositorySnapshot { url, commit, .. } => {
+                RuntimeSource::PublicRepositorySnapshot {
+                    url: url.clone(),
+                    commit: commit.clone(),
+                }
+            }
             WorkspaceSource::GitRepository { url, reference } => RuntimeSource::Clone {
                 url: url.clone(),
                 reference: reference.clone(),
             },
             WorkspaceSource::Empty => RuntimeSource::Init,
+        };
+        let connection = match &self.profile.content.location {
+            crate::profiles::WorkspaceLocation::RepositorySnapshot { connection_id, .. } => {
+                connection_id.clone()
+            }
+            _ => None,
         };
         Ok(WorkspaceRequest::with_clone_depth(
             self.operation_id(WorkspaceWorkStep::Prepare),
@@ -82,12 +101,15 @@ impl Workspace {
             self.name.clone(),
             source,
             execution.clone_depth,
-        ))
+        )
+        .with_repository_connection(connection))
     }
 
     pub fn validate_prepare_recovery_binding(&self) -> Result<(), SandboxStoreError> {
         if let Some(recovery) = &self.work.prepare_recovery {
-            if let WorkspaceSource::RepositorySnapshot { source_commit, .. } = &self.source {
+            if let WorkspaceSource::RepositorySnapshot { source_commit, .. }
+            | WorkspaceSource::PublicRepositorySnapshot { source_commit, .. } = &self.source
+            {
                 let completion = recovery
                     .attempts
                     .last()
@@ -183,13 +205,20 @@ impl Workspace {
             return Err(SandboxStoreError::WorkspaceRecoveryConflict);
         }
         let profile_source = match &self.profile.content.location {
-            crate::profiles::WorkspaceLocation::RepositorySnapshot { url, reference } => {
+            crate::profiles::WorkspaceLocation::RepositorySnapshot { url, reference, .. } => {
                 WorkspaceSource::RepositorySnapshot {
                     url: url.clone(),
                     reference: reference.clone(),
                     source_commit: None,
                 }
             }
+            crate::profiles::WorkspaceLocation::PublicRepositorySnapshot {
+                url, commit, ..
+            } => WorkspaceSource::PublicRepositorySnapshot {
+                url: url.clone(),
+                commit: commit.clone(),
+                source_commit: None,
+            },
             crate::profiles::WorkspaceLocation::GitRepository { url, reference } => {
                 WorkspaceSource::GitRepository {
                     url: url.clone(),

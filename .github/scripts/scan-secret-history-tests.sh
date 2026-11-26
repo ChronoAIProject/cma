@@ -32,7 +32,11 @@ expect_scan() {
 expect_scan 0
 git switch --quiet --create unmerged
 # Synthetic and generated inside the disposable fixture, never a credential.
-printf 'api_key = "%s"\n' "$(openssl rand -hex 32)" >fixture.txt
+# A token-shaped value matches a dedicated rule on every run. A random value
+# under the generic rule is occasionally filtered, which made this self-test
+# fail about once in 500 runs.
+token=$(openssl rand -base64 64 | LC_ALL=C tr -dc 'A-Za-z0-9')
+printf 'token = "ghp_%s"\n' "${token:0:36}" >fixture.txt
 git add fixture.txt
 git -c commit.gpgsign=false commit --quiet -m 'Synthetic finding on another branch'
 expect_scan 1

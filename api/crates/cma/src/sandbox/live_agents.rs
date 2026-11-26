@@ -18,6 +18,7 @@ mod capacity;
 mod ownership;
 mod publication;
 mod recovery;
+mod recovery_output;
 mod updates;
 pub(crate) use recovery::{
     DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity, LiveAgentConnectionLossHandler,
@@ -74,11 +75,27 @@ struct RegistryEntry {
     runtime_generation: u64,
     authority_fence: u64,
     capabilities: RuntimeCapabilities,
-    input: ConversationInputSender,
-    activation: Option<oneshot::Sender<LiveAgentAttachmentIdentity>>,
+    input: AttachmentInput,
     published: bool,
     nonce: u64,
     task: AbortHandle,
+}
+
+enum AttachmentInput {
+    Opening,
+    Connected {
+        input: ConversationInputSender,
+        activation: Option<oneshot::Sender<LiveAgentAttachmentIdentity>>,
+    },
+}
+
+impl AttachmentInput {
+    fn sender(&self) -> Option<&ConversationInputSender> {
+        match self {
+            Self::Opening => None,
+            Self::Connected { input, .. } => Some(input),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -155,8 +172,10 @@ impl LiveAgentRegistry {
             runtime_generation,
             authority_fence,
             capabilities,
-            input,
-            activation: Some(activate),
+            input: AttachmentInput::Connected {
+                input,
+                activation: Some(activate),
+            },
             published: false,
             nonce,
             task,
@@ -217,7 +236,15 @@ impl LiveAgentRegistry {
             authority_fence,
         );
         if let Some(entry) = state.staged.get_mut(&target.agent_id).filter(|entry| {
-            entry.conversation_id == target.conversation_id
+            entry.input.sender().is_some()
+                && (matches!(
+                    entry.input,
+                    AttachmentInput::Connected {
+                        activation: Some(_),
+                        ..
+                    }
+                ) || entry.authority_fence == authority_fence)
+                && entry.conversation_id == target.conversation_id
                 && entry.runtime_generation == target.runtime_generation
         }) {
             if entry.authority_fence > authority_fence {
@@ -327,7 +354,11 @@ impl AgentRuntimeRegistry for LiveAgentRegistry {
         }
         Ok(AgentRuntimeConnection {
             capabilities: entry.capabilities.clone(),
-            input: entry.input.clone(),
+            input: entry
+                .input
+                .sender()
+                .ok_or(AgentRuntimeError::NotFound)?
+                .clone(),
         })
     }
 

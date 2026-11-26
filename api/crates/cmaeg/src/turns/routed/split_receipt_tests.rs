@@ -3,6 +3,9 @@ use crate::delivery::intents::ConfirmedMessagePart;
 use cmaeg_core::{ids::MessageRef, seal::MessageRefPayload};
 use serde_json::json;
 
+#[path = "split_answer_tests.rs"]
+mod split_answer;
+
 fn partial(h: &Harness) -> IntentReceipt {
     let mut receipt = receipt_for(DeliveryOutcome::Unknown {
         reason: "partial_delivery".into(),

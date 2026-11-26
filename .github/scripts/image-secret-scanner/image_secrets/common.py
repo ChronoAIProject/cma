@@ -41,21 +41,23 @@ def tar_metadata(path, member, *, ascii_only=False):
     return json.dumps(data, ensure_ascii=ascii_only).encode("utf-8", errors="backslashreplace")
 
 
-def json_bytes(data):
+def unique_json_pairs(items):
     # Duplicate JSON keys make descriptor/config interpretation ambiguous.
-    def pairs(items):
-        result = {}
-        for key, value in items:
-            if key in result:
-                raise ScanError("duplicate-json-key")
-            result[key] = value
-        return result
+    result = {}
+    for key, value in items:
+        if key in result:
+            raise ScanError("duplicate-json-key")
+        result[key] = value
+    return result
 
-    def invalid_constant(value):
-        raise ScanError("nonstandard-json-constant")
 
+def invalid_json_constant(value):
+    raise ScanError("nonstandard-json-constant")
+
+
+def json_bytes(data):
     try:
-        return json.loads(data, object_pairs_hook=pairs, parse_constant=invalid_constant)
+        return json.loads(data, object_pairs_hook=unique_json_pairs, parse_constant=invalid_json_constant)
     except (ValueError, UnicodeError, RecursionError) as error:
         raise ScanError("invalid-json") from error
 

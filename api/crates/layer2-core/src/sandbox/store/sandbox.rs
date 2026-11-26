@@ -67,6 +67,19 @@ pub trait SandboxStore: Send + Sync {
         Ok(self.retained_reopen_receipt(id).await?.map(Into::into))
     }
 
+    async fn retained_reopen_history(
+        &self,
+        id: &SandboxId,
+        key_sha256: Option<&str>,
+    ) -> Result<crate::sandbox::RetainedReopenHistory, SandboxStoreError> {
+        let receipt = self.retained_reopen_replay(id).await?;
+        Ok(crate::sandbox::RetainedReopenHistory {
+            observed_parent: None,
+            latest_revision: receipt.as_ref().map(|receipt| receipt.accepted.revision),
+            replay: receipt.filter(|receipt| key_sha256 == Some(receipt.key_sha256.as_str())),
+        })
+    }
+
     async fn retained_suspended_reopen_snapshot(
         &self,
         _id: &SandboxId,
@@ -106,9 +119,69 @@ pub trait SandboxStore: Send + Sync {
     }
 
     /// Current server-managed runtime; custom images and lost-runtime recovery stay pinned.
-    fn managed_runtime_version(&self) -> Option<&str> {
+    /// Read once per admission: each call may observe a newer release.
+    fn managed_runtime_version(&self) -> Option<String> {
         None
     }
+
+    fn desktop_runtime_target_is_qualified(&self, _target: &str) -> bool {
+        false
+    }
+
+    fn machine_runtime_target_is_qualified(&self, _id: &SandboxId, _target: &str) -> bool {
+        false
+    }
+
+    fn managed_runtime_target_is_held(&self, _target: &str) -> bool {
+        false
+    }
+
+    async fn qualify_retained_machine(
+        &self,
+        _sandbox: &Sandbox,
+        _at: &str,
+    ) -> Result<Option<Sandbox>, SandboxStoreError> {
+        Ok(None)
+    }
+
+    fn managed_runtime_target<'a>(&self, sandbox: &Sandbox, target: &'a str) -> Option<&'a str> {
+        use crate::released_runtime::ReleasedLane;
+        let qualified = match sandbox.managed_runtime_lane() {
+            Some(ReleasedLane::Machine) => {
+                self.machine_runtime_target_is_qualified(&sandbox.id, target)
+            }
+            Some(ReleasedLane::Agent) if sandbox.has_managed_desktop_image() => {
+                self.desktop_runtime_target_is_qualified(target)
+            }
+            _ => true,
+        };
+        (!target.is_empty() && qualified && !self.managed_runtime_target_is_held(target))
+            .then_some(target)
+    }
+
+    /// The compatible target from one captured release. Explicitly pinned
+    /// custom images cannot borrow either managed lane.
+    fn managed_runtime_for_release<'a>(
+        &self,
+        sandbox: &Sandbox,
+        release: &'a layer3_adapter::ReleasedRuntime,
+    ) -> Option<(crate::released_runtime::ReleasedLane, &'a str)> {
+        let lane = sandbox.managed_runtime_lane()?;
+        let target = self.managed_runtime_target(sandbox, lane.version_in(release)?)?;
+        Some((lane, target))
+    }
+
+    fn capture_released_runtime(&self) -> Option<layer3_adapter::ReleasedRuntime> {
+        self.managed_runtime_version()
+            .map(|agent| layer3_adapter::ReleasedRuntime {
+                revision: 0,
+                agent,
+                machine: None,
+                lane_revisions: None,
+            })
+    }
+
+    async fn refresh_released_runtime(&self) {}
 
     async fn unpublished_runtime_recovery_snapshot(
         &self,
@@ -133,6 +206,26 @@ pub trait SandboxStore: Send + Sync {
         expected_revision: u64,
         sandbox: Sandbox,
     ) -> Result<(), SandboxStoreError>;
+
+    async fn save_sandbox_against_release(
+        &self,
+        expected_revision: u64,
+        sandbox: Sandbox,
+        _release: &layer3_adapter::ReleasedRuntime,
+        _lane: crate::released_runtime::ReleasedLane,
+    ) -> Result<(), SandboxStoreError> {
+        self.save_sandbox(expected_revision, sandbox).await
+    }
+
+    /// Bind a default image before the first dispatch of an unpooled generation.
+    async fn reserve_initial_runtime_image(
+        &self,
+        _sandbox: &Sandbox,
+        _generation: u64,
+        image: &str,
+    ) -> Result<String, SandboxStoreError> {
+        Ok(image.into())
+    }
     async fn list_sandboxes(
         &self,
         owner: &SubjectId,

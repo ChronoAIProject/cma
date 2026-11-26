@@ -154,6 +154,7 @@ async fn retirement_keeps_revoke_debt_until_custody_is_deleted() {
     let authority = active.credential.current.clone().unwrap();
     harness.credentials.restore(CredentialMaterial {
         source: Default::default(),
+        github_route: None,
         sandbox_id: active.id.clone(),
         owner: active.owner.clone(),
         authority: authority.clone(),
@@ -220,6 +221,7 @@ async fn custody_that_appears_after_the_grace_check_blocks_purge_until_revoked()
     );
     harness.credentials.restore(CredentialMaterial {
         source: Default::default(),
+        github_route: None,
         sandbox_id: active.id.clone(),
         owner: active.owner.clone(),
         authority: layer2_core::sandbox::SandboxCredentialAuthority {

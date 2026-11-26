@@ -1,4 +1,4 @@
-"""All current publication paths use the same five images and Omarchy recipe."""
+"""All current publication paths use the same five images; only staging builds them."""
 import copy
 import json
 from pathlib import Path
@@ -8,11 +8,10 @@ import unittest
 import yaml
 
 from deployables import registry
+from release_promotion import PUBLISHED
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENTS = ['api', 'web', 'runtime', 'cmaeg', 'runtime-omarchy']
-TARGET = "${{ matrix.component == 'runtime-omarchy' && 'omarchy' || matrix.component == 'runtime' && 'default-runtime' || 'runtime' }}"
-DESKTOP = "RUNTIME_DESKTOP=${{ matrix.component == 'runtime-omarchy' && '1' || '0' }}"
 
 
 def validate(ci, publish):
@@ -23,23 +22,22 @@ def validate(ci, publish):
         raise ValueError('current CI image matrix differs')
     if jobs['omarchy']['uses'] != './.github/workflows/ci-omarchy.yml':
         raise ValueError('Omarchy image qualification missing')
-    for job in ('images', 'image-exports'):
-        if publish['jobs'][job]['strategy']['matrix']['component'] != COMPONENTS:
-            raise ValueError('current publication matrix differs')
-    steps = publish['jobs']['images']['steps']
-    builds = [step for step in steps if step.get('uses', '').startswith('docker/build-push-action@')]
-    if len(builds) != 2:
-        raise ValueError('native scan and exact publication archive required')
-    for step in builds:
-        settings = step['with']
-        if settings['target'] != TARGET or DESKTOP not in settings['build-args'].splitlines() \
-                or 'OMARCHY_CMA_BASE=runtime-tools' not in settings['build-args'].splitlines():
-            raise ValueError('Omarchy build would use the wrong variant')
-        if settings['push'] is not False or 'image-manager' in settings['file']:
-            raise ValueError('publication bypass or retired recipe')
-    names = [step.get('name') for step in steps]
-    if not names.index('Build the complete publication archive') < names.index('Scan exact archive and publish without rebuilding'):
-        raise ValueError('exact archive scan must precede publication')
+    if sorted(PUBLISHED.values()) != sorted(COMPONENTS):
+        raise ValueError('current publication set differs')
+    # A release assigns its tags to the staging-verified digests; only staging builds.
+    for job in publish['jobs'].values():
+        if any(step.get('uses', '').startswith('docker/build-push-action@') for step in job.get('steps', [])):
+            raise ValueError('release must promote staging-verified images, never rebuild')
+    jobs = publish['jobs']
+    select, promote = jobs['select']['steps'][-1], jobs['images']['steps'][-1]
+    if select.get('run') != 'python3 -B .github/scripts/release_promotion.py select' \
+            or promote.get('run') != 'python3 -B .github/scripts/release_promotion.py promote' \
+            or promote['env']['RELEASE_IMAGES'] != '${{ needs.select.outputs.images }}':
+        raise ValueError('release tags must name the selected staging-verified digests')
+    # No tag is assigned before the runtime evidence passed, and nothing is released before the tags.
+    if 'runtime-image-gate' not in jobs['images']['needs'] or 'images' not in jobs['release']['needs'] \
+            or 'images' in jobs['runtime-image-gate']['needs']:
+        raise ValueError('tags must follow the runtime evidence and precede the release')
 
 
 class PublicationScopeTests(unittest.TestCase):
@@ -65,27 +63,25 @@ class PublicationScopeTests(unittest.TestCase):
         self.assertCountEqual(events['push']['paths'], [policy['DOCKERFILE'], *inputs])
 
     def test_retired_matrix_entries_and_missing_omarchy_are_rejected(self):
-        for job in ('images', 'image-exports'):
-            for retired in ('image-manager', 'runtime-desktop'):
-                changed = copy.deepcopy(self.publish)
-                changed['jobs'][job]['strategy']['matrix']['component'][-1] = retired
-                with self.assertRaises(ValueError):
-                    validate(self.ci, changed)
         for job in ('am-images', 'runtime-images'):
             changed = copy.deepcopy(self.ci)
             changed['jobs'][job]['with']['components'] = '["runtime-desktop"]'
             with self.assertRaises(ValueError):
                 validate(changed, self.publish)
 
-    def test_wrong_omarchy_target_or_args_rejected_in_either_build(self):
-        for build in ('Build the native image for scanning', 'Build the complete publication archive'):
-            for key, value in (('target', 'default-runtime'), ('build-args', 'RUNTIME_DESKTOP=0\n')):
-                changed = copy.deepcopy(self.publish)
-                step = next(row for row in changed['jobs']['images']['steps'] if row.get('name') == build)
-                step['with'][key] = value
-                with self.assertRaises(ValueError):
-                    validate(self.ci, changed)
-
+    def test_a_rebuild_or_unselected_tag_target_in_the_release_is_rejected(self):
+        changed = copy.deepcopy(self.publish)
+        changed['jobs']['images']['steps'].insert(1, {'uses': 'docker/build-push-action@' + 'a' * 40})
+        with self.assertRaises(ValueError):
+            validate(self.ci, changed)
+        changed = copy.deepcopy(self.publish)
+        changed['jobs']['images']['steps'][-1]['env']['RELEASE_IMAGES'] = '{}'
+        with self.assertRaises(ValueError):
+            validate(self.ci, changed)
+        changed = copy.deepcopy(self.publish)
+        changed['jobs']['images']['needs'] = ['plan', 'select']
+        with self.assertRaises(ValueError):
+            validate(self.ci, changed)
 
 if __name__ == '__main__':
     unittest.main()

@@ -26,8 +26,10 @@ export function useTaskTemplateDraftSwitch(
   const clear = () => {
     setCopy(undefined);
     const compiled = draft.template && compileTaskTemplate(draft.template);
-    if (compiled?.issue) setConfirmation('partial');
-    else if (draft.text && draft.text !== compiled?.text) setConfirmation('replace');
+    const hasFields = draft.template && Object.values(draft.template.fields).some(Boolean);
+    if (compiled?.issue && hasFields) setConfirmation('partial');
+    else if (!compiled?.issue && draft.text && draft.text !== compiled?.text)
+      setConfirmation('replace');
     else switchToText();
   };
   const filled = draft.template

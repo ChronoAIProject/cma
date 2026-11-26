@@ -185,6 +185,60 @@ it('cancels a connection intent on Escape, then verifies and resumes the same ad
     expect.objectContaining({ idempotencyKey: 'resume-key' }),
   );
 });
+
+it('discards a repository-only creation after leaving a missing GitHub connection', async () => {
+  const create = vi
+    .fn()
+    .mockResolvedValueOnce({ id: running.id })
+    .mockResolvedValueOnce({ id: 'new-operation' });
+  vi.spyOn(connectionClient, 'check').mockResolvedValue({
+    owner: 'owner',
+    ready: false,
+    checked_at: '2026-11-24T00:00:00Z',
+    services: [
+      {
+        service: 'api-github',
+        display_name: 'GitHub',
+        kind: 'nyxid',
+        state: 'missing',
+        connection_mode: 'hosted',
+      },
+    ],
+  });
+  show(
+    agentClient({
+      createAgentLifecycle: create,
+      readAgentLifecycle: async (id) =>
+        id === running.id
+          ? {
+              ...running,
+              status: 'waiting_for_connection',
+              connection: {
+                services: ['api-github'],
+                target: { type: 'sandbox_profile', profile: { id: 'profile-owned', revision: 1 } },
+              },
+            }
+          : { ...running, id },
+    }),
+  );
+  const actor = await review();
+  await actor.click(screen.getByRole('button', { name: 'Create agent' }));
+  const wizard = await screen.findByRole('dialog', { name: 'Connect required services' });
+  await actor.click(within(wizard).getByRole('button', { name: 'Close' }));
+  expect(screen.getByRole('button', { name: 'Connect services' })).toBeVisible();
+  await actor.click(screen.getByRole('button', { name: 'Discard creation' }));
+  await actor.click(screen.getByRole('button', { name: 'Discard creation' }));
+  expect(screen.getByLabelText('GitHub repository (optional)')).toHaveValue('');
+  expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toBeNull();
+
+  await actor.click(screen.getByRole('button', { name: 'Create agent' }));
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+  expect(create.mock.calls[1]?.[0]).not.toHaveProperty('repository');
+  expect(create.mock.calls[1]?.[1].idempotencyKey).not.toBe(
+    create.mock.calls[0]?.[1].idempotencyKey,
+  );
+});
+
 it('reports status failures and permits retry without submitting creation again', async () => {
   sessionStorage.setItem(
     lifecycleStorageKey('owner'),

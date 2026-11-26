@@ -1,12 +1,16 @@
 use super::{
-    fake_provider::FakeProviderConfig, recording_fixtures, relay_support::Envelope, support::App,
+    fake_provider::FakeProviderConfig,
+    recording_fixtures,
+    relay_support::{now, Envelope},
+    support::{threaded_lark_envelope, App},
 };
 use cmaeg::{
     activity::{Change, ChannelActivity, ConsumerState},
     delivery::intents::DeliveryCommand,
     turns::{observer::ActivityObserver, outcomes::TurnOutcome},
 };
-use cmaeg_core::ids::{ConsumerId, EventId, RecordId};
+use cmaeg_core::ids::{ConsumerId, EventId, MessageRef, RecordId};
+use cmaeg_core::seal::{ReplyAddress, ReplyTargetRef};
 use futures_util::future::BoxFuture;
 use serde_json::json;
 use std::{
@@ -254,6 +258,142 @@ async fn progress_and_tool_reply_do_not_invent_produced_or_duplicate_the_final_a
 }
 
 #[tokio::test]
+async fn live_targeted_reply_preserves_event_receipt_and_suppresses_automatic_final() {
+    for targeted in [false, true] {
+        let lifecycle = Arc::new(Lifecycle::default());
+        let terminal = Arc::new(tokio::sync::Semaphore::new(0));
+        let mut app = App::observed_threaded_lark(
+            FakeProviderConfig {
+                terminal_gate: Some(terminal.clone()),
+                frames: Some(vec![
+                    json!({"type":"response.created","response":{"id":"resp_live_answer","thread_reply":true}}),
+                    json!({"type":"response.completed","response":{"id":"resp_live_answer","output":[{"type":"message","id":"item_live_answer","content":[{"type":"output_text","text":"automatic answer"}]}]}}),
+                ]),
+                ..Default::default()
+            },
+            lifecycle.clone(),
+        )
+        .await;
+        assert_eq!(
+            app.fixture.send(&threaded_lark_envelope()).await.status(),
+            202
+        );
+        app.fake.wait(1).await;
+        assert_eq!(app.fake.texts(), ["Working on it…"]);
+
+        let row = lifecycle.row(&app);
+        assert_eq!(
+            row.consumers[0].response_id.as_deref(),
+            Some("resp_live_answer")
+        );
+        assert!(row.consumers[0].produced_at.is_none());
+        let answer = if targeted {
+            let client = &app.fixture.client;
+            let context = app
+                .provider
+                .admitted()
+                .into_iter()
+                .find(|request| request.path == "/api/v2/responses")
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_str(&context.body).unwrap();
+            let event = body["event_context"]["event_ref"].as_str().unwrap();
+            let target = client
+                .post(format!("{}/v1/events/{event}/reply-target", app.base))
+                .bearer_auth(&app.key)
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap();
+            let status = target.status();
+            let target: serde_json::Value = target.json().await.unwrap();
+            assert_eq!(status, 200, "{target}");
+            let target: ReplyTargetRef = target["reply_target_ref"]
+                .as_str()
+                .unwrap()
+                .parse()
+                .unwrap();
+            let sealed = target
+                .open(&app.fixture.state.master_keys, now())
+                .unwrap()
+                .payload;
+            assert_eq!(sealed.event.event_id, app.event.event_id);
+            assert_eq!(sealed.event.channel_id, app.event.channel_id);
+            assert_eq!(
+                sealed.event.consumer.as_ref().filter(|id| !id.is_default()),
+                app.event.consumer.as_ref()
+            );
+            assert!(matches!(
+                sealed.event.reply,
+                ReplyAddress::NyxidRelay { thread_reply: true, ref route_id, ref message_id, .. }
+                    if route_id == "route-1" && message_id == "message-1"
+            ));
+            let response = client
+                .post(format!(
+                    "{}/v1/reply-targets/{}/messages",
+                    app.base,
+                    target.as_str()
+                ))
+                .bearer_auth(&app.key)
+                .header("idempotency-key", "live-answer")
+                .json(&json!({"text":"targeted answer","thread_reply":true}))
+                .send()
+                .await
+                .unwrap();
+            let status = response.status();
+            let receipt: serde_json::Value = response.json().await.unwrap();
+            assert_eq!(status, 200, "{receipt}");
+            assert_eq!(receipt["delivery"]["outcome"], "confirmed");
+            assert_eq!(receipt["delivery"]["platform_message_id"], "platform-2");
+            let message: MessageRef = receipt["message_ref"].as_str().unwrap().parse().unwrap();
+            let reference = message
+                .open(&app.fixture.state.master_keys)
+                .unwrap()
+                .payload;
+            assert_eq!(reference.event_id, app.event.event_id);
+            assert_eq!(reference.channel_id, app.event.channel_id);
+            assert_eq!(reference.consumer, sealed.event.consumer);
+            assert_eq!(reference.platform_message_id, "platform-2");
+            assert_eq!(reference.route_id, "route-1");
+            "targeted answer"
+        } else {
+            "automatic answer"
+        };
+
+        terminal.add_permits(1);
+        assert!(
+            app.tracker
+                .drain(Instant::now() + Duration::from_secs(10))
+                .await
+        );
+        app.drain().await;
+        assert_eq!(app.fake.texts(), ["Working on it…", answer]);
+        let requests = app.fake.requests.lock().unwrap();
+        assert!(requests
+            .iter()
+            .all(|request| request.body["message_id"] == "message-1"
+                && request.body["thread_reply"] == true));
+        let row = lifecycle.row(&app);
+        let consumer = &row.consumers[0];
+        assert_eq!(consumer.state, ConsumerState::Completed);
+        assert_eq!(consumer.response_id.as_deref(), Some("resp_live_answer"));
+        assert_eq!(consumer.deliveries.len(), 2);
+        let ack = &consumer.deliveries[0];
+        assert_eq!(ack.step, "ack");
+        assert_eq!(ack.outcome, "confirmed");
+        assert!(ack.answer_response_id.is_none());
+        let answer = &consumer.deliveries[1];
+        assert_eq!(answer.destination, "origin");
+        assert_eq!(answer.outcome, "confirmed");
+        assert_eq!(answer.platform_message_id.as_deref(), Some("platform-2"));
+        assert_eq!(answer.step, if targeted { "tool_reply" } else { "answer" });
+        assert_eq!(
+            answer.answer_response_id.as_deref(),
+            (!targeted).then_some("resp_live_answer")
+        );
+    }
+}
+
+#[tokio::test]
 async fn terminal_production_stays_with_its_consumer_and_response() {
     let lifecycle = Arc::new(Lifecycle::default());
     let mut app = App::observed(0, lifecycle.clone()).await;
@@ -280,6 +420,8 @@ async fn terminal_production_stays_with_its_consumer_and_response() {
                     turn: turn.clone(),
                     outcome,
                     answer_response_id: Some(response.into()),
+                    accepted_deadline: None,
+                    recovery: None,
                 })
                 .await
                 .unwrap();

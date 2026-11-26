@@ -1,0 +1,20 @@
+{
+  "http_refusal": {
+    "status": 409,
+    "content_type": "application/problem+json",
+    "body": {
+      "type": "https://spec.chrono-ai.fun/cma/1.0/problems/external-approval-capability-required",
+      "title": "external approval capability required",
+      "status": 409,
+      "detail": "This conversation requires external approval support. Reload with a compatible client.",
+      "code": "external_approval_capability_required"
+    }
+  },
+  "stream_error": {
+    "event": "cma.agent.error",
+    "data": {
+      "code": "external_approval_capability_required",
+      "message": "This conversation requires external approval support. Reload with a compatible client."
+    }
+  }
+}

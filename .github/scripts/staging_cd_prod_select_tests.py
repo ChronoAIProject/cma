@@ -199,6 +199,58 @@ class EvidenceTests(unittest.TestCase):
         select.staging_verified({"web": WEB}, self.staging_runs(runs, artifacts), download)
         self.assertEqual([c.args[0]["id"] for c in download.call_args_list], [1, 2])
 
+    def test_automatic_retry_evidence_counts_for_its_own_lane_only(self):
+        runs = [run_view(30)]
+        artifacts = {30: [artifact(1, 30, name="staging-deployment-30-1-am-retry"),
+                          artifact(2, 30, name="staging-deployment-30-1-web"),
+                          artifact(3, 30, name="staging-deployment-30-1-web-retry")]}
+        download = Mock(return_value=evidence({"web": {"state": "controller-verified", "image": WEB}}))
+        self.assertEqual(select.staging_verified({"web": WEB}, self.staging_runs(runs, artifacts), download),
+                         {"web"})
+        # The AM retry archive is another component's lane and is never downloaded.
+        self.assertEqual([c.args[0]["id"] for c in download.call_args_list], [2])
+        self.assertEqual(select.evidence_lane("staging-deployment-30-1-runtime-omarchy-retry", 30),
+                         "runtime-omarchy")
+        self.assertEqual(select.evidence_lane("staging-deployment-30-1-am", 30), "am")
+
+    def two_workflow_runs(self, staging, redeploy, artifacts):
+        """A request stub listing staging-cd and redeploy-staging runs separately."""
+        listings = {"staging-cd.yml": staging, "redeploy-staging.yml": redeploy}
+        order = []
+
+        def request(path):
+            if path.startswith("actions/workflows/"):
+                name = path.split("/")[2]
+                page = int(path.rsplit("page=", 1)[1])
+                return {"workflow_runs": listings[name][(page - 1) * 100:page * 100]}
+            if path.startswith("actions/runs/") and "/artifacts" in path:
+                order.append(int(path.split("/")[2]))
+                return {"artifacts": artifacts.get(int(path.split("/")[2]), [])}
+            raise AssertionError(path)
+        return request, order
+
+    def test_redeploy_evidence_is_not_starved_behind_staging_runs(self):
+        # Run 45290771313's AM was recovered by redeploy-staging 45297741449. Its
+        # evidence sat behind every staging CD run until the listing bound refused.
+        # Staging CD runs carry even ids; the one redeploy run is odd, between them.
+        staging = [run_view(10_000 - 2 * i) for i in range(select.MAX_RUN_LISTINGS + 50)]
+        redeploy = [run_view(9_991, path=".github/workflows/redeploy-staging.yml", event="workflow_dispatch")]
+        artifacts = {9_991: [artifact(1, 9_991, name="staging-deployment-9991-1-am")]}
+        request, order = self.two_workflow_runs(staging, redeploy, artifacts)
+        download = Mock(return_value=evidence({"am": {"state": "controller-verified", "image": WEB}}))
+        self.assertEqual(select.staging_verified({"am": WEB}, request, download), {"am"})
+        # Newest first across both workflows: five newer staging runs, then the redeploy.
+        self.assertEqual(order, [10_000 - 2 * i for i in range(5)] + [9_991])
+
+    def test_a_redeploy_run_listed_under_the_other_workflow_is_not_trusted(self):
+        staging = [run_view(20)]
+        redeploy = [run_view(21)]  # claims the staging-cd path from the redeploy listing
+        artifacts = {21: [artifact(1, 21, name="staging-deployment-21-1-am")]}
+        request, order = self.two_workflow_runs(staging, redeploy, artifacts)
+        download = Mock(return_value=evidence({"am": {"state": "controller-verified", "image": WEB}}))
+        self.assertEqual(select.staging_verified({"am": WEB}, request, download), set())
+        self.assertEqual(order, [20])
+
     def test_evidence_search_is_bounded(self):
         runs = [run_view(5000 - i) for i in range(select.MAX_RUN_LISTINGS + 1)]
         with self.assertRaises(Refusal):

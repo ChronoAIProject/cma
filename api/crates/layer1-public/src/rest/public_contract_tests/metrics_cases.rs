@@ -6,11 +6,13 @@ use std::sync::Arc;
 const ID: &str = "umr_00000000000000000000000000000001";
 const SANDBOX: &str = "sbx_00000000000000000000000000000001";
 struct Store {
+    initial: bool,
     mode: String,
 }
 impl Store {
     fn check(&self) -> Result<()> {
         match self.mode.as_str() {
+            "expired" if self.initial => Err(MetricsError::Expired),
             "busy" => Err(MetricsError::Busy),
             "unavailable" => Err(MetricsError::Unavailable),
             "missing" => Err(MetricsError::NotFound),
@@ -51,19 +53,23 @@ impl Store {
             tracking_started_at: Some(1000),
             warnings: vec!["measurement_coverage_incomplete".into()],
             source_health: "partial".into(),
-            summary: Some(Summary {
-                sandbox_count: 1,
-                running_count: 1,
-                measured: Some(row().measured),
-                infrastructure: scope.admin.then(|| Infrastructure {
-                    state: "partial".into(),
-                    unproven_count: 1,
-                    unassigned_pool: [Some(0.2), Some(1024.), None],
-                    unattributed: [Some(0.1), None, Some(2048.)],
-                    observed_at: Some(1040),
-                }),
-                ..Default::default()
-            }),
+            summary: if self.initial && self.mode == "pending" {
+                None
+            } else {
+                Some(Summary {
+                    sandbox_count: 1,
+                    running_count: 1,
+                    measured: Some(row().measured),
+                    infrastructure: scope.admin.then(|| Infrastructure {
+                        state: "partial".into(),
+                        unproven_count: 1,
+                        unassigned_pool: [Some(0.2), Some(1024.), None],
+                        unattributed: [Some(0.1), None, Some(2048.)],
+                        observed_at: Some(1040),
+                    }),
+                    ..Default::default()
+                })
+            },
             poll_url: format!(
                 "/api/v1/{}usage/metrics/reports/{ID}",
                 if scope.admin { "admin/" } else { "" }
@@ -130,6 +136,10 @@ fn row() -> Row {
 }
 #[async_trait]
 impl MetricsStore for Store {
+    async fn initial_snapshot_generation(&self, _: &Report) -> Result<u64> {
+        self.check()?;
+        Ok(1)
+    }
     async fn latest(&self, scope: &Scope, selection: &ViewSelection, _: u64) -> Result<ReportView> {
         self.check()?;
         let mut report = self.report(scope.clone());
@@ -301,20 +311,27 @@ impl MetricsStore for Store {
             lines: vec![Line {
                 id: "total".into(),
                 label: "Total".into(),
-                points: vec![Point {
-                    from: 1000,
-                    to: 1060,
-                    mean: None,
-                    min: None,
-                    max: None,
-                    covered_seconds: 0.,
-                    expected_seconds: 60.,
-                    unknown_mapping_seconds: 30.,
-                    numerator: None,
-                    denominator: None,
-                    reason: Some("unattributed".into()),
-                    excluded_count: 1,
-                }],
+                points: if self.initial {
+                    series::buckets(&[], q.metric, r.effective_range, r.query.step_seconds)
+                        .into_iter()
+                        .map(series::Bucket::point)
+                        .collect()
+                } else {
+                    vec![Point {
+                        from: 1000,
+                        to: 1060,
+                        mean: None,
+                        min: None,
+                        max: None,
+                        covered_seconds: 0.,
+                        expected_seconds: 60.,
+                        unknown_mapping_seconds: 30.,
+                        numerator: None,
+                        denominator: None,
+                        reason: Some("unattributed".into()),
+                        excluded_count: 1,
+                    }]
+                },
             }],
         })
     }
@@ -330,6 +347,8 @@ pub(super) fn scenario(name: &str) -> Option<Scenario> {
     let tail = name.strip_prefix("metrics_")?;
     let admin = tail.starts_with("admin_");
     let mode = tail.strip_prefix("admin_").unwrap_or(tail);
+    let initial = mode.starts_with("initial_");
+    let mode = mode.strip_prefix("initial_").unwrap_or(mode);
     let subject = if mode == "anonymous" {
         None
     } else {
@@ -348,6 +367,7 @@ pub(super) fn scenario(name: &str) -> Option<Scenario> {
     };
     Some(Scenario {
         router: super::super::sandbox_metrics_router(MetricsService::new(Arc::new(Store {
+            initial,
             mode: mode.into(),
         }))),
         subject,

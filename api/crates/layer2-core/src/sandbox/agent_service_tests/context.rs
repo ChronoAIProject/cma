@@ -407,6 +407,7 @@ async fn paused_context() -> (ContextHarness, Agent) {
         .store
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision: revision,
             sandbox: Box::new(sandbox),
             event_at: NOW.into(),

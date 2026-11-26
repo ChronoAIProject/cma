@@ -1,0 +1,289 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "privacy-export-inventory",
+      "operation": "GET /api/v1/account/privacy-export",
+      "scenario": "privacy_export_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/privacy-export",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "owner_subject": "owner-a",
+          "data_class": "retained_conversation",
+          "agents": [
+            {
+              "id": "agt_shared_read",
+              "title": "Agent agt_shared_read"
+            },
+            {
+              "id": "agt_sibling",
+              "title": "Agent agt_sibling"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "privacy-export-inventory-unverified",
+      "operation": "GET /api/v1/account/privacy-export",
+      "scenario": "privacy_export_unverified",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/privacy-export",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/privacy-export",
+          "title": "privacy export",
+          "status": 403,
+          "detail": "Sign in as the personal owner to export account data.",
+          "code": "privacy_export_owner_session_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "privacy-export-inventory-invalid",
+      "operation": "GET /api/v1/account/privacy-export",
+      "scenario": "privacy_export_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/privacy-export?cursor=invalid%2Fcursor",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/privacy-export",
+          "title": "privacy export",
+          "status": 400,
+          "detail": "The export page is invalid.",
+          "code": "privacy_export_invalid_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "privacy-export-transcript",
+      "operation": "GET /api/v1/account/privacy-export/agents/{id}/transcript",
+      "scenario": "privacy_export_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/privacy-export/agents/agt_shared_read/transcript?limit=32",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "owner_subject": "owner-a",
+          "manifest": {
+            "format": "cma.retained-conversation-page",
+            "version": 1,
+            "agent_id": "agt_shared_read",
+            "through_seq": 9,
+            "coverage": {
+              "raw_history": false,
+              "completeness": "not_certified",
+              "retention_window": "not_reported_by_source",
+              "gaps": "known_output_gaps_are_marked",
+              "includes": [
+                "recorded_user_messages",
+                "recorded_assistant_messages",
+                "turn_outcomes"
+              ],
+              "excludes": [
+                "raw_runtime_records",
+                "tool_records",
+                "unrecorded_output",
+                "private_metadata"
+              ]
+            },
+            "records": 2,
+            "size_bytes": 322,
+            "sha256": "361a90ad2b308455cebbfecf8d424803b0584ea68deb901fd8e8abbcd9c80221",
+            "next": null,
+            "window": {
+              "turn": null,
+              "after": null,
+              "through": null,
+              "limit": 32
+            }
+          },
+          "payload": "{\"type\":\"turn\",\"turn_sequence\":3,\"started_at\":\"2026-01-02T03:04:05Z\",\"outcome\":\"failed\",\"finished_at\":\"2026-01-02T03:04:05Z\",\"additional_output_retained\":false,\"known_output_gap\":false}\n{\"type\":\"message\",\"turn_sequence\":3,\"sequence\":5,\"role\":\"user\",\"content\":\"Recorded café message\",\"appended_at\":\"2026-01-02T03:04:05Z\"}\n"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "privacy-export-transcript-known-gap",
+      "operation": "GET /api/v1/account/privacy-export/agents/{id}/transcript",
+      "scenario": "privacy_export_gap",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/privacy-export/agents/agt_shared_read/transcript?limit=32",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "owner_subject": "owner-a",
+          "manifest": {
+            "format": "cma.retained-conversation-page",
+            "version": 1,
+            "agent_id": "agt_shared_read",
+            "through_seq": 9,
+            "coverage": {
+              "raw_history": false,
+              "completeness": "not_certified",
+              "retention_window": "not_reported_by_source",
+              "gaps": "known_output_gaps_are_marked",
+              "includes": [
+                "recorded_user_messages",
+                "recorded_assistant_messages",
+                "turn_outcomes"
+              ],
+              "excludes": [
+                "raw_runtime_records",
+                "tool_records",
+                "unrecorded_output",
+                "private_metadata"
+              ]
+            },
+            "records": 2,
+            "size_bytes": 321,
+            "sha256": "804d012b372ff0ad3cdb78411d69051c061e724f20cc821b4e526b39269f3770",
+            "next": null,
+            "window": {
+              "turn": null,
+              "after": null,
+              "through": null,
+              "limit": 32
+            }
+          },
+          "payload": "{\"type\":\"turn\",\"turn_sequence\":3,\"started_at\":\"2026-01-02T03:04:05Z\",\"outcome\":\"failed\",\"finished_at\":\"2026-01-02T03:04:05Z\",\"additional_output_retained\":false,\"known_output_gap\":true}\n{\"type\":\"message\",\"turn_sequence\":3,\"sequence\":5,\"role\":\"user\",\"content\":\"Recorded café message\",\"appended_at\":\"2026-01-02T03:04:05Z\"}\n"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "privacy-export-transcript-unverified",
+      "operation": "GET /api/v1/account/privacy-export/agents/{id}/transcript",
+      "scenario": "privacy_export_unverified",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/privacy-export/agents/agt_shared_read/transcript?limit=32",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/privacy-export",
+          "title": "privacy export",
+          "status": 403,
+          "detail": "Sign in as the personal owner to export account data.",
+          "code": "privacy_export_owner_session_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "privacy-export-transcript-legacy",
+      "operation": "GET /api/v1/account/privacy-export/agents/{id}/transcript",
+      "scenario": "privacy_export_legacy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/privacy-export/agents/agt_shared_read/transcript?limit=32",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/privacy-export",
+          "title": "privacy export",
+          "status": 503,
+          "detail": "This history cannot currently be exported within the source limits.",
+          "code": "privacy_export_source_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "privacy-export-transcript-large",
+      "operation": "GET /api/v1/account/privacy-export/agents/{id}/transcript",
+      "scenario": "privacy_export_large",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/privacy-export/agents/agt_shared_read/transcript?limit=32",
+        "headers": {}
+      },
+      "response": {
+        "status": 413,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/privacy-export",
+          "title": "privacy export",
+          "status": 413,
+          "detail": "The export page exceeds its delivery limit. Try a smaller page.",
+          "code": "privacy_export_page_too_large"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

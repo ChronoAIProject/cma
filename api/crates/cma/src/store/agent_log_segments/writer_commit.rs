@@ -48,6 +48,7 @@ pub(in crate::store) struct PreparedPublication {
     before: Head,
     batch: EncodedBatch,
     plan: PublicationPlan,
+    active_proof: Option<super::active_proof::ActiveProof>,
     delta: ProjectionDelta,
     evidence: Vec<planning::EvidenceWrite>,
     receipt: Publication,

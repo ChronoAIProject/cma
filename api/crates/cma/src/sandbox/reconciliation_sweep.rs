@@ -252,8 +252,7 @@ impl Sweep {
             Phase::Policy => {
                 self.explicit_updates_only = !self.platform_stop
                     && reconciler.automatic_pause_threshold(now).await?.is_none();
-                self.phase = if !self.explicit_updates_only || reconciler.runtime_version.is_some()
-                {
+                self.phase = if !self.explicit_updates_only || reconciler.released.is_some() {
                     Phase::Candidates
                 } else {
                     Phase::Complete

@@ -17,6 +17,9 @@ mod evidence;
 mod model;
 mod mongo;
 mod nyxid;
+mod runtime_scope;
+pub(crate) use runtime_scope::{FundedRuntime, FundingRuntime};
+mod recovery;
 #[cfg(test)]
 mod tests;
 pub(crate) use model::*;
@@ -49,10 +52,10 @@ pub(crate) trait FundingStateStore: Send + Sync {
 #[async_trait]
 pub(crate) trait FundingControl: Send + Sync {
     /// Confirms an exact incarnation's native stop deadline, retaining its home.
-    async fn deadline(&self, sandbox: &Sandbox, until: u64) -> Result<(), FundingError>;
+    async fn deadline(&self, runtime: FundedRuntime<'_>) -> Result<(), FundingError>;
     async fn pause(
         &self,
-        sandbox: &Sandbox,
+        runtime: FundingRuntime<'_>,
         detail: &str,
         now: SystemTime,
     ) -> Result<(), FundingError>;
@@ -128,7 +131,10 @@ impl ProviderFundingAdapter {
         state.retry_at = seconds(now).saturating_add(delay);
         state.last_error = Some(error.to_string());
         self.state.save(state).await?;
-        self.control.pause(sandbox, &error.to_string(), now).await
+        if let Some(runtime) = FundingRuntime::for_state(state, sandbox)? {
+            self.control.pause(runtime, &error.to_string(), now).await?;
+        }
+        Ok(())
     }
 
     async fn reconcile(
@@ -142,17 +148,9 @@ impl ProviderFundingAdapter {
         }
         let id = SandboxId(state.sandbox_id.clone());
         let Some(sandbox) = self.state.sandbox(&id).await? else {
-            // Ledger survives purge. Never infer a zero tail from missing runtime records.
-            self.emit_evidence(&mut state, seconds(now)).await?;
-            state.retained_disk_gib = 0;
-            state.stopped = true;
-            state.retry_at = seconds(now).saturating_add(60);
-            if !state.windows.is_empty() || state.pending.is_some() {
-                state.last_error =
-                    Some("purged Sandbox has unresolved funding or retained evidence".into());
-            }
-            return self.state.save(&mut state).await;
+            return self.reconcile_missing(state, now).await;
         };
+        runtime_scope::require_identity(&state, &sandbox)?;
         if state.pending.is_some() {
             if let Err(error) = self.recover_pending(&mut state).await {
                 self.failure(&sandbox, &mut state, &error, now).await?;
@@ -199,11 +197,13 @@ impl ProviderFundingAdapter {
             self.failure(&sandbox, &mut state, &error, now).await?;
             return Err(error);
         }
-        if sandbox.runtime.is_some() && !state.stopped {
+        if !replacement_pending && sandbox.runtime.is_some() && !state.stopped {
             if let Some(receipt) = &state.current {
                 if receipt.covered_until > seconds(now) {
-                    if let Err(error) = self.control.deadline(&sandbox, receipt.covered_until).await
-                    {
+                    let runtime = FundingRuntime::for_state(&state, &sandbox)?
+                        .ok_or(FundingError::Conflict)?
+                        .confirmed(receipt)?;
+                    if let Err(error) = self.control.deadline(runtime).await {
                         self.failure(&sandbox, &mut state, &error, now).await?;
                         return Err(error);
                     }
@@ -274,15 +274,19 @@ impl SandboxFundingAdapter for ProviderFundingAdapter {
             ));
         }
         if sandbox.runtime.is_some() {
-            self.control
-                .deadline(sandbox, receipt.covered_until)
-                .await?;
+            let runtime = FundingRuntime::for_state(&state, sandbox)?
+                .ok_or(FundingError::Conflict)?
+                .confirmed(receipt)?;
+            self.control.deadline(runtime).await?;
         }
         Ok(Some(receipt.covered_until))
     }
 
     async fn settle(&self, sandbox: &Sandbox, now: SystemTime) -> Result<(), FundingError> {
         if let Some(mut state) = self.state.load(&sandbox.id).await? {
+            if !runtime_scope::completion_applies(&state, sandbox)? {
+                return Ok(());
+            }
             if state.unbilled_generation.is_some() {
                 return Ok(());
             }

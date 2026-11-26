@@ -1,4 +1,5 @@
 import type { Plugin } from 'vite';
+import { isPromotableVersion } from '../src/shell/releaseVersion';
 
 export interface BuildIdentity {
   readonly version: string;
@@ -15,11 +16,10 @@ export function buildIdentity(env: Readonly<Record<string, string | undefined>>)
   const version = env.CHRONO_BUILD?.trim() ?? 'dev';
   const revision = env.CHRONO_BUILD_SHA?.trim() ?? '';
   if (mode === 'promotable') {
-    const release = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
     if (!/^[0-9a-f]{40}$/.test(revision)) {
       throw new Error('Promotable web artifacts require CHRONO_BUILD_SHA with a full commit SHA');
     }
-    if (!release.test(version) && version !== `git-${revision.slice(0, 12)}`) {
+    if (!isPromotableVersion(version, revision)) {
       throw new Error(
         'Promotable web artifacts require a release version or matching git-<12-char SHA>',
       );

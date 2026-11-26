@@ -73,7 +73,7 @@ pub(super) async fn admit(
         && super::super::registration_capacity::is_public(
             &store.sandbox_admissions,
             &admission.sandbox.owner,
-            session,
+            Some(session),
         )
         .await
         .map_err(AdmissionError::Driver)?

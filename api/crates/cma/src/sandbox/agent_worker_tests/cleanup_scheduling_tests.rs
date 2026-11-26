@@ -136,3 +136,5 @@ async fn cleanup_continuation_cannot_take_another_live_claim() {
         AgentWorkStep::RemoveHome
     );
 }
+
+mod durable_control_tests;

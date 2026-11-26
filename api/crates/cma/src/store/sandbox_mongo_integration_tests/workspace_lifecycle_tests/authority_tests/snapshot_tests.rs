@@ -182,6 +182,7 @@ async fn transactional_snapshot_save_preserves_renewal_and_literal_data() {
     first
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision: revision,
             sandbox: Box::new(sandbox.clone()),
             event_at: at(0),

@@ -25,6 +25,7 @@ use crate::AuthenticatedResourceCaller;
 pub fn resource_access_router(service: Arc<ResourceAccessService>) -> Router {
     Router::new()
         .merge(super::organizations::routes())
+        .merge(super::resource_revocations::routes())
         .merge(super::agent_share_links::routes())
         .route("/api/v1/resource-access/{kind}/{id}", get(effective))
         .route(
@@ -58,7 +59,7 @@ fn target(kind: &str, id: String) -> Result<ResourceTarget, ResourceProblem> {
         _ => Err(invalid()),
     }
 }
-fn selector(kind: &str, id: String) -> Result<ResourceSelector, ResourceProblem> {
+pub(super) fn selector(kind: &str, id: String) -> Result<ResourceSelector, ResourceProblem> {
     match target(kind, id)? {
         ResourceTarget::Agent { agent_id } => Ok(ResourceSelector::Agent { agent_id }),
         ResourceTarget::Sandbox { sandbox_id } => Ok(ResourceSelector::Sandbox { sandbox_id }),
@@ -204,6 +205,7 @@ pub(crate) async fn read(
     params(("kind" = String, Path), ("id" = String, Path), ("Idempotency-Key" = String, Header)), request_body = CreateShareBody,
     responses((status = 200, body = ShareReceiptView), (status = 409, body = super::ProblemDocument)))]
 pub(crate) async fn create(
+    revocations: Option<super::resource_revocations::Revocations>,
     State(service): State<Arc<ResourceAccessService>>,
     caller: AuthenticatedResourceCaller,
     Path((kind, id)): Path<(String, String)>,
@@ -215,6 +217,7 @@ pub(crate) async fn create(
         Err(problem) => return problem.into_response(),
     };
     change(
+        revocations,
         service,
         caller,
         (kind, id),
@@ -230,8 +233,9 @@ pub(crate) async fn create(
 
 #[utoipa::path(patch, path = "/api/v1/resource-shares/{kind}/{id}/{share_id}", tag = "resource-access",
     params(("kind" = String, Path), ("id" = String, Path), ("share_id" = String, Path), ("Idempotency-Key" = String, Header)), request_body = UpdateShareBody,
-    responses((status = 200, body = ShareReceiptView), (status = 409, body = super::ProblemDocument)))]
+    responses((status = 200, body = super::resource_revocations::RevocationAwareSuccess<ShareReceiptView>), (status = 409, body = super::ProblemDocument)))]
 pub(crate) async fn update(
+    revocations: Option<super::resource_revocations::Revocations>,
     State(service): State<Arc<ResourceAccessService>>,
     caller: AuthenticatedResourceCaller,
     Path((kind, id, share_id)): Path<(String, String, String)>,
@@ -243,6 +247,7 @@ pub(crate) async fn update(
         Err(problem) => return problem.into_response(),
     };
     change(
+        revocations,
         service,
         caller,
         (kind, id),
@@ -258,8 +263,9 @@ pub(crate) async fn update(
 
 #[utoipa::path(delete, path = "/api/v1/resource-shares/{kind}/{id}/{share_id}", tag = "resource-access",
     params(("kind" = String, Path), ("id" = String, Path), ("share_id" = String, Path), ("Idempotency-Key" = String, Header), ("expected_revision" = u64, Query)),
-    responses((status = 200, body = ShareReceiptView), (status = 409, body = super::ProblemDocument)))]
+    responses((status = 200, body = super::resource_revocations::RevocationAwareSuccess<ShareReceiptView>), (status = 409, body = super::ProblemDocument)))]
 pub(crate) async fn revoke(
+    revocations: Option<super::resource_revocations::Revocations>,
     State(service): State<Arc<ResourceAccessService>>,
     caller: AuthenticatedResourceCaller,
     Path((kind, id, share_id)): Path<(String, String, String)>,
@@ -271,6 +277,7 @@ pub(crate) async fn revoke(
         Err(_) => return invalid().into_response(),
     };
     change(
+        revocations,
         service,
         caller,
         (kind, id),
@@ -285,6 +292,7 @@ fn decode<T>(body: Result<RequestBody<T>, BodyProblem>) -> Result<T, BodyProblem
     body.and_then(|body| body.into_parts().0)
 }
 async fn change(
+    revocations: Option<super::resource_revocations::Revocations>,
     service: Arc<ResourceAccessService>,
     caller: AuthenticatedResourceCaller,
     (kind, id): (String, String),
@@ -300,19 +308,41 @@ async fn change(
         Ok(selector) => selector,
         Err(problem) => return problem.into_response(),
     };
+    let command = ShareCommand {
+        selector,
+        change,
+        expected_share_revision,
+        idempotency_key: key,
+    };
+    if matches!(
+        command.change,
+        ShareChange::Revoke { .. } | ShareChange::SetMode { .. }
+    ) {
+        if let Some(axum::Extension(revocations)) = revocations {
+            return match revocations
+                .request(
+                    &caller.context,
+                    caller.credential.as_ref().map(|c| c.value()),
+                    command,
+                )
+                .await
+            {
+                Ok(value) => match value.receipt.clone() {
+                    Some(receipt) => super::resource_revocations::completed(
+                        &value,
+                        ShareReceiptView::from(receipt),
+                    ),
+                    None => super::resource_revocations::pending(&value),
+                },
+                Err(error) => super::resource_revocations::problem(error),
+            };
+        }
+    }
     match service
         .change_share(
             &caller.context,
-            caller
-                .credential
-                .as_ref()
-                .map(|credential| credential.value()),
-            ShareCommand {
-                selector,
-                change,
-                expected_share_revision,
-                idempotency_key: key,
-            },
+            caller.credential.as_ref().map(|c| c.value()),
+            command,
         )
         .await
     {

@@ -1,12 +1,13 @@
 import type { SandboxLifecycle, SandboxStatus } from '../api/types';
 import { statusLabel, statusTone } from '../vocabulary/status';
+import {
+  sandboxHasParkedRuntimeUpdate,
+  type SandboxRuntimeObservation,
+} from './parkedRuntimeUpdate';
 
 type Purpose = NonNullable<SandboxLifecycle['operation']>['purpose'];
 
-export interface SandboxStatusObservation {
-  readonly status: SandboxStatus;
-  readonly lifecycle?: { readonly operation?: { readonly purpose: Purpose } };
-}
+export type SandboxStatusObservation = SandboxRuntimeObservation;
 
 const operationStatus = {
   pause: 'pausing',
@@ -48,5 +49,12 @@ export function sandboxStatusPresentation(
   deletionRequested = false,
 ) {
   const status = effectiveStatus(observation, deletionRequested);
+  if (!deletionRequested && sandboxHasParkedRuntimeUpdate(observation))
+    return {
+      status,
+      group: 'needs_attention' as const,
+      label: 'Runtime update needs attention',
+      tone: 'error' as const,
+    };
   return { status, group: groups[status], label: statusLabel(status), tone: statusTone(status) };
 }

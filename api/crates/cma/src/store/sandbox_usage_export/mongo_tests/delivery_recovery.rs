@@ -29,6 +29,7 @@ async fn uncertain_claim_and_ack_recover_from_majority_state_with_original_ident
         .await
         .unwrap();
     assert!(claim.is_err());
+    crate::store::test_visibility::majority_barrier(&f.client, f.db.name()).await;
     let rows = f.db.collection::<Document>(OUTBOX);
     let retained = rows
         .find_one(doc! {"stream_id":&stream,"sequence":1_i64})

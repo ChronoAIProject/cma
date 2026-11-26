@@ -24,28 +24,7 @@ pub(super) fn settlement_requires_live_event_ref(plan: &AdmittedPlan) -> bool {
     )
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExecutionError {
-    Abandoned,
-    IdempotencyConflict,
-    OperationLimit,
-    Invalid,
-    Unavailable,
-    Uncertain,
-    Corrupt,
-    LostLease,
-    Busy,
-    Expired,
-    AuthorityChanged,
-    Unsupported,
-}
-
-/// Capabilities proved against the configured provider, not inferred from a slug.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct RecoverySupport {
-    pub exact_body_idempotency: bool,
-    pub response_replay: bool,
-}
+pub use cmaeg_engine::{ExecutionError, Phase, RecoverySupport};
 
 /// Exact provider body fields. Credentials are injected only at the call site.
 /// No Debug implementation: input and event context can contain private data.
@@ -204,30 +183,6 @@ pub(super) fn delivery_event(
     event
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "state", deny_unknown_fields)]
-pub enum Phase {
-    Pending,
-    Prepared,
-    Starting,
-    Unknown,
-    Accepted {
-        response_id: String,
-        durable_cursor: Option<u64>,
-    },
-    Completed {
-        response_id: String,
-        durable_cursor: Option<u64>,
-    },
-    Refused {
-        code: String,
-    },
-}
-impl Phase {
-    pub fn terminal(&self) -> bool {
-        matches!(self, Self::Completed { .. } | Self::Refused { .. })
-    }
-}
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BodyReference {

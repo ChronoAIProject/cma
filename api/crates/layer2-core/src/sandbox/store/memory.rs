@@ -48,6 +48,8 @@ mod queued_inputs;
 mod queued_inputs_tests;
 mod suggestions;
 use events::{append_sandbox_event, bounded_events};
+mod custom_runtime;
+use custom_runtime::validate_new_sandbox;
 #[cfg(test)]
 mod launch_command_tests;
 mod lifecycle;
@@ -70,6 +72,7 @@ mod retained_recovery_tests;
 mod retained_reopen;
 #[cfg(test)]
 mod retained_reopen_tests;
+mod runtime_activity;
 mod sandbox_controls;
 mod sessions;
 mod targeted_controls;
@@ -163,7 +166,37 @@ impl SandboxStore for InMemorySandboxStore {
         &self,
         id: &SandboxId,
     ) -> Result<Option<crate::sandbox::RetainedReopenReceipt>, SandboxStoreError> {
-        Ok(self.lock().retained_reopen_receipts.get(id).cloned())
+        Ok(self
+            .lock()
+            .retained_reopen_receipts
+            .get(id)
+            .and_then(|receipts| receipts.first())
+            .cloned())
+    }
+
+    async fn retained_reopen_history(
+        &self,
+        id: &SandboxId,
+        key_sha256: Option<&str>,
+    ) -> Result<crate::sandbox::RetainedReopenHistory, SandboxStoreError> {
+        let state = self.lock();
+        let parent = state.sandboxes.get(id).ok_or(SandboxStoreError::NotFound)?;
+        let observed_parent = Some((parent.owner.clone(), parent.revision));
+        let Some(receipts) = state.retained_reopen_receipts.get(id) else {
+            return Ok(crate::sandbox::RetainedReopenHistory {
+                observed_parent,
+                ..Default::default()
+            });
+        };
+        Ok(crate::sandbox::RetainedReopenHistory {
+            observed_parent,
+            latest_revision: receipts.last().map(|receipt| receipt.accepted.revision),
+            replay: receipts
+                .iter()
+                .find(|receipt| key_sha256 == Some(receipt.key_sha256.as_str()))
+                .cloned()
+                .map(Into::into),
+        })
     }
 
     async fn admit_retained_reopen(
@@ -180,8 +213,13 @@ impl SandboxStore for InMemorySandboxStore {
         unpublished_recovery::retained_snapshot(&self.lock(), id)
     }
 
-    fn managed_runtime_version(&self) -> Option<&str> {
-        self.managed_runtime_version.as_deref()
+    fn managed_runtime_version(&self) -> Option<String> {
+        self.managed_runtime_version.clone()
+    }
+
+    #[cfg(test)]
+    fn machine_runtime_target_is_qualified(&self, _id: &SandboxId, target: &str) -> bool {
+        self.managed_machine_runtime_version.as_deref() == Some(target)
     }
 
     async fn unpublished_runtime_recovery_snapshot(
@@ -199,18 +237,7 @@ impl SandboxStore for InMemorySandboxStore {
     }
 
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
-        if !sandbox.credential.service_grants.is_empty()
-            || sandbox.credential.service_scope.is_some()
-        {
-            return Err(SandboxStoreError::InvalidTransaction(
-                "service access requires an existing sandbox and an atomic grant",
-            ));
-        }
-        if sandbox.origin.replay_key().is_some() {
-            return Err(SandboxStoreError::InvalidTransaction(
-                "origin-bound sandboxes require atomic admission",
-            ));
-        }
+        validate_new_sandbox(&sandbox)?;
         let mut state = self.lock();
         if state.sandboxes.values().any(|stored| {
             stored.owner == sandbox.owner
@@ -236,6 +263,9 @@ impl SandboxStore for InMemorySandboxStore {
         let mut state = self.lock();
         if state.sandboxes.get(&id).is_some_and(|current| {
             current.owner != sandbox.owner
+                || current.lifecycle.custom_runtime != sandbox.lifecycle.custom_runtime
+                || current.lifecycle.runtime_migration_admission
+                    != sandbox.lifecycle.runtime_migration_admission
                 || current
                     .validate_retirement_archive_successor(&sandbox)
                     .is_err()
@@ -430,6 +460,7 @@ impl AgentStore for InMemorySandboxStore {
             || current.owner != agent.owner
             || current.profile != agent.profile
             || current.conversation.settings != agent.conversation.settings
+            || current.conversation.turn_timeout != agent.conversation.turn_timeout
             || current.work.resolved_skills != agent.work.resolved_skills
             || current.work.live_skills != agent.work.live_skills
         {
@@ -458,35 +489,7 @@ impl AgentStore for InMemorySandboxStore {
     }
 }
 
-#[async_trait]
-impl SandboxEventStore for InMemorySandboxStore {
-    async fn append_sandbox_event(
-        &self,
-        sandbox_id: &SandboxId,
-        appended_at: String,
-        kind: SandboxEventKind,
-    ) -> Result<SandboxEvent, SandboxStoreError> {
-        let mut state = self.lock();
-        if !state.sandboxes.contains_key(sandbox_id) {
-            return Err(SandboxStoreError::NotFound);
-        }
-        append_sandbox_event(&mut state, sandbox_id, appended_at, kind)
-    }
-
-    async fn sandbox_events(
-        &self,
-        sandbox_id: &SandboxId,
-        after: u64,
-        limit: u16,
-    ) -> Result<Vec<SandboxEvent>, SandboxStoreError> {
-        bounded_events(
-            self.lock().sandbox_events.get(sandbox_id),
-            after,
-            limit,
-            |event| event.seq,
-        )
-    }
-}
+mod sandbox_events;
 
 impl InMemorySandboxStore {
     pub fn with_managed_runtime_version(mut self, version: String) -> Self {

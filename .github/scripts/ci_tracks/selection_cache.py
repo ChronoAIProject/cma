@@ -15,6 +15,9 @@ SCHEMA = 'cma-selection-cache-v3'
 FIELDS = {'base', 'head', 'repo', 'am', 'eg', 'web', 'reasons', 'affected', 'am_packages',
           'eg_packages', 'test_tracks', 'deployables', 'changed_path_count'}
 IMAGES = frozenset(CURRENT)
+# The staging producer runs batch_selection. These scripts serve the CI
+# entrypoints and cannot change a staging comparison or its input map.
+CI_ONLY_SCRIPTS = frozenset({'ci_events.py', 'version_label.py'})
 
 
 def canonical(value):
@@ -59,7 +62,10 @@ def workflow_producer(data, job):
 def fingerprint(root):
     # A policy refresh must miss before a historical decision or input map
     # is loaded, even when a tracked manifest was omitted from its archive.
-    paths = sorted(p for p in (root / '.github/scripts/ci_tracks').glob('*.py') if not p.name.startswith('test_'))
+    paths = sorted(
+        path for path in (root / '.github/scripts/ci_tracks').glob('*.py')
+        if path.name not in CI_ONLY_SCRIPTS and not path.name.startswith('test_')
+    )
     paths += [root / '.github/scripts/ci_tracks/requirements.txt',
               root / 'api/rust-toolchain.toml', root / '.github/scripts/deployables.json',
               root / '.github/scripts/staging_cd_comparisons.py', root / '.github/scripts/staging_cd_admission.py',

@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError, ProtocolError, TimeoutError } from '@cma/client';
+import { ApiError, ProtocolError, TimeoutError, TransportError } from '@cma/client';
 import { AgentLifecycleCreateError } from '../api/client';
 import { agentClient } from '../test/agent';
 import { lifecycleStorageKey, useLifecycleIntent } from './lifecycleIntent';
@@ -137,7 +137,7 @@ it('keeps automatic retry timing and the same retained receipt after a network s
   const create = vi.fn();
   const read = vi
     .fn()
-    .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    .mockRejectedValueOnce(new TransportError('Failed to fetch'))
     .mockResolvedValue({ id: 'operation', status: 'failed', phase: 'sandbox_ready', events: [] });
   const { result } = observe({ createAgentLifecycle: create, readAgentLifecycle: read });
   await act(async () => vi.advanceTimersByTimeAsync(499));

@@ -10,7 +10,7 @@ mod launch;
 mod observe;
 #[path = "routed_problem.rs"]
 mod problem;
-use problem::admission_problem;
+use problem::{admission_problem, routing_problem};
 #[path = "routed_native_lark.rs"]
 mod native_lark;
 #[path = "routed_native_lark_control.rs"]
@@ -39,6 +39,9 @@ use cmaeg_core::{
 };
 use std::{collections::BTreeSet, sync::Arc};
 use tokio::sync::OwnedSemaphorePermit;
+
+pub(crate) const TARGET_UNKNOWN: &str = "target_unknown";
+
 #[derive(Clone)]
 pub struct VerifiedIngress {
     quote: super::quoted_context::Intake,
@@ -53,6 +56,8 @@ mod message_event;
 pub(crate) mod telegram;
 pub struct RoutedIngress {
     plans: PlanStore,
+    profile_resolver: Option<crate::channels::resolver::ChannelResolver>,
+    profile_writes_enabled: bool,
     schedule: ScheduleHandle,
     keys: Arc<MasterKeyRing>,
     records: BTreeSet<String>,
@@ -79,6 +84,8 @@ impl RoutedIngress {
     ) -> Self {
         Self {
             plans,
+            profile_resolver: None,
+            profile_writes_enabled: false,
             schedule,
             keys,
             records,
@@ -98,6 +105,36 @@ impl RoutedIngress {
     pub fn selected(&self, record: &RecordId) -> bool {
         self.records.contains(record.as_str())
     }
+    pub(crate) fn with_profile_resolver(
+        mut self,
+        resolver: crate::channels::resolver::ChannelResolver,
+        writes_enabled: bool,
+    ) -> Self {
+        self.profile_resolver = Some(resolver);
+        self.profile_writes_enabled = writes_enabled;
+        self
+    }
+
+    async fn assign_profile(
+        &self,
+        request: &LaunchRequest,
+    ) -> Result<
+        (
+            LaunchRequest,
+            Option<crate::channels::profile_assignment::Admission>,
+        ),
+        Problem,
+    > {
+        let mut request = request.clone();
+        let admission = crate::channels::profile_assignment::prepare_admission(
+            self.profile_resolver.as_ref(),
+            &mut request,
+            self.profile_writes_enabled,
+        )
+        .await?;
+        Ok((request, admission))
+    }
+
     pub fn with_native_discovery(
         mut self,
         selection: crate::discord::selection::Selection,
@@ -198,14 +235,8 @@ impl RoutedIngress {
                         },
                     )
                 }
-                .map_err(|_| {
-                    Problem::new(
-                        ProblemCode::AdmissionRefused,
-                        403,
-                        "routing_admission_refused",
-                    )
-                })?;
-                let OrdinaryPlan::Routed(plan) = decision else {
+                .map_err(routing_problem)?;
+                let OrdinaryPlan::Routed(mut plan) = decision else {
                     return Ok(None);
                 };
                 if !self.admission_enabled || !self.schedule.accepting() {
@@ -239,7 +270,43 @@ impl RoutedIngress {
                         "routed_delivery_unsupported",
                     )
                 })?;
-                let candidate = if message_plan.is_some() {
+                let (assigned, assignment) = if let Some(target) =
+                    plan.targets.iter_mut().find(|target| {
+                        target.consumer.is_default()
+                            && crate::channels::profile_assignment::requires_guard(
+                                &request.channel.definition,
+                                self.profile_writes_enabled,
+                            )
+                    }) {
+                    let mut desired = request.clone();
+                    desired.consumer = None;
+                    desired.conversation_id = target.event.conversation_id.clone();
+                    let (mut assigned, assignment) = self.assign_profile(&desired).await?;
+                    target.provider = assigned
+                        .channel
+                        .consumer(Some(&target.consumer))
+                        .ok_or_else(|| {
+                            Problem::new(
+                                ProblemCode::AdmissionRefused,
+                                403,
+                                "routing_admission_refused",
+                            )
+                        })?
+                        .provider
+                        .clone();
+                    assigned.consumer = request.consumer.clone();
+                    assigned.conversation_id = request.conversation_id.clone();
+                    (assigned, assignment)
+                } else {
+                    let guard = crate::channels::profile_assignment::requires_guard(
+                        &request.channel.definition,
+                        self.profile_writes_enabled,
+                    )
+                    .then(|| crate::channels::profile_assignment::channel_guard(&request.channel));
+                    (request.clone(), guard)
+                };
+                let request = &assigned;
+                let mut candidate = if message_plan.is_some() {
                     Candidate::prepare_message_event_with_generation(
                         request,
                         &plan,
@@ -278,6 +345,7 @@ impl RoutedIngress {
                     )
                 }
                 .map_err(admission_problem)?;
+                candidate.profile_admission = assignment;
                 let committed = if let Some(github_fence) = github_fence {
                     let authority_guards = vec![
                         crate::records::AuthorityGuard {
@@ -325,6 +393,20 @@ fn ordinary(request: &LaunchRequest) -> bool {
     request.consumer.is_none()
         && request.activity.routing.is_none()
         && !matches!(request.activity.kind, ActivityKind::Interaction(_))
+}
+
+fn validate_legacy_command(request: &LaunchRequest) -> Result<(), Problem> {
+    if ordinary(request) {
+        let definition = &request.channel.definition;
+        cmaeg_core::routing::addressing::validate_legacy_command(
+            definition,
+            &request.activity,
+            definition.source_of(&request.activity.source),
+        )
+        .map_err(routing_plan::PlanError::Routing)
+        .map_err(routing_problem)?;
+    }
+    Ok(())
 }
 #[cfg(test)]
 #[path = "routed_tests.rs"]
