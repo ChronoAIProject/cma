@@ -81,6 +81,33 @@
       "captures": {}
     },
     {
+      "id": "agent-restart-runtime-unsupported",
+      "operation": "POST /api/v1/agents/{id}/restart",
+      "scenario": "owner_agent_restart_runtime_unsupported",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_restart_contract/restart",
+        "headers": {
+          "idempotency-key": "owner-restart"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-restart-runtime-unsupported",
+          "title": "agent restart runtime unsupported",
+          "status": 409,
+          "detail": "This Sandbox runtime does not support Agent restart. Update the Sandbox to a runtime that supports Agent restart, then try again.",
+          "code": "agent_restart_runtime_unsupported"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "agent-restart-forbidden",
       "operation": "POST /api/v1/agents/{id}/restart",
       "scenario": "owner_agent_restart_forbidden",

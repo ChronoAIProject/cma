@@ -38,6 +38,7 @@ impl AgentWorker {
             &context.workspace,
             &context.worktree,
             &context.runtime,
+            crate::sandbox::agent_process_proof::CloseProofPurpose::SettleStop,
         )
         .await
         .ok()?;

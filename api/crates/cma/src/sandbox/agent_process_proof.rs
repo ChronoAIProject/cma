@@ -7,6 +7,11 @@ use layer2_core::seconds_from_rfc3339;
 use layer3_adapter::wire::AgentProcessCloseProof;
 use layer3_adapter::{AdapterError, RuntimeHandle, SandboxAdapter};
 
+pub(super) enum CloseProofPurpose {
+    SettleStop,
+    AdmitRestart,
+}
+
 pub(super) async fn prove_closed(
     adapter: &dyn SandboxAdapter,
     agent: &Agent,
@@ -14,6 +19,7 @@ pub(super) async fn prove_closed(
     workspace: &Workspace,
     worktree: &Worktree,
     runtime: &RuntimeHandle,
+    purpose: CloseProofPurpose,
 ) -> layer3_adapter::Result<AgentRestartSource> {
     if sandbox.id != agent.sandbox_id
         || sandbox.owner != agent.owner
@@ -56,8 +62,12 @@ pub(super) async fn prove_closed(
             "Agent runtime changed before Close verification".into(),
         ));
     }
+    let identity = match purpose {
+        CloseProofPurpose::SettleStop => status.ready_process_identity()?,
+        CloseProofPurpose::AdmitRestart => status.restart_runtime()?,
+    };
     let proof = AgentProcessCloseProof {
-        runtime: status.restart_runtime()?,
+        runtime: identity,
         close: request,
         open_request_sha256: open.request_sha256.clone(),
         worktree_path: worktree.path.clone(),
@@ -135,12 +145,12 @@ impl layer2_core::sandbox::AgentRestartObservation for RestartObservation {
             workspace,
             worktree,
             &runtime,
+            CloseProofPurpose::AdmitRestart,
         )
         .await
         .map_err(|error| match error {
-            AdapterError::Rejected(_) | AdapterError::Unsupported(_) => {
-                AgentServiceError::ControlConflict
-            }
+            AdapterError::Unsupported(_) => AgentServiceError::RestartRuntimeUnsupported,
+            AdapterError::Rejected(_) => AgentServiceError::ControlConflict,
             other => AgentServiceError::Unavailable(other.to_string()),
         })
     }
