@@ -38,8 +38,11 @@ fn global_capacity_keeps_the_original_launch_retryable() {
     let failure = sandbox_service_error(SandboxServiceError::GlobalCapacityReached);
     assert_eq!(failure.code, "sandbox_capacity_unavailable");
     assert!(failure.retryable);
-    let owner_limit =
-        sandbox_service_error(SandboxServiceError::SandboxLimitReached { limit: 1, live: 1 });
+    let owner_limit = sandbox_service_error(SandboxServiceError::SandboxLimitReached {
+        limit: 1,
+        live: 1,
+        usage: Default::default(),
+    });
     assert_eq!(owner_limit.code, "sandbox_limit_reached");
     assert!(!owner_limit.retryable);
 }

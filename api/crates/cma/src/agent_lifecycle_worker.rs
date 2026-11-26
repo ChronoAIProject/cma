@@ -270,14 +270,17 @@ impl InlineAgentLifecycle {
                     .copied()
                     .unwrap_or(false)
                     .then_some(match &error {
-                        AgentLifecycleProvisioningError::SandboxLimitReached { limit, live } => {
-                            Some(
-                                layer1_public::rest::AgentLifecycleFailure::SandboxLimitReached {
-                                    limit: *limit,
-                                    live: *live,
-                                },
-                            )
-                        }
+                        AgentLifecycleProvisioningError::SandboxLimitReached {
+                            limit,
+                            live,
+                            quota_usage,
+                        } => Some(
+                            layer1_public::rest::AgentLifecycleFailure::SandboxLimitReached {
+                                limit: *limit,
+                                live: *live,
+                                quota_usage: *quota_usage,
+                            },
+                        ),
                         _ => None,
                     })
                     .flatten();

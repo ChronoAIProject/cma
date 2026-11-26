@@ -55,6 +55,7 @@ impl AgentLifecycleProvisioner for Lifecycle {
             "quota" => Err(AgentLifecycleProvisioningError::SandboxLimitReached {
                 limit: 10,
                 live: 10,
+                quota_usage: None,
             }),
             "desktop_unsupported" => Err(AgentLifecycleProvisioningError::DesktopUnsupported(
                 "This deployment has no verified desktop runtime.".into(),
