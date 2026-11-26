@@ -198,7 +198,19 @@ async fn retirement_capture_worker_delivers_refusal_to_successor_parent() {
     parent_client.database(&name).drop().await.unwrap();
 }
 
-async fn seed(
+pub(super) async fn seed(
+    f: &super::super::super::Fixture,
+    store: &MongoSandboxStore,
+    sandbox: &mut Sandbox,
+    child: &mut Agent,
+    now: SystemTime,
+) {
+    seed_active(f, store, sandbox, child, now).await;
+    sandbox.begin_retirement(rfc3339_at(now)).unwrap();
+    store.save_sandbox(1, sandbox.clone()).await.unwrap();
+}
+
+pub(super) async fn seed_active(
     f: &super::super::super::Fixture,
     store: &MongoSandboxStore,
     sandbox: &mut Sandbox,
@@ -235,11 +247,9 @@ async fn seed(
     child.revision = 1;
     child.conversation.last_seq = 0;
     store.create_agent(child.clone()).await.unwrap();
-    sandbox.begin_retirement(at).unwrap();
-    store.save_sandbox(1, sandbox.clone()).await.unwrap();
 }
 
-async fn run_due(worker: &SandboxWorker, sandbox: &SandboxId) {
+pub(super) async fn run_due(worker: &SandboxWorker, sandbox: &SandboxId) {
     tokio::time::timeout(Duration::from_secs(8), async {
         while !worker.run_one(sandbox, SystemTime::now()).await.unwrap() {
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -249,7 +259,7 @@ async fn run_due(worker: &SandboxWorker, sandbox: &SandboxId) {
     .expect("parent becomes eligible for the next guarded attempt");
 }
 
-fn parent_worker(
+pub(super) fn parent_worker(
     f: &super::super::super::Fixture,
     store: Arc<MongoSandboxStore>,
     holder: &str,
@@ -294,7 +304,7 @@ fn parent_worker(
     )
 }
 
-fn child_worker(
+pub(super) fn child_worker(
     f: &super::super::super::Fixture,
     store: Arc<MongoSandboxStore>,
     coordinator: Arc<OwnershipCoordinator>,
