@@ -433,12 +433,10 @@ mod document_maintenance_tests;
 #[cfg(test)]
 mod live_buffer_tests;
 #[cfg(test)]
-#[path = "features/native_create_retry_tests.rs"]
 mod native_create_retry_tests;
 #[cfg(test)]
 mod observation_tests;
 #[cfg(test)]
-#[path = "features/ownership_retry_hint_tests.rs"]
 mod ownership_retry_hint_tests;
 #[cfg(test)]
 mod paged_event_tests;
