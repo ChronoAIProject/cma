@@ -278,16 +278,16 @@ impl HostedBackend for RuntimeBackends {
             .challenge_retirement_receiver(handle, request, home, receiver)
             .await
     }
-    async fn retire_unreachable(
+    async fn retire_verified(
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
         home: &crate::HomeVolumeAttachment,
-        receiver: &crate::RetirementPod,
+        receiver: Option<&crate::RetirementPod>,
     ) -> Result<()> {
         self.verify_retained_home_route(handle, &home.request)?;
         self.for_handle(handle)?
-            .retire_unreachable(handle, request, home, receiver)
+            .retire_verified(handle, request, home, receiver)
             .await
     }
     async fn verify_retired(
@@ -312,9 +312,10 @@ impl HostedBackend for RuntimeBackends {
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
+        for_retirement: bool,
     ) -> Result<()> {
         self.for_handle(handle)?
-            .verify_suspended(handle, request)
+            .verify_suspended(handle, request, for_retirement)
             .await
     }
     fn retained_startup_policy(&self) -> Option<&dyn crate::hosted::HostedRetainedStartupPolicy> {

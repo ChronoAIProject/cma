@@ -55,6 +55,12 @@ pub trait RuntimeRetirement: Send + Sync {
         receiver: &RetirementPod,
     ) -> Result<()>;
 
+    /// Suspend the original runtime and prove no Pods retain its owner UID.
+    async fn suspend_for_retirement(&self, request: &RuntimeAdoptionRequest) -> Result<()>;
+
+    /// Delete the original runtime only after its suspended mode and Pod absence are proved.
+    async fn retire_suspended(&self, request: &RuntimeAdoptionRequest) -> Result<()>;
+
     /// Fresh read-only proof that the original runtime, processes and claims are absent.
     /// Call after capturing the observation boundary, even after successful deletion.
     async fn verify_retired(&self, request: &RuntimeAdoptionRequest) -> Result<()>;
