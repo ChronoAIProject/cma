@@ -325,7 +325,10 @@ async fn apply(
                 requested_at.clone(),
                 SandboxReviveCause::ExplicitRequest,
             );
-            command.managed_runtime_version = store.managed_agent_release_for(&current);
+            command.managed_runtime_version = store
+                .managed_resume_destination(&current, session)
+                .await
+                .map_err(domain)?;
             match apply_sandbox_lifecycle_command(current.clone(), &command).map_err(domain)? {
                 SandboxLifecycleCommandApplication::Commit {
                     expected_revision,

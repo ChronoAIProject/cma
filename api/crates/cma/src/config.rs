@@ -60,7 +60,7 @@ mod quiet_output;
 pub(crate) mod task_audit;
 mod task_experience;
 pub(crate) use features::home_backup::HomeBackupConfig;
-pub(crate) use features::FeatureFlags;
+pub(crate) use features::{FeatureFlags, ManagedMachineUpdates};
 mod service_authorization;
 pub(crate) use gateway::GatewayConfig;
 pub(crate) use service_authorization::ServiceAuthorizationConfig;
