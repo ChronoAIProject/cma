@@ -230,10 +230,13 @@ test('LOCAL expanded navigation fits its rail and still scrolls vertically', asy
     .click();
   await page.keyboard.press('Escape');
   const list = page.locator('.manager-navigation__list');
-  const expectRailFits = async () => {
-    await expect.poll(() => list.evaluate((node) => node.scrollWidth - node.clientWidth)).toBe(0);
+  const navigation = page.locator('.sidebar__navigation');
+  const expectRailFits = async (scrollArea: Locator) => {
+    await expect
+      .poll(() => scrollArea.evaluate((node) => node.scrollWidth - node.clientWidth))
+      .toBe(0);
     expect(
-      await list.evaluate((node) => {
+      await scrollArea.evaluate((node) => {
         node.scrollTop = 80;
         const position = node.scrollTop;
         node.scrollTop = 0;
@@ -252,22 +255,22 @@ test('LOCAL expanded navigation fits its rail and still scrolls vertically', asy
   const environments = mode.getByRole('button', { name: 'Environments', exact: true });
   await expect(tasks).toHaveAttribute('aria-pressed', 'true');
   await expectTruncation('agent:agt_rail_0');
-  await expectRailFits();
+  await expectRailFits(list);
   await environments.click();
   const changing = page.getByRole('region', { name: 'Changing sandboxes' });
   const collapse = changing.getByRole('button', { name: 'Collapse Changing sandboxes' });
   await expect(collapse).toBeVisible();
   await expectTruncation('sandbox:sbx_rail_0');
-  await expectRailFits();
+  await expectRailFits(navigation);
   await collapse.click();
   await expect(changing.getByRole('tree')).toHaveCount(0);
-  await expectRailFits();
+  await expectRailFits(navigation);
   await tasks.click();
-  await expectRailFits();
+  await expectRailFits(list);
   await environments.click();
   await changing.getByRole('button', { name: 'Expand Changing sandboxes' }).click();
   await expect(changing.getByRole('tree')).toBeVisible();
-  await expectRailFits();
+  await expectRailFits(navigation);
   expect(fixture.writes).toEqual([]);
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.errors).toEqual([]);
