@@ -5,8 +5,6 @@ import { replicaRecoveryEnabled, recoveryEvidence } from './build/recovery';
 import { systemText } from './build/systemText';
 import { devFixtures } from './build/devFixtures';
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
-import { loadEnv, type UserConfig } from 'vite';
 
 export default defineConfig(({ command, mode }) => {
   const identity = buildIdentity(process.env);
@@ -17,24 +15,6 @@ export default defineConfig(({ command, mode }) => {
       react(),
       buildIdentityEvidence(identity),
       recoveryEvidence(identity, recovery),
-      // Keep Vite's normal process and mode-file precedence. The release
-      // default applies only when neither source supplied the flag.
-      ...(command === 'build' && !identity.local
-        ? [
-            {
-              name: 'cma-outbound-release-default',
-              config(config: UserConfig) {
-                const flag = 'VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED';
-                const envDir =
-                  config.envDir === false
-                    ? false
-                    : resolve(config.root ?? process.cwd(), config.envDir ?? '.');
-                if (loadEnv(mode, envDir, flag)[flag] === undefined)
-                  return { define: { [`import.meta.env.${flag}`]: JSON.stringify('true') } };
-              },
-            },
-          ]
-        : []),
       ...(command === 'serve' && mode === 'fixtures' ? [devFixtures()] : []),
     ],
     css: { postcss: { plugins: [systemText()] } },

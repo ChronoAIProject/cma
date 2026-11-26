@@ -13,7 +13,7 @@ afterEach(() => vi.unstubAllEnvs());
 it.each([
   ['local', undefined, undefined, false],
   ['local', 'true', undefined, true],
-  ['promotable', undefined, undefined, true],
+  ['promotable', undefined, undefined, false],
   ['promotable', 'false', undefined, false],
   ['promotable', 'true', undefined, true],
   ['promotable', 'TRUE', undefined, false],
@@ -68,7 +68,7 @@ it.each([
 it('passes the outbound flag from the canonical image build argument to Vite', () => {
   const dockerfile = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8');
   const stage = dockerfile.split(/^FROM /m)[1]!;
-  expect(stage).toContain('ARG VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED=true');
+  expect(stage).toContain('ARG VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED=false');
   expect(stage).toContain(
     'VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED=$VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED',
   );

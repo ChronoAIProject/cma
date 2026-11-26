@@ -116,7 +116,7 @@
     "cargo_root": null,
     "broad_copy": "vite-production",
     "component": "web",
-    "dockerfile_sha256": "3099ace4b73bb73539b0f668dab07d901e4a90ca616052ec538898c29592a2db",
+    "dockerfile_sha256": "2156db5b2ca81011548685e3319e1e8bfed0498534f56710223684ca308d410a",
     "broad_copy_exclusions": [
       "e2e/**",
       "**/tests/**",
