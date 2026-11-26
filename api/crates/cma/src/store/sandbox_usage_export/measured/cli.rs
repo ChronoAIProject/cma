@@ -2,9 +2,9 @@ use super::*;
 use mongodb::{options::ClientOptions, Client};
 
 pub(crate) async fn run_repair_command(arguments: &[String]) -> bool {
-    if !arguments
+    if arguments
         .first()
-        .is_some_and(|argument| argument == "--repair-measured-usage")
+        .is_none_or(|argument| argument != "--repair-measured-usage")
     {
         return false;
     }
