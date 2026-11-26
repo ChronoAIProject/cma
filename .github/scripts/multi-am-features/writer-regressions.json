@@ -10,9 +10,10 @@
       "feature": "Rename",
       "requirement": "Request is authorized and executed under current owning AM authority; server-internal CAS conflict re-reads and retries boundedly; acknowledged title remains after reload and owner move. A stale explicit expected revision receives the established typed stale-client response.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Deterministic lifecycle/log publication race and native execution of title effect custody assertions.",
+      "remaining": "The two ingresses now compete on one explicit preference revision and require one durable rename. The server-internal lifecycle/log publication conflict and integrated execution remain pending.",
       "trigger": "PATCH Agent preferences with a genuinely changed title while owner lifecycle/log publication advances the Agent",
       "required_assertions": [
+        {"case": "writer.competing_renames", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},
         {
           "case": "user.rename_cas",
           "minimum_runs": 3,
