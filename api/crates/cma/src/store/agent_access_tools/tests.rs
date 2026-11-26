@@ -694,3 +694,6 @@ async fn mongo_agent_tools_standing_gate_denies_owner_capability_and_discovery()
     assert!(source.authenticate_setup(&bearer).await.is_err());
     client.database(&database).drop().await.unwrap();
 }
+
+#[path = "numbered_open_tests.rs"]
+mod numbered_open;

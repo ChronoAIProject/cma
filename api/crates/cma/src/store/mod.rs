@@ -52,6 +52,7 @@ mod agent_title_retry;
 mod agent_title_state;
 mod agent_title_writes;
 mod agent_titles;
+mod agent_tool_open;
 mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
