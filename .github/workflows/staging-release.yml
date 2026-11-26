@@ -21,6 +21,7 @@ permissions:
 jobs:
   publish:
     name: Publish
+    cache-mode: read
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'
     runs-on: ubuntu-24.04
     timeout-minutes: 300
@@ -39,7 +40,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
         timeout-minutes: 5
       - name: Expose cache runtime to the Buildx client
         timeout-minutes: 2
@@ -89,6 +90,7 @@ jobs:
       - name: Prepare component Cargo cache
         timeout-minutes: 15
         if: inputs.component == 'am' || inputs.component == 'eg'
+        continue-on-error: true
         id: build-cache
         env:
           CD_COMPONENT: ${{ inputs.component }}
@@ -97,20 +99,42 @@ jobs:
       # The repository's Actions cache stays at its storage limit, so sealed
       # Cargo bundles travel as develop run artifacts from verified producers.
       - name: Restore compatible Cargo mounts
-        if: (inputs.component == 'am' || inputs.component == 'eg') && steps.ownership.outputs.superseded != 'true'
+        if: steps.build-cache.outcome == 'success' && steps.ownership.outputs.superseded != 'true'
         timeout-minutes: 10
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ inputs.component }}
+          CD_CARGO_CACHE_FAMILY: ${{ steps.build-cache.outputs.family }}
+          CD_CARGO_CACHE_PREFIX: ${{ steps.build-cache.outputs.prefix }}
         run: python3 -B .github/scripts/staging_cd_cargo_artifact.py
       - name: Restore authenticated layer detector evidence
         if: steps.ownership.outputs.superseded != 'true'
         timeout-minutes: 1
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ inputs.component }}
         run: python3 -B .github/scripts/image_detector_cache.py
+      - name: Restore bounded layer archive
+        id: layer-restore
+        if: vars.CMA_BOUNDED_LAYER_CACHE == 'true' && steps.ownership.outputs.superseded != 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: |
+            ${{ runner.temp }}/cma-layer-cache/archive.tar
+            ${{ runner.temp }}/cma-layer-cache/replay.json
+          key: cma-layer-archive-v1-${{ inputs.component }}--${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: cma-layer-archive-v1-${{ inputs.component }}--
+          fail-on-cache-miss: false
+      - name: Validate restored layer archive
+        id: layer-validate
+        if: steps.layer-restore.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: python3 -B .github/scripts/buildkit_cache_archive.py restore "$RUNNER_TEMP/cma-layer-cache/restored" "$RUNNER_TEMP/cma-layer-cache/archive.tar"
       - name: Build the exact reserved release archive
         id: producer
         if: >-
@@ -122,6 +146,9 @@ jobs:
           CD_COMPONENT: ${{ inputs.component }}
           CD_TASKS: ${{ inputs.tasks }}
           CD_BUILD_CACHE: enabled
+          CD_LAYER_ARCHIVE_CACHE: ${{ vars.CMA_BOUNDED_LAYER_CACHE == 'true' && 'enabled' || '' }}
+          CD_LAYER_ARCHIVE_RESTORED: ${{ steps.layer-validate.outcome == 'success' }}
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
         run: python3 -B .github/scripts/staging_cd_produce.py
       - name: Build once, scan every layer, and publish exact bytes
         timeout-minutes: 270
@@ -133,37 +160,19 @@ jobs:
           CD_RECEIPTS_PATH: ${{ runner.temp }}/public-receipts/receipts.json
           CD_PREPARED_ARCHIVE: ${{ steps.producer.outputs.prepared }}
           CD_BUILD_CACHE: enabled
+          CD_LAYER_ARCHIVE_CACHE: ${{ vars.CMA_BOUNDED_LAYER_CACHE == 'true' && 'enabled' || '' }}
+          CD_LAYER_ARCHIVE_RESTORED: ${{ steps.layer-validate.outcome == 'success' }}
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
           CD_LAYER_SCAN_CACHE: enabled
         run: python3 -B .github/scripts/staging_cd_publish.py
-      - name: Retain complete layer detector evidence
-        timeout-minutes: 10
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: cma-layer-detector-${{ inputs.component }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/cma-layer-detector-output/cache.json
-          if-no-files-found: ignore
-          retention-days: 7
-      - name: Retain accepted Cargo mounts
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'
-        timeout-minutes: 10
-        continue-on-error: true
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: cma-cd-cargo-${{ inputs.component }}
-          path: ${{ steps.build-cache.outputs.directory }}
-          if-no-files-found: error
-          retention-days: 2
-          compression-level: 0
-          overwrite: true
-      # Without these receipts finalization cannot run and a pushed version is
-      # burned. The upload is safe to repeat; only the repeat may fail the job.
+      # Finalization needs these receipts, so store them before retaining caches.
+      # The upload is safe to repeat; only the repeat may fail the job.
       - name: Retain only public publication receipts
         timeout-minutes: 10
         id: receipts
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: staging-receipts-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.component }}
           path: |
@@ -176,7 +185,7 @@ jobs:
         timeout-minutes: 10
         id: receipts-retry
         if: always() && steps.receipts.outcome == 'failure'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: staging-receipts-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.component }}
           path: |
@@ -188,12 +197,68 @@ jobs:
       - name: Retain verified package decisions
         timeout-minutes: 10
         if: always() && (inputs.component == 'runtime' || inputs.component == 'runtime-omarchy')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: staging-package-decisions-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.component }}
           path: ${{ runner.temp }}/public-receipts/package-policy/*.json
           if-no-files-found: ignore
           retention-days: 90
+      - name: Seal accepted layer archive
+        id: seal-layer-archive
+        if: success() && vars.CMA_BOUNDED_LAYER_CACHE == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && steps.publication.outputs.disposition == ''
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          rm -f "$RUNNER_TEMP/cma-layer-cache/archive.tar"
+          python3 -B .github/scripts/buildkit_cache_archive.py seal "$RUNNER_TEMP/cma-layer-cache/pending" "$RUNNER_TEMP/cma-layer-cache/archive.tar" --replay "$RUNNER_TEMP/cma-layer-cache/replay.json"
+      - name: Retain sealed layer archive for admission
+        id: layer-archive
+        if: steps.seal-layer-archive.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: cma-layer-cache-${{ inputs.component }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/cma-layer-cache/archive.tar
+            ${{ runner.temp }}/cma-layer-cache/replay.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - name: Retain complete layer detector evidence
+        timeout-minutes: 2
+        continue-on-error: true
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.disposition == ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: cma-layer-detector-${{ inputs.component }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cma-layer-detector-output/cache.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Retain accepted Cargo mounts
+        id: cargo-bundle
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'
+        timeout-minutes: 10
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ steps.publication.outputs.build-cache-artifact }}
+          path: ${{ steps.publication.outputs.build-cache-directory }}
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
+          overwrite: true
+      - name: Index the exact graph of the retained Cargo mounts
+        if: steps.cargo-bundle.outcome == 'success'
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ steps.publication.outputs.build-cache-index }}
+          path: ${{ steps.publication.outputs.build-cache-directory }}/manifest.json
+          if-no-files-found: error
+          retention-days: 2
+          overwrite: true
   finalize:
     name: Finalize
     needs: publish
@@ -219,16 +284,18 @@ jobs:
       - id: receipts-download
         continue-on-error: true
         timeout-minutes: 2
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          digest-mismatch: error
           artifact-ids: ${{ needs.publish.outputs.artifact }}
           path: ${{ runner.temp }}/public-receipts
           merge-multiple: true
       - id: receipts-download-retry
         if: steps.receipts-download.outcome == 'failure'
         timeout-minutes: 2
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          digest-mismatch: error
           artifact-ids: ${{ needs.publish.outputs.artifact }}
           path: ${{ runner.temp }}/public-receipts
           merge-multiple: true

@@ -22,10 +22,8 @@ jobs:
       contents: read
       pull-requests: read
       actions: read
-      deployments: read
     outputs:
       queue: ${{ steps.plan.outputs.queue }}
-      controller_proofs: ${{ steps.promotions.outputs.verified }}
       changed: ${{ steps.plan.outputs.changed }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -54,11 +52,18 @@ jobs:
         id: selection-cache
         run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_selection_cache.py'
       - name: Restore previous trusted develop comparisons
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: comparison-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        continue-on-error: true
+        timeout-minutes: 2
         with:
           path: ${{ steps.selection-cache.outputs.directory }}
           key: ${{ steps.selection-cache.outputs.key }}
           restore-keys: ${{ steps.selection-cache.outputs.prefix }}
+      - name: Discard an incomplete comparison cache restore
+        # A prefix hit sets the matched key without an exact cache hit.
+        if: steps.comparison-cache.outcome != 'success' || steps.comparison-cache.outputs.cache-matched-key == ''
+        run: rm -rf -- "${RUNNER_TEMP:?}/cma-selection-cache"
       # The plan starts at the oldest revision a current lane can still need,
       # from each lane's newest final release tag. The read-only token reads
       # those tag objects; the selector processes never receive it.
@@ -71,7 +76,9 @@ jobs:
       # A plan stopped by its budget still succeeds here, so every analysed
       # revision is saved and the next run continues instead of starting over.
       - name: Save trusted develop comparisons
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        continue-on-error: true
+        timeout-minutes: 2
         with:
           path: ${{ steps.selection-cache.outputs.directory }}
           key: ${{ steps.selection-cache.outputs.key }}
@@ -88,13 +95,6 @@ jobs:
         env:
           CD_PLAN_REFUSED: ${{ steps.plan.outputs.refused }}
         run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete'
-      - name: Read recent staging controller outcomes
-        id: promotions
-        if: steps.plan.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CD_STAGING_ENVIRONMENT: chrono-ai-staging
-        run: python3 -B .github/scripts/staging_cd_promotion.py
   allocate:
     needs: plan
     if: needs.plan.outputs.changed == 'true'
@@ -104,6 +104,7 @@ jobs:
       contents: write
       pull-requests: read
       actions: read
+      deployments: read
     outputs:
       matrix: ${{ steps.allocate.outputs.matrix }}
       publications: ${{ steps.routes.outputs.publications }}
@@ -120,7 +121,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CD_QUEUE: ${{ needs.plan.outputs.queue }}
-          CD_CONTROLLER_PROOFS: ${{ needs.plan.outputs.controller_proofs }}
+          CD_STAGING_ENVIRONMENT: chrono-ai-staging
         run: python3 -B .github/scripts/staging_cd_allocate.py
       # A transient refusal (a read, a write that may have committed, or the
       # budget) fails here; catch-up re-runs a head run stopped at this step,
@@ -153,13 +154,22 @@ jobs:
         with:
           python-version: '3.12'
       - name: Restore public tool download cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: public-tools-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        continue-on-error: true
+        timeout-minutes: 1
         with:
           path: ${{ runner.temp }}/cma-public-tool-cache
           key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
+      - name: Discard an incomplete public tool cache restore
+        if: steps.public-tools-cache.outcome != 'success' || steps.public-tools-cache.outputs.cache-hit != 'true'
+        run: rm -rf -- "${RUNNER_TEMP:?}/cma-public-tool-cache"
       - name: Verify and warm public tool downloads before admission
         run: python3 -B .github/scripts/staging_cd_tools.py warm-cache
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Save verified public tool downloads
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        continue-on-error: true
+        timeout-minutes: 2
         with:
           path: ${{ runner.temp }}/cma-public-tool-cache
           key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
@@ -167,7 +177,7 @@ jobs:
       - name: Create restricted infrastructure reader token
         id: infra-token
         continue-on-error: true
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
         with:
           app-id: ${{ vars.CMA_INFRA_APP_ID }}
           private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
@@ -177,7 +187,7 @@ jobs:
       - name: Retry restricted infrastructure reader token
         id: infra-token-retry
         if: steps.infra-token.outcome == 'failure'
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
         with:
           app-id: ${{ vars.CMA_INFRA_APP_ID }}
           private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
@@ -301,6 +311,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: web
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['web']) }}
@@ -321,6 +332,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: am
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['am']) }}
@@ -341,14 +353,25 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: eg
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['eg']) }}
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
   promote_runtime:
     name: Promote runtime
-    needs: [allocate, infrastructure, release_runtime]
-    if: needs.allocate.outputs.changed == 'true' && needs.release_runtime.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime'] == 'runtime'
+    needs: [allocate, infrastructure, release_runtime, promote_am]
+    # A runtime pin rolls the AM deployment. Let this run's independently
+    # selected AM release converge before changing the pin.
+    if: >-
+      !cancelled() && needs.allocate.result == 'success' && needs.infrastructure.result == 'success' &&
+      needs.allocate.outputs.changed == 'true' && needs.release_runtime.result == 'success' &&
+      needs.release_runtime.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime'] == 'runtime' &&
+      (fromJSON(needs.allocate.outputs.lanes)['am'] != 'am' ||
+       (needs.promote_am.result == 'success' && needs.promote_am.outputs.admit == 'success' &&
+        (fromJSON(needs.promote_am.outputs.component_result || '{}').components.am.state == 'controller-verified' ||
+         (needs.promote_am.outputs.admit_disposition == 'already-verified' &&
+          needs.promote_am.outputs.admitted == '["am"]'))))
     concurrency:
       group: cma-staging-deploy-set
       queue: max
@@ -361,14 +384,23 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: runtime
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['runtime']) }}
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
   promote_runtime_omarchy:
     name: Promote runtime-omarchy
-    needs: [allocate, infrastructure, release_runtime_omarchy]
-    if: needs.allocate.outputs.changed == 'true' && needs.release_runtime_omarchy.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime-omarchy'] == 'runtime-omarchy'
+    needs: [allocate, infrastructure, release_runtime_omarchy, promote_am]
+    if: >-
+      !cancelled() && needs.allocate.result == 'success' && needs.infrastructure.result == 'success' &&
+      needs.allocate.outputs.changed == 'true' && needs.release_runtime_omarchy.result == 'success' &&
+      needs.release_runtime_omarchy.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime-omarchy'] == 'runtime-omarchy' &&
+      (fromJSON(needs.allocate.outputs.lanes)['am'] != 'am' ||
+       (needs.promote_am.result == 'success' && needs.promote_am.outputs.admit == 'success' &&
+        (fromJSON(needs.promote_am.outputs.component_result || '{}').components.am.state == 'controller-verified' ||
+         (needs.promote_am.outputs.admit_disposition == 'already-verified' &&
+          needs.promote_am.outputs.admitted == '["am"]'))))
     concurrency:
       group: cma-staging-deploy-set
       queue: max
@@ -381,6 +413,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: runtime-omarchy
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['runtime-omarchy']) }}
@@ -409,6 +442,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     with:
       lane: contract
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['contract']) }}
@@ -445,7 +479,7 @@ jobs:
           CD_FINALIZED_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.outputs.finalized }}
         run: python3 -B .github/scripts/staging_cd_publication_signal.py freeze
       - name: Retain the verified immutable publication signal
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: cma-publication-signal-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/publication-signal.json

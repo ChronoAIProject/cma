@@ -77,6 +77,9 @@ pub(crate) mod bots;
 #[cfg(test)]
 mod bots_mongo_integration_tests;
 mod budget;
+pub(crate) use budget::inventory as turn_budget_inventory;
+#[cfg(test)]
+pub(crate) mod budget_test_fixture;
 mod channel_storage_retention;
 mod checkpoint_capture;
 mod checkpoint_objects;
@@ -141,6 +144,7 @@ pub(crate) mod pending_launch_homes;
 pub(crate) mod test_visibility;
 #[cfg(test)]
 pub(crate) use mongo_diagnostics::attach_readiness_fixture;
+mod managed_machine_origin;
 pub(crate) mod mongo_latency;
 pub(crate) mod mongo_read_telemetry;
 pub(crate) mod native_prepared;

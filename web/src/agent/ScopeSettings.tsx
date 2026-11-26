@@ -173,7 +173,17 @@ export function ScopeSettings({
         </>
       ) : null}
       {connections.needsConnection ? (
-        <Button onClick={() => setConnecting(true)}>Connect services before saving</Button>
+        <>
+          {connections.missingServices?.length ? (
+            <p role="status">
+              Verify connections for{' '}
+              {connections.missingServices.map((service) => service.display_name).join(', ')} before
+              saving.
+            </p>
+          ) : null}
+          <Button onClick={() => setConnecting(true)}>Connect services before saving</Button>
+          <Button onClick={connections.retry}>Check connections again</Button>
+        </>
       ) : null}
       {intent?.requestId && result?.connection ? (
         <Button onClick={() => setConnecting(true)}>Review service connections</Button>
@@ -183,6 +193,7 @@ export function ScopeSettings({
           target={result?.connection?.target ?? connections.target}
           expectedOwner={owner}
           presentation="dialog"
+          description="Connect the selected services, then return here to save the Sandbox scope."
           onCancel={() => setConnecting(false)}
           onReady={(report) => {
             connections.connected(report);

@@ -321,7 +321,7 @@ fn fold_semantic_update(
     observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
     let initial_output = match update {
         SessionUpdate::ToolCall(call)
-            if durable_tool_output && layer3_adapter::has_reported_file_changes(call) =>
+            if durable_tool_output && layer3_adapter::has_reported_initial_output(call) =>
         {
             recorded_initial_tool_output(call).map(|output| AgentLogKind::ToolOutputReported {
                 call_id: call.tool_call_id.0.to_string(),

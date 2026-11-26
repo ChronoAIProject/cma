@@ -43,6 +43,7 @@ class Workspace:
         if any(not re.fullmatch(r"[A-Za-z0-9_-]+", name) for name in self.names):
             raise ValueError("invalid package name")
         self.directories = {}
+        self.build_scripts = {}
         for p in packages:
             manifest = Path(p["manifest_path"]).resolve()
             if manifest.name != "Cargo.toml":
@@ -51,6 +52,10 @@ class Workspace:
             if not relative.startswith("api/") or relative in self.directories:
                 raise ValueError("ambiguous package directory")
             self.directories[relative] = p["name"]
+            self.build_scripts[relative] = {
+                Path(target["src_path"]).resolve().relative_to(root).as_posix()
+                for target in p.get("targets", []) if "custom-build" in target["kind"]
+            }
         by_path = {str((root / path).resolve()): name
                    for path, name in self.directories.items()}
         self.dependencies = {name: set() for name in self.names}

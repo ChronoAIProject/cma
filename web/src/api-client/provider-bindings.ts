@@ -83,8 +83,53 @@ export const BindingConversationInspectionSchema = object({
   agent_id: text,
   state: text,
   agent_status: nullable(text),
+  profile_drift: optional(
+    object({ assigned_profile_digest: text, prompt: boolean, skills: boolean, model: boolean }),
+  ),
 });
 export type BindingConversationInspection = Output<typeof BindingConversationInspectionSchema>;
+const bindingConversationCatalog = object({
+  binding_id: text,
+  generation: positiveInteger,
+  revision: positiveInteger,
+  transport_conversations: array(text),
+});
+export type BindingConversationCatalog = Output<typeof bindingConversationCatalog>;
+const inspectBindingProfile = object({ profile: record, profile_digest: text });
+export type InspectBindingProfile = Output<typeof inspectBindingProfile>;
+const desiredBindingProfileDrift = object({
+  profile_digest: text,
+  prompt: boolean,
+  skills: boolean,
+  model: boolean,
+  service_scope: boolean,
+});
+export type DesiredBindingProfileDrift = Output<typeof desiredBindingProfileDrift>;
+const transferBindingProfile = object({
+  destination_binding_id: text,
+  expected_agent_id: text,
+  expected_generation: positiveInteger,
+  expected_destination_generation: positiveInteger,
+  expected_incarnation: integer,
+  owner: text,
+  organization: boolean,
+  request_digest: text,
+});
+export type TransferBindingProfile = Output<typeof transferBindingProfile>;
+const bindingProfileTransfer = object({
+  source_binding_id: text,
+  source_generation: positiveInteger,
+  source_incarnation: integer,
+  source_agent_id: text,
+  source_conversation_id: text,
+  conversation_id: text,
+  destination_binding_id: text,
+  destination_generation: positiveInteger,
+  destination_agent_id: text,
+  destination_worktree_id: text,
+  state: enumeration('reserved'),
+});
+export type BindingProfileTransfer = Output<typeof bindingProfileTransfer>;
 export const ResetBindingConversationSchema = object({
   expected_agent_id: text,
   owner: text,
@@ -162,12 +207,50 @@ export class ProviderBindings {
       expectedStatus: 204,
     });
   }
+  listConversations(id: string, options: OperationOptions = {}) {
+    return read(this.config, `${path(id)}/conversations`, bindingConversationCatalog, options);
+  }
   inspectConversation(id: string, conversationId: string, options: OperationOptions = {}) {
     return read(
       this.config,
       path(id, conversationId),
       BindingConversationInspectionSchema,
       options,
+    );
+  }
+  inspectDesiredProfile(
+    id: string,
+    conversationId: string,
+    body: InspectBindingProfile,
+    options: OperationOptions = {},
+  ) {
+    return read(
+      this.config,
+      `${path(id, conversationId)}/profile-drift`,
+      nullable(desiredBindingProfileDrift),
+      {
+        ...options,
+        method: 'POST',
+        body: input(inspectBindingProfile, body),
+      },
+    );
+  }
+  /** Retain the original transfer request and operation key for any explicit retry. */
+  transferConversationProfile(
+    id: string,
+    conversationId: string,
+    body: TransferBindingProfile,
+    options: CommandOptions,
+  ) {
+    return read(
+      this.config,
+      `${path(id, conversationId)}/profile-transfers`,
+      bindingProfileTransfer,
+      {
+        ...command(options),
+        method: 'POST',
+        body: input(transferBindingProfile, body),
+      },
     );
   }
   ensureConversation(id: string, conversationId: string, options: OperationOptions = {}) {

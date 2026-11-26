@@ -159,14 +159,14 @@ pub(super) async fn homes(
     target: &PoolTarget,
     image: &str,
 ) -> Result<Option<Vec<HomeVolumeAttachment>>, WarmPoolError> {
-    scan(store, target, image, false).await
+    Ok(scan(store, target, image, false).await?.map(|e| e.homes))
 }
 
 pub(super) async fn drain_homes(
     store: &MongoNativeWarmPools,
     target: &PoolTarget,
     image: &str,
-) -> Result<Option<Vec<HomeVolumeAttachment>>, WarmPoolError> {
+) -> Result<Option<NativePoolDrain>, WarmPoolError> {
     scan(store, target, image, true).await
 }
 
@@ -175,7 +175,7 @@ async fn scan(
     target: &PoolTarget,
     image: &str,
     draining: bool,
-) -> Result<Option<Vec<HomeVolumeAttachment>>, WarmPoolError> {
+) -> Result<Option<NativePoolDrain>, WarmPoolError> {
     if !authorized(store, target, image).await? {
         return Ok(deferred(target, "release_settling"));
     }
@@ -192,7 +192,7 @@ async fn scan(
     {
         return Ok(deferred(target, "lifecycle_admission"));
     }
-    let mut homes = Vec::new();
+    let mut evidence = NativePoolDrain::default();
     for document in documents(store, "sandboxes", doc! {}).await? {
         let sandbox = crate::store::sandboxes::read_sandbox(&document)
             .map_err(|_| WarmPoolError::Unavailable)?;
@@ -201,12 +201,32 @@ async fn scan(
                 if !draining {
                     return Ok(deferred(target, "sandbox_in_use"));
                 }
-                let Some(home) = eligibility::settled_native_home(&sandbox, target)? else {
+                if let Some(home) = eligibility::settled_native_home(&sandbox, target)? {
+                    evidence.homes.push(home);
+                    continue;
+                }
+                let Some(native) = sandbox
+                    .lifecycle
+                    .home
+                    .as_ref()
+                    .and_then(|home| home.native_pool.as_ref())
+                else {
                     return Ok(deferred(target, "sandbox_unsettled"));
                 };
-                homes.push(home);
+                if target.binding.as_ref() != Some(&native.request.pool) {
+                    return Ok(deferred(target, "sandbox_unsettled"));
+                }
+                let Some(claim) = native.claim.as_ref().filter(|claim| {
+                    !native.cleaned
+                        && native.cleanup.is_none()
+                        && claim.request == native.request
+                        && claim.sandbox_name.is_some()
+                }) else {
+                    return Ok(deferred(target, "sandbox_unsettled"));
+                };
+                evidence.claims.push(claim.clone());
             }
-            eligibility::Owned::Retained(home) => homes.push(*home),
+            eligibility::Owned::Retained(home) => evidence.homes.push(*home),
             eligibility::Owned::Unrelated => (),
         }
     }
@@ -238,12 +258,12 @@ async fn scan(
     if !authorized(store, target, image).await? {
         return Ok(deferred(target, "release_settling"));
     }
-    Ok(Some(homes))
+    Ok(Some(evidence))
 }
 
 /// Retirement used to defer silently, leaving obsolete capacity running with
 /// no sign of why. Name the blocking class so a stuck record is diagnosable.
-fn deferred(target: &PoolTarget, reason: &'static str) -> Option<Vec<HomeVolumeAttachment>> {
+fn deferred(target: &PoolTarget, reason: &'static str) -> Option<NativePoolDrain> {
     tracing::info!(
         target: "cma::warm_pools",
         pool = %target.id,

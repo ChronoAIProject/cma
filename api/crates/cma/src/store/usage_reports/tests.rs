@@ -1,6 +1,9 @@
+mod aggregate_projections;
 mod binding_fence;
 mod initial_snapshot;
 mod ownership;
+mod projection_lifecycle;
+mod projection_scale;
 mod publication_fence;
 mod publication_races;
 mod transaction_retries;

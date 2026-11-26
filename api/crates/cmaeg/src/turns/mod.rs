@@ -8,6 +8,9 @@ pub mod observer;
 pub mod outcomes;
 mod preparation;
 mod projection;
+pub(crate) use projection::Projection;
+mod recovery_authority;
+pub use recovery_authority::{RecoveryAuthority, RecoveryChannelAuthority};
 mod refusal;
 #[cfg(test)]
 mod refusal_tests;

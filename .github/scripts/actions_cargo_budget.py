@@ -79,34 +79,37 @@ class Account:
 class BudgetRef:
     """Only the independent admission job can advance this fast-forward-only ref."""
 
-    def __init__(self, api):
+    def __init__(self, api, *, ref=REF, account_type=Account, header=COMMIT_HEADER):
         self.api = api
+        self.ref = ref
+        self.account_type = account_type
+        self.header = header
 
     def read(self):
         try:
-            ref = self.api.request("git/ref/" + REF, allow_not_found=True)
+            ref = self.api.request("git/ref/" + self.ref, allow_not_found=True)
         except GitHubNotFound:
-            return None, Account({})
+            return None, self.account_type({})
         tip = ref["object"]["sha"]
         require(
-            ref["ref"] == "refs/" + REF and ref["object"]["type"] == "commit" and matches("[a-f0-9]{40}", tip),
+            ref["ref"] == "refs/" + self.ref and ref["object"]["type"] == "commit" and matches("[a-f0-9]{40}", tip),
             "Invalid cache budget ref",
         )
         commit = self.api.request("git/commits/" + tip)
         require(commit["sha"] == tip, "Cache budget commit differs")
-        require(commit["message"].startswith(COMMIT_HEADER), "Cache budget revision has no accounting record")
-        return tip, Account.decode(json.loads(commit["message"][len(COMMIT_HEADER) :]))
+        require(commit["message"].startswith(self.header), "Cache budget revision has no accounting record")
+        return tip, self.account_type.decode(json.loads(commit["message"][len(self.header) :]))
 
     def advance(self, previous, account, source):
         # Sibling commits cannot fast-forward each other. An ambiguous response
         # can leave a charge in the ledger, but cannot create an uncharged grant.
-        state = Account.decode(account.encode()).encode()
+        state = self.account_type.decode(account.encode()).encode()
         tree = self.api.request("git/commits/" + (previous or source))["tree"]["sha"]
         require(matches("[a-f0-9]{40}", tree), "Invalid budget tree")
         commit = self.api.request(
             "git/commits",
             {
-                "message": COMMIT_HEADER + json.dumps(state, sort_keys=True),
+                "message": self.header + json.dumps(state, sort_keys=True),
                 "tree": tree,
                 "parents": [previous or source],
             },
@@ -114,10 +117,10 @@ class BudgetRef:
         oid = commit["sha"]
         require(matches("[a-f0-9]{40}", oid), "Invalid budget commit")
         if previous:
-            result = self.api.request("git/refs/" + REF, {"sha": oid, "force": False}, method="PATCH")
+            result = self.api.request("git/refs/" + self.ref, {"sha": oid, "force": False}, method="PATCH")
         else:
-            result = self.api.request("git/refs", {"ref": "refs/" + REF, "sha": oid})
-        require(result["ref"] == "refs/" + REF and result["object"]["sha"] == oid, "Budget grant was not committed")
+            result = self.api.request("git/refs", {"ref": "refs/" + self.ref, "sha": oid})
+        require(result["ref"] == "refs/" + self.ref and result["object"]["sha"] == oid, "Budget grant was not committed")
 
 
 def grant(account, entries, candidates, skipped):

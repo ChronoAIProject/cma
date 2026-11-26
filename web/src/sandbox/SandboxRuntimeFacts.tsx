@@ -51,11 +51,11 @@ export function runtimeLifecycleNotice(
       detail: 'This Sandbox is not eligible for automatic CMA runtime updates.',
       tone: 'neutral',
     };
+  const runtimeObserved =
+    status === 'active' || (status === 'paused' && update.currentVersionConfirmed === true);
   if (
     update.state === 'up_to_date' &&
-    (status !== 'active' ||
-      !update.currentVersion ||
-      update.currentVersion !== update.latestVersion)
+    (!runtimeObserved || !update.currentVersion || update.currentVersion !== update.latestVersion)
   )
     return {
       title: 'Runtime version unconfirmed',
@@ -85,6 +85,7 @@ export function SandboxRuntimeFacts({
     ...(sandboxId === undefined ? [] : [['Sandbox ID', sandboxId]]),
     ['Current runtime', current || 'Not reported'],
     ...(update?.imageOrigin === 'managed_desktop' ? [['Runtime channel', 'Managed Agent']] : []),
+    ...(update?.imageOrigin === 'managed_machine' ? [['Runtime channel', 'Managed Machine']] : []),
     ...(update === undefined
       ? []
       : [

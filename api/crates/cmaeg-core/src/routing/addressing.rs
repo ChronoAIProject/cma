@@ -52,9 +52,34 @@ pub fn parse(
     let Some(roster) = Roster::new(def) else {
         return Ok(None);
     };
-    match recognize(&roster, input) {
+    match recognize(&roster, input.activity, input.chat_source) {
         Some(form) => form.resolve(&roster),
         None => Ok(None),
+    }
+}
+
+/// A legacy launcher can honor only an explicit command to the default consumer.
+/// Ordinary text and disabled command addressing retain their legacy semantics.
+pub fn validate_legacy_command(
+    def: &ChannelDefinition,
+    activity: &crate::activity::Activity,
+    chat_source: Option<&Source>,
+) -> Result<(), RouteError> {
+    let Some(roster) = Roster::new(def) else {
+        return Ok(());
+    };
+    let Some(form) = recognize(&roster, activity, chat_source)
+        .filter(|form| form.resolution() == RouteResolution::Command)
+    else {
+        return Ok(());
+    };
+    let Some(addressed) = form.resolve(&roster)? else {
+        return Ok(());
+    };
+    if matches!(addressed.targets.as_slice(), [target] if target.is_default()) {
+        Ok(())
+    } else {
+        Err(RouteError::KillSwitchClosed)
     }
 }
 
@@ -69,12 +94,16 @@ pub(super) struct Form<'t> {
 }
 
 /// The addressing form the activity uses, when the channel enables it.
-pub(super) fn recognize<'t>(roster: &Roster<'_>, input: &RouteInput<'t>) -> Option<Form<'t>> {
+pub(super) fn recognize<'t>(
+    roster: &Roster<'_>,
+    activity: &'t crate::activity::Activity,
+    chat_source: Option<&Source>,
+) -> Option<Form<'t>> {
     let enabled = &roster.policy.addressing;
-    match &input.activity.kind {
+    match &activity.kind {
         ActivityKind::Message { text, .. } => {
-            let username = bot_username(input.chat_source);
-            let lead = chat::leading_address_end(text, &input.activity.source, username);
+            let username = bot_username(chat_source);
+            let lead = chat::leading_address_end(text, &activity.source, username);
             let addressed = &text[lead..];
             if enabled.command && addressed.starts_with(COMMAND_PREFIX) {
                 let start = command_targets_start(text, lead, username)?;

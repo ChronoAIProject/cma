@@ -166,6 +166,8 @@ class BoundaryTests(unittest.TestCase):
             def fake_run(*unused, payload=payload, code=code, **kwargs):
                 if payload is not None:
                     (self.root / "gitleaks-private.json").write_text(json.dumps(payload))
+                if code == 1:
+                    kwargs["stderr"].write(b"WRN leaks found: 1\n")
                 return subprocess.CompletedProcess([], code)
 
             with patch("subprocess.run", side_effect=fake_run), self.assertRaises(ScanError):

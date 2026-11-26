@@ -121,3 +121,36 @@ it.each([
     t.client.providerBindings.resetConversation(...target, body, options),
   ).rejects.toBeInstanceOf(ProtocolError);
 });
+
+it('preserves assigned profile drift alongside conversation identity', async () => {
+  const t = transport();
+  const response = {
+    ...inspection,
+    profile_drift: {
+      assigned_profile_digest: 'sha256:profile',
+      prompt: true,
+      skills: false,
+      model: true,
+    },
+  };
+  t.answer(response);
+  expect(await t.client.providerBindings.inspectConversation(...target)).toEqual(response);
+});
+
+it('preserves desired profile drift including the Sandbox service scope', async () => {
+  const t = transport();
+  const body = { profile: { schema_version: 1 }, profile_digest: 'sha256:profile' };
+  const response = {
+    profile_digest: body.profile_digest,
+    prompt: false,
+    skills: true,
+    model: false,
+    service_scope: true,
+  };
+  t.answer(response);
+  expect(await t.client.providerBindings.inspectDesiredProfile(...target, body)).toEqual(response);
+  t.answer({ ...response, service_scope: 'true' });
+  await expect(
+    t.client.providerBindings.inspectDesiredProfile(...target, body),
+  ).rejects.toBeInstanceOf(ProtocolError);
+});

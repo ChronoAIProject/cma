@@ -38,6 +38,8 @@ pub enum AgentFileError {
     Access(#[from] ResourceAccessError),
     #[error("invalid file path or request")]
     Invalid,
+    #[error("file or directory name exceeds 255 UTF-8 bytes")]
+    NameTooLong,
     #[error("file or directory does not exist")]
     NotFound,
     #[error("file exceeds the permitted size")]

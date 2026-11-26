@@ -1,7 +1,9 @@
 import { LandingCharacter } from './landing/LandingCharacter';
 import { Button } from './ui/Button';
+import { Alert } from './ui/Alert';
 import { Presence } from './ui/Presence';
 import { IconNewChatOutline16 } from './ui/icons';
+import type { useConsoleAgentAccess } from './resources/consoleAgentAccess';
 
 /**
  * The centre column's plain states: a view that cannot open for this
@@ -9,7 +11,7 @@ import { IconNewChatOutline16 } from './ui/icons';
  * of the console's routing so the routing reads as routing.
  */
 
-export function ConsoleActionError({ error }: { readonly error?: string }) {
+function ConsoleActionError({ error }: { readonly error?: string }) {
   return (
     <Presence>
       {error === undefined ? null : (
@@ -18,6 +20,32 @@ export function ConsoleActionError({ error }: { readonly error?: string }) {
         </p>
       )}
     </Presence>
+  );
+}
+
+export function ConsoleNotices({
+  error,
+  fileDownload,
+}: {
+  readonly error?: string;
+  readonly fileDownload: ReturnType<typeof useConsoleAgentAccess>['fileDownload'];
+}) {
+  return (
+    <>
+      <ConsoleActionError error={error} />
+      {fileDownload.message ? (
+        <Alert
+          tone="error"
+          actions={
+            <Button size="sm" onClick={fileDownload.dismiss}>
+              Dismiss
+            </Button>
+          }
+        >
+          {fileDownload.message}
+        </Alert>
+      ) : null}
+    </>
   );
 }
 

@@ -10,7 +10,7 @@ mod launch;
 mod observe;
 #[path = "routed_problem.rs"]
 mod problem;
-use problem::admission_problem;
+use problem::{admission_problem, routing_problem};
 #[path = "routed_native_lark.rs"]
 mod native_lark;
 #[path = "routed_native_lark_control.rs"]
@@ -39,6 +39,9 @@ use cmaeg_core::{
 };
 use std::{collections::BTreeSet, sync::Arc};
 use tokio::sync::OwnedSemaphorePermit;
+
+pub(crate) const TARGET_UNKNOWN: &str = "target_unknown";
+
 #[derive(Clone)]
 pub struct VerifiedIngress {
     quote: super::quoted_context::Intake,
@@ -232,13 +235,7 @@ impl RoutedIngress {
                         },
                     )
                 }
-                .map_err(|_| {
-                    Problem::new(
-                        ProblemCode::AdmissionRefused,
-                        403,
-                        "routing_admission_refused",
-                    )
-                })?;
+                .map_err(routing_problem)?;
                 let OrdinaryPlan::Routed(mut plan) = decision else {
                     return Ok(None);
                 };
@@ -285,7 +282,18 @@ impl RoutedIngress {
                     desired.consumer = None;
                     desired.conversation_id = target.event.conversation_id.clone();
                     let (mut assigned, assignment) = self.assign_profile(&desired).await?;
-                    target.provider = assigned.channel.definition.provider.clone();
+                    target.provider = assigned
+                        .channel
+                        .consumer(Some(&target.consumer))
+                        .ok_or_else(|| {
+                            Problem::new(
+                                ProblemCode::AdmissionRefused,
+                                403,
+                                "routing_admission_refused",
+                            )
+                        })?
+                        .provider
+                        .clone();
                     assigned.consumer = request.consumer.clone();
                     assigned.conversation_id = request.conversation_id.clone();
                     (assigned, assignment)
@@ -385,6 +393,20 @@ fn ordinary(request: &LaunchRequest) -> bool {
     request.consumer.is_none()
         && request.activity.routing.is_none()
         && !matches!(request.activity.kind, ActivityKind::Interaction(_))
+}
+
+fn validate_legacy_command(request: &LaunchRequest) -> Result<(), Problem> {
+    if ordinary(request) {
+        let definition = &request.channel.definition;
+        cmaeg_core::routing::addressing::validate_legacy_command(
+            definition,
+            &request.activity,
+            definition.source_of(&request.activity.source),
+        )
+        .map_err(routing_plan::PlanError::Routing)
+        .map_err(routing_problem)?;
+    }
+    Ok(())
 }
 #[cfg(test)]
 #[path = "routed_tests.rs"]

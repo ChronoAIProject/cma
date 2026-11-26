@@ -14,7 +14,7 @@ afterEach(() => {
 
 async function unknownRequest() {
   const client = publicClient();
-  vi.mocked(client.requests.createOrResume).mockRejectedValueOnce(new Error('Unknown result'));
+  vi.mocked(client.requests.createOrResumeBound).mockRejectedValueOnce(new Error('Unknown result'));
   const original = createIntent(route, 'new');
   await expect(admit(client, original, 'owner-a')).rejects.toThrow('Unknown result');
   return { client, original: readIntent(path)!, bytes: sessionStorage.getItem(storageKey) };
@@ -27,7 +27,7 @@ it.each([{ ...route, publicId: 'entry-b' }, { ...route, placementId: 'placement-
     expect(() => createIntent(nextRoute)).toThrow('earlier request');
     expect(sessionStorage.getItem(storageKey)).toBe(bytes);
     await admit(client, original, 'owner-a');
-    const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+    const calls = vi.mocked(client.requests.createOrResumeBound).mock.calls;
     expect(calls).toHaveLength(2);
     expect(calls[1]).toEqual(calls[0]);
     forgetIntent(original.id);
@@ -40,7 +40,7 @@ it('keeps the occupied slot after expiry, without resending or re-keying A', asy
   vi.spyOn(Date, 'now').mockReturnValue(original.expiresAt + 1);
   expect(() => createIntent({ ...route, publicId: 'entry-b' })).toThrow('earlier request');
   await expect(admit(client, original, 'owner-a')).rejects.toThrow('original request is saved');
-  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
   expect(sessionStorage.getItem(storageKey)).toBe(bytes);
 });
 
@@ -102,7 +102,7 @@ it('does not dispatch when reading the occupied slot fails', async () => {
     throw new Error('Storage unavailable');
   });
   expect(() => admit(client, original, 'owner-a')).toThrow('Storage unavailable');
-  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
   read.mockRestore();
   expect(sessionStorage.getItem(storageKey)).toBe(bytes);
 });

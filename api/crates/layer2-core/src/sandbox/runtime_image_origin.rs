@@ -2,21 +2,38 @@
 use serde::{Deserialize, Serialize};
 
 use super::{Sandbox, SandboxModelError, SandboxOrigin, SandboxStatus};
+use crate::released_runtime::ReleasedLane;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxRuntimeImageOrigin {
     ManagedDesktop,
+    ManagedMachine,
     UserSelected,
 }
 
 impl Sandbox {
     pub fn has_managed_runtime_image(&self) -> bool {
-        self.profile.content.runtime_image.is_none() || self.has_managed_desktop_image()
+        self.managed_runtime_lane().is_some()
+    }
+
+    pub fn managed_runtime_lane(&self) -> Option<ReleasedLane> {
+        match self.lifecycle.runtime_image_origin {
+            Some(SandboxRuntimeImageOrigin::ManagedMachine) => Some(ReleasedLane::Machine),
+            Some(SandboxRuntimeImageOrigin::ManagedDesktop) => Some(ReleasedLane::Agent),
+            None if self.profile.content.runtime_image.is_none() => Some(ReleasedLane::Agent),
+            Some(SandboxRuntimeImageOrigin::UserSelected) | None => None,
+        }
     }
 
     pub fn has_managed_desktop_image(&self) -> bool {
-        self.lifecycle.runtime_image_origin == Some(SandboxRuntimeImageOrigin::ManagedDesktop)
+        matches!(
+            self.lifecycle.runtime_image_origin,
+            Some(
+                SandboxRuntimeImageOrigin::ManagedDesktop
+                    | SandboxRuntimeImageOrigin::ManagedMachine
+            )
+        )
     }
 
     /// A retained version can be displayed even when it cannot establish the

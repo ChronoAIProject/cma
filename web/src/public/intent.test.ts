@@ -60,10 +60,10 @@ it('coalesces concurrent admission and rejects another owner before network I/O'
   const client = publicClient();
   const intent = createIntent(route);
   await Promise.all([admit(client, intent, 'owner'), admit(client, intent, 'owner')]);
-  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
   writeIntent({ ...intent, owner: 'owner', submitted: true });
   await expect(admit(client, readIntent(path)!, 'other')).rejects.toThrow();
-  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
 });
 
 it.each(['refused', 'retry'] as const)(

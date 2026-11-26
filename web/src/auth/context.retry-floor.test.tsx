@@ -277,11 +277,17 @@ it('cancels the old timer and suppresses refresh hints while sign-out is pending
   expect(screen.getByText('anonymous')).toBeInTheDocument();
   await advance(90_000);
   expect(current).toHaveBeenCalledTimes(1);
-  current.mockResolvedValue({ status: 'anonymous' });
+  current.mockResolvedValue(signedIn);
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   });
+  expect(current).toHaveBeenCalledTimes(1);
+  expect(screen.getByText('anonymous')).toBeInTheDocument();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+  });
   expect(current).toHaveBeenCalledTimes(2);
+  expect(screen.getByText('verified')).toBeInTheDocument();
 });
 
 it('does not restore a timer from a pre-sign-out response that arrives late', async () => {

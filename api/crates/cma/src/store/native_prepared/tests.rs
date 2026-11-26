@@ -15,6 +15,7 @@ pub(in crate::store) mod agent_replay_tests;
 mod claim_race_tests;
 mod guidance_revision_tests;
 mod installation_transfer_tests;
+mod machine_origin_tests;
 pub(super) mod machine_tests;
 mod model_tests;
 pub(crate) mod open_ready_fixture;

@@ -14,11 +14,13 @@ use layer2_core::sandbox::{
     SandboxWorkStep, TypedFailure,
 };
 use layer3_adapter::{
-    CheckpointReceipt, ConversationSnapshot, ConversationUpdate, RuntimeOutputReceipt,
-    RuntimeOutputSource, WriterState,
+    CheckpointReceipt, ConversationSnapshot, ConversationUpdate, ReleasedRuntime,
+    RuntimeOutputReceipt, RuntimeOutputSource, WriterState,
 };
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+#[path = "reopen_machine_tests.rs"]
+mod machine;
 #[path = "reopen_owner_tests.rs"]
 mod ownership;
 
@@ -26,25 +28,28 @@ mod ownership;
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn reopen_output_mongo_fences_parent_and_preserves_receipts_on_publication() {
     for count in [0, 2, 3] {
-        run_case(count, false).await;
+        run_case(count, false, false).await;
     }
 }
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn runtime_update_reopen_refusal_mongo_fences_checkpoint_owner_and_claim() {
-    run_case(2, true).await;
+    run_case(2, true, false).await;
 }
 
-#[tokio::test]
-#[ignore = "requires a disposable local MongoDB replica set"]
-async fn runtime_update_reopen_http_requires_the_callers_checkpoint_and_owner_fence() {
-    crate::sandbox::exercise_runtime_update_reopen_http().await;
-}
-
-async fn run_case(count: usize, park: bool) {
-    let (client, name, store) = database().await;
+async fn run_case(count: usize, park: bool, machine: bool) {
+    let (client, name, mut store) = database().await;
     let (mut parent, mut agent) = fixture(&store, "sbx_reopen_output").await;
+    let released = if machine {
+        Some(machine::setup_release(&client.database(&name), &mut store, &mut parent).await)
+    } else {
+        None
+    };
+    let target = released
+        .as_ref()
+        .and_then(|value| value.machine.as_deref())
+        .unwrap_or("image-v2");
     let (store, authority) = ownership::setup(store, &agent, count).await;
     ownership::under(authority.as_ref(), async {
         let at = layer2_core::now_rfc3339();
@@ -75,9 +80,9 @@ async fn run_case(count: usize, park: bool) {
         if park {
             parent.lifecycle.runtime_update = Some(SandboxRuntimeUpdateState {
                 checked_at: at.clone(),
-                observed_version: "image-v2".into(),
+                observed_version: target.into(),
                 request: Some(SandboxRuntimeUpdateRequest {
-                    target_version: "image-v2".into(),
+                    target_version: target.into(),
                     requested_at: at.clone(),
                     automatic: false,
                     started_at: None,
@@ -90,7 +95,7 @@ async fn run_case(count: usize, park: bool) {
         let identity =
             SandboxRotationIdentity::capture(&parent, std::slice::from_ref(&agent)).unwrap();
         parent
-            .begin_image_rotation("image-v2".into(), identity, at.clone())
+            .begin_image_rotation(target.into(), identity, at.clone())
             .unwrap();
         let Some(SandboxLifecycleOperation::ImageRotation {
             phase,
@@ -103,7 +108,7 @@ async fn run_case(count: usize, park: bool) {
         *phase = SandboxImageRotationPhase::ConversationReopen;
         *checkpoint_epoch = Some(1);
         parent.runtime.as_mut().unwrap().provision_generation = Some(2);
-        parent.runtime.as_mut().unwrap().runtime_version = "image-v2".into();
+        parent.runtime.as_mut().unwrap().runtime_version = target.into();
         parent.lifecycle.runtime_generation_high_water = 2;
         parent
             .work
@@ -178,7 +183,14 @@ async fn run_case(count: usize, park: bool) {
                     .await,
                 Err(AgentConversationError::ReopenOutputDiscontinuity)
             );
-            prove_refusal_fences(&store, &parent, &agent, authority.as_ref().unwrap()).await;
+            prove_refusal_fences(
+                &store,
+                &parent,
+                &agent,
+                authority.as_ref().unwrap(),
+                released.as_ref(),
+            )
+            .await;
             return;
         }
         // A transaction that read the parent before startup receipt publication
@@ -393,6 +405,7 @@ async fn prove_refusal_fences(
     parent: &layer2_core::sandbox::Sandbox,
     agent: &layer2_core::sandbox::Agent,
     authority: &layer2_core::agent_ownership::Authority,
+    released: Option<&ReleasedRuntime>,
 ) {
     use layer2_core::agent_ownership::{candidates, OwnershipStore};
     let at = layer2_core::now_rfc3339();
@@ -421,7 +434,7 @@ async fn prove_refusal_fences(
         agent_revision: agent.revision,
         checkpoint: None,
         owner: Some(authority.token.clone()),
-        released: None,
+        released: released.cloned(),
     };
     assert_eq!(
         store
@@ -468,6 +481,7 @@ async fn prove_refusal_fences(
         *parent
     );
     fence.owner = Some(successor);
+    machine::assert_stale_release_refused(store, &mutation, &fence).await;
     // A fresh reader sees the same checkpoint and can park under its new epoch.
     store
         .park_sandbox_reopen_refusal(mutation, fence)

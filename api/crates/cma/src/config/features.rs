@@ -14,6 +14,8 @@ mod home_backup_tests;
 #[cfg(test)]
 #[path = "ingress_coordinator_tests.rs"]
 mod ingress_coordinator_tests;
+mod machine_updates;
+pub(crate) use machine_updates::ManagedMachineUpdates;
 #[cfg(test)]
 mod native_close_lane_tests;
 #[cfg(test)]
@@ -80,6 +82,7 @@ pub(crate) struct FeatureFlags {
     pub startup_sibling_hold_enabled: bool,
     pub retained_reopen_enabled: bool,
     pub runtime_image_origin_enabled: bool,
+    pub managed_machine_updates: ManagedMachineUpdates,
     pub retained_suspended_reopen_enabled: bool,
     pub retained_repeat_reopen_enabled: bool,
     pub agent_skill_upgrade_enabled: bool,
@@ -241,6 +244,7 @@ impl FeatureFlags {
             )?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
             runtime_image_origin_enabled: flag(lookup, "CHRONO_RUNTIME_IMAGE_ORIGIN_ENABLED")?,
+            managed_machine_updates: ManagedMachineUpdates::read(lookup)?,
             retained_suspended_reopen_enabled: flag(
                 lookup,
                 "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED",
@@ -398,6 +402,9 @@ impl FeatureFlags {
         }
         if flags.am_startup_health_serving && flags.am_failure_containment_enabled {
             return Err("CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED cannot be combined with CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED".into());
+        }
+        if flags.am_empty_warm_pool_startup && !flags.am_startup_health_serving {
+            return Err("CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED requires CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED".into());
         }
         Ok(flags)
     }

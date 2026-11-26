@@ -491,7 +491,9 @@ name = "cma-am-mongo-primitives"
 version = "0.1.0"
 dependencies = [
  "bson",
+ "mongodb",
  "serde",
+ "tokio",
 ]
 
 [[package]]
@@ -499,6 +501,7 @@ name = "cma-am-reporting"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "flate2",
  "futures-util",
  "layer2-core",
  "mongodb",
@@ -518,6 +521,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "cma-service-auth",
+ "cma-service-migrations",
  "futures-util",
  "meteroid-utoipa",
  "meteroid-utoipa-axum",
@@ -581,6 +585,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "cma-service-migrations",
  "mongodb",
  "reqwest",
  "ring",
@@ -589,6 +594,20 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "cma-service-migrations"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "mongodb",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -604,6 +623,7 @@ dependencies = [
  "cfb",
  "cma-allocator-qualification",
  "cma-service-auth",
+ "cma-service-migrations",
  "cmaeg-core",
  "cmaeg-engine",
  "cmaeg-execution",
@@ -2182,9 +2202,9 @@ dependencies = [
 
 [[package]]
 name = "kube"
-version = "4.2.0"
+version = "4.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "208d7fe1380066abb194812a8a8e303cb896a33bb3d7b3177b71bd03ff39bf18"
+checksum = "e0a034a7cb6141527e9225e660e48565305b8557f9fb71946d5436aee929d82f"
 dependencies = [
  "k8s-openapi",
  "kube-client",
@@ -2193,9 +2213,9 @@ dependencies = [
 
 [[package]]
 name = "kube-client"
-version = "4.2.0"
+version = "4.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31e940a73033a7c5c7918b5ece7851d84571b58be25e937198da37fa13f116d3"
+checksum = "0dd59e09518478bda46674fb056103318e443a000089b342d32e440a52afe552"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2230,9 +2250,9 @@ dependencies = [
 
 [[package]]
 name = "kube-core"
-version = "4.2.0"
+version = "4.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9d2353c118cf3462c352ee0b5bd5b0cf17990af456dfd8662d136ff9812eeb4"
+checksum = "10b14df286fa701cd30920fa5251f26d8fcbd0fc54b50e02281cafe0a4505743"
 dependencies = [
  "derive_more",
  "form_urlencoded",

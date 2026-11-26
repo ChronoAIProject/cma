@@ -31,7 +31,9 @@ use callback::callback;
 pub(in crate::auth) mod return_target;
 mod silent;
 
-use return_target::{app_return_target, opaque_path_segment, MAX_LOGIN_URL_BYTES};
+use return_target::{
+    app_return_target, interactive_return_target, opaque_path_segment, MAX_LOGIN_URL_BYTES,
+};
 use silent::LoginPrompt;
 
 const ATTEMPT_DOMAIN: &str = "oidc-login-attempt";
@@ -157,8 +159,14 @@ async fn login(
     if let Some(redirect) = auth.canonical_login_redirect(&headers, &uri) {
         return redirect;
     }
+    let silent = matches!(params.prompt, Some(LoginPrompt::Silent));
+    let validate_return_target = if silent {
+        app_return_target
+    } else {
+        interactive_return_target
+    };
     let return_to = match params.return_to {
-        Some(value) => match app_return_target(&value) {
+        Some(value) => match validate_return_target(&value) {
             Ok(value) => Some(value),
             Err(()) => {
                 return (
@@ -173,7 +181,6 @@ async fn login(
         },
         None => None,
     };
-    let silent = matches!(params.prompt, Some(LoginPrompt::Silent));
     if silent {
         if let Some(refusal) = silent::refuse_entry(
             &auth,

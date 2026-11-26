@@ -10,12 +10,13 @@ const SANDBOX_CREDENTIALS: &str = COLLECTION;
 const FLOOR: &str = "ordinary-work-writer-floor-v1";
 const RUNTIME_MIGRATION_FLOOR: &str = "runtime-migration-writer-floor-v1";
 const RUNTIME_IMAGE_ORIGIN_FLOOR: &str = "runtime-image-origin-writer-floor-v1";
+const MANAGED_MACHINE_ORIGIN_FLOOR: &str = "managed-machine-origin-writer-floor-v1";
 
 pub(in crate::store) async fn verify(database: &mongodb::Database) -> Result<(), StoreError> {
     let rows = database.collection::<Document>(SANDBOX_CREDENTIALS);
     if rows
         .find_one(
-            doc! {"document_schema_version":3_i64,"_id":{"$nin":[FLOOR,RUNTIME_MIGRATION_FLOOR,RUNTIME_IMAGE_ORIGIN_FLOOR]}},
+            doc! {"document_schema_version":3_i64,"_id":{"$nin":[FLOOR,RUNTIME_MIGRATION_FLOOR,RUNTIME_IMAGE_ORIGIN_FLOOR,MANAGED_MACHINE_ORIGIN_FLOOR]}},
         )
         .await
         .map_err(|_| StoreError::Unavailable("credential writer floor unavailable".into()))?
@@ -85,28 +86,49 @@ pub(in crate::store) async fn verify(database: &mongodb::Database) -> Result<(),
             }
         }
     }
-    match rows.find_one(doc! {"_id":RUNTIME_IMAGE_ORIGIN_FLOOR}).await {
-        Ok(Some(row)) if row == runtime_image_origin_floor_document() => {}
-        Ok(Some(_)) => {
-            return Err(StoreError::Malformed(
-                "runtime image origin writer floor is not recognized".into(),
-            ))
-        }
-        Ok(None) => {
+    for (id, envelope, expected) in [
+        (
+            RUNTIME_IMAGE_ORIGIN_FLOOR,
+            super::RUNTIME_IMAGE_ORIGIN_VERSION,
+            runtime_image_origin_floor_document(),
+        ),
+        (
+            MANAGED_MACHINE_ORIGIN_FLOOR,
+            super::MANAGED_MACHINE_ORIGIN_VERSION,
+            managed_machine_origin_floor_document(),
+        ),
+    ] {
+        verify_image_floor(database, &rows, id, envelope, expected).await?;
+    }
+    Ok(())
+}
+
+async fn verify_image_floor(
+    database: &mongodb::Database,
+    rows: &Collection<Document>,
+    id: &str,
+    envelope: i64,
+    expected: Document,
+) -> Result<(), StoreError> {
+    match rows
+        .find_one(doc! {"_id": id})
+        .await
+        .map_err(|_| image_origin_unavailable())?
+    {
+        Some(row) if row == expected => Ok(()),
+        Some(_) => Err(StoreError::Malformed(format!("{id} is not recognized"))),
+        None => {
             let protected = database
                 .collection::<Document>("sandboxes")
-                .find_one(doc! {"document_schema_version":super::RUNTIME_IMAGE_ORIGIN_VERSION})
+                .find_one(doc! {"document_schema_version": envelope})
                 .await
                 .map_err(|_| image_origin_unavailable())?;
             if protected.is_some() {
-                return Err(StoreError::Malformed(
-                    "runtime image origin writer floor is missing".into(),
-                ));
+                return Err(StoreError::Malformed(format!("{id} is missing")));
             }
+            Ok(())
         }
-        Err(_) => return Err(image_origin_unavailable()),
     }
-    Ok(())
 }
 
 fn image_origin_unavailable() -> StoreError {
@@ -180,15 +202,34 @@ fn runtime_image_origin_floor_document() -> Document {
     "protocol":"runtime-image-origin-v1","generation":-3_i64}
 }
 
+fn managed_machine_origin_floor_document() -> Document {
+    doc! {"_id":MANAGED_MACHINE_ORIGIN_FLOOR,"document_schema_version":3_i64,
+    "protocol":"managed-machine-origin-v1","generation":-4_i64}
+}
+
 pub(in crate::store) async fn retain_runtime_image_origin(
     store: &crate::store::sandbox_mongo::MongoSandboxStore,
     session: &mut ClientSession,
+) -> Result<(), mongodb::error::Error> {
+    retain_image_floor(store, session, runtime_image_origin_floor_document()).await
+}
+
+pub(in crate::store) async fn retain_managed_machine_origin(
+    store: &crate::store::sandbox_mongo::MongoSandboxStore,
+    session: &mut ClientSession,
+) -> Result<(), mongodb::error::Error> {
+    retain_image_floor(store, session, managed_machine_origin_floor_document()).await
+}
+
+async fn retain_image_floor(
+    store: &crate::store::sandbox_mongo::MongoSandboxStore,
+    session: &mut ClientSession,
+    floor: Document,
 ) -> Result<(), mongodb::error::Error> {
     let rows = store
         .client
         .database(&store.sandboxes.namespace().db)
         .collection::<Document>(COLLECTION);
-    let floor = runtime_image_origin_floor_document();
     if rows
         .find_one(floor.clone())
         .session(&mut *session)

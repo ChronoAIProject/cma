@@ -117,7 +117,7 @@ jobs:
             "$GITHUB_SERVER_URL" "$RUNNER_TEMP/notes.md" \
             "$RUNNER_TEMP/release.md"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-notes
           path: ${{ runner.temp }}/release.md
@@ -202,7 +202,7 @@ jobs:
         run: node .github/scripts/runtime-ledger-evidence.mjs "$RUNTIME_REFERENCE" "$RUNTIME_SOURCE" "$RUNNER_TEMP/ledger-storage.json"
       - name: Retain ledger storage evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-ledger-storage-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ledger-storage.json
@@ -210,7 +210,7 @@ jobs:
           retention-days: 90
       - name: Retain runtime image evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-runtime-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/runtime-image-evidence.json
@@ -311,15 +311,17 @@ jobs:
       - id: notes-download
         continue-on-error: true
         timeout-minutes: 2
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          digest-mismatch: error
           name: release-notes
           path: ${{ runner.temp }}/notes
       - id: notes-download-retry
         if: steps.notes-download.outcome == 'failure'
         timeout-minutes: 2
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          digest-mismatch: error
           name: release-notes
           path: ${{ runner.temp }}/notes
       - name: Explain the unavailable release notes artifact
@@ -350,75 +352,23 @@ jobs:
           .github/reconcile-github-release.sh \
             release "$VERSION" "$GITHUB_SHA" "$RUNNER_TEMP/notes/release.md"
 
-  # ── Carry the release merge back to develop ──────────────────────────────
-  #
-  # Merging develop into main creates a merge commit *on main* that develop
-  # never receives, so main ends every release one commit ahead. The next
-  # release PR then reads BEHIND and cannot merge until somebody notices and
-  # back-merges by hand.
-  #
-  # That happened after v0.1.0 (#196), after v0.2.0 (#221) and after v0.3.0
-  # (#239) — three releases, three identical manual fixes, each one clearing
-  # the instance and none of them the cause. This is the cause.
-  #
-  # A pull request rather than a push: develop is protected, and §"Never force
-  # push" is not negotiable for a convenience. A conflicting back-merge is left
-  # open rather than resolved, because a conflict means develop moved during
-  # the release and guessing at it is how a release silently reverts something.
+  # The next release needs main's merge commit in develop's ancestry. The
+  # publisher can prepare a verified branch with contents permission. A
+  # maintainer opens the PR because the workflow token cannot create one.
   back-merge:
-    name: Back-merge into develop
-    needs: [plan, release]
+    name: Prepare the release back-merge
+    needs: release
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
 
-      - name: Open or update the back-merge
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.plan.outputs.version }}
+      - name: Publish the verified back-merge branch
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # Nothing to do when develop already contains this commit, which is
-          # the case for a release cut from a develop that nothing has moved.
-          if git merge-base --is-ancestor "$GITHUB_SHA" origin/develop; then
-            echo "develop already contains $VERSION; nothing to carry back"
-            exit 0
-          fi
-
-          branch="chore/back-merge-$VERSION"
-          git checkout -B "$branch" origin/develop
-          if ! git merge --no-edit "$GITHUB_SHA"; then
-            # Left for a person. develop moved during the release, and a
-            # resolution chosen here could revert something silently.
-            git merge --abort
-            echo "::error::$VERSION conflicts with develop; back-merge by hand"
-            exit 1
-          fi
-          git push origin "$branch"
-
-          existing_pr="$(
-            gh pr list --base develop --head "$branch" --state open \
-              --json url --jq '.[0].url // empty'
-          )"
-          if [[ -n "$existing_pr" ]]; then
-            echo "back-merge pull request already open: $existing_pr"
-            exit 0
-          fi
-
-          gh pr create --base develop --head "$branch" \
-            --title "chore: take $VERSION's release merge back into develop" \
-            --body "Opened by the publish workflow.
-
-          Merging \`develop\` into \`main\` leaves a merge commit on \`main\` that
-          \`develop\` never receives, so every release ends with \`main\` one commit
-          ahead and the next release PR reading \`BEHIND\`.
-
-          Carries no content — only the merge commit."
+          bash .github/prepare-release-back-merge.sh "$GITHUB_SHA"

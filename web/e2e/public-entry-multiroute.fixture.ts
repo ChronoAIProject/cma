@@ -1,3 +1,4 @@
+import { verifiedEntryHeaders } from './public-entry-binding.fixture';
 import { expect, type Page, type Request } from '@playwright/test';
 import type { Launch, TriggerPreview } from '@cma/client';
 import { recorded } from './agent-startup-fixtures';
@@ -20,8 +21,14 @@ export async function multirouteFixture(page: Page, baseURL: string, otherStatus
     const request = route.request();
     const url = new URL(request.url());
     if (url.origin !== baseURL) return route.fallback();
+    const proof = verifiedEntryHeaders(request, 'local-owner');
     const reply = (body: unknown, status = 200) =>
-      route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+      route.fulfill({
+        status,
+        headers: proof,
+        contentType: 'application/json',
+        body: JSON.stringify(body),
+      });
     if (url.pathname === '/api/v1/triggers/public/public_other')
       return reply({
         ...recorded<TriggerPreview>('triggers.json', 'triggers-preview'),
@@ -29,7 +36,7 @@ export async function multirouteFixture(page: Page, baseURL: string, otherStatus
         always_review: true,
       });
     if (
-      url.pathname === '/api/v1/triggers/public/public_other/launches' &&
+      url.pathname === '/api/v2/triggers/public/public_other/launches' &&
       request.method() === 'POST'
     ) {
       const post = {

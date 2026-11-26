@@ -4,6 +4,7 @@ use std::time::Duration;
 use mongodb::{bson::doc, options::ClientOptions, Client};
 use serde_json::{json, Value};
 
+pub(in crate::store) mod activity_audit_index;
 mod activity_indexes;
 mod activity_page_index;
 pub(in crate::store) mod agent_log_active_proofs;
@@ -25,6 +26,7 @@ pub(in crate::store) mod opening_index;
 mod sandbox_usage_capture;
 mod steps;
 mod turn_policy_index;
+pub(in crate::store) mod usage_projections;
 use steps::Step;
 mod authority;
 mod ledger;
@@ -195,7 +197,7 @@ async fn execute(arguments: &[String]) -> Result<Value> {
     } else {
         Ok(json!({"migration":step.id(),"checksum":step.checksum(),
             "prerequisites":[],"phase":"expand","missing_indexes":indexes.len(),
-            "effects":"add nonunique query indexes only","writes":false}))
+            "effects":if step == Step::UsageProjections { "add a projection collection and indexes" } else { "add nonunique query indexes only" },"writes":false}))
     }
 }
 
@@ -215,6 +217,7 @@ async fn apply_indexes(
             | Step::MeasuredBatches
             | Step::MeasuredIndex
             | Step::AgentLogActiveProofs
+            | Step::UsageProjections
     ) {
         step.inspect(database).await?;
     }
@@ -288,6 +291,10 @@ pub(in crate::store) fn missing_activity_indexes(
     existing: &[mongodb::bson::Document],
 ) -> Result<Vec<mongodb::bson::Document>> {
     activity_indexes::missing(existing)
+}
+
+pub(in crate::store) fn activity_page_index_ready(existing: &[mongodb::bson::Document]) -> bool {
+    activity_page_index::missing(existing).is_ok_and(|pending| pending.is_empty())
 }
 
 #[cfg(test)]

@@ -230,6 +230,7 @@ pub(crate) async fn serve(
             config.turns.clone(),
         )
         .with_activity(observers.activity.clone())
+        .with_recovery_authority(Arc::new(state.resolver.clone()))
         .with_media_tool_providers(tool_providers)
         .with_media(
             media.clone(),
@@ -252,6 +253,7 @@ pub(crate) async fn serve(
     .with_profile_revisions(config.profile_revisions_enabled)
     .with_whatsapp_receipts(whatsapp_receipts)
     .with_telegram(telegram.clone())
+    .with_routing_notice_relay(state.outbound_relay.clone())
     .with_telegram_effects(telegram_effects || config.native_telegram_received_reactions_enabled)
     .with_interactions(interactions)
     .with_native_intake_config(&config)
@@ -382,7 +384,8 @@ pub(crate) async fn serve(
         .github_enabled
         .then(|| crate::github::Initialization::start(state.clone(), ingress.clone()));
     let ingress = ingress.with_receipt_observer(Arc::new(connections.clone()));
-    let metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
+    let metrics =
+        crate::serve_routed::start_metrics(config.metrics_listen, metrics, routed.as_ref()).await?;
     let replica_routes = routed
         .as_ref()
         .map(|composition| composition.replica_routes.clone())
@@ -415,7 +418,6 @@ pub(crate) async fn serve(
     .map_err(|_| std::io::Error::other("native Discord runtime configuration is invalid"))?;
     listener::announce(&listener, metrics.address(), ephemeral)?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
-
     let (shutdown_started, shutdown_signal) = oneshot::channel();
     let side_messages = delivery_engine.side_messages_if(config.event_side_messages_enabled);
     let mut router = router_with_state(state)

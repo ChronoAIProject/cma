@@ -110,7 +110,11 @@ export function toolGroupSummary(tools: readonly ToolCall[]): string {
 }
 
 export function conciseToolError(tool: ToolCall): string {
-  const text = tool.output?.text || tool.detail || 'The operation failed.';
+  const fallback =
+    tool.title === 'mcp.cma_access.describe_deliverable'
+      ? 'Deliverable result unavailable (result_projection_unavailable). Retryable: unknown. Check the operation history and runtime readiness before verifying the same resource again.'
+      : 'The operation failed.';
+  const text = tool.output?.text || tool.detail || fallback;
   const lines = text.trim().split('\n').slice(-3);
   const exit = /(?:exit(?:ed)?(?: with)?(?: code|_code)?[:= ]+)(-?\d+)/i.exec(text);
   if (exit && !lines.some((line) => line.includes(exit[0]!)))

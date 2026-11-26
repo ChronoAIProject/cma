@@ -17,6 +17,13 @@ pub(crate) async fn compose(
     Error,
 > {
     let custody = crate::channels::mutation::enabled_from_env()?;
+    let cancellation = crate::config::channel_cancel_create_enabled()?;
+    let writer_floor_required = crate::config::channel_create_fence_required()?;
+    if cancellation && !writer_floor_required {
+        return Err(
+            "Channel create cancellation requires the retained writer floor setting".into(),
+        );
+    }
     let retained_origins = crate::config::cma_record_origin_aliases()?;
     let owner_key_settings = crate::worker_credentials::config::Settings::from_env()?;
     let independent_store_enabled = [
@@ -28,9 +35,10 @@ pub(crate) async fn compose(
     ]
     .iter()
     .any(|key| std::env::var_os(key).is_some());
-    if (owner_key_settings.tracking || owner_key_settings.owner_keys) && !independent_store_enabled
+    if (owner_key_settings.tracking || owner_key_settings.owner_keys || writer_floor_required)
+        && !independent_store_enabled
     {
-        return Err("worker tracking and owner keys require Gateway-owned Mongo storage; legacy remote records are unsupported".into());
+        return Err("worker tracking, owner keys, and Channel create cancellation require Gateway-owned Mongo storage".into());
     }
     let (records, creator_auth, browser) = if independent_store_enabled {
         let mongo_uri = std::env::var(CMAEG_MONGODB_URI).map_err(|_| {
@@ -62,15 +70,25 @@ pub(crate) async fn compose(
             &client_id,
             client_secret,
         )?;
-        let records = std::sync::Arc::new(
-            records::RecordClient::new(
-                &config.management.cma_base_url,
-                config.management.cma_service_token.as_str(),
-            )?
-            .with_retained_origins(&retained_origins)?
-            .with_database(database)
-            .with_channel_mutation_custody(custody),
-        );
+        let mut records = records::RecordClient::new(
+            &config.management.cma_base_url,
+            config.management.cma_service_token.as_str(),
+        )?
+        .with_retained_origins(&retained_origins)?
+        .with_database(database)
+        .with_channel_mutation_custody(custody);
+        let protected =
+            records::mongo::verify_create_fence_floor(&database_handle, service_identity.issuer())
+                .await?;
+        if writer_floor_required && !protected {
+            return Err(
+                "Channel create cancellation requires an installed Gateway writer floor".into(),
+            );
+        }
+        if protected {
+            records = records.with_channel_create_fences(service_identity.issuer(), cancellation);
+        }
+        let records = Arc::new(records);
         let mut creator_auth = auth::CreatorAuthenticator::new(&config.management.nyxid_base_url)?
             .with_service(service_identity.clone());
         if owner_key_settings.owner_keys {

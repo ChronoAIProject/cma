@@ -31,8 +31,19 @@ impl ActivityHistory {
         record: &str,
         query: HistoryQuery,
     ) -> Result<HistoryPage, Error> {
+        self.page_with_clock(owner, record, query, super::now_ms)
+            .await
+    }
+
+    pub(super) async fn page_with_clock(
+        &self,
+        owner: &str,
+        record: &str,
+        query: HistoryQuery,
+        now_ms: impl Fn() -> i64,
+    ) -> Result<HistoryPage, Error> {
         let repo = self.reader()?;
-        let now = super::now_ms();
+        let now = now_ms();
         let scope = super::scope(owner, record);
         let mut state = if let Some(token) = query.cursor.as_ref() {
             let cursor: PageCursor = cursor::open(&self.keys, cursor::HISTORY, token)?;
@@ -97,10 +108,6 @@ impl ActivityHistory {
             }
         };
         if state.deadline_ms <= now {
-            return Err(Error::Expired);
-        }
-        let boundary = repo.boundary().await?;
-        if boundary.revision != state.coverage_revision {
             return Err(Error::Expired);
         }
         let rows = repo
@@ -171,13 +178,19 @@ impl ActivityHistory {
             }
             state.after = Some(stored.key);
         }
-        if super::now_ms() >= state.deadline_ms {
+        // Use the boundary and retention cutoff at completion. A receipt at
+        // the start of the range can expire while the snapshot is being read
+        // and disappear before the earliest-expiry lookup sees it.
+        let boundary = repo.boundary().await?;
+        let completed_ms = now_ms();
+        if boundary.revision != state.coverage_revision || completed_ms >= state.deadline_ms {
             return Err(Error::Expired);
         }
         // The attested policy limits completeness even if a reader restarts with
         // a longer configured horizon. Older rows retain their original expiry.
-        let retained_from =
-            now - i64::from(self.config.retention_days.min(boundary.retention_days)) * 86_400_000;
+        let retained_from = completed_ms
+            - i64::from(self.config.retention_days.min(boundary.retention_days)) * 86_400_000
+            + 1;
         let mut gaps = Vec::new();
         if state.from_ms < retained_from {
             gaps.push(CoverageGap::RetentionExpired);
