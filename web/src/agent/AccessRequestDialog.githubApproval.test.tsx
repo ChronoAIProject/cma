@@ -79,6 +79,13 @@ it('requires the owner to choose a repo-capable connection and replays the exact
               manage_url: 'https://nyx.example/keys/profile-only',
             },
             {
+              id: 'stale-repository-access',
+              label: 'Stale repository access',
+              granted_scopes: ['repo'],
+              account: { login: 'stale-owner', observed_scopes: ['read:user'] },
+              manage_url: 'https://nyx.example/keys/stale-repository-access',
+            },
+            {
               id: 'repository-access',
               label: 'Repository access',
               granted_scopes: ['repo'],
@@ -98,6 +105,9 @@ it('requires the owner to choose a repo-capable connection and replays the exact
   expect(screen.getByText('Live scopes — repo, read:user')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: /Select Profile access/ })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', { name: /Select Stale repository access/ }),
+  ).not.toBeInTheDocument();
   await userEvent.click(await screen.findByRole('button', { name: /Select Repository access/ }));
   await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
   expect(await screen.findByText('Lost selected approval response')).toBeVisible();

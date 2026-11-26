@@ -297,36 +297,22 @@ impl NyxidServiceConnectionBroker {
             let detail = self
                 .github_detail(connection_id, &row.slug, &catalog_id, credential, deadline)
                 .await?;
-            if let Some(need) = need {
-                let scope = self
-                    .observe_scope(credential, &catalog_id, &detail, need, deadline)
-                    .await?;
-                if !matches!(scope, GitHubScopeCheck::ScopeSatisfied { .. }) {
-                    return Err(ServiceConnectionError::Refused);
-                }
-            } else {
-                if !valid_browser_id(&catalog_id)
+            if need.is_none()
+                && (!valid_browser_id(&catalog_id)
                     || !detail.active_oauth
                     || !detail
                         .granted_scopes
                         .as_ref()
-                        .is_some_and(|scopes| scopes.iter().any(|scope| scope == "repo"))
-                {
-                    return Err(ServiceConnectionError::Refused);
-                }
-                let response = self
-                    .github_user(credential, &catalog_id, connection_id, deadline)
-                    .await?;
-                let scopes = response
-                    .headers()
-                    .get("x-oauth-scopes")
-                    .and_then(|value| value.to_str().ok())
-                    .ok_or_else(|| {
-                        unavailable("selected GitHub credential scope was not observed")
-                    })?;
-                if !scopes.split(',').any(|scope| scope.trim() == "repo") {
-                    return Err(ServiceConnectionError::Refused);
-                }
+                        .is_some_and(|scopes| scopes.iter().any(|scope| scope == "repo")))
+            {
+                return Err(ServiceConnectionError::Refused);
+            }
+            let need = need.unwrap_or(GitHubRepositoryNeed::PrivateRepositoryRead);
+            let scope = self
+                .observe_scope(credential, &catalog_id, &detail, need, deadline)
+                .await?;
+            if !matches!(scope, GitHubScopeCheck::ScopeSatisfied { .. }) {
+                return Err(ServiceConnectionError::Refused);
             }
             Ok(VerifiedGitHubConnection {
                 connection_id: detail.id,
