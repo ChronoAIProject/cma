@@ -196,3 +196,27 @@ class NativeRecovery(unittest.TestCase):
         retirement_step = next(step for step in job["steps"] if "CD_LEGACY_BUILDKIT_INDEX_RETIREMENT" in step.get("env", {}))
         self.assertIn("vars.CMA_LEGACY_BUILDKIT_INDEX_RETIREMENT == 'true'",
                       retirement_step["env"]["CD_LEGACY_BUILDKIT_INDEX_RETIREMENT"])
+
+    def test_automatic_inspection_requires_successful_staging_and_observed_pressure(self):
+        jobs = yaml.safe_load((ROOT / '.github/workflows/cache-retention.yml').read_text())['jobs']
+        sweep, inspect = jobs['sweep'], jobs['inspect_buildkit']
+        self.assertEqual(sweep['outputs'], {
+            'observed_bytes_to_admit': '${{ steps.preview.outputs.observed_bytes_to_admit }}',
+        })
+        preview = next(step for step in sweep['steps'] if step.get('id') == 'preview')
+        self.assertEqual(preview['run'], 'python3 -B .github/scripts/actions_cache_sweep.py')
+        self.assertEqual(inspect['needs'], 'sweep')
+        for condition in (
+            "github.event_name == 'workflow_dispatch' && inputs.inspect_buildkit",
+            "github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push'",
+            "github.event.workflow_run.head_repository.full_name == github.repository",
+            "github.event.workflow_run.path == '.github/workflows/staging-cd.yml'",
+            "github.event.workflow_run.conclusion == 'success'",
+            "vars.CMA_LEGACY_BUILDKIT_GC != 'true' && needs.sweep.result == 'success'",
+            "fromJSON(needs.sweep.outputs.observed_bytes_to_admit || '0') > 0",
+        ):
+            self.assertIn(condition, inspect['if'])
+        self.assertEqual(inspect['cache-mode'], 'read')
+        self.assertEqual(inspect['permissions'], {'actions': 'read', 'contents': 'read'})
+        self.assertFalse(inspect['concurrency']['cancel-in-progress'])
+        self.assertNotEqual(inspect['concurrency']['group'], jobs['recover_native_buildkit']['concurrency']['group'])
