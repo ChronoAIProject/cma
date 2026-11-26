@@ -2,8 +2,11 @@
 import json
 import os
 from pathlib import Path
+import random
 import sys
+import time
 
+import ci_retry
 from ci_outcome import error_site, report
 from staging_cd_admission import event_identity
 from staging_cd_baselines import durable_baselines
@@ -18,8 +21,8 @@ from staging_cd_receipts import canonical
 from staging_cd_reservations import next_reservation
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
-from staging_cd_promotion import proven_components
-from staging_cd_versions import DEPLOYABLES, label_level, merged_pr, version_tuple
+from staging_cd_promotion import available_proofs, proven_components
+from staging_cd_versions import DEPLOYABLES, label_level, merged_pr, source_is_retired, version_tuple
 
 REFUSAL_CODES = {
     "Reservation owner run could not be read": "RESERVATION_OWNER_UNREADABLE",
@@ -31,36 +34,76 @@ REFUSAL_CODES = {
     "Source already has conflicting final versions": "FINAL_VERSION_CONFLICT",
     "Source must belong to exactly one merged develop PR": "MERGED_PR_NOT_UNIQUE",
     "Merged PR identity changed": "MERGED_PR_IDENTITY_CHANGED",
-    "Merged PR must carry exactly one supported version-upgrade label": "VERSION_LABEL_REQUIRED",
+    "Merged PR has conflicting or unsupported version-upgrade labels": "VERSION_LABEL_REQUIRED",
     "Version labels are malformed": "VERSION_LABELS_INVALID",
     "Release source is not on verified develop first-parent history": "SOURCE_HISTORY_INVALID",
+    # Split by its cause in github_read_code; this is the code of no known cause.
     "GitHub API request failed": "GITHUB_READ_FAILED",
     "GitHub API response is invalid": "GITHUB_RESPONSE_INVALID",
+    "GitHub read budget expired": "DEADLINE_EXCEEDED",
     "Version reservation collision limit exceeded": "RESERVATION_COLLISION_LIMIT",
     "Reservation push failed without a collision": "RESERVATION_PUSH_FAILED",
     "Reservation push was not verified": "RESERVATION_VERIFY_FAILED",
+    "Reservation push was rejected": "RESERVATION_PUSH_REJECTED",
     "Terminal reservation settlement is uncertain": "FINAL_SETTLEMENT_UNCERTAIN",
     "Terminal reservation differs from final receipt": "FINAL_SETTLEMENT_CONFLICT",
     "Allocation deadline exceeded": "DEADLINE_EXCEEDED",
     "Allocation read failed": "READ_FAILED",
     "Allocation write settlement is uncertain": "WRITE_UNCERTAIN",
-    "Allocation claim owner differs": "RESERVATION_VERIFY_FAILED",
-    "Allocation claim has no durable version": "INVENTORY_INCOMPLETE",
+    "Allocation claim owner differs": "INVENTORY_CLAIM_CONFLICT",
+    "Allocation claim has no durable version": "INVENTORY_CLAIM_ORPHANED",
     "Allocation reservation collision": "RESERVATION_COLLISION",
+    "Allocation planned a duplicate reservation": "RESERVATION_PLAN_INVALID",
+    "Unknown reservation component": "RESERVATION_PLAN_INVALID",
     "Allocation tag inventory is incomplete": "INVENTORY_INCOMPLETE",
+    "Develop history has not reached the push": "DEVELOP_ADVERTISEMENT_UNSETTLED",
+    "Develop ancestry could not be verified": "DEVELOP_ADVERTISEMENT_UNSETTLED",
+    "Allocation tag inventory exceeds 16 MiB": "INVENTORY_TOO_LARGE",
     "Allocation reservation readback differs": "RESERVATION_VERIFY_FAILED",
     "Allocation reservation readback is unavailable": "RESERVATION_NOT_VISIBLE",
 }
 FALLBACK_CODES = frozenset({"UNEXPECTED_ERROR", "UNCLASSIFIED_REFUSAL"})
+# Codes a failed GitHub read takes from its cause rather than its message.
+GITHUB_READ_CAUSES = frozenset({"GITHUB_READ_TRANSIENT", "GITHUB_READ_DENIED"})
 # The codes ci_outcomes.json catalogues as transient; a test keeps them equal.
 # Such a refusal stops allocation at its settlement gate, the step catch-up
 # re-runs a head run for, once. Every other refusal fails the allocation step.
 TRANSIENT_CODES = frozenset({
     "RESERVATION_OWNER_UNREADABLE", "RESERVATION_OWNER_UNCERTAIN", "MERGED_PR_IDENTITY_CHANGED",
-    "VERSION_LABELS_INVALID", "GITHUB_RESPONSE_INVALID", "RESERVATION_COLLISION_LIMIT", "RESERVATION_PUSH_FAILED",
-    "RESERVATION_VERIFY_FAILED", "FINAL_SETTLEMENT_UNCERTAIN", "DEADLINE_EXCEEDED", "READ_FAILED",
-    "WRITE_UNCERTAIN", "INVENTORY_INCOMPLETE", "RESERVATION_COLLISION", "RESERVATION_NOT_VISIBLE",
+    "VERSION_LABELS_INVALID", "GITHUB_READ_TRANSIENT", "GITHUB_RESPONSE_INVALID", "RESERVATION_COLLISION_LIMIT",
+    "RESERVATION_PUSH_FAILED", "RESERVATION_VERIFY_FAILED", "FINAL_SETTLEMENT_UNCERTAIN", "DEADLINE_EXCEEDED",
+    "READ_FAILED", "WRITE_UNCERTAIN", "INVENTORY_INCOMPLETE", "INVENTORY_CLAIM_ORPHANED", "RESERVATION_COLLISION",
+    "RESERVATION_NOT_VISIBLE", "DEVELOP_ADVERTISEMENT_UNSETTLED",
 })
+# A transient refusal raised before the reservation push started left nothing
+# on the remote, so the whole allocation runs once more in the same job, with
+# a fresh budget and inventory after a short jittered wait, or longer when
+# GitHub asked for up to the longest wait. A longer request, such as a spent
+# primary rate limit, is left to the gate and catch-up: an early rerun would
+# only repeat every tag read. Two attempts and the wait take at most 260 s of
+# the allocate job's 25 minute timeout.
+ALLOCATION_ATTEMPTS = 2
+RETRY_WAIT_SECONDS = (10, 20)
+# WRITE_UNCERTAIN says a write may have committed. It never reruns
+# allocation, whatever the push flag says.
+RETRIED_CODES = TRANSIENT_CODES - {"WRITE_UNCERTAIN"}
+
+
+def github_read_code(error):
+    """Name a failed GitHub read by the cause its refusal carries."""
+    if ci_retry.classify(error) == ci_retry.TRANSIENT:
+        # A 5xx, 408 or 429 response, a rate-limited 403, or a transport failure.
+        return "GITHUB_READ_TRANSIENT"
+    # Without rate-limit headers, a 401 or 403 is the token's standing answer.
+    return "GITHUB_READ_DENIED" if getattr(error, "status", None) in (401, 403) else "GITHUB_READ_FAILED"
+
+
+def refusal_code(error):
+    """The fixed public code of an allocation failure."""
+    if not isinstance(error, Refusal):
+        return "UNEXPECTED_ERROR"
+    code = REFUSAL_CODES.get(str(error), "UNCLASSIFIED_REFUSAL")
+    return github_read_code(error) if code == "GITHUB_READ_FAILED" else code
 
 
 def run_allocation(operation, env=None):
@@ -74,8 +117,7 @@ def run_allocation(operation, env=None):
             return operation(masker)
         except Exception as error:
             site = error_site(error)
-            if isinstance(error, Refusal):
-                reason = REFUSAL_CODES.get(str(error), "UNCLASSIFIED_REFUSAL")
+            reason = refusal_code(error)
             raise
 
     status = run_private(guarded, None, subject="allocation", explain=False)
@@ -128,7 +170,7 @@ def run_active(api, reservation):
     return run["status"] != "completed"
 
 
-def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, mark=lambda _component, _phase: None):
+def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dict, mark=lambda _component, _phase: None):
     require(isinstance(queue, dict) and matches(r"[0-9a-f]{40}", queue.get("head"))
             and isinstance(queue.get("changes"), list), "Release queue is invalid")
     mark("all", "final-inventory")
@@ -164,6 +206,8 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, ma
         item["component"] in GROUP and item["source"] == group_tip for item in inventory)
     for item in pending:
         if item["component"] not in DEPLOYABLES or DEPLOYABLES[item["component"]] not in newest:
+            continue
+        if source_is_retired(item["component"], item["source"]):
             continue
         # Only duplicate work for the very same source needs an owner lookup.
         # A strictly older owner that has not started building yields to the
@@ -215,7 +259,11 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, ma
     for tag in sorted(finals, key=lambda tag: history.position(tag["target"])):
         receipt = tag["receipt"]
         latest[receipt["identity"]["component"]] = receipt
-    verified = proven_components(proofs or {}, latest, history)
+    # A deployment can finish while this run is waiting for its allocator or
+    # reading Git inventory. Check outcomes only for finals this pass can resume.
+    recoverable = any(component not in busy and newest.get(DEPLOYABLES[component]) == receipt["source"]
+                      for component, receipt in latest.items())
+    verified = proven_components(read_proofs(), latest, history) if recoverable else set()
     current_event = queue.get("event_source") == queue["head"] == history.head
     actions, needed_prs = [], {}
     for change in changes:
@@ -225,6 +273,10 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, ma
         published = [tag["receipt"] for tag in finals if tag["target"] == source]
         for component, name in DEPLOYABLES.items():
             if name not in deployables or source != newest[name] or component in busy:
+                continue
+            # Keep the retired source in newest to prevent an implicit fallback
+            # to its predecessor. An eligible successor may release normally.
+            if source_is_retired(component, source):
                 continue
             stored = [item for item in pending if item["component"] == component]
             stored += [tag["receipt"]["identity"] for tag in finals
@@ -286,15 +338,35 @@ def main(argv=()):
         queue = json.loads(env["CD_QUEUE"])
         require(isinstance(queue, dict) and matches(r"[0-9a-f]{40}", queue.get("event_source"))
                 and queue["event_source"] == env["GITHUB_SHA"], "Release queue is invalid")
-        io = AllocationIO()
-        matrix = allocate_current(queue, env, io, mark)
-        io.remaining()
+        matrix = allocate_attempts(queue, env, mark, mark.retry)
         mark("all", "complete")
         output(env, "matrix", canonical(matrix))
         output(env, "changed", "true" if matrix["include"] else "false")
         return True
     with allocation_progress() as mark:
         return run_allocation(operation, env)
+
+
+def allocate_attempts(queue, env, mark, retry, *, sleep=time.sleep, rand=random.random):
+    """Allocate, once more after a transient refusal raised before the push started."""
+    for attempt in range(1, ALLOCATION_ATTEMPTS + 1):
+        io = AllocationIO()
+        try:
+            matrix = allocate_current(queue, env, io, mark)
+            io.remaining()
+            return matrix
+        except Refusal as error:
+            code = refusal_code(error)
+            requested = ci_retry.requested_wait(error) or 0
+            # Once the push has started, the remote may hold this attempt's
+            # refs: settlement and the gate decide, as for every other stop.
+            if (attempt == ALLOCATION_ATTEMPTS or io.push_started or code not in RETRIED_CODES
+                    or requested > RETRY_WAIT_SECONDS[1]):
+                raise
+        low, high = RETRY_WAIT_SECONDS
+        wait = max(low + (high - low) * rand(), requested)
+        retry(code, attempt + 1, ALLOCATION_ATTEMPTS, wait)
+        sleep(wait)
 
 
 def allocate_current(queue, env, io, mark):
@@ -305,7 +377,8 @@ def allocate_current(queue, env, io, mark):
     if queue["event_source"] != queue["head"]:
         mark("all", "stale-source")
         return {"include": []}
-    proofs = json.loads(env.get("CD_CONTROLLER_PROOFS") or "{}")
+    def read_proofs():
+        return available_proofs(env.get("GH_TOKEN"), env["CD_STAGING_ENVIRONMENT"])
     api = GitHub(env.get("GH_TOKEN"), io)
     while True:
         io.remaining()
@@ -315,7 +388,7 @@ def allocate_current(queue, env, io, mark):
             return {"include": []}
         matrix = allocate_queue(queue, SnapshotAPI(api, reservations), reservations,
                                 int(env["GITHUB_RUN_ID"]), int(env["GITHUB_RUN_ATTEMPT"]),
-                                proofs=proofs, mark=mark)
+                                read_proofs=read_proofs, mark=mark)
         try:
             reservations.commit()
         except AllocationConflict:

@@ -19,12 +19,13 @@ export function prepareOpeningReplay(
     events?.snapshot(agent, {
       limit: OPENING_EVENT_PAGE_LIMIT,
       signal,
+      externalApprovals: true,
       messageBindings: true,
       toolOutput: true,
       retainedOutput: true,
     }),
   );
-  const head = selected.then((events) => events?.head(agent, { signal }));
+  const head = selected.then((events) => events?.head(agent, { signal, externalApprovals: true }));
   // Preserve both failures for the loader; abandoning speculative navigation
   // must not leave an unhandled rejection or cause a replacement request.
   void Promise.allSettled([firstPage, head]);

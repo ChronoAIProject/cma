@@ -7,7 +7,7 @@ pub(super) enum ResourceKey {
     Worktree(String, String),
     AgentHome(AgentSlot),
     AgentSkill(AgentSlot, String),
-    AgentProcess(AgentSlot),
+    AgentProcess(AgentSlot, u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +29,22 @@ pub(super) struct Authority {
     disposition: Disposition,
     identity: Identity,
     skill_sequence: u64,
+}
+
+pub(super) fn completed_close_fence(
+    runtime: &MemoryRuntime,
+    slot: &AgentSlot,
+    incarnation: u64,
+    operation_id: &str,
+) -> Option<u64> {
+    runtime
+        .authorities
+        .get(&ResourceKey::AgentProcess(slot.clone(), incarnation))
+        .filter(|record| {
+            record.disposition == Disposition::Absent
+                && record.identity.operation_id == operation_id
+        })
+        .map(|record| record.fence)
 }
 
 #[allow(clippy::too_many_arguments)]

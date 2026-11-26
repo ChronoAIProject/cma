@@ -8,6 +8,7 @@ pub(super) fn recover_agent(
     sandbox: &Sandbox,
     current: &Agent,
     at: &str,
+    native_retirement_finality: bool,
 ) -> Result<(Agent, Vec<AgentLogKind>), SandboxModelError> {
     current.validate_conversation()?;
     let retiring = sandbox.status == SandboxStatus::Retiring;
@@ -70,13 +71,7 @@ pub(super) fn recover_agent(
                 }));
     let mut next = current.clone();
     let mut logs = Vec::new();
-    if let Some(turn_sequence) = next.conversation.active_turn.take() {
-        let terminal = AgentLogKind::TurnInterrupted { turn_sequence };
-        if let Some(task) = next.conversation.observations.task_acceptance.as_mut() {
-            task.observe_execution(Some(turn_sequence), std::slice::from_ref(&terminal));
-        }
-        logs.push(terminal);
-    }
+    logs.extend(next.conversation.interrupt_active_turn());
     if let Some(operation) = next.conversation.operation.as_mut() {
         if operation.blocks_dispatch() {
             operation.retire_lost_runtime(AgentOperationFailure::new(
@@ -105,9 +100,9 @@ pub(super) fn recover_agent(
         .queued_messages
         .retain(|message| message.state == QueuedMessageState::Queued);
     if retiring {
-        // No message may be replayed into an environment the owner deleted.
-        // Existing owner logs and conversation identity remain available.
-        next.conversation.queued_messages.clear();
+        if !native_retirement_finality {
+            next.conversation.queued_messages.clear();
+        }
         if let Some(previous_generation) = current.conversation.runtime_generation {
             let runtime_generation = previous_generation
                 .checked_add(1)

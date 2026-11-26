@@ -103,7 +103,11 @@ impl RoutedDelivery {
             .as_ref()
             .and_then(|checkpoint| checkpoint.custom.clone())
             .ok_or(ExecutionError::Corrupt)?;
-        if !evidence.valid_for(&CustomCheckpoint::new(&event, body, effect.webhook())) {
+        if !evidence.valid_for(&CustomCheckpoint::new(
+            &event,
+            &body.delivery.policy.sinks,
+            effect.webhook(),
+        )) {
             return Err(ExecutionError::Corrupt);
         }
         if recovering {

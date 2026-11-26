@@ -219,6 +219,7 @@ async fn legacy_agent_operations_never_replace_revoked_full_home_write_consent()
                 None,
                 "aGk=".into(),
                 false,
+                None,
             )
             .await;
         let delete = files
@@ -291,6 +292,7 @@ async fn owner_can_manage_files_and_cross_owner_has_no_access() {
             None,
             "aGk=".into(),
             false,
+            None,
         )
         .await
         .unwrap();
@@ -315,7 +317,8 @@ async fn owner_can_manage_files_and_cross_owner_has_no_access() {
                 "note",
                 None,
                 String::new(),
-                false
+                false,
+                None,
             )
             .await,
         Err(AgentFileError::Access(_))
@@ -371,6 +374,7 @@ async fn view_only_and_view_write_links_enforce_filesystem_capabilities_and_revo
                 None,
                 "aGk=".into(),
                 false,
+                None,
             )
             .await;
         let delete = files
@@ -429,7 +433,8 @@ async fn view_only_and_view_write_links_enforce_filesystem_capabilities_and_revo
                     "note",
                     None,
                     String::new(),
-                    false
+                    false,
+                    None,
                 )
                 .await,
             Err(AgentFileError::Access(_))
@@ -445,3 +450,5 @@ async fn view_only_and_view_write_links_enforce_filesystem_capabilities_and_revo
 mod environment_observation;
 #[path = "agent_filesystem_tests/read_timings.rs"]
 mod read_timings;
+#[path = "agent_filesystem_tests/write_target.rs"]
+mod write_target;

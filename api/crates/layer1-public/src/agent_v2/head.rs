@@ -2,6 +2,7 @@ use super::{cursor, error::Error, parse, projection, shapes::EventHead, snapshot
 use crate::AuthenticatedResourceCaller;
 use axum::{
     extract::{Path, RawQuery, State},
+    http::HeaderMap,
     response::{IntoResponse, Response},
     Json,
 };
@@ -12,7 +13,7 @@ use layer2_core::{
 
 /// Establish live observation independently of historical snapshot pagination.
 #[utoipa::path(get, path = "/api/v2/agents/{agent_id}/events/head", tag = "agent events v2",
-    params(("agent_id" = String, Path)),
+    params(("agent_id" = String, Path), ("Prefer" = Option<String>, Header)),
     responses((status = 200, body = EventHead), (status = 400, body = crate::rest::ProblemDocument),
     (status = 404, body = crate::rest::ProblemDocument), (status = 409, body = crate::rest::ProblemDocument),
     (status = 503, body = crate::rest::ProblemDocument)))]
@@ -21,10 +22,17 @@ pub(super) async fn read(
     auth: AuthenticatedResourceCaller,
     Path(id): Path<String>,
     RawQuery(raw): RawQuery,
+    headers: HeaderMap,
 ) -> Response {
     match capture(&state, &auth, AgentId(id), raw).await {
-        Ok(head) => {
+        Ok((head, authorization)) => {
+            let external = super::external_approval::Preference::new(
+                projection::preference(&headers, super::external_approval::PREFERENCE),
+                &state.external_review_origin,
+                &authorization,
+            );
             let mut response = Json(head).into_response();
+            external.headers(response.headers_mut());
             response
                 .headers_mut()
                 .insert("cache-control", "private, no-store".parse().unwrap());
@@ -39,14 +47,15 @@ async fn capture(
     auth: &AuthenticatedResourceCaller,
     id: AgentId,
     raw: Option<String>,
-) -> Result<EventHead, Error> {
+) -> Result<(EventHead, AgentEventStreamAuthorization), Error> {
     if state.single_fence_pages {
         return super::buffered::head(state, auth, id, raw).await;
     }
     parse::head(raw)?;
     let authorization = snapshot::authorize(state, auth, &id).await?;
     let header = state.reads.event_stream_header(&authorization).await?;
-    project(state, &authorization, header).await
+    let head = project(state, &authorization, header).await?;
+    Ok((head, authorization))
 }
 
 pub(super) async fn project(

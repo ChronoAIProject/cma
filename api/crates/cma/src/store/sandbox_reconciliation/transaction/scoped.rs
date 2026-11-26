@@ -9,6 +9,7 @@ use crate::store::{
 pub(in crate::store::sandbox_reconciliation) async fn apply_scoped(
     store: &MongoSandboxStore,
     request: &SandboxRuntimeLossRequest,
+    retirement: Option<&RetirementAction>,
     mut scope: TransactionScope<'_>,
 ) -> Result<RecoveryApplication, ApplyError> {
     let row = measure("sandbox_read", async {
@@ -20,6 +21,7 @@ pub(in crate::store::sandbox_reconciliation) async fn apply_scoped(
     .map_err(ApplyError::Driver)?
     .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_sandbox(&row).map_err(ApplyError::Domain)?;
+    validate_retirement(&row, &current, request, retirement)?;
     if store.runtime_loss_bounded_proof_enabled {
         if let Some(outcome) =
             precheck_sandbox_runtime_loss(&current, request).map_err(ApplyError::Domain)?
@@ -49,6 +51,7 @@ pub(in crate::store::sandbox_reconciliation) async fn apply_scoped(
         .iter()
         .map(|agent| (agent.clone(), agent.conversation.last_seq))
         .collect::<Vec<_>>();
+    validate_retirement_children(&current, &evidence, retirement)?;
     let mut segmented = Vec::new();
     let mut legacy = Vec::new();
     for agent in all {
@@ -101,7 +104,7 @@ pub(in crate::store::sandbox_reconciliation) async fn apply_scoped(
     published.sort_by(|left, right| left.id.cmp(&right.id));
     logs.sort_by(|left, right| (&left.agent_id, left.seq).cmp(&(&right.agent_id, right.seq)));
     let mut result = persist_sandbox(
-        store, request, &current, last_seq, *mutation, published, logs, session,
+        store, request, retirement, &current, last_seq, *mutation, published, logs, session,
     )
     .await?;
     if let RecoveryApplication::Persist(receipt) = &mut result {

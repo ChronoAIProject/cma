@@ -2,6 +2,7 @@ import { loadAgent } from './loadAgent';
 import { mergeTranscriptSnapshot } from './chronology';
 import { foldAgentEvent, type ConversationState } from './conversation';
 import { foldV2Item } from './transport/projection';
+import { withApprovalProjection } from './transport/externalApprovalProjection';
 import type { CmaWebClient } from '../api/client';
 import type { AgentLoadLineage, ReadyAgent } from './loadAgent';
 
@@ -41,7 +42,13 @@ export function refreshConversation(
   if (next.v2Items !== undefined) {
     if (current.agentIncarnation !== next.conversation.agentIncarnation)
       throw new Error('Agent snapshot changed conversation identity.');
-    return next.v2Items.reduce(foldV2Item, current);
+    // Policy belongs to the freshly qualified read, even when its durable cursor
+    // is unchanged. Preserve newer live/terminal state while replacing authority.
+    const baseline = withApprovalProjection(
+      current,
+      next.conversation.externalApprovalProjection ?? { supported: false, canReview: false },
+    );
+    return next.v2Items.reduce(foldV2Item, baseline);
   }
   if (current.cursor > next.conversation.cursor) return current;
   const folded = next.durableEvents.reduce(foldAgentEvent, current);

@@ -127,6 +127,7 @@ pub struct TurnStream {
         Option<std::sync::Arc<std::sync::OnceLock<crate::telemetry::turn_trace::Association>>>,
     /// First successful socket write of this attempt, excluding provider processing.
     pub request_started: Instant,
+    pub(crate) recovery: Option<super::recovery::AcceptedRecovery>,
 }
 
 #[derive(Debug)]

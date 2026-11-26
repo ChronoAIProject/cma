@@ -69,7 +69,7 @@ impl BotService {
             record_id: uuid::Uuid::new_v4().to_string(),
             resources: BotResources::default(),
             state: BotState::Creating,
-            work: Some(work(BotOperation::Create, 1)),
+            work: Some(work(BotOperation::Create, 1, self.effect_reservations)),
             generation: 1,
             revision: 1,
             creation_key_hash: key_hash.clone(),

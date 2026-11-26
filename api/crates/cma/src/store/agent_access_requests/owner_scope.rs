@@ -27,14 +27,15 @@ impl MongoSandboxStore {
             return Err(AgentAccessError::Invalid);
         }
         let key_hash = command_hash(key)?;
+        let now = layer2_core::now_rfc3339();
+        let mut observed_identity = None;
+        let mut original_intent = None;
         transaction!(self, session, {
             let snapshot = crate::store::agent_provenance::read_snapshot(self, agent_id, session)
                 .await
                 .map_err(|error| match error {
-                    crate::store::resource_access::ReadError::Driver(_) => {
-                        AgentAccessError::Unavailable
-                    }
-                    _ => AgentAccessError::NotFound,
+                    crate::store::resource_access::ReadError::Driver(error) => Error::Driver(error),
+                    _ => Error::Domain(AgentAccessError::NotFound),
                 })?;
             let sandbox = &snapshot.resource.lineage.sandbox;
             let agent = snapshot
@@ -73,6 +74,19 @@ impl MongoSandboxStore {
                     .ok_or(AgentAccessError::Conflict)?,
                 creation,
             };
+            let scope_revision = sandbox
+                .credential
+                .service_scope
+                .as_ref()
+                .map_or(0, |scope| scope.revision);
+            let identity = (requester.clone(), scope_revision);
+            if observed_identity
+                .as_ref()
+                .is_some_and(|original| original != &identity)
+            {
+                return Err(AgentAccessError::Conflict.into());
+            }
+            observed_identity = Some(identity);
             let proposal = AgentAccessProposal {
                 request_key: format!("owner:{key_hash}"),
                 retry_of: None,
@@ -116,24 +130,19 @@ impl MongoSandboxStore {
                 return Err(AgentAccessError::Conflict.into());
             }
             fence(self, &snapshot, session).await?;
-            let now = layer2_core::now_rfc3339();
             let mut record = AgentAccessRecord {
                 id,
                 requester,
                 proposal,
                 body_sha256,
                 scope_mode: mode,
-                expected_scope_revision: Some(
-                    sandbox
-                        .credential
-                        .service_scope
-                        .as_ref()
-                        .map_or(0, |scope| scope.revision),
-                ),
+                expected_scope_revision: Some(scope_revision),
                 phase: AgentAccessPhase::Connecting,
                 decision: Some(AgentAccessDecision::Approved {
                     command_key_hash: key_hash.clone(),
                     services: services.clone(),
+                    connection: None,
+                    connection_binding: None,
                     authorization: authorization.clone(),
                 }),
                 lease: None,
@@ -141,13 +150,23 @@ impl MongoSandboxStore {
                 approved_at: Some(now.clone()),
                 retry_at: 0,
                 created_at: now.clone(),
-                updated_at: now,
+                updated_at: now.clone(),
                 revision: 1,
                 error: None,
             };
             super::authority::renew_current_scope(self, sandbox, &mut record, session).await?;
+            let intent = document(&record)?;
+            // Renewal derives authority from prior consent and runtime state.
+            // A new snapshot may revalidate that state, never replace this intent.
+            if original_intent
+                .as_ref()
+                .is_some_and(|original| original != &intent)
+            {
+                return Err(AgentAccessError::Conflict.into());
+            }
+            original_intent = Some(intent.clone());
             self.agent_access_requests
-                .insert_one(document(&record)?)
+                .insert_one(intent)
                 .session(session)
                 .await?;
             Ok(record)

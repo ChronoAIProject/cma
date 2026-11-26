@@ -1,8 +1,11 @@
 //! Durable owner consent, original-conversation identity and leased execution.
+#[cfg(test)]
+use super::sandbox_mongo::is_transient;
 use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
+    commit_transaction, is_confirmed_body_retry, start_transaction, CommitOutcome,
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::agent_access::{validate_access_services, AgentAccessError};
 use layer2_core::sandbox::agent_access_tool::{AgentAccessProposal, AgentAccessRequester};
 use layer2_core::sandbox::agent_io::AgentAuthorizationRevision;
@@ -29,7 +32,7 @@ const APPLYING: [&str; 6] = [
     "notifying",
 ];
 
-enum Error {
+pub(in crate::store) enum Error {
     Domain(AgentAccessError),
     Driver(mongodb::error::Error),
 }
@@ -45,31 +48,40 @@ impl From<mongodb::error::Error> for Error {
 }
 type TxResult<T> = Result<T, Error>;
 
+fn provenance_error(error: super::resource_access::ReadError) -> Error {
+    match error {
+        super::resource_access::ReadError::Driver(error) => Error::Driver(error),
+        _ => Error::Domain(AgentAccessError::NotFound),
+    }
+}
+
 macro_rules! transaction {
     ($store:expr, $session:ident, $body:block) => {{
         let store = $store;
         let mut outcome = Err(AgentAccessError::Unavailable);
-        for _ in 0..TRANSACTION_ATTEMPTS {
-            let mut owned_session = store
-                .client
-                .start_session()
-                .await
-                .map_err(|_| AgentAccessError::Unavailable)?;
-            start_transaction(&mut owned_session)
-                .await
-                .map_err(|_| AgentAccessError::Unavailable)?;
+        for attempt in 0..TRANSACTION_ATTEMPTS {
+            crate::store::contention::backoff(attempt).await;
+            // A positively known abort at session start or the start fence
+            // retries within the budget; any other failure stays unavailable.
+            let mut owned_session = match store.client.start_session().await {
+                Ok(session) => session,
+                Err(error) if crate::store::sandbox_mongo::is_transient(&error) => continue,
+                Err(_) => break,
+            };
+            if let Err(error) = start_transaction(&mut owned_session).await {
+                if crate::store::sandbox_mongo::is_transient(&error) {
+                    continue;
+                }
+                break;
+            }
             let $session = &mut owned_session;
             let result: TxResult<_> = async { $body }.await;
             let value = match result {
                 Ok(value) => value,
                 Err(error) => {
-                    let _ = owned_session.abort_transaction().await;
+                    let _ = owned_session.abort_guarded().await;
                     match error {
-                        Error::Driver(error)
-                            if is_transient(&error) || is_duplicate_key(&error) =>
-                        {
-                            continue
-                        }
+                        Error::Driver(error) if is_confirmed_body_retry(&error) => continue,
                         Error::Driver(_) => {
                             outcome = Err(AgentAccessError::Unavailable);
                             break;
@@ -104,10 +116,13 @@ pub(in crate::store) use records::{document, lease_filter, read};
 pub(crate) use records::{
     AgentAccessDecision, AgentAccessHotUpdate, AgentAccessLease, AgentAccessNotificationIntent,
     AgentAccessPhase, AgentAccessProgress, AgentAccessRecord, AgentAccessScopeMode,
+    ConnectionApprovalBinding,
 };
 mod lineage;
-pub(in crate::store) use lineage::validate_lineage;
+pub(in crate::store) use lineage::validate_lineage_transaction;
 mod admission;
+#[cfg(test)]
+mod admission_retry_contract;
 mod decisions;
 pub(in crate::store) mod grant;
 mod hot_grant;

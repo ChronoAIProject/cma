@@ -61,11 +61,13 @@ function view(value: unknown): DocumentView {
     !/^doc_[a-f0-9]{32}$/.test(value.id) ||
     typeof value.title !== 'string' ||
     typeof value.owner_subject !== 'string' ||
+    value.owner_subject.trim().length === 0 ||
     !Number.isSafeInteger(value.revision) ||
     Number(value.revision) < 1 ||
     !Number.isSafeInteger(value.source_revision) ||
     Number(value.source_revision) < 1 ||
-    !['owner', 'read', 'comment'].includes(String(value.access)) ||
+    typeof value.access !== 'string' ||
+    !['owner', 'read', 'comment'].includes(value.access) ||
     typeof value.sha256 !== 'string' ||
     !/^[a-f0-9]{64}$/.test(value.sha256) ||
     !Number.isSafeInteger(value.size_bytes) ||

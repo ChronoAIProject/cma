@@ -29,7 +29,9 @@ it('preserves the report cooldown across filters, hide/show and explicit refresh
   act(() => result.current.refresh());
   expect(api.create).toHaveBeenCalledTimes(1);
   expect(result.current.report).toBeUndefined();
-  await act(async () => vi.advanceTimersByTimeAsync(25000));
+  // Retry-After carries up to 10% jitter, so a fixed 30 s offset can land
+  // exactly on the deadline. Stop one millisecond short of the real deadline.
+  await act(async () => vi.advanceTimersByTimeAsync(deadline! - Date.now() - 1));
   expect(api.create).toHaveBeenCalledTimes(1);
   await act(async () => vi.advanceTimersByTimeAsync(Math.max(0, deadline! - Date.now())));
   await act(async () => {});

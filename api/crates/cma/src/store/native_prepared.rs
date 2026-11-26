@@ -14,10 +14,14 @@ mod agent_open_ready;
 mod agent_replay;
 pub(in crate::store) use agent_open_ready::open_ready_proof_revision;
 mod authority;
+mod machine_origin;
 mod model;
+pub(super) use machine_origin::verify_machine_origin;
 mod planning;
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+pub(crate) use tests::machine_tests::admit_machine_for_pointer_fixture;
 mod tools;
 mod work;
 mod workspace_proof;
@@ -28,7 +32,9 @@ pub(super) use adoption::{
 pub(super) use agent_replay::replay_proof_revision;
 pub(crate) use model::NativePreparedPlan;
 use model::Record;
+#[cfg(test)]
 pub(super) use tools::prepared_conversation;
+pub(super) use tools::prepared_conversation_transaction;
 pub(crate) use work::NativePreparedClaim;
 pub(crate) use workspace_proof::NativePreparedWorkspaceProof;
 

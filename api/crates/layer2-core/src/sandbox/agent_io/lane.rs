@@ -73,6 +73,13 @@ impl CommandLane {
 }
 
 impl AdmittedAgentCommand {
+    pub fn predates_owner_restart(&self, agent: &Agent) -> bool {
+        agent
+            .work
+            .pre_restart_command_order
+            .is_some_and(|order| self.receipt.agent_order <= order)
+    }
+
     /// Stable priority applies only to the message admitted with a targeted
     /// interruption. Existing ordinary queue positions remain unchanged.
     pub fn queue_priority(&self) -> (u8, u64) {
@@ -130,6 +137,9 @@ pub fn command_ready_for_claim(
         .zip(seconds_from_rfc3339(&command.queue_deadline))
         .is_some_and(|(now, deadline)| now >= deadline);
     let Some(agent) = agent else { return true };
+    if command.predates_owner_restart(agent) {
+        return false;
+    }
     if expired || !agent.status.is_live() || agent.requested_stop_reason.is_some() {
         return true;
     }
@@ -146,7 +156,12 @@ pub fn command_ready_for_claim(
     }
     match command.receipt.envelope.command {
         AgentCommand::Message { .. } => {
-            agent.status == AgentStatus::Ready
+            !agent
+                .conversation
+                .turn_timeout
+                .as_ref()
+                .is_some_and(|timeout| timeout.blocks_dispatch())
+                && agent.status == AgentStatus::Ready
                 && agent.conversation.active_turn.is_none()
                 && agent
                     .conversation

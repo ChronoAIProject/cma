@@ -1,4 +1,6 @@
-use super::{decode_export, selector, PhysicalSeries, Selection};
+use super::{
+    decode_export, decode_raw_export, selector, PhysicalSeries, RawPhysicalSeries, Selection,
+};
 use crate::{AdapterError, Result};
 use futures_util::StreamExt;
 use std::{sync::Arc, time::Duration};
@@ -48,6 +50,16 @@ impl MetricsClient {
         Ok(Self::new(MetricsTransport::Internal { client, base }))
     }
     pub async fn export(&self, selection: &Selection) -> Result<Vec<PhysicalSeries>> {
+        self.export_decoded(selection, decode_export).await
+    }
+    pub async fn export_raw(&self, selection: &Selection) -> Result<Vec<RawPhysicalSeries>> {
+        self.export_decoded(selection, decode_raw_export).await
+    }
+    async fn export_decoded<T>(
+        &self,
+        selection: &Selection,
+        decode: impl FnOnce(&[u8], &Selection) -> Result<T>,
+    ) -> Result<T> {
         let query = selector(selection)?;
         let start = std::time::Instant::now();
         let result = tokio::time::timeout(Duration::from_secs(5), async {
@@ -100,7 +112,7 @@ impl MetricsClient {
                     }
                 }
             }
-            decode_export(&body, selection)
+            decode(&body, selection)
         })
         .await
         .map_err(|_| unavailable())?;

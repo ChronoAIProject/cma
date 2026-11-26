@@ -78,9 +78,9 @@ export class ReplicaFixture {
     for (const response of this.streams) response.write(this.frame(item));
   }
 
-  async cutMidFrame() {
-    // This event exists in durable fixture custody but only half its bytes reach
-    // ingress 0. Neither its sequence nor live fragments may advance the client cursor.
+  async cutMidFrame(cut: 'frame' | 'comment' = 'frame') {
+    // This event exists in durable fixture custody. Interrupt ingress 0 before
+    // its delivery, either within its frame or within a UTF-8 SSE comment.
     this.base.append({ type: 'message', role: 'assistant', content: 'Recovered complete message' });
     const frame = this.frame(this.base.items.at(-1)!);
     const stream = [...this.streams][0];
@@ -96,10 +96,12 @@ export class ReplicaFixture {
         delta: 'Disposable live fragment',
       })}\n\n`,
     );
+    const interrupted =
+      cut === 'frame'
+        ? frame.slice(0, frame.length / 2)
+        : Buffer.from(': keepalive 🙂').subarray(0, -2);
     await new Promise<void>((resolve, reject) =>
-      stream.write(frame.slice(0, frame.length / 2), (error) =>
-        error ? reject(error) : resolve(),
-      ),
+      stream.write(interrupted, (error) => (error ? reject(error) : resolve())),
     );
     await this.killActive();
   }

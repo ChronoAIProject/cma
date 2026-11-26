@@ -1,8 +1,11 @@
+import { ConnectionReturnPage } from './connections/ConnectionReturnPage';
 import { Console } from './Console';
 import { useAuth } from './auth/context';
 import { BrandLoading } from './landing/LandingCharacter';
 import { ShellLoading } from './ui/Skeleton';
 import { SignInLanding } from './landing/SignInLanding';
+import { legalTermsOf } from './auth/types';
+import { LegalConsentDialog } from './auth/LegalConsentDialog';
 import { parseRoute, useAppRouter } from './routing/routes';
 import './styles/tokens.css';
 import './styles/design-platform.css';
@@ -41,7 +44,7 @@ const AUTHENTICATED_HOME_ROUTE: AppRoute = { kind: 'agent_manager' };
 
 export function App() {
   const browserRouter = useAppRouter();
-  const { state: identity } = useAuth();
+  const { state: identity, signOut } = useAuth();
   const identityScope =
     identity.status === 'authenticated'
       ? JSON.stringify([identity.user.id, [...identity.user.capabilities].sort()])
@@ -76,6 +79,18 @@ export function App() {
         />
       </Suspense>
     ) : null;
+  const legalTerms = identity.status === 'authenticated' ? identity.user.legalTerms : undefined;
+  const legalConsent =
+    identity.status === 'authenticated' &&
+    legalTerms !== undefined &&
+    client.legalConsent !== undefined ? (
+      <LegalConsentDialog
+        key={`${identity.user.id}:${legalTerms.version}`}
+        terms={legalTerms}
+        client={client.legalConsent}
+        onSignOut={() => void signOut()}
+      />
+    ) : null;
   const redirectHome = identity.status === 'authenticated' && browserRouter.route.kind === 'home';
   useLayoutEffect(() => {
     if (redirectHome) navigate(AUTHENTICATED_HOME_ROUTE, { replace: true });
@@ -87,7 +102,28 @@ export function App() {
     : usageOpen
       ? { ...browserRouter, route: browserRouter.backgroundRoute ?? AUTHENTICATED_HOME_ROUTE }
       : browserRouter;
-  const identityKey = identity.status === 'authenticated' ? identity.user.id : identity.status;
+  /*
+   * Retained portal work belongs to one known identity: a signed-in owner or a
+   * signed-out visitor. The portal is not mounted while that identity is being
+   * established, and an outage that hides it does not replace the instance: the
+   * first known identity adopts what was mounted. Only a change from one known
+   * identity to another discards what the portal retained. Keying on the
+   * unresolved state remounted the portal when sign-in resolved, discarding a
+   * channel editor the owner had already opened.
+   */
+  const knownIdentity =
+    identity.status === 'authenticated'
+      ? `user:${identity.user.id}`
+      : identity.status === 'anonymous'
+        ? 'anonymous'
+        : undefined;
+  const [portalOwner, setPortalOwner] = useState({ identity: knownIdentity, generation: 0 });
+  if (knownIdentity !== undefined && knownIdentity !== portalOwner.identity)
+    setPortalOwner({
+      identity: knownIdentity,
+      generation:
+        portalOwner.identity === undefined ? portalOwner.generation : portalOwner.generation + 1,
+    });
   const service =
     router.route.kind === 'event_gateway' || isBotRoute(router.route) ? 'event-gateway' : undefined;
   const [lastGatewayRoute, setLastGatewayRoute] = useState<AppRoute>(
@@ -121,6 +157,7 @@ export function App() {
         <IdentityNotice />
         <AgentApp router={router} authEpoch={authEpoch} />
         {usageDialog}
+        {legalConsent}
       </div>
     );
   const navigateService = (next: AppRoute) =>
@@ -129,6 +166,7 @@ export function App() {
     <div className="service-shell">
       <IdentityNotice />
       {usageDialog}
+      {legalConsent}
       {home ? (
         <ServiceBody>
           <PortalFrame route={router.route} onNavigate={navigateService} {...sidebar}>
@@ -148,13 +186,19 @@ export function App() {
         </ServiceBody>
       ) : null}
       {visitedGateway ? (
-        <EventGatewayPortal
-          key={`event-gateway:${identityKey}`}
-          visible={service === 'event-gateway'}
-          route={service ? router.route : lastGatewayRoute}
-          onNavigate={navigateService}
-          {...sidebar}
-        />
+        identity.status === 'checking' ? (
+          <ServiceBody visible={service === 'event-gateway'}>
+            <ShellLoading label="Signing you in" />
+          </ServiceBody>
+        ) : (
+          <EventGatewayPortal
+            key={`event-gateway:${portalOwner.generation}`}
+            visible={service === 'event-gateway'}
+            route={service ? router.route : lastGatewayRoute}
+            onNavigate={navigateService}
+            {...sidebar}
+          />
+        )
       ) : null}
     </div>
   );
@@ -164,6 +208,7 @@ function HomeLanding({ router }: { readonly router: AppRouter }) {
   if (state.status === 'checking') return <BrandLoading />;
   return (
     <SignInLanding
+      legalTerms={legalTermsOf(state)}
       onSignIn={async (returnTo = '/agent-manager') => {
         if (state.status === 'authenticated') router.navigate(parseRoute(returnTo));
         else {
@@ -199,10 +244,8 @@ function AgentApp({
   }>();
   const [hierarchyRevision, setHierarchyRevision] = useState(0);
 
-  // NyxID hosted connection links redirect their popup here after the
-  // credential is saved. The main CMA window is already polling the durable
-  // connection state. Keep its child window available for the next service;
-  // the main window closes it only after the entire sequence is verified.
+  // Callback parameters never prove readiness. The original target verifies
+  // the durable connection after a popup or explicit same-tab return.
   if (window.location.pathname === '/connection-return') {
     return <ConnectionReturnPage />;
   }
@@ -238,6 +281,7 @@ function AgentApp({
         landing
       >
         <SignInLanding
+          legalTerms={state.legalTerms}
           onSignIn={async (returnTo) => {
             retainFatherDraftForSignIn();
             await signIn(
@@ -310,20 +354,5 @@ function AgentApp({
         )}
       </Presence>
     </ReferenceProvider>
-  );
-}
-
-function ConnectionReturnPage() {
-  return (
-    <main className="app-error">
-      <h1 className="app-error__title">Returning to CMA</h1>
-      <p className="app-error__next">
-        CMA is checking your connection. Your next sign-in will open here, or this window will close
-        when all services are ready. If nothing happens, return to the CMA window to continue.
-      </p>
-      <button type="button" onClick={() => window.close()}>
-        Close this window
-      </button>
-    </main>
   );
 }

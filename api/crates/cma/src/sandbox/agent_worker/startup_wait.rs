@@ -3,7 +3,7 @@ use super::support::{
     claimed_fence, same_publication_claim, validate_lineage, PublicationParents, WorkerFailure,
 };
 use super::*;
-use layer2_core::sandbox::store::{AgentWorkMutation, VersionedWorktree};
+use layer2_core::sandbox::store::{AgentWorkMutation, AgentWorkPublication, VersionedWorktree};
 use layer2_core::sandbox::{Sandbox, SandboxStatus, Workspace, WorkspaceStatus, Worktree};
 
 impl AgentWorker {
@@ -90,7 +90,9 @@ impl AgentWorker {
             }
             let remaining = budget.saturating_sub(started.elapsed());
             if remaining.is_zero() {
-                return self.defer_workspace(current, parents, at).await;
+                // The bounded observation already paced this expected wait. Keep
+                // it due so committed parent readiness can wake it.
+                return self.defer_workspace(current, parents, at, false).await;
             }
             tokio::select! {
                 _ = &mut changed => {},
@@ -105,6 +107,7 @@ impl AgentWorker {
         agent: Agent,
         parents: PublicationParents,
         now: SystemTime,
+        publication_aborted: bool,
     ) -> Result<(), SandboxStoreError> {
         self.publish_lifecycle_work(
             agent,
@@ -114,11 +117,15 @@ impl AgentWorker {
                 let expected = agent.revision;
                 let fence = claimed_fence(&agent, &self.config.holder)?;
                 let stamp = rfc3339_at(at);
-                // The bounded observation already paced this expected wait. Leave it
-                // due so committed parent readiness can wake it without another delay.
+                let due = if publication_aborted {
+                    // Repeated contention survives worker restarts without a hot loop.
+                    at + Duration::from_secs(1 << agent.work.attempts.min(4))
+                } else {
+                    at
+                };
                 agent
                     .work
-                    .retry(&self.config.holder, fence, stamp.clone())
+                    .retry(&self.config.holder, fence, rfc3339_at(due))
                     .map_err(|_| SandboxStoreError::Conflict)?;
                 agent.updated_at = stamp.clone();
                 agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
@@ -163,21 +170,35 @@ impl AgentWorker {
             expected_revision,
             worktree,
         };
-        self.publish_lifecycle_work(agent, Some(parents), now, |agent, at, parents| {
-            let worktree = worktree.clone();
-            async move {
-                let mutation = self.progress_mutation(
-                    agent,
-                    AgentWorkStep::AddWorktree,
-                    at,
-                    None,
-                    Vec::new(),
-                    Some(worktree),
-                    None,
-                )?;
-                self.commit_lifecycle_publication(mutation, parents).await
+        let started = tokio::time::Instant::now();
+        let outcome = self
+            .try_publish_lifecycle_work(
+                agent.clone(),
+                Some(parents.clone()),
+                now,
+                |agent, at, parents| {
+                    let worktree = worktree.clone();
+                    async move {
+                        let mutation = self.progress_mutation(
+                            agent,
+                            AgentWorkStep::AddWorktree,
+                            at,
+                            None,
+                            Vec::new(),
+                            Some(worktree),
+                            None,
+                        )?;
+                        self.commit_lifecycle_publication(mutation, parents).await
+                    }
+                },
+            )
+            .await?;
+        match outcome {
+            AgentWorkPublication::Published => Ok(()),
+            AgentWorkPublication::KnownAborted => {
+                self.defer_workspace(agent, parents, now + started.elapsed(), true)
+                    .await
             }
-        })
-        .await
+        }
     }
 }

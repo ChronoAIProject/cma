@@ -1,5 +1,6 @@
 //! Mongo work discovery, lease claims, and terminal sandbox purge.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt as _;
 use layer2_core::sandbox::store::{
     SandboxStore, SandboxStoreError, SandboxWorkerStore, MAX_PAGE_SIZE,
@@ -13,6 +14,7 @@ use super::sandbox_mongo::{
     DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::read_sandbox;
+use super::work_claim_authority::without_ledger_maintenance;
 
 #[async_trait::async_trait]
 impl SandboxWorkerStore for MongoSandboxStore {
@@ -30,6 +32,26 @@ impl SandboxWorkerStore for MongoSandboxStore {
         sandbox: &layer2_core::sandbox::Sandbox,
     ) -> Result<Option<String>, SandboxStoreError> {
         super::native_prepared::completed_installation_digest(self, sandbox).await
+    }
+
+    async fn canary_runtime_image(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+    ) -> Result<Option<layer3_adapter::RuntimeImage>, SandboxStoreError> {
+        let database = self.client.database(&self.sandboxes.namespace().db);
+        super::agent_lifecycle_operations::canary_admission::runtime_image(&database, sandbox).await
+    }
+
+    async fn admitted_runtime_release(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+    ) -> Result<Option<layer3_adapter::ReleasedRuntime>, SandboxStoreError> {
+        let Some(lanes) = &self.released_lanes else {
+            return Ok(None);
+        };
+        let database = self.client.database(&self.sandboxes.namespace().db);
+        super::agent_lifecycle_operations::released::admitted_release(&database, lanes, sandbox)
+            .await
     }
 
     async fn due_sandbox_work(
@@ -53,16 +75,18 @@ impl SandboxWorkerStore for MongoSandboxStore {
         }
         let mut cursor = self
             .sandboxes
-            .find(crate::store::work_schema::query(doc! {
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "work_pending": true,
-                "$nor": [{"record.lifecycle.retirement_archive.verified": {"$type":"null"}}],
-                "work_ready_at": { "$lte": now },
-                "$or": [
-                    { "work_lease_expires_at": Bson::Null },
-                    { "work_lease_expires_at": { "$lte": now } },
-                ],
-            }))
+            .find(crate::store::work_schema::query(
+                without_ledger_maintenance(doc! {
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                    "work_pending": true,
+                    "$nor": [{"record.lifecycle.retirement_archive.verified": {"$type":"null"}}],
+                    "work_ready_at": { "$lte": now },
+                    "$or": [
+                        { "work_lease_expires_at": Bson::Null },
+                        { "work_lease_expires_at": { "$lte": now } },
+                    ],
+                }),
+            ))
             .projection(doc! { "_id": 1 })
             .sort(doc! { "work_ready_at": 1, "_id": 1 })
             .limit(i64::from(limit))
@@ -95,7 +119,7 @@ impl SandboxWorkerStore for MongoSandboxStore {
     ) -> Result<Option<layer2_core::sandbox::Sandbox>, SandboxStoreError> {
         let acquisition = super::work_claim_authority::eligible(&lease_expires_at)?;
         for _ in 0..TRANSACTION_ATTEMPTS {
-            let Some(mut sandbox) = self.get_sandbox(id).await? else {
+            let Some(mut sandbox) = self.ordinary_work_sandbox(id).await? else {
                 return Ok(None);
             };
             if !sandbox.work.is_due(&now)
@@ -124,7 +148,7 @@ impl SandboxWorkerStore for MongoSandboxStore {
                         return Ok(Some(sandbox));
                     }
                     let stored = self
-                        .get_sandbox(id)
+                        .ordinary_work_sandbox(id)
                         .await?
                         .ok_or(SandboxStoreError::Conflict)?;
                     if stored
@@ -221,16 +245,16 @@ impl SandboxWorkerStore for MongoSandboxStore {
             match purge_in_transaction(self, id, expected_revision, &mut session).await {
                 Ok(()) => {}
                 Err(PurgeError::Conflict) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Conflict);
                 }
                 Err(PurgeError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(PurgeError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             }
@@ -258,6 +282,21 @@ impl SandboxWorkerStore for MongoSandboxStore {
     }
 }
 
+impl MongoSandboxStore {
+    async fn ordinary_work_sandbox(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Option<layer2_core::sandbox::Sandbox>, SandboxStoreError> {
+        self.sandboxes
+            .find_one(without_ledger_maintenance(doc! { "_id": id.as_str() }))
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+            .as_ref()
+            .map(read_sandbox)
+            .transpose()
+    }
+}
+
 enum PurgeError {
     Conflict,
     Driver(mongodb::error::Error),
@@ -269,9 +308,12 @@ async fn purge_in_transaction(
     expected_revision: u64,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), PurgeError> {
-    super::work_publication::fence(store, session)
+    super::work_publication::fence_transaction(store, session)
         .await
-        .map_err(|_| PurgeError::Conflict)?;
+        .map_err(|error| match error {
+            super::work_publication::FenceError::Driver(error) => PurgeError::Driver(error),
+            super::work_publication::FenceError::Domain(_) => PurgeError::Conflict,
+        })?;
     let aggregate = store
         .sandboxes
         .find_one(crate::store::work_schema::query(doc! {
@@ -309,6 +351,19 @@ async fn purge_in_transaction(
         return Err(PurgeError::Conflict);
     }
     let sandbox = read_sandbox(&aggregate).map_err(|_| PurgeError::Conflict)?;
+    if store
+        .agents
+        .find_one(doc! {
+            "sandbox_id": id.as_str(),
+            "record.conversation.turn_timeout": {"$exists": true}
+        })
+        .session(&mut *session)
+        .await
+        .map_err(PurgeError::Driver)?
+        .is_some()
+    {
+        return Err(PurgeError::Conflict);
+    }
     if sandbox.retirement_archive_pending()
         || sandbox.status != SandboxStatus::Retired
         || sandbox.runtime.is_some()

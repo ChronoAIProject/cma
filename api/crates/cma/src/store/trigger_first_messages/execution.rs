@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::resource_access::{ResourceOwner, ResourcePolicyFence};
 use layer2_core::sandbox::agent_io::TriggerExecutionProof;
 use layer2_core::sandbox::store::AgentConversationMutation;
@@ -12,7 +13,7 @@ pub(in crate::store) async fn proof(
         .await
         .map_err(unavailable)?;
     let proof = proof_in_session(store, command, &mut session).await;
-    let _ = session.abort_transaction().await;
+    let _ = session.abort_guarded().await;
     proof
 }
 
@@ -35,7 +36,7 @@ pub(in crate::store) async fn ready_for_claim(
     let result = read_proof(store, command, &mut session, ClaimRequirement::Readiness)
         .await
         .map(|_| ());
-    let _ = session.abort_transaction().await;
+    let _ = session.abort_guarded().await;
     result
 }
 

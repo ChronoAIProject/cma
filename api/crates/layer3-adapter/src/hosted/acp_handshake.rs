@@ -87,6 +87,33 @@ impl Bridge {
                     .map(|binding| binding.acp_server()),
             )
             .collect();
+        // An earlier attempt may have initialized this exact bridge and opened
+        // the conversation before it was interrupted, leaving no identifier to
+        // rejoin. Adopt only the single completed open the runtime proves for
+        // this Agent's binding; its exact receipt is verified again below.
+        let resume = match (&greeting, resume, settings.open_completion) {
+            (Greeting::Existing, None, Some(protocol)) => {
+                *phase = "open_adoption";
+                let digest = super::acp_open_completion::binding_digest_with_policy(
+                    &cwd,
+                    &tool_servers,
+                    self.ingress.as_ref(),
+                )?;
+                match self.current_open_completion(protocol, &digest).await? {
+                    super::acp_open_completion::CurrentOpen::Adopt(conversation) => {
+                        tracing::info!("adopting the completed open of an interrupted attempt");
+                        Some(conversation)
+                    }
+                    super::acp_open_completion::CurrentOpen::InFlight => {
+                        return Err(AdapterError::Unavailable(text(
+                            "an earlier open of this conversation is still completing",
+                        )))
+                    }
+                    super::acp_open_completion::CurrentOpen::Unproven => None,
+                }
+            }
+            (_, resume, _) => resume,
+        };
         *phase = "open_completion";
         let completion = if let (Greeting::Existing, Some(conversation), Some(protocol)) =
             (&greeting, resume.as_deref(), settings.open_completion)

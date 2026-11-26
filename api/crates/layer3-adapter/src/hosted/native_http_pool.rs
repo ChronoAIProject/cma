@@ -12,10 +12,10 @@ pub(super) const MAX_HTTP_SESSIONS: usize =
     crate::agent_sandbox::RuntimeCapacityConfig::NATIVE_HTTP_SESSION_LIMIT;
 pub(super) const HTTP_IDLE_TTL: Duration = Duration::from_secs(60);
 
-/// Receiver negotiations cannot queue behind a long application response body.
-/// Both lanes share the same state, identity fences and total session budget.
+/// Separate connections share the same state, identity fences and session budget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum NativeHttpLane {
+    CloseAgent,
     Control,
     Ownership,
 }
@@ -452,6 +452,27 @@ fn identity(state: &TransportState, handle: &RuntimeHandle) -> NativeRuntimeIden
         sandbox_id: bound.map(|binding| binding.sandbox_id.clone()),
         request_sha256: bound.and_then(|binding| binding.request_sha256.clone()),
     }
+}
+
+/// Independent state for one revoke after the original link state is gone.
+/// It carries only the endpoint's captured identity, so the slot identity
+/// check and the Pod open fences still bind the request to that incarnation.
+pub(super) fn revoke_state(endpoint: &RuntimeEndpoint) -> Option<TransportState> {
+    let (handle, _) = endpoint.native_binding()?;
+    let captured = endpoint.native_identity()?;
+    let mut state = TransportState::default();
+    state.runtime_epochs.insert(handle.clone(), captured.epoch);
+    if let Some(sandbox_id) = &captured.sandbox_id {
+        state.bindings.insert(
+            handle.clone(),
+            BoundRuntime {
+                sandbox_id: sandbox_id.clone(),
+                request_sha256: captured.request_sha256.clone(),
+                store: None,
+            },
+        );
+    }
+    (identity(&state, handle) == *captured).then_some(state)
 }
 
 pub(super) fn retired() -> AdapterError {

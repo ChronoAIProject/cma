@@ -1,4 +1,5 @@
 use super::*;
+use std::time::{Duration, SystemTime};
 
 pub(super) fn bounds() -> ProfileCapacityBounds {
     ProfileCapacityBounds {
@@ -17,11 +18,20 @@ pub(super) async fn fixture(
     MongoSandboxStore,
     MongoProfileStore,
     SandboxProfile,
+    FixtureClock,
 ) {
     let (client, name) = database("warmup").await;
     let mut store = MongoSandboxStore::open(&client, &name).await.unwrap();
     store.warm_runtime_version = Some(IMAGE.into());
     let profiles = MongoProfileStore::open(&client, &name).await.unwrap();
+    // Claim eligibility uses Mongo's $$NOW. Anchor each fixture on that
+    // server so an ahead worker clock cannot seed an ineligible warm row.
+    let hello = client
+        .database(&name)
+        .run_command(doc! {"hello":1})
+        .await
+        .unwrap();
+    let clock = FixtureClock(hello.get_datetime("localTime").unwrap().to_system_time());
     let source = sandbox("sbx_unused", "unused");
     let mut profile = SandboxProfile {
         internal: false,
@@ -35,8 +45,8 @@ pub(super) async fn fixture(
         uses_count: 0,
         draft: source.profile.content,
         draft_version: 1,
-        created_at: stamp(0).as_str().into(),
-        updated_at: stamp(0).as_str().into(),
+        created_at: clock.stamp(0).as_str().into(),
+        updated_at: clock.stamp(0).as_str().into(),
         retired_at: None,
     };
     profiles
@@ -45,7 +55,13 @@ pub(super) async fn fixture(
         .unwrap();
     let scanner: [String; 0] = [];
     profiles
-        .publish_sandbox_profile(&profile.id, 1, stamp(0).as_str().into(), bounds(), &scanner)
+        .publish_sandbox_profile(
+            &profile.id,
+            1,
+            clock.stamp(0).as_str().into(),
+            bounds(),
+            &scanner,
+        )
         .await
         .unwrap();
     profile.availability.warmup_enabled = true;
@@ -55,17 +71,21 @@ pub(super) async fn fixture(
         .save_sandbox_draft(1, profile.clone())
         .await
         .unwrap();
-    (client, name, store, profiles, profile)
+    (client, name, store, profiles, profile, clock)
 }
 
-pub(super) async fn reconcile(store: &MongoSandboxStore, profile: &SandboxProfile) {
+pub(super) async fn reconcile(
+    store: &MongoSandboxStore,
+    profile: &SandboxProfile,
+    clock: FixtureClock,
+) {
     store
         .reconcile_warmup_target(
             &profile.id,
             IMAGE,
             &[],
             ProvisioningExecution::default(),
-            stamp(0).as_str(),
+            clock.stamp(0).as_str(),
         )
         .await
         .unwrap();
@@ -85,9 +105,9 @@ pub(super) async fn records(store: &MongoSandboxStore) -> Vec<WarmSandbox> {
         .collect()
 }
 
-pub(super) async fn make_ready(store: &MongoSandboxStore) -> SandboxId {
+pub(super) async fn make_ready(store: &MongoSandboxStore, clock: FixtureClock) -> SandboxId {
     let claim = store
-        .claim_warmup_work(stamp(0).as_str(), stamp(60).as_str())
+        .claim_warmup_work(clock.stamp(0).as_str(), clock.stamp(60).as_str())
         .await
         .unwrap()
         .unwrap();
@@ -97,28 +117,40 @@ pub(super) async fn make_ready(store: &MongoSandboxStore) -> SandboxId {
         runtime_id: format!("runtime-{}", next.id),
         runtime_version: IMAGE.into(),
         provision_generation: Some(1),
-        bound_at: stamp(0).as_str().into(),
+        bound_at: clock.stamp(0).as_str().into(),
     });
     next.installed_request_sha256 = Some("a".repeat(64));
     next.state = WarmSandboxState::Ready;
     let id = next.id.clone();
     store
-        .finish_warmup_work(&claim, next, stamp(0).as_str(), stamp(60).as_str())
+        .finish_warmup_work(
+            &claim,
+            next,
+            clock.stamp(0).as_str(),
+            clock.stamp(60).as_str(),
+        )
         .await
         .unwrap();
     id
 }
 
-static START: std::sync::LazyLock<std::time::SystemTime> =
-    std::sync::LazyLock::new(std::time::SystemTime::now);
+#[derive(Clone, Copy)]
+pub(super) struct FixtureClock(SystemTime);
 
-pub(super) fn stamp(seconds: u64) -> String {
-    layer2_core::rfc3339_at(*START + std::time::Duration::from_secs(seconds))
+impl FixtureClock {
+    pub(super) fn stamp(self, seconds: u64) -> String {
+        layer2_core::rfc3339_at(self.0 + Duration::from_secs(seconds))
+    }
 }
 
-pub(super) fn admission(id: &str, launch: &str, limit: u16) -> SandboxAdmission {
+pub(super) fn admission(
+    id: &str,
+    launch: &str,
+    limit: u16,
+    clock: FixtureClock,
+) -> SandboxAdmission {
     let mut request = super::super::admission(id, launch, limit);
-    request.event_at = stamp(0);
+    request.event_at = clock.stamp(0);
     request
 }
 

@@ -134,7 +134,7 @@ impl RetainedReopenVerifier for Verifier {
     }
 }
 
-fn home(id: &SandboxId) -> SandboxHome {
+pub(in crate::rest) fn home(id: &SandboxId) -> SandboxHome {
     use layer3_adapter::agent_sandbox::*;
     let policy = HomeVolumePolicy {
         mode: HomeVolumeMode::NativeVctFullHomeV2,
@@ -154,6 +154,7 @@ fn home(id: &SandboxId) -> SandboxHome {
     let request = NativePoolClaimRequest {
         pool: NativePoolBinding {
             spec: NativePoolSpec {
+                cold_canary: false,
                 image: RuntimeImage {
                     uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
                     labels: std::collections::BTreeMap::from([

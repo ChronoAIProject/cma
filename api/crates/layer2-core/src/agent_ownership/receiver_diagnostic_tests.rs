@@ -155,3 +155,33 @@ async fn safe_diagnostic_events_exclude_ancestors_in_text_json_and_selective_fil
         }
     }
 }
+
+#[tokio::test]
+async fn diagnostic_lineage_observes_only_the_exact_agent_and_survives_cancellation() {
+    use super::super::receiver_diagnostics::{observe_agent_sandbox, Correlation};
+    use crate::SandboxId;
+
+    let fixture = Fixture::new(false).await;
+    let authority = &fixture.cancelled;
+    let agent = &authority.token.agent_id;
+    let sandbox = SandboxId("first-sandbox".into());
+    let other = SandboxId("other-sandbox".into());
+
+    observe_agent_sandbox(agent, &other);
+    assert!(authority.receiver_correlation().sandbox_sha256.is_none());
+    authority
+        .run(async {
+            observe_agent_sandbox(&AgentId("other-agent".into()), &other);
+            assert!(authority.receiver_correlation().sandbox_sha256.is_none());
+            observe_agent_sandbox(agent, &sandbox);
+            observe_agent_sandbox(agent, &other);
+        })
+        .await
+        .unwrap();
+    TransportAuthority::revoke(authority.as_ref());
+
+    let expected = Correlation::new(agent, Some(sandbox.as_str()), &authority.token.instance_id);
+    let retained = authority.receiver_correlation();
+    assert_eq!(retained.sandbox_sha256, expected.sandbox_sha256);
+    assert_eq!(retained.epoch, Some(authority.token.epoch));
+}

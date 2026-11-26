@@ -1,5 +1,6 @@
 //! Only the exact claimed lifecycle may adopt its reserved identities/session.
 use super::{document, model::Record, read, unavailable};
+use crate::store::agent_admission::helper_error::HelperError;
 use crate::store::sandbox_mongo::MongoSandboxStore;
 use layer2_core::sandbox::store::{AgentAdmission, AgentCreation};
 use layer2_core::sandbox::{
@@ -53,12 +54,22 @@ pub(super) async fn claimed(
     sandbox: &Sandbox,
     session: &mut ClientSession,
 ) -> Result<Option<Record>, SandboxStoreError> {
+    claimed_transaction(store, sandbox, session)
+        .await
+        .map_err(|error| error.into_store_error(unavailable))
+}
+
+pub(super) async fn claimed_transaction(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    session: &mut ClientSession,
+) -> Result<Option<Record>, HelperError> {
     let Some(value) = store
         .native_prepared
         .find_one(doc! {"_id":sandbox.id.as_str(),"state":"claimed"})
         .session(session)
         .await
-        .map_err(unavailable)?
+        .map_err(HelperError::Driver)?
     else {
         return Ok(None);
     };

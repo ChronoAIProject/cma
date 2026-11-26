@@ -1,6 +1,7 @@
 //! Cross-document capture publication shares one snapshot/majority transaction.
 use super::*;
 use crate::store::sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::ClientSession;
 
 fn canonical(value: &str) -> Result<u64, HomeBackupError> {
@@ -52,7 +53,7 @@ async fn commit(session: &mut ClientSession) -> Result<(), HomeBackupError> {
 async fn abort(session: &mut ClientSession) {
     // Dropping a session also aborts. Await explicit cleanup when possible;
     // never turn a failed transaction into successful publication.
-    let _ = session.abort_transaction().await;
+    let _ = session.abort_guarded().await;
 }
 
 pub(super) async fn claim(
@@ -300,6 +301,9 @@ pub(super) async fn save(
             .map_err(failed)?;
         if result.matched_count != 1 {
             return Err(HomeBackupError::Conflict);
+        }
+        if backup.state == HomeBackupState::Ready {
+            super::retention::publish(store, &mut backup, &mut session).await?;
         }
         let result = store
             .backups

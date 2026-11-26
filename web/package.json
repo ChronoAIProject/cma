@@ -13,9 +13,12 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:approval-contract": "vitest run --mode approval-contract",
     "e2e": "playwright test --config e2e/playwright.config.ts",
     "e2e:mechanics": "playwright test --config e2e/mechanics.config.ts",
     "e2e:typecheck": "tsc --project e2e/tsconfig.json",
+    "e2e:owner-timing": "node e2e/owner-timing/run.mjs",
+    "e2e:owner-timing:test": "node --test e2e/owner-timing/run.test.mjs",
     "check:styles": "node scripts/computed-styles.mjs",
     "check:css": "node scripts/css-collisions.mjs"
   },

@@ -2,10 +2,11 @@
 //! Inventory is evidence, not proof that a legacy writer has stopped.
 #[cfg(test)]
 mod diagnostics;
-mod inventory;
-mod io;
+pub(crate) mod evidence;
+pub(crate) mod inventory;
+pub(crate) mod io;
 mod isolation;
-mod json;
+pub(crate) mod json;
 mod plan;
 mod plan_io;
 mod publication;
@@ -169,11 +170,11 @@ pub(crate) async fn stage_command(
 }
 
 #[derive(Clone, Copy)]
-struct Limits {
-    entries: usize,
-    bytes: u64,
-    metadata_bytes: usize,
-    deadline: Duration,
+pub(crate) struct Limits {
+    pub(crate) entries: usize,
+    pub(crate) bytes: u64,
+    pub(crate) metadata_bytes: usize,
+    pub(crate) deadline: Duration,
 }
 
 impl Default for Limits {
@@ -189,16 +190,16 @@ impl Default for Limits {
     }
 }
 
-struct Budget {
+pub(crate) struct Budget {
     limits: Limits,
     start: Instant,
-    entries: usize,
-    bytes: u64,
-    metadata_bytes: usize,
+    pub(crate) entries: usize,
+    pub(crate) bytes: u64,
+    pub(crate) metadata_bytes: usize,
 }
 
 impl Budget {
-    fn new(limits: Limits) -> Self {
+    pub(crate) fn new(limits: Limits) -> Self {
         Self {
             limits,
             start: Instant::now(),
@@ -207,7 +208,7 @@ impl Budget {
             metadata_bytes: 0,
         }
     }
-    fn check(&self) -> Result<()> {
+    pub(crate) fn check(&self) -> Result<()> {
         if self.start.elapsed() > self.limits.deadline {
             return Err(capacity_at_least(
                 "elapsed_nanoseconds",

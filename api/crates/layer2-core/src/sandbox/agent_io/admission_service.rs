@@ -17,7 +17,7 @@ use super::*;
 
 pub(super) const IO_BOUND: Duration = Duration::from_secs(15);
 const QUEUE_LIFETIME: Duration = Duration::from_secs(300);
-const CREATION_ADMISSION_ATTEMPTS: usize = 3;
+const ADMISSION_ATTEMPTS: usize = 3;
 
 #[path = "admission_authority.rs"]
 mod authority;
@@ -26,6 +26,10 @@ mod ownership;
 
 #[path = "admission_model_credit.rs"]
 mod model_credit;
+#[path = "admission_refresh.rs"]
+mod refresh;
+
+use refresh::RevisionRefresh;
 
 /// Selected by a trusted interface adapter, separately from client intent.
 #[derive(Debug, Clone, Copy)]
@@ -64,6 +68,7 @@ pub struct AgentCommandService {
     authority: Arc<dyn AgentCommandAdmissionAuthority>,
     task_experience: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
     ownership: Option<Arc<crate::agent_ownership::OwnershipCoordinator>>,
+    cancel_wake: Option<Arc<tokio::sync::Notify>>,
     model_credit_required: bool,
     model_funding: Option<Arc<crate::sandbox::model_credit::AgentTurnFunding>>,
 }
@@ -80,6 +85,7 @@ impl AgentCommandService {
             authority,
             task_experience: Default::default(),
             ownership: None,
+            cancel_wake: None,
             model_credit_required: false,
             model_funding: None,
         })
@@ -89,6 +95,33 @@ impl AgentCommandService {
         &self,
     ) -> Arc<crate::sandbox::task_experience::TaskExperiencePolicy> {
         self.task_experience.clone()
+    }
+
+    pub fn with_cancel_wake(self: Arc<Self>, wake: Option<Arc<tokio::sync::Notify>>) -> Arc<Self> {
+        let mut service = Self::clone(&self);
+        service.cancel_wake = wake;
+        Arc::new(service)
+    }
+
+    pub(super) async fn notify_new_cancel(
+        &self,
+        envelope: &AgentCommandEnvelope,
+        committed: &AdmittedAgentCommand,
+    ) {
+        let (Some(wake), Some(ownership)) = (&self.cancel_wake, &self.ownership) else {
+            return;
+        };
+        // Each admission attempt generates a distinct ID. A confirmed replay
+        // carries the original ID, including recovery after an unknown commit.
+        if envelope.command == AgentCommand::Interrupt
+            && envelope.command_id == committed.receipt.envelope.command_id
+            && ownership
+                .local(&envelope.agent_id)
+                .await
+                .is_some_and(|authority| ownership.is_ready() && authority.is_current())
+        {
+            wake.notify_one();
+        }
     }
 
     /// Current access and durable credential custody precede reservation. No
@@ -181,74 +214,78 @@ impl AgentCommandService {
             }
         }
         let expected = request.clone();
-        let lineage = &authorized.snapshot.lineage;
-        let retry_creation = submission.expected_agent_revision.is_none()
-            && request.binding.is_none()
-            && matches!(request.envelope.command, AgentCommand::Message { .. })
-            && lineage.agent.as_ref().is_some_and(|agent| {
-                lineage.workspace.as_ref().is_some_and(|workspace| {
-                    agent
-                        .bootstrap_lineage(&lineage.sandbox, workspace)
-                        .or_else(|| agent.prepared_creation_lineage(&lineage.sandbox, workspace))
-                        .is_some()
-                })
-            });
+        let refresh =
+            RevisionRefresh::capture(&authorized, &submission, &request, binding_policy.is_none());
         let retry_deadline = request
             .authority_deadline
             .map_or(tokio::time::Instant::now() + IO_BOUND, |deadline| {
                 deadline.min(tokio::time::Instant::now() + IO_BOUND)
             });
-        for attempt in 0..CREATION_ADMISSION_ATTEMPTS {
-            let result = self
-                .reserve_with_model_credit(&authorized, &target, request, requires_funding)
-                .await?;
-            if matches!(result, Err(CommandLedgerError::Conflict))
-                && retry_creation
-                && attempt + 1 < CREATION_ADMISSION_ATTEMPTS
-            {
-                // A conflict is a noncommitted transaction. Startup workers can
-                // advance either aggregate during authority IO; reauthorize the
-                // same intent rather than retrying its permanently stale guards.
-                expected.require_current_authority()?;
-                let (fresh_authorized, mut fresh) = tokio::time::timeout_at(
-                    retry_deadline,
-                    self.prepare(context, credential, source, submission.clone()),
-                )
-                .await
-                .map_err(|_| CommandLedgerError::Unavailable)??;
-                if fresh.scope() != expected.scope() || fresh.policy != expected.policy {
-                    return Err(CommandLedgerError::Conflict.into());
+        let mut deferred_refusal = self.model_credit_refusal();
+        let result = async {
+            for attempt in 0..ADMISSION_ATTEMPTS {
+                let may_refresh = refresh.enabled() && attempt + 1 < ADMISSION_ATTEMPTS;
+                let result = self
+                    .reserve_with_model_credit(
+                        &authorized,
+                        &target,
+                        request,
+                        requires_funding,
+                        may_refresh,
+                        &mut deferred_refusal,
+                    )
+                    .await?;
+                if matches!(result, Err(CommandLedgerError::Conflict)) && may_refresh {
+                    // The store reports an uncertain commit as Unavailable.
+                    // Refresh only after a known-aborted reservation.
+                    expected.require_current_authority()?;
+                    let (fresh_authorized, mut fresh) = tokio::time::timeout_at(
+                        retry_deadline,
+                        self.prepare(context, credential, source, submission.clone()),
+                    )
+                    .await
+                    .map_err(|_| CommandLedgerError::Unavailable)??;
+                    if fresh.scope() != expected.scope()
+                        || fresh.policy != expected.policy
+                        || !refresh.matches(&authorized, &fresh_authorized, &expected, &fresh)
+                    {
+                        return Err(CommandLedgerError::Conflict.into());
+                    }
+                    fresh.envelope = AgentCommandEnvelope {
+                        authorization: fresh.envelope.authorization,
+                        ..expected.envelope.clone()
+                    };
+                    fresh.response_id = expected.response_id.clone();
+                    fresh.admitted_at = expected.admitted_at.clone();
+                    fresh.queue_deadline = expected.queue_deadline.clone();
+                    // Fresh evidence cannot extend the original authority or IO budget.
+                    fresh.authority_deadline = Some(
+                        fresh
+                            .authority_deadline
+                            .map_or(retry_deadline, |deadline| deadline.min(retry_deadline)),
+                    );
+                    fresh.validate()?;
+                    tracing::info!(agent_id = %submission.agent_id, attempt = attempt + 2,
+                        reason = refresh.code(), "Refreshing uncommitted command admission");
+                    authorized = fresh_authorized;
+                    request = fresh;
+                    continue;
                 }
-                fresh.envelope = AgentCommandEnvelope {
-                    authorization: fresh.envelope.authorization,
-                    ..expected.envelope.clone()
+                let record = match result? {
+                    CommandReservationResult::Created(record)
+                    | CommandReservationResult::Existing(record) => *record,
                 };
-                fresh.response_id = expected.response_id.clone();
-                fresh.admitted_at = expected.admitted_at.clone();
-                fresh.queue_deadline = expected.queue_deadline.clone();
-                // Fresh evidence cannot extend the original authority or IO budget.
-                fresh.authority_deadline = Some(
-                    fresh
-                        .authority_deadline
-                        .map_or(retry_deadline, |deadline| deadline.min(retry_deadline)),
-                );
-                fresh.validate()?;
-                tracing::info!(agent_id = %submission.agent_id, attempt = attempt + 2,
-                    reason = "creation_revision_conflict", "Refreshing uncommitted command admission");
-                authorized = fresh_authorized;
-                request = fresh;
-                continue;
+                let CommandReservationResult::Existing(record) = expected.replay(record)? else {
+                    return Err(CommandLedgerError::Corrupt.into());
+                };
+                self.notify_new_cancel(&expected.envelope, &record).await;
+                return Ok(CommandStatusView::from_record(&record));
             }
-            let record = match result? {
-                CommandReservationResult::Created(record)
-                | CommandReservationResult::Existing(record) => *record,
-            };
-            let CommandReservationResult::Existing(record) = expected.replay(record)? else {
-                return Err(CommandLedgerError::Corrupt.into());
-            };
-            return Ok(CommandStatusView::from_record(&record));
+            Err(CommandLedgerError::Conflict.into())
         }
-        Err(CommandLedgerError::Conflict.into())
+        .await;
+        deferred_refusal.settle().await?;
+        result
     }
 
     /// Recover only an already admitted exact request under fresh mutation

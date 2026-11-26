@@ -80,7 +80,7 @@ describe.each(['owner', 'operations'] as const)('%s range validation', (surface)
     f.rerender(f.view(reversed));
     expect(screen.getByRole('alert')).toHaveTextContent(rangeError);
     if (surface === 'owner')
-      fireEvent.change(screen.getByRole('searchbox', { name: 'Usage Sandbox search' }), {
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Sandbox name or ID starts with' }), {
         target: { value: 'research' },
       });
     else {

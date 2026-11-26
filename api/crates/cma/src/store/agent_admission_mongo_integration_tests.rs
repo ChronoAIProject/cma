@@ -446,3 +446,6 @@ mod worktree_recovery;
 
 #[path = "agent_admission_mongo_integration_tests/segmented.rs"]
 mod segmented;
+
+#[path = "agent_admission_mongo_integration_tests/metadata_unknown_tests.rs"]
+pub(in crate::store) mod metadata_unknown;

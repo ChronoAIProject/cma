@@ -67,3 +67,11 @@ impl SandboxLifecycleState {
         Ok(())
     }
 }
+
+fn validate_writer_token(authority: &SandboxLifecycleAuthority) -> Result<(), SandboxModelError> {
+    let expected = authority.expected_writer_resume_token();
+    if authority.writer_resume_token.as_deref() != Some(expected.as_str()) {
+        return Err(invalid_lifecycle());
+    }
+    Ok(())
+}

@@ -144,10 +144,20 @@ impl Fixture {
             .unwrap_or_else(|_| panic!("fixture client configuration failed"))
     }
     pub async fn records(&self, base: &str) -> RecordClient {
+        self.records_with_tracking(base, None).await
+    }
+    pub async fn records_with_tracking(
+        &self,
+        base: &str,
+        tracking: Option<crate::worker_credentials::WorkerCredentials>,
+    ) -> RecordClient {
         let client = self.client("runtime").await;
-        let mongo = MongoRecords::open(client.database(&self.database))
+        let mut mongo = MongoRecords::open(client.database(&self.database))
             .await
             .unwrap();
+        if let Some(tracking) = tracking {
+            mongo.set_worker_tracking(tracking);
+        }
         RecordClient::new(base, uuid::Uuid::new_v4().to_string())
             .unwrap()
             .with_database(mongo)

@@ -94,11 +94,7 @@ async fn find(
     session: &mut ClientSession,
     snapshot: bool,
 ) -> Result<Option<Document>, SandboxStoreError> {
-    let find = collection.find_one(filter);
-    let find = if snapshot {
-        find.read_concern(mongodb::options::ReadConcern::snapshot())
-    } else {
-        find
-    };
-    find.session(session).await.map_err(unavailable)
+    crate::store::stale_turns::find_with_proof_budget(collection, filter, session, snapshot)
+        .await
+        .map_err(unavailable)
 }

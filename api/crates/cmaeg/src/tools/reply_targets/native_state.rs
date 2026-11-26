@@ -16,7 +16,7 @@ pub(super) fn state(
 ) -> ToolsState {
     let (delivery, _) = tokio::sync::mpsc::channel(16);
     ToolsState {
-        commonmark_relay_enabled: false,
+        commonmark_relay: Default::default(),
         discord_thread_history: None,
         telegram_topics: None,
         discord_threads: None,

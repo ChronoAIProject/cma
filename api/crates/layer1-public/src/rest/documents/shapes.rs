@@ -29,6 +29,12 @@ pub(crate) struct DocumentView {
     access: DocumentAccess,
 }
 #[derive(ToSchema)]
+pub(crate) struct DocumentDeletionReceipt {
+    id: String,
+    revision: u64,
+    deleted_at: String,
+}
+#[derive(ToSchema)]
 pub(crate) struct DocumentPage {
     items: Vec<DocumentView>,
     next: Option<String>,

@@ -10,7 +10,6 @@ use layer3_adapter::RuntimeHandle;
 use super::live_agents::LiveAgentRegistry;
 use super::worker::{LiveAgentStopper, SandboxDependencyError};
 
-const AGENTS_STOPPING: &str = "sandbox agents are still stopping";
 const AGENT_STORE_UNAVAILABLE: &str = "sandbox agent control is temporarily unavailable";
 const AGENT_STATE_CHANGED: &str = "sandbox agent state changed during retirement";
 const AGENT_STATE_INVALID: &str = "sandbox agent state is not usable";
@@ -32,66 +31,6 @@ impl DurableLiveAgentStopper {
             lifecycle: store.clone(),
             controls: store,
             registry,
-        }
-    }
-
-    async fn sandbox_agents(
-        &self,
-        sandbox: &Sandbox,
-    ) -> Result<Vec<Agent>, SandboxDependencyError> {
-        let mut agents = Vec::new();
-        let mut agent_ids = HashSet::new();
-        let mut seen_cursors = HashSet::new();
-        let mut cursor = None;
-
-        loop {
-            let page = self
-                .lifecycle
-                .sandbox_agents(
-                    &sandbox.id,
-                    &PageRequest::new(MAX_PAGE_SIZE, cursor.clone()).expect("valid page size"),
-                )
-                .await
-                .map_err(|error| sandbox_store_failure(sandbox, error))?;
-            if page.items.len() > usize::from(MAX_PAGE_SIZE) {
-                return Err(invalid_agent_state(
-                    sandbox,
-                    "sandbox-agent page exceeded its requested bound",
-                ));
-            }
-            if page.next.is_some() && page.items.is_empty() {
-                return Err(invalid_agent_state(
-                    sandbox,
-                    "sandbox-agent cursor advanced without an item",
-                ));
-            }
-            for agent in page.items {
-                validate_agent(sandbox, &agent)?;
-                if !agent_ids.insert(agent.id.clone()) {
-                    return Err(invalid_agent_state(
-                        sandbox,
-                        "sandbox-agent pagination repeated an agent",
-                    ));
-                }
-                agents.push(agent);
-                if agents.len() > MAX_SANDBOX_LIFECYCLE_AGENTS {
-                    return Err(invalid_agent_state(
-                        sandbox,
-                        "sandbox-agent set exceeded its lifecycle bound",
-                    ));
-                }
-            }
-
-            let Some(next) = page.next else {
-                return Ok(agents);
-            };
-            if cursor.as_ref() == Some(&next) || !seen_cursors.insert(next.clone()) {
-                return Err(invalid_agent_state(
-                    sandbox,
-                    "sandbox-agent cursor did not make progress",
-                ));
-            }
-            cursor = Some(next);
         }
     }
 
@@ -135,14 +74,14 @@ impl LiveAgentStopper for DurableLiveAgentStopper {
         _runtime: Option<&RuntimeHandle>,
         _operation_id: &str,
     ) -> Result<(), SandboxDependencyError> {
-        let agents = self.sandbox_agents(sandbox).await?;
+        let agents = retirement_agents(self.lifecycle.as_ref(), sandbox).await?;
         let mut has_live_agents = false;
         for agent in agents {
             if !agent.status.is_live() {
                 continue;
             }
-            has_live_agents = true;
             let stopping = self.ensure_stopping(sandbox, agent).await?;
+            has_live_agents |= stopping.status.is_live();
             self.registry.fence(
                 &stopping.id,
                 stopping.conversation.runtime_generation,
@@ -151,7 +90,7 @@ impl LiveAgentStopper for DurableLiveAgentStopper {
         }
 
         if has_live_agents {
-            Err(SandboxDependencyError::Transient(AGENTS_STOPPING.into()))
+            Err(SandboxDependencyError::AgentsStopping)
         } else {
             Ok(())
         }
@@ -189,6 +128,7 @@ fn validate_stop_work(sandbox: &Sandbox, agent: &Agent) -> Result<(), SandboxDep
         AgentWorkStep::FenceInteraction
             | AgentWorkStep::CloseProcess
             | AgentWorkStep::PublishStopped
+            | AgentWorkStep::RestartTeardown
     ) {
         Ok(())
     } else {
@@ -217,6 +157,19 @@ fn validate_control_result(
         return Err(SandboxDependencyError::Security(
             AGENT_BOUNDARY_INVALID.into(),
         ));
+    }
+    if observed.status == layer2_core::sandbox::AgentStatus::Starting
+        && observed.work.step == AgentWorkStep::RestartConversation
+        && result.status == layer2_core::sandbox::AgentStatus::Stopped
+        && result.stop_reason == Some(AgentStopReason::Owner)
+        && result.stopped_at.is_some()
+        && result.work.step == AgentWorkStep::None
+        && result.work.lease.is_none()
+        && result.work.cleanup_debt.is_empty()
+        && result.work.next_fence == observed.work.next_fence
+        && observed.revision.checked_add(1) == Some(result.revision)
+    {
+        return Ok(());
     }
     if !result.status.is_live()
         || result.requested_stop_reason != Some(AgentStopReason::SandboxRetired)
@@ -261,6 +214,8 @@ fn control_store_failure(
         }
         AgentControlStoreError::NotFound
         | AgentControlStoreError::StatusConflict { .. }
+        | AgentControlStoreError::RestartEvidenceRequired
+        | AgentControlStoreError::RestartTurnUnsettled
         | AgentControlStoreError::StopReasonConflict
         | AgentControlStoreError::WorktreeRecoveryConflict
         | AgentControlStoreError::LimitReached { .. }
@@ -281,3 +236,62 @@ fn invalid_agent_state(sandbox: &Sandbox, internal: &'static str) -> SandboxDepe
 #[cfg(test)]
 #[path = "live_agent_stopper_tests.rs"]
 mod tests;
+
+pub(super) async fn retirement_agents(
+    lifecycle: &dyn SandboxLifecycleExecutionStore,
+    sandbox: &Sandbox,
+) -> Result<Vec<Agent>, SandboxDependencyError> {
+    let mut agents = Vec::new();
+    let mut agent_ids = HashSet::new();
+    let mut seen_cursors = HashSet::new();
+    let mut cursor = None;
+
+    loop {
+        let page = lifecycle
+            .sandbox_agents(
+                &sandbox.id,
+                &PageRequest::new(MAX_PAGE_SIZE, cursor.clone()).expect("valid page size"),
+            )
+            .await
+            .map_err(|error| sandbox_store_failure(sandbox, error))?;
+        if page.items.len() > usize::from(MAX_PAGE_SIZE) {
+            return Err(invalid_agent_state(
+                sandbox,
+                "sandbox-agent page exceeded its requested bound",
+            ));
+        }
+        if page.next.is_some() && page.items.is_empty() {
+            return Err(invalid_agent_state(
+                sandbox,
+                "sandbox-agent cursor advanced without an item",
+            ));
+        }
+        for agent in page.items {
+            validate_agent(sandbox, &agent)?;
+            if !agent_ids.insert(agent.id.clone()) {
+                return Err(invalid_agent_state(
+                    sandbox,
+                    "sandbox-agent pagination repeated an agent",
+                ));
+            }
+            agents.push(agent);
+            if agents.len() > MAX_SANDBOX_LIFECYCLE_AGENTS {
+                return Err(invalid_agent_state(
+                    sandbox,
+                    "sandbox-agent set exceeded its lifecycle bound",
+                ));
+            }
+        }
+
+        let Some(next) = page.next else {
+            return Ok(agents);
+        };
+        if cursor.as_ref() == Some(&next) || !seen_cursors.insert(next.clone()) {
+            return Err(invalid_agent_state(
+                sandbox,
+                "sandbox-agent cursor did not make progress",
+            ));
+        }
+        cursor = Some(next);
+    }
+}

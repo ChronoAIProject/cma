@@ -1,11 +1,13 @@
 //! Explicit dimensional field names and lossless browser integer serialization.
 use serde_json::Value;
 pub(super) fn value(value: &impl serde::Serialize) -> Value {
-    let mut value =
-        serde_json::to_value(value).expect("usage report contains validated finite numbers");
+    try_value(value).expect("usage report contains validated finite numbers")
+}
+pub(super) fn try_value(value: &impl serde::Serialize) -> serde_json::Result<Value> {
+    let mut value = serde_json::to_value(value)?;
     dimensional(&mut value);
     safe_integers(&mut value);
-    value
+    Ok(value)
 }
 fn dimensional(value: &mut Value) {
     match value {

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { agentDraftKey, saveAgentDraft } from '../agent/draftStorage';
 import { AuthContextProvider, useAuth } from './context';
 import { IdentityError, IdentityNotice } from './IdentityNotice';
 import type { AuthProvider, AuthState } from './types';
@@ -27,7 +28,7 @@ function Draft() {
   );
 }
 function View() {
-  const { state, signOut } = useAuth();
+  const { state, signIn, signOut } = useAuth();
   return (
     <>
       <IdentityNotice />
@@ -39,7 +40,10 @@ function View() {
       ) : state.status === 'error' ? (
         <IdentityError state={state} />
       ) : (
-        <p>{state.status}</p>
+        <>
+          <p>{state.status}</p>
+          {state.status === 'anonymous' && <button onClick={() => void signIn()}>Sign in</button>}
+        </>
       )}
     </>
   );
@@ -61,7 +65,45 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  sessionStorage.clear();
 });
+
+it.each(['same owner', 'different owner'] as const)(
+  'retains the hidden Agent draft through anonymous checks until the %s signs in',
+  async (nextOwner) => {
+    const { current, unmount } = setup();
+    await act(async () => {});
+    const key = agentDraftKey(signedIn.user.id, 'agt_draft');
+    saveAgentDraft(signedIn.user.id, 'agt_draft', {
+      revision: 'draft-revision',
+      content: 'Unsent Agent draft',
+      attachments: [],
+    });
+    const saved = sessionStorage.getItem(key);
+    expect(saved).not.toBeNull();
+
+    current.mockResolvedValue({ status: 'anonymous' });
+    await act(async () => fireEvent(window, new Event('focus')));
+    expect(screen.getByText('anonymous')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(sessionStorage.getItem(key)).toBe(saved);
+
+    unmount();
+    const reopened = setup({ status: 'anonymous' });
+    await act(async () => {});
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Sign in' })));
+    expect(screen.getByText('anonymous')).toBeInTheDocument();
+    expect(sessionStorage.getItem(key)).toBe(saved);
+
+    reopened.current.mockResolvedValue({
+      ...signedIn,
+      user: { ...signedIn.user, id: nextOwner === 'same owner' ? signedIn.user.id : 'next-owner' },
+    });
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Sign in' })));
+    expect(screen.getByRole('textbox')).toBeVisible();
+    expect(sessionStorage.getItem(key)).toBe(nextOwner === 'same owner' ? saved : null);
+  },
+);
 
 it('keeps the exact draft node through outage, automatic retries and recovery', async () => {
   const { current } = setup();

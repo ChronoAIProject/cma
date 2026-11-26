@@ -31,6 +31,8 @@ interface RiskConfirmationProps {
   /** The sentence beside the tick, in the first person. */
   readonly acknowledgeLabel: string;
   readonly confirmLabel: string;
+  readonly cancelLabel?: string;
+  readonly actionEmphasis?: 'confirm' | 'cancel';
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
   /** Something is already in flight; the confirm key waits for it. */
@@ -51,6 +53,8 @@ export function RiskConfirmation({
   description,
   acknowledgeLabel,
   confirmLabel,
+  cancelLabel = 'Cancel',
+  actionEmphasis = 'confirm',
   onCancel,
   onConfirm,
   busy = false,
@@ -71,21 +75,21 @@ export function RiskConfirmation({
     <Modal
       open={open}
       title={title}
-      placement="risk"
+      placement={actionEmphasis === 'cancel' ? 'risk risk--retain' : 'risk'}
       dismissible={dismissible}
       onClose={close}
       footer={
-        <>
+        <div className="risk__actions">
           <Button
-            variant="outline"
+            variant={actionEmphasis === 'cancel' ? 'primary' : 'outline'}
             placement="risk__cancel"
             disabled={busy || !dismissible}
             onClick={close}
           >
-            Cancel
+            {cancelLabel}
           </Button>
           <Button
-            variant="primary"
+            variant={actionEmphasis === 'cancel' ? 'outline' : 'primary'}
             placement="risk__confirm"
             disabled={busy || confirmDisabled || !acknowledged}
             onClick={() => {
@@ -95,7 +99,7 @@ export function RiskConfirmation({
           >
             {confirmLabel}
           </Button>
-        </>
+        </div>
       }
     >
       <div className="risk__warning" role="alert">

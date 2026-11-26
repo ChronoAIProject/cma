@@ -1,4 +1,5 @@
 //! Whole-Agent sequence-domain proof, independent of lifetime source length.
+use super::capture::preview_budget::PreviewBudget;
 use super::{corrupt, Head};
 use crate::store::{
     agent_log_integrity::TransactionLogError, durability::majority_collection,
@@ -18,11 +19,26 @@ pub(super) async fn prove(
     session: &mut ClientSession,
     snapshot: bool,
 ) -> Result<(), TransactionLogError> {
+    prove_budgeted(database, head, session, snapshot, None).await
+}
+
+pub(super) async fn prove_budgeted(
+    database: &Database,
+    head: &Head,
+    session: &mut ClientSession,
+    snapshot: bool,
+    mut budget: Option<&mut PreviewBudget>,
+) -> Result<(), TransactionLogError> {
     // Catalog qualification is outside the data snapshot, as for the opening
     // index. Every source query below joins the caller's original session.
-    let pending = agent_log_source_keys::inspect(database)
-        .await
-        .map_err(|reason| SandboxStoreError::Unavailable(reason.into()))?;
+    let pending = if let Some(budget) = budget.as_deref_mut() {
+        budget
+            .catalog(agent_log_source_keys::inspect(database))
+            .await?
+    } else {
+        agent_log_source_keys::inspect(database).await
+    }
+    .map_err(|reason| SandboxStoreError::Unavailable(reason.into()))?;
     if !pending.is_empty() {
         return Err(SandboxStoreError::Unavailable(
             "Agent log source-key index migration is required".into(),
@@ -46,12 +62,17 @@ pub(super) async fn prove(
     } else {
         malformed
     };
-    if malformed
+    let malformed = malformed
         .session(&mut *session)
         .await
-        .map_err(TransactionLogError::Driver)?
-        .is_some()
-    {
+        .map_err(TransactionLogError::Driver)?;
+    if let Some(budget) = budget.as_deref_mut() {
+        match &malformed {
+            Some(row) => budget.charge_document(row)?,
+            None => budget.charge(5)?,
+        }
+    }
+    if malformed.is_some() {
         return Err(corrupt().into());
     }
     let outside = source
@@ -67,12 +88,17 @@ pub(super) async fn prove(
     } else {
         outside
     };
-    if outside
+    let outside = outside
         .session(session)
         .await
-        .map_err(TransactionLogError::Driver)?
-        .is_some()
-    {
+        .map_err(TransactionLogError::Driver)?;
+    if let Some(budget) = budget {
+        match &outside {
+            Some(row) => budget.charge_document(row)?,
+            None => budget.charge(5)?,
+        }
+    }
+    if outside.is_some() {
         return Err(SandboxStoreError::SequenceConflict.into());
     }
     Ok(())

@@ -7,6 +7,7 @@ pub(crate) mod http;
 pub(crate) mod request;
 pub(crate) mod runtime;
 pub(crate) mod server;
+pub(crate) mod task_cohort;
 pub(crate) mod work;
 pub(crate) mod worker;
 

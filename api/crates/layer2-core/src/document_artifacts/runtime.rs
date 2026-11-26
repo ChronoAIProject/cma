@@ -149,7 +149,9 @@ fn authority_error(error: AgentAccessError) -> DocumentError {
         | AgentAccessError::ServiceConnectionRequired => DocumentError::NotFound,
         AgentAccessError::Unavailable => DocumentError::Unavailable,
         AgentAccessError::Invalid => DocumentError::Invalid,
-        AgentAccessError::Conflict => DocumentError::Conflict,
+        AgentAccessError::Conflict | AgentAccessError::StaleGithubApproval => {
+            DocumentError::Conflict
+        }
     }
 }
 fn runtime_key(requester: &AgentAccessRequester, key: &str) -> Result<String, DocumentError> {

@@ -28,10 +28,12 @@ use super::{
 
 mod callback;
 use callback::callback;
-mod return_target;
+pub(in crate::auth) mod return_target;
 mod silent;
 
-use return_target::{app_return_target, opaque_path_segment, MAX_LOGIN_URL_BYTES};
+use return_target::{
+    app_return_target, interactive_return_target, opaque_path_segment, MAX_LOGIN_URL_BYTES,
+};
 use silent::LoginPrompt;
 
 const ATTEMPT_DOMAIN: &str = "oidc-login-attempt";
@@ -82,24 +84,41 @@ struct TokenResponse {
 }
 
 pub fn router(auth: Arc<AuthState>) -> Router {
+    no_store(
+        session_routes()
+            .route("/auth/callback", get(callback))
+            .merge(super::actor_links::routes())
+            .with_state(auth),
+    )
+}
+
+pub(crate) fn account_router(auth: Arc<AuthState>) -> Router {
+    no_store(
+        session_routes()
+            .route("/auth/callback", get(callback::account_callback))
+            .with_state(auth),
+    )
+}
+
+fn session_routes() -> Router<Arc<AuthState>> {
     Router::new()
         .route("/auth/login", get(login))
-        .route("/auth/callback", get(callback))
         .route("/auth/session", get(read))
         .route("/auth/signup-options", get(signup_options))
         .route("/auth/logout", get(logout))
-        .merge(super::actor_links::routes())
-        .with_state(auth)
-        .layer(axum::middleware::map_response(
-            |mut response: Response| async move {
-                if !response.headers().contains_key(header::CACHE_CONTROL) {
-                    response
-                        .headers_mut()
-                        .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
-                }
+}
+
+fn no_store(router: Router) -> Router {
+    router.layer(axum::middleware::map_response(
+        |mut response: Response| async move {
+            if !response.headers().contains_key(header::CACHE_CONTROL) {
                 response
-            },
-        ))
+                    .headers_mut()
+                    .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+            }
+            response
+        },
+    ))
 }
 
 /// Reuse the established browser-bound PKCE flow for an opaque actor-link intent.
@@ -140,8 +159,14 @@ async fn login(
     if let Some(redirect) = auth.canonical_login_redirect(&headers, &uri) {
         return redirect;
     }
+    let silent = matches!(params.prompt, Some(LoginPrompt::Silent));
+    let validate_return_target = if silent {
+        app_return_target
+    } else {
+        interactive_return_target
+    };
     let return_to = match params.return_to {
-        Some(value) => match app_return_target(&value) {
+        Some(value) => match validate_return_target(&value) {
             Ok(value) => Some(value),
             Err(()) => {
                 return (
@@ -156,7 +181,6 @@ async fn login(
         },
         None => None,
     };
-    let silent = matches!(params.prompt, Some(LoginPrompt::Silent));
     if silent {
         if let Some(refusal) = silent::refuse_entry(
             &auth,
@@ -260,6 +284,7 @@ async fn begin_login_with_intent(
         verifier: SecretValue::new(verifier.clone()),
         return_to: return_to.clone(),
         actor_link_intent,
+        service_authorization: None,
         silent,
         consent_requested: continuation_binding.is_some(),
         custody_reserved: true,
@@ -324,7 +349,7 @@ fn binding_cookie_name(state: &str) -> String {
     format!("{BINDING_COOKIE_PREFIX}{suffix}")
 }
 
-fn code_challenge(verifier: &str) -> String {
+pub(super) fn code_challenge(verifier: &str) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 

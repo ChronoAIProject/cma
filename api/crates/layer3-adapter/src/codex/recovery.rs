@@ -19,6 +19,22 @@ const LIMIT: usize = 64 * 1024;
 
 #[async_trait::async_trait]
 impl RuntimeRecovery for CodexAdapter {
+    async fn prove_agent_process_closed(
+        &self,
+        handle: &crate::RuntimeHandle,
+        proof: &crate::wire::AgentProcessCloseProof,
+    ) -> Result<bool> {
+        self.hosted.prove_agent_process_closed(handle, proof).await
+    }
+
+    async fn fence_agent_restart(
+        &self,
+        handle: &crate::RuntimeHandle,
+        request: &crate::wire::AgentRestartFence,
+    ) -> Result<()> {
+        self.hosted.fence_agent_restart(handle, request).await
+    }
+
     async fn inspect_idle_reopen(
         &self,
         request: &RuntimeRecoveryInspectionRequest,

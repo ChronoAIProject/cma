@@ -192,7 +192,7 @@ impl App {
         let (sender, _) = mpsc::channel(1);
         let state = ToolsState {
             complete_replies_enabled: false,
-            commonmark_relay_enabled: false,
+            commonmark_relay: Default::default(),
             telegram_topics: None,
             discord_threads: None,
             native_lark_conversation_history: None,

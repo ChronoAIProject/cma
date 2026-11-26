@@ -31,10 +31,64 @@ pub(crate) fn managed_v3() -> &'static str {
     INSTRUCTIONS.get_or_init(|| format!("{}\n\n{DOCUMENTS_V1}", managed_v2()))
 }
 
+const SESSION_GUIDANCE_V1: &str = "CMA session guidance (v1):\n\
+If an ambiguous or compound request could lead to a long build, substantial new work, or an external write, ask one targeted question to resolve the costly choice before committing to it. Continue clearly authorized low-cost work when useful.\n\
+When a missing capability blocks the task, identify the smallest permission needed and give the owner a usable remedy in the same reply. Verify the tool or link against this session's available capabilities and explain what access it requests and what you can resume after approval. For a missing NyxID service, use the advertised CMA access-request tool when available and keep the same request key for transport retries. Wait for owner approval and CMA confirmation, then verify the needed access on the actual service path before reporting success. A read-only result does not prove write permission. Never ask for pasted credentials or assume consent to additional access.\n\
+When this session cannot submit a requested CMA report, use an available authorized handoff if the owner has approved it. Otherwise prepare a redacted title and report for the owner to review and submit at https://github.com/ChronoAIProject/cma/issues/new. Include the observed limitation, expected behavior and a safe reproduction. Remove credentials and private details. State whether you submitted the report or handed it to the owner.";
+
+fn managed_v4() -> &'static str {
+    static INSTRUCTIONS: OnceLock<String> = OnceLock::new();
+    INSTRUCTIONS.get_or_init(|| format!("{SESSION_GUIDANCE_V1}\n\n{}", managed_v3()))
+}
+
+const GITHUB_PERMISSION_V1: &str = "CMA GitHub permission recovery (v1):\n\
+For CMA feedback, the target is ChronoAIProject/cma. Treat anything submitted there as public and redact it before requesting the owner's authorization to file. Before offering a GitHub permission remedy, verify the target repository's current visibility and issue policy, the intended operation, and the selected connection with the capabilities available in this session. A successful repository read or gh auth status confirms only what it reports. When the target is public, classic GitHub OAuth public_repo can suffice if issues are enabled and the account can file there. For an actual private or internal target, classic OAuth requires repo and access to that target. Prefer an available grant limited to the intended repository with Issues write permission when the connection supports it.\n\n\
+Distinguish missing api-github access from missing GitHub authorization. Adding the CMA service does not expand the selected GitHub OAuth grant. For an upstream permission gap, offer the verified permissions path for the selected connection and name the access it requests. If the session cannot verify a working path, explain the limitation and use the approved handoff or prepare the reviewable CMA report described below. Do not broaden access or perform an external write without owner authorization.";
+
+fn managed_v5() -> &'static str {
+    static INSTRUCTIONS: OnceLock<String> = OnceLock::new();
+    INSTRUCTIONS.get_or_init(|| format!("{GITHUB_PERMISSION_V1}\n\n{}", managed_v4()))
+}
+
+const CLARIFICATION_V1: &str = "CMA clarification (v1):\n\
+When an ambiguous or compound prompt leaves a costly action unresolved, ask a direct question in the first reply that lets the owner choose the intended action. If a standing instruction to file issues is followed by an unrelated question, ask whether the owner wants an answer, issue filing, or both. Ask even when you can answer a clearly authorized part in the same reply. Wait for the owner's answer before starting the unresolved substantial work or making the external write.";
+
+fn managed_v6() -> &'static str {
+    static INSTRUCTIONS: OnceLock<String> = OnceLock::new();
+    INSTRUCTIONS.get_or_init(|| format!("{CLARIFICATION_V1}\n\n{}", managed_v5()))
+}
+
+pub(crate) fn configured_admission_instructions(
+    flags: &crate::config::FeatureFlags,
+) -> &'static str {
+    if flags.session_guidance_v6 {
+        managed_v6()
+    } else {
+        admission_instructions(flags.session_guidance_v4, flags.session_guidance_v5)
+    }
+}
+
+pub(super) fn admission_instructions(v4_enabled: bool, v5_enabled: bool) -> &'static str {
+    if v5_enabled {
+        managed_v5()
+    } else if v4_enabled {
+        managed_v4()
+    } else {
+        managed_v3()
+    }
+}
+
 /// Split only exact, already-versioned guidance with its original separator.
 /// Similar owner-authored text is never treated as platform instructions.
 pub(crate) fn split_managed(prompt: &str) -> (Option<&'static str>, &str) {
-    for managed in [managed_v3(), managed_v2(), GITHUB_API_V1] {
+    for managed in [
+        managed_v6(),
+        managed_v5(),
+        managed_v4(),
+        managed_v3(),
+        managed_v2(),
+        GITHUB_API_V1,
+    ] {
         if prompt == managed {
             return (Some(managed), "");
         }
@@ -64,11 +118,17 @@ impl layer2_core::sandbox::AgentInstructionPolicy for ManagedInstructionPolicy {
         split_managed(agent.system_prompt()).1.to_owned()
     }
     fn compose(&self, agent: &layer2_core::sandbox::Agent, owner: &str) -> String {
-        let managed = (agent.conversation.managed_guidance_revision >= 1)
-            .then_some(managed_v3())
+        let managed = self
+            .pinned_managed_guidance(agent)
+            .or_else(|| (agent.conversation.managed_guidance_revision >= 1).then_some(managed_v3()))
             .or_else(|| split_managed(agent.system_prompt()).0)
             .or_else(|| split_managed(&agent.profile.content.system_prompt).0);
         compose_managed(managed, owner)
+    }
+    fn pinned_managed_guidance(&self, agent: &layer2_core::sandbox::Agent) -> Option<&'static str> {
+        split_managed(&agent.profile.content.system_prompt)
+            .0
+            .filter(|managed| [managed_v4(), managed_v5(), managed_v6()].contains(managed))
     }
 }
 

@@ -50,7 +50,15 @@ pub(super) fn apply(
         .sandboxes
         .get(&agent.sandbox_id)
         .ok_or(CommandLedgerError::NotFound)?;
-    request.cancellation.validate_current(agent, parent)?;
+    request
+        .cancellation
+        .validate_current_identity(agent, parent)?;
+    if !request
+        .cancellation
+        .current_observation_matches(agent, parent)
+    {
+        return Ok(QueuedInputOutcome::StaleObservation);
+    }
     validate_command_reservation_policy(
         &request.cancellation.command,
         parent,

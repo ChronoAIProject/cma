@@ -59,6 +59,50 @@ fn account_deletion_config_rejects_non_boolean_values() {
     }
 }
 
+const LEGAL: &str =
+    "2026-11-30 https://legal.example.test/terms https://legal.example.test/privacy";
+
+#[test]
+fn legal_terms_default_off_and_load_from_one_setting() {
+    assert!(configured(&[]).unwrap().legal_terms.is_none());
+    assert!(configured(&[("CHRONO_LEGAL_TERMS", "")])
+        .unwrap()
+        .legal_terms
+        .is_none());
+    let terms = configured(&[("CHRONO_LEGAL_TERMS", LEGAL)])
+        .unwrap()
+        .legal_terms
+        .unwrap();
+    assert_eq!(terms.version(), "2026-11-30");
+    assert_eq!(terms.terms_url(), "https://legal.example.test/terms");
+    assert_eq!(terms.privacy_url(), "https://legal.example.test/privacy");
+}
+
+#[test]
+fn legal_terms_refuse_malformed_or_invalid_settings() {
+    for value in [
+        "2026-11-30 https://legal.example.test/terms",
+        "2026-11-30  https://legal.example.test/terms https://legal.example.test/privacy",
+        " 2026-11-30 https://legal.example.test/terms https://legal.example.test/privacy",
+        "2026-11-30 https://legal.example.test/terms https://legal.example.test/privacy extra",
+    ] {
+        assert!(
+            configured(&[("CHRONO_LEGAL_TERMS", value)])
+                .unwrap_err()
+                .contains("separated by single spaces"),
+            "{value}"
+        );
+    }
+    for value in [
+        "v/1 https://legal.example.test/terms https://legal.example.test/privacy",
+        "1 http://legal.example.test/terms https://legal.example.test/privacy",
+        "1 https://legal.example.test/terms /privacy",
+    ] {
+        let error = configured(&[("CHRONO_LEGAL_TERMS", value)]).unwrap_err();
+        assert!(error.starts_with("CHRONO_LEGAL_TERMS: "), "{error}");
+    }
+}
+
 #[test]
 fn runtime_values_are_required_and_nonblank() {
     for key in REQUIRED_RUNTIME_KEYS {
@@ -314,6 +358,7 @@ fn interface_feature_flags_are_strict_independent_booleans() {
     // Graduated: unset enables the V2 transport.
     assert!(config.features.v2_ui_transport);
     assert!(!config.features.trigger_command_admission);
+    assert!(!config.features.github_repository_preflight);
     assert!(!config.features.nyxid_resource_request);
     assert!(!config.features.document_revocation_reserve);
     assert!(!config.features.retained_context_lookup);
@@ -326,6 +371,7 @@ fn interface_feature_flags_are_strict_independent_booleans() {
         "CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED",
         "CHRONO_V2_UI_TRANSPORT_ENABLED",
         "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
+        "CHRONO_GITHUB_REPOSITORY_PREFLIGHT_ENABLED",
         "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED",
         "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
         "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED",
@@ -378,6 +424,10 @@ fn interface_feature_flags_are_strict_independent_booleans() {
         assert_eq!(
             config.features.trigger_command_admission,
             key == "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED"
+        );
+        assert_eq!(
+            config.features.github_repository_preflight,
+            key == "CHRONO_GITHUB_REPOSITORY_PREFLIGHT_ENABLED"
         );
         assert_eq!(
             config.features.nyxid_resource_request,

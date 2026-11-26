@@ -144,6 +144,22 @@ class SelectionCacheTests(unittest.TestCase):
                         self.value['base'], self.value['head']))
             path.write_text(baseline)
 
+    def test_ci_event_and_label_changes_preserve_staging_comparisons(self):
+        self.policy_fixture()
+        scripts = self.root / '.github/scripts/ci_tracks'
+        files = [scripts / name for name in ('ci_events.py', 'version_label.py')]
+        for path in files:
+            path.write_text('initial')
+        before = fingerprint(self.root)
+        SelectionCache(self.cache.directory, before).save(self.value)
+        for path in files:
+            with self.subTest(script=path.name):
+                path.write_text('changed')
+                after = fingerprint(self.root)
+                self.assertEqual(after, before)
+                self.assertEqual(SelectionCache(self.cache.directory, after).load(
+                    self.value['base'], self.value['head']), self.value)
+
     def test_producer_dependency_changes_invalidate_existing_facts(self):
         self.policy_fixture()
         path = self.root / '.github/workflows/staging-cd.yml'

@@ -5,6 +5,7 @@ import type { CmaWebClient } from '../api/client';
 import { useCmaClient } from '../api/context';
 import { SandboxActivity } from './SandboxActivity';
 import { sandboxLifecycleLabel } from './lifecycle';
+import { sandboxHasParkedRuntimeUpdate } from './parkedRuntimeUpdate';
 import {
   lifecycleStageCopy,
   pausePhases,
@@ -38,7 +39,8 @@ export function LifecycleProgress({
   const client = suppliedClient ?? contextClient;
   const operation = sandbox.lifecycle?.operation;
   const hasOperation = operation !== undefined;
-  const hasProgress = hasOperation;
+  const parked = sandboxHasParkedRuntimeUpdate(sandbox);
+  const hasProgress = hasOperation && !parked;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (!hasProgress) return;
@@ -86,11 +88,11 @@ export function LifecycleProgress({
   return (
     <section className="lifecycle-progress" aria-label="Sandbox progress">
       <p className="lifecycle-progress__stage" aria-live="polite">
-        {stage?.label ?? copy.unknown}
+        {parked ? sandboxLifecycleLabel(sandbox) : (stage?.label ?? copy.unknown)}
       </p>
-      <p>{stage?.detail ?? copy.unknownDetail}</p>
+      <p>{parked ? copy.parked : (stage?.detail ?? copy.unknownDetail)}</p>
       <div className="lifecycle-progress__readings">
-        {elapsed === undefined ? null : (
+        {elapsed === undefined || parked ? null : (
           <span>
             {copy.elapsed}: {elapsed}
           </span>
@@ -103,8 +105,8 @@ export function LifecycleProgress({
         )}
       </div>
       <Presence>{stale ? <p role="status">{copy.disconnected}</p> : null}</Presence>
-      <p>{copy.background}</p>
-      <SandboxActivity client={client} sandboxId={sandbox.id} />
+      {parked ? null : <p>{copy.background}</p>}
+      <SandboxActivity client={client} sandboxId={sandbox.id} parked={parked} />
       <details>
         <summary>{copy.activity}</summary>
         {elapsed === undefined ? null : (
@@ -124,7 +126,7 @@ export function LifecycleProgress({
                   {index < current
                     ? 'Done'
                     : index === current
-                      ? stale
+                      ? stale || parked
                         ? 'Last confirmed stage'
                         : 'In progress'
                       : 'Waiting'}

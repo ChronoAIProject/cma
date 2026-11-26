@@ -10,11 +10,20 @@ import subprocess
 import sys
 import tempfile
 
-from ci_events import full_ci_required
 from image_inputs import NAMES, changed_input_maps, image_inputs, recipes, validate_recipe_sources
 from git_comparison import check_sha, comparison_details, git
 from policy import Workspace, select
 from uncertainty import SelectionIntegrityError, conservative, unknown_paths
+
+APPROVAL_CONTRACT_INPUTS = frozenset({
+    'web/vite.config.ts', 'web/tsconfig.json', 'web/package.json', 'web/package-lock.json',
+    '.github/workflows/ci-approval-contract.yml', '.github/workflows/ci-rust-archive.yml',
+    '.github/scripts/backend-nextest.sh',
+})
+APPROVAL_CONTRACT_DIRECTORIES = (
+    'web/src/api-client/', 'web/src/api/', 'web/src/agent/', 'web/src/test/', 'web/build/',
+    '.github/actions/rust-archive/',
+)
 
 
 def comparison(root, event, event_name):
@@ -133,8 +142,13 @@ def determine(root, event, event_name, *, release=False):
 
 
 def determine_ci(root, event, event_name, repository):
+    from ci_events import VERIFICATION_EVENTS, full_ci_required, verification_head
+
     full = full_ci_required(event, event_name, repository)
-    result = determine(root, event, event_name, release=full and event_name == 'pull_request')
+    if event_name in VERIFICATION_EVENTS:
+        result = determine(root, {'after': verification_head()}, 'push')
+    else:
+        result = determine(root, event, event_name, release=full and event_name == 'pull_request')
     if full:
         with snapshot(root, result['head']) as tree:
             coverage = select([], workspace(tree), force_all=True)
@@ -142,6 +156,12 @@ def determine_ci(root, event, event_name, repository):
             result[key] = coverage[key]
         result['test_tracks'] = {key: result[key] for key in ('repo', 'am', 'eg', 'web')}
         result['reasons'] = sorted(set(result['reasons']) | {'full-ci-event'})
+    # A Web consumer change can require the shared Rust test archive without
+    # changing Agent Manager's product test or image scope.
+    result['approval_contract'] = result['am'] or any(
+        path in APPROVAL_CONTRACT_INPUTS or path.startswith(APPROVAL_CONTRACT_DIRECTORIES)
+        for path in changed_paths(root, result['base'], result['head'])
+    )
     return result
 
 
@@ -166,7 +186,11 @@ def main():
     print(json.dumps(result, sort_keys=True))
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
-            for key in ('repo', 'am', 'eg', 'web', 'am_packages', 'eg_packages', 'test_tracks', 'deployables', 'base', 'head', 'reasons'):
+            keys = ('repo', 'am', 'eg', 'web', 'am_packages', 'eg_packages', 'test_tracks',
+                    'deployables', 'base', 'head', 'reasons')
+            if args.ci:
+                keys += ('approval_contract',)
+            for key in keys:
                 value = result[key] if isinstance(result[key], str) else json.dumps(result[key], separators=(',', ':'))
                 output.write(f"{key}={value}\n")
     return 0

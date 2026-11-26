@@ -133,6 +133,127 @@ async fn admitted(
         .unwrap()
 }
 
+async fn seed_assertion_grant(fixture: &ResourceFixture, assertion: &str) -> ProxyGrant {
+    let owner = fixture
+        .identity
+        .store
+        .subject(&SubjectId::new("owner"))
+        .await
+        .unwrap()
+        .unwrap();
+    let mut grant = ProxyGrant {
+        id: [0; 32],
+        issuer: ISSUER.into(),
+        service_id: SERVICE.into(),
+        assertion_id: assertion.into(),
+        subject: owner.subject,
+        authorization: Authorization::new([Capability::UseOwnSandboxes]),
+        owner_incarnation: owner.incarnation,
+    };
+    grant.id = grant_id(&grant);
+    assert!(fixture
+        .identity
+        .store
+        .insert_proxy_grant(grant.clone())
+        .await
+        .unwrap());
+    grant
+}
+
+async fn admit_with(
+    fixture: &ResourceFixture,
+    auth: Arc<AuthState>,
+    grant: &ProxyGrant,
+    key: &str,
+) -> layer2_core::ids::AgentCommandId {
+    service(fixture, auth.clone())
+        .admit(
+            &context(&auth, grant, OWNER_TOKEN),
+            OWNER_TOKEN,
+            CommandSubmissionSource::Api,
+            submission(key),
+        )
+        .await
+        .unwrap()
+        .receipt
+        .command_id
+}
+
+#[tokio::test]
+async fn exact_key_retry_under_a_fresh_proxy_assertion_replays_only_with_the_gated_writer() {
+    // NyxID signs a new assertion (new jti) for every proxied request, so the
+    // exact grant changes between an original request and its retry.
+    let fixture = ResourceFixture::with_owner("owner").await;
+    let legacy = proxy_auth(&fixture);
+    let first = seed_assertion_grant(&fixture, "assertion-legacy-1").await;
+    let retry = seed_assertion_grant(&fixture, "assertion-legacy-2").await;
+    assert_ne!(first.id, retry.id);
+    let original = admit_with(&fixture, legacy.clone(), &first, "legacy-key").await;
+    let duplicate = admit_with(&fixture, legacy, &retry, "legacy-key").await;
+    assert_ne!(
+        original, duplicate,
+        "legacy writers keep the per-assertion scope until the gate is enabled"
+    );
+    let legacy_command = fixture.store.get_command(&original).await.unwrap().unwrap();
+    assert_eq!(
+        legacy_command
+            .receipt
+            .envelope
+            .authorization
+            .replay_principal,
+        None
+    );
+
+    let gated = proxy_auth(&fixture).with_proxy_replay_principal(true);
+    let first = seed_assertion_grant(&fixture, "assertion-gated-1").await;
+    let retry = seed_assertion_grant(&fixture, "assertion-gated-2").await;
+    let original = admit_with(&fixture, gated.clone(), &first, "gated-key").await;
+    let replayed = admit_with(&fixture, gated.clone(), &retry, "gated-key").await;
+    assert_eq!(
+        original, replayed,
+        "the retry must replay the original command"
+    );
+    let command = fixture.store.get_command(&original).await.unwrap().unwrap();
+    let authorization = &command.receipt.envelope.authorization;
+    // Execution keeps the exact original grant; only replay uses the principal.
+    assert_eq!(
+        authorization.authority_id,
+        format!(
+            "nyxid-proxy:{}",
+            first
+                .id
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        )
+    );
+    let digest = Sha256::digest(
+        serde_json::to_vec(&(
+            "nyxid-proxy-replay-principal-v1",
+            &first.issuer,
+            &first.service_id,
+            &first.subject,
+            &first.owner_incarnation,
+        ))
+        .unwrap(),
+    );
+    assert_eq!(
+        authorization.replay_principal,
+        Some(format!("nyxid-proxy-principal:{digest:x}"))
+    );
+    // A different key from the same principal is still a distinct command.
+    let other = admit_with(&fixture, gated.clone(), &retry, "gated-other-key").await;
+    assert_ne!(original, other);
+    // The recorded principal remains accepted for execution after a restart.
+    proxy_auth(&fixture)
+        .authorize_resource_command(&fixture.access, &command.receipt.envelope)
+        .await
+        .unwrap()
+        .fence()
+        .require_envelope(&command.receipt.envelope)
+        .unwrap();
+}
+
 #[tokio::test]
 async fn retained_proxy_command_accepts_only_its_derived_replay_principal() {
     let fixture = ResourceFixture::with_owner("owner").await;

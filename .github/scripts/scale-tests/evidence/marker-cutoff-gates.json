@@ -14,7 +14,7 @@
     "lint_syntax_source_size": "PASS"
   },
   "logs": {
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/stage-helper-final.log": "7e4b891961055d605d1f09aeb1bfa87460bd59920f4082030e258cd0402ed26c"
+    "tech-lead.staff/developer-17/evidence/final/stage-helper-final.log": "7e4b891961055d605d1f09aeb1bfa87460bd59920f4082030e258cd0402ed26c"
   },
   "unchanged": "Rust/emitter, compiled binaries, all process custody,120s deadline and JS unchanged from6f; Rust and JS gates not rerun",
   "real_execution": "NOT_RUN; review requested before use; no new invocation scope inferred"

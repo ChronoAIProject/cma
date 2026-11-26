@@ -11,6 +11,8 @@ import type {
 } from './sandboxInput';
 import type { QueuedMessageControl } from './transport/queuedStatus';
 import type { QueuedInputsControl } from './transport/queuedInputsStatus';
+import type { SelectedRetiredAgent } from '../useDeletionNoticeReconciliation';
+import type { RetainedAgentRead } from './retainedHistory';
 
 export type MessageAcceptance =
   { readonly commandId: string; readonly responseId: string } | { readonly runId: string };
@@ -21,10 +23,11 @@ export type AgentResourceState =
   | { readonly status: 'error'; readonly message: string; readonly retryAt?: number }
   | ({ readonly status: 'ready' } & ReadyAgent);
 
-export type AgentCommand = 'send' | 'interrupt' | 'approval' | 'stop' | 'delete';
+export type AgentCommand = 'send' | 'interrupt' | 'approval' | 'stop' | 'delete' | 'restart';
 export type ApprovalDecision = 'allow' | 'deny' | 'abort';
 
 export interface AgentController {
+  readonly retained?: RetainedAgentRead;
   readonly readSuggestionRequest?: () => LegacySuggestionRecord | InputRecord | null | undefined;
   readonly applyAgentTitle?: (title: string) => void;
   readonly queuedMessage?: QueuedMessageControl;
@@ -45,6 +48,7 @@ export interface AgentController {
   readonly resourceAvailability: SandboxResourceAvailability;
   readonly progressObservation?: ReturnType<typeof useSandboxInput>['progressObservation'];
   readonly pending?: AgentCommand;
+  readonly initialSendPending?: boolean;
   readonly actionError?: string;
   readonly reload: () => void;
   readonly refreshDetail: () => void;
@@ -68,10 +72,13 @@ export interface AgentController {
   ) => Promise<void>;
   readonly approve: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
   readonly stop: () => Promise<void>;
+  readonly restart?: () => Promise<void>;
   readonly delete: () => Promise<void>;
 }
 
 export interface AgentControllerOptions {
+  readonly selectedRetired?: SelectedRetiredAgent;
+  readonly authEpoch?: number;
   readonly viewerId?: string;
   readonly suspended?: boolean;
   readonly authorizedLineage?: AgentLoadLineage;

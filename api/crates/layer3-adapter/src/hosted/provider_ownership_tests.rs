@@ -454,3 +454,6 @@ async fn deadline_after_response_headers_retains_the_http_status() {
     );
     assert!(authority.failure_before_revocation.load(Ordering::SeqCst));
 }
+
+#[path = "provider_ownership_retirement_tests.rs"]
+mod retirement;

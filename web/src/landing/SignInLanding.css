@@ -86,6 +86,8 @@ main.sign-in-landing {
   color: var(--dsw-alias-label-primary);
 }
 .sign-in-landing .sign-in-landing__brand {
+  position: relative;
+  isolation: isolate;
   width: 100%;
   margin: 0;
   padding: 0;
@@ -173,6 +175,8 @@ main.sign-in-landing {
     gap: 24px;
   }
   .sign-in-landing .sign-in-landing__brand {
+    position: relative;
+    isolation: isolate;
     align-items: flex-start;
     max-width: 280px;
   }

@@ -39,7 +39,7 @@ pub(super) fn error(
 pub(super) fn field(field: &str, code: &str, message: &str) -> Response {
     error(StatusCode::UNPROCESSABLE_ENTITY, code, message, Some(field))
 }
-pub(super) fn missing() -> Response {
+pub fn missing() -> Response {
     error(
         StatusCode::NOT_FOUND,
         "response_not_found",
@@ -47,7 +47,7 @@ pub(super) fn missing() -> Response {
         None,
     )
 }
-pub(super) fn unauthenticated() -> Response {
+pub fn unauthenticated() -> Response {
     error(
         StatusCode::UNAUTHORIZED,
         "authentication_required",
@@ -171,28 +171,10 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
         ) => admission_paused(),
         CommandAdmissionError::Input(
             layer2_core::sandbox::AgentOperationError::ModelFundingUnsupported,
-        ) => error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "model_funding_unsupported",
-            "Guaranteed model funding is unavailable for this turn.",
-            None,
-        ),
+        ) => model_funding(layer2_core::sandbox::model_credit::FundingError::Unsupported),
         CommandAdmissionError::Input(layer2_core::sandbox::AgentOperationError::ModelFunding(
-            layer2_core::sandbox::model_credit::FundingError::Insufficient,
-        )) => error(
-            StatusCode::PAYMENT_REQUIRED,
-            "model_funding_insufficient",
-            "Model funding is insufficient for this turn.",
-            None,
-        ),
-        CommandAdmissionError::Input(layer2_core::sandbox::AgentOperationError::ModelFunding(
-            _,
-        )) => error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "model_funding_unavailable",
-            "Model funding could not be verified for this turn.",
-            None,
-        ),
+            reason,
+        )) => model_funding(reason),
         CommandAdmissionError::ModelMismatch => field(
             "model",
             "model_mismatch",
@@ -219,12 +201,7 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
         )) => missing(),
         CommandAdmissionError::Access(ResourceAccessError::Access(
             AccessError::Forbidden | AccessError::UnsafeInteractiveShare,
-        )) => error(
-            StatusCode::FORBIDDEN,
-            "response_forbidden",
-            "This resource does not permit the requested interaction.",
-            None,
-        ),
+        )) => forbidden(),
         CommandAdmissionError::Ledger(CommandLedgerError::Invalid) => field(
             "Idempotency-Key",
             "invalid_idempotency_key",
@@ -265,6 +242,26 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
         ),
         _ => unavailable(),
     }
+}
+
+fn forbidden() -> Response {
+    error(
+        StatusCode::FORBIDDEN,
+        "response_forbidden",
+        "This resource does not permit the requested interaction.",
+        None,
+    )
+}
+
+fn model_funding(reason: layer2_core::sandbox::model_credit::FundingError) -> Response {
+    if reason == layer2_core::sandbox::model_credit::FundingError::Forbidden {
+        return forbidden();
+    }
+    let (status, _, message, code) = crate::model_funding_problem::projection(reason);
+    let mut response = error(status, code, message, None);
+    // A funding outcome cannot authorize resending an uncertain original intent.
+    response.headers_mut().remove("retry-after");
+    response
 }
 
 #[cfg(test)]
@@ -325,4 +322,44 @@ mod session_capacity_tests {
             assert!(!body.to_string().contains("count"));
         }
     }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn responses_model_funding_contract() {
+    crate::model_funding_problem_tests::assert_funding_contract(
+        |value| admission(value.into()),
+        true,
+    )
+    .await;
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn responses_invalid_input_remains_invalid() {
+    crate::model_funding_problem_tests::assert_invalid_contract(
+        |value| admission(value.into()),
+        "invalid_response_input",
+    )
+    .await;
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn binding_model_funding_contract() {
+    crate::model_funding_problem_tests::assert_funding_contract(
+        |value| binding_admission(value.into()),
+        true,
+    )
+    .await;
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn binding_invalid_input_remains_invalid() {
+    crate::model_funding_problem_tests::assert_invalid_contract(
+        |value| binding_admission(value.into()),
+        "invalid_response_input",
+    )
+    .await;
 }

@@ -360,3 +360,16 @@ function inputAvailability(
   }
   return { allowed: true };
 }
+
+export function accessCheckedInputAvailability(
+  value: SandboxInputAvailability,
+  suspended: boolean,
+): SandboxInputAvailability {
+  return suspended
+    ? {
+        allowed: false,
+        notice:
+          'Checking Agent access. Your conversation and draft are retained; actions are unavailable until access is verified.',
+      }
+    : value;
+}

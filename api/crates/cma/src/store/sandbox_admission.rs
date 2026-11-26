@@ -6,7 +6,7 @@ use futures_util::TryStreamExt;
 use layer2_core::ids::SubjectId;
 use layer2_core::sandbox::store::{
     SandboxAdmission, SandboxAdmissionReplay, SandboxAdmissionResult, SandboxAdmissionStore,
-    SandboxStoreError,
+    SandboxLimitClass, SandboxStoreError,
 };
 use layer2_core::sandbox::{Sandbox, SandboxEvent, SandboxEventKind, SandboxOrigin};
 use mongodb::bson::{doc, Bson};
@@ -15,13 +15,15 @@ use super::sandbox_events::{event_document, read_event};
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::sandboxes::{admitted_sandbox_document, read_sandbox, read_sandbox_admission_replay};
 
+mod canary;
 mod catalogue;
 mod global;
 mod names;
+mod public_owner;
 mod retry;
+mod runtime_image_origin;
 
 const REPLAY_CANDIDATE_LIMIT: i64 = 2;
-
 pub(super) enum AdmissionError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
@@ -105,6 +107,13 @@ async fn apply<F>(
 where
     F: Fn() -> String + Sync,
 {
+    if let Some(fence) = &admission.creation_fence {
+        if store.creation_writer_epoch.as_deref() != Some(fence.epoch.as_str()) {
+            return Err(AdmissionError::Domain(SandboxStoreError::Unavailable(
+                "Sandbox creation epoch is unsupported".into(),
+            )));
+        }
+    }
     let resource_policy = store
         .bindings
         .admit_sandbox(admission, session)
@@ -142,6 +151,13 @@ where
             SandboxStoreError::AccountDeletionInProgress,
         ));
     }
+    let image_admission = canary::verify(
+        &database,
+        admission,
+        store.runtime_image_origin_enabled,
+        session,
+    )
+    .await?;
     if catalogue {
         catalogue::admit(&database, &admission.sandbox, session).await?;
     }
@@ -175,12 +191,21 @@ where
                     SandboxStoreError::Budget(layer2_core::budget::BudgetError::Unavailable),
                 ),
             })?;
-    let live_limit = admission.live_limit.min(
+    let mut live_limit = admission.live_limit.min(
         admission
             .limit_class
             .current_limit(protected.settings())
             .map_err(AdmissionError::Domain)?,
     );
+    if admission.limit_class == SandboxLimitClass::Owner {
+        live_limit = live_limit.min(
+            store
+                .public_owner_sandbox_limit(&admission.sandbox.owner, Some(&mut *session))
+                .await
+                .map_err(AdmissionError::Driver)?
+                .unwrap_or(live_limit),
+        );
+    }
     let live = store
         .sandboxes
         .count_documents(doc! { "owner": owner, "retired_at": Bson::Null })
@@ -205,8 +230,14 @@ where
     .await?;
     global::admit(store, admission, &ceilings, session).await?;
     let mut sandbox = admission.sandbox.clone();
+    image_admission
+        .record_origin(store, &mut sandbox, session)
+        .await?;
     sandbox.name = names::choose_name(store, session, owner, &admission.name).await?;
-    let prepared_outcome = if admission.binding.is_none() {
+    let prepared_outcome = if let canary::ImageAdmission::Canary(lease) = image_admission {
+        canary::bind(&database, &lease, &sandbox.id, session).await?;
+        "miss_runtime_canary_cold_only"
+    } else if admission.binding.is_none() {
         use super::native_prepared::ClaimOutcome;
         // The transaction snapshot already exists. Observe now, so a health
         // completion visible in this snapshot cannot postdate our lease clock.
@@ -274,6 +305,19 @@ where
                 AdmissionError::Driver(error)
             }
         })?;
+    if !super::creation_outcomes::publish_sandbox(
+        &database,
+        admission,
+        sandbox.id.as_str(),
+        session,
+    )
+    .await
+    .map_err(AdmissionError::Driver)?
+    {
+        return Err(AdmissionError::Domain(SandboxStoreError::Unavailable(
+            "Sandbox creation evidence fence is no longer held".into(),
+        )));
+    }
     Ok(AdmissionReceipt::Created {
         sandbox,
         event,

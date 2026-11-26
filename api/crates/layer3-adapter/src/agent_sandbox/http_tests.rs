@@ -182,9 +182,8 @@ async fn suspend_and_delete_send_exact_uid_version_and_foreground_policy() {
     assert_eq!(calls[3].1["propagationPolicy"], "Foreground");
     assert!(calls[4].0.contains("fieldSelector=metadata.name%3D"));
     assert!(!calls[4].0.contains("labelSelector="));
-    assert!(calls[5]
-        .0
-        .contains("labelSelector=agents.x-k8s.io%2Fsandbox-name-hash%3D"));
+    assert!(calls[5].0.contains("/namespaces/cma-test/pods?"));
+    assert!(!calls[5].0.contains("labelSelector="));
 }
 
 #[tokio::test]
@@ -216,10 +215,8 @@ async fn deletion_retry_waits_for_the_original_pod_even_after_the_crd_is_gone() 
     assert!(calls.iter().all(|(line, _)| line.starts_with("GET ")));
     assert!(calls[3].0.contains("/pods?"));
     assert!(calls[5].0.contains("/pods?"));
-    assert!(calls[3]
-        .0
-        .contains("labelSelector=agents.x-k8s.io%2Fsandbox-name-hash%3D"));
-    assert!(!calls[3].0.contains("cma%2Fruntime-name"));
+    assert!(!calls[3].0.contains("labelSelector="));
+    assert!(!calls[5].0.contains("labelSelector="));
 }
 
 #[tokio::test]
@@ -231,11 +228,14 @@ async fn absent_crd_cannot_complete_deletion_with_an_incomplete_pod_inventory() 
     ));
     let mut pods = list("PodList");
     pods["metadata"]["continue"] = json!("next-page");
+    let mut later = list("PodList");
+    later["metadata"]["resourceVersion"] = json!("13");
     let fixture = Fixture::start(vec![
         (404, missing()),
         (404, missing()),
         (200, list("SandboxList")),
         (200, pods),
+        (200, later),
     ])
     .await;
     assert!(matches!(
@@ -319,16 +319,18 @@ async fn deletion_observes_original_crd_uid_even_when_its_management_label_chang
         (404, missing()),
         (404, missing()),
         (200, objects),
-        (200, list("PodList")),
         (200, list("SandboxList")),
         (200, list("PodList")),
     ])
     .await;
     fixture.client.delete(&handle).await.unwrap();
     let calls = fixture.calls.lock().unwrap();
-    assert_eq!(calls.len(), 6);
-    assert!(!calls[2].0.contains("labelSelector="));
-    assert!(calls[2].0.contains("fieldSelector=metadata.name%3D"));
+    assert_eq!(calls.len(), 5);
+    for (call, _) in &calls[2..4] {
+        assert!(!call.contains("labelSelector="));
+        assert!(call.contains("fieldSelector=metadata.name%3D"));
+    }
+    assert!(calls[4].0.contains("/pods?"));
     assert!(calls.iter().all(|(line, _)| line.starts_with("GET ")));
 }
 

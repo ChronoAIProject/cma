@@ -9,6 +9,7 @@ use super::agent_control_receipt::{read_control_receipts, StoredControlReceipts}
 use super::agents::read_agent;
 use super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::sandboxes::read_sandbox;
+use super::work_claim_authority::without_ledger_maintenance;
 use super::workspaces::read_workspace;
 use super::worktrees::read_worktree;
 
@@ -22,10 +23,11 @@ pub(super) enum LineageError {
 }
 
 pub(super) struct ControlSnapshot {
+    pub(super) row: mongodb::bson::Document,
     pub(super) agent: Agent,
     pub(super) receipts: StoredControlReceipts,
-    worktree: Worktree,
-    workspace: Workspace,
+    pub(super) worktree: Worktree,
+    pub(super) workspace: Workspace,
     pub(super) sandbox: Sandbox,
 }
 
@@ -59,6 +61,7 @@ pub(super) async fn load_control_snapshot(
     let (worktree, workspace, sandbox) =
         load_lineage(store, &agent, session, snapshot_read).await?;
     Ok(ControlSnapshot {
+        row: document,
         agent,
         receipts,
         worktree,
@@ -171,6 +174,25 @@ pub(super) async fn fence_control_lineage(
     operation_id: &str,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), LineageError> {
+    fence_lineage(store, snapshot, operation_id, session, false).await
+}
+
+pub(super) async fn fence_restart_lineage(
+    store: &MongoSandboxStore,
+    snapshot: &ControlSnapshot,
+    operation_id: &str,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), LineageError> {
+    fence_lineage(store, snapshot, operation_id, session, true).await
+}
+
+async fn fence_lineage(
+    store: &MongoSandboxStore,
+    snapshot: &ControlSnapshot,
+    operation_id: &str,
+    session: &mut mongodb::ClientSession,
+    requires_active_parent: bool,
+) -> Result<(), LineageError> {
     let worktree_revision = signed(snapshot.worktree.revision, "worktree revision")
         .map_err(|_| LineageError::Domain(AgentControlStoreError::Conflict))?;
     let result = store
@@ -194,16 +216,20 @@ pub(super) async fn fence_control_lineage(
 
     let workspace_revision = signed(snapshot.workspace.revision, "workspace revision")
         .map_err(|_| LineageError::Domain(AgentControlStoreError::Conflict))?;
+    let workspace_filter = active_parent_filter(
+        doc! {
+            "_id": snapshot.workspace.id.as_str(),
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "revision": workspace_revision,
+            "sandbox_id": snapshot.agent.sandbox_id.as_str(),
+            "owner": snapshot.agent.owner.as_str(),
+        },
+        requires_active_parent,
+    );
     let result = store
         .workspaces
         .update_one(
-            crate::store::work_schema::query(doc! {
-                "_id": snapshot.workspace.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "revision": workspace_revision,
-                "sandbox_id": snapshot.agent.sandbox_id.as_str(),
-                "owner": snapshot.agent.owner.as_str(),
-            }),
+            workspace_filter,
             doc! { "$set": { CONTROL_MARKER_FIELD: operation_id } },
         )
         .session(&mut *session)
@@ -213,21 +239,45 @@ pub(super) async fn fence_control_lineage(
 
     let sandbox_revision = signed(snapshot.sandbox.revision, "sandbox revision")
         .map_err(|_| LineageError::Domain(AgentControlStoreError::Conflict))?;
+    let mut sandbox_filter = active_parent_filter(
+        doc! {
+            "_id": snapshot.sandbox.id.as_str(),
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "revision": sandbox_revision,
+            "owner": snapshot.agent.owner.as_str(),
+        },
+        requires_active_parent,
+    );
+    if requires_active_parent {
+        sandbox_filter.insert(
+            super::native_retirement_action::FIELD,
+            doc! {"$exists": false},
+        );
+    }
     let result = store
         .sandboxes
         .update_one(
-            crate::store::work_schema::query(doc! {
-                "_id": snapshot.sandbox.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "revision": sandbox_revision,
-                "owner": snapshot.agent.owner.as_str(),
-            }),
+            without_ledger_maintenance(sandbox_filter),
             doc! { "$set": { CONTROL_MARKER_FIELD: operation_id } },
         )
         .session(session)
         .await
         .map_err(LineageError::Driver)?;
     require_match(result.matched_count)
+}
+
+fn active_parent_filter(
+    mut filter: mongodb::bson::Document,
+    required: bool,
+) -> mongodb::bson::Document {
+    if required {
+        filter.insert("channel_reuse_cleanup_execution", doc! {"$exists": false});
+        filter.insert(
+            "owned_workspace_cleanup_admission_v1",
+            doc! {"$exists": false},
+        );
+    }
+    crate::store::work_schema::query(filter)
 }
 
 fn require_match(matched: u64) -> Result<(), LineageError> {

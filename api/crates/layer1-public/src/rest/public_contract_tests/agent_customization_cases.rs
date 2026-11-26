@@ -171,6 +171,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             | "upgrade_disabled"
             | "upgrade_closed"
     ) {
+        agents::skill_result_fixture::prepare_parents(&fixture.store, &agent).await;
         settle_skill(
             &fixture,
             if mode == "failed" {
@@ -195,6 +196,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         }
     }
     if mode == "history_full" {
+        agents::skill_result_fixture::prepare_parents(&fixture.store, &agent).await;
         for index in 0..128 {
             settle_skill(&fixture, "installed", &format!("v{index}")).await;
         }
@@ -298,20 +300,26 @@ async fn settle_skill(fixture: &agents::Fixture, mode: &str, version: &str) {
         next.updated_at = stamp.clone();
         next.revision += 1;
         next.conversation.last_seq += logs.len() as u64;
-        fixture
-            .store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: current.revision,
-                holder: "contract-skill-worker".into(),
-                fence: current.work.lease.as_ref().unwrap().fence,
-                agent: next.clone(),
-                worktree: None,
-                appended_at: stamp.clone(),
-                sandbox_event: None,
-                agent_logs: logs,
-            })
-            .await
-            .unwrap();
+        let mutation = AgentWorkMutation {
+            expected_agent_revision: current.revision,
+            holder: "contract-skill-worker".into(),
+            fence: current.work.lease.as_ref().unwrap().fence,
+            agent: next.clone(),
+            worktree: None,
+            appended_at: stamp.clone(),
+            sandbox_event: None,
+            agent_logs: logs,
+        };
+        if pin_material {
+            fixture.store.commit_agent_work(mutation).await
+        } else {
+            let guard = agents::skill_result_fixture::capture(&fixture.store, &current).await;
+            fixture
+                .store
+                .commit_agent_skill_result(mutation, guard)
+                .await
+        }
+        .unwrap();
         current = next;
     }
 }

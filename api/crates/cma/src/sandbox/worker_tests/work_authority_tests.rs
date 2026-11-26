@@ -173,3 +173,53 @@ fn renewable_for(
             .with_replicas(true),
     )
 }
+
+#[tokio::test]
+async fn diagnostic_claim_refusal_keeps_the_original_error_without_effects() {
+    use crate::sandbox::lifecycle_failure::{CauseClass, Origin};
+    let h = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let created = h.create().await;
+    let worker = renewable_for(&h, "", h.credentials.clone());
+    let failure = worker
+        .run_one_diagnostic(&created.id, start_time(&created))
+        .await
+        .unwrap_err();
+    assert_eq!(failure.observation.origin, Origin::Claim);
+    assert_eq!(
+        failure.observation.cause_class,
+        CauseClass::StoredDataInvalid
+    );
+    assert!(matches!(
+        failure.into_compatibility(),
+        SandboxStoreError::Corrupt(_)
+    ));
+    assert_eq!(h.stored(&created.id).await, created);
+    assert!(h.actions.snapshot().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn diagnostic_renewal_conflict_keeps_execution_origin_and_stale_worker_fenced() {
+    use crate::sandbox::lifecycle_failure::{CauseClass, Origin};
+    let h = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let (created, now) = prepare_renewable_sandbox(&h).await;
+    let blocked = BlockingCredentials::new(h.credentials.clone());
+    let worker = renewable(&h, blocked.clone());
+    let id = created.id.clone();
+    let running = tokio::spawn(async move { worker.run_one_diagnostic(&id, now).await });
+    blocked.entered.notified().await;
+    let mut current = h.stored(&created.id).await;
+    let revision = current.revision;
+    current.work.lease.as_mut().unwrap().holder = "successor".into();
+    current.revision += 1;
+    h.store
+        .save_sandbox(revision, current.clone())
+        .await
+        .unwrap();
+    tokio::time::advance(Duration::from_secs(WORK_RENEW_SECONDS)).await;
+    let failure = running.await.unwrap().unwrap_err();
+    assert_eq!(failure.observation.origin, Origin::Execute);
+    assert_eq!(failure.observation.cause_class, CauseClass::StoreConflict);
+    assert_eq!(failure.into_compatibility(), SandboxStoreError::Conflict);
+    assert_eq!(h.stored(&created.id).await, current);
+    assert!(h.actions.snapshot().is_empty());
+}

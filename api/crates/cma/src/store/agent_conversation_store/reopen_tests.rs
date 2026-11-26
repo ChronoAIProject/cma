@@ -1,22 +1,26 @@
 use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::{database, fixture};
+use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
 use layer2_core::sandbox::store::{
-    AgentConversationStore, AgentLogStore, AgentReopenGuard, AgentStore,
-    SandboxLifecycleAgentMutation, SandboxLifecycleAgentScope, SandboxLifecycleMutation,
-    SandboxMutationGuard, SandboxStore,
+    AgentConversationStore, AgentLogStore, AgentReopenGuard, AgentStore, ReopenRefusalFence,
+    SandboxLifecycleAgentMutation, SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore,
+    SandboxLifecycleMutation, SandboxMutationGuard, SandboxStore,
 };
 use layer2_core::sandbox::{
-    AgentLogKind, AgentMessageAssembly, AgentStatus, AgentUpdateRecorder, AgentWorkReceipt,
-    AgentWorkStep, DurableAgentUpdateRecorder, SandboxCheckpointConversation, SandboxCheckpointRef,
-    SandboxEventKind, SandboxImageRotationPhase, SandboxLifecycleOperation,
-    SandboxRotationIdentity, SandboxWorkStep,
+    AgentConversationError, AgentLogKind, AgentMessageAssembly, AgentStatus, AgentUpdateRecorder,
+    AgentWorkReceipt, AgentWorkStep, DurableAgentUpdateRecorder, SandboxCheckpointConversation,
+    SandboxCheckpointRef, SandboxEventKind, SandboxImageRotationPhase, SandboxLifecycleOperation,
+    SandboxRotationIdentity, SandboxRuntimeUpdateRequest, SandboxRuntimeUpdateState,
+    SandboxWorkStep, TypedFailure,
 };
 use layer3_adapter::{
-    CheckpointReceipt, ConversationSnapshot, ConversationUpdate, RuntimeOutputReceipt,
-    RuntimeOutputSource, WriterState,
+    CheckpointReceipt, ConversationSnapshot, ConversationUpdate, ReleasedRuntime,
+    RuntimeOutputReceipt, RuntimeOutputSource, WriterState,
 };
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+#[path = "reopen_machine_tests.rs"]
+mod machine;
 #[path = "reopen_owner_tests.rs"]
 mod ownership;
 
@@ -24,13 +28,28 @@ mod ownership;
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn reopen_output_mongo_fences_parent_and_preserves_receipts_on_publication() {
     for count in [0, 2, 3] {
-        run_case(count).await;
+        run_case(count, false, false).await;
     }
 }
 
-async fn run_case(count: usize) {
-    let (client, name, store) = database().await;
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn runtime_update_reopen_refusal_mongo_fences_checkpoint_owner_and_claim() {
+    run_case(2, true, false).await;
+}
+
+async fn run_case(count: usize, park: bool, machine: bool) {
+    let (client, name, mut store) = database().await;
     let (mut parent, mut agent) = fixture(&store, "sbx_reopen_output").await;
+    let released = if machine {
+        Some(machine::setup_release(&client.database(&name), &mut store, &mut parent).await)
+    } else {
+        None
+    };
+    let target = released
+        .as_ref()
+        .and_then(|value| value.machine.as_deref())
+        .unwrap_or("image-v2");
     let (store, authority) = ownership::setup(store, &agent, count).await;
     ownership::under(authority.as_ref(), async {
         let at = layer2_core::now_rfc3339();
@@ -58,10 +77,25 @@ async fn run_case(count: usize) {
         )
         .unwrap();
         parent.lifecycle.checkpoints.publish(checkpoint).unwrap();
+        if park {
+            parent.lifecycle.runtime_update = Some(SandboxRuntimeUpdateState {
+                checked_at: at.clone(),
+                observed_version: target.into(),
+                request: Some(SandboxRuntimeUpdateRequest {
+                    target_version: target.into(),
+                    requested_at: at.clone(),
+                    automatic: false,
+                    started_at: None,
+                    completed_at: None,
+                    failure: None,
+                    retained_transition: None,
+                }),
+            });
+        }
         let identity =
             SandboxRotationIdentity::capture(&parent, std::slice::from_ref(&agent)).unwrap();
         parent
-            .begin_image_rotation("image-v2".into(), identity, at.clone())
+            .begin_image_rotation(target.into(), identity, at.clone())
             .unwrap();
         let Some(SandboxLifecycleOperation::ImageRotation {
             phase,
@@ -74,7 +108,7 @@ async fn run_case(count: usize) {
         *phase = SandboxImageRotationPhase::ConversationReopen;
         *checkpoint_epoch = Some(1);
         parent.runtime.as_mut().unwrap().provision_generation = Some(2);
-        parent.runtime.as_mut().unwrap().runtime_version = "image-v2".into();
+        parent.runtime.as_mut().unwrap().runtime_version = target.into();
         parent.lifecycle.runtime_generation_high_water = 2;
         parent
             .work
@@ -105,13 +139,14 @@ async fn run_case(count: usize) {
             .await
             .unwrap();
         let guard = AgentReopenGuard {
+            owner_restart: None,
             sandbox: SandboxMutationGuard::capture(&parent),
             agent_fence: agent.work.next_fence,
             native_conversation_id: native.clone(),
             runtime_generation: 2,
         };
         let (acks, _) = tokio::sync::mpsc::channel(1);
-        let output = |cursor| ConversationUpdate::RuntimeOutput {
+        let output_with_ack = |cursor, acknowledgements| ConversationUpdate::RuntimeOutput {
             receipt: RuntimeOutputReceipt::new(
                 RuntimeOutputSource {
                     stream_id: "d99003d1-0c3c-46cd-aa47-9bbdbed50b12".into(),
@@ -119,12 +154,45 @@ async fn run_case(count: usize) {
                     native_conversation_id: native.clone(),
                     payload_sha256: format!("{cursor:064x}"),
                 },
-                acks.clone(),
+                acknowledgements,
             ),
             update: None,
         };
+        let output = |cursor| output_with_ack(cursor, acks.clone());
         let recorder = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
         let mut assembly = AgentMessageAssembly::default();
+        if park {
+            assert_eq!(
+                recorder
+                    .record_reopen_update(&agent.id, &guard, &mut assembly, output(3), at.clone())
+                    .await,
+                Err(AgentConversationError::ReopenOutputDiscontinuity)
+            );
+            assert!(store
+                .agent_message_checkpoint(&agent.id)
+                .await
+                .unwrap()
+                .is_none());
+            recorder
+                .record_reopen_update(&agent.id, &guard, &mut assembly, output(1), at.clone())
+                .await
+                .unwrap();
+            assert_eq!(
+                recorder
+                    .record_reopen_update(&agent.id, &guard, &mut assembly, output(3), at.clone())
+                    .await,
+                Err(AgentConversationError::ReopenOutputDiscontinuity)
+            );
+            prove_refusal_fences(
+                &store,
+                &parent,
+                &agent,
+                authority.as_ref().unwrap(),
+                released.as_ref(),
+            )
+            .await;
+            return;
+        }
         // A transaction that read the parent before startup receipt publication
         // cannot subsequently replace its lease from that stale snapshot.
         let mut stale = client.start_session().await.unwrap();
@@ -161,6 +229,68 @@ async fn run_case(count: usize) {
             .unwrap()
             .unwrap();
         assert_eq!(held.runtime_generation, 2);
+        let log_before_hold = store.agent_log(&agent.id, 0, 200).await.unwrap();
+        let hold = doc! { "phase": "requested" };
+        let mut fields = doc! {};
+        fields.insert(LEDGER_MAINTENANCE_FIELD, hold.clone());
+        let parent_id = doc! { "_id": parent.id.as_str() };
+        // The guard was captured before the hold and no WorkAuthority scope is active.
+        assert!(!layer2_core::sandbox::store::WorkAuthority::active());
+        assert_eq!(
+            store
+                .sandboxes
+                .update_one(parent_id.clone(), doc! { "$set": fields })
+                .await
+                .unwrap()
+                .matched_count,
+            1,
+        );
+        let (sender, mut acknowledgements) = tokio::sync::mpsc::channel(1);
+        let refused = recorder
+            .record_reopen_update(
+                &agent.id,
+                &guard,
+                &mut AgentMessageAssembly::default(),
+                output_with_ack(2, sender),
+                at.clone(),
+            )
+            .await;
+        assert_eq!(
+            refused,
+            Err(AgentConversationError::Unavailable(
+                "conversation changed during every commit attempt".into(),
+            ))
+        );
+        assert!(acknowledgements.try_recv().is_err());
+        assert_eq!(
+            store.agent_message_checkpoint(&agent.id).await.unwrap(),
+            Some(held.clone())
+        );
+        assert_eq!(
+            store.agent_log(&agent.id, 0, 200).await.unwrap(),
+            log_before_hold
+        );
+        assert_eq!(
+            store.get_agent(&agent.id).await.unwrap(),
+            Some(agent.clone())
+        );
+        let persisted = store
+            .sandboxes
+            .find_one(parent_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            persisted.get_document(LEDGER_MAINTENANCE_FIELD).unwrap(),
+            &hold
+        );
+        let mut fields = doc! {};
+        fields.insert(LEDGER_MAINTENANCE_FIELD, "");
+        store
+            .sandboxes
+            .update_one(parent_id, doc! { "$unset": fields })
+            .await
+            .unwrap();
         let mut obsolete = guard.clone();
         obsolete.sandbox.lease.as_mut().unwrap().fence += 1;
         assert!(recorder
@@ -268,4 +398,98 @@ async fn run_case(count: usize) {
     })
     .await;
     client.database(&name).drop().await.unwrap();
+}
+
+async fn prove_refusal_fences(
+    store: &MongoSandboxStore,
+    parent: &layer2_core::sandbox::Sandbox,
+    agent: &layer2_core::sandbox::Agent,
+    authority: &layer2_core::agent_ownership::Authority,
+    released: Option<&ReleasedRuntime>,
+) {
+    use layer2_core::agent_ownership::{candidates, OwnershipStore};
+    let at = layer2_core::now_rfc3339();
+    let failure = TypedFailure {
+        class: "terminal_validation".into(),
+        detail: "retained conversation output is discontinuous".into(),
+    };
+    let mut parked = parent.clone();
+    let lease = parent.work.lease.as_ref().unwrap();
+    parked
+        .park_failed_runtime_update(failure.clone(), &lease.holder, lease.fence, at.clone())
+        .unwrap();
+    let mutation = SandboxLifecycleMutation {
+        guard: SandboxMutationGuard::capture(parent),
+        sandbox: parked.clone(),
+        agents: Vec::new(),
+        agent_scope: SandboxLifecycleAgentScope::Touched,
+        appended_at: at,
+        events: vec![SandboxEventKind::WorkStepFailed {
+            step: SandboxWorkStep::RunLifecycleOperation,
+            failure,
+        }],
+    };
+    let mut fence = ReopenRefusalFence {
+        agent_id: agent.id.clone(),
+        agent_revision: agent.revision,
+        checkpoint: None,
+        owner: Some(authority.token.clone()),
+        released: released.cloned(),
+    };
+    assert_eq!(
+        store
+            .park_sandbox_reopen_refusal(mutation.clone(), fence.clone())
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    fence.checkpoint = store
+        .agent_message_checkpoint(&agent.id)
+        .await
+        .unwrap()
+        .map(Box::new);
+    let mut stale_claim = mutation.clone();
+    stale_claim.guard.lease.as_mut().unwrap().fence += 1;
+    assert_eq!(
+        store
+            .park_sandbox_reopen_refusal(stale_claim, fence.clone())
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    let owners = store.agent_ownership.as_ref().unwrap();
+    owners.release(&authority.token).await.unwrap();
+    owners
+        .heartbeat(&authority.token.instance_id, true)
+        .await
+        .unwrap();
+    let membership = owners.membership().await.unwrap();
+    let member = candidates(&agent.id, &membership, None).unwrap().remove(0);
+    let successor = owners
+        .acquire(&agent.id, &member.instance_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .token;
+    assert!(successor.epoch > authority.token.epoch);
+    assert_eq!(
+        store
+            .park_sandbox_reopen_refusal(mutation.clone(), fence.clone())
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        store.get_sandbox(&parent.id).await.unwrap().unwrap(),
+        *parent
+    );
+    fence.owner = Some(successor);
+    machine::assert_stale_release_refused(store, &mutation, &fence).await;
+    // A fresh reader sees the same checkpoint and can park under its new epoch.
+    store
+        .park_sandbox_reopen_refusal(mutation, fence)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_sandbox(&parent.id).await.unwrap().unwrap(),
+        parked
+    );
+    assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), *agent);
 }

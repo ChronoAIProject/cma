@@ -129,6 +129,7 @@ pub(super) fn replay_state(
     current: &crate::sandbox::Agent,
     previous: Option<&crate::sandbox::store::AgentMessageCheckpoint>,
     assembly: &AgentMessageAssembly,
+    reopen: bool,
 ) -> Result<(bool, bool), AgentConversationError> {
     let durable = previous
         .filter(|checkpoint| {
@@ -141,7 +142,7 @@ pub(super) fn replay_state(
         .as_ref()
         .and_then(|state| state.buffer.as_ref())
     else {
-        return super::output::output_replayed(source, current, previous)
+        return super::output::output_replayed(source, current, previous, reopen)
             .map(|replay| (replay, false));
     };
     if Some(buffer.generation) != current.conversation.runtime_generation {
@@ -157,11 +158,11 @@ pub(super) fn replay_state(
         ));
     }
     if durable.is_some_and(|position| source.cursor <= position.cursor) {
-        return super::output::output_replayed(source, current, previous)
+        return super::output::output_replayed(source, current, previous, false)
             .map(|replay| (replay, false));
     }
     let last = buffer.sources.last().expect("quiet buffers are nonempty");
-    let replay = super::output::output_position_replayed(source, current, Some(last))?;
+    let replay = super::output::output_position_replayed(source, current, Some(last), || false)?;
     if replay && !buffer.sources.iter().any(|position| position == source) {
         return Err(AgentConversationError::Corrupt(
             "buffered output receipt hash conflict".into(),

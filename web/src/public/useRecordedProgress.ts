@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ProtocolError, type Launch } from '@cma/client';
 import { refusalSentence } from '../vocabulary/errors';
 import { publicCopy } from '../vocabulary/needs';
@@ -8,22 +8,67 @@ function stopped(record: Launch): boolean {
   return ['draft', 'ready', 'completed', 'failed_terminal', 'cancelled'].includes(record.state);
 }
 
+interface ProgressScope {
+  client: PublicClient;
+  id: string;
+}
+
 export function useRecordedProgress(client: PublicClient, id: string) {
-  const [record, setRecord] = useState<Launch>();
-  const [error, setError] = useState<string>();
-  const [observedAt, setObservedAt] = useState<string>();
+  const scope = useMemo<ProgressScope>(() => ({ client, id }), [client, id]);
+  const observed = useRef<{ scope: ProgressScope; record?: Launch } | undefined>(undefined);
+  const [snapshot, setSnapshot] = useState<{
+    scope: ProgressScope;
+    record: Launch;
+    observedAt: string;
+  }>();
+  const [failure, setFailure] = useState<{ scope: ProgressScope; message: string }>();
   const [revision, setRevision] = useState(0);
-  const refresh = useCallback(() => setRevision((value) => value + 1), []);
-  const changed = useCallback((value: Launch) => {
-    setRecord(value);
-    setObservedAt(new Date().toISOString());
-    setError(undefined);
-    setRevision((prior) => prior + 1);
-  }, []);
+  useEffect(() => {
+    observed.current = { scope };
+    return () => {
+      if (observed.current?.scope === scope) observed.current = undefined;
+    };
+  }, [scope]);
+  const setError = useCallback(
+    (message?: string) => {
+      if (observed.current?.scope === scope)
+        setFailure(message === undefined ? undefined : { scope, message });
+    },
+    [scope],
+  );
+  const observe = useCallback(
+    (value: Launch) => {
+      if (value.id !== id)
+        throw new ProtocolError('The recorded progress belongs to another request');
+      const prior = observed.current?.record;
+      if (prior && (value.revision < prior.revision || value.event_head < prior.event_head))
+        return false;
+      observed.current = { scope, record: value };
+      setSnapshot({ scope, record: value, observedAt: new Date().toISOString() });
+      setError(undefined);
+      return true;
+    },
+    [id, scope, setError],
+  );
+  const refresh = useCallback(() => {
+    if (observed.current?.scope === scope) setRevision((value) => value + 1);
+  }, [scope]);
+  const changed = useCallback(
+    (value: Launch) => {
+      if (observed.current?.scope !== scope) return;
+      try {
+        observe(value);
+      } catch (cause) {
+        setError(refusalSentence(cause));
+      }
+      refresh();
+    },
+    [scope, observe, setError, refresh],
+  );
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let cursor = 0;
+    let cursor = observed.current?.record?.event_head ?? 0;
     let latest: Launch | undefined;
     let failures = 0;
     let outageBeganAt: number | undefined;
@@ -32,11 +77,10 @@ export function useRecordedProgress(client: PublicClient, id: string) {
       if (controller.signal.aborted) return;
       if (value.event_head < minimum)
         throw new ProtocolError('The recorded progress has not reached the delivered event');
+      if (!observe(value))
+        throw new ProtocolError('The recorded progress is older than the last observation');
       latest = value;
       cursor = value.event_head;
-      setRecord(value);
-      setObservedAt(new Date().toISOString());
-      setError(undefined);
     };
     const poll = async () => {
       try {
@@ -91,6 +135,12 @@ export function useRecordedProgress(client: PublicClient, id: string) {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [client, id, revision]);
-  return { record, error, observedAt, refresh, changed };
+  }, [client, id, revision, scope, observe, setError]);
+  return {
+    record: snapshot?.scope === scope ? snapshot.record : undefined,
+    observedAt: snapshot?.scope === scope ? snapshot.observedAt : undefined,
+    error: failure?.scope === scope ? failure.message : undefined,
+    refresh,
+    changed,
+  };
 }

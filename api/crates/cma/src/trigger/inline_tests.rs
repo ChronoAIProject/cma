@@ -377,3 +377,6 @@ async fn system_default_image_does_not_require_image_manager_authority() {
         .unwrap();
     assert_eq!(sandbox.content.runtime_image, None);
 }
+
+#[path = "inline_tests/image_retirement.rs"]
+mod image_retirement;

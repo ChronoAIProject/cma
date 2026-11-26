@@ -95,6 +95,8 @@ fn shared_kind(kind: AgentLogKind) -> Option<AgentLogKind> {
         | ToolCallUpdated { .. }
         | ToolOutputReported { .. }
         | ApprovalResolved { .. }
+        | ExternalApprovalRequested { .. }
+        | ExternalApprovalResolved { .. }
         | OperationDeliveryChanged { .. }
         | Usage { .. }
         | UsageUpdated { .. }

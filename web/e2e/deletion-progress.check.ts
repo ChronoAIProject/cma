@@ -1,3 +1,4 @@
+import { registerDeletionStatusCases } from './redesign-deletion.cases';
 import { expect, test, type Page } from '@playwright/test';
 import { LocalAgentV2 } from './agent-v2.fixture';
 import { LocalStartup } from './agent-startup-fixtures';
@@ -43,6 +44,106 @@ async function routeDeletions(page: Page, fixture: LocalAgentV2) {
   });
 }
 
+for (const [width, theme] of [
+  [1440, 'light'],
+  [390, 'dark'],
+] as const) {
+  test(`LOCAL five deletions share one compact notice at ${width}px`, async ({
+    page,
+    baseURL,
+  }, info) => {
+    const fixture = new LocalAgentV2();
+    const requests = Array.from({ length: 5 }, (_, index) => ({
+      key: `synthetic-aggregate-${index}`,
+      accepted: true,
+      action: { kind: 'delete_sandbox', sandboxId: `sbx_aggregate_${index}` },
+    }));
+    const terminal = new Set<string>();
+    try {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await fixture.route(page, baseURL!);
+      await page.addInitScript((pending) => {
+        for (const request of pending)
+          localStorage.setItem(
+            `cma:deletion-requests:local-owner:${request.key}`,
+            JSON.stringify(request),
+          );
+      }, requests);
+      await page.route('**/api/v1/sandboxes/sbx_aggregate_**', (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const path = new URL(route.request().url()).pathname;
+        if (path.endsWith('/events')) return route.fulfill({ json: [] });
+        const id = path.split('/').at(-1)!;
+        return route.fulfill({
+          json: {
+            ...fixture.boundary.sandbox,
+            id,
+            name: id,
+            status: terminal.has(id) ? 'retired' : 'retiring',
+            workspaces: [],
+            workspace_count: 0,
+            worktree_count: 0,
+            agent_count: 0,
+          },
+        });
+      });
+      const notice = page.getByRole('region', { name: 'Deletion request', exact: true });
+      const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+      await page.goto('/agents/agt_contract');
+      await expect(composer).toBeEnabled();
+      await expect(composer).toBeInViewport();
+      await expect(notice).toHaveCount(0);
+      await page.goto(`/sandboxes/${fixture.boundary.sandbox.id}`);
+      await page.evaluate(
+        (theme) => document.body.toggleAttribute('data-ds-dark-theme', theme === 'dark'),
+        theme,
+      );
+      await expect(notice).toHaveCount(1);
+      await expect(notice).toContainText('Deleting 5 environments');
+      expect((await notice.boundingBox())!.height).toBeLessThanOrEqual(72);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+      ).toBe(true);
+      await page.screenshot({ path: info.outputPath(`aggregate-${width}-${theme}.png`) });
+      const open = notice.getByRole('button', { name: 'View status', exact: true });
+      await open.click();
+      const list = page.getByRole('dialog', { name: 'Deletion progress', exact: true });
+      await expect(list.getByRole('listitem')).toHaveCount(5);
+      await page.keyboard.press('Escape');
+      await expect(list).toHaveCount(0);
+      await expect(open).toBeFocused();
+      for (const [index, request] of requests.entries()) {
+        await open.click();
+        await expect(list.getByText(request.action.sandboxId, { exact: true })).toBeVisible();
+        terminal.add(request.action.sandboxId);
+        await list
+          .getByRole('listitem')
+          .filter({ has: page.getByText(request.action.sandboxId, { exact: true }) })
+          .getByRole('button')
+          .click();
+        await expect(list).toHaveCount(0);
+        const completed = page.getByRole('dialog', { name: 'Sandbox deleted', exact: true });
+        await expect(completed).toBeVisible();
+        await completed.getByRole('button', { name: 'Done', exact: true }).click();
+        const remaining = 4 - index;
+        if (remaining) await expect(notice).toContainText(`Deleting ${remaining} environment`);
+      }
+      await expect(notice).toHaveCount(0);
+      await page.goto('/agents/agt_contract');
+      await expect(composer).toBeEnabled();
+      await expect(composer).toBeInViewport();
+      expect(fixture.writes).toEqual([]);
+      expect(fixture.boundary.writes).toEqual([]);
+      expect(fixture.boundary.unexpected).toEqual([]);
+      expect(fixture.boundary.errors).toEqual([]);
+      expect(fixture.errors).toEqual([]);
+    } finally {
+      await fixture.close(page);
+    }
+  });
+}
+
 for (const restored of [false, true]) {
   test(`LOCAL deletion completes after a 100ms reopen without reload, restored=${restored}`, async ({
     page,
@@ -76,8 +177,9 @@ for (const restored of [false, true]) {
       },
       restored ? [other, uncertain] : [other],
     );
+    const agentPath = `/api/v1/agents/${boundary.agent.id}`;
     const deletes: { path: string; key?: string; body: string | null }[] = [];
-    await page.route(`**/api/v1/agents/${boundary.agent.id}`, (route) => {
+    await page.route(`**${agentPath}`, (route) => {
       const request = route.request();
       if (request.method() !== 'DELETE') return route.fallback();
       deletes.push({
@@ -93,12 +195,18 @@ for (const restored of [false, true]) {
           .filter((key) => key.startsWith('cma:deletion-requests:local-owner:'))
           .map((key) => JSON.parse(localStorage.getItem(key)!)),
       );
+    // Set the clock before navigation so jumping to the anchor cannot advance an in-flight read.
+    const anchor = Date.now();
+    await page.clock.install({ time: anchor - 60_000 });
+    await page.clock.pauseAt(anchor);
     await page.goto(`/agents/${boundary.agent.id}`);
+    const moreActions = page.getByRole('button', { name: 'More Agent actions', exact: true });
+    await expect(moreActions).toBeVisible();
     let submit;
     if (restored) {
       submit = page.getByRole('button', { name: 'Check request', exact: true });
     } else {
-      await page.getByRole('button', { name: 'More Agent actions', exact: true }).click();
+      await moreActions.click();
       await page.getByRole('menuitem', { name: /^Delete task/ }).click();
       const confirmation = page.getByRole('dialog', { name: 'Delete Agent', exact: true });
       await confirmation.getByRole('checkbox').check();
@@ -106,10 +214,27 @@ for (const restored of [false, true]) {
     }
     await expect(submit).toBeEnabled();
     expect(deletes).toEqual([]);
-    const anchor = Date.now();
-    await page.clock.install({ time: anchor - 60_000 });
-    await page.clock.pauseAt(anchor);
-    await submit.press('Enter');
+    const [acceptance] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === 'DELETE' &&
+          new URL(response.url()).pathname === agentPath,
+      ),
+      submit.press('Enter'),
+    ]);
+    expect(acceptance.status()).toBe(202);
+    const summary = page.getByRole('region', { name: 'Deletion request', exact: true });
+    if (restored) {
+      await expect(page.getByRole('dialog', { name: 'Deleting Agent', exact: true })).toBeHidden();
+      await expect(summary).toHaveCount(0);
+      await moreActions.press('Enter');
+      await page
+        .getByRole('menuitem', { name: 'View deletion status', exact: true })
+        .press('Enter');
+    } else {
+      await expect(summary.getByRole('button', { name: 'View status', exact: true })).toBeEnabled();
+      await summary.getByRole('button', { name: 'View status', exact: true }).press('Enter');
+    }
     const reopen = page.getByRole('button', { name: 'View Agent deletion status (2)' });
     await expect(reopen).toBeEnabled();
     const original = (await receipts()).find(
@@ -135,9 +260,7 @@ for (const restored of [false, true]) {
       })
       .toBe(true);
     expect(await receipts()).toEqual([other]);
-    expect(deletes).toEqual([
-      { path: `/api/v1/agents/${boundary.agent.id}`, key: original.key, body: null },
-    ]);
+    expect(deletes).toEqual([{ path: agentPath, key: original.key, body: null }]);
     expect(boundary.writes).toEqual([]);
     expect(boundary.unexpected).toEqual([]);
     expect(boundary.errors).toEqual([]);
@@ -191,10 +314,10 @@ for (const theme of ['light', 'dark']) {
         });
         if (await sidebar.evaluate((element) => element.classList.contains('sidebar--collapsed')))
           await page.getByRole('button', { name: 'Show sidebar', exact: true }).click();
-        const summary = sidebar.getByText('Deletion progress (3)', { exact: true });
+        const summary = sidebar.getByText('Cleaning up 3 sandboxes', { exact: true });
         await summary.focus();
         await page.keyboard.press('Enter');
-        const progress = sidebar.locator('details').filter({ hasText: 'Deletion progress (3)' });
+        const progress = sidebar.locator('details').filter({ hasText: 'Cleaning up 3 sandboxes' });
         for (const name of names) {
           const label = progress.getByText(name, { exact: true });
           await expect(label).toBeVisible();
@@ -279,3 +402,5 @@ for (const theme of ['light', 'dark']) {
     });
   }
 }
+
+registerDeletionStatusCases();

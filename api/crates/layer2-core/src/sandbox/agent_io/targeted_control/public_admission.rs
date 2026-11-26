@@ -95,6 +95,8 @@ impl AgentCommandService {
         self.fence(&authorized, &resource, capability).await?;
         let result = result??;
         let result = request.replay(result.record, Some(result.binding))?;
+        self.notify_new_cancel(&request.command.envelope, &result.record)
+            .await;
         Ok(TargetedControlStatusView::from_record(&result))
     }
 }

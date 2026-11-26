@@ -1,5 +1,5 @@
-import { Presence } from '../ui/Presence';
-import { useRef, useState } from 'react';
+import { Presence, usePresenceExiting } from '../ui/Presence';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { ApiError, type Launch, type TriggerPreview } from '@cma/client';
 import { Button } from '../ui/Button';
 import {
@@ -21,11 +21,22 @@ import type { ConnectionTarget } from '../connections/client';
 import { Details, SoftwareDetails } from './Details';
 import {
   clearDraftRecovery,
-  readDraftRecovery,
-  writeDraftRecovery,
+  assertDraftRecovery,
+  DraftRecoveryChangedError,
+  readDraftRecoverySnapshot,
+  replaceDraftRecovery,
   type DraftCredentialRecovery,
+  type DraftRecoverySnapshot,
   type DraftStartCommand,
 } from './draftRecovery';
+
+function loadRecovery(id: string) {
+  try {
+    return { snapshot: readDraftRecoverySnapshot(id), blocked: false };
+  } catch {
+    return { snapshot: undefined, blocked: true };
+  }
+}
 
 export function ReviewCard({
   client,
@@ -42,7 +53,17 @@ export function ReviewCard({
   readonly onChanged: (value: Launch) => void;
   readonly onClose: () => void;
 }) {
-  const [recovery, setRecovery] = useState(() => readDraftRecovery(record.id));
+  const exiting = usePresenceExiting();
+  const lifetime = useRef<AbortController | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (exiting) return;
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => controller.abort();
+  }, [exiting, expectedSubject, record.id]);
+  const [saved, setSaved] = useState(() => loadRecovery(record.id));
+  const { snapshot, blocked: storageBlocked } = saved;
+  const recovery = snapshot?.recovery;
   const [confirmed, setConfirmed] = useState(
     recovery?.confirmedDigest !== undefined &&
       record.review.needs.some(
@@ -54,10 +75,15 @@ export function ReviewCard({
   const [connectionRevision, setConnectionRevision] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(
-    recovery === undefined ? undefined : credentialSetupMessage,
+    storageBlocked
+      ? publicCopy.storageReadUnavailable
+      : recovery === undefined
+        ? undefined
+        : credentialSetupMessage,
   );
   const active = useRef(false);
   const command = useRef<DraftStartCommand | undefined>(recovery?.command);
+  const unresolved = useRef(recovery?.command !== undefined);
   const [uncertain, setUncertain] = useState(recovery?.command !== undefined);
   const [needsSignIn, setNeedsSignIn] = useState(recovery !== undefined);
   const [credentialOwner, setCredentialOwner] = useState(recovery?.owner ?? expectedSubject);
@@ -69,8 +95,43 @@ export function ReviewCard({
   const missing = needs.flatMap((need) => (need.type === 'connection' ? [need.service] : []));
   const connectionsOnly = missing.length > 0 && missing.length === needs.length;
 
+  const retryRead = () => {
+    const next = loadRecovery(record.id);
+    setSaved(next);
+    if (next.blocked) {
+      setError(publicCopy.storageReadUnavailable);
+      return;
+    }
+    command.current = next.snapshot?.recovery?.command;
+    unresolved.current = command.current !== undefined;
+    setUncertain(unresolved.current);
+    setConfirmed(
+      next.snapshot?.recovery?.confirmedDigest !== undefined &&
+        next.snapshot?.recovery.confirmedDigest === trust?.commands_digest,
+    );
+    setCredentialOwner(next.snapshot?.recovery?.owner ?? expectedSubject);
+    setNeedsSignIn(next.snapshot?.recovery !== undefined);
+    explicitRetryRequired.current = true;
+    setError(next.snapshot?.recovery === undefined ? undefined : credentialSetupMessage);
+  };
+
   const start = async (explicit = false) => {
-    if (active.current || needsSignIn || (!explicit && explicitRetryRequired.current)) return;
+    const controller = lifetime.current;
+    if (
+      controller === undefined ||
+      controller.signal.aborted ||
+      exiting ||
+      active.current ||
+      storageBlocked ||
+      needsSignIn ||
+      (!explicit && explicitRetryRequired.current)
+    )
+      return;
+    const owner = recovery?.owner ?? credentialOwner ?? expectedSubject;
+    if (owner === undefined || snapshot === undefined) {
+      setError('Your CMA account could not be checked. Try again.');
+      return;
+    }
     if (explicit) explicitRetryRequired.current = false;
     active.current = true;
     command.current ??= {
@@ -82,36 +143,75 @@ export function ReviewCard({
     };
     setBusy(true);
     setError(undefined);
+    let attempt: DraftRecoverySnapshot | undefined;
+    let dispatched = false;
     try {
-      if (recovery !== undefined)
-        writeDraftRecovery(record.id, { ...recovery, command: command.current });
-      await checkCredentialRecoveryOwner(recovery?.owner);
+      attempt = replaceDraftRecovery(record.id, snapshot, {
+        owner,
+        confirmedDigest: command.current.body.trust_confirmed_digest,
+        command: command.current,
+      });
+      setSaved({ snapshot: attempt, blocked: false });
+      await checkCredentialRecoveryOwner(recovery?.owner, controller.signal);
+      if (controller.signal.aborted) return;
+      assertDraftRecovery(record.id, attempt);
+      dispatched = true;
       const result = await client.requests.start(record.id, command.current.body, {
         idempotencyKey: command.current.key,
       });
       command.current = undefined;
-      clearDraftRecovery(record.id);
+      clearDraftRecovery(record.id, attempt);
+      unresolved.current = false;
       setUncertain(false);
       onChanged(result);
     } catch (cause) {
-      const unknown = isUnsettledCommand(cause);
+      if (!dispatched && controller.signal.aborted) return;
+      if (cause instanceof DraftRecoveryChangedError) {
+        setSaved((current) => ({ ...current, blocked: true }));
+        explicitRetryRequired.current = true;
+        setError(publicCopy.storageChanged);
+        return;
+      }
+      if (!dispatched && !(cause instanceof CredentialAccountError)) {
+        explicitRetryRequired.current = true;
+        setUncertain(true);
+        setError(publicCopy.storageUnavailable);
+        return;
+      }
+      const credentialRefusal = needsSandboxCredentialSetup(cause);
+      const unknown =
+        !credentialRefusal && (!dispatched || unresolved.current || isUnsettledCommand(cause));
+      unresolved.current = unknown;
       setUncertain(unknown);
-      const required =
-        needsSandboxCredentialSetup(cause) || cause instanceof CredentialAccountError;
+      const required = credentialRefusal || cause instanceof CredentialAccountError;
       setNeedsSignIn(required);
-      if (required || recovery !== undefined) explicitRetryRequired.current = true;
+      explicitRetryRequired.current = true;
       if (!unknown) command.current = undefined;
       setError(refusalSentence(cause));
-      if ((required || recovery !== undefined) && credentialOwner !== undefined) {
+      if (attempt !== undefined) {
         const retained: DraftCredentialRecovery = {
-          owner: recovery?.owner ?? credentialOwner,
-          confirmedDigest: confirmed ? trust?.commands_digest : undefined,
+          owner,
+          confirmedDigest:
+            command.current === undefined
+              ? confirmed
+                ? trust?.commands_digest
+                : undefined
+              : command.current.body.trust_confirmed_digest,
           command: command.current,
         };
-        setRecovery(retained);
         try {
-          writeDraftRecovery(record.id, retained);
-        } catch {
+          const updated = replaceDraftRecovery(record.id, attempt, retained);
+          setSaved({ snapshot: updated, blocked: false });
+        } catch (storageError) {
+          if (storageError instanceof DraftRecoveryChangedError) {
+            setSaved((current) => ({ ...current, blocked: true }));
+            setError(publicCopy.storageChanged);
+            return;
+          }
+          // The write-ahead packet remains recoverable if this update fails.
+          command.current = attempt.recovery?.command;
+          unresolved.current = command.current !== undefined;
+          setUncertain(unresolved.current);
           setError(publicCopy.storageUnavailable);
         }
       }
@@ -122,6 +222,7 @@ export function ReviewCard({
           'trust_confirmation_mismatch',
           'launch_not_startable',
           'launch_changed',
+          'idempotency_recovery_required',
         ].includes(cause.code ?? '')
       ) {
         if (cause.code === 'launch_requirements_not_met') {
@@ -154,10 +255,10 @@ export function ReviewCard({
       footer={
         <Button
           variant="primary"
-          disabled={busy || needsSignIn || (!uncertain && !canStart)}
-          onClick={() => void start(true)}
+          disabled={busy || (!storageBlocked && (needsSignIn || (!uncertain && !canStart)))}
+          onClick={() => (storageBlocked ? retryRead() : void start(true))}
         >
-          {uncertain
+          {storageBlocked || uncertain
             ? publicCopy.retry
             : connectionsOnly
               ? connectionCopy.verifyAll
@@ -183,7 +284,7 @@ export function ReviewCard({
                     <input
                       type="checkbox"
                       checked={confirmed}
-                      disabled={busy || uncertain}
+                      disabled={busy || uncertain || storageBlocked}
                       onChange={(event) => setConfirmed(event.target.checked)}
                     />
                     {publicCopy.confirmation}

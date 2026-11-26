@@ -158,12 +158,9 @@ async fn execute(
     {
         Ok(value) => value,
         Err(error) => {
-            // This request has not attempted admission. Complete only its own
-            // acquired outer claim; finish leaves older fenced claims untouched.
-            // A failed lookup does not prove that no historical command exists.
-            return guard
-                .finish(Ok::<_, Response>(admission_problem(error)))
-                .await;
+            // A failed lookup cannot rule out an older accepted command. Keep
+            // this outer intent unfinished so fenced retries can recover it.
+            return admission_problem(error);
         }
     };
     if let Idempotency::Fenced(problem) = guard {

@@ -39,7 +39,7 @@ async fn deletion_byte_ceiling_accepts_exactly_and_refuses_one_over() {
     }
 }
 
-async fn verify_full_log_cleanup(bytes: bool, boundary: Option<bool>) {
+pub(in crate::store) async fn verify_full_log_cleanup(bytes: bool, boundary: Option<bool>) {
     let (client, name) = database(if bytes {
         "capacity_bytes"
     } else {

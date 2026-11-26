@@ -51,6 +51,16 @@ fn deletion_execution_switches_reject_noncanonical_booleans() {
 }
 
 #[test]
+fn legal_consent_retention_is_an_independent_opt_in() {
+    const KEY: &str = "CHRONO_ERASURE_RETAIN_LEGAL_CONSENTS";
+    assert!(!Options::from_config(&configured(&[]).unwrap()).retain_legal_consents);
+    let config = configured(&[(KEY, "true")]).unwrap();
+    assert!(Options::from_config(&config).retain_legal_consents);
+    assert!(config.legal_terms.is_none());
+    assert!(configured(&[(KEY, "yes")]).is_err());
+}
+
+#[test]
 fn record_erasure_uses_the_configured_delivery_and_optional_store_modes() {
     let mut config = configured(&[]).unwrap();
     let options = Options::from_config(&config);

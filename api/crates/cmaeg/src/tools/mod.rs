@@ -26,6 +26,7 @@ mod media_links;
 mod media_redemption;
 pub(crate) mod message_effects;
 pub(crate) mod reply_targets;
+pub(crate) mod side_messages;
 pub(crate) mod state;
 pub use attachment_view::{
     AttachmentImage, AttachmentImageOrigin, AttachmentStatus, AttachmentText, AttachmentTextSource,

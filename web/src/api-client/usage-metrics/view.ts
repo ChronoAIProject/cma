@@ -59,60 +59,59 @@ export function latestView(
       filters: input.filters === undefined ? undefined : JSON.stringify(input.filters),
       refresh: input.refresh?.toString(),
     }),
-    (value) => {
-      const view = viewSchema(value);
-      const snapshot = view.report;
-      const pending = snapshot.status === 'pending';
-      const ready = snapshot.status === 'ready';
-      if (
-        view.schema_version !== 1 ||
-        view.window !== window ||
-        snapshot.scope.admin !== admin ||
-        (!pending && !ready) ||
-        (pending &&
-          (view.generated_at !== null ||
-            view.stale ||
-            view.refresh.state !== 'pending' ||
-            view.refresh.report_id !== snapshot.report_id)) ||
-        (ready &&
-          (view.generated_at === null || !snapshot.report_complete || snapshot.summary === null)) ||
-        (input.step_seconds !== undefined &&
-          BigInt(snapshot.query.step_seconds) !== BigInt(input.step_seconds)) ||
-        (window === 'custom' &&
-          (BigInt(snapshot.query.from) !== BigInt(input.from!) ||
-            BigInt(snapshot.query.to) !== BigInt(input.to!)))
-      )
-        throw new ProtocolError(
-          'usage view does not match its requested selection or completion state',
-        );
-      const wanted = input.filters ?? {};
-      const actual = snapshot.query.filters;
-      const statuses = [...new Set(wanted.statuses ?? [])].sort().join(',');
-      if (
-        (wanted.owner ?? null) !== actual.owner ||
-        (wanted.runtime_version ?? null) !== actual.runtime_version ||
-        (wanted.agent_id ?? null) !== actual.agent_id ||
-        (wanted.sandbox_id != null && wanted.sandbox_id !== actual.sandbox_id) ||
-        (wanted.agent_id == null && wanted.sandbox_id == null && actual.sandbox_id !== null) ||
-        (wanted.search ?? '').trim().toLowerCase() !== actual.search ||
-        statuses !== [...actual.statuses].sort().join(',')
-      )
-        throw new ProtocolError('usage snapshot filters do not match');
-      const seconds =
-        window === '24h'
-          ? 86400n
-          : window === '7d'
-            ? 604800n
-            : window === '30d'
-              ? 2592000n
-              : undefined;
-      if (
-        seconds !== undefined &&
-        BigInt(snapshot.query.to) - BigInt(snapshot.query.from) !== seconds
-      )
-        throw new ProtocolError('usage snapshot window does not match');
-      return view;
-    },
+    (value) => parseView(value, admin, input),
     { ...options, expectedStatus: [200, 202] },
   );
+}
+
+export function parseView(
+  value: unknown,
+  admin: boolean,
+  input: UsageMetricViewQuery,
+): UsageMetricView {
+  const window = input.window ?? '24h';
+
+  const view = viewSchema(value);
+  const snapshot = view.report;
+  const pending = snapshot.status === 'pending';
+  const ready = snapshot.status === 'ready';
+  if (
+    view.schema_version !== 1 ||
+    view.window !== window ||
+    snapshot.scope.admin !== admin ||
+    (!pending && !ready) ||
+    (pending &&
+      (view.generated_at !== null ||
+        view.stale ||
+        view.refresh.state !== 'pending' ||
+        view.refresh.report_id !== snapshot.report_id)) ||
+    (ready &&
+      (view.generated_at === null || !snapshot.report_complete || snapshot.summary === null)) ||
+    (input.step_seconds !== undefined &&
+      BigInt(snapshot.query.step_seconds) !== BigInt(input.step_seconds)) ||
+    (window === 'custom' &&
+      (BigInt(snapshot.query.from) !== BigInt(input.from!) ||
+        BigInt(snapshot.query.to) !== BigInt(input.to!)))
+  )
+    throw new ProtocolError(
+      'usage view does not match its requested selection or completion state',
+    );
+  const wanted = input.filters ?? {};
+  const actual = snapshot.query.filters;
+  const statuses = [...new Set(wanted.statuses ?? [])].sort().join(',');
+  if (
+    (wanted.owner ?? null) !== actual.owner ||
+    (wanted.runtime_version ?? null) !== actual.runtime_version ||
+    (wanted.agent_id ?? null) !== actual.agent_id ||
+    (wanted.sandbox_id != null && wanted.sandbox_id !== actual.sandbox_id) ||
+    (wanted.agent_id == null && wanted.sandbox_id == null && actual.sandbox_id !== null) ||
+    (wanted.search ?? '').trim().toLowerCase() !== actual.search ||
+    statuses !== [...actual.statuses].sort().join(',')
+  )
+    throw new ProtocolError('usage snapshot filters do not match');
+  const seconds =
+    window === '24h' ? 86400n : window === '7d' ? 604800n : window === '30d' ? 2592000n : undefined;
+  if (seconds !== undefined && BigInt(snapshot.query.to) - BigInt(snapshot.query.from) !== seconds)
+    throw new ProtocolError('usage snapshot window does not match');
+  return view;
 }

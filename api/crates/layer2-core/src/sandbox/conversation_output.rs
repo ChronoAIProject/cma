@@ -91,20 +91,39 @@ pub(super) fn output_replayed(
     source: &layer3_adapter::RuntimeOutputSource,
     current: &Agent,
     previous: Option<&AgentMessageCheckpoint>,
+    reopen: bool,
 ) -> Result<bool, AgentConversationError> {
+    // The Agent and checkpoint come from one snapshot. An older generation
+    // establishes absence of a replacement cursor only for this conversation.
+    let verified = || {
+        reopen
+            && previous.is_none_or(|checkpoint| {
+                checkpoint.validate().is_ok()
+                    && checkpoint.native_conversation_id == source.native_conversation_id
+                    && current
+                        .conversation
+                        .runtime_generation
+                        .is_some_and(|generation| {
+                            (checkpoint.runtime_generation < generation
+                                && checkpoint.after_seq <= current.conversation.last_seq)
+                                || checkpoint.matches(current)
+                        })
+            })
+    };
     let previous = previous
         .filter(|checkpoint| {
             checkpoint.native_conversation_id == source.native_conversation_id
                 && Some(checkpoint.runtime_generation) == current.conversation.runtime_generation
         })
         .and_then(|checkpoint| checkpoint.output.as_ref());
-    output_position_replayed(source, current, previous)
+    output_position_replayed(source, current, previous, verified)
 }
 
 pub(super) fn output_position_replayed(
     source: &layer3_adapter::RuntimeOutputSource,
     current: &Agent,
     previous: Option<&layer3_adapter::RuntimeOutputSource>,
+    verified: impl FnOnce() -> bool,
 ) -> Result<bool, AgentConversationError> {
     let invalid = || {
         AgentConversationError::Corrupt(
@@ -123,18 +142,25 @@ pub(super) fn output_position_replayed(
     {
         return Err(invalid());
     }
+    let discontinuity = || {
+        if verified() && !source.native_conversation_id.is_empty() {
+            AgentConversationError::ReopenOutputDiscontinuity
+        } else {
+            invalid()
+        }
+    };
     match previous {
-        Some(previous) if previous.stream_id != source.stream_id => Err(invalid()),
+        Some(previous) if previous.stream_id != source.stream_id => Err(discontinuity()),
         Some(previous)
             if source.cursor == previous.cursor
                 && source.payload_sha256 != previous.payload_sha256 =>
         {
-            Err(invalid())
+            Err(discontinuity())
         }
         Some(previous) if source.cursor <= previous.cursor => Ok(true),
         Some(previous) if previous.cursor.checked_add(1) == Some(source.cursor) => Ok(false),
         None if source.cursor == 1 => Ok(false),
-        _ => Err(invalid()),
+        _ => Err(discontinuity()),
     }
 }
 

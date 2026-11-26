@@ -10,6 +10,8 @@ use super::{
     TriggerReferenceError, TriggerRevision, TriggerStats, TriggerStore, TriggerStoreError,
 };
 
+mod inline;
+
 const PUBLISHER_FALLBACK: &str = "CMA publisher";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,7 +142,7 @@ impl TriggerService {
     ) -> Result<Trigger, TriggerServiceError> {
         require_publisher(caller)?;
         let draft = self
-            .materialize_inline(caller, draft, delegated_credential)
+            .materialize_inline(caller, draft, None, delegated_credential)
             .await?;
         let trigger = Trigger::new(
             TriggerId::generate(),
@@ -198,9 +200,14 @@ impl TriggerService {
     ) -> Result<Trigger, TriggerServiceError> {
         // Verify ownership before materializing inline profiles so a rejected update
         // cannot leave private internal profile rows behind.
-        self.owned(id, &caller.subject).await?;
+        let current = self.owned(id, &caller.subject).await?;
         let draft = self
-            .materialize_inline(caller, draft, delegated_credential)
+            .materialize_inline(
+                caller,
+                draft,
+                Some(&current.draft.target),
+                delegated_credential,
+            )
             .await?;
         self.definitions
             .save_draft(
@@ -352,22 +359,6 @@ impl TriggerService {
             .await
             .map_err(TriggerServiceError::from)?
             .ok_or(TriggerServiceError::NotFound)
-    }
-
-    async fn materialize_inline(
-        &self,
-        caller: &Caller,
-        draft: TriggerContent,
-        delegated_credential: Option<&str>,
-    ) -> Result<TriggerContent, TriggerServiceError> {
-        let Some(materializer) = &self.inline_materializer else {
-            return Ok(draft);
-        };
-        let target = materializer
-            .materialize_with_credential(&caller.subject, &draft.target, delegated_credential)
-            .await
-            .map_err(TriggerServiceError::Reference)?;
-        Ok(TriggerContent { target, ..draft })
     }
 }
 

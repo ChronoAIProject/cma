@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ApiError, ProtocolError } from '@cma/client';
+import { ApiError, ProtocolError, TransportError } from '@cma/client';
 import type { AgentLifecycleOperationView, CmaWebClient } from '../api/client';
 import { agentClient } from '../test/agent';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
@@ -157,7 +157,7 @@ it('does not add an idle interval after a slow successful status read', async ()
 it('recovers transient status failures automatically and opens the original operation once', async () => {
   const read = vi
     .fn()
-    .mockRejectedValueOnce(new TypeError('Network unavailable'))
+    .mockRejectedValueOnce(new TransportError('Network unavailable'))
     .mockRejectedValueOnce(new ApiError(503, 'Temporarily unavailable'))
     .mockResolvedValueOnce(pending)
     .mockResolvedValue({ ...pending, status: 'succeeded', agent_id: 'ready-agent' });

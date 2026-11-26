@@ -1,5 +1,5 @@
 use super::*;
-use crate::sandbox::funding::token::oauth::tests::{issued, Server};
+use crate::producer_token::oauth::tests::{issued, Server};
 use serde_json::json;
 
 fn provider(server: &Server) -> NyxIdFundingProvider {

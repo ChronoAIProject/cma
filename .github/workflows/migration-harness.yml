@@ -5,15 +5,19 @@ on:
     branches: [develop, main]
     paths:
       - '.github/scripts/migration*'
+      - '.github/scripts/migration-native-assets/**'
       - '.github/scripts/test_migration*'
       - '.github/scripts/multi-am-features/owner/identity.py'
+      - '.github/scripts/multi-am-features/test_identity.py'
       - '.github/workflows/migration-harness.yml'
   push:
     branches: [develop]
     paths:
       - '.github/scripts/migration*'
+      - '.github/scripts/migration-native-assets/**'
       - '.github/scripts/test_migration*'
       - '.github/scripts/multi-am-features/owner/identity.py'
+      - '.github/scripts/multi-am-features/test_identity.py'
       - '.github/workflows/migration-harness.yml'
 
 permissions:
@@ -33,20 +37,36 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 24.15.0
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.13'
       # These tests use temporary files and loopback HTTP fixtures. They do not
       # start kind, Docker, application images, or external database services.
       - name: Inventory, runner and application-fixture regressions
         run: python3 -B -m unittest discover -s .github/scripts -p 'test_migration*.py'
+      - name: Synthetic identity actor permissions
+        run: python3 -B .github/scripts/multi-am-features/test_identity.py
       - name: Evidence envelope and Mongo catalog regressions
         run: >-
           node --test .github/scripts/migration-matrix.test.mjs
           .github/scripts/migration_catalog.test.cjs
           .github/scripts/migration-matrix-inventory.test.mjs
           .github/scripts/migration-matrix-inventory-files.test.mjs
+          .github/scripts/migration_launch_documents.test.cjs
+          .github/scripts/migration_sandbox_documents.test.cjs
+          .github/scripts/migration_agent_documents.test.cjs
+          .github/scripts/migration_agent_document_join.test.mjs
+          .github/scripts/migration_agent_journey.test.mjs
+          .github/scripts/migration_agent_http.test.mjs
+          .github/scripts/migration_agent_kubernetes.test.mjs
+          .github/scripts/migration_native_provider.test.mjs
+          .github/scripts/migration_agent_cleanup.test.mjs
+          .github/scripts/migration_agent_session.test.mjs
+          .github/scripts/migration_agent_protocol.test.mjs
+          .github/scripts/migration_agent_session_http.test.mjs
+          .github/scripts/migration_api_custody_documents.test.cjs
+          .github/scripts/migration_membership_documents.test.cjs

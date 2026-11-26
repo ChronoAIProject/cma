@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
@@ -12,15 +12,18 @@ use layer2_core::sandbox::{
 };
 use layer3_adapter::AgentOpenRequest;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
-use super::super::support::{adapter_failure, runtime, WorkerFailure};
+use super::super::support::{runtime, WorkerFailure};
 use super::super::SandboxWorker;
 use super::checkpoint::{pinned_checkpoint, require_quiet_agent};
+use super::reopen_refusal::within_deadline;
 use super::support::{lifecycle_lease, model_error};
 use crate::sandbox::live_agents::{LiveAgentAttachment, LiveAgentRegistryError};
 use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
 
 const UPDATE_BUFFER: usize = 256;
+const REOPEN_LIMIT: Duration = Duration::from_secs(layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS);
 
 impl SandboxWorker {
     pub(super) async fn reopen_lifecycle_conversations(
@@ -73,20 +76,45 @@ impl SandboxWorker {
 
         let mut attachments = Vec::new();
         let mut receipts = BTreeMap::new();
+        // Earlier restore phases have their own budgets, and an empty set has
+        // no conversation work to time out.
+        let deadline = if live.is_empty() {
+            Instant::now()
+        } else {
+            self.conversation_reopen_deadline(&sandbox).await?
+        };
         for agent in &live {
+            let refusal = match self.reopen_refusal_fence(&sandbox, agent).await {
+                Ok(refusal) => refusal,
+                Err(error) => {
+                    rollback_attachments(self, &attachments);
+                    return Err(error);
+                }
+            };
+            let prove_refusal = refusal.is_some();
             if let Some(relay) = self.reopen_relay.get() {
                 let relay = relay.upgrade().ok_or(SandboxStoreError::Conflict)?;
-                match relay.reopen_agent(&sandbox, &agent.id).await {
+                match within_deadline(
+                    deadline,
+                    relay.reopen_agent(&sandbox, &agent.id, prove_refusal),
+                    refusal,
+                    true,
+                )
+                .await
+                {
                     Ok(mut receipt) => {
                         // Lifecycle validation uses the publisher's logical
                         // timestamp, which can differ from the remote clock.
                         receipt.completed_at = rfc3339_at(now);
                         receipts.insert(agent.id.clone(), receipt);
                     }
-                    Err(error) => {
+                    Err(failure) => {
+                        tracing::warn!(sandbox_id = %sandbox.id, agent_id = %agent.id,
+                            stage = "relayed_reopen", error = %failure.detail(),
+                            "Lifecycle conversation reopen failed");
                         return self
-                            .rollback_reopen(sandbox, attachments, adapter_failure(error), now)
-                            .await
+                            .rollback_reopen(sandbox, attachments, failure, now)
+                            .await;
                     }
                 }
                 continue;
@@ -106,6 +134,7 @@ impl SandboxWorker {
             );
             let authority_fence = agent.work.next_fence;
             let guard = AgentReopenGuard {
+                owner_restart: None,
                 sandbox: SandboxMutationGuard::capture(&sandbox),
                 agent_fence: authority_fence,
                 native_conversation_id: conversation_id.clone(),
@@ -119,12 +148,18 @@ impl SandboxWorker {
                 &conversation_id,
                 updates,
             );
-            let channel = match super::reopen_output::drain_while(
-                opening,
-                &mut receiver,
-                self.dependencies.updates.as_ref(),
-                &agent.id,
-                &guard,
+            let channel = match within_deadline(
+                deadline,
+                super::reopen_output::drain_while(
+                    opening,
+                    &mut receiver,
+                    self.dependencies.updates.as_ref(),
+                    &agent.id,
+                    &guard,
+                    prove_refusal,
+                ),
+                refusal,
+                false,
             )
             .await
             {
@@ -143,24 +178,33 @@ impl SandboxWorker {
                         )
                         .await
                 }
-                Err(error) => {
+                Err(failure) => {
+                    tracing::warn!(sandbox_id = %sandbox.id, agent_id = %agent.id,
+                        stage = "reconnect", error = %failure.detail(),
+                        "Lifecycle conversation reopen failed");
                     return self
-                        .rollback_reopen(sandbox, attachments, adapter_failure(error), now)
-                        .await
+                        .rollback_reopen(sandbox, attachments, failure, now)
+                        .await;
                 }
             };
             if let Some(settings) = &agent.conversation.settings {
-                if let Err(error) = super::reopen_output::drain_while(
-                    channel.input.send(settings.runtime_input()),
-                    &mut receiver,
-                    self.dependencies.updates.as_ref(),
-                    &agent.id,
-                    &guard,
+                if let Err(failure) = within_deadline(
+                    deadline,
+                    super::reopen_output::drain_while(
+                        channel.input.send(settings.runtime_input()),
+                        &mut receiver,
+                        self.dependencies.updates.as_ref(),
+                        &agent.id,
+                        &guard,
+                        false,
+                    ),
+                    None,
+                    false,
                 )
                 .await
                 {
                     return self
-                        .rollback_reopen(sandbox, attachments, adapter_failure(error), now)
+                        .rollback_reopen(sandbox, attachments, failure, now)
                         .await;
                 }
             }
@@ -346,6 +390,41 @@ impl SandboxWorker {
             worktrees.insert(agent.id.clone(), worktree);
         }
         Ok(worktrees)
+    }
+
+    async fn conversation_reopen_deadline(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<Instant, SandboxStoreError> {
+        let remaining = if sandbox.work.attempts == 0 {
+            REOPEN_LIMIT
+        } else {
+            let operation = sandbox
+                .lifecycle
+                .operation
+                .as_ref()
+                .ok_or(SandboxStoreError::Conflict)?;
+            let first_attempt = self
+                .dependencies
+                .store
+                .lifecycle_retry_started_at(&sandbox.id, &operation.authority().requested_at)
+                .await?;
+            if let Some(first_attempt) = first_attempt {
+                let seconds =
+                    layer2_core::seconds_from_rfc3339(&first_attempt).ok_or_else(|| {
+                        SandboxStoreError::Corrupt("invalid lifecycle retry timestamp".into())
+                    })?;
+                let started = SystemTime::UNIX_EPOCH + Duration::from_secs(seconds);
+                REOPEN_LIMIT.saturating_sub(
+                    SystemTime::now()
+                        .duration_since(started)
+                        .unwrap_or_default(),
+                )
+            } else {
+                REOPEN_LIMIT
+            }
+        };
+        Ok(Instant::now() + remaining)
     }
 
     async fn rollback_reopen(

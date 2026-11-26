@@ -358,3 +358,6 @@ async fn mongo_retained_transport_requires_durable_idle_intent_and_keeps_origina
     assert_eq!(saved.profile, agent.profile);
     client.database(&database).drop().await.unwrap();
 }
+
+#[path = "publication_retry_tests.rs"]
+mod publication_retry;

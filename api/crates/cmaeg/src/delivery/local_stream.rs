@@ -20,18 +20,7 @@ use serde_json::{json, Value};
 #[path = "local_stream_tests.rs"]
 mod tests;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LocalStreamOutcome {
-    /// Durable reservation; whether enqueue happened is not yet recorded.
-    Pending,
-    /// Only the bounded in-process queue accepted the frame, not the reader.
-    Buffered,
-    /// No live waiter accepted this attempt, including exhausted local capacity.
-    Unavailable,
-    /// The process lost the enqueue result. Never retransmitted as a reconnect.
-    Lost,
-}
+pub use cmaeg_engine::LocalStreamOutcome;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

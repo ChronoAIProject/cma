@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type Launch, type LaunchStreamOptions } from '@cma/client';
 import { PUBLIC_PREVIEW, PUBLIC_RECORD, PUBLIC_TRUST, publicClient } from '../test/public';
 import { ReviewCard } from './ReviewCard';
@@ -8,13 +8,113 @@ import { Progress } from './Progress';
 import { readIntent } from './intent';
 import { connectionClient } from '../connections/client';
 
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input) => {
+      if (input !== '/auth/session') throw new Error('Unexpected external fetch');
+      return new Response(
+        JSON.stringify({
+          authenticated: true,
+          subject: 'owner',
+          visitor: true,
+          capabilities: ['launch_triggers'],
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }),
+  );
+});
+
 afterEach(() => {
+  expect(vi.mocked(fetch).mock.calls.every(([input]) => input === '/auth/session')).toBe(true);
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.useRealTimers();
   vi.restoreAllMocks();
   sessionStorage.clear();
 });
 
 describe('minimal review', () => {
+  it.each(['local deadline', 'expired', 'cancelled', 'failed'] as const)(
+    'keeps the original Draft unstarted after %s until a new user action',
+    async (ending) => {
+      vi.stubEnv('VITE_CONNECTION_INTENT_RECOVERY_ENABLED', 'true');
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-11-22T00:00:00.000Z'));
+      vi.spyOn(window, 'open').mockReturnValue(null);
+      const client = publicClient();
+      const record: Launch = {
+        ...PUBLIC_RECORD,
+        state: 'draft',
+        review: { can_start_now: false, needs: [{ type: 'connection', service: 'code' }] },
+      };
+      const changed = vi.fn();
+      let connected = false;
+      let activeState: 'expired' | 'cancelled' | 'failed' | undefined;
+      vi.spyOn(connectionClient, 'check').mockImplementation(async () => ({
+        owner: 'owner',
+        ready: connected,
+        checked_at: new Date().toISOString(),
+        active_state: activeState,
+        services: [
+          {
+            service: 'code',
+            display_name: 'Code host',
+            kind: 'nyxid',
+            state: connected ? 'satisfied' : 'missing',
+            connection_mode: 'hosted',
+          },
+        ],
+      }));
+      vi.spyOn(connectionClient, 'start').mockImplementation(async (_target, active) => ({
+        ...active,
+        owner: 'owner',
+        hosted_url: 'https://identity.example.test/connect',
+        expires_at: new Date(
+          Date.now() + (ending === 'local deadline' ? 1000 : 600000),
+        ).toISOString(),
+      }));
+      render(
+        <ReviewCard
+          expectedSubject="owner"
+          client={client}
+          record={record}
+          onChanged={changed}
+          onClose={vi.fn()}
+        />,
+      );
+      await act(async () => undefined);
+      fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+      await act(async () => undefined);
+      expect(connectionClient.start).toHaveBeenCalledOnce();
+      if (ending !== 'local deadline') activeState = ending;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(screen.getByRole('alert')).toHaveTextContent('This sign-in did not finish.');
+      expect(client.requests.start).not.toHaveBeenCalled();
+      connected = true;
+      activeState = undefined;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(client.requests.start).not.toHaveBeenCalled();
+      expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
+      expect(changed).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000);
+      });
+      expect(client.requests.start).toHaveBeenCalledOnce();
+      expect(client.requests.start).toHaveBeenCalledWith(
+        record.id,
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
+    },
+  );
   it('continues the same Draft through Start once a hosted connection is satisfied', async () => {
     vi.useFakeTimers();
     vi.spyOn(window, 'open').mockReturnValue(null);
@@ -52,7 +152,15 @@ describe('minimal review', () => {
       hosted_url: 'https://identity.example.test/connect',
       expires_at: new Date(Date.now() + 600000).toISOString(),
     }));
-    render(<ReviewCard client={client} record={record} onChanged={changed} onClose={vi.fn()} />);
+    render(
+      <ReviewCard
+        expectedSubject="owner"
+        client={client}
+        record={record}
+        onChanged={changed}
+        onClose={vi.fn()}
+      />,
+    );
     await act(async () => undefined);
     fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
     await act(async () => undefined);
@@ -71,7 +179,7 @@ describe('minimal review', () => {
       { idempotencyKey: expect.any(String) },
     );
     expect(changed).toHaveBeenCalledWith(PUBLIC_RECORD);
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
   });
   it('shows only server needs, preserves commands and env data, and submits matching trust', async () => {
     const client = publicClient();
@@ -79,6 +187,7 @@ describe('minimal review', () => {
     const actor = userEvent.setup();
     render(
       <ReviewCard
+        expectedSubject="owner"
         client={client}
         record={PUBLIC_TRUST}
         preview={PUBLIC_PREVIEW}
@@ -116,7 +225,13 @@ describe('minimal review', () => {
         .mockResolvedValue(PUBLIC_RECORD);
       const actor = userEvent.setup();
       render(
-        <ReviewCard client={client} record={PUBLIC_TRUST} onChanged={vi.fn()} onClose={vi.fn()} />,
+        <ReviewCard
+          expectedSubject="owner"
+          client={client}
+          record={PUBLIC_TRUST}
+          onChanged={vi.fn()}
+          onClose={vi.fn()}
+        />,
       );
       await actor.click(screen.getByRole('checkbox'));
       await actor.click(screen.getByRole('button', { name: 'Continue' }));
@@ -162,6 +277,7 @@ describe('minimal review', () => {
     const actor = userEvent.setup();
     render(
       <ReviewCard
+        expectedSubject="owner"
         client={client}
         record={record}
         preview={PUBLIC_PREVIEW}
@@ -178,7 +294,7 @@ describe('minimal review', () => {
     await actor.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByText('Connect the accounts below to continue.')).toBeInTheDocument();
     await waitFor(() => expect(changed).toHaveBeenCalledWith(record));
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
   });
 });
 
@@ -296,7 +412,7 @@ describe('durable progress', () => {
         { replace: true },
       ),
     );
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
     expect(client.requests.start).not.toHaveBeenCalled();
   });
 
@@ -355,7 +471,7 @@ describe('durable progress', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(navigate).toHaveBeenCalledWith({ kind: 'agent', agentId: 'agt_prepared' });
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
     expect(client.requests.start).not.toHaveBeenCalled();
   });
 

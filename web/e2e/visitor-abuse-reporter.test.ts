@@ -34,7 +34,21 @@ function record(
   retry = 0,
   evidence: unknown = { status, counts: newCounts(), provenanceVerified: false },
 ) {
-  writeFileSync(join(output, `tc117-${name}.json`), JSON.stringify(evidence));
+  writeFileSync(
+    join(output, `tc117-${name}.json`),
+    JSON.stringify({
+      schema: 'cma-tc117-scenario-v1',
+      campaign: 'TC-117',
+      case: name,
+      run: process.env.CMA_E2E_EVIDENCE_RUN,
+      journalRun: `journal-${name}`,
+      startedAt: '2026-01-01T00:00:00Z',
+      endedAt: '2026-01-01T00:00:01Z',
+      N: 1,
+      requests: [{}],
+      ...(evidence as object),
+    }),
+  );
   reporter.onTestEnd(
     { title: `TC117-${name} synthetic scenario` } as TestCase,
     { status, retry, duration: 1, errors: [] } as unknown as TestResult,

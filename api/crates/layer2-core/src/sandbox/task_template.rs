@@ -20,7 +20,7 @@ pub fn compile_task_template(
     fields: &BTreeMap<String, String>,
 ) -> Result<String, TaskTemplateError> {
     let error = |code| TaskTemplateError::new(code, None);
-    if version != 1 {
+    if ![1, 2].contains(&version) {
         return Err(error("task_template_version_unsupported"));
     }
     let required: &[(&str, &str)] = match id {
@@ -64,6 +64,15 @@ pub fn compile_task_template(
     }
     let value = |name: &str| fields[name].trim();
     let message = match id {
+        "research" if version == 2 => format!(
+            "Research the following topic:\n\n{}\n\nSummarize the key findings, with links to sources.",
+            value("topic")
+        ),
+        "code" if version == 2 => {
+            let behavior = value("behavior");
+            let punctuation = if behavior.ends_with(['.', '!', '?', '。', '！', '？']) { "" } else { "." };
+            format!("Write a {} script for the following task:\n\n{behavior}{punctuation}", value("language"))
+        }
         "research" => format!(
             "Research {} and summarize the key findings, with links to sources.",
             value("topic")

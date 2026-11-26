@@ -87,16 +87,13 @@ impl RecordClient {
 
     pub(crate) async fn get_observed(&self, record_url: &str) -> Result<RecordValue, ReadFailure> {
         let record_path = self.record_path;
-        let url = Url::parse(record_url)
-            .map_err(|error| RecordError::Rejected(format!("record URL is invalid: {error}")))?;
+        // A URL sealed under a retained origin reads from the configured one.
+        let url = self.current_record_url(record_url)?;
         let id = url
             .path()
             .strip_prefix(&format!("{record_path}/"))
             .ok_or_else(|| RecordError::Rejected("invalid record path".into()))?;
-        if self.record_url(id)?.as_str() != record_url
-            || url.origin() != self.base_url.origin()
-            || !url.path().starts_with(&format!("{record_path}/"))
-        {
+        if url.origin() != self.base_url.origin() {
             return Err(RecordError::Rejected(
                 "record URL is outside the configured CMA origin".into(),
             )

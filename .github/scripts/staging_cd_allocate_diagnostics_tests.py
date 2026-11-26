@@ -9,7 +9,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 import staging_cd_allocate as allocation
+from staging_cd_allocation_io import AllocationGitHub, AllocationIO
 from staging_cd_common import Refusal
+from staging_cd_github import GitHub
 import staging_cd_queue_tests
 from staging_cd_reservations import next_reservation
 from staging_cd_outcome_tests import legacy
@@ -40,6 +42,59 @@ class AllocationDiagnosticsTests(unittest.TestCase):
                                               r"site=staging_cd_allocate_diagnostics_tests\.py:\d+\n\Z")
                 else:
                     self.assertEqual((status, log, outputs), (1, "FAIL allocation\nFAIL allocation " + code + "\n", ""))
+
+    def test_a_failed_github_read_is_named_by_its_cause(self):
+        def http(status, headers=""):
+            return subprocess.CompletedProcess([], 1, f"HTTP/2.0 {status} Status\n{headers}\n{{}}", "")
+
+        def refused(result):
+            with self.assertRaisesRegex(Refusal, "GitHub API request failed") as raised:
+                GitHub.response("pulls/1", None, result, False)
+            return raised.exception
+        reset = "Get \"https://api.github.com/repos\": read tcp: connection reset by peer"
+        for result, code in (
+                (http(500), "GITHUB_READ_TRANSIENT"), (http(503), "GITHUB_READ_TRANSIENT"),
+                (http(429), "GITHUB_READ_TRANSIENT"),
+                (http(403, "X-RateLimit-Remaining: 0\n"), "GITHUB_READ_TRANSIENT"),
+                (http(403, "Retry-After: 60\n"), "GITHUB_READ_TRANSIENT"),
+                # No response at all, and a diagnostic that names the network.
+                (subprocess.CompletedProcess([], 4, "", reset), "GITHUB_READ_TRANSIENT"),
+                (http(401), "GITHUB_READ_DENIED"),
+                (http(403, "X-RateLimit-Remaining: 4999\n"), "GITHUB_READ_DENIED"),
+                (http(422), "GITHUB_READ_FAILED"),
+                # Neither a network fault nor a denial is proven.
+                (subprocess.CompletedProcess([], 4, "", "gh auth login is required"), "GITHUB_READ_FAILED"),
+                (subprocess.CompletedProcess([], 0, "HTTP/2.0 200 OK\n\n" + "x" * (16 * 1024 * 1024), ""),
+                 "GITHUB_READ_FAILED")):
+            with self.subTest(code=code, result=result.stdout[:40] + result.stderr[:40]):
+                error = refused(result)
+                self.assertEqual(allocation.refusal_code(error), code)
+                status, log, outputs = self.allocate_privately(lambda _masker, error=error: (_ for _ in ()).throw(error))
+                if code in allocation.TRANSIENT_CODES:
+                    self.assertEqual((status, log), (0, "FAIL allocation\n"))
+                    self.assertIn(f"refused={code}\n", outputs)
+                else:
+                    self.assertEqual((status, log, outputs), (1, f"FAIL allocation\nFAIL allocation {code}\n", ""))
+        self.assertLessEqual(allocation.GITHUB_READ_CAUSES, allocation.TRANSIENT_CODES | {"GITHUB_READ_DENIED"})
+
+    def test_allocation_reads_keep_their_cause_after_repeats_and_a_spent_budget(self):
+        throttled = subprocess.CompletedProcess([], 1, "HTTP/2.0 403 Status\nRetry-After: 1\n\n{}", "")
+        for result, code, calls in ((throttled, "GITHUB_READ_TRANSIENT", 3),
+                                    (subprocess.CompletedProcess([], 1, "HTTP/2.0 403 Status\n\n{}", ""),
+                                     "GITHUB_READ_DENIED", 1),
+                                    # A 5xx is already a repeated allocation read failure.
+                                    (subprocess.CompletedProcess([], 1, "HTTP/2.0 502 Status\n\n{}", ""),
+                                     "READ_FAILED", 3)):
+            runner = Mock(return_value=result)
+            io = AllocationIO(runner, clock=lambda: 0, sleep=Mock(), rand=lambda: 0.0)
+            with self.subTest(code=code), self.assertRaises(Refusal) as raised:
+                AllocationGitHub("fixture", io).request("pulls/1")
+            self.assertEqual((allocation.refusal_code(raised.exception), runner.call_count), (code, calls))
+        # A spent read budget refused nothing; it used to be an unclassified refusal.
+        with self.assertRaisesRegex(Refusal, "budget expired") as raised:
+            GitHub("fixture", Mock(), retry={"clock": lambda: 100}, deadline=100).request("pulls/1")
+        self.assertEqual(allocation.refusal_code(raised.exception), "DEADLINE_EXCEEDED")
+        self.assertIn("DEADLINE_EXCEEDED", allocation.TRANSIENT_CODES)
 
     def test_unknown_text_never_becomes_a_public_reason(self):
         for error, code in ((Refusal("private\n::warning::fixture"), "UNCLASSIFIED_REFUSAL"),

@@ -14,6 +14,7 @@ async fn ambiguous_commits_preserve_frozen_members_and_replay_the_exact_final_re
     let result = fixture.store.register(&authority, &member).await;
     fixture.ambiguous_commits(false).await;
     assert!(matches!(result, Err(ExecutionError::Unknown)));
+    crate::store::test_visibility::majority_barrier(&fixture.client, &fixture.name).await;
     let operation = fixture.freeze().await;
     assert_eq!(operation.frozen_members, 1);
     let key = registration_id(&member).unwrap();

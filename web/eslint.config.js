@@ -13,7 +13,7 @@ export default tseslint.config(
      * run in a browser — `page.evaluate` bodies are serialised and executed
      * there, so both sets of globals are genuinely in scope in one file.
      */
-    files: ['scripts/**/*.mjs'],
+    files: ['scripts/**/*.mjs', 'e2e/owner-timing/**/*.mjs'],
     languageOptions: {
       ecmaVersion: 2022,
       globals: { ...globals.node, ...globals.browser },

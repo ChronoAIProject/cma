@@ -23,6 +23,7 @@ export function UsageDialog({
   const [selection, onSelection] = useUsageSelection(false);
   return (
     <Modal keepMounted open={open} title="Your usage" onClose={onClose} placement="usage-dialog">
+      <p className="usage-section-description">Usage only, not a bill</p>
       {appearanceNotice && <p role="status">Appearance is now in your account menu.</p>}
       {client ? (
         <MetricsDashboard

@@ -79,11 +79,17 @@ it.each([false, true])(
     );
     refreshed.unmount();
     render(<TaskHome {...props} />);
-    expect(computerOption('Shared desktop')).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.queryByRole('button', { name: /^Cloud computer/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Setup details'));
+    expect(screen.getByRole('definition')).toHaveTextContent(
+      machine ? 'Shared desktop' : 'Cloud computer',
+    );
     expect(
       screen.queryByRole('menuitemcheckbox', { name: 'Agent browser' }),
     ).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Next task draft' } });
+    fireEvent.change(screen.getByLabelText('Follow-up draft'), {
+      target: { value: 'Next task draft' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Recover original task' }));
     await waitFor(() => expect(writes).toHaveLength(2));
     expect(writes[1]).toEqual(writes[0]);

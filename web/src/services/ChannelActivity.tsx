@@ -1,14 +1,11 @@
 import { QuotedContextSummary } from './QuotedContextSummary';
 import { Presence } from '../ui/Presence';
+import { IconCheckOutline16 } from '../ui/icons';
 import './ChannelActivity.css';
 import { useChannelActivity, type ChannelActivityFeed } from './useChannelActivity';
-import { deliveryLabel, deliveryTime } from './activityDelivery';
 import { activityActor, activityLabel } from './channelActivityLabels';
-import {
-  ActivityConnection,
-  ActivityTimestamp,
-  activityStateLabels,
-} from './ChannelActivityStatus';
+import { ActivityConnection, ActivityTimestamp } from './ChannelActivityStatus';
+import { ChannelReceiptFacts } from './ChannelReceiptFacts';
 
 export function ChannelActivity({
   channelId,
@@ -27,9 +24,20 @@ export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFe
   const { page, connection, retry } = feed;
   return (
     <div className="channel-activity">
-      <ActivityConnection connection={connection} retry={retry} />
+      <div className="channel-activity__heading">
+        <h3>Conversation activity</h3>
+        <p>Recorded arrival, agent response and delivery status for the original event.</p>
+      </div>
+      <ActivityConnection connection={connection} retry={retry} refresh />
+      {!page ? (
+        <p className="channel-activity__notice">
+          Activity records haven’t loaded. No event or delivery status is confirmed by this view.
+        </p>
+      ) : null}
       {page?.items.length === 0 ? (
-        <p>No events recorded in the last {page.retention_days} days.</p>
+        <p className="channel-activity__notice">
+          No events recorded in the last {page.retention_days} days.
+        </p>
       ) : null}
       <ol className="channel-activity__events">
         {page?.items.map((event) => (
@@ -37,130 +45,74 @@ export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFe
             <Presence>
               <article className="channel-activity__event">
                 <header>
-                  <strong>
-                    {activityLabel(event)} · {event.source.platform ?? event.source.type}
-                  </strong>
-                  <span>
-                    Received <ActivityTimestamp value={event.received_at} />
-                  </span>
+                  <div>
+                    <p>
+                      {activityActor(event)} · {event.source.platform ?? event.source.type}
+                    </p>
+                    <strong>
+                      {activityLabel(event)} · {event.source.platform ?? event.source.type}
+                    </strong>
+                  </div>
+                  <span className="channel-activity__badge">Activity recorded</span>
                 </header>
-                <p>
-                  {activityActor(event)} · <code>{event.event_id}</code>
-                </p>
                 <QuotedContextSummary context={event.quoted_context} />
-                <dl>
+                <div className="channel-activity__fact channel-activity__arrival">
+                  <span
+                    className="channel-activity__fact-icon channel-activity__fact-icon--confirmed"
+                    aria-hidden="true"
+                  >
+                    <IconCheckOutline16 />
+                  </span>
                   <div>
-                    <dt>{event.kind === 'event' ? 'Source event time' : 'Recorded event time'}</dt>
-                    <dd>
-                      <ActivityTimestamp
-                        value={
-                          event.kind === 'event' ? event.source_occurred_at : event.occurred_at
-                        }
-                      />
-                    </dd>
+                    <strong>Received</strong>
+                    <p>
+                      The original event is recorded ·{' '}
+                      <ActivityTimestamp value={event.received_at} />
+                    </p>
                   </div>
-                  <div>
-                    <dt>Conversation</dt>
-                    <dd>{event.conversation.id}</dd>
-                  </div>
-                </dl>
+                </div>
+                {event.consumers.length === 0 ? (
+                  <p className="channel-activity__notice">
+                    No Agent response or recipient delivery receipt is recorded.
+                  </p>
+                ) : null}
                 {event.consumers.map((consumer) => (
-                  <section key={consumer.consumer_id} className="channel-activity__consumer">
-                    <header>
-                      <strong>{consumer.display_name ?? consumer.consumer_id}</strong>
-                      <span>{activityStateLabels[consumer.state] ?? consumer.state}</span>
-                    </header>
+                  <ChannelReceiptFacts key={consumer.consumer_id} consumer={consumer} />
+                ))}
+                <footer className="channel-activity__event-footer">
+                  <p>
+                    Original event · <code>{event.event_id}</code>
+                  </p>
+                  <details className="channel-activity__details">
+                    <summary>Event details</summary>
                     <dl>
-                      {consumer.refusal_code ? (
-                        <div>
-                          <dt>Refusal reason</dt>
-                          <dd>{consumer.refusal_code}</dd>
-                        </div>
-                      ) : null}
-                      {consumer.last_non_admission_code ? (
-                        <div>
-                          <dt>Last admission refusal</dt>
-                          <dd>{consumer.last_non_admission_code}</dd>
-                        </div>
-                      ) : null}
-                      <div>
-                        <dt>Dispatch started</dt>
-                        <dd>
-                          <ActivityTimestamp value={consumer.dispatched_at} />
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Accepted by agent</dt>
-                        <dd>
-                          <ActivityTimestamp value={consumer.accepted_at} />
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Provider Agent</dt>
-                        <dd>{consumer.agent_id ?? 'Provider Agent identity was not reported'}</dd>
-                      </div>
-                      {consumer.execution_reference ? (
-                        <div>
-                          <dt>Provider execution reference</dt>
-                          <dd>{consumer.execution_reference}</dd>
-                        </div>
-                      ) : null}
-                      {consumer.provider ? (
-                        <div>
-                          <dt>Provider</dt>
-                          <dd>{consumer.provider}</dd>
-                        </div>
-                      ) : null}
-                      {consumer.conversation_id ? (
-                        <div>
-                          <dt>Agent conversation</dt>
-                          <dd>{consumer.conversation_id}</dd>
-                        </div>
-                      ) : null}
                       <div>
                         <dt>
-                          {!consumer.produced_at && consumer.produced_by
-                            ? 'Response produced by'
-                            : 'Response produced'}
+                          {event.kind === 'event' ? 'Source event time' : 'Recorded event time'}
                         </dt>
                         <dd>
-                          <ActivityTimestamp value={consumer.produced_at ?? consumer.produced_by} />
-                          {!consumer.produced_at && consumer.produced_by ? (
-                            <span> · Confirmed answer delivery</span>
-                          ) : null}
+                          <ActivityTimestamp
+                            value={
+                              event.kind === 'event' ? event.source_occurred_at : event.occurred_at
+                            }
+                          />
                         </dd>
                       </div>
+                      <div>
+                        <dt>Conversation</dt>
+                        <dd>{event.conversation.id}</dd>
+                      </div>
                     </dl>
-                    {consumer.deliveries.length === 0 ? (
-                      <p>No recipient delivery receipt recorded.</p>
-                    ) : (
-                      <ul>
-                        {consumer.deliveries.map((delivery, index) => (
-                          <li key={`${delivery.step}:${delivery.observed_at}:${index}`}>
-                            <span>
-                              {delivery.step.replaceAll('_', ' ')} ·{' '}
-                              {delivery.recipients?.length
-                                ? delivery.recipients
-                                    .map(
-                                      (recipient) =>
-                                        `${recipient.kind}: ${recipient.id}${recipient.thread_id ? ` · Thread ${recipient.thread_id}` : ''}`,
-                                    )
-                                    .join(', ')
-                                : 'Recipient not reported'}
-                            </span>
-                            <strong>{deliveryLabel(delivery)}</strong>
-                            <ActivityTimestamp value={deliveryTime(delivery)} />
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </section>
-                ))}
+                  </details>
+                </footer>
               </article>
             </Presence>
           </li>
         ))}
       </ol>
+      <p className="channel-activity__notice">
+        An agent’s reply isn’t proof the other side received it.
+      </p>
       {page?.has_more ? (
         <p className="channel-field-hint">
           Showing {page.items.length} recent events (up to {page.limit}; retained for{' '}

@@ -2,6 +2,7 @@
 //! records and responses; a browser keeps the secret in the URL fragment.
 use super::{idempotency::IdempotencyKey, resource_access_problem::ResourceProblem};
 use crate::AuthenticatedResourceCaller;
+use axum::response::{IntoResponse, Response};
 use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post},
@@ -183,14 +184,15 @@ pub(super) async fn create(
         .await?;
     Ok(Json(view(&service, receipt.share).await?))
 }
-#[utoipa::path(delete, path="/api/v1/agents/{id}/share-links/{share_id}", tag="agents", params(("id"=String,Path),("share_id"=String,Path),("expected_revision"=u64,Query),("Idempotency-Key"=String,Header)),responses((status=200,body=ShareLinkView)))]
+#[utoipa::path(delete, path="/api/v1/agents/{id}/share-links/{share_id}", tag="agents", params(("id"=String,Path),("share_id"=String,Path),("expected_revision"=u64,Query),("Idempotency-Key"=String,Header)),responses((status=200,body=super::resource_revocations::RevocationAwareSuccess<ShareLinkView>),(status=409,body=super::ProblemDocument,content_type="application/problem+json")))]
 pub(super) async fn revoke(
+    revocations: Option<super::resource_revocations::Revocations>,
     State(service): State<Arc<ResourceAccessService>>,
     caller: AuthenticatedResourceCaller,
     Path((id, share_id)): Path<(String, String)>,
     key: IdempotencyKey,
     Query(query): Query<RevokeQuery>,
-) -> Result<Json<ShareLinkView>, ResourceProblem> {
+) -> Result<Response, ResourceProblem> {
     let key = key.into_required_value().map_err(|_| invalid())?;
     let selector = ResourceSelector::Agent {
         agent_id: AgentId(id),
@@ -201,19 +203,33 @@ pub(super) async fn revoke(
     if share.link.is_none() {
         return Err(invalid());
     }
-    let receipt = service
-        .change_share(
-            &caller.context,
-            credential(&caller),
-            ShareCommand {
-                selector,
-                change: ShareChange::Revoke { share_id },
-                expected_share_revision: Some(query.expected_revision),
-                idempotency_key: key,
+    let command = ShareCommand {
+        selector,
+        change: ShareChange::Revoke { share_id },
+        expected_share_revision: Some(query.expected_revision),
+        idempotency_key: key,
+    };
+    if let Some(axum::Extension(revocations)) = revocations {
+        return Ok(
+            match revocations
+                .request(&caller.context, credential(&caller), command)
+                .await
+            {
+                Ok(value) => match value.receipt.clone() {
+                    Some(receipt) => super::resource_revocations::completed(
+                        &value,
+                        view(&service, receipt.share).await?,
+                    ),
+                    None => super::resource_revocations::pending(&value),
+                },
+                Err(error) => super::resource_revocations::problem(error),
             },
-        )
+        );
+    }
+    let receipt = service
+        .change_share(&caller.context, credential(&caller), command)
         .await?;
-    Ok(Json(view(&service, receipt.share).await?))
+    Ok(Json(view(&service, receipt.share).await?).into_response())
 }
 #[utoipa::path(post,path="/api/v1/agent-share-links/{share_id}/redeem",tag="agents",params(("share_id"=String,Path)),request_body=RedeemLinkBody,responses((status=200,body=ShareLinkView)))]
 pub(super) async fn redeem(

@@ -11,12 +11,65 @@ export interface BrowserIntent {
   readonly expiresAt: number;
   readonly body: CreateLaunchRequest;
   readonly submitted: boolean;
+  readonly wireBody?: string;
+  readonly recoveryRequired?: true;
   readonly owner?: string;
   readonly credentialRecovery?: 'refused' | 'retry';
 }
 
+export class IntentConflictError extends Error {
+  readonly path?: string;
+
+  constructor(saved?: BrowserIntent) {
+    super(
+      saved === undefined
+        ? 'This tab has a saved request that could not be read safely. No new request has been sent. Contact your CMA administrator.'
+        : 'An earlier request is still unresolved in this tab. Return to it with the same CMA account before starting another request.',
+    );
+    this.path = saved?.path;
+  }
+}
+
 export function writeIntent(intent: BrowserIntent): void {
-  sessionStorage.setItem(KEY, JSON.stringify(intent));
+  const stored = sessionStorage.getItem(KEY);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(stored ?? 'null');
+  } catch {
+    throw new IntentConflictError();
+  }
+  const saved = parseIntent(raw);
+  if (raw !== null && saved === undefined) throw new IntentConflictError();
+  const credentialRetry =
+    saved?.credentialRecovery === 'refused' &&
+    intent.credentialRecovery === 'retry' &&
+    saved.key !== intent.key;
+  if (
+    saved?.submitted &&
+    (saved.id !== intent.id ||
+      saved.owner !== intent.owner ||
+      saved.path !== intent.path ||
+      saved.publicId !== intent.publicId ||
+      saved.expiresAt !== intent.expiresAt ||
+      JSON.stringify(saved.body) !== JSON.stringify(intent.body) ||
+      (!credentialRetry && intent.wireBody !== undefined && saved.wireBody !== intent.wireBody) ||
+      (saved.key !== intent.key && !credentialRetry))
+  )
+    throw new IntentConflictError(saved);
+  const submitted =
+    intent.submitted ||
+    saved?.recoveryRequired === true ||
+    (saved?.submitted === true && intent.credentialRecovery !== 'refused' && !credentialRetry);
+  const sameCommand = saved?.id === intent.id && saved.key === intent.key;
+  const wireBody = intent.wireBody ?? (sameCommand ? saved.wireBody : undefined);
+  const recoveryRequired =
+    intent.recoveryRequired ?? (sameCommand ? saved.recoveryRequired : undefined);
+  sessionStorage.setItem(KEY, JSON.stringify({ ...intent, submitted, wireBody, recoveryRequired }));
+}
+
+export function hasCurrentConsent(intent: BrowserIntent): boolean {
+  const now = Date.now();
+  return intent.expiresAt > now && intent.expiresAt <= now + LIFETIME;
 }
 
 export function createIntent(
@@ -50,23 +103,40 @@ export function createIntent(
 
 export function readIntent(path: string): BrowserIntent | undefined {
   try {
-    const raw: unknown = JSON.parse(sessionStorage.getItem(KEY) ?? 'null');
+    const intent = parseIntent(JSON.parse(sessionStorage.getItem(KEY) ?? 'null'));
+    return intent?.path === path && (intent.submitted || hasCurrentConsent(intent))
+      ? intent
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseIntent(raw: unknown): BrowserIntent | undefined {
+  try {
     if (typeof raw !== 'object' || raw === null) return undefined;
     const intent = raw as Partial<BrowserIntent>;
     if (
-      intent.path !== path ||
+      typeof intent.path !== 'string' ||
       typeof intent.id !== 'string' ||
       typeof intent.key !== 'string' ||
       typeof intent.publicId !== 'string' ||
       typeof intent.expiresAt !== 'number' ||
-      intent.expiresAt <= Date.now() ||
-      intent.expiresAt > Date.now() + LIFETIME ||
+      !Number.isFinite(intent.expiresAt) ||
       typeof intent.submitted !== 'boolean' ||
-      intent.body?.start_if_ready !== true
+      intent.body?.start_if_ready !== true ||
+      Object.keys(intent.body).some(
+        (field) => !['start_if_ready', 'placement_id', 'referrer_origin', 'choice'].includes(field),
+      ) ||
+      (intent.wireBody !== undefined &&
+        (typeof intent.wireBody !== 'string' || intent.wireBody !== JSON.stringify(intent.body))) ||
+      (intent.recoveryRequired !== undefined &&
+        (intent.recoveryRequired !== true || !intent.submitted))
     )
       return undefined;
     if (
       (intent.owner !== undefined && typeof intent.owner !== 'string') ||
+      (intent.submitted && typeof intent.owner !== 'string') ||
       (intent.credentialRecovery !== undefined &&
         (typeof intent.owner !== 'string' ||
           (intent.credentialRecovery !== 'refused' && intent.credentialRecovery !== 'retry'))) ||
@@ -90,22 +160,19 @@ export function readIntent(path: string): BrowserIntent | undefined {
       publicId: intent.publicId,
       placementId: intent.body.placement_id,
     });
-    if (canonical !== path) return undefined;
+    if (canonical !== intent.path) return undefined;
     return {
       id: intent.id,
       key: intent.key,
-      path,
+      path: intent.path,
       publicId: intent.publicId,
       expiresAt: intent.expiresAt,
       submitted: intent.submitted,
+      wireBody: intent.wireBody,
+      recoveryRequired: intent.recoveryRequired,
       owner: intent.owner,
       credentialRecovery: intent.credentialRecovery,
-      body: {
-        start_if_ready: true,
-        placement_id: intent.body.placement_id,
-        referrer_origin: intent.body.referrer_origin,
-        choice: intent.body.choice,
-      },
+      body: intent.body,
     };
   } catch {
     return undefined;

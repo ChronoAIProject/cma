@@ -173,6 +173,18 @@
           "meaning": "The copy to the registry failed in transport and its tag could not be read back to settle the outcome.",
           "cause": "unknown",
           "next": "Read the reserved tag in the registry: if it holds the scanned digest the copy landed; otherwise push again for a new version."
+        },
+    "registry_not_visible": {
+      "title": "Pushed image not visible yet",
+      "meaning": "The image copy finished, but reading its tag or digest back kept returning 404 for the whole settle window (about 45 s). The registry had not yet served the write at the edge that answered.",
+      "cause": "transient",
+      "next": "Re-run the failed jobs; the reserved version is read back again before anything is rewritten. If it repeats, check GitHub Packages status and that the tag exists in the package."
+    },
+        "runtime_cleanup_incomplete": {
+          "title": "Runtime canary cleanup incomplete",
+          "meaning": "The runtime canary's Docker containers, volume or local image could not be proven removed after two cleanup passes; nothing was published.",
+          "cause": "transient",
+          "next": "Re-run the release; runtime-cleanup.json names the smoke result and failed cleanup step. failure=identity_refused means the runner held containers or a volume this run did not create: inspect its Docker inventory, do not re-run."
         }
       }
     },
@@ -582,10 +594,10 @@
           "next": "Re-run the failed jobs."
         },
         "VERSION_LABEL_REQUIRED": {
-          "title": "Version label required",
-          "meaning": "The merged pull request does not carry exactly one of version-upgrade:major, version-upgrade:minor or version-upgrade:patch.",
+          "title": "Conflicting or unsupported version labels",
+          "meaning": "The merged pull request carries multiple version-upgrade labels or an unsupported version-upgrade label.",
           "cause": "change",
-          "next": "Add exactly one version-upgrade label to the merged pull request, then re-run the failed jobs."
+          "next": "Keep one supported version-upgrade label or remove all version-upgrade labels to use patch, then re-run the failed jobs."
         },
         "VERSION_LABELS_INVALID": {
           "title": "Version labels malformed",
@@ -601,9 +613,21 @@
         },
         "GITHUB_READ_FAILED": {
           "title": "GitHub read failed",
-          "meaning": "A GitHub API read failed.",
+          "meaning": "A GitHub API read failed without a transient or permission cause: another HTTP status, an oversized response, or a gh failure whose diagnostic names no network fault.",
           "cause": "unknown",
-          "next": "Re-run the failed jobs; if it repeats, check GitHub's status and the workflow token's permissions."
+          "next": "Open the reported line; if it repeats, compare the read with the GitHub API and the workflow token's permissions."
+        },
+        "GITHUB_READ_TRANSIENT": {
+          "title": "GitHub read unavailable",
+          "meaning": "GitHub API reads kept failing transiently: a 5xx, 408 or 429 response, a rate-limited 403, or no response at all.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; if it repeats, check GitHub's status."
+        },
+        "GITHUB_READ_DENIED": {
+          "title": "GitHub read denied",
+          "meaning": "GitHub answered an API read with 401, or 403 without rate-limit headers. The workflow fixes the token's permissions, so a 403 that comes and goes is usually a secondary rate limit, not a permission change.",
+          "cause": "operator",
+          "next": "If this read passed in recent runs, re-run the failed jobs. Otherwise an operator must check the allocate job's token permissions (contents, pull-requests, actions) and the Actions settings."
         },
         "GITHUB_RESPONSE_INVALID": {
           "title": "GitHub response invalid",
@@ -622,6 +646,12 @@
           "meaning": "Pushing the reservation tag failed without a collision.",
           "cause": "transient",
           "next": "Re-run the failed jobs."
+        },
+        "RESERVATION_PUSH_REJECTED": {
+          "title": "Reservation push rejected",
+          "meaning": "GitHub declined the atomic reservation push and none of its refs exist: the token may not write tags, or a tag ruleset or hook refused them.",
+          "cause": "operator",
+          "next": "An operator must check the allocate job's contents permission and the rulesets and hooks that cover cma- tags, then re-run the failed jobs."
         },
         "RESERVATION_VERIFY_FAILED": {
           "title": "Reservation not verified",
@@ -643,7 +673,7 @@
         },
         "DEADLINE_EXCEEDED": {
           "title": "Allocation deadline exceeded",
-          "meaning": "Allocation exceeded its 120 second budget.",
+          "meaning": "An allocation attempt, or a GitHub read within it, ran out of its 120 second budget.",
           "cause": "transient",
           "next": "Re-run the failed jobs."
         },
@@ -661,15 +691,45 @@
         },
         "INVENTORY_INCOMPLETE": {
           "title": "Tag inventory incomplete",
-          "meaning": "The version tag inventory was incomplete, or a claim had no durable version.",
+          "meaning": "The version tag inventory could not be read completely.",
           "cause": "transient",
           "next": "Re-run the failed jobs."
+        },
+        "DEVELOP_ADVERTISEMENT_UNSETTLED": {
+          "title": "Advertised develop history does not settle the push",
+          "meaning": "The live ref and its available first-parent history did not establish that this push is current or superseded.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs after develop's ref and history agree with the push."
+        },
+        "INVENTORY_CLAIM_CONFLICT": {
+          "title": "Claim and reservation differ",
+          "meaning": "A version claim and the pending reservation of its version name different objects in one tag advertisement, so the inventory is damaged and every read repeats it.",
+          "cause": "operator",
+          "next": "An operator must compare the cma-allocation claim with the pending tag of that version and restore the pair one run wrote."
+        },
+        "INVENTORY_CLAIM_ORPHANED": {
+          "title": "Claim listed without a version",
+          "meaning": "A version claim was listed without its pending reservation or its final tag. One listing is not an atomic snapshot, so another job's push or finalization can show this for a moment; allocation reads the inventory again once in the job.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs. If it persists after the re-run, a pending or final tag was deleted, and an operator must restore it for that claim."
+        },
+        "INVENTORY_TOO_LARGE": {
+          "title": "Tag inventory too large",
+          "meaning": "The repository's tag advertisement exceeds the 16 MiB that allocation reads, and grows with every release.",
+          "cause": "operator",
+          "next": "An operator must prune obsolete tags, or raise the bound in staging_cd_allocation_snapshot.py in its own change."
         },
         "RESERVATION_COLLISION": {
           "title": "Reservation collision",
           "meaning": "Another run claimed the planned version slot first.",
           "cause": "transient",
           "next": "Re-run the failed jobs; the next allocation plans a new version."
+        },
+        "RESERVATION_PLAN_INVALID": {
+          "title": "Reservation plan invalid",
+          "meaning": "Planning produced a reservation for a retired component, or for a version the inventory or this plan already holds; an allocator defect, not a race.",
+          "cause": "unknown",
+          "next": "Reproduce allocation from the reported line, fix the planner and add a test; a re-run plans the same reservation."
         },
         "RESERVATION_NOT_VISIBLE": {
           "title": "Reservation not yet visible",
@@ -802,10 +862,10 @@
           "next": "An operator must grant the deployment client its required permission."
         },
         "clock": {
-          "title": "Controller clock refused",
-          "meaning": "The controller's timing check refused the admission time.",
+          "title": "Controller time budget refused",
+          "meaning": "The controller stopped before any change because a time budget ran out: the admission was too old when it started, or a pre-change check (preflight) used its whole budget.",
           "cause": "transient",
-          "next": "Re-run the deployment."
+          "next": "Re-run the deployment. If it repeats, check whether a component it depends on, such as the Agent Manager, was restarting or unready at the time."
         },
         "inventory": {
           "title": "Deployment inventory unreadable",
@@ -914,6 +974,12 @@
           "meaning": "The controller reported a refusal reason that this repository does not know; the token is withheld.",
           "cause": "operator",
           "next": "Add the controller's new reason to REASONS in staging_cd_refusal.py and to this catalogue."
+        },
+        "am-replicas": {
+          "title": "Agent Manager scaled beyond the release budget",
+          "meaning": "Agent Manager runs more replicas than the production release budget is sized for (2). A rollout at that count could outlast the deployment window, so the controller refused before any write.",
+          "cause": "operator",
+          "next": "Wait until Agent Manager scales back to its steady-state count, then re-run the deployment. Nothing was changed."
         }
       }
     },
@@ -971,9 +1037,27 @@
         },
         "pod-restarts": {
           "title": "Pods restarted",
-          "meaning": "Pods of the new release restarted during verification, usually from a crash or a failing liveness probe.",
+          "meaning": "New release pods restarted during verification, usually from a crash or failing liveness probe. A runtime or runtime-omarchy release only reconfigures the Agent Manager, so its restarted pods are Agent Manager pods.",
           "cause": "change",
-          "next": "Check the released components' staging pod logs for the crash; if this change caused it, fix it and push."
+          "next": "Check the restarted pods' logs (Agent Manager's for a runtime release). \"native warm pool startup readiness failed\" means the new runtime's warm pool was not ready in time, not a broken image; if this change caused it, fix it."
+        },
+        "pod-restarts-membership": {
+          "title": "Agent Manager restarted after losing authority",
+          "meaning": "Agent Manager reported lost membership or ownership before the restart.",
+          "cause": "change",
+          "next": "Use the previous Agent Manager container log to investigate membership or ownership renewal."
+        },
+        "pod-restarts-startup-gate": {
+          "title": "Agent Manager restarted at the warm-pool startup gate",
+          "meaning": "The active runtime pool did not reach startup readiness before the Agent Manager stopped.",
+          "cause": "operator",
+          "next": "Check active warm-pool readiness, provider capacity and quota for the Sandbox namespace."
+        },
+        "pod-restarts-panic": {
+          "title": "A release container restarted after a panic",
+          "meaning": "The previous container log recorded a panic before the restart.",
+          "cause": "change",
+          "next": "Open the restarted container's previous log and inspect the panic."
         },
         "rollout-ownership": {
           "title": "Rollout ownership unproven",
@@ -1202,6 +1286,12 @@
           "meaning": "The controller reported a reason that this repository does not know; the token is withheld.",
           "cause": "operator",
           "next": "Add the controller's new reason to VERIFICATION_REASONS in staging_cd_refusal.py and to this catalogue."
+        },
+        "am-replicas": {
+          "title": "Agent Manager scaled beyond the release budget",
+          "meaning": "Agent Manager ran more replicas than the production release budget is sized for (2), so the rollout could not be proven inside its window.",
+          "cause": "operator",
+          "next": "An operator confirms the deployment state, waits until Agent Manager scales back to its steady-state count, then re-runs the deployment."
         }
       },
       "cause": "operator",
@@ -1404,6 +1494,12 @@
           "meaning": "The deployment finished without a verified controller outcome for this component.",
           "cause": "unknown",
           "next": "Open the Deploy job: its FAIL line and summary state what the controller proved."
+        },
+        "retry-not-run": {
+          "title": "Automatic deployment retry did not run",
+          "meaning": "The first deployment was refused before any change for a transient reason and handed over to one automatic re-admission and retry, but that retry never started or never reported. Nothing is deployed for this component in this run.",
+          "cause": "unknown",
+          "next": "Open the lane's Re-admit and Deploy again jobs. If they were cancelled or skipped, dispatch redeploy-staging for the component or push to develop; a re-run of failed jobs reuses an expired admission."
         }
       }
     },

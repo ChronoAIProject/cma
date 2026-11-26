@@ -4,17 +4,39 @@ import { useResourceActions } from './ResourceActions';
 import { agentClient } from './test/agent';
 import { downloadAgentHistory } from './agent/historyExport';
 import type { CmaWebClient } from './api/client';
-import type { AgentTranscript } from './api/types';
+import type { AgentEvent, AgentTranscript } from './api/types';
 
 vi.mock('./agent/historyExport', () => ({ downloadAgentHistory: vi.fn() }));
-const transcript: AgentTranscript = { agentId: 'agt_1', throughSeq: 9, turns: [] };
+const transcript: AgentTranscript = { agentId: 'agt_1', throughSeq: 3, turns: [] };
+const event = (seq: number, kind: AgentEvent['kind']): AgentEvent => ({
+  seq,
+  kind,
+  appendedAt: '2026-10-12T00:00:00Z',
+});
 beforeEach(() => vi.clearAllMocks());
 
 it('exports fresh retained data even when raw runtime history is unavailable, without changing resources', async () => {
   const readAgentTranscript = vi.fn().mockResolvedValue(transcript);
   const exportAgentHistory = vi.fn().mockRejectedValue(new Error('Runtime unavailable'));
+  const start = event(2, { type: 'tool_call_started', call_id: 'tool', title: 'Fixture tool' });
+  const output = event(3, {
+    type: 'tool_output_reported',
+    call_id: 'tool',
+    output: { text: 'Fixture result', truncated: false },
+  });
+  const readAgentEvents = vi
+    .fn<CmaWebClient['readAgentEvents']>()
+    .mockResolvedValueOnce({
+      items: [event(1, { type: 'turn_started' }), start],
+      next: 2,
+    })
+    .mockResolvedValueOnce({
+      items: [output, event(4, { type: 'tool_call_updated', call_id: 'later' })],
+      next: 4,
+    });
   const client = agentClient({
     readAgentTranscript,
+    readAgentEvents,
     exportAgentHistory,
     stopAgent: vi.fn(),
     reviveSandbox: vi.fn(),
@@ -32,11 +54,32 @@ it('exports fresh retained data even when raw runtime history is unavailable, wi
       maxBytes: 16 * 1024 * 1024,
     }),
   );
-  expect(downloadAgentHistory).toHaveBeenCalledExactlyOnceWith('agt_1', transcript);
+  expect(readAgentEvents.mock.calls.map(([, options]) => options?.cursor)).toEqual([0, 2]);
+  expect(readAgentEvents).toHaveBeenCalledWith(
+    'agt_1',
+    expect.objectContaining({ signal: expect.any(AbortSignal), cache: 'no-store' }),
+  );
+  expect(downloadAgentHistory).toHaveBeenCalledExactlyOnceWith('agt_1', {
+    transcript,
+    toolEvents: [start, output],
+  });
   expect(exportAgentHistory).not.toHaveBeenCalled();
   expect(changed).not.toHaveBeenCalled();
   expect(client.stopAgent).not.toHaveBeenCalled();
   expect(client.reviveSandbox).not.toHaveBeenCalled();
+});
+
+it('reports an incomplete event read without downloading partial history', async () => {
+  const client = agentClient({
+    readAgentTranscript: async () => transcript,
+    readAgentEvents: async () => ({ items: [event(1, { type: 'turn_started' })] }),
+  });
+  const view = renderHook(() => useResourceActions(client, vi.fn()));
+  await act(async () =>
+    view.result.current.select({ kind: 'export_retained_conversation', agentId: 'agt_1' }),
+  );
+  expect(downloadAgentHistory).not.toHaveBeenCalled();
+  expect(view.result.current.error).toMatch(/saved sequence/);
 });
 
 it.each(['identity', 'revocation', 'client', 'unmount'])(

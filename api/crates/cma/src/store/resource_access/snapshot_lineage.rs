@@ -20,13 +20,42 @@ const FIELDS: [&str; 6] = [
     "policy",
 ];
 
+pub(in crate::store) struct LineageCollections<'a> {
+    pub agents: &'a Collection<Document>,
+    pub worktrees: &'a Collection<Document>,
+    pub workspaces: &'a Collection<Document>,
+    pub sandboxes: &'a Collection<Document>,
+    pub resource_policies: &'a Collection<Document>,
+}
+
+impl<'a> From<&'a MongoSandboxStore> for LineageCollections<'a> {
+    fn from(store: &'a MongoSandboxStore) -> Self {
+        Self {
+            agents: &store.agents,
+            worktrees: &store.worktrees,
+            workspaces: &store.workspaces,
+            sandboxes: &store.sandboxes,
+            resource_policies: &store.resource_policies,
+        }
+    }
+}
+
 pub(super) async fn read(
     store: &MongoSandboxStore,
     target: &ResourceTarget,
     session: &mut ClientSession,
     snapshot_session: bool,
 ) -> Result<(ResourceLineage, Option<ResourcePolicyRecord>), ReadError> {
-    let (collection, pipeline) = plan(store, target);
+    read_from(store.into(), target, session, snapshot_session).await
+}
+
+pub(in crate::store) async fn read_from(
+    collections: LineageCollections<'_>,
+    target: &ResourceTarget,
+    session: &mut ClientSession,
+    snapshot_session: bool,
+) -> Result<(ResourceLineage, Option<ResourcePolicyRecord>), ReadError> {
+    let (collection, pipeline) = plan_from(collections, target);
     let collection = super::super::snapshot_collection::collection(collection, snapshot_session);
     let mut cursor = collection
         .aggregate(pipeline)
@@ -97,17 +126,22 @@ pub(super) fn plan<'a>(
     store: &'a MongoSandboxStore,
     target: &ResourceTarget,
 ) -> (&'a Collection<Document>, Vec<Document>) {
+    plan_from(store.into(), target)
+}
+
+fn plan_from<'a>(
+    store: LineageCollections<'a>,
+    target: &ResourceTarget,
+) -> (&'a Collection<Document>, Vec<Document>) {
     let (collection, id, root) = match target {
-        ResourceTarget::Agent { agent_id } => (&store.agents, agent_id.as_str(), "agent"),
+        ResourceTarget::Agent { agent_id } => (store.agents, agent_id.as_str(), "agent"),
         ResourceTarget::Worktree { worktree_id } => {
-            (&store.worktrees, worktree_id.as_str(), "worktree")
+            (store.worktrees, worktree_id.as_str(), "worktree")
         }
         ResourceTarget::Workspace { workspace_id } => {
-            (&store.workspaces, workspace_id.as_str(), "workspace")
+            (store.workspaces, workspace_id.as_str(), "workspace")
         }
-        ResourceTarget::Sandbox { sandbox_id } => {
-            (&store.sandboxes, sandbox_id.as_str(), "sandbox")
-        }
+        ResourceTarget::Sandbox { sandbox_id } => (store.sandboxes, sandbox_id.as_str(), "sandbox"),
     };
     let mut wrapped = Document::new();
     wrapped.insert(root, "$$ROOT");
@@ -115,7 +149,7 @@ pub(super) fn plan<'a>(
     if matches!(target, ResourceTarget::Agent { .. }) {
         join(
             &mut pipeline,
-            &store.worktrees,
+            store.worktrees,
             "agent.record.worktree_id",
             "worktree",
         );
@@ -126,7 +160,7 @@ pub(super) fn plan<'a>(
     ) {
         join(
             &mut pipeline,
-            &store.workspaces,
+            store.workspaces,
             "worktree.record.workspace_id",
             "workspace",
         );
@@ -134,7 +168,7 @@ pub(super) fn plan<'a>(
     if !matches!(target, ResourceTarget::Sandbox { .. }) {
         join(
             &mut pipeline,
-            &store.sandboxes,
+            store.sandboxes,
             "workspace.record.sandbox_id",
             "sandbox",
         );
@@ -142,14 +176,14 @@ pub(super) fn plan<'a>(
     if matches!(target, ResourceTarget::Worktree { .. }) {
         join(
             &mut pipeline,
-            &store.agents,
+            store.agents,
             "worktree.record.agent_id",
             "assigned",
         );
     }
     join(
         &mut pipeline,
-        &store.resource_policies,
+        store.resource_policies,
         "sandbox._id",
         "policy",
     );

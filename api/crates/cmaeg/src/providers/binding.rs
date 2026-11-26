@@ -9,6 +9,13 @@ use cmaeg_core::{
 use serde_json::json;
 
 impl ProviderClient {
+    pub(crate) fn has_cma_binding_contract(&self, provider: &ProviderSlug) -> bool {
+        provider.as_str() == "cma_codex"
+            && self.handle(provider).is_ok_and(|handle| {
+                handle.entry.paths.binding == "/api/v1/cmaeg/bindings/{binding_id}"
+            })
+    }
+
     pub async fn bind(
         &self,
         provider: &ProviderSlug,

@@ -7,6 +7,7 @@ import {
   object,
   optional,
   positiveInteger,
+  record,
   text,
   type Output,
 } from '../schema.js';
@@ -29,7 +30,12 @@ export const triggerImage = object({
   reference: optional(text),
 });
 export type TriggerImage = Output<typeof triggerImage>;
-export const triggerRepository = object({ url: text, reference: optional(text) });
+const repositoryFields = object({ url: text, ref: optional(text) });
+export const triggerRepository = (value: unknown) => {
+  if (Object.keys(record(value)).some((key) => !['url', 'ref'].includes(key)))
+    throw new ProtocolError('unknown Trigger repository field');
+  return repositoryFields(value);
+};
 export type TriggerRepository = Output<typeof triggerRepository>;
 export const triggerInlineWorkspace = object({ repository: optional(triggerRepository) });
 export type TriggerInlineWorkspace = Output<typeof triggerInlineWorkspace>;

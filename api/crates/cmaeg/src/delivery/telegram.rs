@@ -1,6 +1,6 @@
 //! Native chat delivery using only the channel's encrypted platform credential.
 use super::{
-    gate::expired,
+    gate::{expired, within_deadline},
     intents::{ConfirmedMessagePart, DeliveryOutcome, IntentReceipt, TypingOutcome, TypingReceipt},
     render::{RelayText, Renderer},
     send::{refused, unsupported, SendContext, SendEffects, Sender},
@@ -95,7 +95,8 @@ impl Sender {
         let mut confirmed = 0;
         let mut first = None;
         for (index, part) in parts.iter().enumerate() {
-            let Some(mut slot) = self.pacing.acquire(&route).await else {
+            let Some(mut slot) = within_deadline(ctx.gate, self.pacing.acquire(&route), None).await
+            else {
                 receipt.delivery = DeliveryOutcome::Rejected {
                     reason: "pacing_capacity".into(),
                 };
@@ -116,17 +117,25 @@ impl Sender {
             }
             let markup = prepared.as_ref().map(|p| &p.markup);
             let send_part = || async {
-                if split_refs {
-                    self.relay
-                        .telegram
-                        .send_confirmed_text_part(token, chat_id, thread_id.as_deref(), &part.text)
-                        .await
-                } else {
-                    self.relay
-                        .telegram
-                        .send_message(token, chat_id, thread_id.as_deref(), &part.text, markup)
-                        .await
-                }
+                let transport = async {
+                    if split_refs {
+                        self.relay
+                            .telegram
+                            .send_confirmed_text_part(
+                                token,
+                                chat_id,
+                                thread_id.as_deref(),
+                                &part.text,
+                            )
+                            .await
+                    } else {
+                        self.relay
+                            .telegram
+                            .send_message(token, chat_id, thread_id.as_deref(), &part.text, markup)
+                            .await
+                    }
+                };
+                within_deadline(ctx.gate, transport, Err(Error::Unconfirmed)).await
             };
             let mut sent = super::trace::native::part(
                 index,
@@ -138,7 +147,7 @@ impl Sender {
             drop(permit);
             if let Err(Error::RateLimited(delay)) = sent {
                 slot.cooldown(delay);
-                slot.retry().await;
+                within_deadline(ctx.gate, slot.retry(), ()).await;
                 let _retry = match ctx.gate.attempt().await {
                     Ok(permit) => permit,
                     Err(refusal) => {

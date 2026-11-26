@@ -1,27 +1,57 @@
 use super::*;
+#[path = "response_observation.rs"]
+mod observation;
 use crate::sandbox::store::{AgentResponseLogStore, AgentResponseLogWindow};
 
 struct Source {
     entries: Vec<AgentLogEntry>,
     mode: &'static str,
     calls: AtomicUsize,
+    indexed_calls: AtomicUsize,
+    indexed_delay: Duration,
+    window_delay: Duration,
     gate: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 }
 
 #[async_trait::async_trait]
 impl AgentResponseLogStore for Source {
+    async fn agent_output_reader(
+        &self,
+        _: &Agent,
+        _: Option<u64>,
+    ) -> Result<
+        Option<Box<dyn crate::sandbox::store::indexed::AgentOutputReader + '_>>,
+        SandboxStoreError,
+    > {
+        self.indexed_calls.fetch_add(1, Ordering::SeqCst);
+        tokio::time::sleep(self.indexed_delay).await;
+        match self.mode {
+            "indexed-quarantine" => Err(SandboxStoreError::Corrupt("quarantined index".into())),
+            "indexed-unavailable" => Err(SandboxStoreError::Unavailable(
+                "private source error".into(),
+            )),
+            _ => Ok(None),
+        }
+    }
+
     async fn agent_response_log_window(
         &self,
         agent: &Agent,
         turn: Option<u64>,
     ) -> Result<Option<AgentResponseLogWindow>, SandboxStoreError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        tokio::time::sleep(self.window_delay).await;
         if let Some((entered, resume)) = &self.gate {
             entered.notify_one();
             resume.notified().await;
         }
         if self.mode == "fallback" {
             return Ok(None);
+        }
+        if self.mode == "unavailable" {
+            return Err(SandboxStoreError::Unavailable(
+                "private source error".into(),
+            ));
         }
         if self.mode == "quarantine" {
             return Err(SandboxStoreError::Corrupt("quarantined".into()));
@@ -66,6 +96,9 @@ async fn source(store: &InMemorySandboxStore, id: &AgentId, mode: &'static str) 
         entries,
         mode,
         calls: AtomicUsize::new(0),
+        indexed_calls: AtomicUsize::new(0),
+        indexed_delay: Duration::ZERO,
+        window_delay: Duration::ZERO,
         gate: None,
     }
 }

@@ -5,6 +5,7 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Sandbox, SandboxEventKind, SandboxStatus, SandboxWorkStep};
 use layer3_adapter::RuntimeHandle;
 
+use super::super::native_retirement_finalizer::{NativeRetirementFinalizer, RetirementOutcome};
 use super::support::{
     adapter_failure, credential_failure, dependency_failure, operation_id, system_time,
     WorkerFailure,
@@ -17,22 +18,25 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let finalizer = self
+            .config
+            .retirement_finalizer
+            .as_ref()
+            .filter(|_| NativeRetirementFinalizer::applies(&sandbox));
+        if let Some(finalizer) = finalizer {
+            if finalizer.holds_custody(&sandbox).await? {
+                return self
+                    .finalize_native_retirement(finalizer, sandbox, now)
+                    .await;
+            }
+        }
         if let Some(failure) = self
             .remove_stopped_native_runtime(&mut sandbox, now)
             .await?
         {
             return self.retry_failure(sandbox, failure, now).await;
         }
-        let runtime = sandbox
-            .runtime
-            .as_ref()
-            .map(|binding| RuntimeHandle(binding.runtime_id.clone()));
-        match self
-            .dependencies
-            .agents
-            .stop_live_agents(&sandbox, runtime.as_ref(), &operation_id(&sandbox))
-            .await
-        {
+        match self.request_agent_stop(&sandbox).await {
             Ok(()) => {
                 self.advance(
                     sandbox,
@@ -44,11 +48,70 @@ impl SandboxWorker {
                 )
                 .await
             }
+            Err(super::SandboxDependencyError::AgentsStopping)
+                if finalizer.is_some_and(|finalizer| finalizer.admission_enabled()) =>
+            {
+                self.finalize_native_retirement(
+                    finalizer.expect("selected finalizer"),
+                    sandbox,
+                    now,
+                )
+                .await
+            }
             Err(error) => {
                 self.retry_failure(sandbox, dependency_failure(error), now)
                     .await
             }
         }
+    }
+
+    async fn finalize_native_retirement(
+        &self,
+        finalizer: &NativeRetirementFinalizer,
+        mut sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let mut result = finalizer.finalize(&sandbox, &self.config.holder).await;
+        if matches!(result, Ok(RetirementOutcome::GracefulWithCustody)) {
+            if let Err(error) = self.request_agent_stop(&sandbox).await {
+                return self
+                    .retry_failure(sandbox, dependency_failure(error), now)
+                    .await;
+            }
+            let mut cleaned = sandbox.clone();
+            if let Some(failure) = self.prepare_retirement_cleanup(&mut cleaned, now).await? {
+                return self.retry_failure(sandbox, failure, now).await;
+            }
+            sandbox = cleaned;
+            result = finalizer
+                .finish_graceful_stop(&sandbox, &self.config.holder)
+                .await;
+        }
+        let reason = match result {
+            Ok(RetirementOutcome::Settled | RetirementOutcome::Superseded) => return Ok(()),
+            Ok(RetirementOutcome::GracefulPending | RetirementOutcome::GracefulWithCustody) => {
+                "sandbox agents are still stopping"
+            }
+            Ok(RetirementOutcome::ProviderPending(reason)) => reason,
+            Err(SandboxStoreError::Conflict) => "native retirement authority changed",
+            Err(error) => return Err(error),
+        };
+        self.retry_failure(sandbox, WorkerFailure::waiting(reason), now)
+            .await
+    }
+
+    async fn request_agent_stop(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<(), super::SandboxDependencyError> {
+        let runtime = sandbox
+            .runtime
+            .as_ref()
+            .map(|binding| RuntimeHandle(binding.runtime_id.clone()));
+        self.dependencies
+            .agents
+            .stop_live_agents(sandbox, runtime.as_ref(), &operation_id(sandbox))
+            .await
     }
 
     pub(super) async fn revoke_for_retirement(

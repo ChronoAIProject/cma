@@ -38,6 +38,19 @@ def success():
 
 
 class BootObservationTests(unittest.TestCase):
+    def test_exact_manifest_is_allowed_and_embedded_config_is_rejected(self):
+        image = 'example.invalid/api@sha256:' + 'b'*64
+        for image_id in (image, image.split('@')[1], 'docker-pullable://'+image, 'containerd://'+CONFIG):
+            candidate = pod(ready=True, image=image)
+            candidate['status']['containerStatuses'][0]['imageID'] = image_id
+            result = evaluate(stream(('ADDED', candidate)), set(), SELECTED, image, CONFIG, 'before')
+            self.assertEqual(result['failed_boots'], 0)
+        for image_id in ('prefix'+CONFIG, CONFIG+'suffix', 'unknown://'+CONFIG):
+            candidate = pod(ready=True, image=image)
+            candidate['status']['containerStatuses'][0]['imageID'] = image_id
+            with self.assertRaises(BootObservationError):
+                evaluate(stream(('ADDED', candidate)), set(), SELECTED, image, CONFIG, 'before')
+
     def test_replays_from_opaque_list_version_and_keeps_expected_retirement(self):
         old = pod('old', ready=True, image='historical-api')
         old['status']['phase'] = 'Failed'

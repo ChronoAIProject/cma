@@ -37,6 +37,13 @@ export function isCapability(value: unknown): value is Capability {
   return typeof value === 'string' && (CAPABILITIES as readonly string[]).includes(value);
 }
 
+/** The terms and privacy notice this deployment asks owners to accept. */
+export interface LegalTerms {
+  readonly version: string;
+  readonly termsUrl: string;
+  readonly privacyUrl: string;
+}
+
 export interface User {
   readonly id: string;
   readonly handle: string;
@@ -45,6 +52,10 @@ export interface User {
   readonly avatarUrl?: string;
   readonly capabilities: readonly Capability[];
   readonly visitor: boolean;
+  readonly serviceAuthorization?: boolean;
+  readonly privacyExport?: boolean;
+  readonly bindingDiagnostics?: boolean;
+  readonly legalTerms?: LegalTerms;
 }
 
 /** Failure disposition only: no response headers, credentials or identity data. */
@@ -58,7 +69,7 @@ export type AuthRetryMetadata =
 
 export type AuthState =
   | { readonly status: 'checking' }
-  | { readonly status: 'anonymous' }
+  | { readonly status: 'anonymous'; readonly legalTerms?: LegalTerms }
   | { readonly status: 'authenticated'; readonly user: User }
   | {
       readonly status: 'error';
@@ -81,4 +92,11 @@ export interface AuthProvider {
 
 export interface SignInOptions {
   readonly screen?: 'register';
+}
+
+/** The published terms known for this identity, signed in or not. */
+export function legalTermsOf(state: AuthState): LegalTerms | undefined {
+  if (state.status === 'anonymous') return state.legalTerms;
+  if (state.status === 'authenticated') return state.user.legalTerms;
+  return undefined;
 }

@@ -30,7 +30,10 @@ use tower::ServiceExt;
 
 #[path = "response_readers_fixture.rs"]
 mod fixture_support;
-use fixture_support::Fixture;
+use fixture_support::{request, Fixture};
+
+#[path = "sse_observation_tests.rs"]
+mod sse_observation_tests;
 
 const AT: &str = "2026-09-05T00:00:00Z";
 
@@ -190,6 +193,10 @@ impl AgentOutputReader for Reader<'_> {
 }
 
 async fn fixture() -> Fixture {
+    fixture_with_terminal(Some(AgentLogKind::TurnCompleted { turn_sequence: 3 })).await
+}
+
+async fn fixture_with_terminal(terminal: Option<AgentLogKind>) -> Fixture {
     let store = Arc::new(InMemorySandboxStore::default());
     let profiles = Arc::new(InMemoryProfileStore::default());
     let sandbox = test_resources::sandbox("sbx_composed", "owner");
@@ -200,11 +207,18 @@ async fn fixture() -> Fixture {
         workspace.id.as_str(),
         sandbox.id.as_str(),
         "owner",
-        AgentStatus::Ready,
+        if terminal.is_some() {
+            AgentStatus::Ready
+        } else {
+            AgentStatus::Working
+        },
     );
     agent.conversation.conversation_id = Some("composed-conversation".into());
     agent.conversation.runtime_generation = Some(1);
-    agent.conversation.last_seq = 6;
+    // A retained Agent already passed readiness before its first turn.
+    agent.ready_at = Some(agent.created_at.clone());
+    agent.conversation.active_turn = terminal.is_none().then_some(3);
+    agent.conversation.last_seq = 5 + u64::from(terminal.is_some());
     let worktree = test_resources::worktree(
         agent.worktree_id.as_str(),
         workspace.id.as_str(),
@@ -232,10 +246,10 @@ async fn fixture() -> Fixture {
         AgentLogKind::AgentMessage {
             content: "retained answer".into(),
         },
-        AgentLogKind::TurnCompleted { turn_sequence: 3 },
     ];
     let rows: Vec<_> = kinds
         .into_iter()
+        .chain(terminal)
         .enumerate()
         .map(|(i, kind)| AgentLogEntry {
             agent_id: agent.id.clone(),
@@ -273,10 +287,10 @@ async fn fixture() -> Fixture {
         state: Mutex::new(fixture_support::SourceState {
             metadata: AgentOutputMetadata {
                 agent_id: agent.id.clone(),
-                through: 6,
+                through: agent.conversation.last_seq,
                 created_at: agent.created_at.clone(),
-                runtime_generation: Some(1),
-                active_turn: None,
+                runtime_generation: agent.conversation.runtime_generation,
+                active_turn: agent.conversation.active_turn,
                 initial_model: agent.profile.content.model.clone(),
                 index: Some(index),
                 turn: Some(AgentOutputTurn {
@@ -341,46 +355,6 @@ async fn fixture() -> Fixture {
     }
 }
 
-fn request(method: Method, path: &str, subject: &str, body: Option<Value>) -> Request<Body> {
-    let caller = Caller::new(
-        SubjectId::new(subject),
-        Authorization::new([Capability::UseOwnSandboxes]),
-    );
-    let context = CallerContext {
-        credential_source: CredentialSource::Retained,
-        actor: ResourceActor::Api {
-            subject: caller.subject.clone(),
-            delegation_id: None,
-        },
-        credential: CredentialContext {
-            issuer: "https://fixture.test".into(),
-            subject: caller.subject.clone(),
-            credential_id: "composed-reader".into(),
-        },
-        caller: caller.clone(),
-        memberships: vec![],
-    };
-    let mut request = Request::builder()
-        .method(method)
-        .uri(path)
-        .header("content-type", "application/json")
-        .header("idempotency-key", "composed-reader")
-        .body(body.map_or_else(Body::empty, |value| Body::from(value.to_string())))
-        .unwrap();
-    request
-        .extensions_mut()
-        .insert(layer1_public::AuthenticatedSubject(caller.subject));
-    request
-        .extensions_mut()
-        .insert(Authorization::new([Capability::UseOwnSandboxes]));
-    request.extensions_mut().insert(context);
-    request
-        .extensions_mut()
-        .insert(layer1_public::DelegatedCredential::new(
-            "fixture-credential".into(),
-        ));
-    request
-}
 async fn get(f: &Fixture, subject: &str) -> (StatusCode, Value) {
     let response = f
         .router

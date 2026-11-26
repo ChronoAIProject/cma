@@ -1,5 +1,5 @@
 use layer2_core::sandbox::agent_io::CommandRevivalAuthorization;
-use layer2_core::sandbox::store::validate_command_revival_transition;
+use layer2_core::sandbox::store::{validate_command_revival_transition, SandboxStore};
 use layer2_core::sandbox::Sandbox;
 use mongodb::ClientSession;
 
@@ -16,11 +16,15 @@ pub(super) struct Receipt {
 pub(super) async fn fence(
     store: &MongoSandboxStore,
     session: &mut ClientSession,
-    proof: Option<&CommandRevivalAuthorization>,
+    revival: (
+        Option<&CommandRevivalAuthorization>,
+        Option<&layer3_adapter::ReleasedRuntime>,
+    ),
     candidate: &Sandbox,
     at: &str,
     event: &SandboxEventKind,
 ) -> Result<Option<Receipt>, ApplyError> {
+    let (proof, release) = revival;
     let Some(proof) = proof else { return Ok(None) };
     proof.require_current().map_err(|_| conflict())?;
     store
@@ -34,14 +38,17 @@ pub(super) async fn fence(
             resource_access::ReadError::Domain(_) => conflict(),
         })?;
     proof.validate_snapshot(&snapshot).map_err(|_| conflict())?;
-    validate_command_revival_transition(
-        &snapshot.lineage.sandbox,
-        candidate,
-        at,
-        event,
-        store.managed_runtime_version.as_deref(),
-    )
-    .map_err(ApplyError::Domain)?;
+    let current = &snapshot.lineage.sandbox;
+    let selected = release.and_then(|release| store.managed_runtime_for_release(current, release));
+    if let (Some(release), Some((lane, _))) = (release, selected) {
+        store
+            .fence_released_admission(release, lane, session)
+            .await
+            .map_err(ApplyError::Domain)?;
+    }
+    let target = selected.map(|(_, target)| target);
+    validate_command_revival_transition(current, candidate, at, event, target)
+        .map_err(ApplyError::Domain)?;
     let command_id = proof.command().receipt.envelope.command_id.clone();
     let document = store
         .agent_commands

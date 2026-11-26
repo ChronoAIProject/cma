@@ -1,14 +1,6 @@
+import { MeasuredChart } from './MeasuredChart';
 import { useMemo, useState } from 'react';
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import { CartesianGrid, Line, LineChart, ReferenceLine, Tooltip, XAxis, YAxis } from 'recharts';
 import type { UsageMetricQuantity, UsageMetricSeries } from '@cma/client';
 import { Button } from '../../ui/Button';
 import { Picker } from '../../ui/Picker';
@@ -51,67 +43,65 @@ export function MetricChart({
       </h3>
       <p>Source: {series.source}. Gaps indicate unavailable measurements.</p>
       {hasData ? (
-        <div className="usage-metric-chart__plot" aria-hidden="true">
-          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-            <LineChart
-              accessibilityLayer={false}
-              data={points}
-              margin={{ top: 12, right: 16, bottom: 8, left: 0 }}
-            >
-              <CartesianGrid stroke="var(--dsw-alias-border-l1)" strokeDasharray="3 3" />
-              <XAxis
-                dataKey="at"
-                type="number"
-                domain={['dataMin', 'dataMax']}
-                tickFormatter={(value: number) =>
-                  new Date(value * 1000).toLocaleString('en-SG', {
-                    timeZone: 'Asia/Singapore',
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })
-                }
-                tick={{ fill: 'var(--dsw-alias-label-secondary)', fontSize: 12 }}
+        <MeasuredChart className="usage-metric-chart__plot">
+          <LineChart
+            accessibilityLayer={false}
+            data={points}
+            margin={{ top: 12, right: 16, bottom: 8, left: 0 }}
+          >
+            <CartesianGrid stroke="var(--dsw-alias-border-l1)" strokeDasharray="3 3" />
+            <XAxis
+              dataKey="at"
+              type="number"
+              domain={['dataMin', 'dataMax']}
+              tickFormatter={(value: number) =>
+                new Date(value * 1000).toLocaleString('en-SG', {
+                  timeZone: 'Asia/Singapore',
+                  month: 'short',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })
+              }
+              tick={{ fill: 'var(--dsw-alias-label-secondary)', fontSize: 12 }}
+            />
+            <YAxis
+              domain={[0, 'auto']}
+              tick={{ fill: 'var(--dsw-alias-label-secondary)', fontSize: 12 }}
+              width={60}
+            />
+            <Tooltip
+              contentStyle={{
+                background: 'var(--dsw-alias-bg-layer-2)',
+                color: 'var(--dsw-alias-label-primary)',
+                borderColor: 'var(--dsw-alias-border-l1)',
+              }}
+              labelFormatter={(value) => metricTime(Number(value))}
+            />
+            {capacity != null && (
+              <ReferenceLine
+                y={Number(capacity) / divisor}
+                stroke="var(--dsw-alias-label-secondary)"
+                strokeDasharray="5 5"
+                ifOverflow="extendDomain"
               />
-              <YAxis
-                domain={[0, 'auto']}
-                tick={{ fill: 'var(--dsw-alias-label-secondary)', fontSize: 12 }}
-                width={60}
+            )}
+            {series.lines.map((line, index) => (
+              <Line
+                key={line.id}
+                dataKey={`value${index}`}
+                name={line.label}
+                type="linear"
+                connectNulls={false}
+                stroke={strokes[index % strokes.length]}
+                strokeDasharray={dashes[Math.floor(index / strokes.length)]}
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
               />
-              <Tooltip
-                contentStyle={{
-                  background: 'var(--dsw-alias-bg-layer-2)',
-                  color: 'var(--dsw-alias-label-primary)',
-                  borderColor: 'var(--dsw-alias-border-l1)',
-                }}
-                labelFormatter={(value) => metricTime(Number(value))}
-              />
-              {capacity != null && (
-                <ReferenceLine
-                  y={Number(capacity) / divisor}
-                  stroke="var(--dsw-alias-label-secondary)"
-                  strokeDasharray="5 5"
-                  ifOverflow="extendDomain"
-                />
-              )}
-              {series.lines.map((line, index) => (
-                <Line
-                  key={line.id}
-                  dataKey={`value${index}`}
-                  name={line.label}
-                  type="linear"
-                  connectNulls={false}
-                  stroke={strokes[index % strokes.length]}
-                  strokeDasharray={dashes[Math.floor(index / strokes.length)]}
-                  strokeWidth={2}
-                  dot={false}
-                  isAnimationActive={false}
-                />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+            ))}
+          </LineChart>
+        </MeasuredChart>
       ) : (
         <p role="status">
           {series.lines.length

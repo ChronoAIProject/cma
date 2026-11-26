@@ -51,6 +51,23 @@ impl QueuedCancellationReservation {
         agent: &Agent,
         parent: &Sandbox,
     ) -> Result<(), CommandLedgerError> {
+        self.validate_current_identity(agent, parent)?;
+        if !self.current_observation_matches(agent, parent) {
+            return Err(CommandLedgerError::Conflict);
+        }
+        Ok(())
+    }
+
+    pub fn current_observation_matches(&self, agent: &Agent, parent: &Sandbox) -> bool {
+        self.observed_agent_revision == agent.revision
+            && self.command.parent == SandboxMutationGuard::capture(parent)
+    }
+
+    pub fn validate_current_identity(
+        &self,
+        agent: &Agent,
+        parent: &Sandbox,
+    ) -> Result<(), CommandLedgerError> {
         self.command.require_current_authority()?;
         let owner = match &self.command.envelope.owner {
             super::super::AgentOwner::Person { subject }
@@ -63,11 +80,6 @@ impl QueuedCancellationReservation {
             || self.agent_created_at != agent.created_at
         {
             return Err(CommandLedgerError::NotFound);
-        }
-        if self.observed_agent_revision != agent.revision
-            || self.command.parent != SandboxMutationGuard::capture(parent)
-        {
-            return Err(CommandLedgerError::Conflict);
         }
         Ok(())
     }

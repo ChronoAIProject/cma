@@ -22,7 +22,21 @@ for (const admin of [false, true]) {
       const errors: string[] = [];
       const failedAssets: string[] = [];
       page.on('console', (message) => {
-        if (message.type() === 'error') errors.push(`${message.location().url}: ${message.text()}`);
+        if (message.type() !== 'error') return;
+        // The retained image fixture represents a replica that predates the
+        // bounded initial-view routes. The client deliberately falls back to
+        // the legacy report path for this explicit 501 route absence, which
+        // Chromium still reports as a console error. Keep that expected
+        // compatibility signal out of the stale-asset error assertion while
+        // retaining all other network and application errors.
+        const location = message.location().url;
+        if (
+          location.includes('/api/v1/') &&
+          location.includes('/usage/metrics/initial/') &&
+          message.text().includes('status of 501')
+        )
+          return;
+        errors.push(`${location}: ${message.text()}`);
       });
       page.on('pageerror', (error) => errors.push(error.message));
       page.on('response', (response) => {
@@ -30,6 +44,17 @@ for (const admin of [false, true]) {
           failedAssets.push(`${response.status()} ${new URL(response.url()).pathname}`);
       });
       await boundary.route(page, baseURL!);
+      await page.route('**/api/v1/agents/agt_contract/reply-preview', (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        return route.fulfill({
+          json: {
+            status: 'none',
+            agent_id: 'agt_contract',
+            source_through_seq: 0,
+            latest_assistant_reply: null,
+          },
+        });
+      });
       await metrics.route(page);
       await metrics.session(page, ['use_own_sandboxes', 'read_all_sandboxes']);
       let transportSelections = 0;

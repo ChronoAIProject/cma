@@ -104,8 +104,7 @@ async fn observed(
     }));
     let client = Client::with_options(options).unwrap();
     let mut store = (*original).clone();
-    store.db = client.database(database);
-    store.client = client;
+    store.persistence = store.persistence.with_client(client);
     (Arc::new(store), commands)
 }
 fn save(path: &Path, value: &Value) {

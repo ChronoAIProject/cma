@@ -54,6 +54,7 @@ impl ResourceCommandExecution {
             .lineage;
         let agent = lineage.agent.ok_or(CommandReadiness::Retry)?;
         if !agent.status.is_live()
+            || command.predates_owner_restart(&agent)
             || agent.requested_stop_reason.is_some()
             || matches!(
                 lineage.sandbox.status,

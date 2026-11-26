@@ -109,7 +109,7 @@ class RuntimeSmokeTests(unittest.TestCase):
             self.assertFalse(any(args[:2] == ["docker", "ps"] for args, _ in calls))
 
     def test_failed_reconciliation_refuses_success_and_retains_identity(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, patch("staging_cd_runtime_smoke.time.sleep"):
             root, archive, _, run = self.fixture(directory)
             def failure(args, **kwargs):
                 if args[:2] == ["docker", "ps"]:
@@ -120,6 +120,120 @@ class RuntimeSmokeTests(unittest.TestCase):
                         "e" * 64, root, failure)
             self.assertNotIn("private-daemon-value", str(raised.exception))
             self.assertFalse(raised.exception.receipt["inventory_reconciled"])
+
+    def test_slow_image_removal_is_repeated_once_and_does_not_fail_a_passed_canary(self):
+        # Run 45031760463: a passed Omarchy canary lost its release because one
+        # cleanup command outlasted its bound on a busy runner.
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory, patch("staging_cd_runtime_smoke.time.sleep") as sleep:
+            root, archive, calls, run = self.fixture(directory)
+            removals = []
+            def busy(args, **kwargs):
+                if args[:3] == ["docker", "image", "rm"]:
+                    removals.append(kwargs["timeout"])
+                    if len(removals) == 1:
+                        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+                return run(args, **kwargs)
+            proof = qualify(archive, fixture_identity(component="runtime-omarchy"), "sha256:" + "d" * 64,
+                            "e" * 64, root, busy, source=root)
+        self.assertTrue(proof["passed"])
+        self.assertEqual(removals, [120, 120])
+        sleep.assert_called_once_with(5)
+
+    def test_image_removed_late_by_the_daemon_counts_as_removed_on_the_next_pass(self):
+        # Pass 1's removal outlasts its bound but the daemon finishes it; pass 2's
+        # removal then finds no such image, which must not lose the release.
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory, patch("staging_cd_runtime_smoke.time.sleep") as sleep:
+            root, archive, calls, run = self.fixture(directory)
+            state = {"removals": 0, "present": True}
+            def late(args, **kwargs):
+                if args[:3] == ["docker", "image", "rm"]:
+                    state["removals"] += 1
+                    if state["removals"] == 1:
+                        state["present"] = False
+                        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+                    raise Refusal("Image operation failed; captured output is private")
+                if args[:3] == ["docker", "image", "ls"]:
+                    return b"0123456789ab\n" if state["present"] else b""
+                return run(args, **kwargs)
+            proof = qualify(archive, fixture_identity(component="runtime-omarchy"), "sha256:" + "d" * 64,
+                            "e" * 64, root, late, source=root)
+        self.assertTrue(proof["passed"])
+        self.assertEqual(state["removals"], 2)
+        sleep.assert_called_once_with(5)
+
+    def test_a_present_image_that_cannot_be_removed_still_fails(self):
+        with tempfile.TemporaryDirectory() as directory, patch("staging_cd_runtime_smoke.time.sleep"):
+            root, archive, calls, run = self.fixture(directory)
+            def stuck(args, **kwargs):
+                if args[:3] == ["docker", "image", "rm"]:
+                    raise Refusal("Image operation failed; captured output is private")
+                if args[:3] == ["docker", "image", "ls"]:
+                    return b"0123456789ab\n"
+                return run(args, **kwargs)
+            with self.assertRaises(CleanupIncomplete) as raised:
+                qualify(archive, fixture_identity(component="runtime"), "sha256:" + "d" * 64,
+                        "e" * 64, root, stuck)
+        receipt = raised.exception.receipt
+        self.assertEqual((receipt["failed_step"], receipt["failure"], receipt["attempts"]),
+                         ("image_remove", "command_failed", 2))
+
+    def test_repeated_cleanup_failure_names_the_smoke_result_and_failed_step(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory, patch("staging_cd_runtime_smoke.time.sleep") as sleep:
+            root, archive, calls, run = self.fixture(directory)
+            def stuck(args, **kwargs):
+                if args[:3] == ["docker", "image", "rm"]:
+                    raise subprocess.TimeoutExpired(args, kwargs.get("timeout"))
+                return run(args, **kwargs)
+            with self.assertRaises(CleanupIncomplete) as raised:
+                qualify(archive, fixture_identity(component="runtime"), "sha256:" + "d" * 64,
+                        "e" * 64, root, stuck)
+        receipt = raised.exception.receipt
+        self.assertEqual(receipt["schema"], "cma-runtime-cleanup-v2")
+        self.assertEqual((receipt["smoke"], receipt["failed_step"], receipt["failure"], receipt["attempts"]),
+                         ("passed", "image_remove", "timeout", 2))
+        self.assertTrue(receipt["helpers_quiesced"])
+        self.assertFalse(receipt["inventory_reconciled"])
+        sleep.assert_called_once_with(5)
+
+    def test_identity_refusals_are_never_repeated(self):
+        with tempfile.TemporaryDirectory() as directory, patch("staging_cd_runtime_smoke.time.sleep") as sleep:
+            root, archive, calls, run = self.fixture(directory)
+            def foreign(args, **kwargs):
+                if args[:2] == ["docker", "ps"]:
+                    return b"not-a-container-id\n"
+                return run(args, **kwargs)
+            with self.assertRaises(CleanupIncomplete) as raised:
+                qualify(archive, fixture_identity(component="runtime"), "sha256:" + "d" * 64,
+                        "e" * 64, root, foreign)
+        receipt = raised.exception.receipt
+        self.assertEqual((receipt["failed_step"], receipt["failure"], receipt["attempts"]),
+                         ("container_list", "identity_refused", 1))
+        sleep.assert_not_called()
+        self.assertFalse(any(args[:3] == ["docker", "rm", "--force"] for args, _ in calls))
+
+    def test_cleanup_receipt_uses_only_fixed_vocabulary(self):
+        receipt = CleanupIncomplete("cma-runtime-ci-" + "a" * 36, True, False, smoke="private-text",
+                                    step="private-step", failure="private-failure", attempts=2).receipt
+        self.assertEqual((receipt["smoke"], receipt["failed_step"], receipt["failure"]), ("not_run", None, None))
+        self.assertNotIn("private", json.dumps(receipt))
+
+    def test_failed_canary_reports_its_result_when_cleanup_also_fails(self):
+        with tempfile.TemporaryDirectory() as directory, patch("staging_cd_runtime_smoke.time.sleep"):
+            root, archive, calls, run = self.fixture(directory, failure="run")
+            def broken(args, **kwargs):
+                if args[:2] == ["docker", "ps"]:
+                    raise RuntimeError("private-daemon-value")
+                return run(args, **kwargs)
+            with self.assertRaises(CleanupIncomplete) as raised:
+                qualify(archive, fixture_identity(component="runtime"), "sha256:" + "d" * 64,
+                        "e" * 64, root, broken)
+        receipt = raised.exception.receipt
+        self.assertEqual((receipt["smoke"], receipt["failed_step"], receipt["failure"]),
+                         ("interrupted", "unknown", "error"))
+        self.assertNotIn("private-daemon-value", json.dumps(receipt))
 
     def test_cleanup_receipt_survives_publisher_temporary_directory(self):
         with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
@@ -148,7 +262,7 @@ class RuntimeSmokeTests(unittest.TestCase):
             with redirect_stdout(public):
                 self.assertEqual(main(), 1)
             self.assertEqual(legacy(public.getvalue()),
-                             "FAIL publication\nFAIL publication stage=runtime_smoke reason=validation_refused\n")
+                             "FAIL publication\nFAIL publication stage=runtime_smoke reason=runtime_cleanup_incomplete\n")
             self.assertEqual(json.loads(output.with_name("runtime-cleanup.json").read_text()), error.receipt)
             self.assertFalse(output.exists())
             self.assertEqual(list(root.glob("cma-publication-*")), [])

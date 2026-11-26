@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
-from staging_cd_allocate import allocate_queue
+from staging_cd_allocate import TRANSIENT_CODES, allocate_queue, refusal_code
 from staging_cd_allocation_fixture import AllocationServer
 from staging_cd_allocation_io import (ALLOCATION_SECONDS, PUSH_RESERVE_SECONDS, PUSH_SECONDS, SETTLE_WAITS,
                                       VERIFY_RESERVE_SECONDS, AllocationIO)
@@ -15,7 +15,15 @@ from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts_tests import fixture_receipt
 from staging_cd_receipts import canonical
+from staging_cd_reservations import next_reservation, pending_name
 from staging_cd_versions import DEPLOYABLES
+
+REMOTE = "https://github.com/ChronoAIProject/cma.git"
+
+
+def porcelain(summary):
+    """git push --porcelain output in which every ref received one summary."""
+    return f"To {REMOTE}\n!\t{'f' * 40}:refs/tags/cma-agent-manager/pending/v0.10.4\t{summary}\nDone\n"
 
 
 class AllocationSnapshotTests(unittest.TestCase):
@@ -37,7 +45,7 @@ class AllocationSnapshotTests(unittest.TestCase):
                 matrix = self.allocate(server, store)
                 tasks = json.loads(matrix["include"][0]["tasks"])
                 self.assertEqual(len(tasks), 1)
-                self.assertEqual(tasks[0]["reservation"]["version"], "0.10.26")
+                self.assertEqual(tasks[0]["reservation"]["version"], "0.10.27" if component == "runtime" else "0.10.26")
                 self.assertEqual([args[1] for args in server.commands].count("ls-remote"), 1)
                 pushes = [args for args in server.commands if args[1] == "push"]
                 self.assertEqual(len(pushes), 1)
@@ -67,7 +75,8 @@ class AllocationSnapshotTests(unittest.TestCase):
         self.assertEqual(len(result["include"]), 5)
         expected = {key: server.sources[14 - i] for i, key in enumerate(DEPLOYABLES)}
         self.assertEqual({item["component"]: item["source"] for item in store.planned}, expected)
-        self.assertTrue(all(item["version"] == "0.10.1" for item in store.list()))
+        self.assertEqual({item["component"]: item["version"] for item in store.list()},
+                         {key: "0.10.2" if key == "runtime" else "0.10.1" for key in expected})
         self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertEqual(len([path for path in server.calls if path.startswith("git/ref/tags/")]), 5)
         self.assertEqual({p.split("/")[1] for p in server.calls if p.startswith("commits/")}, set(expected.values()))
@@ -131,6 +140,87 @@ class AllocationSnapshotTests(unittest.TestCase):
                 self.allocate(server, store)
             self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
             self.assertTrue(all(server.refs[name] == oid for name, oid in server.original.items()))
+
+    def test_a_push_github_declined_with_nothing_landed_is_rejected_for_good(self):
+        denied = (f"remote: Permission to ChronoAIProject/cma.git denied to github-actions[bot].\n"
+                  f"fatal: unable to access '{REMOTE}/': The requested URL returned error: 403\n")
+        outage = f"fatal: unable to access '{REMOTE}/': The requested URL returned error: 502\n"
+        reset = "error: RPC failed; curl 56 Recv failure: Connection reset by peer\n"
+        forbidden = f"fatal: unable to access '{REMOTE}/': The requested URL returned error: 403\n"
+        for name, rejection, message in (
+                ("ruleset", (1, porcelain("[remote rejected] (push declined due to repository rule violations)"),
+                             "remote: error: GH013: Repository rule violations found\n"), "push was rejected"),
+                ("hook", (1, porcelain("[remote rejected] (pre-receive hook declined)"), ""), "push was rejected"),
+                ("permission", (128, "", denied), "push was rejected"),
+                ("write access", (128, "", "remote: Write access to repository not granted.\n" + forbidden),
+                 "push was rejected"),
+                # A 403 is durable only alone and with the permission it lacks.
+                ("secondary rate limit", (128, "", "remote: You have exceeded a secondary rate limit.\n" + forbidden),
+                 "readback differs"),
+                ("rate limit and permission", (128, "", "remote: API rate limit exceeded.\n" + denied),
+                 "readback differs"),
+                ("bare 403", (128, "", forbidden), "readback differs"),
+                ("permission without its 403", (128, "", denied.splitlines()[0] + "\n"), "readback differs"),
+                ("403 then 502", (128, "", denied + outage), "readback differs"),
+                ("authentication", (128, "", "remote: Invalid username or token.\n"
+                                    f"fatal: Authentication failed for '{REMOTE}/'\n"), "readback differs"),
+                # Without GitHub's own refusal, a failed push proves nothing durable.
+                ("outage", (128, "", outage), "readback differs"),
+                ("reset", (128, "", reset), "readback differs"),
+                ("unreported", (1, porcelain("[remote failure] (remote failed to report status)"), ""),
+                 "readback differs"),
+                ("server error", (1, porcelain("[remote rejected] (Internal Server Error)"), ""), "readback differs"),
+                ("silent", (1, "", ""), "readback differs")):
+            with self.subTest(case=name):
+                server, store = self.fixture()
+                server.rejection = rejection
+                with self.assertRaisesRegex(Refusal, message) as raised:
+                    self.allocate(server, store)
+                self.assertEqual(refusal_code(raised.exception), "RESERVATION_PUSH_REJECTED"
+                                 if message == "push was rejected" else "RESERVATION_VERIFY_FAILED")
+                self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
+                self.assertEqual(server.refs, server.original)
+
+    def test_a_declined_push_with_anything_listed_is_not_a_clean_rejection(self):
+        # GitHub declined, but a planned ref already holds another object:
+        # that is not "nothing landed", so it stays a readback refusal.
+        server, store = self.fixture()
+        server.rejection = (1, porcelain("[remote rejected] (pre-receive hook declined)"), "")
+        store.load()
+        allocate_queue(server.queue(), SnapshotAPI(server, store), store, 999, 1)
+        server.refs[pending_name(store.planned[0])] = "0" * 40
+        with self.assertRaisesRegex(Refusal, "readback differs") as raised:
+            store.commit()
+        self.assertEqual(refusal_code(raised.exception), "RESERVATION_VERIFY_FAILED")
+
+    def test_an_oversized_inventory_is_refused_apart_from_an_incomplete_read(self):
+        for output, returncode, message, code in (
+                ("x" * (16 * 1024 * 1024 + 1), 0, "exceeds 16 MiB", "INVENTORY_TOO_LARGE"),
+                ("", 128, "inventory is incomplete", "INVENTORY_INCOMPLETE")):
+            server, store = self.fixture()
+            store.io.runner = Mock(return_value=subprocess.CompletedProcess([], returncode, output,
+                                                                            "fatal: protocol error\n"))
+            with self.subTest(code=code), self.assertRaisesRegex(Refusal, message) as raised:
+                store.load()
+            self.assertEqual(refusal_code(raised.exception), code)
+            self.assertFalse(store.loaded)
+
+    def test_a_duplicate_or_retired_planned_reservation_is_a_planner_defect(self):
+        server, store = self.fixture()
+        store.load()
+        fresh = next_reservation("am", server.sources[-1], "e" * 40, 4, "patch", 999, 1, [], store.list())
+        for value, message in ((dict(store.list()[0]), "planned a duplicate reservation"),
+                               (dict(fresh, component="image-manager"), "Unknown reservation component"),
+                               (fresh, None),
+                               (dict(fresh, run_id=1000), "planned a duplicate reservation")):
+            with self.subTest(value=value, message=message):
+                if message is None:
+                    self.assertTrue(store.insert(value))
+                    continue
+                with self.assertRaisesRegex(Refusal, message) as raised:
+                    store.insert(value)
+                self.assertEqual(refusal_code(raised.exception), "RESERVATION_PLAN_INVALID")
+        self.assertEqual(store.planned, [fresh])
 
     def test_ambiguous_response_requires_exact_ref_readback_after_each_push(self):
         server, store = self.fixture(3, reserved=False)
@@ -354,15 +444,16 @@ class AllocationSnapshotTests(unittest.TestCase):
         self.assertEqual(len([path for path in server.calls if path.startswith("git/ref/tags/")]), 5)
         self.assertEqual(len([path for path in server.calls if path.startswith("actions/")]), 0)
         for group in matrix["include"]:
-            self.assertEqual(json.loads(group["tasks"])[0]["reservation"]["version"], "0.10.5")
+            expected = "0.10.6" if group["component"] == "runtime" else "0.10.5"
+            self.assertEqual(json.loads(group["tasks"])[0]["reservation"]["version"], expected)
 
-    def test_unknown_label_prevents_the_entire_batch(self):
+    def test_unsupported_upgrade_label_prevents_the_entire_batch(self):
         server, store = self.fixture(3, reserved=False)
         request = server.request
-        def missing(path, **kwargs):
+        def unsupported(path, **kwargs):
             result = request(path, **kwargs)
-            return dict(result, labels=[]) if path == "pulls/4" else result
-        server.request = missing
+            return dict(result, labels=[{"name": "version-upgrade:other"}]) if path == "pulls/4" else result
+        server.request = unsupported
         with self.assertRaisesRegex(Refusal, "version-upgrade"):
             self.allocate(server, store)
         self.assertEqual(store.planned, [])
@@ -374,11 +465,17 @@ class AllocationSnapshotTests(unittest.TestCase):
         claim = next(name for name in server.refs if name.startswith("cma-allocation/"))
         oid = server.refs[claim]
         server.refs[claim] = "e" * 40
-        with self.assertRaisesRegex(Refusal, "claim owner differs"):
+        with self.assertRaisesRegex(Refusal, "claim owner differs") as raised:
             AllocationSnapshot(server, "fixture", Path.cwd(), store.io).load()
+        # Both refs are create-only and one push writes them with one object,
+        # so even a torn listing never shows two objects: lasting damage.
+        self.assertEqual(refusal_code(raised.exception), "INVENTORY_CLAIM_CONFLICT")
         server.refs = {claim: oid}
-        with self.assertRaisesRegex(Refusal, "claim has no durable version"):
+        with self.assertRaisesRegex(Refusal, "claim has no durable version") as raised:
             AllocationSnapshot(server, "fixture", Path.cwd(), store.io).load()
+        # A claim alone is also what a listing torn by a concurrent push shows.
+        self.assertEqual(refusal_code(raised.exception), "INVENTORY_CLAIM_ORPHANED")
+        self.assertIn("INVENTORY_CLAIM_ORPHANED", TRANSIENT_CODES)
 
     def test_noop_never_pushes_and_snapshot_is_not_usable_before_load(self):
         server, store = self.fixture()

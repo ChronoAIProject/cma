@@ -202,7 +202,12 @@ it.each([200, 403])('discards a previous owner’s outstanding HTTP %i reply', a
     );
   const fetcher = vi.fn<typeof fetch>((url, init) => {
     if (url === listPath) return lists(url, init);
-    return Promise.resolve(response({ platforms: [], items: [] }));
+    return Promise.resolve(
+      response({
+        platforms: [{ id: 'telegram', connection_methods: ['managed_create'] }],
+        items: [],
+      }),
+    );
   });
   vi.stubGlobal('fetch', fetcher);
   const denied = vi.fn();
@@ -260,7 +265,12 @@ it.each([200, 403])(
       vi.fn<typeof fetch>((url, init) =>
         typeof url === 'string' && url.startsWith(listPath)
           ? lists(url, init)
-          : Promise.resolve(response({ platforms: [], items: [] })),
+          : Promise.resolve(
+              response({
+                platforms: [{ id: 'telegram', connection_methods: ['managed_create'] }],
+                items: [],
+              }),
+            ),
       ),
     );
     const denied = vi.fn();
@@ -343,7 +353,12 @@ it.each([
     const fetcher = vi.fn<typeof fetch>((url, init) =>
       typeof url === 'string' && url.startsWith(listPath)
         ? lists(url, init)
-        : Promise.resolve(response({ platforms: [], items: [] })),
+        : Promise.resolve(
+            response({
+              platforms: [{ id: 'telegram', connection_methods: ['managed_create'] }],
+              items: [],
+            }),
+          ),
     );
     vi.stubGlobal('fetch', fetcher);
     const denied = vi.fn();

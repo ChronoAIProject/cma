@@ -1,9 +1,42 @@
 //! Parent validation and call-local prepared startup observations.
 use super::*;
+use layer2_core::agent_ownership::receiver_diagnostics::{with_root, Correlation, TARGET};
 use layer2_core::sandbox::{SandboxStatus, WorkspaceStatus};
 
+#[cfg(test)]
+#[path = "connection_diagnostics_tests.rs"]
+mod diagnostics_tests;
+#[cfg(test)]
+#[path = "context_diagnostics_tests.rs"]
+mod inspection_tests;
 #[path = "context_overlap.rs"]
 mod overlap;
+
+fn report_inspection(
+    fields: &Correlation,
+    step: AgentWorkStep,
+    elapsed: std::time::Duration,
+    parent_overlap: bool,
+    error: Option<&AdapterError>,
+) {
+    let reason = error.map(|error| match error {
+        AdapterError::Unavailable(_) => "runtime_unavailable",
+        AdapterError::AccessRevoked => "authority_lost",
+        AdapterError::NativeClaimNotReady(_) => "native_claim_not_ready",
+        AdapterError::RuntimeCapacity(_) | AdapterError::AtCapacity(_) => "runtime_at_capacity",
+        AdapterError::RuntimeContractMismatch(_) => "runtime_contract_mismatch",
+        AdapterError::RuntimeStartupHold(_) => "runtime_startup_hold",
+        AdapterError::RuntimeLedgerHold(_) => "runtime_ledger_hold",
+        _ => "runtime_refused",
+    });
+    with_root(|| {
+        tracing::info!(target: TARGET, parent: None,
+            agent_sha256 = %fields.agent_sha256, sandbox_sha256 = fields.sandbox_sha256.as_deref(),
+            instance_sha256 = %fields.instance_sha256, receiver_sha256 = fields.receiver_sha256.as_deref(),
+            epoch = fields.epoch, step = ?step, elapsed_ms = elapsed.as_millis() as u64, parent_overlap,
+            succeeded = error.is_none(), reason, "Agent runtime inspection completed");
+    });
+}
 
 impl AgentWorker {
     pub(in crate::sandbox::agent_worker) async fn startup_context(
@@ -97,21 +130,25 @@ impl AgentWorker {
                 });
             return Err(failure);
         }
+        let inspection = self.inspection_correlation(agent);
         let inspection_started = tokio::time::Instant::now();
-        let attached = crate::sandbox::runtime_attachment::inspect_bound_runtime(
-            self.dependencies.adapter.as_ref(),
+        let attached = super::super::inspection_park::observe(
+            agent,
             &sandbox,
-            &self.config.deployment_id,
+            crate::sandbox::runtime_attachment::inspect_bound_runtime(
+                self.dependencies.adapter.as_ref(),
+                &sandbox,
+                &self.config.deployment_id,
+            ),
         )
         .await;
         self.observe_runtime_startup(&sandbox, inspection_started, &attached);
-        tracing::info!(
-            agent_id = %agent.id,
-            sandbox_id = %sandbox.id,
-            step = ?agent.work.step,
-            elapsed_ms = inspection_started.elapsed().as_millis() as u64,
-            succeeded = attached.is_ok(),
-            "Agent runtime inspection completed"
+        report_inspection(
+            &inspection,
+            agent.work.step,
+            inspection_started.elapsed(),
+            false,
+            attached.as_ref().err(),
         );
         let (attached, status) = attached.map_err(|error| {
             // Inspection is read-only. A timeout here cannot hide an uncertain
@@ -130,6 +167,7 @@ impl AgentWorker {
             }
             failure
         })?;
+        self.confirm_inspection(agent, &sandbox).await?;
         Ok(AgentContext {
             sandbox,
             workspace,
@@ -138,6 +176,26 @@ impl AgentWorker {
             agent_resource_preparation: status
                 .is_some_and(|status| status.agent_resource_preparation),
         })
+    }
+
+    fn inspection_correlation(&self, agent: &Agent) -> Correlation {
+        use layer2_core::agent_ownership::execution_authority;
+        if let Some(authority) =
+            execution_authority().filter(|authority| authority.token.agent_id == agent.id)
+        {
+            authority.observe_diagnostic_sandbox(agent.sandbox_id.as_str());
+            return authority.receiver_correlation();
+        }
+        Correlation::new(
+            &agent.id,
+            Some(agent.sandbox_id.as_str()),
+            self.config
+                .ownership
+                .as_ref()
+                .map_or(self.config.holder.as_str(), |owner| {
+                    owner.instance_id.as_str()
+                }),
+        )
     }
 
     pub(in crate::sandbox::agent_worker) async fn prepared_open_context(

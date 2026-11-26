@@ -38,6 +38,7 @@ export function createProfileViewsClient(sdk: Cma): ProfileViewsClient {
         (await sdk.profileAuthoring.services(options)).map((entry) => ({
           id: entry.id,
           catalogId: entry.catalog_id,
+          detailUrl: entry.detail_url,
           name: entry.name,
           description: entry.description,
         })),

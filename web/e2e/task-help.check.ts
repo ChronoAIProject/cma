@@ -127,18 +127,24 @@ test('LOCAL Home, full capacity and uncertain task help preserve the draft and o
   await page.goBack();
   await expect(draft).toHaveValue('Keep this original task through help and recovery');
   await expect(page.getByRole('region', { name: 'Sandbox capacity' })).toContainText(
-    'All 1 Sandbox environment slots are in use',
+    'Environment limit reached',
   );
-  await page.getByRole('link', { name: 'Help with environments and capacity' }).click();
+  await page.getByRole('link', { name: 'Help starting a task', exact: true }).click();
+  await page.getByRole('link', { name: 'Docs', exact: true }).click();
+  await page.getByRole('link', { name: /^Environments and capacity/ }).click();
   await expect(
     page.getByRole('heading', { name: 'Environments and capacity', exact: true }),
   ).toBeFocused();
   await expect(page.getByRole('article')).toContainText('A pending deletion is not a free slot');
   await page.goBack();
+  await page.goBack();
+  await page.goBack();
   await expect(draft).toHaveValue('Keep this original task through help and recovery');
   expect(writes).toEqual([]);
+  const refreshCapacity = page.getByRole('button', { name: 'Refresh Sandbox capacity' });
+  await expect(refreshCapacity).toBeEnabled();
   full = false;
-  await page.getByRole('button', { name: 'Refresh Sandbox capacity' }).click();
+  await refreshCapacity.click();
   await page.getByRole('button', { name: 'Start task', exact: true }).click();
   const recover = page.getByRole('button', { name: 'Recover original task', exact: true });
   await expect(recover).toBeEnabled();
@@ -151,7 +157,7 @@ test('LOCAL Home, full capacity and uncertain task help preserve the draft and o
   await page.goBack();
   await expect(recover).toBeEnabled();
   expect(writes).toHaveLength(1);
-  await expect(page.getByRole('region', { name: 'Submitted task' })).toContainText(
+  await expect(page.getByRole('region', { name: 'Original request', exact: true })).toContainText(
     'Keep this original task through help and recovery',
   );
   await recover.click();

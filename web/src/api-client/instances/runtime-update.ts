@@ -3,6 +3,10 @@ import { boolean, enumeration, nullable, object, optional, text, type Output } f
 /** Runtime image references are opaque deployment values, not semantic versions. */
 export const sandboxRuntimeUpdate = object({
   current_version: nullable(text),
+  current_version_confirmed: optional(boolean),
+  image_origin: optional(
+    enumeration('managed_agent', 'managed_desktop', 'managed_machine', 'user_selected', 'unknown'),
+  ),
   latest_version: text,
   update_available: boolean,
   state: enumeration('up_to_date', 'available', 'queued', 'updating', 'failed'),

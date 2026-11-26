@@ -9,6 +9,9 @@ mod nonexecuting;
 #[path = "backend_provision_home_tests.rs"]
 mod provision_home_tests;
 
+#[path = "backend_adoption_home_tests.rs"]
+mod adoption_home_tests;
+
 const POD: &str = "/api/v1/namespaces/cma-test/pods/warm-member";
 
 struct Bound {

@@ -61,12 +61,11 @@ pub(super) async fn drive_environment(
             );
         }
         wait_for_due_work(&sandbox.work.ready_at, lease).await;
-        let step = worker.run_one(public_sandbox_id, SystemTime::now()).await;
+        let step = retry.sandbox(harness, worker, public_sandbox_id).await;
         assert!(
-            !matches!(step, Ok(false)),
+            !matches!(step, Some(false)),
             "{scenario}: {phase} did not progress"
         );
-        retry.should_retry(step);
     }
     *phase = String::from("checking committed Workspace result");
     let workspace = harness

@@ -7,7 +7,7 @@ from staging_cd_common import require
 from staging_cd_compatibility import GROUP
 from staging_cd_component_admission import REASONS as ADMISSION_REASONS, validate_failures
 from staging_cd_deploy_result import STATES
-from staging_cd_set import OVERTAKEN, document
+from staging_cd_set import ALREADY_VERIFIED, OVERTAKEN, RETRY_PENDING, document
 from staging_cd_targets import TARGETS
 
 CONCLUSIONS = {"success", "failure", "skipped", "cancelled"}
@@ -18,7 +18,7 @@ DISPOSITIONS = frozenset({"reservation_superseded", "source_already_final"})
 UNSUCCESSFUL = ("failure", "skipped", "cancelled", "unknown")
 # Every code a row or a run-level line can explain, from the component-report catalogue family.
 CODES = frozenset({"allocation-incomplete", "evidence-invalid", *DISPOSITIONS, OVERTAKEN, "superseded-peer",
-                   "finalize-incomplete", "admit-skipped", "admit-unknown", "controller-unreported",
+                   "finalize-incomplete", "admit-skipped", "admit-unknown", "controller-unreported", "retry-not-run",
                    *("publish-" + value for value in UNSUCCESSFUL), *("deploy-" + value for value in UNSUCCESSFUL)})
 HEADER = ["| Component | Publish + finalize | Admit | Deploy job | Controller outcome | Reason | Likely cause | Next step |",
           "|---|---|---|---|---|---|---|---|"]
@@ -38,6 +38,10 @@ def diagnosis(publish, admit, deploy, state):
         return "admission", admit
     if admit != "admitted":
         return "component-report", "admit-" + admit
+    if state == ALREADY_VERIFIED:
+        return None
+    if deploy == RETRY_PENDING:
+        return "component-report", "retry-not-run"
     if deploy != "success":
         return "component-report", "deploy-" + deploy
     if state in ("withheld", "unverified"):
@@ -89,7 +93,7 @@ def summarize(env):
             require(c in lanes and not env.get("CD_FINALIZED_" + c.upper().replace("-", "_")),
                     "Superseded publication conflicts with finalization evidence")
             superseded[c] = disposition
-    overtaken, admission_overtaken = set(), set()
+    overtaken, admission_overtaken, already_verified = set(), set(), set()
     passed = env["CD_INFRASTRUCTURE_RESULT"] == "success"
     lines = list(HEADER)
     for lane in sorted(set(lanes.values())):
@@ -109,7 +113,20 @@ def summarize(env):
         states = payload["components"] if payload is not None else {}
         require(isinstance(states, dict) and states.keys() <= set(admitted), "Unexpected controller outcome")
         disposition = outputs.get("deploy_disposition") or ""
-        require(disposition in ("", OVERTAKEN), "Unknown deployment disposition")
+        require(disposition in ("", OVERTAKEN, RETRY_PENDING), "Unknown deployment disposition")
+        if outputs.get("retried") == "true":
+            # The promotion's outputs are its automatic retry's own attempt.
+            lines.append(f"{lane}: the first deployment was refused for a transient reason before any "
+                         "change; the rows below are its automatic re-admission and retry.")
+        if disposition == RETRY_PENDING:
+            # The first attempt handed over to one re-admission that never reported.
+            require(outputs.get("retried") != "true", "Retry outcome conflicts with its evidence")
+            for c in sorted(selected | reported):
+                publish = outcome(env["CD_PUBLISH_" + c.upper().replace("-", "_")]) if c in selected else "retained"
+                admit = failures.get(c) or ("admitted" if c in admitted else missing)
+                lines.append(row(c, publish, admit, RETRY_PENDING, "unreported"))
+            passed = False
+            continue
         if disposition:
             # The deploy job found a newer final at a later source for every
             # admitted member and deployed nothing. Its run owns the release.
@@ -117,8 +134,13 @@ def summarize(env):
                     and outputs.get("deploy") == "success", "Overtaken deployment conflicts with its evidence")
             overtaken.update(admitted)
         admission = outputs.get("admit_disposition") or ""
-        require(admission in ("", OVERTAKEN), "Unknown admission disposition")
-        if admission:
+        require(admission in ("", OVERTAKEN, ALREADY_VERIFIED), "Unknown admission disposition")
+        if admission == ALREADY_VERIFIED:
+            require(selected <= set(admitted) and not failures and not disposition and payload is None
+                    and job["result"] == "success" and outputs.get("admit") == "success" and not outputs.get("deploy"),
+                    "Reused controller proof conflicts with admission evidence")
+            already_verified.update(admitted)
+        elif admission == OVERTAKEN:
             # Admission found a later-source final for every selected member.
             require(lane != "contract" and not GROUP & selected and not admitted and not disposition
                     and failures.keys() == selected and set(failures.values()) == {"superseded-source"}
@@ -147,14 +169,15 @@ def summarize(env):
             publish = outcome(env["CD_PUBLISH_" + c.upper().replace("-", "_")]) if c in selected else "retained"
             admit = failures.get(c) or ("admitted" if c in admitted else missing)
             # A handled admission deliberately ran no deployment job.
-            deploy = (outcome(outputs["deploy"]) if outputs.get("deploy")
-                      else "skipped" if c in admission_overtaken else missing)
-            state = OVERTAKEN if c in overtaken | admission_overtaken else "unreported"
+            confirmed = admission == ALREADY_VERIFIED and c in admitted
+            handled = c in admission_overtaken or confirmed
+            deploy = outcome(outputs["deploy"]) if outputs.get("deploy") else "skipped" if handled else missing
+            state = ALREADY_VERIFIED if confirmed else (
+                OVERTAKEN if c in overtaken | admission_overtaken else "unreported")
             if c in states:
                 state = states[c]["state"]
                 require(state in STATES and states[c]["reason"] == STATES[state], "Invalid controller outcome")
             lines.append(row(c, publish, admit, deploy, state))
-            handled = c in admission_overtaken
             passed &= (publish in ("success", "retained") and job["result"] == "success"
                        and outputs.get("admit") == "success"
                        and (handled or (c in admitted and deploy == "success"
@@ -171,6 +194,8 @@ def summarize(env):
     for c in sorted(admission_overtaken):
         lines.append(f"{c} admission skipped: {OVERTAKEN}. A newer final's run owns this deployment; "
                      f"this run has no verified {c} release.")
+    for c in sorted(already_verified):
+        lines.append(f"{c} deployment skipped: a previous staging deployment verified this exact release.")
     if (superseded or overtaken or admission_overtaken) and passed:
         return lines, None
     return lines, passed

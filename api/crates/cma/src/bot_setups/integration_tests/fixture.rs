@@ -282,6 +282,7 @@ impl Fixture {
             .await
             .unwrap();
         let material = CredentialMaterial {
+            github_route: None,
             sandbox_id: binding.sandbox_id.clone(),
             owner: binding.owner.clone(),
             source: binding.credential_source(),

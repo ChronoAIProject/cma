@@ -162,3 +162,168 @@ async fn changed_native_incarnation_before_handshake_publication_is_refused() {
         exercise("provider", "", field).await;
     }
 }
+
+/// Serve an interrupted first open: the bridge is already initialized and the
+/// caller holds no conversation. Returns the frames sent after `current`.
+async fn adoption(server: &mut ServerSocket, expected: &str, support: &str, current: &str) {
+    let probe = receive_json(server).await;
+    assert_eq!(probe["method"], "cma/open-completion");
+    assert_eq!(probe["params"], serde_json::json!({"action": "support"}));
+    match support {
+        "unsupported" => {
+            send_json(
+                server,
+                serde_json::json!({"jsonrpc":"2.0","id":probe["id"],
+                "error":{"code":-32601,"message":"Method not found"}}),
+            )
+            .await;
+            return;
+        }
+        "legacy" => {
+            respond(
+                server,
+                &probe,
+                serde_json::json!({"supported":true,"version":1}),
+            )
+            .await;
+            return;
+        }
+        _ => {
+            respond(
+                server,
+                &probe,
+                serde_json::json!({"supported":true,"version":1,"current":true}),
+            )
+            .await
+        }
+    }
+    let request = receive_json(server).await;
+    assert_eq!(request["method"], "cma/open-completion");
+    assert_eq!(request["params"]["action"], "current");
+    let challenge = request["params"]["challenge"].clone();
+    assert!(uuid::Uuid::parse_str(challenge.as_str().unwrap()).is_ok());
+    let held = serde_json::json!({"sessionId":"held-conversation","bindingDigest":expected});
+    let mut result = serde_json::json!({
+        "version":1,"challenge":challenge,
+        "processNonce":"cdd9d1db-5781-4ba0-9e27-df60e4f1cab2","opening":false,
+        "sessions":[held.clone()],
+    });
+    match current {
+        "" => {}
+        "none" => result["sessions"] = serde_json::json!([]),
+        "several" => {
+            result["sessions"] = serde_json::json!([held,
+                {"sessionId":"another-conversation","bindingDigest":expected}])
+        }
+        "binding" => {
+            result["sessions"][0]["bindingDigest"] =
+                serde_json::json!(format!("v1:{}", "0".repeat(64)))
+        }
+        "opening" => result["opening"] = serde_json::json!(true),
+        "challenge" => result["challenge"] = serde_json::json!("an-earlier-challenge-value"),
+        "version" => result["version"] = serde_json::json!(2),
+        _ => unreachable!(),
+    }
+    respond(server, &request, result).await;
+}
+
+async fn interrupted(
+    family: &'static str,
+    support: &'static str,
+    current: &'static str,
+) -> (crate::Result<OpenedBridge>, tokio::task::JoinHandle<()>) {
+    let config = configured(family);
+    let expected = digest(&config);
+    let (client, mut server) = socket_pair().await;
+    send_ready(&mut server, "agent-1").await;
+    let adopted = support.is_empty() && current.is_empty();
+    let serving = tokio::spawn(async move {
+        let initialize = receive_json(&mut server).await;
+        reject(&mut server, &initialize).await;
+        adoption(&mut server, &expected, support, current).await;
+        if adopted {
+            // The adopted open is verified through its exact receipt, then rejoined.
+            completion(&mut server, &expected, "").await;
+            settings_only(&mut server, family).await;
+            completion(&mut server, &expected, "").await;
+        }
+        // Never a second session/new, session/load or prompt to obtain evidence.
+        while let Some(Ok(frame)) = server.next().await {
+            if let Message::Text(text) = &frame {
+                let frame: serde_json::Value = serde_json::from_str(text).unwrap();
+                assert!(
+                    !frame["method"]
+                        .as_str()
+                        .is_some_and(|m| m.starts_with("session/")),
+                    "unexpected {frame}"
+                );
+            }
+            assert!(!matches!(frame, Message::Binary(_)));
+        }
+    });
+    let (updates, _receiver) = tokio::sync::mpsc::channel(8);
+    let opened = Bridge::open(
+        client,
+        "agent-1",
+        "/workspace".into(),
+        configured(family),
+        None,
+        updates,
+    )
+    .await;
+    (opened, serving)
+}
+
+async fn refused(support: &'static str, current: &'static str) -> crate::AdapterError {
+    let (opened, serving) = interrupted("access", support, current).await;
+    serving.await.unwrap();
+    opened
+        .err()
+        .expect("an unproven interrupted open must not be adopted")
+}
+
+#[tokio::test]
+async fn interrupted_first_open_adopts_the_single_proven_completed_open() {
+    for family in ["access", "provider", "channel"] {
+        let (opened, serving) = interrupted(family, "", "").await;
+        let opened = opened.unwrap();
+        assert_eq!(
+            opened.channel.conversation_id.as_deref(),
+            Some("held-conversation")
+        );
+        stop(opened).await;
+        serving.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn interrupted_first_open_without_proof_keeps_refusing() {
+    for (support, current) in [
+        ("unsupported", ""),
+        ("legacy", ""),
+        ("", "none"),
+        ("", "several"),
+        ("", "binding"),
+    ] {
+        assert!(
+            matches!(
+                refused(support, current).await,
+                crate::AdapterError::Rejected(_)
+            ),
+            "{support}/{current}"
+        );
+    }
+    for current in ["challenge", "version"] {
+        assert!(matches!(
+            refused("", current).await,
+            crate::AdapterError::Unavailable(_)
+        ));
+    }
+}
+
+#[tokio::test]
+async fn an_open_still_in_flight_is_retried_never_duplicated() {
+    let (opened, serving) = interrupted("provider", "", "opening").await;
+    serving.await.unwrap();
+    assert!(matches!(opened, Err(crate::AdapterError::Unavailable(_))));
+}

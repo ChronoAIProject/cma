@@ -10,6 +10,13 @@ use crate::sandbox::{Agent, Sandbox, SandboxAgentActivity, SandboxStatus};
 
 #[async_trait]
 impl SandboxMaintenanceStore for InMemorySandboxStore {
+    async fn admit_custom_runtime_migration(
+        &self,
+        admission: super::super::SandboxCustomRuntimeMigrationAdmission,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        super::custom_runtime::admit(self, admission)
+    }
+
     async fn sandbox_maintenance_candidates(
         &self,
         request: &PageRequest,
@@ -281,7 +288,10 @@ pub(super) fn live_agent_activities(
         .collect()
 }
 
-fn sandbox_agents(state: &State, sandbox_id: &SandboxId) -> Result<Vec<Agent>, SandboxStoreError> {
+pub(super) fn sandbox_agents(
+    state: &State,
+    sandbox_id: &SandboxId,
+) -> Result<Vec<Agent>, SandboxStoreError> {
     state
         .agents
         .iter()
@@ -321,7 +331,7 @@ fn newest_agent_log<'a>(
     Ok(entries.last())
 }
 
-fn persist_application(
+pub(super) fn persist_application(
     state: &mut State,
     application: SandboxMaintenanceApplication,
     appended_at: String,

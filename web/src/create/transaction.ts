@@ -8,6 +8,7 @@ export function useCreationCommand<Result>(onCreated: (result: Result) => void) 
   const [failure, setFailure] = useState<CreationFailure>();
   const active = useRef<AbortController | undefined>(undefined);
   const retained = useRef<((options: CommandOptions) => Promise<Result>) | undefined>(undefined);
+  const unresolved = useRef(false);
   const keys = useRef(new CommandKeys());
   useEffect(() => () => active.current?.abort(), []);
   const submit = async (operation: (options: CommandOptions) => Promise<Result>) => {
@@ -25,10 +26,12 @@ export function useCreationCommand<Result>(onCreated: (result: Result) => void) 
       if (request.signal.aborted) return;
       keys.current.settle('create');
       retained.current = undefined;
+      unresolved.current = false;
       onCreated(result);
     } catch (error: unknown) {
       if (request.signal.aborted) return;
-      const problem = creationFailure(error);
+      const problem = creationFailure(error, unresolved.current);
+      unresolved.current = problem.uncertain;
       setFailure(problem);
       if (!problem.uncertain) {
         retained.current = undefined;

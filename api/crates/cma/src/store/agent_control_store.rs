@@ -23,6 +23,13 @@ impl AgentControlStore for MongoSandboxStore {
             .await
     }
 
+    async fn schedule_agent_restart(
+        &self,
+        request: layer2_core::sandbox::store::AgentRestartRequest,
+    ) -> Result<layer2_core::sandbox::store::AgentRestartAcceptance, AgentControlStoreError> {
+        super::agent_control_transaction::schedule_restart(self, request).await
+    }
+
     async fn schedule_agent_stop(
         &self,
         request: AgentStopRequest,

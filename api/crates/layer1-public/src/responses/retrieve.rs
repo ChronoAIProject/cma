@@ -183,7 +183,7 @@ pub(super) async fn cancel(AuthenticatedCaller(_caller): AuthenticatedCaller) ->
     )
 }
 
-pub(super) fn parse_response_id(value: &str) -> Option<(AgentId, u64)> {
+pub fn parse_response_id(value: &str) -> Option<(AgentId, u64)> {
     let (agent, turn) = value.strip_prefix("resp_")?.rsplit_once('_')?;
     if !agent.starts_with("agt_") || agent.len() <= 4 {
         return None;

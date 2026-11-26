@@ -2,10 +2,16 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { FileExplorer } from './FileExplorer';
+import { FileNavigationMemory } from './useFileNavigation';
 import { AgentFiles } from './AgentFiles';
 import { CmaClientProvider } from '../../api/context';
 import { unavailableClient } from '../../api/client';
-import { fileBase64, type AgentFileEntry, type AgentFilesClient } from '../../api/agentFiles';
+import {
+  AgentFileError,
+  fileBase64,
+  type AgentFileEntry,
+  type AgentFilesClient,
+} from '../../api/agentFiles';
 
 afterEach(() => vi.restoreAllMocks());
 const directory = 'cma/project/.worktrees/wt-fixture';
@@ -201,3 +207,62 @@ it('ignores a late old-Agent listing when switching to another working directory
   expect(screen.queryByRole('button', { name })).toBeNull();
   expect(screen.getByLabelText('Current directory')).toHaveTextContent('/home/cma/second');
 });
+
+it.each([true, false])(
+  'retains the last successful directory across access rechecks (readOnly=%s)',
+  async (readOnly) => {
+    const files = filesFixture();
+    const memory = new FileNavigationMemory();
+    const folder = (name: string): AgentFileEntry => ({
+      path: name,
+      name,
+      kind: 'directory',
+      size_bytes: 0,
+      hidden: false,
+    });
+    let finishOld!: (entries: readonly AgentFileEntry[]) => void;
+    vi.mocked(files.list).mockImplementation(async (_id, path) => {
+      if (!path) return [folder('old'), folder('cma'), folder('denied')];
+      if (path === 'old')
+        return new Promise((resolve) => {
+          finishOld = resolve;
+        });
+      if (path === 'denied') throw new AgentFileError('Access denied. Check access again.', 403);
+      return [];
+    });
+    const onAccessChanged = vi.fn();
+    const view = (active = true) => (
+      <FileExplorer
+        client={files}
+        agentId="agent-one"
+        readOnly={readOnly}
+        navigationMemory={memory}
+        onClose={vi.fn()}
+        active={active}
+        onAccessChanged={onAccessChanged}
+      />
+    );
+    const user = userEvent.setup();
+    const first = render(view());
+    await user.click(await screen.findByRole('button', { name: 'old' }));
+    await user.click(screen.getByRole('button', { name: 'cma' }));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Current directory')).toHaveTextContent('/home/cma'),
+    );
+    await act(async () => finishOld([]));
+    expect(screen.getByLabelText('Current directory')).toHaveTextContent('/home/cma');
+    await user.click(screen.getByRole('button', { name: 'denied' }));
+    expect(await screen.findByText('Access denied. Check access again.')).toBeVisible();
+    expect(screen.getByLabelText('Current directory')).toHaveTextContent('/home/cma');
+    expect(memory.read()).toBe('cma');
+    expect(onAccessChanged).toHaveBeenCalledOnce();
+    first.unmount();
+    const reopened = render(view(false));
+    expect(screen.getByRole('status')).toHaveTextContent('Checking file access');
+    reopened.rerender(view());
+    await waitFor(() =>
+      expect(files.list).toHaveBeenLastCalledWith('agent-one', 'cma', expect.any(Object)),
+    );
+    expect(screen.getByLabelText('Current directory')).toHaveTextContent('/home/cma');
+  },
+);

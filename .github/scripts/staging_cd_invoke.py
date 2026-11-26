@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Run one private coordinator with a private release file and bounded lifetime."""
 from contextlib import contextmanager
+from functools import partial
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-from cd_target import PRODUCTION, controller
+from cd_target import PRODUCTION, STAGING, controller, name as target_name
 from prod_cd_select import release_bounds
-from ci_outcome import error_site, report
+from ci_outcome import entry, error_site, report
 from staging_cd_admission import event_identity
 from staging_cd_applied import configured_group
 from staging_cd_checkout import checkout_path
@@ -22,7 +23,7 @@ from staging_cd_runtime import run_private
 from staging_cd_refusal import (
     REASONS as PRIVATE_REASONS, UNRECOGNIZED, VERIFICATION_REASONS, read as read_refusal, read_verification,
 )
-from staging_cd_set import OVERTAKEN, document, private_document, release_set, validate_set
+from staging_cd_set import OVERTAKEN, RETRY_PENDING, document, private_document, release_set, validate_set
 from staging_cd_tools import environment as tool_environment
 from staging_cd_compatibility import ContractPolicy, GROUP
 from staging_cd_history import DevelopHistory
@@ -100,10 +101,11 @@ def private_script(env, run_command=subprocess.run):
 
 
 
-def execute(script, release_file, mode, started, env, *, timeout=None):
+def execute(script, release_file, mode, started, env, *, timeout=None, target=STAGING):
     # Reserve the same absolute clock for the child. Older controllers ignore
-    # this timing input and retain their shorter deadline.
-    limit = controller_seconds(mode)
+    # this timing input and retain their shorter deadline. Only a production
+    # release reserves the production total; staging's budgets are unchanged.
+    limit = controller_seconds(mode, target)
     child_env = {**env, CONTROLLER_TOTAL_ENV: str(limit)}
     left = remaining(started, limit)
     wait = min(left, timeout) if timeout is not None else left
@@ -214,7 +216,7 @@ def controller_receipts(receipts, transition, script, directory, started, env, c
     return qualified, 0
 
 
-def deploy(env, masker, script_reader=private_script, runner=execute,
+def deploy(env, masker, script_reader=private_script, runner=None,
            tool_reader=tool_environment, policy_reader=deploy_selection, on_disabled=lambda: None,
            on_private_refusal=None, on_unverified=None, on_rolled_back=None, on_overtaken=lambda _keys: None):
     event_identity(env)
@@ -226,7 +228,11 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
                 "Deployment mode is invalid")
         require(mode != "bootstrap" or set(value["receipts"]) == {"am", "eg", "web"},
                 "Bootstrap requires all components")
-    limit = controller_seconds(mode)
+    target = target_name(env)
+    limit = controller_seconds(mode, target)
+    if runner is None:
+        # The launcher's watchdog enforces the same target budget as this caller.
+        runner = partial(execute, target=target)
     credentials = {key: env.get(key) for key in ("CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET")}
     for credential in credentials.values():
         masker(credential)
@@ -323,7 +329,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     return code if code in (10, 20, 30, 40, 50) else 20
 
 
-def explain(outcome, reason, private, verification, recovery, release, site, raised):
+def explain(outcome, reason, private, verification, recovery, release, site, raised, level=None):
     """Report an exit 10, 20, 30, 40 or 52 outcome with its cause and next step.
 
     No component is named: the controller's packets do not say which member of
@@ -335,9 +341,9 @@ def explain(outcome, reason, private, verification, recovery, release, site, rai
         # Exit 10 alone certifies the rollback; only the release token is reported.
         return report("deploy-release", release, subject="deploy")
     if private is not None:
-        return report("deploy-private", private, subject="deploy")
+        return report("deploy-private", private, subject="deploy", level=level)
     if reason is not None:
-        return report("deploy-precondition", reason, subject="deploy", site=site)
+        return report("deploy-precondition", reason, subject="deploy", site=site, level=level)
     if outcome == 30:
         return report("deploy-private", "unreported", subject="deploy")
     if outcome == 40:
@@ -349,6 +355,36 @@ def explain(outcome, reason, private, verification, recovery, release, site, rai
     if outcome == CONTRACT_READ_FAILED:
         return report("deploy-contract", "contract-read-failed", subject="deploy")
     return None
+
+
+# Transient, yet an immediate retry is wrong: interrupted is an operator's
+# cancel or stop, which a retry would undo, and fence is another project's
+# rollout in the shared namespace, which an immediate re-admission meets again.
+NEVER_RETRY = frozenset({("deploy-private", "interrupted"), ("deploy-private", "fence")})
+
+
+def automatic_retry(outcome, private, reason, env):
+    """Return the transient (family, code) of a refusal one automatic retry may follow, else None.
+
+    Only the first attempt of an automatic staging promotion passes
+    CD_RETRY_ALLOWED; its caller then re-admits and deploys exactly once more.
+    Exit 30 proves nothing was changed: the controller refused before any
+    mutation, or a public precondition stopped it from starting. The cause is
+    the catalogue's, so an unreported, unrecognized or operator reason, a
+    mutation (10, 20, 50) and an input error (40) never retry.
+    """
+    if (outcome != 30 or env.get("CD_RETRY_ALLOWED") != "true" or env.get("GITHUB_EVENT_NAME") != "push"
+            or env.get("CD_TARGET", STAGING) != STAGING):
+        return None
+    if private is not None:
+        family, code = "deploy-private", private
+    elif reason is not None:
+        family, code = "deploy-precondition", reason
+    else:
+        return None
+    if (family, code) in NEVER_RETRY:
+        return None
+    return (family, code) if entry(family, code).get("cause") == "transient" else None
 
 
 def main():
@@ -404,7 +440,16 @@ def main():
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
                 stream.write(f"disposition={OVERTAKEN}\n")
-    diagnostic = explain(outcome, reason, private, verification, recovery, release, site, raised)
+    retry = automatic_retry(outcome, private, reason, os.environ) if result != 0 else None
+    # The refusal stays fully explained; it is a warning while one retry follows.
+    diagnostic = explain(outcome, reason, private, verification, recovery, release, site, raised,
+                         level="warning" if retry else None)
+    if retry:
+        print(f"RETRY deployment reason={retry[0]}/{retry[1]}: refused before any change; "
+              "one automatic re-admission and deployment follow")
+        if os.environ.get("GITHUB_OUTPUT"):
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+                stream.write(f"retryable=true\ndisposition={RETRY_PENDING}\n")
     if skipped:
         print(RESULTS[DISABLED])
     if outcome == UNVERIFIED_COHORT:
@@ -432,6 +477,8 @@ def main():
             if diagnostic:
                 stream.write(diagnostic + "\n")
             stream.write(RESULTS[outcome] + "\n")
+            if retry:
+                stream.write("Automatic retry: one re-admission and deployment follow; their outcome counts.\n")
     if result == 0 and outcome == 0:
         # A fixed public state survives suppression without forwarding private output.
         print(RUNTIME_NOTICE)
@@ -444,7 +491,7 @@ def main():
         for component in sorted(GROUP):
             if value.get("components", {}).get(component, {}).get("state") == "withheld":
                 report("deploy-component", "deployed-compatibility-unqualified", subject="deploy", component=component)
-    if result == 0:
+    if result == 0 or retry:
         return 0
     return outcome if outcome in (10, 20, 30, 40, 50, UNVERIFIED_COHORT, CONTRACT_READ_FAILED) else 40
 

@@ -4,6 +4,7 @@ use std::sync::{
     Arc,
 };
 
+use sha2::{Digest as _, Sha256};
 use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
 
@@ -29,9 +30,22 @@ struct Journal {
     held: VecDeque<RetainedFrame>,
     bytes: usize,
     last_cursor: u64,
-    acknowledged: u64,
+    acknowledged: Option<(u64, [u8; 32])>,
     lost: usize,
     finished: bool,
+}
+
+impl Journal {
+    fn acknowledged_through(&self) -> u64 {
+        self.acknowledged.map_or(0, |(cursor, _)| cursor)
+    }
+}
+
+/// Evidence from the recorder ACK, kept together with the stream identity and cursor.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct RetainedOutputEvidence {
+    pub boundary: RetainedOutputBoundary,
+    pub acknowledged_payload_sha256: Option<[u8; 32]>,
 }
 
 pub(crate) struct OutputSnapshot {
@@ -144,24 +158,28 @@ impl OutputRetention {
                 .cloned()
                 .collect(),
             finished_and_acknowledged: journal.finished
-                && journal.acknowledged == journal.last_cursor,
+                && journal.acknowledged_through() == journal.last_cursor,
         })
     }
 
-    pub(crate) async fn recovery_boundary(&self) -> Option<RetainedOutputBoundary> {
+    pub(crate) async fn recovery_evidence(&self) -> Option<RetainedOutputEvidence> {
         let journal = self.journal.lock().await;
-        if journal.lost > 0 || journal.last_cursor == u64::MAX {
+        if self.legacy.load(Ordering::SeqCst) || journal.lost > 0 || journal.last_cursor == u64::MAX
+        {
             return None;
         }
         let first_retained = journal.held.front().map_or_else(
             || journal.last_cursor.saturating_add(1),
             |frame| frame.cursor,
         );
-        Some(RetainedOutputBoundary {
-            stream_id: self.stream_id.to_string(),
-            acknowledged_through: journal.acknowledged,
-            first_retained,
-            observed_through: journal.last_cursor,
+        Some(RetainedOutputEvidence {
+            boundary: RetainedOutputBoundary {
+                stream_id: self.stream_id.to_string(),
+                acknowledged_through: journal.acknowledged_through(),
+                first_retained,
+                observed_through: journal.last_cursor,
+            },
+            acknowledged_payload_sha256: journal.acknowledged.map(|(_, digest)| digest),
         })
     }
 
@@ -170,16 +188,26 @@ impl OutputRetention {
             return false;
         }
         let mut journal = self.journal.lock().await;
-        let retained_through = journal
-            .held
-            .back()
-            .map_or(journal.acknowledged, |frame| frame.cursor);
-        if cursor > retained_through {
+        if self.legacy.load(Ordering::SeqCst) {
             return false;
         }
-        if cursor <= journal.acknowledged {
+        let acknowledged = journal.acknowledged_through();
+        if cursor <= acknowledged {
             return true;
         }
+        let Ok(index) = usize::try_from(cursor - acknowledged - 1) else {
+            return false;
+        };
+        let Some(frame) = journal
+            .held
+            .get(index)
+            .filter(|frame| frame.cursor == cursor)
+        else {
+            return false;
+        };
+        // The wire prefix carries stream and cursor separately. Hash the same raw
+        // ACP payload that the recorder associates with that position.
+        let digest = Sha256::digest(&frame.bytes).into();
         while journal
             .held
             .front()
@@ -188,7 +216,7 @@ impl OutputRetention {
             let frame = journal.held.pop_front().expect("front checked above");
             journal.bytes -= frame.retained_bytes();
         }
-        journal.acknowledged = cursor;
+        journal.acknowledged = Some((cursor, digest));
         self.changed.send_replace(());
         true
     }

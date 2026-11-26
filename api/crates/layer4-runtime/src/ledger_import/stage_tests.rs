@@ -19,6 +19,76 @@ fn database(output: &Path) -> Connection {
 }
 
 #[tokio::test]
+async fn numbered_open_with_missing_or_moved_predecessor_keeps_import_held() {
+    use crate::mutation_journal::Operation;
+    use layer3_adapter::wire::{AgentCloseReceipt, AgentOpenReceipt};
+    use layer3_adapter::AgentProcessAction::{Close, Open};
+
+    for previous_workspace in [None, Some("different-workspace")] {
+        let fixture = fixture();
+        let config = &fixture.config;
+        let agent = AgentSlot::new("agent");
+        let opened = |incarnation, workspace| {
+            let cwd = crate::worktree::expected_path(&config.home, workspace, agent.as_str())
+                .to_string_lossy()
+                .into_owned();
+            let home = config
+                .agent_home(agent.as_str())
+                .to_string_lossy()
+                .into_owned();
+            let operation = Operation {
+                operation_id: Open.operation_id(agent.as_str(), incarnation),
+                request_sha256: "a".repeat(64),
+                payload_sha256: "b".repeat(64),
+                subject: Subject::OpenAgent {
+                    agent_id: agent.as_str().into(),
+                    cwd: cwd.clone(),
+                    home: home.clone(),
+                },
+            };
+            Record::started(config, &operation)
+                .unwrap()
+                .completed(&AgentOpenReceipt {
+                    operation_id: operation.operation_id,
+                    request_sha256: operation.request_sha256,
+                    agent_id: agent.clone(),
+                    cwd,
+                    home,
+                    conversation_id: None,
+                })
+                .unwrap()
+        };
+        journal(config, &opened(2, "workspace"));
+        if let Some(workspace) = previous_workspace {
+            journal(config, &opened(1, workspace));
+            let request = AgentCloseRequest::new(Close.operation_id(agent.as_str(), 1), agent);
+            let record = Record::started(config, &Operation::close_agent(&request))
+                .unwrap()
+                .completed(&AgentCloseReceipt {
+                    operation_id: request.operation_id,
+                    request_sha256: request.request_sha256,
+                    agent_id: request.agent_id,
+                })
+                .unwrap();
+            journal(config, &record);
+        }
+        assert_eq!(
+            crate::mutation_journal::active_agents(config)
+                .unwrap_err()
+                .code,
+            "agent_process_history_invalid"
+        );
+        let (plan, digest) = plan(&fixture);
+        let output = fixture.root.join("staged");
+        let error = stage::create(config.clone(), &plan, &digest, &output)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "agent_process_history_invalid");
+        assert!(!output.join("ready.json").exists());
+    }
+}
+
+#[tokio::test]
 async fn imported_terminal_bytes_and_unsigned_authority_survive_with_a_durable_hold() {
     let fixture = fixture();
     for fence in 1..=4097 {

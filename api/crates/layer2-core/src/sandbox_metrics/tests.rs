@@ -2,7 +2,7 @@ use super::*;
 use layer3_adapter::sandbox_metrics::{PhysicalSeries, Sample, SourceMetric};
 use std::collections::BTreeMap;
 
-fn binding(kind: BindingKind) -> Binding {
+pub(super) fn binding(kind: BindingKind) -> Binding {
     Binding {
         id: format!("{kind:?}"),
         schema_version: 1,

@@ -29,7 +29,7 @@ use super::sandbox_mongo::MongoSandboxStore;
 const NOW: &str = "2026-09-05T00:00:00Z";
 static DATABASE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-async fn database(prefix: &str) -> (Client, String, MongoSandboxStore) {
+pub(super) async fn database(prefix: &str) -> (Client, String, MongoSandboxStore) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
     let client = Client::with_uri_str(uri)
@@ -41,7 +41,7 @@ async fn database(prefix: &str) -> (Client, String, MongoSandboxStore) {
     (client, name, store)
 }
 
-fn sandbox(
+pub(super) fn sandbox(
     id: &str,
     owner: &str,
     name: &str,
@@ -163,7 +163,7 @@ fn workspace(sandbox: &Sandbox) -> Workspace {
     }
 }
 
-fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
+pub(super) fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
     Agent {
         id: AgentId(id.into()),
         worktree_id: WorktreeId(format!("wkt_{id}")),
@@ -190,6 +190,7 @@ fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
         ]),
         status,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),
@@ -333,7 +334,7 @@ async fn sandbox_operator_inventory_filters_pages_counts_and_reads_details() {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn operator_retirement_uses_the_shared_transaction_and_leaves_agents_for_teardown() {
     let (client, name, store) = database("retirement").await;
-    let target = sandbox(
+    let mut target = sandbox(
         "sbx_retire",
         "another-owner",
         "retire",
@@ -344,8 +345,33 @@ async fn operator_retirement_uses_the_shared_transaction_and_leaves_agents_for_t
     let working = agent(&target, "agt_still_working", AgentStatus::Working);
     store.create_agent(working.clone()).await.unwrap();
     let retirement = StoredSandboxRetirement::new(Arc::new(store.clone()));
+    let observed_revision = target.revision;
+    target.last_activity_at = "2026-09-06T00:00:00Z".into();
+    target.revision += 1;
+    store
+        .save_sandbox(observed_revision, target.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        retirement
+            .retire(&target.id, NOW.into(), Some(observed_revision))
+            .await,
+        Err(layer2_core::sandbox::OperatorError::InvalidState(_))
+    ));
+    assert_eq!(
+        store.get_sandbox(&target.id).await.unwrap(),
+        Some(target.clone())
+    );
+    assert!(store
+        .sandbox_events(&target.id, 0, 10)
+        .await
+        .unwrap()
+        .is_empty());
 
-    let result = retirement.retire(&target.id, NOW.into()).await.unwrap();
+    let result = retirement
+        .retire(&target.id, NOW.into(), Some(target.revision))
+        .await
+        .unwrap();
     assert!(result.changed);
     assert_eq!(result.sandbox.status, SandboxStatus::Retiring);
     assert_eq!(
@@ -361,7 +387,10 @@ async fn operator_retirement_uses_the_shared_transaction_and_leaves_agents_for_t
             to: SandboxStatus::Retiring,
         }
     );
-    let repeated = retirement.retire(&target.id, NOW.into()).await.unwrap();
+    let repeated = retirement
+        .retire(&target.id, NOW.into(), None)
+        .await
+        .unwrap();
     assert!(!repeated.changed);
     assert_eq!(
         store.sandbox_events(&target.id, 0, 10).await.unwrap().len(),

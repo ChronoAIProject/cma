@@ -9,7 +9,8 @@ from actions_cache_retention import BUDGET
 def retained_family(key):
     for prefix, name in (("buildkit-blob-", "shared_buildkit_blobs"), ("index-", "buildkit_indexes"),
                          ("cma-cd-cargo-v2-", "historical_cargo"), ("cma-cd-cargo-v3-", "historical_cargo"),
-                         ("cma-cd-cargo-v4-", "v4_cargo"), ("codeql-overlay-base-", "codeql_bases")):
+                         ("cma-cd-cargo-v4-", "v4_cargo"), ("codeql-overlay-base-", "codeql_bases"),
+                         ("v0-rust-build-Linux-x64-", "rust_ci_build"), ("v0-rust-lint-Linux-x64-", "rust_ci_lint")):
         if key.startswith(prefix):
             return name
     return "other"

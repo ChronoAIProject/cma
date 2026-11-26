@@ -1,6 +1,14 @@
 import type { ResolvedConfig } from '../config.js';
-import { ProtocolError } from '../errors.js';
-import { readBytes, requestResponse, withDeadline, type OperationOptions } from '../http.js';
+import { ProtocolError, ValidationError } from '../errors.js';
+import {
+  readBytes,
+  readJsonBody,
+  requestResponse,
+  requireSuccess,
+  send,
+  withDeadline,
+  type OperationOptions,
+} from '../http.js';
 import {
   command,
   input,
@@ -42,7 +50,7 @@ const mediaType = enumeration(
   'image/jpeg',
   'image/webp',
 );
-const content = (value: unknown): string => {
+const content = (value: unknown) => {
   const encoded = text(value);
   if (encoded.length === 0 || encoded.length > Math.ceil(maximumBytes / 3) * 4)
     throw new ProtocolError('artifact content must contain 1 byte through 1 MiB');
@@ -50,16 +58,20 @@ const content = (value: unknown): string => {
     const decoded = atob(encoded);
     if (decoded.length === 0 || decoded.length > maximumBytes || btoa(decoded) !== encoded)
       throw new Error('noncanonical content');
+    const bytes = new Uint8Array(decoded.length);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = decoded.charCodeAt(i);
+    return { encoded, bytes };
   } catch (cause) {
     throw new ProtocolError('artifact content must be canonical standard base64 within 1 MiB', {
       cause,
     });
   }
-  return encoded;
 };
 const publishRequest = object({ name, media_type: mediaType, content_base64: content });
 /** Explicitly selected content published to one Agent's current and future readers. */
-export type PublishAgentArtifactRequest = Output<typeof publishRequest>;
+export type PublishAgentArtifactRequest = Omit<Output<typeof publishRequest>, 'content_base64'> & {
+  readonly content_base64: string;
+};
 const metadata = object({
   id: artifactId,
   agent_id: text,
@@ -143,22 +155,41 @@ export function publishAgentArtifact(
   body: PublishAgentArtifactRequest,
   options: CommandOptions,
 ) {
-  input(publishRequest, body);
-  return read(
-    config,
-    collection(agentId),
-    (value) => {
-      const result = artifact(value, agentId);
-      if (
-        result.name !== body.name ||
-        result.media_type !== body.media_type ||
-        result.size_bytes !== atob(body.content_base64).length
-      )
-        throw new ProtocolError('published artifact did not match the request');
-      return result;
-    },
-    { ...command(options), method: 'POST', body, expectedStatus: 201 },
-  );
+  let selected: Output<typeof publishRequest>;
+  try {
+    selected = publishRequest(body);
+  } catch (cause) {
+    throw new ValidationError(cause instanceof Error ? cause.message : 'invalid request body', {
+      cause,
+    });
+  }
+  const path = collection(agentId);
+  const { encoded, bytes } = selected.content_base64;
+  // The transport can yield to caller callbacks before serializing the body.
+  const snapshot = {
+    name: selected.name,
+    media_type: selected.media_type,
+    content_base64: encoded,
+  };
+  const request = { ...command(options), method: 'POST', body: snapshot };
+  return withDeadline(config, request, async (signal, requestId) => {
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+    const sha256 = Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    const { response, metadata } = await send(config, path, request, signal, requestId);
+    await requireSuccess(response, 201, signal, metadata.requestId);
+    const result = artifact(await readJsonBody(response, signal), agentId);
+    if (
+      result.name !== snapshot.name ||
+      result.media_type !== snapshot.media_type ||
+      result.size_bytes !== bytes.length ||
+      result.sha256 !== sha256
+    ) {
+      throw new ProtocolError(
+        'The publication receipt did not match the selected artifact. Retry to check the same request.',
+      );
+    }
+    return result;
+  });
 }
 export function downloadAgentArtifact(
   config: ResolvedConfig,

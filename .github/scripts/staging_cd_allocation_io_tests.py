@@ -8,10 +8,11 @@ from unittest.mock import Mock, patch
 
 from staging_cd_allocation_io import (ALLOCATION_SECONDS, PUSH_RESERVE_SECONDS, PUSH_SECONDS, PUSH_SETTLEMENT_SECONDS,
                                       SETTLE_WAITS, VERIFY_RESERVE_SECONDS, AllocationGitHub, AllocationIO,
-                                      TransientRead, parallel_read)
+                                      TransientRead, UncertainPush, parallel_read)
 from staging_cd_allocation_snapshot import AllocationSnapshot
 from staging_cd_common import Refusal
 from staging_cd_github import GitHub, GitHubNotFound
+import ci_retry
 import staging_cd_github
 import staging_cd_allocation_io
 
@@ -96,6 +97,17 @@ class AllocationIOTests(unittest.TestCase):
         self.assertIs(AllocationIO(runner, clock=lambda: 0, sleep=Mock()).read(["gh", "api"]), outage)
         runner.assert_called_once()
 
+    def test_a_failed_read_keeps_the_wait_a_throttled_response_asked_for(self):
+        throttled = subprocess.CompletedProcess([], 1, "HTTP/2.0 429 Status\r\nRetry-After: 60\r\n\r\n{}", "")
+        outage = subprocess.CompletedProcess([], 1, "HTTP/2.0 503 Status\n\n{}", "")
+        reset = subprocess.CompletedProcess([], 1, "", "read tcp: connection reset by peer")
+        for result, wait in ((throttled, 60), (outage, None), (reset, None)):
+            io = AllocationIO(Mock(return_value=result), clock=lambda: 0, sleep=Mock(), rand=lambda: 0.0)
+            with self.subTest(wait=wait), self.assertRaises(TransientRead) as raised:
+                AllocationGitHub("fixture", io).request("pulls/1")
+            self.assertEqual(ci_retry.requested_wait(raised.exception), wait)
+            self.assertEqual(ci_retry.classify(raised.exception), ci_retry.TRANSIENT)
+
     def test_auth_and_missing_provenance_do_not_retry(self):
         for code in (401, 403, 404):
             runner = Mock(return_value=response(code, '{"status":"404"}'))
@@ -136,6 +148,28 @@ class AllocationIOTests(unittest.TestCase):
         with self.assertRaisesRegex(Refusal, "deadline"):
             late.write(["git", "push", "fixture"])
         runner.assert_not_called()
+
+    def test_only_a_started_push_marks_the_remote_as_possibly_written(self):
+        runner = Mock(return_value=Mock(returncode=0, stdout=""))
+        io = AllocationIO(runner, clock=lambda: 0)
+        io.read(["git", "ls-remote", "fixture"])
+        io.write(["git", "mktag"])
+        self.assertFalse(io.push_started)
+        # A push the budget refuses never starts, so nothing remote can exist.
+        late = AllocationIO(runner, clock=Mock(side_effect=[0, ALLOCATION_SECONDS - PUSH_RESERVE_SECONDS + 0.5]))
+        with self.assertRaisesRegex(Refusal, "deadline"):
+            late.write(["git", "push", "fixture"])
+        self.assertFalse(late.push_started)
+        for push in (runner, Mock(side_effect=subprocess.TimeoutExpired("git", PUSH_SECONDS))):
+            started = AllocationIO(push, clock=lambda: 0)
+            try:
+                started.write(["git", "push", "fixture"])
+            except UncertainPush:
+                pass
+            self.assertTrue(started.push_started)
+            started.runner = runner
+            started.write(["git", "mktag"])  # A later local write never clears it.
+            self.assertTrue(started.push_started)
 
     def test_retries_exhaust_and_uncertain_write_is_never_repeated(self):
         runner = Mock(side_effect=subprocess.TimeoutExpired("fixture", 5))

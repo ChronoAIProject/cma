@@ -7,6 +7,7 @@ import runpy
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -28,22 +29,107 @@ BSON_CEILING_TEST = ("store::sandbox_mongo_integration_tests::resource_access_te
                      "personal_agent_list_preserves_sources_near_the_bson_document_ceiling")
 FIRST_RESPONSE_TEST = ("store::usage_reports::tests::submission::"
                        "default_day_report_serves_four_hundred_sandboxes_without_polling")
+HISTORY_TEST = ("store::usage_reports::tests::history_batch::"
+                "seven_day_history_generates_and_reuses_complete_421_member_report")
 # The audit keeps its 30-second bound; competing fixtures must not consume its
 # resource window while it validates and promotes a full 10,000-row unit.
 ISOLATED_TESTS = (("--scale", SCALE_TEST), ("--owner-allocation", OWNER_ALLOCATION_TEST),
                   ("--audit-bounds", AUDIT_BOUNDS_TEST), ("--diagnostics", DIAGNOSTICS_TEST),
                   ("--scan-cooperation", SCAN_COOPERATION_TEST), ("--bson-ceiling", BSON_CEILING_TEST),
-                  ("--first-response", FIRST_RESPONSE_TEST))
+                  ("--first-response", FIRST_RESPONSE_TEST), ("--history", HISTORY_TEST))
 CLEANUP_FAILURE = 125
+DISCOVERY_TIMEOUT_SECONDS = 120
 SCHEDULE = runpy.run_path(str(Path(__file__).with_name("mongo-contract-schedule.py")))
 
 
+def discovery_diagnostics(group, proc=Path("/proc")):
+    """Report owned process states, never arguments, environment or output."""
+    rows = []
+    try:
+        for path in proc.iterdir():
+            if not path.name.isdecimal():
+                continue
+            try:
+                fields = (path / "stat").read_text().rsplit(")", 1)[1].split()
+                if int(fields[2]) != group:
+                    continue
+                rows.append({"pid": int(path.name), "state": fields[0],
+                             "name": (path / "comm").read_text().strip(),
+                             "wait": (path / "wchan").read_text().strip()})
+                if len(rows) == 64:
+                    break
+            except (OSError, ValueError, IndexError):
+                continue
+    except OSError:
+        pass
+    print(f"Mongo discovery processes: {json.dumps(rows)}", file=sys.stderr, flush=True)
+
+
+def archived_listing(command):
+    interrupted = 0
+
+    def interrupt(number, _frame):
+        nonlocal interrupted
+        interrupted = number
+
+    previous = {number: signal.signal(number, interrupt)
+                for number in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        for attempt in range(2):
+            if interrupted:
+                raise SystemExit(128 + interrupted)
+            # A fresh file prevents partial inventory from a stalled attempt
+            # reaching completeness checks, and avoids another output pipe.
+            with tempfile.TemporaryFile(mode="w+") as output:
+                child = subprocess.Popen(command, stdout=output, start_new_session=True)
+                try:
+                    try:
+                        deadline = time.monotonic() + DISCOVERY_TIMEOUT_SECONDS
+                        while child.poll() is None:
+                            if interrupted:
+                                raise SystemExit(128 + interrupted)
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise subprocess.TimeoutExpired(command, DISCOVERY_TIMEOUT_SECONDS)
+                            try:
+                                child.wait(timeout=min(0.1, remaining))
+                            except subprocess.TimeoutExpired:
+                                pass
+                    except subprocess.TimeoutExpired:
+                        print(f"Mongo discovery timed out (attempt {attempt + 1}/2)",
+                              file=sys.stderr, flush=True)
+                        discovery_diagnostics(child.pid)
+                        if attempt == 1:
+                            raise
+                        continue
+                    if child.returncode:
+                        raise subprocess.CalledProcessError(child.returncode, command)
+                    output.seek(0)
+                    return output.read()
+                finally:
+                    # Discovery has no fixtures or test effects to settle.
+                    # Kill the complete owned group before retry or cancellation.
+                    try:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    child.wait(timeout=5)
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+        if interrupted:
+            raise SystemExit(128 + interrupted)
+
+
 def partition_plan(script):
-    listing = subprocess.run(
-        ["bash", str(script), "--list"], check=True, stdout=subprocess.PIPE,
-        text=True,
-    )
-    metadata = json.loads(listing.stdout)
+    command = ["bash", str(script), "--list"]
+    if os.environ.get("CMA_NEXTEST_REUSE") == "1":
+        listing = archived_listing(command)
+    else:
+        # Local discovery may first compile the workspace. Its build time is
+        # outside the short budget for listing already archived CI binaries.
+        listing = subprocess.run(command, check=True, stdout=subprocess.PIPE, text=True).stdout
+    metadata = json.loads(listing)
     runpy.run_path(str(Path(__file__).with_name("mongo-contract-completeness.py")))["check_metadata"](metadata)
     selected = [
         (name, test)
@@ -91,12 +177,13 @@ def run(script, shard=None):
         shard_work(1, shard)  # Reject malformed coordinates before enumeration.
         count, costs = partition_plan(script)
         isolated_tests, partitions = shard_work(count, shard, costs)
-    except (OSError, subprocess.CalledProcessError, ValueError, KeyError, TypeError) as error:
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
         print(f"Cannot enumerate Mongo contracts: {error}", file=sys.stderr)
         return 1
     children = []
     interrupted = 0
     cleanup_failed = False
+    fixture_env = dict(os.environ, CMA_MONGO_COORDINATOR_SHARD=shard or "all")
     print(f"Mongo shard {shard or 'all'}: {len(isolated_tests)} isolated contracts, "
           f"partitions {partitions} of {count}", flush=True)
 
@@ -112,7 +199,7 @@ def run(script, shard=None):
         for option, _ in isolated_tests:
             if interrupted:
                 break
-            isolated = subprocess.Popen(["bash", str(script), option], start_new_session=True)
+            isolated = subprocess.Popen(["bash", str(script), option], env=fixture_env, start_new_session=True)
             children.append(isolated)
             while not interrupted and isolated.poll() is None:
                 time.sleep(0.1)
@@ -132,7 +219,7 @@ def run(script, shard=None):
             while not interrupted and active < CONCURRENT_FIXTURES and next_partition < len(partitions):
                 partition = f"count:{partitions[next_partition]}/{count}"
                 children.append(subprocess.Popen(
-                    ["bash", str(script), partition], start_new_session=True,
+                    ["bash", str(script), partition], env=fixture_env, start_new_session=True,
                 ))
                 next_partition += 1
                 active += 1

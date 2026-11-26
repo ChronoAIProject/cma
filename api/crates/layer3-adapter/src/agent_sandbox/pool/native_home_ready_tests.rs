@@ -13,7 +13,7 @@ async fn pending_fixture() -> (Fixture, NativePoolClaim, usize) {
 }
 
 async fn observed_pending(fixture: &Fixture, floor: usize) {
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(HANG_GUARD, async {
         loop {
             let reads = fixture.state.lock().unwrap().calls[floor..]
                 .iter()
@@ -54,16 +54,31 @@ fn writes_once(fixture: &Fixture, floor: usize, claim: &NativePoolClaim) {
         .all(|(call, _)| !call.contains("persistentvolumeclaims") || call.starts_with("GET ")));
 }
 
+// Hang guards only: each awaited adoption finishes promptly once the fixture
+// state allows it. A tight wall-clock bound fails on a loaded runner without
+// proving anything more than this one does.
+const HANG_GUARD: Duration = Duration::from_secs(30);
+
 #[tokio::test]
 async fn native_home_readiness_deadline_has_typed_timeout_without_replaying_effects() {
     let (fixture, claim, floor) = pending_fixture().await;
     let error = fixture.client.adopt_home(&claim).await.unwrap_err();
-    assert!(matches!(
-        error,
-        crate::AdapterError::NativeClaimNotReady(
-            crate::agent_sandbox::NativeClaimGuardReason::Pending
-        )
-    ));
+    // The wall-clock deadline can land between polls (Pending, after a
+    // validated pending read) or during an outstanding fixture read
+    // (TimedOut); a loaded runner makes the second likelier. That exact
+    // classification is proven deterministically with a paused clock in
+    // claim_guard/tests.rs. Here the contract is a typed not-ready refusal
+    // that never replays adoption writes.
+    assert!(
+        matches!(
+            error,
+            crate::AdapterError::NativeClaimNotReady(
+                crate::agent_sandbox::NativeClaimGuardReason::Pending
+                    | crate::agent_sandbox::NativeClaimGuardReason::TimedOut
+            )
+        ),
+        "{error:?}"
+    );
     writes_once(&fixture, floor, &claim);
 }
 
@@ -82,7 +97,7 @@ async fn native_home_waits_for_annotation_generation_in_one_adoption_without_rep
         assert_eq!(member["status"]["conditions"][0]["observedGeneration"], 1);
         member["status"]["conditions"][0]["observedGeneration"] = json!(2);
     }
-    let home = tokio::time::timeout(Duration::from_secs(2), adopting)
+    let home = tokio::time::timeout(HANG_GUARD, adopting)
         .await
         .unwrap()
         .unwrap()
@@ -148,7 +163,7 @@ async fn native_home_pending_observation_rejects_authority_changes_without_repla
         }
         assert!(
             matches!(
-                tokio::time::timeout(Duration::from_secs(2), adopting)
+                tokio::time::timeout(HANG_GUARD, adopting)
                     .await
                     .unwrap()
                     .unwrap(),
@@ -168,11 +183,24 @@ async fn native_home_pending_observation_propagates_dependency_errors_immediatel
     let adopting = tokio::spawn(async move { client.adopt_home(&original).await });
     observed_pending(&fixture, floor).await;
     fixture.state.lock().unwrap().rows.remove(MEMBER);
-    let error = tokio::time::timeout(Duration::from_secs(2), adopting)
+    let removed = tokio::time::Instant::now();
+    let error = tokio::time::timeout(HANG_GUARD, adopting)
         .await
         .unwrap()
         .unwrap()
         .unwrap_err();
+    // The hang guard is loose, so these assertions carry "immediately": a
+    // dependency error that adoption swallowed until its readiness deadline
+    // would surface as a typed not-ready refusal, after that deadline.
+    assert!(
+        !matches!(error, crate::AdapterError::NativeClaimNotReady(_)),
+        "{error:?}"
+    );
+    assert!(
+        removed.elapsed() < Duration::from_secs(5),
+        "dependency error took {:?}",
+        removed.elapsed()
+    );
     assert!(!error
         .to_string()
         .contains("initialization is still pending"));
@@ -186,17 +214,24 @@ async fn native_home_requires_initializer_ready_before_returning_attachment() {
     fixture.state.lock().unwrap().rows.get_mut(MEMBER).unwrap()["status"]["conditions"][0]
         ["status"] = json!("False");
     let started = tokio::time::Instant::now();
-    assert!(matches!(
-        tokio::time::timeout(
-            std::time::Duration::from_secs(6),
-            fixture.client.adopt_home(&claim)
-        )
+    // The outer bound only guards against a hang; adoption's own readiness
+    // deadline ends the wait. As in the deadline tests above, that deadline
+    // can land between polls (Pending) or during an outstanding fixture read
+    // (TimedOut), and a loaded runner makes the second likelier. The exact
+    // classification is proven with a paused clock in claim_guard/tests.rs.
+    let refused = tokio::time::timeout(HANG_GUARD, fixture.client.adopt_home(&claim))
         .await
-        .unwrap(),
-        Err(crate::AdapterError::NativeClaimNotReady(
-            crate::agent_sandbox::NativeClaimGuardReason::Pending
-        ))
-    ));
+        .unwrap();
+    assert!(
+        matches!(
+            refused,
+            Err(crate::AdapterError::NativeClaimNotReady(
+                crate::agent_sandbox::NativeClaimGuardReason::Pending
+                    | crate::agent_sandbox::NativeClaimGuardReason::TimedOut
+            ))
+        ),
+        "{refused:?}"
+    );
     assert!(started.elapsed() >= std::time::Duration::from_secs(5));
     fixture.state.lock().unwrap().rows.get_mut(MEMBER).unwrap()["status"]["conditions"][0]
         ["status"] = json!("True");

@@ -1,3 +1,6 @@
+#[path = "ownership_retry_desktop_tests.rs"]
+mod desktop;
+
 use super::ownership_retry_wake_tests::fixture;
 use super::*;
 use crate::sandbox::ownership_retry_hint::{

@@ -22,6 +22,7 @@ mod wake_tests;
 
 mod commit_tests;
 pub(super) mod failed_result_tests;
+mod reopen_deadline_tests;
 
 fn checkpoint(epoch: u64) -> SandboxCheckpointRef {
     let archive = b"durable conversation archive".to_vec();
@@ -407,6 +408,7 @@ async fn retirement_result_uses_atomic_admission_on_every_replica_after_retry_an
     first
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision: before.revision,
             sandbox: Box::new(retiring.clone()),
             event_at: MINUTE.into(),

@@ -3,20 +3,20 @@ use super::*;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn legacy_retirement_preserves_live_lease_and_fences_stale_worker() {
-    let (client, name, store, _, profile) = fixture(1).await;
-    reconcile(&store, &profile).await;
+    let (client, name, store, _, profile, clock) = fixture(1).await;
+    reconcile(&store, &profile, clock).await;
     let old = store
-        .claim_warmup_work(stamp(0).as_str(), stamp(60).as_str())
+        .claim_warmup_work(clock.stamp(0).as_str(), clock.stamp(60).as_str())
         .await
         .unwrap()
         .unwrap();
     assert!(store
-        .claim_legacy_warm_cleanup(stamp(0).as_str(), stamp(60).as_str())
+        .claim_legacy_warm_cleanup(clock.stamp(0).as_str(), clock.stamp(60).as_str())
         .await
         .unwrap()
         .is_none());
     store
-        .retire_legacy_warmups(stamp(0).as_str())
+        .retire_legacy_warmups(clock.stamp(0).as_str())
         .await
         .unwrap();
     let retired = store.warm_sandbox(&old.record.id).await.unwrap().unwrap();
@@ -24,12 +24,14 @@ async fn legacy_retirement_preserves_live_lease_and_fences_stale_worker() {
     assert_eq!(retired.revision, old.record.revision + 1);
     assert_eq!(retired.plan, old.record.plan);
     assert!(store
-        .claim_legacy_warm_cleanup(stamp(0).as_str(), stamp(60).as_str())
+        .claim_legacy_warm_cleanup(clock.stamp(0).as_str(), clock.stamp(60).as_str())
         .await
         .unwrap()
         .is_none());
     assert!(matches!(
-        store.renew_warmup_work(&old, stamp(60).as_str()).await,
+        store
+            .renew_warmup_work(&old, clock.stamp(60).as_str())
+            .await,
         Err(SandboxStoreError::Conflict)
     ));
     assert!(matches!(
@@ -37,15 +39,15 @@ async fn legacy_retirement_preserves_live_lease_and_fences_stale_worker() {
             .finish_warmup_work(
                 &old,
                 old.record.clone(),
-                stamp(0).as_str(),
-                stamp(0).as_str()
+                clock.stamp(0).as_str(),
+                clock.stamp(0).as_str()
             )
             .await,
         Err(SandboxStoreError::Conflict)
     ));
     // A restart/retry neither creates a replacement nor changes authority again.
     store
-        .retire_legacy_warmups(stamp(0).as_str())
+        .retire_legacy_warmups(clock.stamp(0).as_str())
         .await
         .unwrap();
     assert_eq!(
@@ -54,7 +56,7 @@ async fn legacy_retirement_preserves_live_lease_and_fences_stale_worker() {
     );
     expire(&store, &old.record.id).await;
     let cleanup = store
-        .claim_legacy_warm_cleanup(stamp(60).as_str(), stamp(120).as_str())
+        .claim_legacy_warm_cleanup(clock.stamp(60).as_str(), clock.stamp(120).as_str())
         .await
         .unwrap()
         .unwrap();
@@ -62,15 +64,20 @@ async fn legacy_retirement_preserves_live_lease_and_fences_stale_worker() {
     let mut next = cleanup.record.clone();
     next.state = WarmSandboxState::Retired;
     store
-        .finish_warmup_work(&cleanup, next, stamp(60).as_str(), stamp(60).as_str())
+        .finish_warmup_work(
+            &cleanup,
+            next,
+            clock.stamp(60).as_str(),
+            clock.stamp(60).as_str(),
+        )
         .await
         .unwrap();
     store
-        .retire_legacy_warmups(stamp(60).as_str())
+        .retire_legacy_warmups(clock.stamp(60).as_str())
         .await
         .unwrap();
     assert!(store
-        .claim_legacy_warm_cleanup(stamp(60).as_str(), stamp(120).as_str())
+        .claim_legacy_warm_cleanup(clock.stamp(60).as_str(), clock.stamp(120).as_str())
         .await
         .unwrap()
         .is_none());
@@ -81,13 +88,13 @@ async fn legacy_retirement_preserves_live_lease_and_fences_stale_worker() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn default_store_admission_never_claims_legacy_ready_rows_and_cleanup_keeps_claimed_rows() {
-    let (client, name, fixture_store, _, profile) = fixture(2).await;
-    reconcile(&fixture_store, &profile).await;
-    let _ = make_ready(&fixture_store).await;
-    let _ = make_ready(&fixture_store).await;
+    let (client, name, fixture_store, _, profile, clock) = fixture(2).await;
+    reconcile(&fixture_store, &profile, clock).await;
+    let _ = make_ready(&fixture_store, clock).await;
+    let _ = make_ready(&fixture_store, clock).await;
     // Simulate the old version's already committed ownership transfer.
     let SandboxAdmissionResult::Created(claimed) = fixture_store
-        .admit_sandbox(admission("sbx_old", "old-version-handoff", 10))
+        .admit_sandbox(admission("sbx_old", "old-version-handoff", 10, clock))
         .await
         .unwrap()
     else {
@@ -104,7 +111,7 @@ async fn default_store_admission_never_claims_legacy_ready_rows_and_cleanup_keep
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     assert!(store.warm_runtime_version.is_none());
     let SandboxAdmissionResult::Created(fresh) = store
-        .admit_sandbox(admission("sbx_new", "new-version-admission", 10))
+        .admit_sandbox(admission("sbx_new", "new-version-admission", 10, clock))
         .await
         .unwrap()
     else {
@@ -113,7 +120,7 @@ async fn default_store_admission_never_claims_legacy_ready_rows_and_cleanup_keep
     assert_eq!(fresh.id.as_str(), "sbx_new");
     assert!(fresh.runtime.is_none());
     store
-        .retire_legacy_warmups(stamp(0).as_str())
+        .retire_legacy_warmups(clock.stamp(0).as_str())
         .await
         .unwrap();
     assert_eq!(
@@ -136,13 +143,13 @@ async fn default_store_admission_never_claims_legacy_ready_rows_and_cleanup_keep
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn concurrent_legacy_retirement_and_old_admission_never_share_cleanup_authority() {
-    let (client, name, store, _, profile) = fixture(1).await;
-    reconcile(&store, &profile).await;
-    let id = make_ready(&store).await;
-    let at = stamp(0);
+    let (client, name, store, _, profile, clock) = fixture(1).await;
+    reconcile(&store, &profile, clock).await;
+    let id = make_ready(&store, clock).await;
+    let at = clock.stamp(0);
     let (retirement, admission) = tokio::join!(
         store.retire_legacy_warmups(&at),
-        store.admit_sandbox(admission("sbx_racing", "race-handoff", 10))
+        store.admit_sandbox(admission("sbx_racing", "race-handoff", 10, clock))
     );
     retirement.unwrap();
     let SandboxAdmissionResult::Created(created) = admission.unwrap() else {
@@ -152,7 +159,7 @@ async fn concurrent_legacy_retirement_and_old_admission_never_share_cleanup_auth
     if created.id == id {
         assert_eq!(old.state, WarmSandboxState::Claimed);
         assert!(store
-            .claim_legacy_warm_cleanup(stamp(60).as_str(), stamp(120).as_str())
+            .claim_legacy_warm_cleanup(clock.stamp(60).as_str(), clock.stamp(120).as_str())
             .await
             .unwrap()
             .is_none());
@@ -161,7 +168,7 @@ async fn concurrent_legacy_retirement_and_old_admission_never_share_cleanup_auth
         assert!(store.get_sandbox(&id).await.unwrap().is_none());
         assert_eq!(
             store
-                .claim_legacy_warm_cleanup(stamp(60).as_str(), stamp(120).as_str())
+                .claim_legacy_warm_cleanup(clock.stamp(60).as_str(), clock.stamp(120).as_str())
                 .await
                 .unwrap()
                 .unwrap()

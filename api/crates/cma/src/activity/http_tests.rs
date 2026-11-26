@@ -336,3 +336,91 @@ async fn configured_audit_sampling_preserves_default_reads_and_all_refusals_muta
         assert_eq!(store.records.lock().unwrap().len(), before + 1);
     }
 }
+
+#[tokio::test]
+async fn typed_usage_view_probe_preserves_legacy_success_and_other_failures_in_audit() {
+    use axum::{response::IntoResponse, routing::post};
+    use layer1_public::rest::UsageReportViewDisabled;
+    use layer2_core::ActivityOutcome;
+
+    async fn disabled() -> impl IntoResponse {
+        (
+            axum::Extension(UsageReportViewDisabled),
+            StatusCode::NOT_IMPLEMENTED,
+        )
+    }
+
+    let store = Arc::new(Store::default());
+    let app = Router::new()
+        .route("/api/v1/admin/usage/metrics/view", get(disabled))
+        .route("/api/v1/admin/usage/metrics/initial/view", post(disabled))
+        .route(
+            "/api/v1/admin/usage/metrics/initial/reports",
+            post(disabled),
+        )
+        .route(
+            "/api/v1/admin/usage/metrics/reports",
+            post(|| async { StatusCode::ACCEPTED }),
+        )
+        .route("/generic", get(|| async { StatusCode::NOT_IMPLEMENTED }))
+        .route(
+            "/unavailable",
+            get(|| async { StatusCode::SERVICE_UNAVAILABLE }),
+        )
+        .route("/forbidden", get(|| async { StatusCode::FORBIDDEN }))
+        .layer(middleware::from_fn_with_state(
+            ActivityRecorder::new(ActivityService::new(store.clone())),
+            super::record,
+        ));
+
+    for (method, path, status) in [
+        (
+            "GET",
+            "/api/v1/admin/usage/metrics/view",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            "POST",
+            "/api/v1/admin/usage/metrics/initial/view",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            "POST",
+            "/api/v1/admin/usage/metrics/reports",
+            StatusCode::ACCEPTED,
+        ),
+        (
+            "POST",
+            "/api/v1/admin/usage/metrics/initial/reports",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        ("GET", "/generic", StatusCode::NOT_IMPLEMENTED),
+        ("GET", "/unavailable", StatusCode::SERVICE_UNAVAILABLE),
+        ("GET", "/forbidden", StatusCode::FORBIDDEN),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status);
+    }
+    let records = store.records.lock().unwrap();
+    let outcomes: Vec<_> = records.iter().map(|record| &record.outcome).collect();
+    assert_eq!(
+        outcomes,
+        [
+            &ActivityOutcome::Succeeded,
+            &ActivityOutcome::Failed("501".into()),
+            &ActivityOutcome::Failed("501".into()),
+            &ActivityOutcome::Failed("503".into()),
+            &ActivityOutcome::Refused("403".into()),
+        ]
+    );
+}

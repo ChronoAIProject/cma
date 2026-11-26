@@ -9,6 +9,9 @@ function Probe() {
   return (
     <>
       <span>{value.status}</span>
+      <output>
+        {value.managedTelegramSetup ? 'managed-setup-enabled' : 'managed-setup-disabled'}
+      </output>
       <span>{value.authoring?.platforms[0]?.id}</span>
       <button onClick={value.retry}>Retry</button>
     </>
@@ -115,4 +118,18 @@ it('does not show a previous owner response after identity changes', async () =>
     complete(response({ relay_authoring: { platforms: [{ id: 'old-owner' }] } })),
   );
   expect(screen.queryByText('old-owner')).not.toBeInTheDocument();
+});
+
+it.each([
+  [{ platforms: [{ id: 'telegram', connection_methods: ['managed_create'] }] }, true],
+  [{ platforms: [{ id: 'telegram', connection_methods: ['existing_credential'] }] }, false],
+  [{ platforms: [] }, false],
+  [{}, false],
+])('uses explicit managed setup discovery (%j)', async (capabilities, enabled) => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(capabilities)));
+  render(<Portal owner="alice" />);
+  await screen.findAllByText('legacy');
+  expect(
+    screen.getAllByText(enabled ? 'managed-setup-enabled' : 'managed-setup-disabled'),
+  ).toHaveLength(2);
 });

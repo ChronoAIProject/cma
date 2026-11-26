@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 import os
 import time
 
-from cd_target import branch as target_branch, workflows as target_workflows
+from cd_target import (PRODUCTION, STAGING, TARGETS, branch as target_branch,
+                       workflows as target_workflows)
 from ci_outcome import error_site, report
 from staging_cd_common import matches, require
 
@@ -11,15 +12,23 @@ ADMISSION_SECONDS = 120
 BOOTSTRAP_ADMISSION_SECONDS = 45
 BOOTSTRAP_TOTAL_SECONDS = 600
 RELEASE_TOTAL_SECONDS = 990
+# A production rollout takes far longer than staging's release budget. Only a
+# production release requests this total; every other request is unchanged.
+PRODUCTION_RELEASE_TOTAL_SECONDS = 3600
 CONTROLLER_TOTAL_ENV = "CD_CONTROLLER_TOTAL_SECONDS"
 TERMINATION_GRACE_SECONDS = 15
+# A release controller lives at most its total from admission, then the grace.
 WATCHDOG_SECONDS = RELEASE_TOTAL_SECONDS + TERMINATION_GRACE_SECONDS
+PRODUCTION_WATCHDOG_SECONDS = PRODUCTION_RELEASE_TOTAL_SECONDS + TERMINATION_GRACE_SECONDS
 ADMISSION_FAILURE = "admission-time"
 
 
-def controller_seconds(mode):
+def controller_seconds(mode, target=STAGING):
     require(mode in ("release", "bootstrap"), "Unknown deployment mode")
-    return RELEASE_TOTAL_SECONDS if mode == "release" else BOOTSTRAP_TOTAL_SECONDS
+    require(target in TARGETS, "Unknown deployment target")
+    if mode == "bootstrap":
+        return BOOTSTRAP_TOTAL_SECONDS
+    return PRODUCTION_RELEASE_TOTAL_SECONDS if target == PRODUCTION else RELEASE_TOTAL_SECONDS
 
 
 def timestamp(now=None):

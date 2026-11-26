@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { createClient } from '@cma/client';
+import { TransportError, createClient } from '@cma/client';
 import { createRestWebClient } from '../rest';
 
 const feature = {
@@ -54,7 +54,7 @@ it.each(['late success', 'deadline'] as const)(
     );
     expect(published).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(3999);
+    await vi.advanceTimersByTimeAsync(9999);
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(transportSignal?.aborted).toBe(false);
     const fresh = client.files!.environment!('agent-a');
@@ -69,3 +69,34 @@ it.each(['late success', 'deadline'] as const)(
     expect(withdrawn).toHaveBeenCalledTimes(1);
   },
 );
+
+it('returns a healthy environment read that outlasts the browser control bound', async () => {
+  vi.useFakeTimers();
+  const fetch = vi.fn(
+    () =>
+      new Promise<Response>((resolve) => {
+        setTimeout(() => resolve(Response.json(environment(3))), 6000);
+      }),
+  );
+  const client = createRestWebClient(createClient({ baseUrl: 'https://fixture.invalid', fetch }));
+  const read = client.files!.environment!('agent-a');
+  const settled = vi.fn();
+  void read.then(settled, settled);
+  await vi.advanceTimersByTimeAsync(5999);
+  expect(settled).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(read).resolves.toMatchObject({ policy_revision: 3 });
+});
+
+it('reports a missed environment budget as a retryable timeout, not unavailability', async () => {
+  vi.useFakeTimers();
+  const fetch = vi.fn(() => new Promise<Response>(() => {}));
+  const client = createRestWebClient(createClient({ baseUrl: 'https://fixture.invalid', fetch }));
+  const read = client.files!.environment!('agent-a');
+  const failure = read.catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(9999);
+  await vi.advanceTimersByTimeAsync(1);
+  const error = await failure;
+  expect(error).toBeInstanceOf(TransportError);
+  expect(error).toMatchObject({ name: 'TimeoutError', isRetryable: true });
+});

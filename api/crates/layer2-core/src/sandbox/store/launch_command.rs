@@ -103,14 +103,22 @@ where
         command: SandboxLaunchCommand,
     ) -> Result<SandboxLaunchCommandResult, SandboxStoreError> {
         let mut command = command;
-        command.managed_runtime_version = self.managed_runtime_version().map(str::to_owned);
+        command.managed_runtime_version = self.managed_runtime_version();
         validate_command(&command)?;
         for _ in 0..COMMAND_CAS_ATTEMPTS {
+            let release = self.capture_released_runtime();
             let current = self
                 .get_sandbox(&command.sandbox_id)
                 .await?
                 .filter(|sandbox| sandbox.owner == command.owner)
                 .ok_or(SandboxStoreError::NotFound)?;
+            command.managed_runtime_version = release
+                .as_ref()
+                .and_then(|release| {
+                    self.managed_runtime_for_release(&current, release)
+                        .map(|(_, target)| target)
+                })
+                .map(str::to_owned);
             current.validate().map_err(|error| {
                 SandboxStoreError::Corrupt(format!("stored sandbox is invalid: {error}"))
             })?;
@@ -129,6 +137,7 @@ where
             match self
                 .commit(SandboxTransaction::SaveSandboxAndAppend {
                     command_revival: None,
+                    released_runtime: release,
                     expected_revision,
                     sandbox: Box::new(sandbox.clone()),
                     event_at: command.requested_at.clone(),

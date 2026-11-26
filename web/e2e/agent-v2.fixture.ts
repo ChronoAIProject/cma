@@ -34,6 +34,9 @@ export class LocalAgentV2 {
   readonly errors: string[] = [];
   readonly streams = new Set<ServerResponse>();
   enabled = true;
+  externalApprovals = false;
+  approvalReviewAllowed = true;
+  approvalPolicyAvailable = true;
   owner = 'local-owner';
   holdInput = false;
   loseInput = false;
@@ -86,6 +89,13 @@ export class LocalAgentV2 {
         },
       }),
     );
+  }
+
+  async routeSignOut(page: Page, onSignOut: () => void) {
+    await page.route(`${this.baseURL}/auth/logout`, (route) => {
+      onSignOut();
+      return route.fulfill({ status: 303, headers: { location: '/' } });
+    });
   }
 
   async close(page: Page) {
@@ -242,6 +252,20 @@ export class LocalAgentV2 {
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse) {
+    if (
+      this.externalApprovals &&
+      String(request.headers.prefer ?? '')
+        .split(',')
+        .some((token) => token.trim() === 'cma-external-approval-v1')
+    ) {
+      response.setHeader('Preference-Applied', 'cma-external-approval-v1');
+      if (this.approvalPolicyAvailable)
+        response.setHeader('CMA-Approval-Review-Origin', 'https://identity.example.test');
+      response.setHeader(
+        'CMA-External-Approval-Action',
+        this.approvalReviewAllowed ? 'review' : 'none',
+      );
+    }
     response.setHeader('Access-Control-Allow-Origin', this.baseURL);
     response.setHeader('Access-Control-Allow-Credentials', 'true');
     response.setHeader(
@@ -249,7 +273,10 @@ export class LocalAgentV2 {
       'content-type, x-request-id, last-event-id, idempotency-key, prefer',
     );
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    response.setHeader('Access-Control-Expose-Headers', 'x-cma-response-id, x-cma-command-id');
+    response.setHeader(
+      'Access-Control-Expose-Headers',
+      'x-cma-response-id, x-cma-command-id, Preference-Applied, CMA-Approval-Review-Origin, CMA-External-Approval-Action',
+    );
     if (request.method === 'OPTIONS') return response.end();
     const url = new URL(request.url!, 'http://localhost');
     const path = url.pathname;

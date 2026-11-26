@@ -13,6 +13,7 @@ mod payload;
 pub(crate) struct UsageWorkers {
     store: Arc<MongoSandboxStore>,
     exporter: Option<Exporter>,
+    usage_exporter: Option<crate::sandbox_usage_export::UsageExporter>,
 }
 impl UsageWorkers {
     pub(crate) fn new(
@@ -25,10 +26,24 @@ impl UsageWorkers {
             .clone()
             .map(|config| Exporter::new(store.clone(), config))
             .transpose()?;
-        Ok(Self { store, exporter })
+        let usage_exporter = crate::sandbox_usage_export::UsageExporter::from_config(
+            &store,
+            config.usage_export.as_ref(),
+        )?;
+        Ok(Self {
+            store,
+            exporter,
+            usage_exporter,
+        })
     }
     pub(crate) fn spawn(self, shutdown: &mut crate::shutdown::ShutdownCoordinator) {
+        if let Some(projection) = self.store.spawn_usage_projection(shutdown.subscribe()) {
+            shutdown.push(projection);
+        }
         shutdown.push(self.store.spawn_usage_meter(shutdown.subscribe()));
+        if let Some(exporter) = self.usage_exporter {
+            shutdown.push(exporter.spawn(shutdown.subscribe()));
+        }
         if let Some(exporter) = self.exporter {
             shutdown.push(exporter.spawn(shutdown.subscribe()));
         }

@@ -173,3 +173,7 @@ mod tests {
 
 mod signals;
 pub(crate) use signals::shutdown_signal;
+
+#[path = "shutdown/contained.rs"]
+mod contained;
+pub(crate) use contained::serve_contained;

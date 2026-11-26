@@ -17,8 +17,10 @@ pub(super) struct RuntimeEndpoint {
     base: Url,
     secure: bool,
     control_token: Option<String>,
+    accept: Option<&'static str>,
     native_identity: Option<NativeRuntimeIdentity>,
     native_binding: Option<(crate::RuntimeHandle, crate::agent_sandbox::PodBinding)>,
+    direct_receiver: Option<(crate::RuntimeHandle, crate::RetirementPod)>,
 }
 
 impl RuntimeEndpoint {
@@ -85,8 +87,10 @@ impl RuntimeEndpoint {
             base: parsed,
             secure,
             control_token: None,
+            accept: None,
             native_binding: None,
             native_identity: None,
+            direct_receiver: None,
         })
     }
 
@@ -97,6 +101,15 @@ impl RuntimeEndpoint {
 
     pub(super) fn control_token(&self) -> Option<&str> {
         self.control_token.as_deref()
+    }
+
+    pub(super) fn with_accept(mut self, accept: &'static str) -> Self {
+        self.accept = Some(accept);
+        self
+    }
+
+    pub(super) fn accept(&self) -> Option<&'static str> {
+        self.accept
     }
 
     pub(super) fn with_native_binding(
@@ -112,6 +125,30 @@ impl RuntimeEndpoint {
         &self,
     ) -> Option<&(crate::RuntimeHandle, crate::agent_sandbox::PodBinding)> {
         self.native_binding.as_ref()
+    }
+
+    pub(super) fn with_direct_receiver(
+        mut self,
+        handle: &crate::RuntimeHandle,
+        binding: &crate::agent_sandbox::PodBinding,
+    ) -> Self {
+        self.direct_receiver = crate::RetirementPod::try_from(binding)
+            .ok()
+            .map(|pod| (handle.clone(), pod));
+        self
+    }
+
+    pub(super) fn retirement_receiver(
+        &self,
+    ) -> Option<(crate::RuntimeHandle, crate::RetirementPod)> {
+        self.native_binding
+            .as_ref()
+            .and_then(|(handle, binding)| {
+                crate::RetirementPod::try_from(binding)
+                    .ok()
+                    .map(|pod| (handle.clone(), pod))
+            })
+            .or_else(|| self.direct_receiver.clone())
     }
 
     pub(super) fn with_native_identity(mut self, identity: NativeRuntimeIdentity) -> Self {
@@ -151,6 +188,13 @@ impl RuntimeEndpoint {
 
     pub(super) fn capacity_recovery(&self, agent_id: &str) -> crate::Result<Url> {
         self.with_path(&["runtime", "agents", agent_id, "capacity-recovery"], false)
+    }
+
+    pub(super) fn stale_turn(&self, agent_id: &str, action: &str) -> crate::Result<Url> {
+        self.with_path(
+            &["runtime", "agents", agent_id, "stale-turn", action],
+            false,
+        )
     }
 
     pub(super) fn history(&self, agent_id: &str) -> crate::Result<Url> {

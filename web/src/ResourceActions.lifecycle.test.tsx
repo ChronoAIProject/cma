@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { useResourceActions } from './ResourceActions';
 import { agentClient } from './test/agent';
-import { sandboxFixture } from './test/hierarchy';
+import { sandboxFixture, parkedRuntimeUpdateFixture } from './test/hierarchy';
 import type { CmaWebClient } from './api/client';
 import { connectionClient, type ConnectionReport } from './connections/client';
 
@@ -265,7 +265,9 @@ it.each(['pause', 'resume'] as const)(
           pauseSandbox: command,
           reviveSandbox: command,
           readSandbox: async (id) => ({
-            ...sandboxFixture(failed ? 'rotating' : action === 'pause' ? 'pausing' : 'reviving'),
+            ...(failed
+              ? parkedRuntimeUpdateFixture()
+              : sandboxFixture(action === 'pause' ? 'pausing' : 'reviving')),
             id,
             runtimeUpdate: failed
               ? {

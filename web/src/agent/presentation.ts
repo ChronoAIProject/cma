@@ -25,6 +25,7 @@ export function usePresentedRetainedInputs(
   legacy: AgentV2Session | undefined,
   pending: AgentCommand | undefined,
   onIdentityChange: (error: unknown) => boolean,
+  recoverInputError?: (session: AgentV2Session, key: string) => () => void,
 ) {
   const [checked, setChecked] = useState<{ session: AgentV2Session; key: string }>();
   const legacyInput = legacy?.journal.legacySuggestion.read();
@@ -44,10 +45,13 @@ export function usePresentedRetainedInputs(
   useEffect(() => {
     if (!session || key === undefined || !checkingInputReceipt) return;
     const controller = new AbortController();
+    const recovered = recoverInputError?.(session, key);
     const receipt =
       v2 === undefined
         ? session.recoverLegacySuggestion(controller.signal)
-        : session.recover(() => {}, controller.signal);
+        : session.recover(() => {
+            if (!controller.signal.aborted) recovered?.();
+          }, controller.signal);
     void receipt
       .catch((error: unknown) => {
         if (!controller.signal.aborted) onIdentityChange(error);
@@ -56,7 +60,7 @@ export function usePresentedRetainedInputs(
         if (!controller.signal.aborted) setChecked({ session, key });
       });
     return () => controller.abort();
-  }, [checkingInputReceipt, key, onIdentityChange, session, v2]);
+  }, [checkingInputReceipt, key, onIdentityChange, recoverInputError, session, v2]);
 
   const retained = v2?.pending();
   return {

@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useProfileViewsClient } from '../api/context';
+import { connectionUrl } from '../connections/client';
 import type { AppRoute, ProfileKind } from '../routing/routes';
 import { routePath } from '../routing/routes';
 import type { ServiceCatalogEntry } from './client';
@@ -15,7 +16,7 @@ import type { ServiceCatalogEntry } from './client';
 type ReferenceKind = ProfileKind | 'service' | 'skill';
 type Resolved = {
   readonly name: string;
-  readonly catalogId?: string;
+  readonly detailUrl?: string;
   readonly publicProfile?: boolean;
 };
 type Resolve = (kind: ReferenceKind, id: string) => Promise<Resolved | undefined>;
@@ -107,12 +108,14 @@ export function ReferenceLink({
   name,
   version,
   catalogId,
+  detailUrl,
 }: {
   readonly kind: ReferenceKind;
   readonly id: string;
   readonly name?: string;
   readonly version?: string;
   readonly catalogId?: string;
+  readonly detailUrl?: string;
 }) {
   const context = useContext(References);
   const [resolved, setResolved] = useState<{ key: string; resolver: Resolve; value?: Resolved }>();
@@ -150,15 +153,14 @@ export function ReferenceLink({
           profileKind: kind,
           profileId: id,
         };
-  const serviceId = catalogId ?? value?.catalogId;
-  if (kind === 'service' && serviceId === undefined)
-    return <span>{label ?? (loading ? 'Loading name' : fallback)}</span>;
+  const catalogUrl = detailUrl ?? value?.detailUrl;
   const href =
     route !== undefined
       ? routePath(route)
       : kind === 'service'
-        ? `https://nyxid.ai/services/${encodeURIComponent(serviceId!)}`
+        ? catalogUrl && connectionUrl(catalogUrl)
         : `https://ornn.chrono-ai.fun/skills/${encodeURIComponent(id)}${version === undefined ? '' : `?version=${encodeURIComponent(version)}`}`;
+  if (!href) return <span>{label ?? (loading ? 'Loading name' : fallback)}</span>;
   return (
     <a
       href={href}

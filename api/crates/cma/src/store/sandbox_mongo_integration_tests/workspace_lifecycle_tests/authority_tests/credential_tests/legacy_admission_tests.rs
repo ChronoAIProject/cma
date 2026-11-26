@@ -14,6 +14,7 @@ pub(super) async fn independent_custody(f: &Fixture) -> Arc<MongoSandboxCredenti
 pub(super) fn retained(f: &Fixture) -> CredentialMaterial {
     CredentialMaterial {
         source: Default::default(),
+        github_route: None,
         sandbox_id: f.claim.id.clone(),
         owner: f.claim.owner.clone(),
         authority: SandboxCredentialAuthority {

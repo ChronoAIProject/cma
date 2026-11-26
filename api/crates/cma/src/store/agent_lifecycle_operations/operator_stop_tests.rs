@@ -116,13 +116,14 @@ async fn paused_insert_rechecks_a_winner_committed_after_the_outer_replay_lookup
     // already constructed. Another writer and the stop have since committed.
     stale.id = "uncommitted-candidate".into();
     stop(&client, &name).await;
-    let CreateResult::Existing(replayed) = store.finish_create(stale.clone()).await.unwrap() else {
+    let CreateResult::Existing(replayed) = store.finish_create(stale.clone(), None).await.unwrap()
+    else {
         panic!("the exact durable winner must remain a continuation");
     };
     assert_eq!(replayed.id, id);
     stale.input.request.name = "Different submitted request".into();
     assert!(matches!(
-        store.finish_create(stale).await,
+        store.finish_create(stale, None).await,
         Err(LifecycleCreateError::Store(
             StoreError::RevisionConflict { .. }
         ))

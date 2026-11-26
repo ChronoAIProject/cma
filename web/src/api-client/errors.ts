@@ -19,6 +19,10 @@ export class ApiError extends CmaError {
     readonly retryAfterMs?: number,
     /** Structured RFC 9457 extensions; never inferred from the error message. */
     readonly extensions: Readonly<Record<string, unknown>> = {},
+    /** Untrusted status Link for a pending revocation; validate before use. */
+    readonly statusLink?: string,
+    /** Stable RFC 9457 problem-type URI, when supplied. */
+    readonly problemType?: string,
   ) {
     super('ApiError', message);
   }

@@ -9,6 +9,11 @@ use crate::{now_rfc3339, AgentId, Caller};
 pub trait AgentInstructionPolicy: Send + Sync {
     fn owner_prompt(&self, agent: &Agent) -> String;
     fn compose(&self, agent: &Agent, owner_prompt: &str) -> String;
+    /// Instructions already pinned for this Agent supersede the deployment's
+    /// default whenever maintenance refreshes its managed context.
+    fn pinned_managed_guidance(&self, _agent: &Agent) -> Option<&'static str> {
+        None
+    }
 }
 
 pub(super) struct UnmanagedInstructions;

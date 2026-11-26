@@ -63,7 +63,13 @@ pub(crate) fn runtime_capabilities(capabilities: AdapterCapabilities) -> Runtime
     )
 }
 
-pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpec {
+pub(super) fn sandbox_spec(
+    sandbox: &Sandbox,
+    deployment_id: &str,
+) -> layer3_adapter::Result<SandboxSpec> {
+    let custom_image = sandbox
+        .custom_runtime_image_for_binding()
+        .map_err(|error| layer3_adapter::AdapterError::Rejected(error.to_string()))?;
     let mut spec = environment_spec(
         &sandbox.id,
         &sandbox.profile,
@@ -78,12 +84,27 @@ pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpe
     {
         spec.tool_proxy_url = tool_endpoint.clone();
     }
+    // The saved profile remains immutable. A queued migration retains the old
+    // image; only its validated successor binding can select the admitted target.
+    spec.runtime_image = custom_image.map(str::to_owned);
     spec.home_volume = sandbox
         .lifecycle
         .home
         .as_ref()
         .and_then(|home| home.attachment())
         .map(Box::new);
+    if let Some(evidence) = &sandbox.lifecycle.retained_startup_policy {
+        if spec
+            .home_volume
+            .as_ref()
+            .and_then(|home| home.identity().ok())
+            .as_deref()
+            == Some(evidence.observation.runtime.home_identity.as_str())
+        {
+            spec.retained_journal_recovery =
+                Some(evidence.observation.legacy_journal_recovery_enabled);
+        }
+    }
     if spec.runtime_image.is_none() {
         spec.runtime_image = sandbox
             .lifecycle
@@ -99,7 +120,7 @@ pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpe
                     .unwrap_or_else(|| native.request.pool.spec.image.uri.clone())
             });
     }
-    spec
+    Ok(spec)
 }
 
 pub(super) fn environment_spec(

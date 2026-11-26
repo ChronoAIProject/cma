@@ -37,7 +37,8 @@ impl Identity {
             || !image
                 .split_once("@sha256:")
                 .is_some_and(|(repository, digest)| {
-                    repository.ends_with("/cma-api") && hash(digest, 64)
+                    (repository.ends_with("/cma-agent-manager") || repository.ends_with("/cma-api"))
+                        && hash(digest, 64)
                 })
         {
             return Err("apply requires a release build SHA and immutable API image reference");

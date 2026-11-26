@@ -95,6 +95,8 @@ pub struct AdmittedQueuedInput {
 pub enum QueuedInputOutcome {
     Applied(Box<AdmittedQueuedInput>),
     NotAdmitted,
+    /// A local observation was stale before any edit or receipt could be written.
+    StaleObservation,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueuedInputView {

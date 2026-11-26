@@ -76,11 +76,12 @@ pub(super) async fn complete(
 
 /// Cursor is (turn sequence, last source sequence). A fixed high-water mark is
 /// required on continuations; changed snapshots are refused, never mixed.
-pub(in crate::store) async fn page(
+pub(super) async fn page_with_capture(
     store: &MongoSandboxStore,
     agent: &Agent,
     session: &mut ClientSession,
     request: &layer2_core::sandbox::AgentTranscriptPageRequest,
+    capture_mode: capture::CaptureMode,
 ) -> Result<Option<layer2_core::sandbox::AgentTranscriptPage>, SandboxStoreError> {
     request
         .validate()
@@ -95,7 +96,7 @@ pub(in crate::store) async fn page(
         return crate::store::agent_opening_reads::transcript::page(store, agent, session, request)
             .await;
     }
-    let source = capture::capture(store, agent, session, capture::CaptureMode::Snapshot)
+    let source = capture::capture(store, agent, session, capture_mode)
         .await
         .map_err(segment_error)?;
     let facts = if let Some(turn) = request.turn {
@@ -150,6 +151,23 @@ pub(in crate::store) async fn page(
         transcript,
         next,
     }))
+}
+
+#[cfg(test)]
+async fn page(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    session: &mut ClientSession,
+    request: &layer2_core::sandbox::AgentTranscriptPageRequest,
+) -> Result<Option<layer2_core::sandbox::AgentTranscriptPage>, SandboxStoreError> {
+    page_with_capture(
+        store,
+        agent,
+        session,
+        request,
+        capture::CaptureMode::Snapshot,
+    )
+    .await
 }
 
 async fn next_turn(

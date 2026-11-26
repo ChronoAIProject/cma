@@ -1,0 +1,1 @@
+{"apiVersion":"v1","kind":"Namespace","metadata":{"labels":{"cma.chronoai.dev/run":"multi-am-ci","pod-security.kubernetes.io/enforce":"privileged"},"name":"cma-native-storage"}}

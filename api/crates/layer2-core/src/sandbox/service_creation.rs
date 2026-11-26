@@ -13,17 +13,26 @@ use super::service_trust::{
     foreign_workspace_setups, validate_sandbox_profile, validate_sandbox_revision,
 };
 use super::store::{
-    SandboxAdmission, SandboxAdmissionName, SandboxAdmissionReplay, SandboxAdmissionResult,
-    SandboxLimitClass,
+    CreationFence, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionReplay,
+    SandboxAdmissionResult, SandboxLimitClass,
 };
 use super::{
-    Sandbox, SandboxCredentialState, SandboxLimits, SandboxOrigin, SandboxSignInState,
-    SandboxStatus, SandboxWorkState, SandboxWorkStep,
+    InitialServiceConnection, Sandbox, SandboxCredentialSource, SandboxCredentialState,
+    SandboxLimits, SandboxOrigin, SandboxSignInState, SandboxStatus, SandboxWorkState,
+    SandboxWorkStep,
 };
 
 struct ResolvedProfile {
     name: String,
     revision: SandboxProfileRevision,
+}
+
+struct AdmissionAuthority<'a> {
+    limit: u16,
+    class: SandboxLimitClass,
+    lifecycle_lease: Option<&'a str>,
+    creation_fence: Option<CreationFence>,
+    credential_source: SandboxCredentialSource,
 }
 
 impl SandboxService {
@@ -53,6 +62,52 @@ impl SandboxService {
         caller: &Caller,
         request: CreateSandbox,
     ) -> Result<Sandbox, SandboxServiceError> {
+        self.admit_lifecycle(
+            caller,
+            request,
+            None,
+            None,
+            SandboxCredentialSource::Managed,
+        )
+        .await
+    }
+
+    /// Trusted admission using the initiating lifecycle worker's claim.
+    pub async fn create_for_lifecycle_with_lease(
+        &self,
+        caller: &Caller,
+        request: CreateSandbox,
+        lease: &str,
+        creation_fence: Option<CreationFence>,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        self.create_for_lifecycle_with_connection(caller, request, lease, creation_fence, None)
+            .await
+    }
+
+    /// Carry the verified initial connection into the same Sandbox admission.
+    pub async fn create_for_lifecycle_with_connection(
+        &self,
+        caller: &Caller,
+        request: CreateSandbox,
+        lease: &str,
+        creation_fence: Option<CreationFence>,
+        connection: Option<InitialServiceConnection>,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        let source = connection.map_or(SandboxCredentialSource::Managed, |initial| {
+            SandboxCredentialSource::ManagedConnection { initial }
+        });
+        self.admit_lifecycle(caller, request, Some(lease), creation_fence, source)
+            .await
+    }
+
+    async fn admit_lifecycle(
+        &self,
+        caller: &Caller,
+        request: CreateSandbox,
+        lifecycle_lease: Option<&str>,
+        creation_fence: Option<CreationFence>,
+        credential_source: SandboxCredentialSource,
+    ) -> Result<Sandbox, SandboxServiceError> {
         require(caller, Capability::UseOwnSandboxes)?;
         require(caller, Capability::CreateSandbox)?;
         request.origin.validate()?;
@@ -66,7 +121,13 @@ impl SandboxService {
             .await
             .map_err(store_error)?
         {
-            return reconcile_launch_replay(caller, &request, exact_name.as_deref(), replay);
+            let sandbox = reconcile_launch_replay(caller, &request, exact_name.as_deref(), replay)?;
+            if sandbox.credential.source.initial_connection()
+                != credential_source.initial_connection()
+            {
+                return Err(SandboxServiceError::SandboxOriginConflict);
+            }
+            return Ok(sandbox);
         }
         let policy = self
             .policy
@@ -78,8 +139,13 @@ impl SandboxService {
             caller,
             request,
             profile,
-            policy.max_sandboxes_per_owner,
-            SandboxLimitClass::Owner,
+            AdmissionAuthority {
+                limit: policy.max_sandboxes_per_owner,
+                class: SandboxLimitClass::Owner,
+                lifecycle_lease,
+                creation_fence,
+                credential_source,
+            },
             policy,
         )
         .await
@@ -89,6 +155,15 @@ impl SandboxService {
         &self,
         caller: &Caller,
         request: CreateSandbox,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        self.create_with_fence(caller, request, None).await
+    }
+
+    pub async fn create_with_fence(
+        &self,
+        caller: &Caller,
+        request: CreateSandbox,
+        creation_fence: Option<CreationFence>,
     ) -> Result<Sandbox, SandboxServiceError> {
         require(caller, Capability::CreateSandbox)?;
         request.origin.validate()?;
@@ -105,8 +180,13 @@ impl SandboxService {
             caller,
             request,
             profile,
-            policy.max_sandboxes_per_owner,
-            SandboxLimitClass::Owner,
+            AdmissionAuthority {
+                limit: policy.max_sandboxes_per_owner,
+                class: SandboxLimitClass::Owner,
+                lifecycle_lease: None,
+                creation_fence,
+                credential_source: SandboxCredentialSource::Managed,
+            },
             policy,
         )
         .await
@@ -146,8 +226,20 @@ impl SandboxService {
             }
             _ => unreachable!("launch authority was validated"),
         };
-        self.admit(caller, request, profile, limit, limit_class, policy)
-            .await
+        self.admit(
+            caller,
+            request,
+            profile,
+            AdmissionAuthority {
+                limit,
+                class: limit_class,
+                lifecycle_lease: None,
+                creation_fence: None,
+                credential_source: SandboxCredentialSource::Managed,
+            },
+            policy,
+        )
+        .await
     }
 
     async fn read_profile(
@@ -260,8 +352,7 @@ impl SandboxService {
         caller: &Caller,
         request: CreateSandbox,
         profile: ResolvedProfile,
-        limit: u16,
-        limit_class: SandboxLimitClass,
+        authority: AdmissionAuthority<'_>,
         policy: SandboxPolicy,
     ) -> Result<Sandbox, SandboxServiceError> {
         let name = requested_name(request.name, &profile.name)?;
@@ -269,8 +360,23 @@ impl SandboxService {
             .revision
             .content
             .credential_services(&policy.baseline_services);
-        self.check_creation_connections(caller, &profile.revision.content, &reaches)
-            .await?;
+        if let Some(initial) = authority.credential_source.initial_connection() {
+            // The lifecycle worker checked this specific authorization. The
+            // generic prerequisite would resolve the service by slug instead.
+            if !initial.selection.matches_scope(&reaches) {
+                return Err(SandboxServiceError::InvalidServiceAccess);
+            }
+            let remaining: Vec<_> = reaches
+                .iter()
+                .filter(|service| *service != &initial.selection.service)
+                .cloned()
+                .collect();
+            self.check_creation_connections(caller, &profile.revision.content, &remaining)
+                .await?;
+        } else {
+            self.check_creation_connections(caller, &profile.revision.content, &reaches)
+                .await?;
+        }
         let now = now_rfc3339();
         let sign_in = match profile.revision.content.model_access {
             ModelAccess::ChronoaiManaged => SandboxSignInState::NotRequired,
@@ -290,7 +396,7 @@ impl SandboxService {
             failure: None,
             runtime: None,
             credential: SandboxCredentialState {
-                source: Default::default(),
+                source: authority.credential_source,
                 service_grants: Vec::new(),
                 service_scope: None,
                 reaches,
@@ -318,8 +424,12 @@ impl SandboxService {
             .validate()
             .map_err(|error| SandboxServiceError::Corrupt(error.to_string()))?;
         let mut admission =
-            SandboxAdmission::new(sandbox, name, limit, now).map_err(store_error)?;
-        admission.limit_class = limit_class;
+            SandboxAdmission::new(sandbox, name, authority.limit, now).map_err(store_error)?;
+        admission.limit_class = authority.class;
+        admission.creation_fence = authority.creation_fence;
+        if let Some(token) = authority.lifecycle_lease {
+            admission = admission.with_lifecycle_lease(token);
+        }
         let result = self
             .store
             .admit_catalogue_sandbox(admission)

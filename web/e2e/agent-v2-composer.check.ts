@@ -22,6 +22,7 @@ for (const theme of ['light', 'dark']) {
       const field = page.getByRole('textbox', { name: 'Message', exact: true });
       const queue = page.getByRole('button', { name: 'Queue message', exact: true });
       const stop = page.getByRole('button', { name: 'Stop response', exact: true });
+      const stopScope = page.getByText('Running Sandbox commands may continue.', { exact: true });
       await expect(queue).toHaveCount(0);
       await expect(stop).toBeEnabled();
       await field.fill('Continue with this after the active response');
@@ -43,10 +44,17 @@ for (const theme of ['light', 'dark']) {
           await Promise.all(frame.getAnimations().map((animation) => animation.finished));
         });
         const stopBox = await stop.boundingBox();
+        await expect(stopScope).toBeInViewport();
+        const scopeBox = await stopScope.boundingBox();
+        expect(scopeBox!.width).toBeGreaterThan(1);
+        expect(scopeBox!.x).toBeGreaterThanOrEqual(0);
+        expect(scopeBox!.x + scopeBox!.width).toBeLessThanOrEqual(width);
+        expect(scopeBox!.y + scopeBox!.height).toBeLessThanOrEqual(stopBox!.y);
         await field.fill('Continue with this after the active response');
         await expect(queue).toBeEnabled();
         expect(await queue.boundingBox()).toEqual(stopBox);
         await expect(stop).toHaveCount(0);
+        await expect(stopScope).toHaveCount(0);
         await expect
           .poll(() =>
             queue.evaluate((element) => {
@@ -77,7 +85,9 @@ for (const theme of ['light', 'dark']) {
         input: 'Continue with this after the active response',
         stream: true,
       });
-      await expect(page.getByRole('status').filter({ hasText: /^Thinking$/ })).toBeVisible();
+      await expect(
+        page.getByRole('status').filter({ hasText: /^Waiting for a response$/ }),
+      ).toBeVisible();
       await expect(stop).toBeEnabled();
       fixture.append({
         type: 'tool_started',
@@ -368,6 +378,9 @@ for (const action of ['button', 'Escape'] as const) {
       await expect(stop).toBeEnabled();
       await field.focus();
       await expect(page.getByText('Esc to stop', { exact: true })).toBeVisible();
+      await expect(stop).toHaveAccessibleDescription(
+        'Esc to stop Running Sandbox commands may continue.',
+      );
       if (action === 'Escape') await field.press('Escape');
       else await stop.click();
       await expect.poll(() => attempts).toBe(1);
@@ -383,7 +396,12 @@ for (const action of ['button', 'Escape'] as const) {
         body: { turn_sequence: 1, expected_agent_revision: 10, command: { type: 'cancel' } },
       });
       expect(fixture.writes[0]!.key).toBeTruthy();
+      const terminal = page.getByRole('status').filter({
+        hasText: /Response interrupted.*Running Sandbox commands may continue/,
+      });
+      await expect(terminal).toHaveCount(0);
       fixture.append({ type: 'turn_cancelled', turn_sequence: 1 });
+      await expect(terminal).toBeVisible();
       await expect(page.getByRole('button', { name: /Stop.*response/ })).toHaveCount(0);
       await page.reload();
       await expect(field).toBeVisible();

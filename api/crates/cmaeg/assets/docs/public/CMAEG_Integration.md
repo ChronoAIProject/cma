@@ -13,10 +13,15 @@ for an overview of channel setup, ingress, execution, tools, delivery and recove
 
 ## Addresses and discovery
 
-| Interface | Production address |
+The served guide uses the configured public Event Gateway base for direct links.
+If you see `gateway.example.com` in a source copy, replace that placeholder with
+your gateway's host. For NyxID proxy calls, replace `nyxid.example.com` with your
+NyxID API host.
+
+| Interface | Address |
 | --- | --- |
 | Direct REST base | `https://gateway.example.com/event-gateway/v1` |
-| NyxID REST proxy base | `https://gateway.example.com/api/v1/proxy/s/cmaeg` |
+| NyxID REST proxy base (example) | `https://nyxid.example.com/api/v1/proxy/s/cmaeg` |
 | Native MCP | `https://gateway.example.com/event-gateway/mcp` |
 | OpenAPI | <https://gateway.example.com/event-gateway/openapi.json> |
 | Integration guide | <https://gateway.example.com/event-gateway/docs> |
@@ -46,10 +51,10 @@ Clients reconnect and atomically apply the server's latest activity snapshot;
 no periodic history polling is needed.
 
 
-Existing `https://gateway.example.com` API, webhook and setup URLs continue
-to work. Keep retained callback URLs and signatures unchanged during migration;
-an installed Telegram webhook on the old host is preserved. Newly generated
-channel, setup and media links use the canonical namespace.
+Keep existing API, webhook and setup URLs issued by your deployment during
+migration. Retain callback URLs and signatures, including an installed Telegram
+webhook on the old host. Newly generated channel, setup and media links use the
+canonical namespace.
 
 The NyxID catalog display name is **Agent Event Gateway**, with slug `cmaeg`.
 It is a public, automatically connected service. Refresh `GET /api/v1/keys` in
@@ -62,6 +67,58 @@ The proxy already maps to the gateway's `/v1` base. For example, direct
 NyxID forwards the caller's bearer. An agent key also needs access to the user's
 gateway connection under NyxID's key policy; use that connection's ID from `/keys`,
 not the global catalog ID, when assigning an explicit service grant.
+
+## Paged activity history
+
+When the operator enables history, `GET /v1/channels/{channel_id}/activity/history`
+exports durable ingress receipts with their current bounded summaries. It uses the
+same owner read grant and current channel ownership as the recent activity API.
+Every request reauthorizes, including continuation and detail requests.
+
+The initial query supplies UTC RFC3339 `from` (inclusive), `until` (exclusive), and
+optional `limit` (1–200, default 100). Timestamp precision is milliseconds or
+coarser; a range is at most seven days and must end at or before the current time.
+Request consecutive ranges for longer reports. Continue with the opaque `cursor`
+from `next_cursor`; if range/limit are repeated they must match the original query.
+Do not pass the SSE watermark to this endpoint.
+
+The response has `items`, `next_cursor`, `has_more`, `range`, and `coverage`.
+Ordering is first gateway receipt time descending, then opaque history event ID
+ascending. A transactional channel sequence freezes membership on the first page:
+later inserts, including delayed events with older timestamps, are excluded.
+Current processing summaries may advance between pages. This does not archive
+every intermediate transition or imply successful delivery without a receipt.
+Pages are bounded by both count and 1 MiB, so a nonterminal page can be shorter
+than `limit`. `has_more` describes remaining retained scan results, including
+unreadable records; it is separate from missing historical coverage.
+
+`coverage.complete_event_enumeration` requires an operator-attested all-writer
+capture interval, retention coverage, and no observed gaps. `legacy_partial`,
+`retention_expired`, `capture_gap`, and `unreadable_record` explain incomplete
+coverage. An unreadable row advances the cursor without hiding the gap. Receipts
+already evicted by the recent view cannot be recovered. The history retention
+setting defaults to 7 rolling days; inspect `coverage.retained_from` rather than
+assuming a delayed weekly report is available. For a weekly schedule, configure
+enough history retention to cover the seven-day reporting range plus the time
+needed to start and finish the export. For example, eight days of retention
+allows up to one day for that delay. Check coverage on every page because
+receipts can reach the retention cutoff while the export is running.
+
+Each item has `history_event_id`, `activity`, detail coverage flags, and an optional
+`detail_cursor`. For a large summary, `activity` contains the small ingress receipt;
+fetch `/v1/channels/{channel_id}/activity/history/events/{history_event_id}/details?cursor=...`.
+Detail pages pin one immutable generation. Decode each part's standard-base64
+`data`, check its SHA-256, concatenate parts in `index` order across pages, then
+parse the UTF-8 JSON as `ChannelActivity`. A summary can be up to 1 MiB in 32 sealed
+parts. `detail_incomplete` and `detail_truncated` remain explicit; history never
+stores message text or raw event bodies.
+
+Cursors expire after at most 15 minutes, or earlier when any retained member of the
+export can expire. HTTP 410 `activity_history_cursor_expired` requires restarting
+the same range and deduplicating by event identity. Tampered, mismatched, or
+cross-channel cursors return 400. Disabled history returns 503; an enabled reader
+using the legacy remote backend returns 501 `unsupported_backend`. Storage failure
+returns a safe typed error, never an empty complete report.
 
 ## Live channel activity
 
@@ -137,7 +194,8 @@ connection lifetime. Channel deletion or failed revalidation closes the stream.
 
 | Your system | What to implement |
 | --- | --- |
-| A CMA user connecting a messaging channel | Complete an Event Gateway connection, then create a consumer with inline Agent settings. Follow [Create a CMA consumer](#create-a-cma-consumer). |
+| A CMA user connecting a messaging channel | Open **Channels** and follow [Create a channel in CMA](#create-a-channel-in-cma). |
+| A CMA user who has a **Consumers** tab | To create a consumer from a ready connection, follow [Create a CMA consumer](#create-a-cma-consumer). |
 | A backend sending business events to an agent | Create a custom channel, sign CloudEvents, then consume streamed results or a result webhook. |
 | An agent using event reply tools | Connect native MCP with the channel's agent key; use the event reference supplied with the turn. |
 | A new downstream agent execution provider | Implement the binding, conversation, Responses and context endpoints below; arrange operator registration of your provider. |
@@ -148,11 +206,30 @@ JSON field remains `profile`. The gateway validates its common shape, while the
 provider reports which fields it honours or refuses. This API configuration does
 not require a saved CMA Profile revision.
 
+## Create a channel in CMA
+
+1. In CMA, open **Event Gateway**, select **Channels**, then choose
+   **New channel**. Enter a **Channel name**.
+2. Under **Connection**, choose a supported producer. For a messaging platform,
+   use a ready connection you own when the form offers one, or fill in the
+   settings for the selected producer. For a **Custom event** producer, configure
+   its credentials and keep **Each event subject** or choose another supported
+   grouping.
+3. Configure the Agent destination and its service access. Provide the
+   **Provider agent key** and any credentials required by the selected producer.
+4. Under **Access & reply policy**, review who can send messages,
+   **Group incoming messages by**, and where replies go. If **Send final answers
+   automatically** is enabled, make sure the channel has a reply destination.
+5. Check **Review**, then select **Create channel**. If the result is unconfirmed,
+   use **Check original channel** to look up the saved request, then
+   **Retry same request** to confirm its result.
+
 ## Create a CMA consumer
 
-Sign in to CMA with an account that can create consumers. Use the connection
-types and setup actions offered by your Event Gateway. Telegram availability
-depends on the gateway's supported connections and enabled setup capabilities.
+Use this route when your CMA account has a **Consumers** tab in **Event Gateway**.
+If you only see **Channels**, follow the [channel setup steps](#create-a-channel-in-cma).
+Telegram availability depends on the gateway's supported connections and enabled
+setup capabilities.
 
 1. Open **Event Gateway** and complete your channel connection setup. The
    connection must be ready before you can select it for a new consumer.
@@ -169,6 +246,10 @@ depends on the gateway's supported connections and enabled setup capabilities.
 5. Check **Review and create**, then select **Create consumer**. If creation is
    unconfirmed, use **Recover creation** to reconcile the same request. Wait for
    the consumer's setup to complete before testing messages and replies.
+
+For a document created in **Artifacts**, use **Retry creation** while the
+original dialog is open. After leaving the dialog, use **Resume creation** in
+**Artifacts** to reopen the saved request, then use **Retry creation**.
 
 CMA's Profile authoring pages are retired. New consumers use the connection and
 inline settings above. Saved Profile definitions and revisions remain readable
@@ -432,7 +513,8 @@ NyxID REST base does not include a `/mcp` endpoint.
 
 Ordinary relay replies can use complete-reply mode after operators coordinate
 an upgraded NyxID deployment and enable `CMAEG_NYXID_COMPLETE_REPLIES`. In that
-mode CMAEG sends the complete escaped logical text once; NyxID performs final
+mode CMAEG sends the complete logical text once (escaped, except that Lark,
+Feishu and Discord text keeps Markdown punctuation literal); NyxID performs final
 ordinary/thread platform splitting. Acks, progress and intentional separate
 replies keep separate requests. Native Telegram and interactive/edit constraints
 retain their existing behavior. The default remains legacy chunking until the
@@ -444,10 +526,14 @@ CommonMark reply/thread/update routes. CMAEG then preserves original source,
 including literal backslashes, and sends ordinary replies, keyboards and media
 captions through those routes without local splitting. Rust embedders select
 `RelayClient::with_commonmark_relay(true)` and match
-`ToolsState.commonmark_relay_enabled` so ordinary Telegram reply tools allow the
+`ToolsState.commonmark_relay.telegram` so ordinary Telegram reply tools allow the
 18 s outer wait. Native and other-platform rendering stay unchanged. The switch
 defaults off and never enables endpoint fallback after uncertain submission;
 see CommonMark rollout (maintainer guidance).
+
+Lark, Feishu and Discord relay text uses the separate, default-off
+`CMAEG_NYXID_COMMONMARK_LARK_FEISHU_DISCORD_ENABLED` switch. Enable it only
+after every serving NyxID replica supports the required routes.
 
 Rust embedders select this mode with `RelayClient::with_complete_replies(true)`
 when composing the delivery engine. Existing `Config` and `DeliveryConfig`
@@ -677,9 +763,8 @@ Exact bodies, canonical digests, error codes and conformance levels are in the
 Channel owners can inspect every channel their NyxID account, or an
 organization they administer, owns at
 <https://gateway.example.com/event-gateway/legacy-console>. This compatibility entry
-redirects to the existing console OAuth authority at
-`https://gateway.example.com/console`; its login, callback and existing tabs
-remain valid. It is read-only apart from
+uses the configured gateway address and retains the existing console OAuth
+authority for login, callback and existing tabs. It is read-only apart from
 source attach and detach; change consumers and routing through the REST API.
 
 1. **Sign in.** Choose "Sign in with NyxID" and approve the console. Use the

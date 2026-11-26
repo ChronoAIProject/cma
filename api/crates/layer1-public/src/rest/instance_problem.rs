@@ -32,6 +32,8 @@ pub(crate) enum InstanceProblem {
     WorkspaceNotReady,
     AgentNotReady,
     AgentNotStopped,
+    RestartRuntimeUnsupported,
+    RestartTurnUnsettled,
     WorktreeRecoveryConflict,
     AgentLimitReached {
         limit: u8,
@@ -87,6 +89,8 @@ impl InstanceProblem {
             }
             AgentServiceError::InvalidRequest(_) => Self::InvalidRequest,
             AgentServiceError::WorktreeRecoveryConflict => Self::WorktreeRecoveryConflict,
+            AgentServiceError::RestartRuntimeUnsupported => Self::RestartRuntimeUnsupported,
+            AgentServiceError::RestartTurnUnsettled => Self::RestartTurnUnsettled,
             AgentServiceError::CreationConflict
             | AgentServiceError::StatusConflict { .. }
             | AgentServiceError::WorkConflict { .. }
@@ -136,6 +140,9 @@ impl From<AgentReadError> for InstanceProblem {
                 Self::CapabilityUnsupported { capability }
             }
             AgentReadError::ResourcesUnsupported(_) => Self::ResourcesUnsupported,
+            AgentReadError::HistoryRuntimeUnavailable => {
+                Self::HistoryExport(super::AgentHistoryExportError::Unavailable)
+            }
             AgentReadError::RuntimeCapacity(capacity) => Self::RuntimeCapacity(capacity),
             AgentReadError::Corrupt(_) | AgentReadError::Unavailable(_) => Self::Unavailable,
         }
@@ -207,24 +214,10 @@ impl IntoResponse for InstanceProblem {
             Self::RuntimeCapacity(capacity) => return super::problems::runtime_capacity(*capacity),
             Self::HistoryExport(error) => return super::agent_history::problem(*error),
             Self::AdmissionPaused => return super::admission_problem::paused(),
-            Self::ModelFundingUnsupported => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "model-funding-unsupported",
-                "Guaranteed model funding is unavailable for this turn.",
-                "model_funding_unsupported",
+            Self::ModelFundingUnsupported => crate::model_funding_problem::projection(
+                layer2_core::sandbox::model_credit::FundingError::Unsupported,
             ),
-            Self::ModelFunding(layer2_core::sandbox::model_credit::FundingError::Insufficient) => (
-                StatusCode::PAYMENT_REQUIRED,
-                "model-funding-insufficient",
-                "Model funding is insufficient for this turn.",
-                "model_funding_insufficient",
-            ),
-            Self::ModelFunding(_) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "model-funding-unavailable",
-                "Model funding could not be verified for this turn.",
-                "model_funding_unavailable",
-            ),
+            Self::ModelFunding(reason) => crate::model_funding_problem::projection(*reason),
             Self::SessionCapacityUnavailable => return super::admission_problem::session_capacity(),
             // Every budget refusal, the platform's included, is a final 402
             // without Retry-After: clients treat >= 500 as retryable.
@@ -358,6 +351,18 @@ impl IntoResponse for InstanceProblem {
                 "agent-capability-unsupported",
                 "The agent runtime does not support this operation.",
                 "agent_capability_unsupported",
+            ),
+            Self::RestartRuntimeUnsupported => (
+                StatusCode::CONFLICT,
+                "agent-restart-runtime-unsupported",
+                "This Sandbox runtime does not support Agent restart. Update the Sandbox to a runtime that supports Agent restart, then try again.",
+                "agent_restart_runtime_unsupported",
+            ),
+            Self::RestartTurnUnsettled => (
+                StatusCode::CONFLICT,
+                "agent-restart-turn-unsettled",
+                "The stopped Agent still has an unsettled turn. Ask support to reconcile it before retrying Agent restart or updating this Sandbox.",
+                "agent_restart_turn_unsettled",
             ),
             Self::OperationInFlight => (
                 StatusCode::CONFLICT,

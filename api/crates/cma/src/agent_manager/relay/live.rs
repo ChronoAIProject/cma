@@ -135,12 +135,12 @@ impl Relay {
         let uri: Uri = format!("{PREFIX}/live/{}", destination.token.agent_id)
             .parse()
             .map_err(|_| ())?;
-        let proof = self.authentication.sign(
+        let headers = self.authentication.signed_headers(
             &self.coordinator.instance_id,
             &destination.token,
             &Method::GET,
             &uri,
-            &HeaderMap::new(),
+            HeaderMap::new(),
             &[],
         )?;
         let url = format!(
@@ -150,7 +150,7 @@ impl Relay {
         );
         let response = tokio::time::timeout(
             LIVE_ADMISSION_DEADLINE,
-            self.client.get(url).header(PROOF, proof).send(),
+            self.client.get(url).headers(headers).send(),
         )
         .await
         .map_err(|_| ())?

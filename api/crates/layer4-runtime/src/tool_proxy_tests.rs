@@ -111,6 +111,7 @@ async fn install(holder: &CredentialHolder, generation: u64) {
             operation_id: format!("install-{generation}"),
             value: RuntimeCredential::new(format!("test-runtime-credential-{generation}")),
             custody_generation: Some(generation),
+            github_route: None,
         })
         .await
         .unwrap();

@@ -22,6 +22,15 @@ fn authority(grant: &ProxyGrant) -> AgentAuthorizationRevision {
     }
 }
 
+/// New admissions scope replay by the stable principal when the gated writer
+/// is enabled; execution still uses the exact grant in `authority_id`.
+fn admission_authority(grant: &ProxyGrant, record_principal: bool) -> AgentAuthorizationRevision {
+    AgentAuthorizationRevision {
+        replay_principal: record_principal.then(|| replay_principal(grant)),
+        ..authority(grant)
+    }
+}
+
 fn hex(id: &[u8; 32]) -> String {
     id.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -98,7 +107,10 @@ impl AuthState {
             return Err(CommandAuthorizationError::Revoked);
         }
         self.require_proxy_custody(&custody).await?;
-        Ok(authority(&custody.grant))
+        Ok(admission_authority(
+            &custody.grant,
+            self.proxy_replay_principal_enabled,
+        ))
     }
 
     /// Reader floor for a future gated writer that records the derived replay principal.

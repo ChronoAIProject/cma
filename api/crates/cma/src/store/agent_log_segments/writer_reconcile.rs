@@ -63,6 +63,17 @@ pub(in crate::store) async fn reconcile_transaction(
     .await
 }
 
+pub(in crate::store) async fn reconcile_scoped(
+    store: &MongoSandboxStore,
+    operation: &PublicationIdentity,
+    expected: &Agent,
+    logs: &[AgentLogEntry],
+    result: &Binary,
+    scope: &mut super::transaction_scope::TransactionScope<'_>,
+) -> Result<Outcome, SandboxStoreError> {
+    reconcile_transaction(store, operation, expected, logs, result, scope.session()).await
+}
+
 async fn reconcile_mode(
     store: &MongoSandboxStore,
     operation: &PublicationIdentity,

@@ -34,6 +34,9 @@ export function UsageHistory({
     return () => controller.abort();
   }, [client, id, cursor]);
   const result = stored?.cursor === cursor ? stored : undefined;
+  // The ledger identifies a transaction by Sandbox and revision. Distinct
+  // checkpoints can have identical times and resource quantities.
+  const transactions = new Map(result?.page?.items.map((event) => [event.transaction_id, event]));
   return (
     <section aria-label="Sandbox usage history">
       <h3>Lifecycle history</h3>
@@ -50,6 +53,7 @@ export function UsageHistory({
         empty="No usage intervals recorded."
         columns={[
           { header: 'Event' },
+          { header: 'Revision' },
           { header: 'Time (SGT)' },
           { header: 'Interval uptime' },
           { header: 'Interval CPU (millicores)' },
@@ -57,9 +61,10 @@ export function UsageHistory({
           { header: 'Interval disk (GiB)' },
         ]}
       >
-        {result?.page?.items.map((event) => (
+        {[...transactions.values()].map((event) => (
           <tr key={event.transaction_id}>
             <TableCell>{stateWord(event.kind)}</TableCell>
+            <TableCell>{event.revision}</TableCell>
             <TableCell>{usageTime(event.ended_at)}</TableCell>
             <TableCell>{uptime(event.quantity.uptime_seconds)}</TableCell>
             <TableCell>{event.allocation.cpu_millis}</TableCell>

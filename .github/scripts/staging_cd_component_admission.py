@@ -3,6 +3,7 @@ import subprocess
 
 from staging_cd_common import Refusal, matches, require
 from staging_cd_compatibility import ContractPolicy, GROUP
+from staging_cd_promotion import UNAVAILABLE, proven_components
 from staging_cd_receipts import canonical, validate_identity
 from staging_cd_reservations import validate_reservation
 from staging_cd_resolve import ObsoleteSource
@@ -81,6 +82,24 @@ def overtaken_admission(matrix, value, failures, api):
         return tuple(sorted(tasks))
     except (Refusal, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         return ()
+
+
+def verified_resume(matrix, value, failures, api, read_proofs):
+    """Only an exact, wholly qualified resume can reuse a previous deployment."""
+    if value is None or failures:
+        return False
+    if any(task["mode"] != "resume" for tasks in groups(matrix).values() for task in tasks):
+        return False
+    receipts = value["receipts"]
+    try:
+        evidence = read_proofs()
+        # A contract cohort needs one writer that verified the entire set.
+        # Independent receipts cannot stand in for an atomic deployment.
+        witnesses = [evidence[component] for component in receipts]
+        return (all(row == witnesses[0] for row in witnesses)
+                and receipts.keys() <= proven_components(evidence, receipts, api.history()))
+    except UNAVAILABLE:
+        return False
 
 
 def automatic_admission(matrix, api, registry, *, policy=None):

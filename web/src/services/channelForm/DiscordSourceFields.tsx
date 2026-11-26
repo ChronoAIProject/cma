@@ -1,3 +1,4 @@
+import { botIdMessage } from './connectorValidation';
 import { nativeDiscordUnavailable, useRelayCapabilities } from '../RelayCapabilities';
 import { SourceAdmissionFields } from './SourceAdmissionFields';
 import { Section, TextField, Toggle } from './Fields';
@@ -44,6 +45,8 @@ export function DiscordSourceFields({
           </p>
         )}
         <TextField
+          path="bot_id"
+          validationMessage={botIdMessage(value.bot_id, 'discord')}
           label="Discord bot user ID"
           value={value.bot_id}
           onChange={(bot_id) => onChange({ ...value, bot_id })}

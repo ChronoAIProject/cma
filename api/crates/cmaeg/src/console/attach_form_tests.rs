@@ -30,6 +30,7 @@ fn a_telegram_form_becomes_a_telegram_source_with_its_secrets() {
         topic_creation: _,
         message_events: _,
         channel_posts: _,
+        member_join_chat_ids: _,
         bot_id,
         bot_username,
         admission,

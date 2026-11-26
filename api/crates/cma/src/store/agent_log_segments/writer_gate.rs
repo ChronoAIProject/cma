@@ -175,6 +175,40 @@ pub(in crate::store) async fn read(
         .map_err(Into::into)
 }
 
+pub(in crate::store) async fn read_scoped(
+    database: &Database,
+    name: GateName,
+    scope: &mut super::transaction_scope::TransactionScope<'_>,
+) -> Result<Option<GateRecord>, TransactionLogError> {
+    read(database, name, scope.session()).await
+}
+
+pub(in crate::store) async fn selects_pending_worker_scoped(
+    database: &Database,
+    agent: &Agent,
+    scope: &mut super::transaction_scope::TransactionScope<'_>,
+) -> Result<bool, TransactionLogError> {
+    selects_pending_worker(database, agent, scope.session()).await
+}
+
+pub(in crate::store) async fn selects_pending_worker(
+    database: &Database,
+    agent: &Agent,
+    session: &mut ClientSession,
+) -> Result<bool, TransactionLogError> {
+    let incarnation = super::incarnation(agent);
+    for name in [GateName::CapacityRecovery, GateName::Segments] {
+        let selected = read(database, name, session).await?.is_some_and(|gate| {
+            gate.policy
+                .selects(agent.id.as_str(), agent.owner.as_str(), &incarnation)
+        });
+        if !selected {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Absence is closed. A successfully selected gate must be write-fenced in the
 /// transaction that inserts the exact immutable publication admission.
 pub(in crate::store) async fn select_and_fence(

@@ -37,7 +37,15 @@ impl<T: SandboxStore + SandboxTransactionStore + Send + Sync> CommandRevivalStor
                 .validate()
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
             let at = crate::now_rfc3339();
-            let command = revival(&current, &at, self.managed_runtime_version());
+            let release = self.capture_released_runtime();
+            let command = revival(
+                &current,
+                &at,
+                release.as_ref().and_then(|release| {
+                    self.managed_runtime_for_release(&current, release)
+                        .map(|(_, target)| target)
+                }),
+            );
             let application = apply_sandbox_lifecycle_command(current, &command)?;
             let SandboxLifecycleCommandApplication::Commit {
                 expected_revision,
@@ -55,6 +63,7 @@ impl<T: SandboxStore + SandboxTransactionStore + Send + Sync> CommandRevivalStor
             match self
                 .commit(SandboxTransaction::SaveSandboxAndAppend {
                     command_revival: Some(authorization.clone()),
+                    released_runtime: release,
                     expected_revision,
                     sandbox: Box::new(sandbox.clone()),
                     event_at: at,
@@ -71,6 +80,7 @@ impl<T: SandboxStore + SandboxTransactionStore + Send + Sync> CommandRevivalStor
                     ))
                 }
                 Err(SandboxStoreError::Conflict | SandboxStoreError::SequenceConflict) => {
+                    self.refresh_released_runtime().await;
                     tokio::task::yield_now().await
                 }
                 Err(error) => return Err(error),

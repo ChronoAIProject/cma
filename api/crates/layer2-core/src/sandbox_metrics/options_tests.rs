@@ -164,6 +164,38 @@ fn identifiers_attached_to_names_and_runtime_versions_are_never_labels() {
     );
 }
 
+#[test]
+fn runtime_pins_share_a_visible_digest_with_sandbox_details() {
+    for (image, digest, expected) in [
+        (
+            "registry.example/team/runtime:stable",
+            "a".repeat(64),
+            "runtime:stable · sha256:aaaaaaaaaaaa",
+        ),
+        (
+            "registry.example/team/runtime:stable",
+            "b".repeat(64),
+            "runtime:stable · sha256:bbbbbbbbbbbb",
+        ),
+        (
+            "registry.example/owner/custom-runtime",
+            "c".repeat(64),
+            "custom-runtime · sha256:cccccccccccc",
+        ),
+        (
+            "registry.example/owner/91892afa-5fa5-4f4f-9100-2b8d986d2f71",
+            "d".repeat(64),
+            "Runtime image · sha256:dddddddddddd",
+        ),
+    ] {
+        let value = format!("{image}@sha256:{digest}");
+        let label = option_label(OptionKind::Runtime, &value, None);
+        assert_eq!(label, expected);
+        let reference = label.rsplit_once(" · ").unwrap().1;
+        assert!(value.contains(reference));
+    }
+}
+
 fn contextual_pair(contexts: [OptionContext; 2]) -> Vec<FilterOption> {
     let mut items: Vec<_> = ["first", "second"]
         .into_iter()

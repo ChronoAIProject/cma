@@ -112,6 +112,10 @@ fn error(error: BotError) -> Response {
         BotError::NotFound => (StatusCode::NOT_FOUND, "setup_not_found"),
         BotError::Conflict => (StatusCode::CONFLICT, "setup_changed"),
         BotError::Invalid(_) => (StatusCode::BAD_REQUEST, "invalid_setup"),
+        BotError::ImageSelectionUnsupported => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "bot_image_selection_unsupported",
+        ),
         BotError::ConnectionRequired { .. } => {
             (StatusCode::UNPROCESSABLE_ENTITY, "connection_required")
         }

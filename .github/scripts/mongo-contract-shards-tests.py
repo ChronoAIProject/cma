@@ -16,6 +16,8 @@ ROOT = Path(__file__).parent
 PARTITIONS = runpy.run_path(str(ROOT / "mongo-contract-partitions.py"))
 GATE = runpy.run_path(str(ROOT / "mongo-contract-gate.py"))
 SCHEDULE = PARTITIONS["SCHEDULE"]
+DiscoveryTests = runpy.run_path(str(ROOT / "mongo-contract-discovery-tests.py"))["DiscoveryTests"]
+ListGuardTests = runpy.run_path(str(ROOT / "mongo-list-guard-tests.py"))["ListGuardTests"]
 
 
 class SchedulingTests(unittest.TestCase):
@@ -116,7 +118,17 @@ class ShardTests(unittest.TestCase):
         self.assertEqual(PARTITIONS["TESTS_PER_FIXTURE"], 40)
         self.assertEqual(PARTITIONS["CONCURRENT_FIXTURES"], 2)
         self.assertEqual(PARTITIONS["CI_SHARDS"], 8)
-        self.assertEqual(len(PARTITIONS["ISOLATED_TESTS"]), 7)
+        self.assertEqual(PARTITIONS["ISOLATED_TESTS"], (
+            ("--scale", PARTITIONS["SCALE_TEST"]),
+            ("--owner-allocation", PARTITIONS["OWNER_ALLOCATION_TEST"]),
+            ("--audit-bounds", PARTITIONS["AUDIT_BOUNDS_TEST"]),
+            ("--diagnostics", PARTITIONS["DIAGNOSTICS_TEST"]),
+            ("--scan-cooperation", PARTITIONS["SCAN_COOPERATION_TEST"]),
+            ("--bson-ceiling", PARTITIONS["BSON_CEILING_TEST"]),
+            ("--first-response", PARTITIONS["FIRST_RESPONSE_TEST"]),
+            ("--history", "store::usage_reports::tests::history_batch::seven_day_history_generates_and_reuses_complete_421_member_report"),
+        ))
+        self.assertEqual(len(PARTITIONS["ISOLATED_TESTS"]), 8)
         script = (ROOT / "mongo-contract-tests.sh").read_text()
         self.assertIn("--test-threads 1 --no-fail-fast", script)
         self.assertEqual(script.count("readiness_deadline=$((SECONDS + 60))"), 2)

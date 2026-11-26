@@ -94,6 +94,7 @@ async fn setup() -> (App, Arc<Platform>, MessageRef) {
         topic_creation: false,
         message_events: false,
         channel_posts: false,
+        member_join_chat_ids: Vec::new(),
         bot_id: "77".into(),
         bot_username: None,
         admission: AdmissionPolicy::All {},

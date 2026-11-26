@@ -16,6 +16,8 @@ use layer2_core::dependency_diagnostics::{
     self as diagnostics, Dependency, Failure, Operation, Reason,
 };
 
+mod failure_diagnostics;
+
 pub async fn attach_subject(
     state: State<Arc<AuthState>>,
     request: axum::extract::Request,
@@ -38,6 +40,12 @@ async fn attach_subject_inner(
     mut request: axum::extract::Request,
     next: Next,
 ) -> Response {
+    if request.uri().path() == layer1_public::rest::creation_outcomes::LOOKUP_PATH {
+        if !auth.creation_outcomes_enabled {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        return super::creation_outcomes::attach(&auth, request, next).await;
+    }
     if super::worker_credentials::matches_path(request.uri().path()) {
         return super::worker_credentials::attach(&auth, request, next).await;
     }
@@ -60,6 +68,7 @@ async fn attach_subject_inner(
             .scope(diagnostics::capture(super::identity_lifetime::scope(
                 &auth,
                 auth.resolve_request(request.headers()),
+                super::identity_retry::unavailable,
             ))),
     )
     .await;
@@ -96,13 +105,12 @@ async fn attach_subject_inner(
     let resolved = match resolved {
         Ok(resolved) => resolved,
         Err(error) => {
-            diagnostics::report(
-                Operation::Authentication,
-                failure.or(Some(Failure::new(
-                    Dependency::AuthenticationAuthority,
-                    Reason::Unknown,
-                ))),
-            );
+            let failure = failure.unwrap_or(Failure::new(
+                Dependency::AuthenticationAuthority,
+                Reason::Unknown,
+            ));
+            failure_diagnostics::record(&error, failure);
+            diagnostics::report(Operation::Authentication, Some(failure));
             if let Some(seconds) = retry_after {
                 return identity_failure_after(seconds);
             }
@@ -248,6 +256,7 @@ fn bypasses_ambient_auth(path: &str) -> bool {
         "/auth/signup-options"
             | "/auth/login"
             | "/auth/callback"
+            | super::service_authorization::CALLBACK_PATH
             | "/auth/logout"
             | "/.well-known/agent-card.json"
     ) {

@@ -8,7 +8,7 @@ use crate::config::RuntimeConfig;
 use crate::failure::Result;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum Kind {
+pub(crate) enum Kind {
     Authority,
     Journal,
     Workspace,
@@ -171,10 +171,16 @@ impl Inventory {
 }
 
 pub(super) fn scan(config: &RuntimeConfig, limits: Limits) -> Result<Inventory> {
+    scan_with_budget(config, &mut Budget::new(limits))
+}
+
+pub(super) fn scan_with_budget(config: &RuntimeConfig, budget: &mut Budget) -> Result<Inventory> {
+    budget.check()?;
+    let initial_entries = budget.entries;
+    let initial_bytes = budget.bytes;
     if config.home_identity.is_none() || config.generation == 0 {
         return Err(invalid());
     }
-    let mut budget = Budget::new(limits);
     let home = Directory::open(&config.home)?.identity()?;
     let state = Directory::open(&config.state_root)?;
     let transfer = Directory::open(&config.checkpoint_root)?;
@@ -190,7 +196,7 @@ pub(super) fn scan(config: &RuntimeConfig, limits: Limits) -> Result<Inventory> 
     };
     // Count every state-root entry, including unrelated helper directories;
     // never scan home files, native conversation data or credential directories.
-    let names = state.names(&mut budget)?;
+    let names = state.names(budget)?;
     let mut scopes = vec![(0, config.state_root.clone())];
     for name in &names {
         if let Some(number) = name.strip_prefix("process-generation-") {
@@ -210,7 +216,7 @@ pub(super) fn scan(config: &RuntimeConfig, limits: Limits) -> Result<Inventory> 
     for (scope, path) in scopes {
         let directory = Directory::open(&path)?;
         if scope != 0 {
-            let children = directory.names(&mut budget)?;
+            let children = directory.names(budget)?;
             if children
                 .iter()
                 .any(|name| name != "mutation-authority" && name != "runtime-mutations")
@@ -222,21 +228,14 @@ pub(super) fn scan(config: &RuntimeConfig, limits: Limits) -> Result<Inventory> 
             ("mutation-authority", Kind::Authority),
             ("runtime-mutations", Kind::Journal),
         ] {
-            result.collect(&directory, path.join(name), name, kind, scope, &mut budget)?;
+            result.collect(&directory, path.join(name), name, kind, scope, budget)?;
         }
     }
     for (name, kind) in [
         ("workspace-operations", Kind::Workspace),
         ("home-binding", Kind::Ownership),
     ] {
-        result.collect(
-            &state,
-            config.state_root.join(name),
-            name,
-            kind,
-            0,
-            &mut budget,
-        )?;
+        result.collect(&state, config.state_root.join(name), name, kind, 0, budget)?;
     }
     result.collect(
         &transfer,
@@ -244,7 +243,7 @@ pub(super) fn scan(config: &RuntimeConfig, limits: Limits) -> Result<Inventory> 
         "runtime-state",
         Kind::Installation,
         0,
-        &mut budget,
+        budget,
     )?;
     // Retain the current removal writer and its unpublished replacements as
     // evidence. Neither their existence nor a released flock proves quiescence.
@@ -267,7 +266,7 @@ pub(super) fn scan(config: &RuntimeConfig, limits: Limits) -> Result<Inventory> 
                 name,
                 Kind::Ownership,
                 name.ends_with(".tmp"),
-                &mut budget,
+                budget,
             )?;
         }
         // The separate repair protocol has additional authority not represented
@@ -314,8 +313,8 @@ pub(super) fn scan(config: &RuntimeConfig, limits: Limits) -> Result<Inventory> 
     .map_err(|_| invalid())?;
     result.digest = crate::command::hex(&digest.finalize());
     budget.check()?;
-    result.examined = budget.entries;
-    result.bytes = budget.bytes;
+    result.examined = budget.entries - initial_entries;
+    result.bytes = budget.bytes - initial_bytes;
     Ok(result)
 }
 
@@ -372,7 +371,7 @@ impl Inventory {
     }
 }
 
-fn classify(name: &str, kind: Kind) -> Result<bool> {
+pub(crate) fn classify(name: &str, kind: Kind) -> Result<bool> {
     let canonical = name.strip_suffix(".json").is_some_and(|stem| {
         stem.len() == 64
             && stem

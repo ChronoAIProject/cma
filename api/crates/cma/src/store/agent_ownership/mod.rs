@@ -3,7 +3,7 @@
 use futures_util::TryStreamExt;
 use layer2_core::agent_ownership::{
     Member, Membership, OwnershipError, OwnershipFailure, OwnershipLease, OwnershipStore,
-    OwnershipToken, DEFAULT_LEASE_MS, PROTOCOL_VERSION,
+    OwnershipToken, ReconciliationOwner, DEFAULT_LEASE_MS, PROTOCOL_VERSION,
 };
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::AgentId;
@@ -16,10 +16,12 @@ use super::sandbox_mongo::{
 };
 
 mod acquisition;
+mod binding_diagnostics;
 mod effects;
 mod failure;
 mod membership;
 mod records;
+mod renewal_batch;
 mod work_discovery;
 use records::{member_from, owner_from, token_filter};
 
@@ -35,6 +37,36 @@ pub(crate) struct MongoAgentOwnership {
     receiver_diagnostics_enabled: bool,
 }
 
+/// Preserve driver labels until the owning transaction decides whether it can retry.
+pub(in crate::store) enum FenceError {
+    Domain(SandboxStoreError),
+    Driver(mongodb::error::Error),
+}
+
+pub(in crate::store) enum ObservedFenceError {
+    Read(mongodb::error::Error),
+    Fence(FenceError),
+}
+
+impl ObservedFenceError {
+    pub(in crate::store) fn into_fence_error(self) -> FenceError {
+        match self {
+            Self::Read(error) => FenceError::Driver(error),
+            Self::Fence(error) => error,
+        }
+    }
+}
+
+impl FenceError {
+    /// Callers without their own bounded retry keep the historical classification.
+    pub(in crate::store) fn into_store(self) -> SandboxStoreError {
+        match self {
+            Self::Domain(error) => error,
+            Self::Driver(error) => fence_write_error(error),
+        }
+    }
+}
+
 impl MongoAgentOwnership {
     pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, OwnershipError> {
         let receiver_diagnostics_enabled = failure::diagnostics_enabled(std::env::var(
@@ -44,13 +76,7 @@ impl MongoAgentOwnership {
         super::schema::initialize_collections(&database, &[MEMBERS, OWNERS])
             .await
             .map_err(unavailable)?;
-        let store = Self {
-            client: client.clone(),
-            receiver_diagnostics_enabled,
-            members: majority_collection(&database, MEMBERS),
-            owners: majority_collection(&database, OWNERS),
-            database,
-        };
+        let store = Self::from_database(client, database, receiver_diagnostics_enabled);
         store
             .members
             .create_index(
@@ -79,6 +105,49 @@ impl MongoAgentOwnership {
         Ok(store)
     }
 
+    fn from_database(
+        client: &Client,
+        database: Database,
+        receiver_diagnostics_enabled: bool,
+    ) -> Self {
+        Self {
+            client: client.clone(),
+            receiver_diagnostics_enabled,
+            members: majority_collection(&database, MEMBERS),
+            owners: majority_collection(&database, OWNERS),
+            database,
+        }
+    }
+
+    #[cfg(feature = "qualification-hooks")]
+    pub(crate) async fn prepare_qualification_renewal(
+        uri: &str,
+        name: &str,
+    ) -> Result<std::sync::Arc<dyn OwnershipStore>, &'static str> {
+        let mut options = mongodb::options::ClientOptions::parse(uri)
+            .await
+            .map_err(|_| "qualification MongoDB configuration refused")?;
+        options.app_name = Some("cma-qualification-renewal".into());
+        options.min_pool_size = Some(0);
+        options.max_pool_size = Some(1);
+        super::transaction_barrier::bind(&mut options, name);
+        let client =
+            Client::with_options(options).map_err(|_| "qualification MongoDB client refused")?;
+        let database = client.database(name);
+        // Open and verify this separate pool before the local plan can arm.
+        // The ordinary composition owns collections, indexes and all other calls.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            database.run_command(doc! {"ping": 1}),
+        )
+        .await
+        .map_err(|_| "qualification MongoDB startup timed out")?
+        .map_err(|_| "qualification MongoDB startup failed")?;
+        Ok(std::sync::Arc::new(Self::from_database(
+            &client, database, false,
+        )))
+    }
+
     async fn server_now(&self) -> Result<i64, OwnershipError> {
         self.database
             .run_command(doc! {"hello": 1})
@@ -89,13 +158,66 @@ impl MongoAgentOwnership {
             .map_err(invalid)
     }
 
+    /// The driver aborts a dropped session only after its transaction's first
+    /// command has returned. A caller cancelled while a first-command write is
+    /// in flight would leave that write's locks on the server until the session
+    /// is reused or the transaction lifetime expires (#3189). On the member row
+    /// that would block every effect fence of this instance. Reading first
+    /// strands at most a lock-free snapshot; the driver aborts any later drop.
+    pub(super) async fn open_with_read(
+        &self,
+        instance: &str,
+        session: &mut ClientSession,
+    ) -> mongodb::error::Result<()> {
+        self.members
+            .find_one(doc! {"_id": instance})
+            .projection(doc! {"_id": 1})
+            .session(session)
+            .await
+            .map(|_| ())
+    }
+
     /// A write in the effect's own transaction creates a conflict with takeover.
     /// A preceding read, even a majority read, would leave a TOCTOU gap.
+    #[cfg(test)]
     pub(crate) async fn fence_transaction(
         &self,
         token: &OwnershipToken,
         session: &mut ClientSession,
     ) -> Result<(), SandboxStoreError> {
+        self.fence_transaction_typed(token, session)
+            .await
+            .map_err(FenceError::into_store)
+    }
+
+    pub(in crate::store) async fn fence_transaction_typed(
+        &self,
+        token: &OwnershipToken,
+        session: &mut ClientSession,
+    ) -> Result<(), FenceError> {
+        self.fence_transaction_observed(token, session)
+            .await
+            .map_err(ObservedFenceError::into_fence_error)
+    }
+
+    pub(super) async fn fence_transaction_observed(
+        &self,
+        token: &OwnershipToken,
+        session: &mut ClientSession,
+    ) -> Result<(), ObservedFenceError> {
+        self.open_with_read(&token.instance_id, session)
+            .await
+            .map_err(ObservedFenceError::Read)?;
+        self.fence_transaction_writes(token, session)
+            .await
+            .map_err(ObservedFenceError::Fence)
+    }
+
+    async fn fence_transaction_writes(
+        &self,
+        token: &OwnershipToken,
+        session: &mut ClientSession,
+    ) -> Result<(), FenceError> {
         let member = self
             .members
             .update_one(
@@ -108,24 +230,24 @@ impl MongoAgentOwnership {
             )
             .session(&mut *session)
             .await
-            .map_err(fence_write_error)?;
+            .map_err(FenceError::Driver)?;
         if member.matched_count != 1 {
-            return Err(SandboxStoreError::Conflict);
+            return Err(FenceError::Domain(SandboxStoreError::Conflict));
         }
         let matched = self
             .owners
             .update_one(
-                token_filter(token).map_err(|_| SandboxStoreError::Conflict)?,
+                token_filter(token).map_err(|_| FenceError::Domain(SandboxStoreError::Conflict))?,
                 doc! {"$inc": {"effect_revision": 1_i64}},
             )
             .session(&mut *session)
             .await
-            .map_err(fence_write_error)?
+            .map_err(FenceError::Driver)?
             .matched_count;
         if matched == 1 {
             Ok(())
         } else {
-            Err(SandboxStoreError::Conflict)
+            Err(FenceError::Domain(SandboxStoreError::Conflict))
         }
     }
 }
@@ -179,6 +301,45 @@ impl OwnershipStore for MongoAgentOwnership {
             .transpose()
     }
 
+    async fn reconciliation_owners(
+        &self,
+        ids: &[&AgentId],
+    ) -> Result<Vec<ReconciliationOwner>, OwnershipError> {
+        let ids: Vec<_> = ids.iter().map(|id| id.as_str()).collect();
+        let mut rows = self
+            .owners
+            .aggregate([
+                doc! {"$match": {
+                    "_id": {"$in": &ids}, "instance_id": {"$type": "string"},
+                    "expires_at": {"$type": "date"},
+                    "$expr": {"$gt": ["$expires_at", "$$NOW"]},
+                }},
+                doc! {"$project": {
+                    "document_schema_version": 1, "instance_id": 1, "epoch": 1, "protocol": 1,
+                    "expires_at": 1, "remaining_ms": {"$subtract": ["$expires_at", "$$NOW"]},
+                }},
+            ])
+            .batch_size(ids.len() as u32 + 1)
+            .await
+            .map_err(unavailable)?;
+        let mut owners = Vec::new();
+        while let Some(row) = rows.try_next().await.map_err(unavailable)? {
+            let (Ok(lease), Some(remaining_ms)) = (
+                owner_from(&row),
+                row.get_i64("remaining_ms")
+                    .ok()
+                    .and_then(|millis| u64::try_from(millis).ok()),
+            ) else {
+                continue;
+            };
+            owners.push(ReconciliationOwner {
+                token: lease.token,
+                remaining_ms,
+            });
+        }
+        Ok(owners)
+    }
+
     async fn has_owner_history(&self, id: &AgentId) -> Result<bool, OwnershipError> {
         self.owners
             .find_one(doc! {"_id": id.as_str()})
@@ -196,8 +357,28 @@ impl OwnershipStore for MongoAgentOwnership {
         self.acquire_owner(agent_id, instance_id).await
     }
 
+    async fn reconcile_acquisition(
+        &self,
+        agent_id: &AgentId,
+        instance_id: &str,
+    ) -> Result<Option<OwnershipToken>, OwnershipError> {
+        self.reconcile_owner_acquisition(agent_id, instance_id)
+            .await
+    }
+
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError> {
         self.renew_owner(token).await
+    }
+
+    fn supports_batch_renewal(&self) -> bool {
+        true
+    }
+
+    async fn renew_batch(
+        &self,
+        tokens: &[OwnershipToken],
+    ) -> Result<layer2_core::agent_ownership::RenewalBatch, OwnershipError> {
+        self.renew_owner_batch(tokens).await
     }
 
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
@@ -239,6 +420,8 @@ fn invalid(error: impl std::fmt::Display) -> OwnershipError {
     OwnershipError::Invalid(error.to_string())
 }
 
+#[cfg(test)]
+mod mongo_failure_containment_tests;
 #[cfg(test)]
 pub(crate) mod mongo_renewal_faults;
 #[cfg(test)]

@@ -28,6 +28,17 @@ pub(crate) fn require_execution(requested: bool) -> Result<(), String> {
     Ok(())
 }
 
+pub(super) fn retain_legal_consents(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<bool, String> {
+    const KEY: &str = "CHRONO_ERASURE_RETAIN_LEGAL_CONSENTS";
+    match lookup(KEY)?.as_deref() {
+        None | Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        _ => Err(format!("{KEY} must be true or false")),
+    }
+}
+
 pub(super) fn transaction_drain(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
 ) -> Result<u64, String> {

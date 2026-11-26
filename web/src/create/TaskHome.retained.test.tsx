@@ -175,9 +175,10 @@ it('restores an accepted home task after refresh and opens its exact preparing A
     expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
   );
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: '比较三个工具' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Preparing a cloud computer for your Agent…');
+  const start = screen.getByRole('button', { name: 'Start task' });
+  fireEvent.click(start);
+  fireEvent.click(start);
+  await screen.findByText('Getting its cloud computer ready');
   first.unmount();
   readable = true;
   render(<TaskHome {...props} />);
@@ -228,23 +229,23 @@ it.each([true, false])(
     await screen.findByText(
       "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
     );
-    fireEvent.change(screen.getByLabelText('Your task'), {
+    fireEvent.change(screen.getByLabelText('Follow-up draft'), {
       target: { value: 'Next independent draft' },
     });
     first.unmount();
     client.taskExperience = taskExperience('owner', enabled);
     render(<TaskHome {...props} />);
-    expect(screen.getByLabelText('Your task')).toHaveValue('Next independent draft');
-    if (!enabled) expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(screen.getByLabelText('Follow-up draft')).toHaveValue('Next independent draft');
+    expect(screen.queryByRole('button', { name: 'Start task' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Recover original task' }));
     await waitFor(() => expect(requests).toHaveLength(2));
-    fireEvent.change(screen.getByLabelText('Your task'), {
+    fireEvent.change(screen.getByLabelText('Follow-up draft'), {
       target: { value: 'Newer draft while recovering' },
     });
     resolve(Response.json({ id: 'original-operation', status: 'provisioning' }, { status: 202 }));
-    await screen.findByText('Preparing a cloud computer for your Agent…');
+    await screen.findByText('Getting its cloud computer ready');
     expect(requests[1]).toEqual(requests[0]);
-    expect(screen.getByLabelText('Your task')).toHaveValue('Newer draft while recovering');
+    expect(screen.getByLabelText('Follow-up draft')).toHaveValue('Newer draft while recovering');
   },
 );
 
@@ -281,9 +282,11 @@ it('shows terminal preparation failure and requires an explicit new task before 
     target: { value: 'Keep the task draft' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Environment unavailable');
-  expect(screen.queryByText('Preparing a cloud computer for your Agent…')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  await waitFor(() =>
+    expect(screen.getByRole('alert')).toHaveTextContent('Environment unavailable'),
+  );
+  expect(screen.queryByText('Getting its cloud computer ready')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Start task' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Start another task' }));
   expect(keys).toHaveLength(1);
   expect(screen.getByLabelText('Your task')).toHaveValue('Keep the task draft');

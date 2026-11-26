@@ -189,6 +189,17 @@ function createOpenCompletionRuntime(require, agent, alive, invalidRequest = mes
     return { ...base, complete: true, bindingDigest: record.digest, processNonce,
       openGeneration: record.openGeneration, sessionGeneration: record.sessionGeneration };
   }
-  return { open, nativeOpen, nativeWork, exclusive, installing, retire, retireAll, observe, promptStarting, read };
+  function current(params) {
+    // Only this process's completed, still-live opens; nothing is inferred.
+    // A caller holding no session id can adopt exactly one of these, and an
+    // open still in flight must be waited for rather than duplicated.
+    const sessions = [];
+    for (const record of records.values()) {
+      if (live(record)) sessions.push({ sessionId: record.sessionId, bindingDigest: record.digest });
+    }
+    return { version: 1, challenge: params.challenge, processNonce, opening: opening !== null, sessions };
+  }
+  return { open, nativeOpen, nativeWork, exclusive, installing, retire, retireAll, observe, promptStarting, read,
+    current };
 }
 module.exports = { createOpenCompletionRuntime };

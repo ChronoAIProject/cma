@@ -375,6 +375,9 @@ mod home_inventory;
 #[path = "reconciliation_binding_tests.rs"]
 mod binding_tests;
 
+#[path = "reconciliation_binding_observation_tests.rs"]
+mod binding_observation;
+
 #[path = "reconciliation_schedule_tests.rs"]
 mod schedule_tests;
 

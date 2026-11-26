@@ -39,6 +39,7 @@ async fn tool_proxy_proof_requires_the_live_endpoint_and_current_custody_generat
                     operation_id: format!("tool-proof-credential-{generation}"),
                     value: RuntimeCredential::new(format!("fixture-credential-{generation}")),
                     custody_generation: Some(generation),
+                    github_route: None,
                 }))
                 .await,
             ResponseFrame::Credential(_)

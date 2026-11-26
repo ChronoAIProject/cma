@@ -57,3 +57,37 @@ fn domain_aliases_are_bounded_exact_clean_bases() {
         super::origins::parse_public_api_aliases(&["https://old.example"; 9].join(",")).is_err()
     );
 }
+
+#[test]
+fn cma_record_origin_aliases_are_bounded_exact_origins() {
+    assert!(super::origins::parse_cma_record_origin_aliases("")
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        super::origins::parse_cma_record_origin_aliases(
+            "http://cma-api.earlier.svc,https://cma.earlier.example"
+        )
+        .unwrap(),
+        vec![
+            "http://cma-api.earlier.svc".to_owned(),
+            "https://cma.earlier.example".to_owned()
+        ]
+    );
+    for invalid in [
+        "http://cma-api.earlier.svc,",
+        "http://cma-api.earlier.svc/",
+        "http://cma-api.earlier.svc/api",
+        "http://public.example",
+        "https://user@cma.earlier.example",
+        "https://cma.earlier.example?query=1",
+    ] {
+        assert!(
+            super::origins::parse_cma_record_origin_aliases(invalid).is_err(),
+            "{invalid}"
+        );
+    }
+    assert!(super::origins::parse_cma_record_origin_aliases(
+        &["https://cma.earlier.example"; 9].join(",")
+    )
+    .is_err());
+}

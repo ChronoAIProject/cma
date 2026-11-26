@@ -131,7 +131,12 @@ async fn an_unbudgeted_owners_turns_and_requests_meet_the_stop() {
             .unwrap(),
     );
     budget_someone_else(&store).await;
-    crate::sandbox::assert_metered_title_refusal(store.clone(), scope.clone()).await;
+    crate::sandbox::assert_metered_auxiliary_refusal(
+        store.clone(),
+        scope.clone(),
+        BudgetError::Unavailable,
+    )
+    .await;
     assert_eq!(
         store.reserve_request(&scope, &request).await,
         Err(BudgetError::Unavailable)

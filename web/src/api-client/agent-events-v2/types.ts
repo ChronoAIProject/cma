@@ -11,7 +11,8 @@ import {
   text,
   type Output,
 } from '../schema.js';
-import { v2AgentEventKind } from './kinds.js';
+import type { ExternalApprovalProjection } from './external-approval.js';
+import { negotiatedAgentEventKind } from './kinds.js';
 import {
   cursor,
   cursorIncarnation,
@@ -41,20 +42,24 @@ export const v2UiTransport = strict({
   command_status: enumeration('/api/v2/commands/{command_id}'),
 });
 export type V2UiTransport = Output<typeof v2UiTransport>;
-const itemFields = {
+const itemFields = (externalApprovals = false) => ({
   retained_output: optional(retainedOutputAvailability),
   cursor,
   sequence: positiveInteger,
   appended_at: identifier,
-  kind: nullable(v2AgentEventKind),
+  kind: nullable((value: unknown) => negotiatedAgentEventKind(value, externalApprovals)),
   message_command_id: optional(identifier),
   response_binding: nullable(
     strict({ command_id: identifier, response_id: identifier, turn_sequence: positiveInteger }),
   ),
-};
-export const v2AgentEventItem = strict(itemFields);
+});
+export function v2AgentEventItem(value: unknown, externalApprovals = false) {
+  return strict(itemFields(externalApprovals))(value);
+}
 export type V2AgentEventItem = Output<typeof v2AgentEventItem>;
-export const v2AgentEvent = strict({ ...itemFields, agent_id: identifier, incarnation });
+export function v2AgentEvent(value: unknown, externalApprovals = false) {
+  return strict({ ...itemFields(externalApprovals), agent_id: identifier, incarnation })(value);
+}
 export type V2AgentEvent = Output<typeof v2AgentEvent>;
 const head = strict({
   object: enumeration('cma.agent.event_head'),
@@ -64,7 +69,9 @@ const head = strict({
   through_cursor: cursor,
   active_turn: nullable(v2AgentEventItem),
 });
-export type V2AgentEventHead = Output<typeof head>;
+export type V2AgentEventHead = Output<typeof head> & {
+  readonly externalApprovalProjection?: ExternalApprovalProjection;
+};
 /** A live baseline does not acknowledge any historical rows. */
 export function v2AgentEventHead(value: unknown, agentId: string): V2AgentEventHead {
   const result = head(value);
@@ -81,16 +88,19 @@ export function v2AgentEventHead(value: unknown, agentId: string): V2AgentEventH
   }
   return result;
 }
-const page = strict({
-  object: enumeration('cma.agent.event_page'),
-  schema_version: version,
-  agent_id: identifier,
-  incarnation,
-  through_cursor: cursor,
-  items: array(v2AgentEventItem),
-  next_page_cursor: nullable(pageCursor),
-});
-export type V2AgentEventPage = Output<typeof page>;
+const page = (externalApprovals = false) =>
+  strict({
+    object: enumeration('cma.agent.event_page'),
+    schema_version: version,
+    agent_id: identifier,
+    incarnation,
+    through_cursor: cursor,
+    items: array((value: unknown) => v2AgentEventItem(value, externalApprovals)),
+    next_page_cursor: nullable(pageCursor),
+  });
+export type V2AgentEventPage = Output<ReturnType<typeof page>> & {
+  readonly externalApprovalProjection?: ExternalApprovalProjection;
+};
 export function validateItem(
   item: V2AgentEventItem,
   expectedIncarnation: string,
@@ -130,8 +140,9 @@ export function v2AgentEventPage(
   agentId: string,
   limit: number,
   previous?: V2AgentPageCursor,
+  externalApprovals = false,
 ): V2AgentEventPage {
-  const result = page(value);
+  const result = page(externalApprovals)(value);
   const through = cursorSequence(result.through_cursor);
   const prior = previous === undefined ? { after: 0, through } : pageCoordinates(previous);
   if (

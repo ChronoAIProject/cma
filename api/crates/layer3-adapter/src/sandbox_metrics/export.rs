@@ -38,11 +38,46 @@ struct Export {
 }
 
 pub fn decode_export(body: &[u8], selection: &Selection) -> Result<Vec<PhysicalSeries>> {
+    let mut named = BTreeMap::new();
+    for series in decode_series(body, selection, |left, right| left == right)? {
+        let chart = PhysicalSeries {
+            metric: series.metric,
+            name: series.name,
+            labels: series.labels,
+            samples: series
+                .samples
+                .into_iter()
+                .map(|sample| Sample {
+                    at: sample.timestamp_ms as f64 / 1000.0,
+                    value: sample.value,
+                })
+                .collect(),
+        };
+        if named.insert(chart.name.clone(), chart).is_some() {
+            return Err(invalid());
+        }
+    }
+    Ok(named.into_values().collect())
+}
+
+pub fn decode_raw_export(body: &[u8], selection: &Selection) -> Result<Vec<RawPhysicalSeries>> {
+    decode_series(body, selection, |left, right| {
+        left.to_bits() == right.to_bits()
+    })
+}
+
+fn decode_series(
+    body: &[u8],
+    selection: &Selection,
+    same_value: impl Fn(f64, f64) -> bool,
+) -> Result<Vec<RawPhysicalSeries>> {
     selection.validate()?;
     if body.len() > super::transport::MAX_RESPONSE_BYTES {
         return Err(invalid());
     }
-    let mut series: BTreeMap<String, PhysicalSeries> = BTreeMap::new();
+    let from_ms = selection.from.checked_mul(1000).ok_or_else(invalid)?;
+    let to_ms = selection.to.checked_mul(1000).ok_or_else(invalid)?;
+    let mut series: BTreeMap<BTreeMap<String, String>, RawPhysicalSeries> = BTreeMap::new();
     for line in body.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
         let row: Export = serde_json::from_slice(line).map_err(|_| invalid())?;
         let name = row
@@ -63,41 +98,35 @@ pub fn decode_export(body: &[u8], selection: &Selection) -> Result<Vec<PhysicalS
         {
             return Err(invalid());
         }
+        // Split export lines for the same label set can be combined. Separate
+        // physical incarnations can share the exported series name.
         let entry = series
-            .entry(name.clone())
-            .or_insert_with(|| PhysicalSeries {
+            .entry(row.metric.clone())
+            .or_insert_with(|| RawPhysicalSeries {
                 metric: selection.metric,
                 name: name.clone(),
                 labels: row.metric.clone(),
                 samples: Vec::new(),
             });
-        // Export may split one physical series into several JSON lines. Another
-        // job/replica/instance is ambiguity, never an extra value to sum.
-        if entry.labels != row.metric {
-            return Err(invalid());
-        }
-        for (at, value) in row.timestamps.into_iter().zip(row.values) {
-            let at = at as f64 / 1000.0;
-            if !value.is_finite()
-                || value < 0.0
-                || at < selection.from as f64
-                || at > selection.to as f64
-            {
+        for (timestamp_ms, value) in row.timestamps.into_iter().zip(row.values) {
+            if !value.is_finite() || value < 0.0 || timestamp_ms < from_ms || timestamp_ms > to_ms {
                 return Err(invalid());
             }
-            entry.samples.push(Sample { at, value });
+            entry.samples.push(RawSample {
+                timestamp_ms,
+                value,
+            });
         }
     }
     for entry in series.values_mut() {
-        entry.samples.sort_by(|a, b| a.at.total_cmp(&b.at));
-        if entry
-            .samples
-            .windows(2)
-            .any(|w| w[0].at == w[1].at && w[0].value != w[1].value)
-        {
+        entry.samples.sort_by_key(|sample| sample.timestamp_ms);
+        if entry.samples.windows(2).any(|pair| {
+            pair[0].timestamp_ms == pair[1].timestamp_ms
+                && !same_value(pair[0].value, pair[1].value)
+        }) {
             return Err(invalid());
         }
-        entry.samples.dedup_by(|a, b| a.at == b.at);
+        entry.samples.dedup_by_key(|sample| sample.timestamp_ms);
     }
     Ok(series.into_values().collect())
 }
@@ -141,5 +170,88 @@ mod tests {
         assert!(
             decode_export(b"{\"status\":\"success\",\"isPartial\":true}", &selection()).is_err()
         );
+    }
+
+    #[test]
+    fn raw_export_preserves_milliseconds_and_container_identity_for_reused_names() {
+        let mut selected = selection();
+        selected.from = 9_007_199_254_740;
+        selected.to = selected.from + 2;
+        let timestamp = 9_007_199_254_740_993_u64;
+        let row = |container, timestamp| {
+            serde_json::json!({
+                "metric": {
+                    "__name__": selected.metric.name(), "cluster": selected.cluster,
+                    "namespace": selected.namespace, "pod": selected.names[0],
+                    "job": "kubelet", "metrics_path": "/metrics/resource", "container": "runtime",
+                    "pod_uid": "fixture-pod", "container_id": container,
+                },
+                "timestamps": [timestamp], "values": [3.25],
+            })
+        };
+        let raw = [
+            row("one", timestamp),
+            row("two", timestamp + 1),
+            row("one", timestamp),
+        ]
+        .into_iter()
+        .map(|row| row.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+        let parsed = decode_raw_export(raw.as_bytes(), &selected).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].labels["container_id"], "one");
+        assert_eq!(
+            parsed[0].samples,
+            vec![RawSample {
+                timestamp_ms: timestamp,
+                value: 3.25
+            }]
+        );
+        assert_eq!(parsed[1].samples[0].timestamp_ms, timestamp + 1);
+        assert!(decode_export(raw.as_bytes(), &selected).is_err());
+    }
+
+    #[test]
+    fn raw_export_refuses_conflicting_value_bits_in_either_order() {
+        let make_row = |value| {
+            serde_json::json!({
+                "metric": {
+                    "__name__": "container_cpu_usage_seconds_total", "cluster": "prod",
+                    "namespace": "runtime", "pod": "cold-claim", "container": "runtime",
+                    "job": "kubelet", "metrics_path": "/metrics/resource",
+                },
+                "timestamps": [1250], "values": [value],
+            })
+        };
+        let first = make_row(0.0).to_string();
+        let second = make_row(-0.0).to_string();
+        for input in [format!("{first}\n{second}"), format!("{second}\n{first}")] {
+            assert!(decode_raw_export(input.as_bytes(), &selection()).is_err());
+            assert!(decode_export(input.as_bytes(), &selection()).is_ok());
+        }
+    }
+
+    #[test]
+    fn raw_export_rejects_mislabeled_or_incomplete_source() {
+        let row = serde_json::json!({
+            "metric": {
+                "__name__": "container_cpu_usage_seconds_total", "cluster": "prod",
+                "namespace": "runtime", "pod": "cold-claim", "container": "runtime",
+                "job": "kubelet", "metrics_path": "/metrics/resource",
+            },
+            "timestamps": [1250], "values": [3.25],
+        });
+        for missing in ["__name__", "pod", "job", "metrics_path", "container"] {
+            let mut incomplete = row.clone();
+            incomplete["metric"]
+                .as_object_mut()
+                .unwrap()
+                .remove(missing);
+            assert!(decode_raw_export(incomplete.to_string().as_bytes(), &selection()).is_err());
+        }
+        let mut selected = selection();
+        selected.metric = SourceMetric::WorkingSet;
+        assert!(decode_raw_export(row.to_string().as_bytes(), &selected).is_err());
     }
 }

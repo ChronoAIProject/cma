@@ -1,5 +1,6 @@
 use super::*;
 mod acceptance;
+mod cluster_fixture;
 mod environment;
 mod transport_auth;
 use axum::{
@@ -17,146 +18,20 @@ use layer2_core::{
         AgentLiveSubscription,
     },
 };
+
+pub(crate) use cluster_fixture::{
+    acquire, acquire_for_store, cluster, cluster_with_store, Instance,
+};
+use cluster_fixture::{cluster_with_capacity, cluster_with_middleware};
 use tokio::task::JoinHandle;
 use transport_auth::test_auth;
-
-pub(crate) struct Instance {
-    pub(crate) coordinator: Arc<OwnershipCoordinator>,
-    pub(crate) relay: Arc<Relay>,
-    updates: Arc<DurableAgentUpdateRecorder>,
-    address: String,
-    server: JoinHandle<()>,
-}
 
 pub(crate) fn public_routes(relay: &Arc<Relay>, router: Router) -> Router {
     relay.routes(router)
 }
-impl Drop for Instance {
-    fn drop(&mut self) {
-        self.server.abort();
-    }
-}
 
-pub(crate) async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
-    cluster_with_capacity(count, Default::default()).await
-}
-async fn cluster_with_capacity(
-    count: usize,
-    capacity: crate::config::RelayCapacityConfig,
-) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
-    cluster_with_middleware(count, capacity, |router| router).await
-}
-
-async fn cluster_with_middleware(
-    count: usize,
-    capacity: crate::config::RelayCapacityConfig,
-    wrap: impl Fn(Router) -> Router,
-) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
-    let store = Arc::new(MemoryOwnershipStore::default());
-    let mut instances = Vec::new();
-    for index in 0..count {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = format!("http://{}", listener.local_addr().unwrap());
-        let coordinator = OwnershipCoordinator::register(
-            store.client(),
-            Member {
-                instance_id: format!("instance-{index}"),
-                protocol: PROTOCOL_VERSION,
-                relay_address: address.clone(),
-                expires_at_ms: 0,
-                draining: false,
-                owned_agents: 0,
-                max_owned_agents: 256,
-            },
-        )
-        .await
-        .unwrap();
-        let updates = DurableAgentUpdateRecorder::new(Arc::new(InMemorySandboxStore::default()));
-        let relay = Relay::with_capacity(
-            coordinator.clone(),
-            &updates,
-            ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"synthetic-test-deployment-key"),
-            capacity,
-        )
-        .unwrap();
-        assert!(relay
-            .public_access
-            .set(Arc::new(transport_auth::TransportPolicy))
-            .is_ok());
-        updates.install_live_source(relay.live_source());
-        let router = relay.routes(
-            Router::new()
-                .route("/api/v1/agents/{agent}", get(environment::ready_fixture_read))
-                .route(
-                    "/api/v1/agents/{agent}/transcript",
-                    get(environment::ready_fixture_read),
-                )
-                .route(
-                    "/api/v1/agents/{agent}/{*operation}",
-                    axum::routing::any(|headers: HeaderMap, body: axum::body::Bytes| async move {
-                        if headers
-                            .get("authorization")
-                            .and_then(|value| value.to_str().ok())
-                            != Some("Bearer synthetic-authorized")
-                        {
-                            return StatusCode::UNAUTHORIZED.into_response();
-                        }
-                        let owner = layer2_core::agent_ownership::execution_owner().unwrap();
-                        axum::Json(
-                            serde_json::json!({"instance": owner.instance_id, "epoch": owner.epoch, "bytes": body.len(),
-                "idempotency": headers.get("idempotency-key").and_then(|value| value.to_str().ok()),
-                "request": headers.get("x-request-id").and_then(|value| value.to_str().ok()) }),
-                        )
-                        .into_response()
-                    }),
-                )
-                .route(
-                    "/api/v1/agents/{agent}/files/slow",
-                    get(|| async {
-                        use futures_util::StreamExt;
-                        axum::body::Body::from_stream(
-                            futures_util::stream::once(async { Ok::<_, std::io::Error>("first") })
-                                .chain(futures_util::stream::pending()),
-                        )
-                    }),
-                )
-                .layer(axum::extract::DefaultBodyLimit::max(MAX_BUFFERED_BODY_BYTES)),
-        ).layer(axum::middleware::from_fn(test_auth));
-        let router = wrap(router);
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        });
-        instances.push(Instance {
-            coordinator,
-            relay,
-            updates,
-            address,
-            server,
-        });
-    }
-    (store, instances)
-}
-
-pub(crate) async fn acquire(
-    store: &MemoryOwnershipStore,
-    instances: &[Instance],
-    id: &AgentId,
-) -> (usize, Arc<Authority>) {
-    let preferred = candidates(id, &store.membership().await.unwrap(), None).unwrap()[0]
-        .instance_id
-        .clone();
-    let index = instances
-        .iter()
-        .position(|instance| instance.coordinator.instance_id == preferred)
-        .unwrap();
-    let authority = instances[index]
-        .coordinator
-        .acquire(id)
-        .await
-        .unwrap()
-        .unwrap();
-    (index, authority)
-}
+/// A canonical request ID, which the request context preserves end to end.
+const SAME_REQUEST: &str = "00000000-0000-4000-8000-000000000001";
 
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -178,7 +53,7 @@ async fn two_and_three_instances_route_to_exact_owner_and_preserve_authorization
                 .get(&url)
                 .header("authorization", "Bearer synthetic-authorized")
                 .header("idempotency-key", "same-operation")
-                .header("x-request-id", "same-request")
+                .header("x-request-id", SAME_REQUEST)
                 .send()
                 .await
                 .unwrap();
@@ -187,7 +62,7 @@ async fn two_and_three_instances_route_to_exact_owner_and_preserve_authorization
             assert_eq!(body["instance"], instances[owner].coordinator.instance_id);
             assert_eq!(body["epoch"], authority.token.epoch);
             assert_eq!(body["idempotency"], "same-operation");
-            assert_eq!(body["request"], "same-request");
+            assert_eq!(body["request"], SAME_REQUEST);
             assert_eq!(
                 client().get(&url).send().await.unwrap().status(),
                 StatusCode::UNAUTHORIZED
@@ -244,6 +119,74 @@ async fn two_and_three_instances_route_to_exact_owner_and_preserve_authorization
                 .status(),
             StatusCode::SERVICE_UNAVAILABLE
         );
+    }
+}
+
+async fn owner_routed(
+    instance: &Instance,
+    method: Method,
+    id: &AgentId,
+    path: &str,
+) -> (StatusCode, serde_json::Value) {
+    let response = client()
+        .request(
+            method,
+            format!("{}/api/v1/agents/{id}/{path}", instance.address),
+        )
+        .header("authorization", "Bearer synthetic-authorized")
+        .send()
+        .await
+        .unwrap();
+    (response.status(), response.json().await.unwrap())
+}
+
+#[tokio::test]
+async fn file_requests_without_a_live_owner_are_served_locally_and_other_owner_routes_refuse() {
+    let (store, instances) = cluster(2).await;
+    let id = AgentId("agt-without-owner".into());
+    let files = [
+        (Method::GET, "files/content"),
+        (Method::GET, "files/tree"),
+        (Method::POST, "files"),
+        (Method::DELETE, "files"),
+    ];
+    let others = [
+        (Method::GET, "environment"),
+        (Method::GET, "models"),
+        (Method::POST, "attachments"),
+        (Method::POST, "recover-worktree"),
+    ];
+    // A stopped Agent has no live owner at all.
+    for instance in &instances {
+        for (method, path) in files.clone() {
+            let (status, body) = owner_routed(instance, method, &id, path).await;
+            assert_eq!(status, StatusCode::OK, "{path}");
+            assert_eq!(body["instance"], serde_json::Value::Null, "{path}");
+        }
+        for (method, path) in others.clone() {
+            let (status, body) = owner_routed(instance, method, &id, path).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+            assert_eq!(body["code"], "agent_owner_unavailable", "{path}");
+        }
+    }
+    // A live owner still serves its Agent's files.
+    let (owner, authority) = acquire(&store, &instances, &id).await;
+    let peer = &instances[(owner + 1) % instances.len()];
+    let (status, body) = owner_routed(peer, Method::GET, &id, "files/content").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["instance"], instances[owner].coordinator.instance_id);
+    assert_eq!(body["epoch"], authority.token.epoch);
+    // A draining owner cannot accept new work; files fall back to the peer.
+    instances[owner].coordinator.begin_drain().await;
+    for (method, path) in files {
+        let (status, body) = owner_routed(peer, method, &id, path).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(body["instance"], serde_json::Value::Null, "{path}");
+    }
+    for (method, path) in others {
+        let (status, body) = owner_routed(peer, method, &id, path).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+        assert_eq!(body["code"], "agent_owner_unavailable", "{path}");
     }
 }
 
@@ -352,7 +295,9 @@ async fn peer_auth_rejects_unsigned_tampered_replayed_and_stale_epoch_requests()
         client().get(&url).send().await.unwrap().status(),
         StatusCode::FORBIDDEN
     );
-    let sign = |token: &OwnershipToken| {
+    let mut signed = HeaderMap::new();
+    signed.insert("x-request-id", SAME_REQUEST.parse().unwrap());
+    let sign_over = |token: &OwnershipToken, headers: &HeaderMap| {
         peer.relay
             .authentication
             .sign(
@@ -360,33 +305,35 @@ async fn peer_auth_rejects_unsigned_tampered_replayed_and_stale_epoch_requests()
                 token,
                 &Method::GET,
                 &uri,
-                &HeaderMap::new(),
+                headers,
                 &[],
             )
             .unwrap()
     };
-    let proof = sign(&authority.token);
-    let accepted = client()
-        .get(&url)
-        .header(PROOF, &proof)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(accepted.status(), StatusCode::OK);
-    drop(accepted);
+    // The receiver's request context assigns a request ID to a request that
+    // arrives without one; a proof that did not sign it is refused (#3261).
     assert_eq!(
         client()
             .get(&url)
-            .header(PROOF, proof)
+            .header(PROOF, sign_over(&authority.token, &HeaderMap::new()))
             .send()
             .await
             .unwrap()
             .status(),
         StatusCode::FORBIDDEN
     );
+    let sign = |token: &OwnershipToken| sign_over(token, &signed);
+    let get = || client().get(&url).header("x-request-id", SAME_REQUEST);
+    let proof = sign(&authority.token);
+    let accepted = get().header(PROOF, &proof).send().await.unwrap();
+    assert_eq!(accepted.status(), StatusCode::OK);
+    drop(accepted);
     assert_eq!(
-        client()
-            .get(&url)
+        get().header(PROOF, proof).send().await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        get()
             .header(PROOF, sign(&authority.token))
             .header("authorization", "changed")
             .send()
@@ -398,8 +345,7 @@ async fn peer_auth_rejects_unsigned_tampered_replayed_and_stale_epoch_requests()
     let mut old = authority.token.clone();
     old.epoch += 1;
     assert_eq!(
-        client()
-            .get(&url)
+        get()
             .header(PROOF, sign(&old))
             .send()
             .await

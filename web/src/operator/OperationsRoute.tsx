@@ -10,10 +10,12 @@ export function OperationsRoute({
   operator,
   capabilities,
   principal,
+  bindingDiagnostics = false,
 }: {
   readonly operator?: OperatorClient;
   readonly capabilities: readonly Capability[];
   readonly principal: UsageReportOwner;
+  readonly bindingDiagnostics?: boolean;
 }) {
   if (operator === undefined || !canOpenOperations(capabilities))
     return (
@@ -30,7 +32,12 @@ export function OperationsRoute({
         </section>
       }
     >
-      <Operations client={operator} capabilities={capabilities} principal={principal} />
+      <Operations
+        client={operator}
+        capabilities={capabilities}
+        principal={principal}
+        bindingDiagnostics={bindingDiagnostics}
+      />
     </Suspense>
   );
 }

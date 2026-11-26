@@ -2,7 +2,6 @@ import { test, expect, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalUsageMetrics } from './usage-metrics.fixture';
 import { expectReadableText } from './themeContrast';
-
 async function settle(page: Page, width: number) {
   await expect
     .poll(() =>
@@ -52,7 +51,7 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(send).toHaveCSS('color', 'rgb(11, 11, 12)');
       await expect(page.locator('.task-home__composer')).toHaveCSS(
         'background-color',
-        theme === 'light' ? 'rgb(250, 250, 250)' : 'rgb(19, 19, 21)',
+        theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(20, 20, 22)',
       );
       await expect(page.locator('.console__surface')).toHaveCSS(
         'background-color',
@@ -67,9 +66,9 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(
         nav.locator('.sidebar__actions').getByRole('button', { name: 'Settings', exact: true }),
       ).toHaveCount(0);
-      await expect(nav.getByRole('button', { name: 'Settings', exact: true })).toHaveCount(1);
+      await expect(nav.getByRole('button', { name: 'Settings', exact: true })).toHaveCount(0);
       await expect(
-        nav.locator('.sidebar__account').getByRole('button', { name: 'Settings', exact: true }),
+        nav.locator('.sidebar__account').getByRole('button', { name: /Account menu for/ }),
       ).toBeVisible();
       const filter = nav.getByRole('button', { name: 'Filter', exact: true });
       await filter.click();

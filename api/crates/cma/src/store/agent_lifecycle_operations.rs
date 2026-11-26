@@ -14,19 +14,22 @@ use layer1_public::rest::{
 };
 use layer2_core::{now_rfc3339, Capability, StoreError, SubjectId};
 use mongodb::{
-    bson::{doc, spec::BinarySubtype, Binary, Bson, DateTime},
+    bson::{doc, Binary, Bson, DateTime},
     error::{Error, ErrorKind, WriteFailure},
     options::{IndexOptions, ReturnDocument},
     Collection, Database, IndexModel,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
 mod admission;
+pub(crate) mod canary_admission;
+pub(crate) mod canary_key;
+pub(crate) use canary_admission::CanaryProfiles;
 #[cfg(test)]
 mod operator_stop_tests;
+pub(super) mod released;
 pub(crate) use admission::LifecycleCreateError;
 
 pub(crate) const COLLECTION: &str = "agent_lifecycle_operations";
@@ -44,6 +47,30 @@ pub(crate) enum LifecycleBehavior {
     #[default]
     Legacy,
     PromptRepository,
+    /// This admission cannot allocate before verifying the GitHub connection.
+    ManagedRepository,
+    /// Generic URL-only source admission. The durable pin chooses the source mode.
+    RepositoryChoice,
+    PublicRepository,
+}
+
+impl LifecycleBehavior {
+    pub(crate) fn uses_repository_profile(self) -> bool {
+        matches!(
+            self,
+            Self::PromptRepository
+                | Self::ManagedRepository
+                | Self::RepositoryChoice
+                | Self::PublicRepository
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PublicRepositoryPin {
+    pub url: String,
+    pub commit: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,7 +138,20 @@ pub(crate) struct LifecycleRecord {
     pub owner: String,
     pub key: String,
     pub fingerprint: Binary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_wire: Option<CreationWire>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_fence: Option<layer2_core::sandbox::store::CreationFence>,
     pub input: LifecycleInput,
+    /// Present when the operation's resolved image passed the durable lane fence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub released_lane: Option<layer2_core::released_runtime::ReleasedLane>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_admission: Option<canary_admission::CanaryAdmission>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_manifest_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_redemption_key: Option<canary_admission::CanaryRedemptionKey>,
     pub status: String,
     pub phase: String,
     pub events: Vec<LifecycleEvent>,
@@ -120,6 +160,10 @@ pub(crate) struct LifecycleRecord {
     pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_access_pin: Option<RepositoryAccessPin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_repository: Option<PublicRepositoryPin>,
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<layer1_public::rest::AgentLifecycleFailure>,
@@ -130,11 +174,31 @@ pub(crate) struct LifecycleRecord {
     pub lease_token: Option<String>,
     #[serde(default)]
     pub attempts: u32,
+    /// Confirmed pre-allocation quota refusals that scheduled another attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_quota_refusals: Option<u32>,
     #[serde(default)]
     pub retry_at: Option<DateTime>,
     pub created_at: DateTime,
     pub updated_at: DateTime,
     pub document_schema_version: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RepositoryAccessPin {
+    pub(crate) owner: String,
+    pub(crate) repository: String,
+    pub(crate) commit: String,
+    pub(crate) runtime_image: String,
+    pub(crate) connection: layer2_core::sandbox::InitialServiceConnection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CreationWire {
+    deployment: String,
+    digest: String,
 }
 
 #[derive(Debug, Clone)]
@@ -151,8 +215,11 @@ pub(crate) struct LifecycleLease {
 
 #[derive(Clone)]
 pub(crate) struct MongoAgentLifecycleStore {
+    pub(super) creation_writer_epoch: Option<String>,
+    pub(super) creation_terminal_settlement_enabled: bool,
     operations: Collection<LifecycleRecord>,
     admission_settings: Collection<mongodb::bson::Document>,
+    pub(super) released_lanes: Option<super::released_runtimes::MongoReleasedRuntimes>,
 }
 
 impl MongoAgentLifecycleStore {
@@ -191,65 +258,33 @@ impl MongoAgentLifecycleStore {
             )
             .await
             .map_err(driver)?;
+        operations
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"status":1,"creation_fence.epoch":1,"_id":1})
+                    .options(
+                        IndexOptions::builder()
+                            .name("creation_terminal_recovery".to_owned())
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(driver)?;
+        canary_admission::ensure_admission_indexes(&operations).await?;
         Ok(Self {
+            creation_writer_epoch: None,
+            creation_terminal_settlement_enabled: false,
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
+            released_lanes: None,
         })
     }
 
-    pub(crate) async fn create(
-        &self,
-        owner: &SubjectId,
-        key: &str,
-        input: LifecycleInput,
-    ) -> Result<CreateResult, LifecycleCreateError> {
-        let bytes = serde_json::to_vec(&input.request)
-            .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
-        let fingerprint = Binary {
-            subtype: BinarySubtype::Generic,
-            bytes: Sha256::digest(&bytes).to_vec(),
-        };
-        if let Some(existing) = self
-            .operations
-            .find_one(doc! { "owner": owner.as_str(), "key": key })
-            .await
-            .map_err(driver)?
-        {
-            schema::require_current(existing.document_schema_version)?;
-            if !same_request(&existing.input.request, &input.request)? {
-                return Err(StoreError::RevisionConflict {
-                    expected: 0,
-                    actual: 1,
-                }
-                .into());
-            }
-            return Ok(CreateResult::Existing(Box::new(existing)));
-        }
-        let now = DateTime::now();
-        let record = LifecycleRecord {
-            id: uuid::Uuid::new_v4().simple().to_string(),
-            owner: owner.to_string(),
-            key: key.to_owned(),
-            fingerprint,
-            input,
-            status: "queued".into(),
-            phase: "queued".into(),
-            events: Vec::new(),
-            sandbox_id: None,
-            agent_id: None,
-            repository_commit: None,
-            error: None,
-            failure: None,
-            connection: None,
-            lease_expires_at: None,
-            lease_token: None,
-            attempts: 0,
-            retry_at: None,
-            created_at: now,
-            updated_at: now,
-            document_schema_version: DOCUMENT_SCHEMA_VERSION,
-        };
-        self.finish_create(record).await
+    pub(crate) fn canary_database(&self) -> Database {
+        self.operations
+            .client()
+            .database(&self.operations.namespace().db)
     }
 
     /// Claim queued work or an expired worker, including legacy records whose
@@ -380,6 +415,7 @@ impl LifecycleRecord {
         AgentLifecycleOperationView {
             callback_url: None,
             id: self.id.clone(),
+            accepted_at: self.created_at.try_to_rfc3339_string().ok(),
             status: self.status.clone(),
             phase: self.phase.clone(),
             agent_id: self.agent_id.clone(),

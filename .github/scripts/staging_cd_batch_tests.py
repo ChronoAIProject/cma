@@ -28,7 +28,8 @@ class BatchBoundaryTests(unittest.TestCase):
         stdout = json.dumps(rows) if stdout is None else stdout
         response = SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr)
         with patch.object(comparisons.subprocess, 'run', return_value=response) as runner, \
-                patch.object(comparisons, 'comparison_parent', side_effect=[self.before, self.first]), \
+                patch.object(comparisons, 'comparison_parents',
+                             return_value={self.first: self.before, self.second: self.first}), \
                 patch.dict(queue.os.environ, GH_TOKEN='synthetic-not-a-credential'):
             try:
                 return queue.batch_selection(self.root, self.revisions, metrics, budget)
@@ -64,7 +65,8 @@ class BatchBoundaryTests(unittest.TestCase):
         for cached in (True, False):
             with self.subTest(cached=cached), patch.dict(queue.os.environ, CD_SELECTOR_CACHE='{}'), \
                     patch.object(comparisons.subprocess, 'run', return_value=response) as runner, \
-                    patch.object(comparisons, 'comparison_parent', side_effect=[self.before, self.first]):
+                    patch.object(comparisons, 'comparison_parents',
+                                 return_value={self.first: self.before, self.second: self.first}):
                 comparisons.batch_selection(self.root, self.revisions, cached=cached)
             self.assertEqual('CD_SELECTOR_CACHE' in runner.call_args.kwargs['env'], cached)
             self.assertEqual(runner.call_args.kwargs['env'].keys() - {'CD_SELECTOR_CACHE'},

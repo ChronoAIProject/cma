@@ -43,9 +43,12 @@ impl BotChannelObservation {
     }
 }
 
-/// Mutations must never be retried by the transport. Every call has a deadline
-/// below the worker claim lifetime. Enumeration must be complete and reject
-/// ambiguous ownership; absence is only authoritative after a successful read.
+/// Mutations must never be retried by the transport. With effect reservations
+/// enabled, mutating calls require the persisted reservation and use its absolute
+/// admission deadline. Success must mean the operation is terminal, not merely
+/// queued remotely. Timeout/error/cancellation retains custody beyond lease expiry.
+/// Enumeration must be complete and reject ambiguous ownership; a read does not
+/// prove that a previously accepted mutation is terminal.
 #[async_trait::async_trait]
 pub trait BotExternal: Send + Sync {
     async fn available(&self, owner: &SubjectId) -> Result<Vec<ExternalBot>, BotError>;
@@ -156,7 +159,9 @@ impl BotWorker {
         if let Err(error) = result {
             // A rejected revision fence belongs to another worker. Never issue
             // compensating effects from this stale copy of the aggregate.
-            if error == BotError::Conflict {
+            if error == BotError::Conflict
+                || bot.work.as_ref().is_some_and(|work| work.effect.is_some())
+            {
                 return Err(error);
             }
             if operation == BotOperation::Create {
@@ -193,7 +198,7 @@ impl BotWorker {
             // Disabled renewal may have retained a key still used by an old
             // route. Reconcile that route before admitting any new messages.
             // A removed or transferred route leaves this Bot disabled.
-            self.step(bot, "reconcile_route_before_enable").await?;
+            self.effect(bot, "reconcile_route_before_enable").await?;
             self.external
                 .set_route_key(
                     bot,
@@ -208,10 +213,11 @@ impl BotWorker {
                         .ok_or(BotError::Unavailable)?,
                 )
                 .await?;
+            self.settled(bot).await?;
             self.retire_unused_keys(bot, &bot.resources.credentials.clone())
                 .await?;
         }
-        self.step(bot, "configure_admission").await?;
+        self.effect(bot, "configure_admission").await?;
         let channel = self
             .external
             .configure_channel(bot, &current, &bot.resources.credentials, None, enabled)
@@ -220,6 +226,7 @@ impl BotWorker {
             return Err(BotError::Unavailable);
         }
         bot.resources.channel = Some(channel.channel);
+        self.settled(bot).await?;
         self.service
             .complete(
                 bot,

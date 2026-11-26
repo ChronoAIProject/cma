@@ -11,12 +11,15 @@ REASONS = frozenset({
     "preflight",
     # chrono-cd stored a generation but never applied it; an operator must apply it.
     "apply-abandoned",
+    # Production: Agent Manager runs more replicas than its release budget covers.
+    "am-replicas",
 })
 
 
 VERIFICATION_REASONS = frozenset({
     "write-timeout", "write-response", "read-timeout", "read-response", "status-reconcile",
-    "status-counts", "status-inventory", "status-pods", "pod-restarts", "rollout-ownership",
+    "status-counts", "status-inventory", "status-pods", "pod-restarts",
+    "pod-restarts-membership", "pod-restarts-startup-gate", "pod-restarts-panic", "rollout-ownership",
     "rollout-timeout", "rollout-failed", "image-digest", "ownership", "recovery-ownership",
     "recovery-revision", "phase-budget", "image-identity", "served-identity", "status-shape",
     "pod-evidence", "cohort", "serving", "acceptance", "startup-observation", "startup-schema",

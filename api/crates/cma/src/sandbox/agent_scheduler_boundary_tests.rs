@@ -22,6 +22,14 @@ impl AgentScheduleWork for BoundaryWork {
         Err(SandboxStoreError::Corrupt("private-reconciliation".into()))
     }
 
+    async fn reconcile_slice(
+        &self,
+        _: SystemTime,
+        _: &mut ConnectionSweep,
+    ) -> Result<bool, SandboxStoreError> {
+        Err(SandboxStoreError::Corrupt("private-reconciliation".into()))
+    }
+
     async fn run_one(
         &self,
         id: &AgentId,

@@ -1,4 +1,6 @@
 import { test, expect, type Launch } from './harness';
+import { ConnectionJourney } from './connection-journey';
+import { connectionModes } from './connection-journey-contract';
 
 test('J3 reuse both supports ask resume, ask new and resume-existing', async ({ harness: h }) => {
   const page = await h.open('visitor');
@@ -23,25 +25,27 @@ test('J3 reuse both supports ask resume, ask new and resume-existing', async ({ 
   expect(repeated.resolution.agent.id).toBe(existing.resolution.agent.id);
 });
 
-for (const mode of ['oauth', 'api_key', 'device_code'] as const) {
+for (const mode of connectionModes) {
   test(`J4-${mode} G-T2 missing service connection assistant continues via ${mode}`, async ({
     harness: h,
   }) => {
+    const journey = new ConnectionJourney(h, mode);
     const page = await h.open('visitor');
     const launch = await h.launchTarget(page, h.fixture.connections[mode]);
-    expect(launch.state).toBe('draft');
-    await expect(page.locator('.public-connection')).toBeVisible();
+    await journey.begin(page, launch);
     await h.capture(page, `j4-${mode}-connection`);
     await h.identity(async () => {
       const popup = page.waitForEvent('popup');
-      await page.getByRole('button', { name: 'Connect', exact: true }).click();
-      await h.operators.completeConnection(await popup, mode);
+      const result = journey.startResult(page);
+      await page
+        .getByRole('region', { name: journey.wizardName })
+        .getByRole('button', { name: 'Connect all', exact: true })
+        .click();
+      const [identity] = await Promise.all([popup, result]);
+      const verification = journey.verification(page);
+      await Promise.all([h.operators.completeConnection(identity, mode), verification]);
     });
-    await h.ready(page, launch.id);
-    expect(h.commands.filter((row) => row.path.endsWith('/launches'))).toHaveLength(1);
-    expect(
-      h.commands.filter((row) => row.path === `/api/v1/launches/${launch.id}/start`),
-    ).toHaveLength(1);
+    await journey.finish(page, 'valid');
     await h.capture(page, `j4-${mode}-ready`);
   });
 }

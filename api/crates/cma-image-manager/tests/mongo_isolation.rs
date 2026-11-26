@@ -9,10 +9,68 @@ use mongodb::{
     options::{ClientOptions, Credential},
     Client,
 };
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture with failpoints"]
+async fn migration_cli_reports_uncertain_abort_on_stderr_without_rust_log() {
+    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("migration_cli_{}", uuid::Uuid::new_v4().simple());
+    let database = admin.database(&name);
+    let mut cli_uri = url::Url::parse(&uri).unwrap();
+    let app = format!("migration_cli_{}", uuid::Uuid::new_v4().simple());
+    cli_uri.query_pairs_mut().append_pair("appName", &app);
+
+    for refused_abort in [false, true] {
+        let commands = if refused_abort {
+            vec!["findAndModify", "abortTransaction"]
+        } else {
+            vec!["findAndModify"]
+        };
+        admin
+            .database("admin")
+            .run_command(doc! {
+                "configureFailPoint": "failCommand",
+                "mode": {"times": commands.len() as i32},
+                "data": {"appName": &app, "failCommands": commands, "errorCode": 2_i32},
+            })
+            .await
+            .unwrap();
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            tokio::process::Command::new(env!("CARGO_BIN_EXE_cma-image-manager"))
+                .arg("--migrate")
+                .env_remove("RUST_LOG")
+                .env("CMA_IM_MONGODB_DATABASE", &name)
+                .env("CMA_IM_MONGODB_URI", cli_uri.as_str())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("migration database operation unavailable"),
+            "{stderr}"
+        );
+        assert_eq!(
+            stderr.contains("migration abort command failed"),
+            refused_abort,
+            "{stderr}"
+        );
+    }
+    database.drop().await.unwrap();
+}
+
 #[path = "support/public_images.rs"]
 mod public_images;
 #[path = "support/shared_schema.rs"]
 mod shared_schema;
+#[path = "support/worker_dispatch.rs"]
+mod worker_dispatch;
 #[tokio::test]
 #[ignore = "requires the authenticated image-manager Mongo contract fixture"]
 async fn isolated_credentials_preserve_owner_idempotency_shares_and_build_fences() {

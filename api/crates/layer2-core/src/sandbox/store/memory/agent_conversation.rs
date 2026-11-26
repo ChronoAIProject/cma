@@ -5,8 +5,65 @@ use crate::sandbox::store::{
 use crate::sandbox::PendingAgentApprovals;
 use crate::seconds_from_rfc3339;
 
+#[cfg(any(test, feature = "test-support"))]
+impl InMemorySandboxStore {
+    pub fn seed_turn_policy_fixture(&self, agent: Agent) {
+        self.lock().agents.insert(agent.id.clone(), agent);
+    }
+}
+
 #[async_trait]
 impl AgentConversationStore for InMemorySandboxStore {
+    async fn commit_turn_timeout(
+        &self,
+        settlement: &crate::sandbox::turn_timeout::TurnTimeoutSettlement,
+    ) -> Result<(), SandboxStoreError> {
+        let mut state = self.lock();
+        let id = &settlement.snapshot().agent.id;
+        let command_id = &settlement.command().receipt.envelope.command_id;
+        let actual = state.agents.get(id).ok_or(SandboxStoreError::NotFound)?;
+        let command = state
+            .agent_commands
+            .get(command_id)
+            .ok_or(SandboxStoreError::NotFound)?;
+        if actual
+            .conversation
+            .turn_timeout
+            .as_ref()
+            .is_some_and(|timeout| {
+                timeout.blocks_dispatch()
+                    && timeout.action_id() == settlement.checkpoint().update_id
+            })
+            && command.status == crate::sandbox::agent_io::AgentResponseStatus::Failed
+        {
+            return Ok(());
+        }
+        if command != settlement.command() {
+            return Err(SandboxStoreError::Conflict);
+        }
+        let mut candidate = state.clone();
+        let mut lane = candidate
+            .agent_command_orders
+            .get(id)
+            .cloned()
+            .ok_or(SandboxStoreError::Conflict)?;
+        let command = settlement
+            .settle_command(&mut lane)
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        commit_message(
+            &mut candidate,
+            settlement.snapshot().agent.clone(),
+            settlement.snapshot().checkpoint.clone(),
+            settlement.checkpoint().clone(),
+            Some(settlement.mutation().clone()),
+            None,
+        )?;
+        candidate.agent_commands.insert(command_id.clone(), command);
+        candidate.agent_command_orders.insert(id.clone(), lane);
+        *state = candidate;
+        Ok(())
+    }
+
     async fn agent_message_snapshot(
         &self,
         id: &AgentId,
@@ -41,6 +98,9 @@ impl AgentConversationStore for InMemorySandboxStore {
         mutation: Option<AgentConversationMutation>,
         guard: crate::sandbox::store::AgentReopenGuard,
     ) -> Result<crate::sandbox::AgentUpdateOutcome, SandboxStoreError> {
+        if let Some(mutation) = &mutation {
+            crate::sandbox::turn_timeout::validate_ordinary_publication(&current, mutation)?;
+        }
         commit_message(
             &mut self.lock(),
             current,
@@ -58,6 +118,9 @@ impl AgentConversationStore for InMemorySandboxStore {
         next: super::AgentMessageCheckpoint,
         mutation: Option<AgentConversationMutation>,
     ) -> Result<crate::sandbox::AgentUpdateOutcome, SandboxStoreError> {
+        if let Some(mutation) = &mutation {
+            crate::sandbox::turn_timeout::validate_ordinary_publication(&current, mutation)?;
+        }
         commit_message(&mut self.lock(), current, previous, next, mutation, None)
     }
 
@@ -66,6 +129,14 @@ impl AgentConversationStore for InMemorySandboxStore {
         mutation: AgentConversationMutation,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
         let mut state = self.lock();
+        let current = state
+            .agents
+            .get(&mutation.agent.id)
+            .ok_or(SandboxStoreError::NotFound)?;
+        if current.work.step.fences_conversation_output() {
+            return Err(SandboxStoreError::Conflict);
+        }
+        crate::sandbox::turn_timeout::validate_ordinary_publication(current, &mutation)?;
         let mut candidate = state.clone();
         let appended = apply_conversation(&mut candidate, mutation)?;
         *state = candidate;
@@ -297,9 +368,14 @@ fn commit_message(
             .map_err(|_| {
                 SandboxStoreError::InvalidTransaction("reopen output authority is stale")
             })?;
-    } else if actual.is_some_and(|checkpoint| {
-        Some(checkpoint.runtime_generation) > current.conversation.runtime_generation
-    }) {
+    } else if state
+        .agents
+        .get(&current.id)
+        .is_some_and(|agent| agent.work.step.fences_conversation_output())
+        || actual.is_some_and(|checkpoint| {
+            Some(checkpoint.runtime_generation) > current.conversation.runtime_generation
+        })
+    {
         return Err(SandboxStoreError::Conflict);
     }
     let reanchor = mutation.is_none()

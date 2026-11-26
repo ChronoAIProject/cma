@@ -148,6 +148,7 @@ export function retainLifecycleIntent(
   scope: IntentScope,
   expected: Intent | undefined,
   next?: Intent,
+  beforeRemove?: () => void,
 ) {
   const pending = pendingKey(scope);
   const key = expected?.agentId ? lifecycleRecoveryKey(scope, bindingFor(expected)) : pending;
@@ -172,6 +173,7 @@ export function retainLifecycleIntent(
       compare(key, scope, next);
     }
   } else {
+    beforeRemove?.();
     sessionStorage.removeItem(key);
     compare(key, scope, undefined);
   }

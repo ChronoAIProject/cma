@@ -265,8 +265,8 @@ the environment manager and lead respectively. Task build outputs remain active
 for candidate integration; they are outside the repository and are not delivered.
 
 Retained workspace evidence:
-`/Users/shining/code/work/tech-lead.staff/developer-17/evidence/`.
+`tech-lead.staff/developer-17/evidence/`.
 Full preflight matrix:
-`/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/preflight/RESULTS.md`.
+`tech-lead.staff/developer-17/evidence/final/preflight/RESULTS.md`.
 The PR is a draft until driver/candidate integration, acceptance execution and
 architect review of the exact commit are complete. The lead owns merge.

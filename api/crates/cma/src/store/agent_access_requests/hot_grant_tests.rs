@@ -1,3 +1,6 @@
+#[path = "hot_grant_exact_connection_tests.rs"]
+mod exact_connection;
+
 use super::*;
 use layer2_core::sandbox::store::{SandboxEventStore, SandboxStore};
 use layer2_core::sandbox::{SandboxStatus, SandboxWorkState, SandboxWorkStep};

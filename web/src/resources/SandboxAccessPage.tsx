@@ -1,3 +1,4 @@
+import type { ApiError } from '@cma/client';
 import { ResourceAccessDetails } from './ResourceAccessSummary';
 import { SkeletonRows } from '../ui/Skeleton';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -60,7 +61,20 @@ export function SandboxAccessPage({
           },
     [client, id, views],
   );
-  const current = useAuthorizedRead(read);
+  const retryPolicy = useMemo(
+    () => ({
+      scope: read ?? {},
+      applies: (error: ApiError) => error.status === 503 && error.retryAfterMs !== undefined,
+    }),
+    [read],
+  );
+  const current = useAuthorizedRead(read, false, retryPolicy);
+  const transient = current.state.status === 'error' && current.state.transient === true;
+  useEffect(() => {
+    if (!transient) return;
+    window.addEventListener('online', current.reload);
+    return () => window.removeEventListener('online', current.reload);
+  }, [transient, current.reload]);
   useEffect(() => {
     if (current.state.status === 'error') views?.forgetSandbox(id);
   }, [current.state, views, id]);
@@ -105,7 +119,15 @@ export function SandboxAccessPage({
       <section className="console__empty" role="alert">
         <h1>Sandbox unavailable</h1>
         <p>{current.state.message}</p>
-        <Button onClick={current.reload}>Check Sandbox access</Button>
+        {transient ? (
+          <p>
+            The current environment status could not be checked. Retry to read its status and access
+            again.
+          </p>
+        ) : null}
+        <Button onClick={current.reload}>
+          {transient ? 'Retry environment check' : 'Check Sandbox access'}
+        </Button>
       </section>
     );
   const sandbox = current.state.value.detail;

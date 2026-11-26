@@ -362,3 +362,97 @@ fn command_request(
         },
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn mongo_profile_transfer_pins_one_successor_and_retains_exact_receipt() {
+    let (client, database, store, binding, previous) = fixture().await;
+    let mut destination = binding.clone();
+    destination.binding_id = "new-profile-fixture".into();
+    destination.key_sha256 = "b".repeat(64);
+    destination.revision = 1;
+    destination.state = BindingState::Provisioning;
+    destination.work = BindingWork::AwaitingCredential;
+    store.save_binding(None, destination.clone()).await.unwrap();
+    destination.state = BindingState::Ready;
+    destination.work = BindingWork::Idle;
+    destination
+        .advance_revision(layer2_core::now_rfc3339())
+        .unwrap();
+    store
+        .save_binding(Some(1), destination.clone())
+        .await
+        .unwrap();
+
+    let request = ProfileTransferRequest {
+        source_binding_id: binding.binding_id.clone(),
+        destination_binding_id: destination.binding_id.clone(),
+        conversation_id: previous.conversation_id.clone(),
+        expected_agent_id: previous.agent_id.clone(),
+        expected_generation: binding.generation,
+        expected_destination_generation: destination.generation,
+        expected_incarnation: 0,
+        owner: binding.resource_owner(),
+        manager: binding.manager.clone(),
+        operation_id: content_digest(&"transfer-operation").unwrap(),
+        request_digest: content_digest(&"transfer-request").unwrap(),
+    };
+    assert!(matches!(
+        store
+            .transfer_profile_conversation(request.clone(), false)
+            .await,
+        Err(BindingError::ResetRefused("partition_reset_disabled"))
+    ));
+    let peer = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let (one, two) = tokio::join!(
+        store.transfer_profile_conversation(request.clone(), true),
+        peer.transfer_profile_conversation(request.clone(), true)
+    );
+    let receipt = one.unwrap();
+    assert_eq!(receipt, two.unwrap());
+    let source = store
+        .binding_conversation(
+            &binding.binding_id,
+            binding.generation,
+            &previous.conversation_id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(source.state, BindingConversationState::Retired);
+    assert_eq!(source.profile_transfer.as_deref(), Some(&receipt));
+    let successor = peer
+        .binding_conversation(
+            &destination.binding_id,
+            destination.generation,
+            &previous.conversation_id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(successor.agent_id, receipt.destination_agent_id);
+    assert_eq!(successor.worktree_id, receipt.destination_worktree_id);
+    assert_eq!(successor.state, BindingConversationState::Provisioning);
+    assert_ne!(successor.agent_id, previous.agent_id);
+    assert_eq!(
+        peer.transfer_profile_conversation(request.clone(), false)
+            .await
+            .unwrap(),
+        receipt
+    );
+    let mut changed = request;
+    changed.request_digest = content_digest(&"different-request").unwrap();
+    assert!(matches!(
+        peer.transfer_profile_conversation(changed, true).await,
+        Err(BindingError::ResetRefused("partition_reset_key_conflict"))
+    ));
+    assert_eq!(
+        store
+            .binding_conversations(&destination.binding_id, destination.generation, None, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    client.database(&database).drop().await.unwrap();
+}

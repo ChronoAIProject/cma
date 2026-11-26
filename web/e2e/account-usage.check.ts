@@ -94,7 +94,27 @@ test('LOCAL selected Usage names survive Apply, reopen and exact URL recovery', 
     agent_id: 'agt_usage',
   });
   expect(selectionURL).not.toContain('Research');
-  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 480 });
+  const usageBody = dialog.locator('.modal__body');
+  expect(await usageBody.evaluate((node) => node.scrollHeight - node.clientHeight)).toBeGreaterThan(
+    60,
+  );
+  await sandboxButton.click();
+  const sandboxSearch = dialog.getByRole('textbox', { name: 'Search sandbox choices' });
+  await sandboxSearch.focus();
+  const scrollTop = await usageBody.evaluate((node) => {
+    node.scrollTop = 60;
+    return node.scrollTop;
+  });
+  expect(scrollTop).toBeGreaterThan(0);
+  await page.keyboard.press('Escape');
+  await expect(sandboxSearch).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await expect(sandboxButton).toBeFocused();
+  await expect(agentButton).toBeVisible();
+  await expect(page).toHaveURL(selectionURL);
+  expect(await usageBody.evaluate((node) => node.scrollTop)).toBe(scrollTop);
+  await page.keyboard.press('Escape');
   await expect(dialog).not.toBeVisible();
   await page.goForward();
   await expect(agentButton).toBeVisible();
@@ -309,7 +329,7 @@ test('LOCAL pending owner report resolves and empty selections are explicit', as
   await expect(dialog.getByRole('button', { name: 'Research Sandbox', exact: true })).toBeVisible();
   expect(metrics.creates).toHaveLength(1);
   metrics.pending = false;
-  await dialog.getByRole('searchbox', { name: 'Usage Sandbox search' }).fill('empty');
+  await dialog.getByRole('searchbox', { name: 'Sandbox name or ID starts with' }).fill('empty');
   await dialog.getByRole('button', { name: 'Apply usage filters' }).click();
   await expect(dialog.getByText('No Sandboxes match this selection.')).toBeVisible();
   if (!measured)

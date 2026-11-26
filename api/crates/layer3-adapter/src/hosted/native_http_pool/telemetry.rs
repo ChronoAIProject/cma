@@ -70,9 +70,9 @@ pub(in crate::hosted::provider_transport) trait Observer:
 struct Metrics {
     role: &'static str,
     gauges: [metrics::Gauge; 7],
-    checkouts: [[metrics::Counter; 4]; 2],
-    waits: [[metrics::Histogram; 4]; 2],
-    refusals: [[[metrics::Counter; 2]; 3]; 2],
+    checkouts: [[metrics::Counter; 4]; 3],
+    waits: [[metrics::Histogram; 4]; 3],
+    refusals: [[[metrics::Counter; 2]; 3]; 3],
 }
 impl Metrics {
     fn new(role: &'static str) -> Self {
@@ -82,7 +82,7 @@ impl Metrics {
             gauge.increment(0.0);
             gauge
         });
-        let lanes = ["control", "ownership"];
+        let lanes = ["close_agent", "control", "ownership"];
         let outcomes = [
             Outcome::Fresh,
             Outcome::Reused,

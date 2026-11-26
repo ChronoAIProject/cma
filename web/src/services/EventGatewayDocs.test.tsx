@@ -69,7 +69,10 @@ it('renders all three canonical documents with complete navigation and all revie
 
 it('keeps every static diagram and reserved aspect ratio aligned with the backend source', () => {
   const backend = resolve(process.cwd(), '../api/crates/cmaeg');
-  const manifest = readFileSync(resolve(backend, 'src/http/docs/diagrams.rs'), 'utf8');
+  const manifest = readFileSync(
+    resolve(backend, '../cmaeg-http/src/http/docs/diagrams.rs'),
+    'utf8',
+  );
   let diagramCount = 0;
   for (const document of GATEWAY_DOCUMENTS) {
     const diagrams = [...document.markdown.matchAll(/```mermaid\s*\n([\s\S]*?)\n```/g)];

@@ -5,6 +5,17 @@ use crate::retirement_archive::{
 };
 use layer3_adapter::permanent_custody::PermanentCustody;
 
+#[tokio::test]
+async fn frozen_census_before_legal_receipts_still_matches() {
+    assert_eq!(manifest_collections(), pre_legal_consent::COLLECTIONS);
+    assert_eq!(schema_sha256(), pre_legal_consent::SHA256);
+    let current = manifest().await;
+    assert!(matches_current(&current, current.clone()).unwrap());
+    let mut missing = current;
+    missing.database.pop();
+    assert!(validate_manifest_census(&missing).is_err());
+}
+
 #[test]
 fn frozen_legacy_census_matches_the_exact_pre_allocation_descriptor() {
     let audit: Vec<_> = super::super::census_catalog::AUDIT
@@ -12,7 +23,7 @@ fn frozen_legacy_census_matches_the_exact_pre_allocation_descriptor() {
         .copied()
         .filter(|(name, _)| legacy::COLLECTIONS.contains(name))
         .collect();
-    let names: Vec<_> = crate::store::isolation::COLLECTIONS
+    let names: Vec<_> = crate::store::retirement_archive::manifest_collections()
         .iter()
         .copied()
         .filter(|name| legacy::COLLECTIONS.contains(name))
@@ -43,7 +54,7 @@ async fn manifest() -> Manifest {
         schema_sha256: schema_sha256(),
         external: vec![],
         files: vec![],
-        database: crate::store::isolation::COLLECTIONS
+        database: crate::store::retirement_archive::manifest_collections()
             .iter()
             .map(|name| DatabaseRecord {
                 collection: (*name).into(),
@@ -53,6 +64,57 @@ async fn manifest() -> Manifest {
                 objects: vec![],
             })
             .collect(),
+    }
+}
+
+#[tokio::test]
+async fn frozen_pre_capture_census_requires_new_evidence_namespaces_to_be_empty() {
+    for (collections, schema) in [
+        (pre_capture::COLLECTIONS, pre_capture::SHA256),
+        (pre_execution::COLLECTIONS, pre_execution::SHA256),
+        (
+            pre_capture_backups::COLLECTIONS,
+            pre_capture_backups::SHA256,
+        ),
+        (
+            pre_capture_accounts::COLLECTIONS,
+            pre_capture_accounts::SHA256,
+        ),
+    ] {
+        let audit: Vec<_> = super::super::census_catalog::AUDIT
+            .iter()
+            .copied()
+            .filter(|(name, _)| collections.contains(name))
+            .collect();
+        let names: Vec<_> = crate::store::retirement_archive::manifest_collections()
+            .iter()
+            .copied()
+            .filter(|name| collections.contains(name))
+            .collect();
+        assert_eq!(names, collections);
+        assert_eq!(
+            digest(format!("archive-census-v2\n{audit:?}\n{}", names.join("\n")).as_bytes()),
+            schema
+        );
+        let current = manifest().await;
+        let mut old = current.clone();
+        old.schema_sha256 = schema.into();
+        old.database
+            .retain(|row| collections.contains(&row.collection.as_str()));
+        assert!(matches_current(&old, current.clone()).unwrap());
+        for &name in manifest_collections()
+            .iter()
+            .filter(|name| !collections.contains(name))
+        {
+            let mut pending = current.clone();
+            pending
+                .database
+                .iter_mut()
+                .find(|row| row.collection == name)
+                .unwrap()
+                .documents = 1;
+            assert!(!matches_current(&old, pending).unwrap());
+        }
     }
 }
 
@@ -85,7 +147,7 @@ async fn exact_current_and_legacy_censuses_refuse_unknown_duplicate_and_missing_
     mismatched.schema_sha256 = schema_sha256();
     assert!(validate_manifest_census(&mismatched).is_err());
     assert!(matches_current(&old, current.clone()).unwrap());
-    for name in crate::store::isolation::COLLECTIONS
+    for &name in crate::store::retirement_archive::manifest_collections()
         .iter()
         .filter(|name| !legacy::COLLECTIONS.contains(name))
     {
@@ -94,7 +156,7 @@ async fn exact_current_and_legacy_censuses_refuse_unknown_duplicate_and_missing_
             let extra = changed
                 .database
                 .iter_mut()
-                .find(|r| r.collection == *name)
+                .find(|r| r.collection == name)
                 .unwrap();
             match mode {
                 0 => extra.documents = 1,

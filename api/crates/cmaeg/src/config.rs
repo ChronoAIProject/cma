@@ -9,6 +9,7 @@ mod origins;
 pub(crate) use origins::validate_origin;
 use origins::{parse_api_advertisement, required_origin, validate_public_api_url};
 
+pub mod activity_history;
 mod cache;
 mod console;
 mod delivery;
@@ -33,7 +34,10 @@ pub use cache::*;
 pub use console::*;
 pub use delivery::*;
 pub use ingress::*;
-pub(crate) use management::channel_mutation_custody_enabled;
+pub(crate) use management::{
+    channel_cancel_create_enabled, channel_create_fence_required, channel_mutation_custody_enabled,
+    cma_record_origin_aliases,
+};
 pub use media::{
     MediaConfig, MediaToolProviders, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
     CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS,
@@ -63,6 +67,7 @@ pub const CMAEG_ADVERTISE_PUBLIC_API_URL: &str = "CMAEG_ADVERTISE_PUBLIC_API_URL
 pub const CMAEG_MASTER_KEYS: &str = "CMAEG_MASTER_KEYS";
 pub const CMAEG_MASTER_KEYS_FILE: &str = "CMAEG_MASTER_KEYS_FILE";
 pub const CMAEG_CMA_BASE_URL: &str = "CMAEG_CMA_BASE_URL";
+pub const CMAEG_CMA_RECORD_ORIGIN_ALIASES: &str = "CMAEG_CMA_RECORD_ORIGIN_ALIASES";
 pub const CMAEG_CMA_SERVICE_TOKEN: &str = "CMAEG_CMA_SERVICE_TOKEN";
 pub const CMAEG_CMA_SERVICE_TOKEN_FILE: &str = "CMAEG_CMA_SERVICE_TOKEN_FILE";
 pub const CMAEG_NYXID_BASE_URL: &str = "CMAEG_NYXID_BASE_URL";
@@ -161,10 +166,12 @@ pub struct Config {
     pub cma_service_account: Option<ServiceAccountConfig>,
     pub channel_cache: ChannelCacheConfig,
     pub github_enabled: bool,
+    pub managed_telegram_setup_enabled: bool,
     pub native_bot_mentions_writes_enabled: bool,
     /// Allows new thread contracts only after every reader supports them.
     pub thread_contract_writes_enabled: bool,
     pub multi_consumer_writes_enabled: bool,
+    pub profile_revisions_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
     pub lark_resource_writes_enabled: bool,
@@ -215,6 +222,8 @@ pub struct Config {
     pub lark_message_effects_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
     pub native_telegram_message_events_writes_enabled: bool,
+    pub native_telegram_member_joins_enabled: bool,
+    pub relay_telegram_member_joins_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
     pub native_telegram_topic_lifecycle_enabled: bool,
     pub native_telegram_topic_creation_enabled: bool,
@@ -226,6 +235,7 @@ pub struct Config {
     pub native_discord_reactions_enabled: bool,
     pub native_discord: NativeDiscordConfig,
     pub outbound_messages_writes_enabled: bool,
+    pub event_side_messages_enabled: bool,
     pub ingress: IngressConfig,
     pub turns: TurnConfig,
     pub delivery: DeliveryConfig,
@@ -291,6 +301,9 @@ impl Config {
             thread_contract_writes_enabled: routing::write_flag(
                 "CMAEG_THREAD_CONTRACT_WRITES_ENABLED",
             )?,
+            profile_revisions_enabled: routing::write_flag(
+                "CMAEG_CHANNEL_PROFILE_REVISIONS_ENABLED",
+            )?,
             multi_consumer_writes_enabled: routing::write_flag(
                 "CMAEG_MULTI_CONSUMER_WRITES_ENABLED",
             )?,
@@ -326,6 +339,15 @@ impl Config {
             )?,
             native_telegram_message_events_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED",
+            )?,
+            native_telegram_member_joins_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_MEMBER_JOINS_ENABLED",
+            )?,
+            relay_telegram_member_joins_enabled: routing::write_flag(
+                "CMAEG_RELAY_TELEGRAM_MEMBER_JOINS_ENABLED",
+            )?,
+            managed_telegram_setup_enabled: routing::write_flag(
+                "CMAEG_MANAGED_TELEGRAM_SETUP_ENABLED",
             )?,
             native_lark_writes_enabled: routing::write_flag("CMAEG_NATIVE_LARK_WRITES_ENABLED")?,
             native_lark_intake_enabled: routing::write_flag("CMAEG_NATIVE_LARK_INTAKE_ENABLED")?,
@@ -457,6 +479,7 @@ impl Config {
             outbound_messages_writes_enabled: routing::write_flag(
                 "CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED",
             )?,
+            event_side_messages_enabled: routing::write_flag("CMAEG_EVENT_SIDE_MESSAGES_ENABLED")?,
             ingress: IngressConfig::from_env()?,
             turns,
             delivery: DeliveryConfig::from_env()?,

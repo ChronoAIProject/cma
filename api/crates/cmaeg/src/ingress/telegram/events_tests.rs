@@ -10,6 +10,8 @@ mod anonymous_tests;
 mod channel_post_tests;
 #[path = "events_http_tests.rs"]
 mod http_tests;
+#[path = "member_join_tests.rs"]
+mod member_join_tests;
 
 #[tokio::test]
 async fn telegram_message_events_keep_original_agents_partition_and_thread_across_changed_text_and_policy(

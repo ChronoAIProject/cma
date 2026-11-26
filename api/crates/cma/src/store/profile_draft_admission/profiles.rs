@@ -1,14 +1,16 @@
 //! Apply Profile draft CAS in the transaction that reads known child fences.
 use layer2_core::profiles::ProfileStoreError;
 use mongodb::{
-    bson::{doc, Document},
+    bson::{doc, Bson, Document},
+    error::UNKNOWN_TRANSACTION_COMMIT_RESULT,
     Collection,
 };
 use serde::Serialize;
 
-use super::{profile_error, transact, Error, Mutation, Pins};
+use super::{profile_error, transact, transact_in, Error, Mutation, Pins};
 use crate::store::{
     profile_documents::{draft_mutation, ProfileDocumentInput},
+    profiles::read_after_unknown_commit,
     sandbox_mongo::{is_duplicate_key, require_version, MongoProfileStore},
 };
 
@@ -19,18 +21,28 @@ pub(in crate::store) async fn create(
     mut pins: Pins,
 ) -> Result<(), ProfileStoreError> {
     let db = store.client.database(&collection.namespace().db);
-    transact(
-        &store.client,
-        &db,
-        &mut pins,
-        &Mutation::Insert {
-            collection: collection.clone(),
-            document,
-        },
-    )
-    .await
-    .map_err(create_error)?;
-    Ok(())
+    let mutation = Mutation::Insert {
+        collection: collection.clone(),
+        document: document.clone(),
+    };
+    let mut session = store.client.start_session().await.map_err(unavailable)?;
+    // A failed create never replays its mutation. Only an unknown commit is
+    // reconciled, and only the exact durable draft proves that it applied.
+    match transact_in(&mut session, &db, &mut pins, &mutation).await {
+        Ok(_) => Ok(()),
+        Err(Error::Driver(error)) if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) => {
+            let id = document.get("_id").cloned().unwrap_or(Bson::Null);
+            match read_after_unknown_commit(&mut session, collection, doc! {"_id": id}).await? {
+                Some(stored) if stored == document => Ok(()),
+                _ => Err(create_error(Error::Driver(error))),
+            }
+        }
+        Err(error) => Err(create_error(error)),
+    }
+}
+
+fn unavailable(error: mongodb::error::Error) -> ProfileStoreError {
+    ProfileStoreError::Unavailable(error.to_string())
 }
 
 fn create_error(error: Error) -> ProfileStoreError {

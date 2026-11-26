@@ -4,6 +4,13 @@ operations['POST /api/v1/admin/usage/metrics/options'] = ({ client, body }) =>
   client.adminUsageMetrics.options(body);
 for (const admin of [false, true]) {
   const base = `/api/v1/${admin ? 'admin/' : ''}usage/metrics/reports`;
+  const initial = `/api/v1/${admin ? 'admin/' : ''}usage/metrics/initial`;
+  operations[`POST ${initial}/reports`] = ({ client, body }) =>
+    (admin ? client.adminUsageMetrics : client.usageMetrics).createInitial(body);
+  operations[`POST ${initial}/view`] = ({ client, body }) =>
+    (admin ? client.adminUsageMetrics : client.usageMetrics).latestInitial(body);
+  operations[`POST ${initial}/reports/{report}`] = ({ client, body, param }) =>
+    (admin ? client.adminUsageMetrics : client.usageMetrics).initialReport(param('report'), body);
   operations[`GET /api/v1/${admin ? 'admin/' : ''}usage/metrics/view`] = ({ client, options }) =>
     (admin ? client.adminUsageMetrics : client.usageMetrics).latest(options);
   operations[`POST ${base}`] = ({ client, body }) =>

@@ -9,8 +9,65 @@ async function start(page: Page) {
 }
 type Attempt = { key: string | undefined; body: unknown };
 
+for (const status of [503, 408, 409]) {
+  test(`LOCAL creation HTTP ${status} followed by refusal cannot unlock the original request`, async ({
+    page,
+    baseURL,
+  }) => {
+    const fixture = new LocalDocuments();
+    await fixture.route(page, baseURL!);
+    const attempts: Attempt[] = [];
+    await page.route('**/api/v1/documents', async (route) => {
+      const request = route.request();
+      if (request.method() !== 'POST') return route.fallback();
+      attempts.push({ key: request.headers()['idempotency-key'], body: request.postDataJSON() });
+      if (attempts.length <= 2)
+        return route.fulfill({
+          status: attempts.length === 1 ? status : 403,
+          json: { detail: 'Synthetic creation refusal' },
+        });
+      return route.fallback();
+    });
+    await start(page);
+    const dialog = page.getByRole('dialog', { name: 'New document' });
+    const retry = dialog.getByRole('button', { name: 'Retry creation', exact: true });
+    await expect(retry).toBeEnabled();
+    await expect(dialog.getByRole('button', { name: 'Edit as a new request' })).toHaveCount(0);
+    await dialog.getByText('Get help with this request', { exact: true }).click();
+    const details = dialog.getByLabel('Request help details');
+    const identity = (await details.innerText()).split('\n').slice(0, 4).join('\n');
+    expect(attempts[0]!.key).toBeTruthy();
+    expect(identity).toContain(`Creation request reference: ${attempts[0]!.key}`);
+    await retry.click();
+    await expect(dialog.getByText('The original creation is still unconfirmed.')).toBeVisible();
+    await expect(dialog.getByRole('textbox', { name: 'Title', exact: true })).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: 'Edit as a new request' })).toHaveCount(0);
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await page.getByRole('button', { name: 'Resume creation', exact: true }).click();
+    await expect(dialog.getByText('The original creation is still unconfirmed.')).toBeVisible();
+    await expect(dialog.getByRole('textbox', { name: 'Title', exact: true })).toHaveValue(
+      'Original private title',
+    );
+    await expect(dialog.getByRole('textbox', { name: 'Title', exact: true })).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: 'Edit as a new request' })).toHaveCount(0);
+    await dialog.getByText('Get help with this request', { exact: true }).click();
+    await expect(details).toContainText(identity);
+    await expect(details).toContainText('Last attempt: Refused\nHTTP status: 403');
+    expect(attempts).toHaveLength(2);
+    expect(fixture.writes).toEqual([]);
+    await retry.click();
+    await expect(page).toHaveURL(`/artifacts/${documentId}`);
+    expect(attempts).toEqual([attempts[0], attempts[0], attempts[0]]);
+    expect(fixture.writes).toHaveLength(1);
+    expect(fixture.boundary.writes).toEqual([]);
+    expect(fixture.boundary.errors).toEqual([]);
+    expect(fixture.boundary.unexpected).toEqual([]);
+  });
+}
+
 for (const mobile of [false, true]) {
-  test(`LOCAL creation retains its request through help, cancel and delayed retry (${mobile ? 'mobile' : 'desktop'})`, async ({
+  test(`LOCAL creation retains its request through help, cancel, reload and delayed retry (${mobile ? 'mobile' : 'desktop'})`, async ({
     page,
     baseURL,
   }) => {
@@ -94,6 +151,8 @@ for (const mobile of [false, true]) {
     await expect(dialog).toBeHidden();
     await expect(page.getByText('Creation request: Original private title')).toBeVisible();
     expect(attempts).toHaveLength(1);
+    await page.reload();
+    await expect(page.getByText('Creation request: Original private title')).toBeVisible();
     await page.getByRole('button', { name: 'Resume creation', exact: true }).click();
     await expect(title).toHaveValue('Original private title');
     expect(attempts).toHaveLength(1);

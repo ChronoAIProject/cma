@@ -80,3 +80,22 @@ it('does not prepare shared Agents and aborts a cancelled classification', async
   pending.unmount();
   expect(signal.aborted).toBe(true);
 });
+
+it('does not prepare runtime, usage or events for a retired navigation row', async () => {
+  const readAccessible = vi.fn().mockResolvedValue({
+    id: 'agt_1',
+    workspace: { id: 'wks_1' },
+    sandbox: { id: 'sbx_1', status: 'retired' },
+  });
+  const prepare = vi.fn();
+  const source = client(readAccessible, prepare);
+  const view = renderHook(() => useNavigationOpeningPreparation(source, 'alice'));
+  act(() => view.result.current('agt_1', true));
+  await act(async () => {});
+  expect(readAccessible).toHaveBeenCalledOnce();
+  expect(prepare).not.toHaveBeenCalled();
+  expect(source.readAgent).not.toHaveBeenCalled();
+  expect(source.readWorkspace).not.toHaveBeenCalled();
+  expect(source.readAgentTranscript).not.toHaveBeenCalled();
+  expect(source.readAgentUsage).not.toHaveBeenCalled();
+});

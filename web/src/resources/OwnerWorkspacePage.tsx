@@ -3,14 +3,11 @@ import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail, WorkspaceDetail } from '../api/types';
 import { agentDisplayTitle } from '../agent/presentation';
 import { routePath, type AppRoute } from '../routing/routes';
-import {
-  sandboxChildrenAvailable,
-  sandboxChildStatus,
-  sandboxUnavailableNotice,
-} from '../sandbox/lifecycle';
+import { sandboxChildrenAvailable, sandboxUnavailableNotice } from '../sandbox/lifecycle';
 import { sandboxCreateReason } from '../sandbox/sandboxHeaderActions';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
 import { Alert } from '../ui/Alert';
+import { SandboxChildBadge } from '../sandbox/SandboxChildBadge';
 import { StatusBadge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { IconPlusOutline16, IconTrashOutline16 } from '../ui/icons';
@@ -132,7 +129,7 @@ function WorkspaceAgents({
                       </ResourceLink>
                     </th>
                     <td>
-                      <StatusBadge status={sandboxChildStatus(sandbox, agent.status)} />
+                      <SandboxChildBadge sandbox={sandbox} status={agent.status} agent={agent} />
                     </td>
                     <td>
                       {worktree === undefined ? (
@@ -239,7 +236,7 @@ export function OwnerWorkspacePage({
         ]}
         title={workspace.name}
         headingRef={heading}
-        badge={<StatusBadge status={sandboxChildStatus(sandbox, workspace.status)} live />}
+        badge={<SandboxChildBadge sandbox={sandbox} status={workspace.status} live />}
         actions={
           <>
             {permissions.createAgent ? (

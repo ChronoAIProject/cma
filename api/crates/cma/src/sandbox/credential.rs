@@ -20,6 +20,7 @@ pub(crate) struct ManagedSandboxCredentials {
     issuer: Arc<KeyIssuer>,
     tokens: Arc<dyn OwnerTokenSource>,
     custody: Arc<dyn SandboxCredentialCustody>,
+    exact_connections: Option<Arc<crate::trigger::CmaServiceConnectionBroker>>,
 }
 
 impl ManagedSandboxCredentials {
@@ -32,7 +33,18 @@ impl ManagedSandboxCredentials {
             issuer,
             tokens,
             custody,
+            exact_connections: None,
         })
+    }
+
+    pub(crate) fn with_exact_connections(
+        mut self: Arc<Self>,
+        broker: Arc<crate::trigger::CmaServiceConnectionBroker>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("credential controller is configured before use")
+            .exact_connections = Some(broker);
+        self
     }
 
     async fn owner_token(&self, sandbox: &Sandbox) -> Result<SecretValue, CredentialError> {
@@ -98,6 +110,17 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
         {
             return Err(CredentialError::Security(
                 "credential generation does not cover the current service access".into(),
+            ));
+        }
+        if sandbox
+            .credential
+            .service_scope
+            .as_ref()
+            .is_some_and(|scope| scope.connection.is_some())
+            && self.exact_connections.is_none()
+        {
+            return Err(CredentialError::Unavailable(
+                "selected connection issuance is unavailable".into(),
             ));
         }
         if sandbox.work.authority_protocol.is_some()
@@ -197,6 +220,7 @@ fn owned_material(
         && material.sandbox_id == sandbox.id
         && material.source == sandbox.credential.source
         && material.matches_source()
+        && material.matches_connection(sandbox)
     {
         Ok(material)
     } else {

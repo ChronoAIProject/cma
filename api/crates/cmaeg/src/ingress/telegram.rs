@@ -21,6 +21,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 pub(crate) mod channel_posts;
 pub(crate) mod events;
+pub(crate) mod member_joins;
 mod message_context;
 pub(crate) mod shared_facts;
 

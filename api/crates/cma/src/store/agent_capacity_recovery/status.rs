@@ -10,7 +10,12 @@ use layer2_core::AgentId;
 use super::{authority, receipts};
 use crate::store::{
     agent_log_integrity::TransactionLogError,
-    agent_log_segments::transaction_scope::TransactionScope, sandbox_mongo::MongoSandboxStore,
+    agent_log_segments::{
+        incarnation,
+        transaction_scope::TransactionScope,
+        writer_gate::{self, GateName},
+    },
+    sandbox_mongo::MongoSandboxStore,
 };
 
 /// Call in an existing read transaction; no gate, carrier, audit or log writes.
@@ -22,6 +27,7 @@ pub(in crate::store) async fn read(
     id: &AgentId,
     request: Option<&RecoveryRequest>,
     now: &str,
+    observe_cohort: bool,
     scope: &mut TransactionScope<'_>,
 ) -> Result<RecoveryStatus, TransactionLogError> {
     let current = authority::capture(store, authorized, id, scope).await?;
@@ -56,5 +62,21 @@ pub(in crate::store) async fn read(
         // An absent row exposes no phase; it is not a KnownAbort assertion.
     }
     authority::require(authorized)?;
+    if observe_cohort && request.is_none() {
+        let database = store.client.database(&store.agents.namespace().db);
+        match writer_gate::read_scoped(&database, GateName::CapacityRecovery, scope).await {
+            Ok(Some(gate))
+                if gate.policy.selects(
+                    context.agent.id.as_str(),
+                    context.agent.owner.as_str(),
+                    &incarnation(context.agent),
+                ) =>
+            {
+                super::observations::preflight(status.disposition)
+            }
+            Ok(_) => {}
+            Err(_) => tracing::debug!("Capacity recovery status cohort observation unavailable"),
+        }
+    }
     Ok(status)
 }

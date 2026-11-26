@@ -33,6 +33,9 @@ pub(in crate::store) async fn claim_ready(
         .environment_variables
         .iter()
         .any(|e| e.name == "CMA_MACHINE_INCLUDED" && e.value == "1");
+    if store.default_pool_holds.lane(machine) {
+        return Ok(ClaimOutcome::Miss("miss_default_pool_held"));
+    }
     let target_id = if machine { "machine-target" } else { "target" };
     let Some(target) = store
         .native_prepared
@@ -47,28 +50,36 @@ pub(in crate::store) async fn claim_ready(
         mongodb::bson::deserialize_from_bson(target.get("plan").cloned().unwrap_or(Bson::Null))
             .map_err(|e| domain(SandboxStoreError::Corrupt(e.to_string())))?;
     desired.validate().map_err(domain)?;
-    // The preparation worker reconciles its durable target asynchronously after
-    // startup. Never let that prior target override this process's released
-    // runtime while new owned admissions are already being accepted.
+    // The preparation worker can still have a prior release as its desired
+    // plan. Use independently captured authority for a fresh transfer.
+    let release = store.released_runtime();
+    let machine_release = release.machine.as_deref();
+    let agent_release = (!release.agent.is_empty()).then_some(release.agent.as_str());
     let released = if machine {
-        store.managed_machine_runtime_version.as_ref()
+        machine_release
     } else {
-        store.managed_runtime_version.as_ref()
+        agent_release
     };
     if desired.machine() != machine
         || (machine && released.is_none())
-        || released.is_some_and(|version| version != &desired.warm.runtime_version)
+        || released.is_some_and(|version| version != desired.warm.runtime_version)
     {
         return Ok(ClaimOutcome::Miss("miss_released_runtime_mismatch"));
+    }
+    // A target written by a process with an earlier home renderer names homes
+    // whose replay the runtime would refuse. Provision normally until this
+    // process's preparation worker replaces that target.
+    if !desired.renders_current_home() {
+        return Ok(ClaimOutcome::Miss("miss_prepared_home_rendering"));
     }
     let database = store.client.database(&store.sandboxes.namespace().db);
     let Some(operation)=database.collection::<crate::store::agent_lifecycle_operations::LifecycleRecord>(crate::store::agent_lifecycle_operations::COLLECTION)
         .find_one(doc!{"_id":operation_id,"owner":sandbox.owner.as_str(),"status":{"$in":["queued","running"]}})
         .session(&mut *session).await.map_err(AdmissionError::Driver)? else{return Ok(ClaimOutcome::Miss("miss_operation_unavailable"))};
-    if operation.input.behavior != crate::store::LifecycleBehavior::PromptRepository
+    if !operation.input.behavior.uses_repository_profile()
         || operation.input.request.machine_included != machine
         || (machine
-            && operation.input.resolved_image.as_ref() != Some(&desired.warm.runtime_version))
+            && operation.admitted_machine_image() != Some(desired.warm.runtime_version.as_str()))
         || operation.input.request.workspace_id.is_some()
         || operation.input.request.sandbox_id.is_some()
         || operation.sandbox_id.is_some()
@@ -122,6 +133,24 @@ pub(in crate::store) async fn claim_ready(
         .session(&mut *session)
         .await
         .map_err(AdmissionError::Driver)?;
+    // A machine lifecycle receipt already admitted its exact image. A plain
+    // prepared transfer makes the first durable image choice here.
+    if !machine && operation.input.resolved_image.is_none() {
+        store
+            .fence_released_admission(
+                &release,
+                layer2_core::released_runtime::ReleasedLane::Agent,
+                session,
+            )
+            .await
+            .map_err(domain)?;
+    }
+    let authorized_version = operation
+        .input
+        .resolved_image
+        .as_deref()
+        .or(released)
+        .unwrap_or(desired.warm.runtime_version.as_str());
     let ownership = Ownership {
         owner: sandbox.owner.clone(),
         operation_id: operation_id.clone(),
@@ -136,7 +165,7 @@ pub(in crate::store) async fn claim_ready(
     projected.profile = record.plan.warm.profile.clone();
     record
         .payload
-        .claim(&mut projected, &record.plan.warm.runtime_version, at)
+        .claim(&mut projected, authorized_version, at)
         .map_err(domain)?;
     projected.profile = ownership.sandbox.clone();
     projected

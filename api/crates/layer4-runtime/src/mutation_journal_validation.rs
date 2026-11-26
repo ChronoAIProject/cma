@@ -3,6 +3,7 @@ use std::path::Path;
 use super::{corrupt, validate_terminal_shape, Operation, Record, Subject};
 use crate::config::RuntimeConfig;
 use crate::failure::Result;
+use layer3_adapter::AgentProcessAction;
 
 pub(super) fn validate_record(record: &Record, config: &RuntimeConfig) -> Result<()> {
     if record.version != 1 {
@@ -76,12 +77,12 @@ pub(super) fn validate_operation(operation: &Operation, config: &RuntimeConfig) 
                 cwd,
                 home,
             } => {
-                valid_agent_identity(operation, agent_id, "open")
+                valid_process_identity(operation, agent_id, AgentProcessAction::Open)
                     && Path::new(home) == config.agent_home(agent_id)
                     && crate::worktree::parse_path(&config.home, Path::new(cwd)).is_some()
             }
             Subject::CloseAgent { agent_id } => {
-                valid_agent_identity(operation, agent_id, "close")
+                valid_process_identity(operation, agent_id, AgentProcessAction::Close)
                     && operation.payload_sha256 == operation.request_sha256
                     && layer3_adapter::AgentCloseRequest {
                         operation_id: operation.operation_id.clone(),
@@ -109,6 +110,17 @@ pub(super) fn validate_operation(operation: &Operation, config: &RuntimeConfig) 
 fn valid_agent_identity(operation: &Operation, agent_id: &str, action: &str) -> bool {
     crate::paths::safe_component(agent_id, "agent id").is_ok()
         && operation.operation_id == format!("agent:{agent_id}:{action}:v1")
+}
+
+fn valid_process_identity(
+    operation: &Operation,
+    agent_id: &str,
+    action: AgentProcessAction,
+) -> bool {
+    crate::paths::safe_component(agent_id, "agent id").is_ok()
+        && action
+            .incarnation(agent_id, &operation.operation_id)
+            .is_some()
 }
 
 fn valid_receipt(record: &Record, value: &serde_json::Value, config: &RuntimeConfig) -> bool {

@@ -5,6 +5,10 @@ use axum::response::{IntoResponse, Redirect, Response};
 use std::sync::Arc;
 
 impl AuthState {
+    pub(crate) fn approval_review_origin(&self) -> &str {
+        &self.nyxid_public_url
+    }
+
     pub(crate) fn with_browser_origins(mut self: Arc<Self>, origins: &[HeaderValue]) -> Arc<Self> {
         let state = Arc::get_mut(&mut self).expect("configure before sharing");
         for origin in origins {

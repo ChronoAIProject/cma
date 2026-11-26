@@ -5,6 +5,7 @@ use super::{
     workspace_admission::{lock_sandbox, ApplyError},
     workspaces::{read_workspace, workspace_replacement_fields},
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::{store::SandboxStoreError, Workspace};
 use layer2_core::{Caller, WorkspaceId};
 use mongodb::bson::doc;
@@ -144,23 +145,23 @@ pub(super) async fn begin(
         {
             Ok(workspace) => workspace,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Retry(error)) | Err(ApplyError::Driver(error))
                 if is_transient(&error) =>
             {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(ApplyError::Retry(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };

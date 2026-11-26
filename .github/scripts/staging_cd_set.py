@@ -15,6 +15,10 @@ from staging_cd_runtime_smoke import validate_smoke
 
 
 OVERTAKEN = "superseded_by_newer_final"
+ALREADY_VERIFIED = "already-verified"
+# A first staging attempt refused before any change for a transient cause; its
+# promotion re-admits and deploys once more, and that attempt's outcome counts.
+RETRY_PENDING = "retry-pending"
 
 
 class OvertakenByNewerFinal(Refusal):

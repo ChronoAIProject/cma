@@ -71,14 +71,14 @@ impl MongoAdmissionControlStore {
                     }
                 },
                 Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if is_transient(&error) {
                         continue;
                     }
                     return Err(unavailable(&format!("read admission history: {error}")));
                 }
                 Err(ApplyError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
             }

@@ -51,5 +51,40 @@ pub(super) fn public_path(
     {
         return Err(AgentFileError::Invalid);
     }
+    if path.split('/').any(|component| component.len() > 255) {
+        return Err(AgentFileError::NameTooLong);
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_path_component_bounds_count_utf8_bytes() {
+        let agent = AgentId("test-agent".into());
+        for name in [
+            "a".repeat(255),
+            format!("{}.txt", "a".repeat(251)),
+            "界".repeat(85),
+            "普通 # note.txt".into(),
+        ] {
+            assert!(public_path(&agent, &format!("cma/{name}"), false).is_ok());
+        }
+        for name in [
+            "a".repeat(256),
+            format!("{}.txt", "a".repeat(252)),
+            "界".repeat(86),
+        ] {
+            assert!(matches!(
+                public_path(&agent, &format!("cma/{name}"), false),
+                Err(AgentFileError::NameTooLong)
+            ));
+        }
+        assert!(matches!(
+            public_path(&agent, "../outside", false),
+            Err(AgentFileError::Invalid)
+        ));
+    }
 }

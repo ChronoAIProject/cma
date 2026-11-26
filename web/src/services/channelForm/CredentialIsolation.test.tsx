@@ -150,10 +150,16 @@ it.each([
       discord_bot_token: 'discord-private',
       channel_key: 'relay-private',
       replace_hmac: true,
-      hmac_secrets: [{ key_id: 'events', secret: 'hmac-private' }],
+      hmac_secrets: [{ key_id: 'events', secret: btoa('synthetic HMAC material') }],
     };
     const body = channelRequest(
-      { sources: [defaultSource(type)] },
+      {
+        sources: [
+          type === 'custom'
+            ? { ...defaultSource(type), auth: { type: 'hmac', key_id: 'events' } }
+            : defaultSource(type),
+        ],
+      },
       credentials,
       undefined,
       'record',
@@ -238,7 +244,7 @@ it('retains explicit shared HMAC keys for an outbound result webhook without a c
     agent_key: 'provider-private',
     telegram_bot_token: 'telegram-private',
     replace_hmac: true,
-    hmac_secrets: [{ key_id: 'result', secret: 'result-private' }],
+    hmac_secrets: [{ key_id: 'result', secret: btoa('synthetic result material') }],
   };
   expect(channelRequest(draft, credentials, undefined, 'record').credentials).toEqual({
     agent_key: 'provider-private',

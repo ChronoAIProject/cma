@@ -9,12 +9,20 @@ from deployables import known_components
 
 from staging_cd_common import Refusal, matches, require
 from staging_cd_receipts import canonical, final_tag_oid, final_tag_text, validate_receipt
-from staging_cd_versions import BASE_VERSION, DEPLOYABLES, LEVELS, bump, version_tuple
+from staging_cd_versions import (
+    DEPLOYABLES, LEVELS, bump, require_publishable_release, require_publishable_source,
+    source_is_retired, version_floor, version_tuple,
+)
 
 KNOWN_DEPLOYABLES = known_components()
 FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump", "run_id", "run_attempt"}
 # A pending tag and its final belong to one owner exactly when these agree.
 OWNER = ("source", "run_id", "run_attempt", "version", "pr")
+# GitHub acknowledges a ref push before its REST ref listing shows it, so a
+# readback right after the push can still see the old state for seconds. Re-read
+# only that lag, after each delay in turn; never repeat the write or hide an
+# API error.
+READBACK_SETTLE_SECONDS = (1, 2, 4, 8)
 # One finalization prunes at most this many burned reservations; the next prunes the rest.
 PRUNE_LIMIT = 128
 # No pruning Git call starts with less of the finalization budget than this.
@@ -63,7 +71,8 @@ def outcome_ref(component, version):
 
 def next_reservation(component, source, tree, pr, level, run_id, attempt, finals, pending):
     require(component in DEPLOYABLES, "Unknown reservation component")
-    versions = [BASE_VERSION]
+    require_publishable_source(component, source)
+    versions = [version_floor(component)]
     for tag in finals:
         prefix = DEPLOYABLES[component] + "/v"
         if tag["name"].startswith(prefix):
@@ -107,6 +116,16 @@ class Reservations:
         result = [value for key in DEPLOYABLES if component in (None, key) for value, _ in self.inventory(key)]
         require(len({pending_name(item) for item in result}) == len(result), "Duplicate pending version")
         return result
+
+    def settled_list(self, component, done):
+        """The lane's reservations once done(rows) holds, else the last read of a bounded settle."""
+        rows = self.list(component)
+        for delay in READBACK_SETTLE_SECONDS:
+            if done(rows):
+                break
+            self.sleep(delay)
+            rows = self.list(component)
+        return rows
 
     def inventory(self, key, rows=None):
         """One lane's validated reservations, each with the tag object its live ref names."""
@@ -157,6 +176,7 @@ class Reservations:
     def insert(self, value):
         validate_reservation(value)
         require(value["component"] in DEPLOYABLES, "Retired images cannot reserve versions")
+        require_publishable_release(value)
         # An annotated reservation records the owning run, so a later planner
         # can distinguish an active build from a burned failed run. The push
         # itself is ordinary insert-only git push, never force/lease/update.
@@ -180,7 +200,8 @@ class Reservations:
             return False
         require(any(line.startswith("*\t") and "[new tag]" in line for line in result.stdout.splitlines()),
                 "An up-to-date push is not a new version reservation")
-        require(value in self.list(value["component"]), "Reservation push was not verified")
+        rows = self.settled_list(value["component"], lambda rows: value in rows)
+        require(value in rows, "Reservation push was not verified")
         return True
 
     def require_current(self, value, *, build_started):
@@ -194,6 +215,7 @@ class Reservations:
         """
         validate_reservation(value)
         component = value["component"]
+        require_publishable_release(value)
         pending, finals = self.list(component), self.api.tags(component)
         if value not in pending:
             # Pruning removes a reservation only once a final at or after its
@@ -243,6 +265,7 @@ class Reservations:
         self.mark("cleanup_verify")
         component = receipt["identity"]["component"]
         require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
+        require_publishable_release(receipt["identity"])
         observed = self.api.tags(component)
         finals = [tag for tag in observed if tag["name"] == receipt["tag"]]
         require(len(finals) == 1 and finals[0]["receipt"] == receipt and finals[0]["oid"] == expected_oid,
@@ -257,8 +280,9 @@ class Reservations:
         self.mark("cleanup_delete")
         self.command("push", REMOTE, ":refs/tags/" + pending_name(matches[0]))
         self.mark("cleanup_read")
-        remaining = [item for item in self.list(component) if item["version"] == receipt["identity"]["version"]]
-        require(not remaining, "Published reservation cleanup failed")
+        version = receipt["identity"]["version"]
+        rows = self.settled_list(component, lambda rows: all(item["version"] != version for item in rows))
+        require(all(item["version"] != version for item in rows), "Published reservation cleanup failed")
 
     def prune_burned(self, receipt, *, deadline=None, clock=time.monotonic):
         """Remove this lane's reservations that its verified finals have made unusable.
@@ -299,7 +323,7 @@ class Reservations:
         for value, oid in sorted(self.inventory(component, rows), key=lambda entry: version_tuple(entry[0]["version"])):
             if removed == PRUNE_LIMIT:
                 break
-            if value["run_id"] == identity["run_id"]:
+            if value["run_id"] == identity["run_id"] or source_is_retired(component, value["source"]):
                 continue
             if value["source"] in history.positions:
                 fenced = any(self.supersedes(final, value, history) for final in finals)
@@ -331,6 +355,7 @@ class Reservations:
         validate_receipt(receipt)
         component = receipt["identity"]["component"]
         require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
+        require_publishable_release(receipt["identity"])
         self.mark("registry_verify")
         require(verify_digest(receipt["repository"], receipt["digest"]) is True,
                 "Final version requires the verified published digest")

@@ -1,4 +1,5 @@
 //! Atomic, owner-consented reopening on an already restored retained runtime.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::{
     sandbox::{
         RetainedReopenAccepted, RetainedReopenPath, RetainedReopenReceipt, RetainedReopenRequest,
@@ -17,6 +18,7 @@ use super::sandbox_mongo::{
 use super::sandbox_unpublished_recovery::transaction::ApplyError;
 use super::sandbox_unpublished_recovery::transaction::NativeFacts;
 
+mod history;
 mod load;
 #[cfg(test)]
 pub(in crate::store) mod mongo_fixtures;
@@ -26,6 +28,7 @@ mod suspended;
 mod transaction;
 const FIELD: &str = "retained_reopen_receipt_v1";
 
+pub(super) use history::{indexes as receipt_indexes, read as read_history, read_for_service};
 pub(super) use suspended::{admit_suspended, replay};
 
 pub(super) async fn snapshot_in_transaction(
@@ -57,7 +60,7 @@ pub(super) async fn snapshot(
         .await
         .map_err(unavailable)?;
     let result = scope.retained_reopen_view(store, id, path, policy).await;
-    let _ = scope.release().abort_transaction().await;
+    let _ = scope.release().abort_guarded().await;
     result
         .map(|(snapshot, _)| snapshot)
         .map_err(ApplyError::domain)
@@ -92,20 +95,25 @@ pub(super) async fn admit(
         let applied = match transaction::apply_scoped(store, &request, scope).await {
             Ok(applied) => applied,
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 continue;
             }
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error.domain());
             }
         };
         // An exact replay needs no write or event and was read at majority.
-        let transaction::Applied::Commit { receipt, event } = applied else {
+        let transaction::Applied::Commit {
+            receipt,
+            event,
+            repeat,
+        } = applied
+        else {
             let transaction::Applied::Replay(accepted) = applied else {
                 unreachable!()
             };
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Ok(accepted);
         };
         match commit_transaction(&mut session).await {
@@ -117,7 +125,7 @@ pub(super) async fn admit(
                 })?;
                 let store = store.clone();
                 return wait_for_reconciliation("retained reopening commit", async move {
-                    transaction::reconcile(&store, &receipt, &event, time).await?;
+                    transaction::reconcile(&store, &receipt, &event, time, repeat).await?;
                     Ok(receipt.accepted)
                 })
                 .await

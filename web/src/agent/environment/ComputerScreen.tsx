@@ -80,6 +80,7 @@ export function ComputerScreen({
               controlUnavailable={!controlsReady}
               preparation={{ context: detailReadSource(client), owner: subject }}
               onClose={onClose}
+              onReturnToConversation={onReturnToConversation}
               embedded
             />
           ) : null
@@ -120,6 +121,7 @@ export function ComputerScreen({
 
       {!lifecycleHeld &&
       !shared &&
+      !machineAvailable &&
       policy.desktop_enable &&
       features?.browser.state === 'not_enabled' &&
       features.runtime_incarnation &&

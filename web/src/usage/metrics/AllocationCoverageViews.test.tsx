@@ -237,7 +237,7 @@ it('uses only owner evidence and the selected ranking, with unknown interval and
   expect(screen.queryByText(/Partial history|Missing history is excluded/)).not.toBeInTheDocument();
   const caption = screen.getByLabelText('Selected owners coverage');
   expect(caption).toHaveTextContent('Coverage unverified');
-  expect(caption).toHaveTextContent('No missing interval has been established');
+  expect(caption).not.toHaveTextContent('No missing interval has been established');
   expect(caption).toHaveTextContent('Missing-interval durations are unavailable for this scope');
   expect(caption).toHaveTextContent('Projection details are unavailable for this scope');
   expect(caption).not.toHaveTextContent(/None confirmed|0s|estimated/);
@@ -256,3 +256,61 @@ it('uses only owner evidence and the selected ranking, with unknown interval and
   expect(caption).toHaveTextContent('Projection details are unavailable for this scope');
   expect(api.create).not.toHaveBeenCalled();
 });
+
+it.each(['CPU', 'Disk'] as const)(
+  'keeps the %s report gap visible when grouping allocations by owner',
+  async (resource) => {
+    const actor = userEvent.setup();
+    const api = metricsClient(true);
+    const coverage = {
+      ...metricRow.allocated_period,
+      complete: false,
+      unknown_seconds: '3600',
+      projected_tail_seconds: '0',
+    };
+    api.ownerAllocations.mockResolvedValue({
+      report_id: props.reportId,
+      metric: resource === 'CPU' ? 'cpu' : 'disk',
+      unit: resource === 'CPU' ? 'core-hours' : 'GiB-hours',
+      total_count: 1,
+      next: null,
+      items: [
+        {
+          subject: 'owner',
+          label: 'Synthetic owner',
+          allocated_hours: 10,
+          sandbox_count: 1,
+          complete: false,
+        },
+      ],
+    });
+    render(
+      <AllocationChart
+        {...props}
+        api={api}
+        admin
+        reportCoverage={coverage}
+        page={{
+          report_id: props.reportId,
+          as_of: asOf,
+          next: null,
+          total_count: 1,
+          items: [{ ...metricRow, allocated_period: coverage }],
+        }}
+      />,
+    );
+    await actor.click(screen.getByRole('button', { name: 'Allocation chart resource' }));
+    await actor.click(screen.getByRole('menuitemradio', { name: resource }));
+    const report = screen.getByRole('note', { name: 'Report allocation coverage' });
+    expect(report).toHaveTextContent('Missing intervals confirmed');
+    expect(report).toHaveTextContent('Confirmed missing duration: 1h');
+    await actor.click(screen.getByRole('button', { name: 'Allocation chart grouping' }));
+    await actor.click(screen.getByRole('menuitemradio', { name: 'By owner' }));
+    const owners = await screen.findByRole('note', { name: 'Selected owners coverage' });
+    expect(owners).toHaveTextContent('Coverage unverified');
+    expect(owners).toHaveTextContent('Missing-interval durations are unavailable for this scope');
+    expect(owners).not.toHaveTextContent('No missing interval has been established');
+    expect(report).toBeVisible();
+    expect(report).toHaveTextContent('Confirmed missing duration: 1h');
+  },
+);

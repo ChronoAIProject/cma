@@ -131,6 +131,10 @@ pub async fn verify(store: Store) {
         store,
         auth,
         executor: Arc::new(NoCloud),
+        registry: cma_image_manager::model::ImageRegistry::parse(
+            "us-docker.pkg.dev/example-project/images".into(),
+        )
+        .unwrap(),
     }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api = Api {

@@ -84,7 +84,21 @@ pub(super) fn matches(rule: Erasure, row: &Document, context: &Context) -> bool 
         Erasure::ProvenAbsent(paths) => {
             let mut values = vec![context.subject.clone()];
             values.extend(context.sets.values().flatten().cloned());
+            values.extend(context.shares.iter().cloned());
             has(paths, &values)
+        }
+        Erasure::ProvenAbsentJson(fields) => {
+            let mut values = vec![context.subject.clone()];
+            values.extend(context.sets.values().flatten().cloned());
+            values.extend(context.shares.iter().cloned());
+            values.extend(context.execution_digests.iter().cloned());
+            fields.iter().any(|field| match row.get(*field) {
+                None => false,
+                Some(Bson::String(text)) => serde_json::from_str::<serde_json::Value>(text)
+                    .map_or(true, |value| json_names(&value, &values)),
+                Some(value @ (Bson::Document(_) | Bson::Array(_))) => bson_names(value, &values),
+                Some(_) => true,
+            })
         }
         Erasure::Reference(Ref::ActivityTargets) => {
             strings(row, "record.target.kind").contains(&"subject")
@@ -99,7 +113,8 @@ pub(super) fn matches(rule: Erasure, row: &Document, context: &Context) -> bool 
                     "recipient_subjects",
                     "record.shares.subject",
                     "record.comments.author_subject",
-                    "record.receipts.*.outcome.comment.author_subject",
+                    "audit.shares.subject",
+                    "audit.comments.author_subject",
                 ],
                 std::slice::from_ref(&context.subject),
             ) || receipt_author(row, &context.subject)
@@ -142,15 +157,17 @@ pub(super) fn matches(rule: Erasure, row: &Document, context: &Context) -> bool 
     }
 }
 fn receipt_author(row: &Document, subject: &str) -> bool {
-    super::context::value(row, "record.receipts")
-        .and_then(Bson::as_document)
-        .is_some_and(|receipts| {
-            receipts.values().any(|receipt| {
-                receipt.as_document().is_some_and(|receipt| {
-                    strings(receipt, "outcome.comment.author_subject").contains(&subject)
+    ["record.receipts", "audit.receipts"].iter().any(|path| {
+        super::context::value(row, path)
+            .and_then(Bson::as_document)
+            .is_some_and(|receipts| {
+                receipts.values().any(|receipt| {
+                    receipt.as_document().is_some_and(|receipt| {
+                        strings(receipt, "outcome.comment.author_subject").contains(&subject)
+                    })
                 })
             })
-        })
+    })
 }
 pub(super) fn destructive(rule: Erasure) -> bool {
     matches!(
@@ -188,3 +205,76 @@ pub(super) const PROTECTION_PATHS: &[&str] = &[
     "record.worktree_id",
     "record.launch_id",
 ];
+
+fn bson_names(value: &Bson, values: &[String]) -> bool {
+    match value {
+        Bson::String(text) => values.iter().any(|value| value == text),
+        Bson::Array(items) => items.iter().any(|item| bson_names(item, values)),
+        Bson::Document(row) => row.values().any(|item| bson_names(item, values)),
+        _ => false,
+    }
+}
+
+fn json_names(value: &serde_json::Value, values: &[String]) -> bool {
+    match value {
+        serde_json::Value::String(text) => values.iter().any(|value| value == text),
+        serde_json::Value::Array(items) => items.iter().any(|item| json_names(item, values)),
+        serde_json::Value::Object(map) => map.values().any(|item| json_names(item, values)),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod json_residue_tests {
+    use super::*;
+    use mongodb::bson::doc;
+
+    fn context() -> Context {
+        let mut context = Context::default();
+        context.subject = "subject-erased".into();
+        context
+            .sets
+            .insert(Set::Sandboxes, ["sbx_erased".to_owned()].into());
+        context.shares.insert("shr_erased".into());
+        context.execution_digests.insert("d1gest".into());
+        context
+    }
+
+    // #3296: identities inside a serialized record must block erasure.
+    #[test]
+    fn serialized_records_naming_the_subject_or_resources_fail_closed() {
+        let rule = Erasure::ProvenAbsentJson(&["record"]);
+        let context = context();
+        let named = doc! {"_id": "a", "record": r#"{"intent":{"actor":"subject-erased"}}"#};
+        let resource = doc! {"_id": "b", "record": r#"{"key":[{"sandbox":"sbx_erased"}]}"#};
+        let unrelated = doc! {"_id": "c", "record": r#"{"actor":"someone-else","n":3}"#};
+        let unreadable = doc! {"_id": "d", "record": "{not json"};
+        let wrong_type = doc! {"_id": "e", "record": 7_i32};
+        let absent = doc! {"_id": "activation", "share_id": "shr_x"};
+        let share = doc! {"_id": "h", "record": r#"{"key":{"share_id":"shr_erased"}}"#};
+        let digest = doc! {"_id": "i", "record": r#"{"basis":{"actor":"d1gest"}}"#};
+        assert!(matches(rule, &digest, &context));
+        let receipt = doc! {"_id": "grant_receipt:o", "share_id": "shr_erased"};
+        assert!(matches(rule, &share, &context));
+        assert!(matches(
+            Erasure::ProvenAbsent(&["share_id"]),
+            &receipt,
+            &context
+        ));
+        assert!(!matches(
+            Erasure::ProvenAbsent(&["share_id"]),
+            &absent,
+            &context
+        ));
+        let document = doc! {"_id": "f", "record": {"owner": "someone-else"}};
+        let named_document = doc! {"_id": "g", "record": {"owner": ["subject-erased"]}};
+        assert!(!matches(rule, &document, &context));
+        assert!(matches(rule, &named_document, &context));
+        assert!(matches(rule, &named, &context));
+        assert!(matches(rule, &resource, &context));
+        assert!(!matches(rule, &unrelated, &context));
+        assert!(matches(rule, &unreadable, &context));
+        assert!(matches(rule, &wrong_type, &context));
+        assert!(!matches(rule, &absent, &context));
+    }
+}

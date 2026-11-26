@@ -256,7 +256,7 @@ async fn exactly_one_admission_and_original_receipt_survive_progress_and_disabli
         disabled
             .request(&caller, &id, 7, "different-key", true)
             .await,
-        Err(E::Conflict)
+        Err(E::StaleRequest)
     ));
     assert!(matches!(
         disabled.request(&caller, &id, 9, "same-key", true).await,

@@ -59,6 +59,8 @@ fn ready() -> (AgentAccessRecord, Agent, Sandbox) {
         decision: Some(AgentAccessDecision::Approved {
             command_key_hash: "b".repeat(64),
             services: vec![ServiceId::new("github")],
+            connection: None,
+            connection_binding: None,
             authorization: AgentAuthorizationRevision {
                 replay_principal: None,
                 authority_id: "personal:owner".into(),
@@ -169,6 +171,7 @@ fn hot_notification_requires_exact_scope_revision_and_complete_old_key_revocatio
     sandbox.credential.service_scope = Some(SandboxServiceScopeRevision {
         revision: 3,
         services: record.approved_services().unwrap().to_vec(),
+        connection: None,
         authorized_by: record.requester.owner.clone(),
         authorized_at: fixtures::NOW.into(),
         credential_generation_floor: floor,

@@ -23,7 +23,7 @@ mod execute;
 mod home;
 mod initial_runtime;
 mod install_failure;
-mod lifecycle;
+pub(super) mod lifecycle;
 mod provision_timing;
 mod provisioning;
 mod retained_retirement;
@@ -44,6 +44,8 @@ const WORK_BATCH_SIZE: u16 = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum SandboxDependencyError {
+    #[error("sandbox agents are still stopping")]
+    AgentsStopping,
     #[error("dependency is temporarily unavailable: {0}")]
     Transient(String),
     #[error("requested resources are unavailable: {0}")]
@@ -95,14 +97,20 @@ pub(crate) struct SandboxWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct SandboxWorkerConfig {
+    pub retirement_finalizer:
+        Option<Arc<super::native_retirement_finalizer::NativeRetirementFinalizer>>,
     pub renewable_work: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
+    pub reopen_output_refusal_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
+    /// Fixed default for fixtures composed without a released authority.
     pub runtime_version: String,
+    /// The process's released default for new provisioning, when composed.
+    pub released: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
     pub lease_duration: Duration,
     pub retry_delay: Duration,
     pub policy: Arc<dyn SandboxPolicySource>,
@@ -126,14 +134,17 @@ impl SandboxWorkerConfig {
         policy: Arc<dyn SandboxPolicySource>,
     ) -> Self {
         Self {
+            retirement_finalizer: None,
             renewable_work: false,
             home_policy: None,
             work_retry_policy_enabled: false,
             native_create_retry_enabled: false,
+            reopen_output_refusal_enabled: false,
             execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
             runtime_version: runtime_version.into(),
+            released: None,
             lease_duration: DEFAULT_LEASE,
             retry_delay: DEFAULT_RETRY,
             policy,
@@ -162,6 +173,45 @@ impl SandboxWorkerConfig {
         self
     }
 
+    /// Share the process's released-default authority instead of a fixed pin.
+    pub(crate) fn with_released_runtime(
+        mut self,
+        released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+    ) -> Self {
+        self.released = Some(released);
+        self
+    }
+
+    /// One release for an operation, when this worker has a released authority.
+    pub(crate) fn release(&self) -> Option<layer3_adapter::ReleasedRuntime> {
+        self.released.as_ref().map(|released| released.snapshot())
+    }
+
+    /// One release for a provisioning: the snapshot that renders it and the
+    /// version recorded for `spec`, which keeps any image it already names.
+    pub(crate) fn release_for(
+        &self,
+        spec: &layer3_adapter::SandboxSpec,
+    ) -> (Option<layer3_adapter::ReleasedRuntime>, String) {
+        let released = self.release();
+        let version = spec
+            .runtime_image
+            .clone()
+            .unwrap_or_else(|| self.default_version(released.as_ref()));
+        (released, version)
+    }
+
+    /// The agent-lane default named by `release`, or the fixed fixture default.
+    pub(crate) fn default_version(
+        &self,
+        release: Option<&layer3_adapter::ReleasedRuntime>,
+    ) -> String {
+        release.map_or_else(
+            || self.runtime_version.clone(),
+            |released| released.agent.clone(),
+        )
+    }
+
     pub fn with_home_policy(mut self, policy: Option<layer3_adapter::HomeVolumePolicy>) -> Self {
         self.home_policy = policy;
         self
@@ -184,7 +234,7 @@ pub(crate) struct SandboxWorker {
     funding: Arc<dyn SandboxFundingAdapter>,
     reopen_relay: std::sync::OnceLock<std::sync::Weak<crate::agent_manager::relay::Relay>>,
     reopen_agents: std::sync::OnceLock<Arc<dyn layer2_core::sandbox::store::AgentStore>>,
-    reopen_gate: tokio::sync::Mutex<()>,
+    reopen_gates: std::sync::Mutex<lifecycle::ReopenGates>,
     pending_reopens: std::sync::Mutex<
         std::collections::BTreeMap<layer2_core::AgentId, lifecycle::PendingReopen>,
     >,
@@ -211,7 +261,7 @@ impl SandboxWorker {
             funding,
             reopen_relay: std::sync::OnceLock::new(),
             reopen_agents: std::sync::OnceLock::new(),
-            reopen_gate: tokio::sync::Mutex::new(()),
+            reopen_gates: std::sync::Mutex::default(),
             pending_reopens: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         })
     }
@@ -292,6 +342,8 @@ impl SandboxWorker {
         let Some(sandbox) = granted else {
             return Ok(false);
         };
+        #[cfg(test)]
+        diagnostics::executing();
         if self.config.renewable_work || sandbox.work.authority_protocol.is_some() {
             return Box::pin(self.run_renewable(sandbox, now, claiming)).await;
         }
@@ -329,6 +381,16 @@ impl SandboxWorker {
             }
         }
         Ok(true)
+    }
+
+    #[cfg(test)]
+    pub(super) async fn resume_claim_for_test(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        layer2_core::agent_ownership::transport_observation_scope(self.run_claimed(sandbox, now, 0))
+            .await
     }
 
     /// A finished attempt must not leave its long capture lease blocking a retry
@@ -428,3 +490,6 @@ impl SandboxWorker {
         Box::pin(self.execute(sandbox, now)).await
     }
 }
+
+#[cfg(test)]
+mod diagnostics;

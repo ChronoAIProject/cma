@@ -173,7 +173,8 @@ def main(argv=None):
     def operation(_masker):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Allocation planning only accepts develop pushes")
-        head = git(root, "rev-parse", "origin/develop")
+        head = git(root, "rev-parse", "HEAD")
+        require(head == env["GITHUB_SHA"], "Release checkout differs from the push")
         try:
             queue = release_queue(root, env.get("CD_ADOPTION_SHA"), head, env["GITHUB_SHA"], metrics,
                                   budget=BUDGET_SECONDS, window=window,

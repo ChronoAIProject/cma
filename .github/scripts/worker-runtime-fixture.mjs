@@ -14,7 +14,7 @@ const binary = process.env.CMA_CODEX_TEST_BINARY;
 const bridge = process.env.CMA_ACP_TEST_BRIDGE;
 assert.equal(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 0.147.0');
 assert.equal(createHash('sha256').update(readFileSync(bridge)).digest('hex'),
-  'ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66');
+  'ed2ce5c01e53b0a991bab1fd6ccbd44d0182967b3eda44ab21538881be27dc4c');
 const evidence = process.env.CMA_SUPERVISION_EVIDENCE_DIR ?? tmpdir();
 mkdirSync(evidence, { recursive: true });
 const root = mkdtempSync(join(realpathSync(evidence), 'runtime-'));

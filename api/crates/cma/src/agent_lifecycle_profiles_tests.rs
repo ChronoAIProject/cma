@@ -45,6 +45,7 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
         input.captured_limits(),
         input.behavior,
         input.sandbox_availability,
+        "",
     )
     .await
     .unwrap();
@@ -87,6 +88,7 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
         resumed.captured_limits(),
         resumed.behavior,
         resumed.sandbox_availability,
+        "",
     )
     .await
     .unwrap();
@@ -122,6 +124,7 @@ async fn retained_inline_profile_keeps_its_capacity_and_inactivity_policy_after_
             old.captured_limits(),
             old.behavior,
             availability,
+            "",
         )
     };
     let (_, _, original) = materialize(
@@ -199,6 +202,7 @@ async fn legacy_lifecycle_without_capacity_replays_the_old_minimum_reservation()
         input.captured_limits(),
         input.behavior,
         input.sandbox_availability,
+        "",
     )
     .await
     .unwrap();
@@ -222,6 +226,7 @@ async fn legacy_lifecycle_without_capacity_replays_the_old_minimum_reservation()
         input.captured_limits(),
         input.behavior,
         input.sandbox_availability,
+        "",
     )
     .await
     .unwrap();
@@ -269,6 +274,7 @@ async fn repository_is_a_first_message_and_never_a_platform_clone_plan() {
         },
         LifecycleBehavior::PromptRepository,
         Default::default(),
+        "",
     )
     .await
     .unwrap();
@@ -369,6 +375,7 @@ async fn machine_included_profiles_pin_the_desktop_image_and_marker() {
         layer2_core::sandbox::SandboxLimits { max_workspaces: 16, max_agents_per_workspace: 16 },
         LifecycleBehavior::PromptRepository,
         Default::default(),
+        "",
     )
     .await
     .unwrap();
@@ -484,7 +491,7 @@ fn legacy_operations_retain_original_setup_and_permissions_after_upgrade() {
             .is_empty()
     );
     assert!(matches!(
-        validation::repository_location(&input.request, input.behavior).unwrap(),
+        validation::repository_location(&input.request, input.behavior, "").unwrap(),
         layer2_core::profiles::WorkspaceLocation::GitRepository { .. }
     ));
     let admitted: LifecycleInput = serde_json::from_value(json!({
@@ -495,7 +502,7 @@ fn legacy_operations_retain_original_setup_and_permissions_after_upgrade() {
         serde_json::from_slice(&serde_json::to_vec(&admitted).unwrap()).unwrap();
     assert_eq!(recovered.behavior, LifecycleBehavior::PromptRepository);
     assert!(matches!(
-        validation::repository_location(&recovered.request, recovered.behavior).unwrap(),
+        validation::repository_location(&recovered.request, recovered.behavior, "").unwrap(),
         layer2_core::profiles::WorkspaceLocation::Directory { .. }
     ));
 }

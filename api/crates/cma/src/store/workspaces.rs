@@ -216,17 +216,13 @@ impl WorkspaceStore for MongoSandboxStore {
         if workspace.revision != 1 {
             return Err(SandboxStoreError::Conflict);
         }
-        self.workspaces
-            .insert_one(workspace_document(&workspace)?)
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                if is_duplicate_key(&error) {
-                    SandboxStoreError::Duplicate
-                } else {
-                    SandboxStoreError::Unavailable(error.to_string())
-                }
-            })
+        super::native_retirement_action::insert_child(
+            self,
+            &self.workspaces,
+            &workspace.sandbox_id,
+            workspace_document(&workspace)?,
+        )
+        .await
     }
 
     async fn get_workspace(

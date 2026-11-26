@@ -26,6 +26,7 @@ fn credential() -> CredentialFrame {
         operation_id: "credential-1".into(),
         value: RuntimeCredential::new("opaque-sandbox-key"),
         custody_generation: Some(3),
+        github_route: None,
     }
 }
 
@@ -702,6 +703,7 @@ async fn a_failed_credential_rotation_keeps_the_installed_generation_usable() {
         operation_id: "credential-2".into(),
         value: RuntimeCredential::new("opaque-rotated-key"),
         custody_generation: Some(4),
+        github_route: None,
     };
     assert!(adapter
         .deliver_credential(&handle, rotated.clone())

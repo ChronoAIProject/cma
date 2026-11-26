@@ -18,6 +18,46 @@ pub fn seal_blob(ring: &MasterKeyRing, plaintext: &[u8]) -> Result<Vec<u8>, Seal
     seal_bound_blob(ring, TokenKind::Blob, "", plaintext)
 }
 
+/// Retain the original channel plaintext under a kind ordinary readers refuse.
+pub fn seal_retired_channel(
+    ring: &MasterKeyRing,
+    record_id: &str,
+    stored_version: u64,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, SealError> {
+    seal_bound_blob(
+        ring,
+        TokenKind::RetiredChannel,
+        &format!(":{record_id}:{stored_version}"),
+        plaintext,
+    )
+}
+
+/// Open an ordinary or retired channel for inspection or custody accounting.
+/// A retired blob authenticates the post-retirement CAS version. Its receipt
+/// names the immediately preceding version.
+pub fn open_retained_channel(
+    ring: &MasterKeyRing,
+    record_id: &str,
+    stored_version: u64,
+    token: &[u8],
+) -> Result<(Opened<Vec<u8>>, Option<u64>), OpenError> {
+    if !token.starts_with(b"cmaeg1.rc.") {
+        return open_blob(ring, token).map(|opened| (opened, None));
+    }
+    let admitted = stored_version
+        .checked_sub(1)
+        .filter(|version| *version > 0)
+        .ok_or(OpenError::Format)?;
+    let opened = open_bound_blob(
+        ring,
+        TokenKind::RetiredChannel,
+        &format!(":{record_id}:{stored_version}"),
+        token,
+    )?;
+    Ok((opened, Some(admitted)))
+}
+
 pub fn seal_interaction(
     ring: &MasterKeyRing,
     id: &str,

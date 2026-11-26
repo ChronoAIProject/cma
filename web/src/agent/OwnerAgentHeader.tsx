@@ -6,6 +6,8 @@ import { Modal } from '../ui/Modal';
 import { SkillsSettings } from './SkillsSettings';
 import { AgentHeader } from './AgentHeader';
 import { AgentPreferencesDialog } from './AgentPreferencesDialog';
+import { usePromptAvailability } from './usePromptAvailability';
+import { readRetainedPromptIntent } from './transport/journal';
 
 /** Owner-only tools reuse the same public authorization as their Details controls. */
 export function OwnerAgentHeader({
@@ -24,11 +26,32 @@ export function OwnerAgentHeader({
 }) {
   const client = useCmaClient();
   const configBusy = busy || actionsBusy;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const canInspectPrompt = () => {
+    if (readOnly || !header.viewerId || !client.readAgentPreferences) return false;
+    try {
+      return !!readRetainedPromptIntent(sessionStorage, header.viewerId, detail.id);
+    } catch {
+      return false;
+    }
+  };
+  const canReviewPrompt = menuOpen && canInspectPrompt();
+  const promptReason = usePromptAvailability(
+    client,
+    detail.id,
+    header.viewerId,
+    menuOpen &&
+      !readOnly &&
+      !configBusy &&
+      !!client.readAgentPreferences &&
+      !!client.updateAgentPreferences,
+  );
   const [dialog, setDialog] = useState<'share' | 'skills' | 'rename' | 'prompt'>();
   return (
     <>
       <AgentHeader
         {...header}
+        onActionsOpenChange={setMenuOpen}
         onShare={readOnly || !client.resourceViews ? undefined : () => setDialog('share')}
         menu={[
           {
@@ -53,15 +76,17 @@ export function OwnerAgentHeader({
             disabled:
               readOnly ||
               !client.readAgentPreferences ||
-              !client.updateAgentPreferences ||
-              configBusy,
+              (!canReviewPrompt &&
+                (!client.updateAgentPreferences || configBusy || promptReason !== undefined)),
             reason: readOnly
               ? 'Only the task owner can update its system prompt.'
-              : !client.readAgentPreferences || !client.updateAgentPreferences
-                ? 'Task preferences are unsupported by this client.'
-                : configBusy
-                  ? 'Wait until the Agent and its pending actions are idle.'
-                  : undefined,
+              : canReviewPrompt
+                ? 'Review the pending system prompt change. New changes remain blocked until it is resolved.'
+                : !client.readAgentPreferences || !client.updateAgentPreferences
+                  ? 'Task preferences are unsupported by this client.'
+                  : configBusy
+                    ? 'Wait until the Agent and its pending actions are idle.'
+                    : promptReason,
           },
           {
             id: 'update-skills',
@@ -80,8 +105,10 @@ export function OwnerAgentHeader({
         ]}
         onMenuSelect={(id) => {
           if (id === 'rename-agent') setDialog('rename');
-          else if (id === 'update-prompt') setDialog('prompt');
-          else if (id === 'update-skills') setDialog('skills');
+          else if (id === 'update-prompt') {
+            if (!readOnly && (canInspectPrompt() || (!configBusy && promptReason === undefined)))
+              setDialog('prompt');
+          } else if (id === 'update-skills') setDialog('skills');
           else header.onMenuSelect?.(id);
         }}
       />
@@ -101,6 +128,7 @@ export function OwnerAgentHeader({
           {client.resourceViews ? (
             <AgentShareLinksDialog
               client={client.resourceViews}
+              ownerId={header.viewerId}
               agentId={detail.id}
               open={dialog === 'share'}
               onClose={() => setDialog(undefined)}
@@ -108,7 +136,8 @@ export function OwnerAgentHeader({
           ) : null}
           <Modal
             open={dialog === 'skills'}
-            title="Update skills installed"
+            title="Choose skills"
+            description="Add skills to this Agent. Each installation uses the version you choose."
             onClose={() => setDialog(undefined)}
           >
             {dialog === 'skills' ? (
@@ -116,6 +145,8 @@ export function OwnerAgentHeader({
                 agentId={detail.id}
                 viewerId={header.viewerId}
                 active
+                catalogOpen
+                onClose={() => setDialog(undefined)}
                 busy={configBusy}
               />
             ) : null}

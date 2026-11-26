@@ -9,11 +9,13 @@ import {
 import { desktopInput } from './desktopInput';
 import { watchDesktopDisplay } from './desktopDisplay';
 import {
+  checkDesktopBudget,
   desktopStableMs,
   desktopStopMessages,
   failDesktopAttempt,
   newDesktopReconnect,
   startDesktopAttempt,
+  type DesktopReconnect,
   type DesktopStop,
 } from './desktopReconnect';
 
@@ -72,14 +74,19 @@ export function useDesktopConnection(
     runtimeReady,
     runtimeVersion,
   });
+  const sameGeneration = generation.agentId === agentId && generation.owner === owner;
+  // A refresh may briefly withhold the version. Treat that as the same admitted
+  // runtime, as the reconnect effect does, so a waiting retry keeps its status.
+  const admittedVersion = sameGeneration
+    ? (runtimeVersion ?? generation.runtimeVersion)
+    : runtimeVersion;
   if (
-    generation.agentId !== agentId ||
-    generation.owner !== owner ||
+    !sameGeneration ||
     generation.attempt !== attempt ||
     generation.runtimeReady !== runtimeReady ||
-    generation.runtimeVersion !== runtimeVersion
+    generation.runtimeVersion !== admittedVersion
   ) {
-    setGeneration({ agentId, owner, attempt, runtimeReady, runtimeVersion });
+    setGeneration({ agentId, owner, attempt, runtimeReady, runtimeVersion: admittedVersion });
     setPhase(runtimeReady ? 'connecting' : 'waiting');
     setError('');
     setStop(undefined);
@@ -128,6 +135,16 @@ export function useDesktopConnection(
     let retry: ReturnType<typeof setTimeout> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let stable: ReturnType<typeof setTimeout> | undefined;
+    let budget: ReturnType<typeof setTimeout> | undefined;
+    let reportedStop = false;
+    // The budget before the attempt now in progress began. An attempt that a
+    // rebuild or a hidden tab supersedes has not failed: restoring this keeps
+    // its restart from being spent as an automatic retry (#3295).
+    let unsettled: DesktopReconnect | undefined;
+    const supersede = () => {
+      if (unsettled) session.policy = unsettled;
+      unsettled = undefined;
+    };
     const hidden = () => document.hidden || document.visibilityState === 'hidden';
     const release = () => {
       // Invalidate callbacks before disconnect (noVNC may emit synchronously).
@@ -139,6 +156,7 @@ export function useDesktopConnection(
       clearTimeout(retry);
       clearTimeout(deadline);
       clearTimeout(stable);
+      clearTimeout(budget);
       stopWaiting?.();
       stopWatching?.();
       stopWaiting = stopWatching = undefined;
@@ -154,6 +172,13 @@ export function useDesktopConnection(
       const reason = session.policy.terminal;
       if (!reason) return false;
       release();
+      if (!reportedStop) {
+        reportedStop = true;
+        console.warn('Desktop observation retries stopped', {
+          reason,
+          attempts: session.policy.automaticAttempts,
+        });
+      }
       setStop(reason);
       setError(desktopStopMessages[reason]);
       setPhase('error');
@@ -161,6 +186,7 @@ export function useDesktopConnection(
     };
     const failed = (message: string, cause?: unknown, refused = false) => {
       if (disposed) return;
+      unsettled = undefined;
       release();
       session.policy = failDesktopAttempt(session.policy, Date.now(), cause, refused);
       if (stopped()) return;
@@ -176,14 +202,16 @@ export function useDesktopConnection(
     };
     const begin = async () => {
       if (disposed || session.policy.terminal || hidden() || request) return;
-      session.policy = startDesktopAttempt(session.policy);
+      const before = session.policy;
+      session.policy = startDesktopAttempt(before, Date.now());
       if (stopped()) return;
+      unsettled = before;
       const current = ++version;
       const valid = () => !disposed && current === version && !hidden();
       request = new AbortController();
       setPhase(session.policy.automaticAttempts ? 'recovering' : 'connecting');
       deadline = setTimeout(() => {
-        if (valid()) failed('The screen is taking longer than expected. Reconnecting…');
+        if (valid()) failed('The screen is taking longer than expected.');
       }, 30_000);
       try {
         // A browser WebSocket hides failed-handshake headers. Discovery exposes
@@ -218,15 +246,20 @@ export function useDesktopConnection(
         rfb.addEventListener('connect', () => {
           if (!valid() || connected) return;
           connected = true;
-          setPhase('loading');
+          setPhase(session.policy.automaticAttempts ? 'recovering' : 'loading');
           stopWaiting = waitForDesktopFrame(target, () => {
             if (!valid()) return;
             clearTimeout(deadline);
+            clearTimeout(budget);
             setError('');
             setPhase('ready');
             // Short-lived connections must not reset an ongoing failure storm.
             stable = setTimeout(() => {
-              if (valid()) session.policy = newDesktopReconnect(0, true);
+              if (valid()) {
+                unsettled = undefined;
+                session.policy = newDesktopReconnect(0, true);
+                console.debug('Desktop observation stable; retry budget reset');
+              }
             }, desktopStableMs);
             stopWatching = watchDesktopDisplay(
               target,
@@ -240,19 +273,34 @@ export function useDesktopConnection(
           });
         });
         rfb.addEventListener('disconnect', () => {
-          if (valid()) failed('Connection lost. Reconnecting automatically…');
+          if (valid()) failed('Connection lost.');
         });
         rfb.addEventListener('securityfailure', () => {
           if (valid()) failed('Desktop connection refused.', undefined, true);
         });
         prepared?.replay();
       } catch (cause) {
-        if (valid()) failed('Desktop is temporarily unavailable. Reconnecting…', cause);
+        if (valid()) failed('Desktop is temporarily unavailable.', cause);
       }
     };
     function schedule() {
       clearTimeout(retry);
-      if (disposed || stopped() || hidden() || request) return;
+      if (disposed || request) return;
+      session.policy = checkDesktopBudget(session.policy, Date.now());
+      if (stopped() || hidden()) return;
+      // Availability refreshes may rebuild the viewer during an existing backoff.
+      if (session.policy.started) setPhase('recovering');
+      clearTimeout(budget);
+      // Bound backoff, discovery and first-frame waits by the same deadline.
+      // A painted stream may finish its stability window without being torn down.
+      if (session.policy.expiresAt !== undefined)
+        budget = setTimeout(
+          () => {
+            session.policy = checkDesktopBudget(session.policy, Date.now());
+            stopped();
+          },
+          Math.max(0, session.policy.expiresAt - Date.now()),
+        );
       const delay = Math.max(0, session.policy.retryAt - Date.now());
       if (delay) retry = setTimeout(() => void begin(), delay);
       else void begin();
@@ -260,6 +308,7 @@ export function useDesktopConnection(
     const visibility = () => {
       if (session.policy.terminal) return;
       if (hidden()) {
+        supersede();
         release();
         setPhase('recovering');
       } else schedule();
@@ -268,6 +317,7 @@ export function useDesktopConnection(
     schedule();
     return () => {
       disposed = true;
+      supersede();
       release();
       document.removeEventListener('visibilitychange', visibility);
     };

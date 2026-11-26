@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -285,24 +286,30 @@ function ViewportFit({
   };
 }) {
   const { fitView } = useReactFlow();
+  const frame = useRef<number | null>(null);
+  const fit = useEffectEvent(() => {
+    frame.current = null;
+    const element = container.current;
+    if (element && element.clientWidth > 0)
+      void fitView({ padding, maxZoom: 1, duration: reduced ? 0 : 200 });
+  });
+  const scheduleFit = useEffectEvent(() => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(() => fit());
+  });
   useEffect(() => {
     const element = container.current;
     if (!element) return;
-    let frame = 0;
-    const fit = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        if (element.clientWidth > 0)
-          void fitView({ padding, maxZoom: 1, duration: reduced ? 0 : 200 });
-      });
-    };
-    const observer = new ResizeObserver(fit);
+    const observer = new ResizeObserver(() => scheduleFit());
     observer.observe(element);
-    fit();
     return () => {
-      cancelAnimationFrame(frame);
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+      frame.current = null;
       observer.disconnect();
     };
-  }, [container, fitView, reduced, padding]);
+  }, [container]);
+  useEffect(() => {
+    scheduleFit();
+  }, [padding, reduced, fitView]);
   return null;
 }

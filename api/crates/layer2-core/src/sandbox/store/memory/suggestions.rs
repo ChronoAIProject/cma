@@ -46,7 +46,7 @@ impl SuggestionStore for InMemorySandboxStore {
                 && work.strategy_version == STRATEGY_VERSION
         });
         Ok(match work {
-            Some(work) => work.reading(current(&state, work), unix_millis()),
+            Some(work) => work.reading(current(&state, work)),
             None => SuggestionReading {
                 status: SuggestionStatus::Unavailable,
                 set: None,

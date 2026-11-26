@@ -1,6 +1,7 @@
 //! Durable command/response reservation in an additive ledger. No runtime input
 //! is issued here; unknown commits are recovered by the same idempotency key.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::AgentCommandId;
 use layer2_core::sandbox::agent_io::{
     AdmittedAgentCommand, AgentCommandStore, CommandLedgerError, CommandReservation,
@@ -25,14 +26,17 @@ pub(in crate::store) mod records;
 pub(in crate::store) mod reserve;
 mod retry;
 mod targeted_control;
+pub(in crate::store) mod unclaimed;
 pub(in crate::store) mod worker;
 pub(in crate::store) mod worker_apply;
 
 pub(super) use lane_records::read as read_command_lane;
+#[cfg(test)]
 pub(super) use records::document as command_document;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read as read_command;
 
+#[derive(Debug)]
 pub(super) enum ApplyError {
     Domain(CommandLedgerError),
     Driver(mongodb::error::Error),
@@ -251,11 +255,11 @@ impl AgentCommandStore for MongoSandboxStore {
                 let result = match reserve::apply(self, &request, &mut session).await {
                     Ok(result) => result,
                     Err(ApplyError::Domain(error)) => {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         return Err(error);
                     }
                     Err(ApplyError::Driver(error)) => {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         if is_transient(&error) || is_duplicate_key(&error) {
                             continue;
                         }
@@ -263,7 +267,7 @@ impl AgentCommandStore for MongoSandboxStore {
                     }
                 };
                 if let Err(error) = request.require_current_authority() {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 match commit_transaction(&mut session).await {

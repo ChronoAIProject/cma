@@ -1,5 +1,6 @@
 //! Transactional operator control and its activity evidence on one singleton.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::admission::{AdmissionControl, AdmissionControlRead, AdmissionControlStore};
 use layer2_core::{StoreError, SubjectId};
 use mongodb::bson::{doc, Bson, Document};
@@ -214,14 +215,14 @@ impl AdmissionControlStore for MongoAdmissionControlStore {
                     }
                 },
                 Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if is_transient(&error) || is_duplicate_key(&error) {
                         continue;
                     }
                     return Err(unavailable(&format!("write admission change: {error}")));
                 }
                 Err(ApplyError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
             }

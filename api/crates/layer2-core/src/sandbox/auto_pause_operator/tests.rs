@@ -30,13 +30,23 @@ impl ActivityStore for Audit {
         Ok(crate::Page::new(self.records.lock().unwrap().clone(), None))
     }
 }
-struct Settings(Mutex<StoredPlatformSettings>, Mutex<bool>);
+#[derive(Clone, Copy)]
+enum ReadFault {
+    Timeout,
+    Unavailable,
+}
+
+struct Settings(Mutex<StoredPlatformSettings>, Mutex<Option<ReadFault>>);
 #[async_trait::async_trait]
 impl PlatformSettingsStore for Settings {
     async fn read(&self) -> Result<StoredPlatformSettings, StoreError> {
-        let slow = *self.1.lock().unwrap();
-        if slow {
-            tokio::time::sleep(Duration::from_secs(30)).await;
+        let fault = *self.1.lock().unwrap();
+        match fault {
+            Some(ReadFault::Timeout) => tokio::time::sleep(Duration::from_secs(30)).await,
+            Some(ReadFault::Unavailable) => {
+                return Err(StoreError::Unavailable("policy offline".into()))
+            }
+            None => {}
         }
         Ok(self.0.lock().unwrap().clone())
     }
@@ -53,7 +63,8 @@ struct Maintenance {
     calls: Mutex<Vec<SandboxInactivityPauseRequest>>,
     fail: Mutex<Option<String>>,
     slow: Mutex<bool>,
-    slow_discovery: Mutex<bool>,
+    discovery_fault: Mutex<Option<ReadFault>>,
+    invalid_discovery_page: Mutex<bool>,
 }
 #[async_trait::async_trait]
 impl SandboxMaintenanceStore for Maintenance {
@@ -61,9 +72,19 @@ impl SandboxMaintenanceStore for Maintenance {
         &self,
         page: &PageRequest,
     ) -> Result<Page<crate::SandboxId>, SandboxStoreError> {
-        let slow = *self.slow_discovery.lock().unwrap();
-        if slow {
-            tokio::time::sleep(Duration::from_secs(30)).await;
+        let fault = *self.discovery_fault.lock().unwrap();
+        match fault {
+            Some(ReadFault::Timeout) => tokio::time::sleep(Duration::from_secs(30)).await,
+            Some(ReadFault::Unavailable) => {
+                return Err(SandboxStoreError::Unavailable("discovery offline".into()));
+            }
+            None => {}
+        }
+        if *self.invalid_discovery_page.lock().unwrap() {
+            return Ok(Page {
+                items: vec![crate::SandboxId("a".into())],
+                next: Some("b".into()),
+            });
         }
         let mut ids: Vec<_> = ["a", "b", "c"]
             .into_iter()
@@ -143,14 +164,15 @@ fn fixture() -> (
             revision: 5,
             settings: policy,
         }),
-        Mutex::new(false),
+        Mutex::default(),
     ));
     let maintenance = Arc::new(Maintenance {
         audit: audit.clone(),
         calls: Mutex::default(),
         fail: Mutex::default(),
         slow: Mutex::new(false),
-        slow_discovery: Mutex::new(false),
+        discovery_fault: Mutex::default(),
+        invalid_discovery_page: Mutex::new(false),
     });
     let service = SandboxAutoPauseService::new(
         Arc::new(PlatformSettingsService::new(
@@ -298,9 +320,9 @@ async fn batch_deadline_includes_settings_and_discovery_before_effects() {
     for discovery in [false, true] {
         let (service, store, settings, audit, caller) = fixture();
         if discovery {
-            *store.slow_discovery.lock().unwrap() = true;
+            *store.discovery_fault.lock().unwrap() = Some(ReadFault::Timeout);
         } else {
-            *settings.1.lock().unwrap() = true;
+            *settings.1.lock().unwrap() = Some(ReadFault::Timeout);
         }
         let started = tokio::time::Instant::now();
         assert!(matches!(
@@ -312,6 +334,85 @@ async fn batch_deadline_includes_settings_and_discovery_before_effects() {
         assert_eq!(started.elapsed(), Duration::from_secs(20));
         assert!(store.calls.lock().unwrap().is_empty());
         assert!(audit.records.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn preview_reports_bounded_reasons_for_503_before_effects() {
+    use metrics::{
+        atomics::AtomicU64, Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder,
+        SharedString, Unit,
+    };
+    use std::sync::atomic::Ordering;
+
+    #[derive(Default)]
+    struct Counters(Mutex<Vec<(Key, Arc<AtomicU64>)>>);
+
+    impl Recorder for Counters {
+        fn describe_counter(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+        fn describe_gauge(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+        fn describe_histogram(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+        fn register_counter(&self, key: &Key, _: &Metadata<'_>) -> Counter {
+            let value = Arc::new(AtomicU64::new(0));
+            self.0.lock().unwrap().push((key.clone(), value.clone()));
+            Counter::from_arc(value)
+        }
+        fn register_gauge(&self, _: &Key, _: &Metadata<'_>) -> Gauge {
+            Gauge::noop()
+        }
+        fn register_histogram(&self, _: &Key, _: &Metadata<'_>) -> Histogram {
+            Histogram::noop()
+        }
+    }
+
+    let counters = Counters::default();
+    let _recorder = metrics::set_default_local_recorder(&counters);
+    let reasons = [
+        (
+            Some(ReadFault::Unavailable),
+            None,
+            false,
+            "policy_read_error",
+        ),
+        (Some(ReadFault::Timeout), None, false, "policy_read_timeout"),
+        (None, Some(ReadFault::Unavailable), false, "discovery_error"),
+        (None, Some(ReadFault::Timeout), false, "discovery_timeout"),
+        (None, None, true, "invalid_discovery_page"),
+    ];
+    for (policy, discovery, invalid_page, _) in reasons {
+        let (service, store, settings, audit, caller) = fixture();
+        *settings.1.lock().unwrap() = policy;
+        *store.discovery_fault.lock().unwrap() = discovery;
+        *store.invalid_discovery_page.lock().unwrap() = invalid_page;
+        let unauthorized = Caller {
+            subject: caller.subject.clone(),
+            authorization: Authorization::new([]),
+        };
+        let page = PageRequest::new(1, None).unwrap();
+        assert_eq!(
+            service.batch(&unauthorized, page.clone(), false).await,
+            Err(OperatorError::Forbidden)
+        );
+        assert_eq!(
+            service.batch(&caller, page, false).await,
+            Err(OperatorError::Unavailable(
+                "auto-pause evidence or audit unavailable".into()
+            ))
+        );
+        assert!(store.calls.lock().unwrap().is_empty());
+        assert!(audit.records.lock().unwrap().is_empty());
+    }
+    let counters = counters.0.lock().unwrap();
+    assert_eq!(counters.len(), reasons.len());
+    for ((key, value), (_, _, _, reason)) in counters.iter().zip(reasons) {
+        assert_eq!(key.name(), "cma_auto_pause_operator_unavailable_total");
+        assert_eq!(
+            key.labels()
+                .map(|label| (label.key(), label.value()))
+                .collect::<Vec<_>>(),
+            [("mode", "preview"), ("reason", reason)]
+        );
+        assert_eq!(value.load(Ordering::Relaxed), 1);
     }
 }
 

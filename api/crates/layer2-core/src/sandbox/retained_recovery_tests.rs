@@ -3,6 +3,9 @@ use crate::sandbox::lifecycle_test_support::{agent, NOW};
 use crate::sandbox::runtime_update_test_support::native;
 use crate::sandbox::{AgentWorkLease, AgentWorkStep, TypedFailure};
 
+#[path = "retained_recovery_custom_tests.rs"]
+mod custom_runtime;
+
 fn snapshot() -> RetainedRecoverySnapshot {
     let mut sandbox = native();
     let image = format!("registry.example/runtime@sha256:{}", "a".repeat(64));

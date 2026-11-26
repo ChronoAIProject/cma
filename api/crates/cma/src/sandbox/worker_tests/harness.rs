@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) struct WorkspaceRecorder {
-    pub(super) actions: ActionLog,
+pub(crate) struct WorkspaceRecorder {
+    pub(crate) actions: ActionLog,
 }
 
 #[async_trait::async_trait]
@@ -20,8 +20,8 @@ impl ProfileWorkspaceProvisioner for WorkspaceRecorder {
     }
 }
 
-pub(super) struct AgentStopRecorder {
-    pub(super) actions: ActionLog,
+pub(crate) struct AgentStopRecorder {
+    pub(crate) actions: ActionLog,
 }
 
 #[async_trait::async_trait]

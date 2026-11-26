@@ -132,7 +132,7 @@ for (const touch of [true, false]) {
       await expect(menu.getByRole('menuitem', { name: 'Stop', exact: true })).toBeFocused();
       await expect(menu.getByRole('menuitem', { name: /^Delete/ })).toHaveAttribute(
         'aria-disabled',
-        'true',
+        'false',
       );
       await page.keyboard.press('Escape');
       await expect(menu).toHaveCount(0);
@@ -149,6 +149,18 @@ for (const touch of [true, false]) {
       noEffects(boundary);
       await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
       await expect(confirmation).toHaveCount(0);
+      if (touch) await button.tap();
+      else await button.click();
+      await menu.getByRole('menuitem', { name: /^Delete/ }).click();
+      const deletion = page.getByRole('dialog', { name: 'Delete Agent', exact: true });
+      await expect(deletion).toBeVisible();
+      await expect(deletion.getByRole('checkbox')).not.toBeChecked();
+      await expect(
+        deletion.getByRole('button', { name: 'Stop and delete', exact: true }),
+      ).toBeDisabled();
+      noEffects(boundary);
+      await deletion.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await expect(deletion).toHaveCount(0);
       await pointerMode(page, touch);
       noEffects(boundary);
     });

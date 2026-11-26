@@ -284,6 +284,44 @@ pub(super) fn actor_digest(actor: &ResourceActor) -> ExecutionResult<wire::Diges
     digest(&("resource-execution-actor-v1", actor))
 }
 
+/// Deterministic execution digests that identify `subject`, so account erasure
+/// can recognize them in serialized execution evidence (#3296): the Human and
+/// undelegated Api actors, the Trigger actor for each of its Launches, and the
+/// Person and Organization owners. Delegated Api actors are not enumerable.
+pub fn subject_execution_digests(
+    subject: &crate::SubjectId,
+    launches: &[crate::LaunchId],
+) -> ExecutionResult<Vec<String>> {
+    let mut actors = vec![
+        ResourceActor::Human {
+            subject: subject.clone(),
+        },
+        ResourceActor::Api {
+            subject: subject.clone(),
+            delegation_id: None,
+        },
+    ];
+    actors.extend(launches.iter().map(|launch_id| ResourceActor::Trigger {
+        subject: subject.clone(),
+        launch_id: launch_id.clone(),
+    }));
+    let mut values = Vec::with_capacity(actors.len() + 2);
+    for actor in &actors {
+        values.push(actor_digest(actor)?.as_str().to_owned());
+    }
+    for owner in [
+        super::ResourceOwner::Person {
+            subject: subject.clone(),
+        },
+        super::ResourceOwner::Organization {
+            subject: subject.clone(),
+        },
+    ] {
+        values.push(digest(&owner)?.as_str().to_owned());
+    }
+    Ok(values)
+}
+
 pub(super) fn capability(value: ResourceCapability) -> ExecutionResult<wire::ProtectedCapability> {
     use ResourceCapability as C;
     Ok(match value {

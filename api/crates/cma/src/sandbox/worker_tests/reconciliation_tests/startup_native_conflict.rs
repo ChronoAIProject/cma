@@ -208,6 +208,106 @@ async fn startup_native_changed_binding_is_deferred_without_adopting_new_targets
 }
 
 #[tokio::test]
+async fn missing_native_home_defers_only_a_superseded_binding() {
+    assert_missing_home_respects_durable_binding(false, false).await;
+}
+
+#[tokio::test]
+async fn home_disappearance_during_status_defers_only_a_superseded_binding() {
+    assert_missing_home_respects_durable_binding(true, false).await;
+}
+
+#[tokio::test]
+async fn startup_native_home_refusal_keeps_the_binding_held_when_enabled() {
+    for status_in_flight in [false, true] {
+        assert_missing_home_respects_durable_binding(status_in_flight, true).await;
+    }
+}
+
+async fn assert_missing_home_respects_durable_binding(
+    status_in_flight: bool,
+    native_home_hold_enabled: bool,
+) {
+    for binding_changed in [false, true] {
+        let mut fixture = NativeStartup::new(false, false).await;
+        fixture.reconciler = fixture
+            .reconciler
+            .with_startup_native_home_hold(native_home_hold_enabled);
+        fixture
+            .control
+            .hold_next_home_check
+            .store(!status_in_flight, Ordering::SeqCst);
+        let startup = fixture.reconciler.initialize_before_workers(fixture.now);
+        tokio::pin!(startup);
+        if status_in_flight {
+            until(&mut startup, fixture.control.status_entered.notified()).await;
+        } else {
+            until(&mut startup, fixture.control.home_check_entered.notified()).await;
+        }
+        let mut current = fixture.original.clone();
+        current.revision += 1;
+        current.name = "updated while checking the home".into();
+        if binding_changed {
+            current
+                .runtime
+                .as_mut()
+                .unwrap()
+                .runtime_id
+                .push_str("-successor");
+        }
+        current.validate().unwrap();
+        fixture
+            .store
+            .inner
+            .save_sandbox(fixture.original.revision, current.clone())
+            .await
+            .unwrap();
+        if status_in_flight {
+            // Let the provider finish validating the status exchange before
+            // removing the PVC at the follow-up hosted home verification.
+            fixture
+                .control
+                .hold_next_home_check
+                .store(true, Ordering::SeqCst);
+            fixture.control.status_gate.add_permits(1);
+            until(&mut startup, fixture.control.home_check_entered.notified()).await;
+        }
+        fixture.control.api.lock().unwrap().rows.remove(api::VOLUME);
+        fixture.control.other_gate.add_permits(8);
+        fixture.control.home_check_gate.add_permits(1);
+        let result = tokio::time::timeout(Duration::from_secs(10), startup)
+            .await
+            .unwrap();
+        if binding_changed || native_home_hold_enabled {
+            result.unwrap();
+            assert!(fixture.reconciler.binding_is_held(&current.id));
+            assert_eq!(fixture.control.other_settled.load(Ordering::SeqCst), 8);
+        } else {
+            let error = result.unwrap_err();
+            assert!(
+                matches!(&error, SandboxStoreError::Unavailable(message)
+                if message.contains("native home identity changed or disappeared")),
+                "{error}"
+            );
+        }
+        assert_eq!(
+            fixture.store.inner.get_sandbox(&current.id).await.unwrap(),
+            Some(current)
+        );
+        fixture.control.assert_no_cleanup();
+        assert!(!fixture
+            .control
+            .api
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .any(|(kind, _)| kind == "DURABLE_CAS"));
+        assert_retained(&fixture);
+    }
+}
+
+#[tokio::test]
 async fn startup_native_refreshes_first_attempt_after_authority_advanced_past_startup_time() {
     let fixture = NativeStartup::new(false, false).await;
     let durable_at = stamp_time(&fixture.original.updated_at);

@@ -1,6 +1,7 @@
 //! Gap-free Mongo log for agent conversation and tool events.
 
 use crate::store::agent_log_telemetry::ScanCaller;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{AgentLogStore, SandboxStoreError};
 use layer2_core::sandbox::{AgentLogEntry, AgentLogKind};
@@ -15,6 +16,8 @@ pub(super) use super::agent_log_integrity::{
     scan_complete_log_with_session, scan_complete_log_with_snapshot_session,
 };
 use super::agent_log_reads::{read_window, Window};
+use super::agent_log_segment_reads::transcript_page;
+use super::agent_log_segments::capture::CaptureMode;
 use super::agents::read_agent;
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, require_version, signed, start_transaction,
@@ -250,16 +253,16 @@ impl AgentLogStore for MongoSandboxStore {
             {
                 Ok(entry) => entry,
                 Err(TransactionLogError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(TransactionLogError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(TransactionLogError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };
@@ -417,13 +420,15 @@ impl AgentLogStore for MongoSandboxStore {
         expected: &layer2_core::sandbox::Agent,
         request: &layer2_core::sandbox::AgentTranscriptPageRequest,
     ) -> Result<Option<layer2_core::sandbox::AgentTranscriptPage>, SandboxStoreError> {
-        let mut session = self
-            .client
-            .start_session()
-            .snapshot(true)
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-        super::agent_log_segment_reads::transcript_page(self, expected, &mut session, request).await
+        transcript_page(self, expected, request, CaptureMode::Snapshot).await
+    }
+
+    async fn agent_log_export_page(
+        &self,
+        expected: &layer2_core::sandbox::Agent,
+        request: &layer2_core::sandbox::AgentTranscriptPageRequest,
+    ) -> Result<Option<layer2_core::sandbox::AgentTranscriptPage>, SandboxStoreError> {
+        transcript_page(self, expected, request, CaptureMode::PrivacyExport).await
     }
 
     async fn agent_log_final_answer(
@@ -480,6 +485,13 @@ impl AgentLogStore for MongoSandboxStore {
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         super::agent_log_segment_reads::projected_usage(self, expected, &mut session).await
+    }
+
+    async fn agent_log_reply_preview(
+        &self,
+        agent: &layer2_core::sandbox::Agent,
+    ) -> Result<layer2_core::sandbox::AgentReplyPreview, SandboxStoreError> {
+        super::agent_log_segment_reads::reply_preview::read(self, agent).await
     }
 }
 

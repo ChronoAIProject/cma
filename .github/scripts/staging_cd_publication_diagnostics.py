@@ -20,6 +20,8 @@ REFUSAL_REASONS = {
     "Registry digest differs from the scanned archive": "registry_digest_conflict",
     "Registry publication outcome is uncertain": "registry_write_uncertain",
     "Registry copy budget expired": "command_timeout",
+    "Runtime canary cleanup incomplete; retain the campaign receipt": "runtime_cleanup_incomplete",
+    "Registry write is not visible yet": "registry_not_visible",
 }
 REASONS = frozenset({"registry_denied", "build_failed", "command_failed", "build_timeout", "command_timeout",
                      "scan_refused", "registry_read_failed", "validation_refused", "io_failed", "unexpected_error",

@@ -20,6 +20,7 @@ async fn legacy_attempt(f: &Fixture) -> (String, String) {
             verifier: SecretValue::new("predecessor-pkce".into()),
             return_to: Some("/agent-manager".into()),
             actor_link_intent: None,
+            service_authorization: None,
             silent: false,
             consent_requested: false,
             custody_reserved: false,
