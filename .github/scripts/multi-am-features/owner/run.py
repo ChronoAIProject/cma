@@ -166,6 +166,14 @@ class Fixture:
             if value['instance_id']==row['instance_id']:return {**row,'am':am,'am_id':am,'pod_uid':value['pod_uid']}
         raise RuntimeError('owner_pod_mapping_absent')
 
+    def liveOwnerLease(self, agentId=None):
+        if not isinstance(agentId, str) or not re.fullmatch(r'[-A-Za-z0-9_]{1,160}', agentId):
+            raise ValueError('owner_lease_agent_required')
+        return self.mongo(
+            "const row=d.cma_agent_manager_owners.findOne({_id:" + json.dumps(agentId)
+            + ",instance_id:{$type:'string'},$expr:{$gt:['$expires_at','$$NOW']}},{_id:1});"
+            "print(JSON.stringify(row!==null));")
+
     def runtimeFor(self, agentId=None, agent_id=None, **_):
         identity=agentId or agent_id
         live=next((a for a in ['a','b'] if a not in self.killed),None)
@@ -378,7 +386,7 @@ class Fixture:
                     allowed=['topology','runtimeFor','ownerOf','killAm','restoreAm','prepareTurn',
                              'releaseTurn','oracle','captureFailure','titleEffects','skillEffects',
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
-                             'observeScale','observeNeverReady']
+                             'observeScale','observeNeverReady','liveOwnerLease']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

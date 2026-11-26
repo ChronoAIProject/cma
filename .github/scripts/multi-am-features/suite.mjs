@@ -244,12 +244,18 @@ try {
     && result.writer_coverage.verdict === 'PASS' ? 'PASS' : 'FAIL';
   result.finished_at = new Date().toISOString();
   await writeFile(join(config.matrix_output, 'result.private.json'), JSON.stringify(result, null, 2), {mode: 0o600});
+  const revival = result.journey?.steps.find(s => s.name === 'ownerless_pause_revive_open' && s.verdict === 'PASS');
   // This allowlist is the only suite content eligible for CI artifact upload.
   await writeFile(join(config.summary_dir, 'coverage.json'), JSON.stringify({
     ...result.coverage, suite_verdict: result.verdict, source: result.source,
     writer_coverage: result.writer_coverage,
     case_count: rows.length, non_owner_request_count: observations.length,
     owner_restart_pass: result.journey?.steps.some(s => s.name === 'actual_owner_kill_and_recovery' && s.verdict === 'PASS') === true,
+    ownerless_revival: revival ? {ingress: revival.ingress, replay_ingress: revival.replay_ingress,
+      prior_owner_epoch: revival.prior_owner_epoch, owner_epoch: revival.owner_epoch,
+      durable_admissions: revival.durable_admissions, durable_completions: revival.durable_completions,
+      retained_owner_restarted: revival.retained_owner_restarted, request_sha256: revival.request_sha256,
+      replay_request_sha256: revival.replay_request_sha256} : null,
     autoscaler_ready_manager_counts: result.journey?.steps.find(s =>
       s.name === 'ready_autoscaler_two_three_two' && s.verdict === 'PASS')?.ready_managers ?? [],
     never_ready_manager_samples: result.journey?.steps.find(s =>

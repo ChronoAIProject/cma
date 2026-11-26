@@ -7,6 +7,10 @@ export const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 export function check(value, code) { if (!value) throw new Error(code); }
 export const id = x => typeof x === 'string' && /^[-a-zA-Z0-9_]{1,160}$/.test(x);
 export const other = am => am === 'a' ? 'b' : 'a';
+export const terminal = value => ['completed', 'failed', 'incomplete', 'cancelled'].includes(value.status);
+export const lineage = (record, detail) => detail?.id === record.agentId && detail.sandbox?.id === record.sandboxId
+  && [detail.title, detail.owner_title, detail.worktree?.name, detail.sandbox?.name]
+    .some(name => name === record.name || (record.writerTitle && name === record.writerTitle.title));
 export function runtimeBindings(value) {
   check(value?.runtime_images?.base, 'base_runtime_image_required');
   const bindings = {};

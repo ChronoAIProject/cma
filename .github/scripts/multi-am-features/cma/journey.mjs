@@ -3,15 +3,11 @@ import {pathToFileURL} from 'node:url';
 import {resolve, join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
-import {API, check, hash, id, normalizeConfig, runtimeBindings, assertRuntimeBindings, poll, other, assertOwner, assertRecovery, assertResponse, assertOracle, observeServingDuringRestart, observeTwoAmServingHold, awaitInitialIdle, wait} from './core.mjs';
+import {API, check, hash, id, normalizeConfig, runtimeBindings, assertRuntimeBindings, poll, other, assertOwner, assertRecovery, assertResponse, assertOracle, observeServingDuringRestart, observeTwoAmServingHold, awaitInitialIdle, wait, terminal, lineage} from './core.mjs';
 import {NonOwnerRouter} from '../routing.mjs';
 import {desktopFrame, closeDesktop} from './desktop.mjs';
 import {drainOwnerCase, neverReadyManagerCase, scaleManagerCase} from '../features/readiness.mjs';
-
-const terminal = value => ['completed', 'failed', 'incomplete', 'cancelled'].includes(value.status);
-const lineage = (record, detail) => detail?.id === record.agentId && detail.sandbox?.id === record.sandboxId
-  && [detail.title, detail.owner_title, detail.worktree?.name, detail.sandbox?.name]
-    .some(name => name === record.name || (record.writerTitle && name === record.writerTitle.title));
+import {ownerlessRevival} from '../features/ownerless_revival.mjs';
 
 export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook, preparedHook, triggerHook} = {}) {
   const config = normalizeConfig(raw);
@@ -230,22 +226,15 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     assertRecovery(before, after, record.agentId);
     const held = await observeOracle(turn.caseId);
     check(held.request_count === 1 && held.completed_effect_count === 0 && held.active_streams === 1, 'runtime_turn_not_preserved');
-    await adapter.releaseTurn({caseId: turn.caseId});
-    const response = await poll(() => readResponse(survivor, record, turn.stream.responseId), terminal, {timeout: 90000, code: 'recovered_response_timeout'});
-    check(response.status === 'completed', 'recovered_response_not_completed');
-    check(JSON.stringify(response.output ?? []).includes(turn.marker), 'recovered_output_marker_missing');
-    const oracle = await poll(() => observeOracle(turn.caseId), x => x.active_streams === 0, {timeout: 20000}); assertOracle(oracle, turn.caseId, 1);
+    await settleReply(record, survivor, turn);
     // Keep useful public reads on the surviving AM while its peer starts.
     // A successful restore alone cannot establish this concurrent-serving leg.
-    const serving = await observeServingDuringRestart(() => adapter.restoreAm({am: killedAm}), async () => {
+    const serving = await observeServingDuringRestart(restoreKilledAm, async () => {
       const current = await detail(survivor, record);
       check(current.status === 'ready', 'survivor_not_ready_during_peer_startup');
       const transcript = await api.request(survivor, 'GET', `/api/v1/agents/${record.agentId}/transcript`);
       check(transcript.body && typeof transcript.body === 'object', 'survivor_transcript_missing_during_peer_startup');
     });
-    const restored = serving.restored;
-    if (restored?.origin) config.ams[killedAm] = restored.origin;
-    check(restored?.ready === true, 'second_am_restore_failed'); killedAm = null;
     api.routingEnabled = true;
     const restoredTopology = await adapter.topology();
     assertRuntimeBindings(runtimes, restoredTopology);
@@ -256,7 +245,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     result.am_restart_while_peer_serves = {verdict:'PASS', restarted_am:before.am, serving_am:survivor,
       successful_detail_and_transcript_pairs:serving.servingSamples, elapsed_ms:serving.elapsed_ms,
       restored_pod_uid_sha256:hash(restoredTopology.ams[before.am].pod_uid), api_image:config.expected_api_image};
-    await openBoth(record); turn.stream.abort(); await turn.stream.done;
+    await openBoth(record);
     return {killed_am: before.am, recovered_am: after.am, owner_epoch_before: before.epoch, owner_epoch_after: after.epoch,
       owner_container_exit_observed: true, response_sha256: hash(turn.stream.responseId), provider_requests: 1, provider_completions: 1,
       unchanged_agent_and_response: true, second_am_restored: true};
@@ -376,6 +365,31 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
         container_id_sha256:hash(value.container_id), started_at:value.started_at}]))};
     return result.serving_hold;
   }
+  async function complete(record, am) {
+    await settleReply(record, other(am), await sendHeld(record, am, 'retained-reply'));
+  }
+  async function settleReply(record, reader, turn) {
+    try {
+      await adapter.releaseTurn({caseId: turn.caseId});
+      const response = await poll(() => readResponse(reader, record, turn.stream.responseId), terminal,
+        {timeout: 90000, code: 'retained_reply_timeout'});
+      check(response.status === 'completed' && JSON.stringify(response.output ?? []).includes(turn.marker),
+        'retained_reply_missing');
+      const oracle = await poll(() => observeOracle(turn.caseId), value => value.active_streams === 0,
+        {timeout: 20000, code: 'retained_provider_did_not_settle'});
+      assertOracle(oracle, turn.caseId, 1);
+    } finally {
+      turn.stream.abort();
+      await turn.stream.done;
+    }
+  }
+  async function restoreKilledAm() {
+    const restored = await adapter.restoreAm({am: killedAm});
+    check(restored?.ready === true && restored.origin, 'second_am_restore_failed');
+    config.ams[killedAm] = restored.origin;
+    killedAm = null;
+    return restored;
+  }
   try {
     await step('two_am_shared_database', async () => {
       const t = await adapter.topology();
@@ -386,19 +400,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       return {coordination_enabled: true, shared_database: true, am_pod_uid_hashes: ['a', 'b'].map(am => hash(t.ams[am].pod_uid))};
     });
     if (preparedHook) {
-      await preparedHook({adapter, create, openBoth, cleanup, step, complete: async (record, am) => {
-        const turn = await sendHeld(record, am, 'prepared-reply');
-        await adapter.releaseTurn({caseId: turn.caseId});
-        const response = await poll(() => readResponse(other(am), record, turn.stream.responseId), terminal,
-          {timeout: 90000, code: 'prepared_reply_timeout'});
-        check(response.status === 'completed' && JSON.stringify(response.output ?? []).includes(turn.marker),
-          'prepared_reply_missing');
-        const oracle = await poll(() => observeOracle(turn.caseId), value => value.active_streams === 0,
-          {timeout: 20000, code: 'prepared_provider_did_not_settle'});
-        assertOracle(oracle, turn.caseId, 1);
-        turn.stream.abort();
-        await turn.stream.done;
-      }});
+      await preparedHook({adapter, create, openBoth, cleanup, step, complete});
       result.verdict = 'LOCAL_PREPARED_TWO_AM_PASS';
       return result;
     }
@@ -431,6 +433,12 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     await step('owner_drain_and_readiness', () => drainOwnerCase({adapter, api, record: plain, config}));
     await step('ready_autoscaler_two_three_two', () => scaleManagerCase({adapter, api, record: plain}));
     await step('never_ready_third_manager', () => neverReadyManagerCase({adapter, api, record: plain}));
+    await step('ownerless_pause_revive_open', () => ownerlessRevival({adapter, api, record: plain, openBoth, complete,
+      restartOwner: async owner => {
+        const kill = await adapter.killAm({agentId: plain.agentId, owner}); killedAm = owner.am;
+        check(kill.killed_am === killedAm && kill.actual_container_exited === true, 'revival_owner_exit_unproven');
+        await restoreKilledAm();
+      }}));
     await step('plain_public_stop_retire', async () => {await cleanup(plain); return {retired: true};});
     if (triggerHook) await step('trigger_origin_always_on_and_replay', () => triggerHook({adapter, config}));
     if (!runtimes.omarchy) {
@@ -474,7 +482,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     api.routingEnabled = false; // Cleanup must also handle expired or missing ownership.
     await api.close();
     for (const caseId of turns) {try {await adapter.releaseTurn({caseId});} catch {result.cleanup.push({provider_release: 'FAILED', case_id: caseId});}}
-    if (killedAm) {try {const value = await adapter.restoreAm({am: killedAm}); if (value?.origin) config.ams[killedAm] = value.origin; check(value?.ready, 'restore_failed'); killedAm = null;} catch {result.cleanup.push({am_restore: 'FAILED'});}}
+    if (killedAm) {try {await restoreKilledAm();} catch {result.cleanup.push({am_restore: 'FAILED'});}}
     for (const record of records) {try {await cleanup(record);} catch (error) {result.cleanup.push({agent_sha256: record.agentId ? hash(record.agentId) : null, public_cleanup: 'FAILED', reason: safeError(error)});}}
     if (result.verdict.endsWith('_PASS') && result.cleanup.some(x => Object.values(x).includes('FAILED'))) result.verdict = 'FAIL_CLEANUP';
     result.finished_at = new Date().toISOString(); result.infrastructure_release = 'OWNED_BY_SOLE_LAUNCHER'; await save();
