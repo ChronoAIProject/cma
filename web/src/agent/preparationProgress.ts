@@ -9,10 +9,9 @@ import { WorkspaceReadUnavailable } from '../api/rest/workspaceRead';
 import { readPreparation } from './preparationRead';
 import { refreshConversation } from './reopenAgent';
 import type { ReadinessWake } from './readinessWait';
+import { WORKSPACE_READ_RECONNECTING } from './controllerError';
 
 const PREPARATION_RECONNECTING = 'Preparation progress could not be refreshed. Reconnecting.';
-const WORKSPACE_RECONNECTING =
-  'Workspace status is temporarily unavailable (HTTP 503). Reconnecting.';
 
 interface Options {
   agentId?: string;
@@ -58,7 +57,7 @@ export function usePreparationProgress({
           return { status: 'ready', ...next, conversation, sandboxEvents: events };
         });
         setActionError((current) =>
-          current === PREPARATION_RECONNECTING || current === WORKSPACE_RECONNECTING
+          current === PREPARATION_RECONNECTING || current === WORKSPACE_READ_RECONNECTING
             ? undefined
             : current,
         );
@@ -71,7 +70,7 @@ export function usePreparationProgress({
         if (!signal.aborted && !onIdentityChange(error)) {
           setActionError(
             error instanceof WorkspaceReadUnavailable
-              ? WORKSPACE_RECONNECTING
+              ? WORKSPACE_READ_RECONNECTING
               : PREPARATION_RECONNECTING,
           );
           return retrySchedule(error, ++failures, 5000);
