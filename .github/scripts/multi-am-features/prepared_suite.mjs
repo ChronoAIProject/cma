@@ -39,6 +39,8 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         [1, 3, 4].includes(workspace) && worktree === 1, 'prepared_parent_schemas_unbound');
       check(durable.ready_fences?.length === 4 && durable.ready_fences.every(count => count === 1),
         'prepared_open_ready_atomic_publication_unproven');
+      check(durable.startup_receipts?.length === 3 && durable.startup_receipts.every(count => count === 1),
+        'prepared_startup_receipt_count_wrong');
       const owner = assertOwner(await adapter.ownerOf({agentId: record.agentId}), record.agentId);
       const browserOpen = await opening;
       if (browserOpen?.error) throw browserOpen.error;
@@ -51,6 +53,7 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       await cleanup(record);
       return {ingress, owner: owner.am, owner_epoch: owner.epoch, parent_schema_versions: durable.schemas,
         atomic_publication_fence_count: durable.ready_fences.filter(count => count === 1).length,
+        startup_receipt_count: durable.startup_receipts.length,
         browser_starting_read: true, browser_ready_read: true, browser_reply_sha256: browserReply.answer_sha256,
         prepared_reservation_sha256: hash(record.sandboxId), agent_sha256: hash(record.agentId),
         lifecycle_operation_sha256: hash(record.operationId)};
@@ -78,10 +81,10 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
     schema: 'multi-am-prepared-coverage-v1', suite_verdict: verdict, source: config.expected_api_source,
     writer_coverage: coverage,
     steps: journey.steps.map(({name, verdict, elapsed_ms, parent_schema_versions, owner_epoch, ingress, owner,
-      atomic_publication_fence_count, browser_starting_read, browser_ready_read, browser_reply_sha256,
+      atomic_publication_fence_count, startup_receipt_count, browser_starting_read, browser_ready_read, browser_reply_sha256,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256}) => ({
       name, verdict, elapsed_ms, parent_schema_versions, owner_epoch, ingress, owner,
-      atomic_publication_fence_count, browser_starting_read, browser_ready_read, browser_reply_sha256,
+      atomic_publication_fence_count, startup_receipt_count, browser_starting_read, browser_ready_read, browser_reply_sha256,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256,
     })),
   }, null, 2) + '\n', {flag: 'wx', mode: 0o600});
