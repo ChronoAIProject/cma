@@ -71,7 +71,7 @@ jobs:
         with:
           cache-image: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
       -
-        uses: "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f"
+        uses: "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e"
         with:
           cache-binary: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
       -
@@ -96,7 +96,7 @@ jobs:
         name: "Restore API Cargo cache archive"
         if: "steps.staging-image.outputs.adopted != 'true' && (matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success')"
         id: "api-cargo-cache-restore"
-        uses: "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830"
+        uses: "actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25"
         timeout-minutes: 3
         continue-on-error: true
         with:
@@ -128,7 +128,7 @@ jobs:
         if: steps.staging-image.outputs.adopted != 'true' && vars.CMA_BOUNDED_LAYER_CACHE == 'true'
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: |
             ${{ runner.temp }}/cma-layer-cache/archive.tar
@@ -206,7 +206,7 @@ jobs:
       -
         name: "Restore Trivy databases"
         if: "github.event_name != 'push' || github.ref != 'refs/heads/develop'"
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: ${{ github.workspace }}/.cache/trivy
           # Trivy uses daily keys. Restore the newest eligible database and let the scanner refresh it.
@@ -263,7 +263,7 @@ jobs:
       -
         name: "Retain runtime image evidence"
         if: "always() && matrix.component == 'runtime'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "runtime-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}"
           path: |
@@ -285,7 +285,7 @@ jobs:
       -
         name: "Retain ledger storage evidence"
         if: "always() && (matrix.component == 'runtime')"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "ledger-storage-${{ matrix.component }}-${{ github.run_id }}-${{ github.run_attempt }}"
           path: "${{ runner.temp }}/ledger-storage.json"
@@ -345,7 +345,7 @@ jobs:
         name: "Retain web image browser evidence"
         if: "always() && matrix.component == 'web'"
         timeout-minutes: 3
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "web-image-browser-${{ github.run_id }}-${{ github.run_attempt }}"
           path: "${{ runner.temp }}/web-image-upload/"
@@ -379,7 +379,7 @@ jobs:
         name: "Retain tested native image"
         if: "steps.staging-image.outputs.adopted != 'true' && (success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository))"
         timeout-minutes: 10
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "ci-native-image-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
           path: "${{ runner.temp }}/ci-native-image/"
@@ -389,7 +389,7 @@ jobs:
       -
         name: "Save accepted API Cargo cache archive"
         if: "steps.staging-image.outputs.adopted != 'true' && (success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && vars.CMA_LAYER_CACHE_WRITER_FLOOR != 'true' && steps.api-cargo-cache-export.outputs.ready == 'true')"
-        uses: "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830"
+        uses: "actions/cache/save@caa296126883cff596d87d8935842f9db880ef25"
         timeout-minutes: 3
         continue-on-error: true
         with:

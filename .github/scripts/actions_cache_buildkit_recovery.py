@@ -14,8 +14,6 @@ from actions_cache_buildkit_inventory import (
 from actions_cache_retention import BUDGET
 from actions_cache_sweep import authorized_completion
 
-MAX_INDEX_RETIREMENTS = 8
-
 
 def authorized(env):
     # An operator attests that every historical native writer and in-flight
@@ -38,7 +36,8 @@ def recover(api, reader, revision, now, *, retire_indexes=False):
     initial = sum(row.size for row in api.entries())
     result = {"before_bytes": initial, "budget_bytes": BUDGET, "candidate_bytes": 0,
               "confirmed_deleted_bytes": 0, "status": "under-target", "confirmed_retired_indexes": 0,
-              "superseded_index_count": 0, "projected_candidate_bytes_after_index_retirement": 0}
+              "superseded_index_count": 0, "next_index_batch_count": 0,
+              "projected_newly_unreachable_bytes": 0, "projected_candidate_bytes_after_index_retirement": 0}
     retired_ids = set()
     if initial >= BUDGET:
         result["status"] = "target-unmet"
@@ -46,7 +45,7 @@ def recover(api, reader, revision, now, *, retire_indexes=False):
             result["status"] = "reader-held"
         else:
             try:
-                observation = observe(api, reader, revision, now)
+                observation = observe(api, reader, revision, now, retirement_target=initial - BUDGET + 1)
             except ProofError as error:
                 result.update(status="proof-incomplete", proof_phase=error.phase, error_class=error.cause_type)
                 candidates = []
@@ -55,12 +54,14 @@ def recover(api, reader, revision, now, *, retire_indexes=False):
                 pinned, candidates = observation.pinned, observation.candidates
                 result.update(candidate_bytes=sum(row.size for row in candidates),
                               superseded_index_count=len(observation.superseded),
+                              next_index_batch_count=len(observation.retirement_batch),
+                              projected_newly_unreachable_bytes=observation.projected_newly_unreachable_bytes,
                               projected_candidate_bytes_after_index_retirement=observation.projected_candidate_bytes)
                 # Layers made unreachable here are considered only by a later,
                 # independent observation against the surviving indexes.
-                retiring_indexes = retire_indexes and not candidates and observation.projected_candidate_bytes > 0
+                retiring_indexes = retire_indexes and not candidates and bool(observation.retirement_batch)
                 if retiring_indexes:
-                    candidates = observation.superseded[:MAX_INDEX_RETIREMENTS]
+                    candidates = observation.retirement_batch
             remaining = sum(row.size for row in api.entries())
             for candidate in candidates:
                 if remaining < BUDGET:

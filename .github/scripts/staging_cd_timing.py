@@ -7,7 +7,7 @@ import time
 from staging_cd_reservations import ReservationSuperseded
 
 STAGES = frozenset({
-    "source", "reuse", "cache-restore", "cache-export",
+    "source", "reuse", "cache-restore", "cache-export", "cache-export-wait",
     "build", "inspect", "scan", "runtime-smoke", "registry-check", "login", "push", "verify",
 })
 

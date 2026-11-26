@@ -4,19 +4,22 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import time
 import zipfile
+import zlib
 from pathlib import Path
 
 import ci_retry
 from deployables import registry as deployable_registry
 from staging_cd_build import command, inspect
 from staging_cd_common import Refusal, matches, require
+from staging_cd_contract import from_source
 from staging_cd_versions import DEPLOYABLES, REPOSITORY
 
 MAX_ARTIFACT = 8 * 1024 * 1024 * 1024
-# The reuse probe's reads and download share one budget. Spending it falls back
-# to a build, which is always correct, instead of holding the publish step.
+# Optional discovery, download and conversion share a budget with each other.
+# The reserved-source build remains available when that budget expires.
 REUSE_SECONDS = 900
 DOWNLOAD_SECONDS = 600
 QUEUE_EVENT = "merge_group"
@@ -102,23 +105,25 @@ def successful_runs(api, event, head, deadline, *, component=None):
     data = api.request(f"{endpoint}?event={event}&head_sha={head}&status=success&per_page=100",
                        deadline=deadline)
     require(isinstance(data, dict) and isinstance(data.get("workflow_runs"), list), "CI run inventory is malformed")
-    return [run for run in data["workflow_runs"] if run.get("event") == event
+    return [run for run in data["workflow_runs"] if isinstance(run, dict) and run.get("event") == event
             and run.get("status") == "completed" and run.get("conclusion") == "success"
             and run.get("head_sha") == head and run.get("path") in paths
             and type(run.get("id")) is int and type(run.get("run_attempt")) is int
-            and run.get("repository", {}).get("full_name") == REPOSITORY]
+            and isinstance(run.get("repository"), dict) and run["repository"].get("full_name") == REPOSITORY]
 
 
 def queue_run(expected, pr, api, deadline):
     """The develop merge-queue run whose group commit became this exact source."""
     # Queued fork code runs in this repository's context. Its CI bytes are
     # never adopted: a fork-originated source is always rebuilt here.
-    if ((pr.get("head") or {}).get("repo") or {}).get("full_name") != REPOSITORY \
-            or (pr.get("base") or {}).get("ref") != "develop":
+    repository, base = pr["head"].get("repo"), pr.get("base")
+    if (not isinstance(repository, dict) or repository.get("full_name") != REPOSITORY
+            or not isinstance(base, dict) or base.get("ref") != "develop"):
         return None
     branch = rf"gh-readonly-queue/develop/pr-{expected['pr']}-[0-9a-f]{{40}}"
     runs = [run for run in successful_runs(api, QUEUE_EVENT, expected["source"], deadline)
-            if (run.get("head_repository") or {}).get("full_name") == REPOSITORY
+            if isinstance(run.get("head_repository"), dict)
+            and run["head_repository"].get("full_name") == REPOSITORY
             and matches(branch, run.get("head_branch"))]
     return max(runs, key=lambda item: (item["id"], item["run_attempt"])) if runs else None
 
@@ -134,8 +139,11 @@ def native_artifact(expected, run, api, deadline):
     require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list)
             and listing.get("total_count") == len(listing["artifacts"]), "CI artifact inventory is incomplete")
     component = deployable_registry()[DEPLOYABLES[expected["component"]]]["component"]
-    pattern = rf"ci-native-image-{re.escape(component)}-[0-9a-f]{{40}}-{run['id']}-{run['run_attempt']}"
-    artifacts = [item for item in listing["artifacts"] if matches(pattern, item.get("name")) and item.get("expired") is False]
+    # The producer names the checkout it tested. A PR merge preview can have
+    # a different commit from the final squash even when their trees match.
+    name = f"ci-native-image-{component}-{expected['source']}-{run['id']}-{run['run_attempt']}"
+    artifacts = [item for item in listing["artifacts"] if isinstance(item, dict)
+                 and item.get("name") == name and item.get("expired") is False]
     require(len(artifacts) <= 1, "Native PR artifact is ambiguous")
     return artifacts[0] if artifacts else None
 
@@ -147,7 +155,7 @@ def fetch(expected, api, archive, token, downloader, deadline):
     run tested its own merge preview; its manifest qualifies only if it matches.
     """
     pr = api.request("pulls/" + str(expected["pr"]), deadline=deadline)
-    require(pr.get("merged") is True and pr.get("merge_commit_sha") == expected["source"]
+    require(isinstance(pr, dict) and pr.get("merged") is True and pr.get("merge_commit_sha") == expected["source"]
             and isinstance(pr.get("head"), dict) and matches(r"[0-9a-f]{40}", pr["head"].get("sha")),
             "PR artifact source cannot be established")
     lookups = (lambda: queue_run(expected, pr, api, deadline),
@@ -166,53 +174,71 @@ def fetch(expected, api, archive, token, downloader, deadline):
 
 
 def try_reuse(expected, directory, api, token, downloader=download, runner=command, *,
-              clock=time.monotonic, on_miss=None):
-    def record_miss(reason):
+              clock=time.monotonic, on_miss=None, source_root=None):
+    def miss(reason):
         if on_miss is not None:
             on_miss(reason)
+        return None
 
-    archive = directory / "candidate.zip"
-    try:
-        run, miss = fetch(expected, api, archive, token, downloader, clock() + REUSE_SECONDS)
-    except Exception as error:  # noqa: BLE001 - only an exhausted transient failure is tolerated.
-        if ci_retry.classify(error) != ci_retry.TRANSIENT:
-            raise
-        # The PR artifact stayed unreachable through bounded retries, and the
-        # download removed its own partial bytes. A build from source costs
-        # time; failing here would burn the reserved version.
-        record_miss("unreachable")
-        return None
-    if run is None:
-        record_miss(miss)
-        return None
-    with zipfile.ZipFile(archive) as source:
-        entries = source.infolist()
-        require(len(entries) <= 3 and len({entry.filename for entry in entries}) == len(entries)
-                and all(not Path(entry.filename).is_absolute() and ".." not in Path(entry.filename).parts
-                        and entry.file_size <= MAX_ARTIFACT for entry in entries), "Native PR artifact entries are unsafe")
-        metadata_entry = source.getinfo("metadata.json")
-        require(metadata_entry.file_size <= 16384, "Native PR metadata exceeds limit")
-        metadata = json.loads(source.read(metadata_entry))
-        miss = manifest_miss(metadata, expected, run)
-        if miss is not None:
-            record_miss(miss)
-            return None
-        filename = metadata["archive"]
-        require(isinstance(filename, str) and re.fullmatch(r"cma-[a-z-]+-linux-amd64\.docker\.tar\.gz", filename)
-                and matches(r"[0-9a-f]{64}", metadata["archiveSha256"]), "Native PR archive name or digest is invalid")
-        target = directory / "qualified.docker.tar.gz"
-        digest, length = hashlib.sha256(), 0
-        with source.open(filename) as incoming, target.open("xb") as outgoing:
-            for chunk in iter(lambda: incoming.read(1024 * 1024), b""):
-                length += len(chunk)
-                require(length <= MAX_ARTIFACT, "Native PR archive exceeds limit")
-                digest.update(chunk)
-                outgoing.write(chunk)
-        require(length == metadata["archiveBytes"] and digest.hexdigest() == metadata["archiveSha256"],
-                "Native PR archive checksum differs")
-    output = directory / "image.oci.tar"
-    # Conversion happens before scanning. It changes the transport format,
-    # never the compiled image or its source/build inputs.
-    runner(["skopeo", "copy", "--format", "oci", "docker-archive:" + str(target), "oci-archive:" + str(output)], timeout=600)
-    inspect(output, expected, runner, allow_qualified=True)
-    return output
+    deadline = clock() + REUSE_SECONDS
+    with tempfile.TemporaryDirectory(prefix="ci-candidate-", dir=directory) as scratch:
+        scratch = Path(scratch)
+        archive = scratch / "candidate.zip"
+        try:
+            run, reason = fetch(expected, api, archive, token, downloader, deadline)
+        except (Refusal, OSError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+            reason = "unreachable" if ci_retry.classify(error) == ci_retry.TRANSIENT else "candidate-unavailable"
+            return miss(reason)
+        if run is None:
+            return miss(reason)
+
+        try:
+            with zipfile.ZipFile(archive) as source:
+                entries = source.infolist()
+                require(len(entries) <= 3 and len({entry.filename for entry in entries}) == len(entries)
+                        and all(not Path(entry.filename).is_absolute() and ".." not in Path(entry.filename).parts
+                                and not entry.flag_bits & 1
+                                and entry.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+                                and entry.file_size <= MAX_ARTIFACT for entry in entries),
+                        "Native PR artifact entries are unsafe")
+                metadata_entry = source.getinfo("metadata.json")
+                require(metadata_entry.file_size <= 16384, "Native PR metadata exceeds limit")
+                metadata = json.loads(source.read(metadata_entry))
+                reason = manifest_miss(metadata, expected, run)
+                if reason is not None:
+                    return miss(reason)
+                filename = metadata["archive"]
+                require(isinstance(filename, str) and re.fullmatch(r"cma-[a-z-]+-linux-amd64\.docker\.tar\.gz", filename)
+                        and matches(r"[0-9a-f]{64}", metadata["archiveSha256"]), "Native PR archive name or digest is invalid")
+                entry = source.getinfo(filename)
+                require(type(metadata["archiveBytes"]) is int and 0 < entry.file_size == metadata["archiveBytes"],
+                        "Native PR archive length differs")
+                target = scratch / "qualified.docker.tar.gz"
+                digest, length = hashlib.sha256(), 0
+                with source.open(entry) as incoming, target.open("xb") as outgoing:
+                    for chunk in iter(lambda: incoming.read(1024 * 1024), b""):
+                        require(clock() < deadline, "CI image extraction budget expired")
+                        length += len(chunk)
+                        require(length <= MAX_ARTIFACT, "Native PR archive exceeds limit")
+                        digest.update(chunk)
+                        outgoing.write(chunk)
+                require(length == metadata["archiveBytes"] and digest.hexdigest() == metadata["archiveSha256"],
+                        "Native PR archive checksum differs")
+            output = scratch / "image.oci.tar"
+
+            def bounded_runner(*args, timeout, **options):
+                remaining = ci_retry.attempt_timeout(timeout, deadline, clock)
+                require(remaining is not None, "CI image conversion budget expired")
+                return runner(*args, timeout=remaining, **options)
+
+            # Conversion happens before scanning. It changes only the transport.
+            bounded_runner(["skopeo", "copy", "--format", "oci", "docker-archive:" + str(target), "oci-archive:" + str(output)],
+                           timeout=600)
+            compatibility = from_source(expected["component"], expected["source"], source_root)
+            inspect(output, expected, bounded_runner, allow_qualified=True, compatibility=compatibility)
+            published = directory / output.name
+            os.link(output, published)
+            return published
+        except (OSError, KeyError, ValueError, EOFError, subprocess.SubprocessError, zipfile.BadZipFile,
+                zipfile.LargeZipFile, zlib.error):
+            return miss("candidate-invalid")

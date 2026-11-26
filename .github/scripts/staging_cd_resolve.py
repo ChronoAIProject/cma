@@ -10,7 +10,7 @@ from staging_cd_registry import Registry
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_runtime import SKIPPED, run_private
 from staging_cd_targets import RUNTIME_TARGETS, TARGETS
-from staging_cd_versions import DEPLOYABLES, version_tuple
+from staging_cd_versions import DEPLOYABLES, require_publishable_release, version_tuple
 from staging_cd_watermark import record_withheld
 
 
@@ -51,6 +51,7 @@ def resolve(component, version, tags, registry, history):
         if tag["target"] != newest["target"]:
             raise ObsoleteSource("Superseded runtime source cannot be promoted")
     receipt = tag["receipt"]
+    require_publishable_release(receipt["identity"])
     require(registry.exists(receipt["repository"], receipt["digest"]) is True,
             "Published digest is not publicly available")
     version_manifest = registry.manifest(receipt["repository"], receipt["identity"]["version"])

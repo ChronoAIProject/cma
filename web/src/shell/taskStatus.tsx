@@ -16,6 +16,7 @@ export const taskWords = {
   waiting_approval: 'Waiting for approval',
   starting: 'Preparing',
   paused: 'Paused',
+  interrupted: 'Response interrupted',
   stopped: 'Stopped',
   failed: 'Failed',
   unknown: 'Status unavailable',
@@ -61,8 +62,12 @@ export function taskStatus(
   agent: Pick<AgentSummary, 'status' | 'taskStatus' | 'taskAcceptance'>,
   sandbox?: SandboxSummary,
 ): TaskStatus {
-  if (agent.status === 'ready' && (agent.taskStatus === 'failed' || agent.taskStatus === 'stopped'))
-    return agent.taskStatus;
+  if (agent.status === 'ready') {
+    if (agent.taskStatus === 'failed') return 'failed';
+    // The inventory uses the same wire value for a turn interruption and an
+    // Agent lifecycle stop. A Ready Agent with this outcome is still usable.
+    if (agent.taskStatus === 'stopped') return 'interrupted';
+  }
   const status = sandbox === undefined ? agent.status : sandboxChildStatus(sandbox, agent.status);
   if (status === 'ready') {
     const verdict =
@@ -97,7 +102,13 @@ export function taskStateMeta(status: TaskStatus, stale = false) {
         ? 'completed'
         : status === 'needs_attention'
           ? 'warning'
-          : statusTone(status === 'unknown' || status === 'loading' ? 'ready' : status);
+          : statusTone(
+              status === 'unknown' || status === 'loading'
+                ? 'ready'
+                : status === 'interrupted'
+                  ? 'stopped'
+                  : status,
+            );
   return (
     <>
       <span className="sr-only">, </span>
