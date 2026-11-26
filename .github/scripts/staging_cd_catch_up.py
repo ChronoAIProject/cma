@@ -8,10 +8,11 @@ This check runs after each Staging CD run completes and every ten minutes.
 It re-runs the develop head's own push run once when no Staging CD run is
 active, that run's allocation completed, and some lane's newest version is
 either an unfinalized reservation of an earlier run or a final of a settled
-owner that no controller proof covers. A re-run for finals alone waits for
-the scheduled check, once every staging run has settled for a while, so a stuck
-app or a namespace fence that failed the deploy can clear first, and never
-follows a cancelled head. A re-run attempt
+owner that no controller proof covers. A re-run for finals alone waits until
+every staging run has settled for a while so a stuck app or a namespace fence
+that failed the deploy can clear first, and never follows a cancelled head.
+A completion check that needs to wait schedules a fresh check outside the
+shared catch-up lock. A re-run attempt
 is the same develop push event, so every push-only authority, cache and
 admission check applies unchanged, its admission clock starts afresh, and
 staging-cd.yml gains no trigger. Like any allocation it also retries the
@@ -27,8 +28,8 @@ An unreadable controller outcome is reported as unknown and never re-runs.
 A head run whose plan stopped at its completion gate (a budget-stopped plan,
 or tags that could not be read), or whose allocation stopped at its
 settlement gate (a transient read, write or budget refusal), is re-run once
-too, with the same settling: from the scheduled check, once every staging run
-has settled, never after a cancelled head, and never by the bot's own
+too, with the same settling: once every staging run has settled, never after
+a cancelled head, and never by the bot's own
 attempt. Reservations a stopped allocation committed belong to its settled
 attempt, so the re-run attempt reserves their sources again. A spent head
 whose plan or allocation stopped at its gate again is never caught up: it is
@@ -79,6 +80,7 @@ TIMESTAMP = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"
 BEHIND = ("unfinalized-reservation", "unproven-final", "undeployed-final")
 UNKNOWN = "controller-unknown"
 Lane = collections.namedtuple("Lane", "component reason version")
+Decision = collections.namedtuple("Decision", "reason run lanes settle_until", defaults=(None,))
 
 
 def push_run(run):
@@ -300,25 +302,31 @@ def allocation_stopped(jobs):
     return stopped_at(jobs, ALLOCATION_JOB, ALLOCATION_GATE)
 
 
-def settled(run, now):
+def settle_deadline(runs, now):
+    """When the newest completion settles, or None without a trustworthy clock."""
+    finished = [run.get("updated_at") for run in runs]
+    if not all(matches(TIMESTAMP, value) for value in finished):
+        return None
     try:
-        finished = datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")).timestamp()
-    except (AttributeError, KeyError, TypeError, ValueError):
-        return False
-    return now - finished >= SETTLE_SECONDS
+        latest = max(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() for value in finished)
+    except (OSError, OverflowError, ValueError):
+        return None
+    deadline = int(latest) + SETTLE_SECONDS
+    return deadline if latest <= now else None
 
 
-def decide(api, read_refs, read_controller, *, event=None, now=None):
+def decide(api, read_refs, read_controller, *, now=None):
     listing = api.request("actions/workflows/staging-cd.yml/runs?branch=develop&per_page=100")
     require(isinstance(listing, dict) and isinstance(listing.get("workflow_runs"), list)
             and all(isinstance(run, dict) for run in listing["workflow_runs"]), "Staging runs could not be read")
+    staging_runs = listing["workflow_runs"]
     # The last run to finish decides; a running one (or a pending re-run) will.
-    if any(run.get("status") != "completed" for run in listing["workflow_runs"]):
-        return "run-active", None, []
+    if any(run.get("status") != "completed" for run in staging_runs):
+        return Decision("run-active", None, [])
     refs = read_refs()
-    runs = [run for run in listing["workflow_runs"] if run.get("head_sha") == refs[DEVELOP]]
+    runs = [run for run in staging_runs if run.get("head_sha") == refs[DEVELOP]]
     if not runs:
-        return "head-run-missing", None, []
+        return Decision("head-run-missing", None, [])
     require(len(runs) == 1 and push_run(runs[0]) and runs[0].get("path") == WORKFLOW,
             "Develop head run identity is invalid")
     run = runs[0]
@@ -332,40 +340,41 @@ def decide(api, read_refs, read_controller, *, event=None, now=None):
     if not spent and not allocated(jobs):
         # A plan or an allocation stopped at its transient gate is re-run once,
         # as a re-run for finals alone is: never after a cancelled head, and
-        # only from the scheduled check once every staging run has settled. Any
-        # other failed plan or allocation is a failure to retry on the next
-        # push, not a skip.
+        # only once every staging run has settled. A failure outside its gate
+        # waits for the next push.
         if stage is None:
-            return "head-unallocated", None, []
+            return Decision("head-unallocated", None, [])
         if run.get("conclusion") == "cancelled":
-            return "cancelled", None, []
+            return Decision("cancelled", None, [])
         current = time.time() if now is None else now
-        if event != "schedule" or not all(settled(row, current) for row in listing["workflow_runs"]):
-            return stage + "-waiting", None, []
-        return stage + "-rerun", run, []
+        deadline = settle_deadline(staging_runs, current)
+        if deadline is None or deadline > current:
+            return Decision(stage + "-waiting", None, [], deadline)
+        return Decision(stage + "-rerun", run, [])
     wait, lanes = left_behind(api, refs, run, jobs, read_controller)
     if wait:
-        return wait, None, []
+        return Decision(wait, None, [])
     late = [lane for lane in lanes if lane.reason in BEHIND]
     if spent and stage:
         # Its last attempt stopped at the gate again, so the head's own sources
         # were never allocated: whatever its lanes show, it is not caught up.
-        return stage + "-exhausted", run, lanes
+        return Decision(stage + "-exhausted", run, lanes)
     if late and spent:
-        return "exhausted", run, lanes
+        return Decision("exhausted", run, lanes)
     if late and all(lane.reason != BEHIND[0] for lane in late):
         # A person or a job timeout cancelled the head; a build left behind still re-runs.
         if run.get("conclusion") == "cancelled":
-            return "cancelled", None, lanes
+            return Decision("cancelled", None, lanes)
         # A deploy failure's cause may outlast its run; the single retry waits for it.
         current = time.time() if now is None else now
-        if event != "schedule" or not all(settled(row, current) for row in listing["workflow_runs"]):
-            return "final-waiting", None, lanes
+        deadline = settle_deadline(staging_runs, current)
+        if deadline is None or deadline > current:
+            return Decision("final-waiting", None, lanes, deadline)
     if late:
-        return "rerun", run, lanes
+        return Decision("rerun", run, lanes)
     if spent:
-        return "head-caught-up", None, lanes
-    return (UNKNOWN if lanes else "nothing-behind"), None, lanes
+        return Decision("head-caught-up", None, lanes)
+    return Decision(UNKNOWN if lanes else "nothing-behind", None, lanes)
 
 
 def rerun(api, run, read_head, *, sleep=time.sleep):
@@ -423,8 +432,11 @@ def main():
         try:
             authorized(env)
             api = GitHub(env.get("GH_TOKEN"), deadline=time.monotonic() + SECONDS)
-            reason, run, lanes = decide(api, advertised, controller_reader(env), event=env["GITHUB_EVENT_NAME"])
+            reason, run, lanes, settle_until = decide(api, advertised, controller_reader(env))
             outcome.update(reason=reason, lanes=lanes)
+            if settle_until is not None and env.get("GITHUB_OUTPUT"):
+                with Path(env["GITHUB_OUTPUT"]).open("a") as output:
+                    print(f"settle_until={settle_until}", file=output)
             if reason in RERUNS:
                 attempt = rerun(api, run, lambda: advertised(include_tags=False)[DEVELOP])
                 if attempt is None:

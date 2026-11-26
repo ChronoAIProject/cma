@@ -20,6 +20,8 @@ import { hasChannelAddress } from './channelTypes';
 import { useChannelRecords } from './useChannelRecords';
 import { duplicateChannelLabels } from './channelLabels';
 import { RelayCapabilitiesProvider } from './RelayCapabilities';
+import { readNewChannelDraft, setNewChannelDraftOpen } from './channelForm/newChannelDraft';
+import { RecoverChannelCreation } from './channelForm/RecoverChannelCreation';
 import './EventGateway.css';
 
 export interface EventGatewaySlots {
@@ -50,9 +52,13 @@ function EventGatewayBody({
   active = true,
 }: EventGatewayProps) {
   const channels = usePage<ChannelListItem>('event-gateway', '/v1/channels', denied);
+  const canCreate = can(session, 'event-gateway', 'channels:create');
+  const [recovered, setRecovered] = useState(() =>
+    canCreate ? readNewChannelDraft(session.subject) : undefined,
+  );
   const [selected, setSelected] = useState<string>();
   const [visited, setVisited] = useState<readonly string[]>([]);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(recovered?.open ?? false);
   const contentId = useId();
   const [createOrigin, setCreateOrigin] = useState<HTMLElement | null>(null);
   const [restoreRevision, setRestoreRevision] = useState(0);
@@ -73,7 +79,7 @@ function EventGatewayBody({
       (welcome ?? heading)?.focus();
     }
   }, [active, creating, restoreRevision, createOrigin, contentId]);
-  const [createStarted, setCreateStarted] = useState(false);
+  const [createStarted, setCreateStarted] = useState(recovered !== undefined);
   const [created, setCreated] = useState<Channel>();
   const [deleted, setDeleted] = useState<readonly string[]>([]);
   const evidence = useChannelRecords(channels.value, created);
@@ -100,7 +106,6 @@ function EventGatewayBody({
       return record ? [record.channel] : [];
     });
   const current = workspaces.find((row) => row.record_id === selected);
-  const canCreate = can(session, 'event-gateway', 'channels:create');
   useDocumentTitle(creating ? 'New channel' : (current?.definition.name ?? 'Event Gateway'));
   const retain = () => {
     if (current) setVisited((previous) => [...new Set([...previous, current.record_id])]);
@@ -110,6 +115,7 @@ function EventGatewayBody({
     setVisited((previous) => [...new Set([...previous, id])]);
     setSelected(id);
     setCreating(false);
+    setNewChannelDraftOpen(session.subject, false);
     onNavigate?.();
   };
   const startCreate = () => {
@@ -117,11 +123,23 @@ function EventGatewayBody({
     setCreateOrigin(document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setCreateStarted(true);
     setCreating(true);
+    setNewChannelDraftOpen(session.subject, true);
     onNavigate?.();
   };
   const exitCreate = () => {
     setRestoreRevision((value) => value + 1);
     setCreating(false);
+    setNewChannelDraftOpen(session.subject, false);
+  };
+  const finishCreate = (channel?: Channel) => {
+    if (channel) {
+      setCreated(channel);
+      setSelected(channel.record_id);
+    }
+    setCreating(false);
+    setCreateStarted(false);
+    setRecovered(undefined);
+    refresh();
   };
   const showChannels = () => {
     retain();
@@ -222,20 +240,23 @@ function EventGatewayBody({
             placement="gateway-create-header"
             description="Connect an event source to your agent."
           />
-          <ChannelEditor
-            active={createActive}
-            ownerSubject={session.subject}
-            denied={denied}
-            onDone={(channel) => {
-              if (channel) {
-                setCreated(channel);
-                setSelected(channel.record_id);
-              }
-              setCreating(false);
-              setCreateStarted(false);
-              refresh();
-            }}
-          />
+          {recovered?.record ? (
+            <RecoverChannelCreation
+              owner={session.subject}
+              record={recovered.record}
+              denied={denied}
+              onFound={finishCreate}
+            />
+          ) : (
+            <ChannelEditor
+              active={createActive}
+              ownerSubject={session.subject}
+              recoverDraft
+              initialDraft={recovered}
+              denied={denied}
+              onDone={finishCreate}
+            />
+          )}
           <Button onClick={exitCreate}>Cancel</Button>
         </section>
       ) : null}
