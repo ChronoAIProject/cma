@@ -9,6 +9,7 @@ import {desktopFrame, closeDesktop} from './desktop.mjs';
 import {cleanupFixture} from './cleanup.mjs';
 import {drainOwnerCase, neverReadyManagerCase, scaleManagerCase} from '../features/readiness.mjs';
 import {retainedLifecycle} from '../features/lifecycle_atomicity.mjs';
+import {runtimeLoss} from '../features/runtime_loss.mjs';
 
 export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook,
   preparedHook, triggerHook, retirementHook} = {}) {
@@ -386,6 +387,8 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     await step('owner_drain_and_readiness', () => drainOwnerCase({adapter, api, record: plain, config}));
     await step('ready_autoscaler_two_three_two', () => scaleManagerCase({adapter, api, record: plain}));
     await step('never_ready_third_manager', () => neverReadyManagerCase({adapter, api, record: plain}));
+    if (featureHook) await step('native_runtime_loss_preserves_agent', () => runtimeLoss({api, adapter,
+      record: plain, openBoth, complete}));
     await retainedLifecycle({adapter, api, record: plain, create, cleanup, openBoth, complete, step,
       restartOwner: async owner => {
         const kill = await adapter.killAm({agentId: plain.agentId, owner}); killedAm = owner.am;

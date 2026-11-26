@@ -10,7 +10,6 @@ import os
 from pathlib import Path
 import re
 import secrets
-import shutil
 import signal
 import socket
 import ssl
@@ -28,10 +27,10 @@ import legacy_manifests as old
 from login import login
 from readiness_scaling import observe_never_ready, observe_scale
 from retirement_purge import retirement_purge
+from runtime_loss import remove_runtime_pod
 
 ROOT=Path(__file__).resolve().parent
 PROVIDER=ROOT.parent/'cma'/'provider.py'
-JOURNEY=PROVIDER.with_name('journey.mjs')
 
 def validate_runtime_sources(ready):
     sources=ready.get('runtime_sources')
@@ -46,6 +45,8 @@ class Fixture:
     configurationLog = configuration_log
     configurationDispatch = configuration_dispatch
     retirementPurge = retirement_purge
+    removeRuntimePod = remove_runtime_pod
+
     def __init__(self, ready, output):
         self.ready=ready
         self.client=Client(ready,output)
@@ -414,7 +415,8 @@ class Fixture:
                              'releaseTurn','oracle','captureFailure','titleEffects','skillEffects',
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
                              'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
-                             'organizationMembership','configurationLog','configurationDispatch','retirementPurge']
+                             'organizationMembership','configurationLog','configurationDispatch',
+                             'retirementPurge','removeRuntimePod']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

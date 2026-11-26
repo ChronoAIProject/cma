@@ -18,6 +18,14 @@ def write(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
     path.chmod(0o600)
 
+def require_feature_fixture(fixture):
+    ready = fixture.ready
+    run_id = ready.get('run_id', '')
+    if (ready.get('fixture') != 'features' or fixture.client.namespace != 'cma-native-am'
+            or not re.fullmatch(r'cma-ci-[0-9a-f]{12}', run_id) or ready.get('context') != 'kind-' + run_id
+            or not re.fullmatch(r'https?://127\.0\.0\.1:[0-9]+', ready.get('server', ''))):
+        raise ValueError('disposable_feature_fixture_required')
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *_):
         return None

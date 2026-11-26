@@ -169,9 +169,37 @@ class OwnershipTests(unittest.TestCase):
         for changes in [{'fixture': 'prepared'}, {'context': 'another-kind-context'},
                         {'server': 'https://example.invalid'}, {'run_id': 'foreign'}]:
             fixture.ready = {**local, **changes}
-            with self.assertRaisesRegex(ValueError, 'retirement_purge_fixture_scope_required'):
+            with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
                 fixture.retirementPurge('fixture-agent', 'fixture-sandbox', 'fixture-create', True)
         self.assertEqual(len(script), 1)
+
+    def test_runtime_loss_uses_the_exact_owned_pod_uid_as_a_delete_precondition(self):
+        run_id = 'cma-ci-' + 'a' * 12
+        pod_uid = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        image = 'localhost/base@sha256:' + 'a' * 64
+        fixture = Fixture.__new__(Fixture)
+        fixture.ready = {'fixture': 'features', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345', 'runtime_images': {'base': image}}
+        mutations = []
+        fixture.mongo = lambda query: '"record.origin.operation_id": "fixture-op"' in query
+        fixture.runtimeFor = lambda **_: {'sandbox_id': 'fixture', 'pod_uid': pod_uid, 'ready': True,
+                                          'image': image, 'pod_name': 'owned-pod'}
+        fixture.record = lambda *_args, **_kwargs: None
+        def delete(args, *, data, timeout):
+            self.assertEqual(args, ['delete', '--raw', '/api/v1/namespaces/cma-native-am/pods/owned-pod', '-f', '-'])
+            self.assertEqual(timeout, 15)
+            mutations.append(json.loads(data))
+            return {'kind': 'Pod', 'metadata': {'uid': pod_uid}}
+
+        fixture.client = SimpleNamespace(namespace='cma-native-am', kjson=delete)
+        self.assertEqual(fixture.removeRuntimePod('agent', 'fixture', 'fixture-op', pod_uid),
+                         {'accepted': True, 'pod_uid': pod_uid})
+        self.assertEqual(mutations, [{'apiVersion': 'v1', 'kind': 'DeleteOptions', 'preconditions': {'uid': pod_uid}}])
+        with self.assertRaisesRegex(RuntimeError, 'runtime_loss_pod_changed'):
+            fixture.removeRuntimePod('agent', 'other-sandbox', 'fixture-op', pod_uid)
+        with self.assertRaisesRegex(RuntimeError, 'runtime_loss_agent_not_owned_ready'):
+            fixture.removeRuntimePod('agent', 'fixture', 'foreign-op', pod_uid)
+        self.assertEqual(len(mutations), 1)
 
     def test_cleanup_refuses_unrelated_cluster_before_calling_docker(self):
         with tempfile.TemporaryDirectory() as directory:
