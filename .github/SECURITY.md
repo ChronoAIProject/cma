@@ -8,16 +8,16 @@ repository owner. This policy covers the first source-only OSS release.
 Do not disclose suspected vulnerabilities, exploit details, credentials or
 private data in public issues, pull requests, discussions or logs.
 
-Use [GitHub private vulnerability reporting](https://github.com/ChronoAIProject/cma/security/advisories/new).
-Do not disclose suspected vulnerabilities, exploit details, credentials or
-private data in public issues, pull requests, discussions or logs. There is no
-email fallback; if the private GitHub channel is unavailable, withhold technical
-details and contact a maintainer through an existing private GitHub channel.
+GitHub private vulnerability reporting is enabled for this repository. Open the
+repository's **Security and quality** tab and select **Report a vulnerability**.
+You can also use the
+[private report form](https://github.com/ChronoAIProject/cma/security/advisories/new).
+If the form is unavailable, contact a maintainer through an existing private
+GitHub channel and confirm it is private before sharing technical details.
 
-Once a private channel is verified, include the affected version or commit,
-affected component, expected and observed behavior, a minimal synthetic
-reproduction, likely impact and any proposed mitigation. Share only information
-necessary to reproduce the problem; redact credentials and unrelated data.
+In the private report, include the affected source version or commit, affected
+component, expected and observed behavior, a minimal synthetic reproduction,
+likely impact and any proposed mitigation. Redact credentials and unrelated data.
 Testing must be limited to systems and data you are authorized to examine.
 
 ## Triage and coordinated disclosure
@@ -31,9 +31,7 @@ Testing must be limited to systems and data you are authorized to examine.
   through the private GitHub report. Do not publish unpatched details. Reporter
   credit is handled according to the reporter's preference where practical.
 
-Share reports only with people needed for investigation and remediation. Agree on
-disclosure timing through the private channel and avoid publishing unpatched
-details before coordination.
+Share reports only with people needed for investigation and remediation.
 
 ## Supported versions and release scope
 

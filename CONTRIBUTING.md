@@ -50,10 +50,16 @@ For vulnerabilities, read the [security reporting policy](.github/SECURITY.md)
 before sharing any technical detail. Community participation expectations remain
 in the [code of conduct draft](.github/CODE_OF_CONDUCT.md).
 
-For dependency or vendored-asset changes, run the
-[source license inventory](.github/scripts/license-inventory/README.md), review
-new license declarations and preserve their provenance. Generated notices remain
-drafts until the selected distribution has been reviewed.
+Follow these steps when adding or updating a dependency or vendored asset.
+
+1. Run the [source license inventory](.github/scripts/license-inventory/README.md)
+   against the updated lockfiles, and review the changed license declarations.
+2. When adding or updating a vendored asset, record its upstream revision and
+   keep its copyright, license and required notices with the asset. Update the
+   [vendor catalog](.github/scripts/license-inventory/vendors.json) and the
+   [source notices index](.github/THIRD_PARTY_NOTICES.md) in the same change.
+3. Flag unknown licenses or provenance for review before redistribution. Keep
+   generated inventory drafts out of commits.
 
 ## Development and review
 
