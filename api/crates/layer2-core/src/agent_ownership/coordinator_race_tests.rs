@@ -27,11 +27,17 @@ impl OwnershipStore for PausedRenew {
         self.inner.membership().await
     }
     async fn owner(&self, id: &AgentId) -> Result<Option<OwnershipLease>, OwnershipError> {
+        self.inner.owner(id).await
+    }
+    async fn reconciliation_owners(
+        &self,
+        ids: &[&AgentId],
+    ) -> Result<Vec<ReconciliationOwner>, OwnershipError> {
         if self.pause_owner {
             self.entered.notify_one();
             self.resume.notified().await;
         }
-        self.inner.owner(id).await
+        self.inner.reconciliation_owners(ids).await
     }
     async fn has_owner_history(&self, id: &AgentId) -> Result<bool, OwnershipError> {
         self.inner.has_owner_history(id).await
@@ -300,9 +306,10 @@ async fn reconciliation_owner_lookup_times_out_without_serializing_acquisition()
         let coordinator = coordinator.clone();
         let candidate = candidate.clone();
         async move {
-            coordinator
-                .observe_foreign_reconciliation_owner(&candidate)
-                .await
+            let mut owners = coordinator
+                .observe_foreign_reconciliation_owners([&candidate])
+                .await;
+            coordinator.defer_reconciliation_for_foreign_owner(&mut owners, &candidate)
         }
     });
     store.entered.notified().await;
@@ -321,11 +328,10 @@ async fn reconciliation_owner_lookup_times_out_without_serializing_acquisition()
     // take the ordinary acquisition path and cannot revive its old epoch.
     local.cancel_receiver();
     let started = tokio::time::Instant::now();
-    assert!(
-        !coordinator
-            .observe_foreign_reconciliation_owner(&candidate)
-            .await
-    );
+    let mut owners = coordinator
+        .observe_foreign_reconciliation_owners([&candidate])
+        .await;
+    assert!(!coordinator.defer_reconciliation_for_foreign_owner(&mut owners, &candidate));
     assert_eq!(started.elapsed(), std::time::Duration::ZERO);
     assert!(coordinator.acquire(&candidate).await.unwrap().is_none());
     assert!(!local.is_current());
