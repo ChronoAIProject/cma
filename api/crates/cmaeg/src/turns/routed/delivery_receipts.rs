@@ -8,7 +8,7 @@ use super::{
 };
 use crate::delivery::{
     intents::{DeliveryOutcome, IntentReceipt},
-    retained_receipt::INLINE_LIMIT,
+    retained_receipt::{StoredReceipt, INLINE_LIMIT},
 };
 
 use crate::{
@@ -40,6 +40,30 @@ pub(super) fn answer_response_id<'a>(
 }
 
 impl RoutedDelivery {
+    pub(super) async fn recover_automatic_receipt(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        lease: &mut Lease,
+        operation: &str,
+    ) -> Result<Option<DeliveryStatus>, ExecutionError> {
+        let store = ReplyStore(self.journal.clone(), lease.partition.clone());
+        let Some(stored) = store.automatic_receipt(plan, target, operation).await? else {
+            return Ok(None);
+        };
+        let receipt = self
+            .journal
+            .receipts(operation, &lease.state.owner, lease.state.retained_until)
+            .load(&stored)
+            .await
+            .map_err(|_| ExecutionError::Unavailable)?;
+        // The reply guard can settle before the cursor checkpoint is written.
+        // The operation already binds the target, response and exact effect.
+        let status = receipt_status(Some(stored), Some(&receipt));
+        self.record(lease, status.clone()).await?;
+        Ok(Some(status))
+    }
+
     pub(super) async fn observe_replayed_answer(
         &self,
         plan: &AdmittedPlan,
@@ -147,20 +171,27 @@ impl RoutedDelivery {
             ),
             (_, None) => None,
         };
-        let unresolved = receipt.is_some_and(|value| {
-            matches!(value.delivery, DeliveryOutcome::Unknown { .. })
-                || (value.message_parts.is_empty()
-                    && storage::bytes(value).map_or(true, |bytes| bytes.len() > INLINE_LIMIT))
-        });
-        let status = if unresolved {
-            match stored.filter(|value| value.has_parts()) {
-                Some(receipt) => DeliveryStatus::Partial { receipt },
-                None => DeliveryStatus::Unknown,
-            }
-        } else {
-            DeliveryStatus::Settled { receipt: stored }
-        };
+        let status = receipt_status(stored, receipt);
+        let settled = status.settled();
         self.record(lease, status).await?;
-        Ok(!unresolved)
+        Ok(settled)
+    }
+}
+
+fn receipt_status(
+    stored: Option<StoredReceipt>,
+    receipt: Option<&IntentReceipt>,
+) -> DeliveryStatus {
+    let unresolved = receipt.is_some_and(|value| {
+        matches!(value.delivery, DeliveryOutcome::Unknown { .. })
+            || (value.message_parts.is_empty()
+                && storage::bytes(value).map_or(true, |bytes| bytes.len() > INLINE_LIMIT))
+    });
+    if !unresolved {
+        return DeliveryStatus::Settled { receipt: stored };
+    }
+    match stored.filter(StoredReceipt::has_parts) {
+        Some(receipt) => DeliveryStatus::Partial { receipt },
+        None => DeliveryStatus::Unknown,
     }
 }

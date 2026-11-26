@@ -2,6 +2,19 @@
 use super::*;
 
 impl ReplyStore {
+    pub(in crate::turns::routed) async fn automatic_receipt(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        operation: &str,
+    ) -> Result<Option<StoredReceipt>, ExecutionError> {
+        let record = self.load(plan, target).await?;
+        Ok(record
+            .automatic
+            .filter(|attempt| attempt.operation == operation)
+            .and_then(|attempt| attempt.receipt))
+    }
+
     pub async fn replay(
         &self,
         plan: &AdmittedPlan,

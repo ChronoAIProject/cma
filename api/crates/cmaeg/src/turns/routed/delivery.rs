@@ -175,8 +175,18 @@ impl RoutedDelivery {
                 {
                     return Err(ExecutionError::Invalid);
                 }
-                match &previous.status {
-                    DeliveryStatus::Settled { receipt } if previous.status.settled() => {
+                let mut status = previous.status.clone();
+                if matches!(status, DeliveryStatus::Intent)
+                    && matches!(effect, ReplayEffect::Reply(_))
+                    && custom_effect.is_none()
+                {
+                    status = self
+                        .recover_automatic_receipt(&plan, target, lease, &operation)
+                        .await?
+                        .unwrap_or(status);
+                }
+                match &status {
+                    DeliveryStatus::Settled { receipt } if status.settled() => {
                         let receipt = match receipt {
                             Some(receipt) => Some(
                                 self.journal
