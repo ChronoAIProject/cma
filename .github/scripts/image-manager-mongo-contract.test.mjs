@@ -8,6 +8,8 @@ import { join } from 'node:path';
 const standingPermission = 'auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure';
 const activeProofOperator = 'package(=cma) and test(=store::agent_log_segments::active_proof::prepare::tests::active_proof_operator_cli_uses_generated_isolated_role)';
 
+const gatewayResetJourneys = 'package(=cma) and (test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors) or test(=store::bindings::reset_tests::gateway_reset_tests::profile_reset_receipt_replays_after_a_later_channel_revision))';
+
 // Independent inventory of every invocation, including replica delivery and
 // the exact owner-key contract. Check complete arguments in source and archive mode.
 const selections = [
@@ -45,7 +47,7 @@ const selections = [
   ['package(=cmaeg) and kind(lib) and test(~replicas::mongo_tests::)', 'only', true],
   ['package(=cma) and test(~gateway::tests::)', 'only', false],
   ['package(=cma) and test(~sender_context_tests::)', 'only', true],
-  ['package(=cma) and test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors)', 'only', true],
+  [gatewayResetJourneys, 'only', true],
   [`package(=cma) and test(=${standingPermission})`, 'only', true],
   [activeProofOperator, 'only', true],
 ];
@@ -117,7 +119,7 @@ for (const reuse of [false, true]) {
       }
       for (const row of calls) {
         const isActiveProofOperator = row.command === 'cargo' && row.args.includes(activeProofOperator);
-        const needsStore = row.command === 'cargo' && (isActiveProofOperator || row.args.includes('package(=cma) and test(~sender_context_tests::)') || row.args.includes('package(=cma) and test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors)'));
+        const needsStore = row.command === 'cargo' && (isActiveProofOperator || row.args.includes('package(=cma) and test(~sender_context_tests::)') || row.args.includes(gatewayResetJourneys));
         assert.equal(row.caller, needsStore ? row.uri : undefined, 'only M1 store contracts receive the owned fixture URI');
         assert.equal(row.cma, isActiveProofOperator ? join(f.metadata, '..', 'debug', 'cma') : undefined);
         assert.equal(row.failpoint, undefined);

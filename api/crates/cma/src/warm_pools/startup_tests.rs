@@ -1,7 +1,9 @@
 use super::super::startup::{
     await_ready, await_ready_with_fencing, observed_capacity, observed_ready, StartupPoolPolicy,
+    WarmPoolStartup,
 };
 use super::*;
+use crate::startup::Admission;
 
 fn fixture() -> (Memory, Provider) {
     let calls = Arc::new(Mutex::new(vec![]));
@@ -160,8 +162,12 @@ async fn empty_startup_requires_opt_in_exact_admission_and_fresh_durable_target(
     ));
     let enabled = pools.with_empty_pool_startup(true);
     let started = tokio::time::Instant::now();
-    enabled.await_default_ready().await.unwrap();
-    assert_eq!(started.elapsed(), Duration::ZERO);
+    let boot = enabled
+        .await_default_ready_until(Some(&Admission::new()))
+        .await
+        .unwrap();
+    assert!(matches!(boot, WarmPoolStartup::CapacityDeferred(proof) if proof.desired() == 2));
+    assert_eq!(started.elapsed(), Duration::from_secs(240));
     let stored = store.find(&original.id).await.unwrap().unwrap();
     assert_eq!(stored.target_replicas, 2);
     assert_eq!(stored.binding, original.binding);
@@ -178,17 +184,158 @@ async fn empty_startup_requires_opt_in_exact_admission_and_fresh_durable_target(
         .unwrap()
         .is_none());
 
+    assert!(matches!(
+        await_ready_with_fencing(
+            &*store,
+            &planner,
+            &original.plan,
+            tokio::time::Instant::now() + limit,
+            policy,
+            None,
+            None,
+        )
+        .await,
+        Err(WarmPoolError::Unavailable)
+    ));
+    for missing in [true, false] {
+        let rows = if missing {
+            vec![]
+        } else {
+            let mut duplicate = original.clone();
+            duplicate.id = "duplicate-target".into();
+            vec![original.clone(), duplicate]
+        };
+        *store.rows.lock().unwrap() = rows;
+        assert!(matches!(
+            enabled
+                .await_default_ready_until(Some(&Admission::new()))
+                .await,
+            Err(WarmPoolError::Unavailable)
+        ));
+        *store.rows.lock().unwrap() = vec![original.clone()];
+    }
+
+    for retirement_read in [false, true] {
+        let observations = planner.admission_observations.load(Ordering::SeqCst);
+        let claims = store.claims.lock().unwrap().len();
+        if retirement_read {
+            // The readiness and retirement branches list in that order.
+            store.list_error_after.store(2, Ordering::SeqCst);
+        } else {
+            planner.inventory_error.store(true, Ordering::SeqCst);
+        }
+        let started = tokio::time::Instant::now();
+        assert!(matches!(
+            enabled
+                .await_default_ready_until(Some(&Admission::new()))
+                .await,
+            Ok(WarmPoolStartup::CapacityDeferred(_))
+        ));
+        assert_eq!(started.elapsed(), Duration::from_secs(240));
+        assert_eq!(
+            planner.admission_observations.load(Ordering::SeqCst),
+            observations + 1
+        );
+        assert_eq!(store.list_error_after.load(Ordering::SeqCst), 0);
+        assert!(!planner.inventory_error.load(Ordering::SeqCst));
+        assert_eq!(
+            store.claims.lock().unwrap().len() - claims,
+            if retirement_read { 240 } else { 239 },
+        );
+    }
+
+    let observations = planner.admission_observations.load(Ordering::SeqCst);
+    store.claim_error.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        enabled
+            .await_default_ready_until(Some(&Admission::new()))
+            .await,
+        Err(WarmPoolError::Unavailable)
+    ));
+    assert!(!store.claim_error.load(Ordering::SeqCst));
+    assert_eq!(
+        planner.admission_observations.load(Ordering::SeqCst),
+        observations
+    );
+
+    let mut superseded = original.clone();
+    superseded.id = "superseded".into();
+    superseded.retiring = true;
+    store.rows.lock().unwrap().push(superseded);
+    store.retirement_claim_error.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        enabled
+            .await_default_ready_until(Some(&Admission::new()))
+            .await,
+        Err(WarmPoolError::Unavailable)
+    ));
+    assert!(!store.retirement_claim_error.load(Ordering::SeqCst));
+    assert_eq!(
+        planner.admission_observations.load(Ordering::SeqCst),
+        observations
+    );
+    store.rows.lock().unwrap().truncate(1);
+
+    for case in ["resize", "drain", "read_failed", "timeout"] {
+        let (entered, receiving) = tokio::sync::oneshot::channel();
+        let (release, held) = tokio::sync::oneshot::channel();
+        let mut release = Some(release);
+        *store.find_gate.lock().unwrap() = Some((entered, held));
+        let admission = Admission::new();
+        let started = tokio::time::Instant::now();
+        let (result, ()) =
+            tokio::join!(enabled.await_default_ready_until(Some(&admission)), async {
+                receiving.await.unwrap();
+                match case {
+                    "resize" => {
+                        store.rows.lock().unwrap()[0].revision += 1;
+                        release.take().unwrap().send(true).unwrap();
+                    }
+                    "drain" => admission.close(),
+                    "read_failed" => release.take().unwrap().send(false).unwrap(),
+                    _ => {}
+                }
+            },);
+        if case == "drain" {
+            assert!(matches!(result, Ok(WarmPoolStartup::Stopping)));
+        } else {
+            assert!(
+                matches!(result, Err(WarmPoolError::Unavailable)),
+                "{case}: {result:?}"
+            );
+        }
+        let expected = if case == "timeout" { 248 } else { 240 };
+        assert_eq!(started.elapsed(), Duration::from_secs(expected), "{case}");
+        store.rows.lock().unwrap()[0] = original.clone();
+    }
+
     planner.retiring.store(true, Ordering::SeqCst);
     assert!(matches!(
-        await_ready_with_fencing(&*store, &planner, &original.plan, limit, policy, None, None)
-            .await,
+        await_ready_with_fencing(
+            &*store,
+            &planner,
+            &original.plan,
+            tokio::time::Instant::now() + limit,
+            policy,
+            Some(&Admission::new()),
+            None
+        )
+        .await,
         Err(WarmPoolError::Conflict)
     ));
     planner.retiring.store(false, Ordering::SeqCst);
     store.find_error.store(true, Ordering::SeqCst);
     assert!(matches!(
-        await_ready_with_fencing(&*store, &planner, &original.plan, limit, policy, None, None)
-            .await,
+        await_ready_with_fencing(
+            &*store,
+            &planner,
+            &original.plan,
+            tokio::time::Instant::now() + limit,
+            policy,
+            Some(&Admission::new()),
+            None
+        )
+        .await,
         Err(WarmPoolError::Unavailable)
     ));
     assert_eq!(
@@ -378,7 +525,7 @@ async fn startup_pool_drift_requires_exact_target_and_preserves_healthy_capacity
                 &*store,
                 &planner,
                 &original.plan,
-                Duration::from_secs(3),
+                tokio::time::Instant::now() + Duration::from_secs(3),
                 policy,
                 None,
                 None,
@@ -386,17 +533,23 @@ async fn startup_pool_drift_requires_exact_target_and_preserves_healthy_capacity
         };
 
         // Drift on a historical pool is no proof for the current target.
-        assert_eq!(await_pool().await, Err(WarmPoolError::Unavailable));
+        assert!(matches!(
+            await_pool().await,
+            Err(WarmPoolError::Unavailable)
+        ));
         observation.ready_replicas = 1;
         observation.observed = true;
         planner.inventory.lock().unwrap()[0] = observation;
-        assert_eq!(await_pool().await, Ok(()));
+        assert!(matches!(await_pool().await, Ok(WarmPoolStartup::Ready)));
 
         planner.bound_drift.store(true, Ordering::SeqCst);
         planner.superseded_target.store(true, Ordering::SeqCst);
-        assert_eq!(await_pool().await, Err(WarmPoolError::Conflict));
+        assert!(matches!(await_pool().await, Err(WarmPoolError::Conflict)));
         planner.superseded_target.store(false, Ordering::SeqCst);
-        assert_eq!(await_pool().await, Ok(()));
+        assert!(matches!(
+            await_pool().await,
+            Ok(WarmPoolStartup::ConfigurationDrift)
+        ));
         assert_eq!(
             store.find(&original.id).await.unwrap().unwrap().binding,
             original.binding
@@ -412,7 +565,7 @@ async fn startup_pool_drift_requires_exact_target_and_preserves_healthy_capacity
         );
 
         planner.retiring.store(true, Ordering::SeqCst);
-        assert_eq!(await_pool().await, Err(WarmPoolError::Conflict));
+        assert!(matches!(await_pool().await, Err(WarmPoolError::Conflict)));
     }
 }
 
@@ -434,12 +587,12 @@ pub(crate) async fn assert_startup_pool_with_historical_template_absent(
     target.applied_revision = target.revision;
     store.rows.lock().unwrap().push(target);
     for allow_empty in [false, true] {
-        assert_eq!(
+        assert!(matches!(
             await_ready_with_fencing(
                 &store,
                 provider,
                 &plan,
-                Duration::from_secs(3),
+                tokio::time::Instant::now() + Duration::from_secs(3),
                 StartupPoolPolicy {
                     allow_empty,
                     target_fencing: true
@@ -448,7 +601,7 @@ pub(crate) async fn assert_startup_pool_with_historical_template_absent(
                 None,
             )
             .await,
-            Ok(())
-        );
+            Ok(WarmPoolStartup::Ready)
+        ));
     }
 }

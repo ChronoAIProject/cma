@@ -10,7 +10,7 @@ export const activityWords = {
   waiting_approval: 'Waiting for approval',
   completed: 'Ready',
   failed: 'Failed',
-  stopped: 'Stopped',
+  interrupted: 'Response interrupted',
 } as const;
 export type ActivityStatus = keyof typeof activityWords;
 
@@ -33,6 +33,5 @@ export function observedActivity(
   if (!(Date.parse(at ?? '') > Date.parse(currentAgentSnapshot(detail, summary).updatedAt)))
     return undefined;
   if (active) return status === 'waiting_approval' ? 'waiting_approval' : 'working';
-  const outcome = conversation.turnOutcomes?.[runId];
-  return outcome === 'interrupted' ? 'stopped' : outcome;
+  return conversation.turnOutcomes?.[runId];
 }

@@ -6,15 +6,16 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import staging_cd_publish
 import staging_cd_produce
 
 from staging_cd_build_cargo_keys import CargoKey
 from staging_cd_common import Refusal
-from staging_cd_release_archive import ARCHIVE, MANIFEST, load, path_for, seal
+from staging_cd_release_archive import ARCHIVE, LEGACY_SCHEMA, MANIFEST, load, path_for, seal
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt
 
 
@@ -27,13 +28,36 @@ class ArchiveHandoffTests(unittest.TestCase):
             directory.mkdir()
             archive = directory / ARCHIVE
             archive.write_bytes(b"synthetic OCI archive")
-            seal(directory, identity, "a" * 32)
+            day = date(2026, 11, 25)
+            seal(directory, identity, "a" * 32, day)
             handoff = load(directory, identity)
             self.assertEqual(handoff.path, archive)
             self.assertEqual(handoff.cache_namespace, "a" * 32)
+            self.assertEqual(handoff.cache_day, day)
             self.assertEqual(handoff.sha256, json.loads((directory / MANIFEST).read_text())["archive_sha256"])
 
+    def test_legacy_handoff_has_no_authority_to_reseal_cargo_for_the_publisher_day(self):
+        identity = fixture_identity(component="am")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / ARCHIVE).write_bytes(b"synthetic OCI archive")
+            seal(directory, identity, "a" * 32, date(2026, 11, 25))
+            manifest = directory / MANIFEST
+            document = json.loads(manifest.read_text())
+            manifest.write_text(json.dumps(dict(document, cache_day="2026-11-31")))
+            with self.assertRaisesRegex(Refusal, "cache identity is malformed"):
+                load(directory, identity)
+            document.pop("cache_day")
+            manifest.write_text(json.dumps(dict(document, schema=LEGACY_SCHEMA)))
+            self.assertIsNone(load(directory, identity).cache_day)
+
     def test_normal_release_consumes_the_prepared_archive_without_rebuilding(self):
+        self.check_prepared_release(overlap=True)
+
+    def test_low_disk_headroom_defers_export_until_verification_scratch_is_removed(self):
+        self.check_prepared_release(overlap=False)
+
+    def check_prepared_release(self, *, overlap):
         receipt = fixture_receipt(component="am")
         identity = receipt["identity"]
         reservation = identity.copy()
@@ -55,12 +79,29 @@ class ArchiveHandoffTests(unittest.TestCase):
             producer_authority = stack.enter_context(patch.object(staging_cd_produce, "Reservations")).return_value
             publisher_authority = stack.enter_context(patch.object(staging_cd_publish, "Reservations")).return_value
             stack.enter_context(patch.object(staging_cd_publish, "Registry"))
-            cache = Mock(key=CargoKey("cma-cd-cargo-v4-am-" + "e" * 64 + "-", "f" * 64),
+            producer_day = date(2026, 11, 25)
+            cache = Mock(key=CargoKey("cma-cd-cargo-v4-am-" + "e" * 64 + "-", "f" * 64), cache_day=producer_day,
                          namespace="a" * 32, restore_result="hit", export_headroom=None, export_retained_groups=None)
             cache.exports_layers.return_value = True
-            cache.export_mounts.return_value = True
-            for module in (staging_cd_produce, staging_cd_publish):
-                stack.enter_context(patch.object(module, "BuildCache", return_value=cache))
+            cache.can_overlap_export.return_value = overlap
+            export_started = Mock()
+            verification_directories = []
+
+            def finish_export():
+                self.assertEqual(json.loads(Path(env["CD_RECEIPTS_PATH"]).read_text()), [receipt])
+                self.assertEqual(verification_directories[0].exists(), overlap)
+                return True
+
+            @contextlib.contextmanager
+            def background_export(_directory):
+                export_started()
+                self.assertFalse(Path(env["CD_RECEIPTS_PATH"]).exists())
+                yield finish_export
+
+            cache.background_export.side_effect = background_export
+            cache.export_mounts.side_effect = finish_export
+            stack.enter_context(patch.object(staging_cd_produce, "BuildCache", return_value=cache))
+            publisher_cache = stack.enter_context(patch.object(staging_cd_publish, "BuildCache", return_value=cache))
             stack.enter_context(patch.object(staging_cd_publish, "identity", return_value=(identity, None, None)))
 
             def build(_root, _reservation, directory, *, progress, **_kwargs):
@@ -71,7 +112,17 @@ class ArchiveHandoffTests(unittest.TestCase):
 
             producer_build = stack.enter_context(patch.object(staging_cd_produce, "build", side_effect=build))
             fallback = stack.enter_context(patch.object(staging_cd_publish, "build"))
-            publish = stack.enter_context(patch.object(staging_cd_publish, "publish", return_value=receipt))
+            def publish_then_return(*_args, **_kwargs):
+                verification_directories.append(_args[2])
+                export_started.assert_not_called()
+                _kwargs["on_verified_image"]()
+                if overlap:
+                    export_started.assert_called_once()
+                else:
+                    export_started.assert_not_called()
+                return receipt
+
+            publish = stack.enter_context(patch.object(staging_cd_publish, "publish", side_effect=publish_then_return))
             stack.enter_context(patch.object(staging_cd_produce.Path, "cwd", return_value=root))
             output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             self.assertEqual(staging_cd_produce.main(), 0)
@@ -80,7 +131,15 @@ class ArchiveHandoffTests(unittest.TestCase):
             self.assertEqual(staging_cd_publish.main(), 0)
             self.assertIn("build-cache-artifact=" + cache.key.family.removesuffix("-") + "\n",
                           (root / "output").read_text())
-            cache.export_mounts.assert_called_once()
+            self.assertIn("build-cache-index=graph-" + cache.key.prefix.removesuffix("-") + "\n",
+                          (root / "output").read_text())
+            publisher_cache.assert_called_once_with(root, ANY, ANY, "am", cache_day=producer_day)
+            if overlap:
+                cache.background_export.assert_called_once()
+                cache.export_mounts.assert_not_called()
+            else:
+                cache.background_export.assert_not_called()
+                cache.export_mounts.assert_called_once()
             self.assertEqual(output.getvalue().count("CACHE-SAVE cache=build-layers component=am"), 1)
             self.assertIn("result=not-saved reason=read-only", output.getvalue())
             self.assertIn("::warning title=Build cache not saved", output.getvalue())

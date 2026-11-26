@@ -167,6 +167,28 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertEqual(len(server.refs), 4)
 
+    def test_lagging_develop_advertisement_cannot_complete_allocation_without_work(self):
+        current = []
+
+        def command(server, args, kwargs, _advance):
+            if args[1] == "ls-remote":
+                if not current:
+                    older = "f" * 40
+                    head = server.history().head
+                    current.append(DevelopHistory(head, [head, older]))
+                    server._history = DevelopHistory(older, [older])
+                else:
+                    server._history = current[0]
+            return server.command(args, **kwargs)
+
+        status, server, first, output, events, _ = self.execute(command=command)
+        self.assertEqual(status, 0)
+        self.assertEqual(events, ["readback", "readback", "matrix", "changed"])
+        self.assertEqual(retries(output), ["RETRY allocation reason=DEVELOP_ADVERTISEMENT_UNSETTLED attempt=2/2 wait=10.0s"])
+        self.assertFalse(first.loaded)
+        self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
+        self.assertEqual({item["source"] for item in self.stores[1].planned}, {server.sources[-1]})
+
     def test_a_listing_torn_by_a_concurrent_push_is_read_again_and_succeeds(self):
         # git ls-remote is not an atomic snapshot. While another job's atomic
         # push lands, one listing can show its claim but not its reservation.

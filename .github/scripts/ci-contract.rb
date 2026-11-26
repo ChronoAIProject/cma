@@ -41,7 +41,7 @@ module CIContract
 
   def self.artifact(job, condition, prefix)
     upload = step(job, "Retain runtime image evidence", nil, condition)
-    expected = prefix.start_with?("release-") ? "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" : "actions/upload-artifact@v4"
+    expected = prefix.start_with?("release-") ? "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" : "actions/upload-artifact@v4"
     require!(upload["uses"] == expected, "runtime evidence uploader changed")
     require!(upload["with"] == {
       "name" => "#{prefix}-${{ github.run_id }}-${{ github.run_attempt }}",
@@ -87,7 +87,7 @@ module CIContract
       "github.event_name == 'push' && github.ref == 'refs/heads/develop' && #{base} && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'")
     require!(extract["id"] == "api-cargo-cache-export", "API cache extraction output changed")
     require!([inject, extract].all? { |row| row["timeout-minutes"] == 3 }, "API cache transfers must be bounded")
-    revision = "0057852bfaa89a56745cba8c7296529d2fc39830"
+    revision = "caa296126883cff596d87d8935842f9db880ef25"
     shared = { "path" => "${{ runner.temp }}/cma-api-cargo-cache/data",
       "key" => "${{ steps.api-cargo-cache.outputs.key }}", "enableCrossOsArchive" => false }
     expected = [
@@ -178,7 +178,7 @@ module CIContract
       "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
       "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
       "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
-      "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+      "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
       "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
       "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
       "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",

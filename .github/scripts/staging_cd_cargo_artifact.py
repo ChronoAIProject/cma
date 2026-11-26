@@ -39,6 +39,10 @@ MAX_EXPANDED_BYTES = 6 * 1024**3
 # members fits in the extra MiB.
 MAX_ARTIFACT_BYTES = MAX_BUNDLE_BYTES + 4096 + MIB
 CANDIDATES = 5
+EXACT_CANDIDATES = 3
+# An unavailable index must leave the ordinary family lookup its download budget.
+EXACT_LOOKUP_SECONDS = 30
+MAX_INDEX_BYTES = 64 * 1024
 # Any workflow run may upload an artifact with this name. List enough rows to
 # find the develop producers among them.
 LISTING = 50
@@ -65,6 +69,13 @@ def artifact_name(component, family=None):
     require(re.fullmatch(re.escape(CARGO_NAMESPACE + component + "-") + r"[0-9a-f]{64}-", family),
             "family")
     return family.removesuffix("-")
+
+
+def index_name(component, family, prefix):
+    artifact_name(component, family)
+    require(isinstance(prefix, str) and re.fullmatch(re.escape(family) + r"[0-9a-f]{64}-", prefix),
+            "prefix")
+    return "graph-" + prefix.removesuffix("-")
 
 
 def context(env):
@@ -109,11 +120,11 @@ def on_develop(root, source, head, timeout):
     return result.returncode == 0 and source in result.stdout.split()
 
 
-def validate_artifact(artifact, name):
+def validate_artifact(artifact, name, *, max_bytes=MAX_ARTIFACT_BYTES):
     require(isinstance(artifact, dict) and artifact.get("name") == name
             and artifact.get("expired") is False and type(artifact.get("id")) is int and artifact["id"] > 0
             and type(artifact.get("size_in_bytes")) is int
-            and 0 < artifact["size_in_bytes"] <= MAX_ARTIFACT_BYTES
+            and 0 < artifact["size_in_bytes"] <= max_bytes
             and isinstance(artifact.get("digest"), str)
             and re.fullmatch(r"sha256:[a-f0-9]{64}", artifact["digest"]), "artifact")
     origin = artifact.get("workflow_run")
@@ -164,7 +175,7 @@ def file_digest(path):
     return "sha256:" + value.hexdigest()
 
 
-def unpack(archive_path, artifact, destination, family):
+def unpack(archive_path, artifact, destination, family, *, exact_prefix=None):
     item = archive_path.lstat()
     require(stat.S_ISREG(item.st_mode) and item.st_size <= MAX_ARTIFACT_BYTES, "archive")
     require(file_digest(archive_path) == artifact["digest"], "digest")
@@ -186,6 +197,7 @@ def unpack(archive_path, artifact, destination, family):
         prefix = metadata.get("prefix") if isinstance(metadata, dict) else None
         require(isinstance(prefix, str) and re.fullmatch(re.escape(family) + r"[0-9a-f]{64}-", prefix),
                 "family")
+        require(exact_prefix is None or prefix == exact_prefix, "prefix")
         destination.mkdir(mode=0o700)
         for member in members:
             with archive.open(member) as source, (destination / member.filename).open("xb") as target:
@@ -211,25 +223,39 @@ def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develo
     component = env["CD_COMPONENT"]
     family = env.get("CD_CARGO_CACHE_FAMILY", "")
     names = (artifact_name(component, family), artifact_name(component))
+    prefix = env.get("CD_CARGO_CACHE_PREFIX")
+    index = index_name(component, family, prefix) if prefix else None
     require(not destination.exists() and not destination.is_symlink(), "destination")
     destination.parent.mkdir(mode=0o700, exist_ok=True)
     require(destination.parent.is_dir() and not destination.parent.is_symlink(), "destination")
-    deadline = clock() + DEADLINE_SECONDS
+    started = clock()
+    deadline = started + DEADLINE_SECONDS
+    exact_deadline = started + EXACT_LOOKUP_SECONDS
 
-    def remaining(cap):
-        left = deadline - clock()
+    def remaining(cap, until=deadline):
+        left = until - clock()
         require(left > 0, "deadline")
         return min(cap, left)
 
-    def read(path, cap, output=None):
+    def read(path, cap, output=None, *, until=deadline):
         # Every read is a GET; transport failures repeat inside the restore deadline.
         def attempt():
             if output is None:
-                return get(path, timeout=remaining(cap))
+                return get(path, timeout=remaining(cap, until))
             discard(output)  # a repeat never resumes a partial download
-            return get(path, timeout=remaining(cap), output=output)
+            return get(path, timeout=remaining(cap, until), output=output)
         return ci_retry.call(attempt, name="cargo-artifact-read", classify=ci_retry.classify,
-                             deadline=deadline, clock=clock, sleep=sleep)
+                             deadline=until, clock=clock, sleep=sleep)
+
+    def rows_for(name, until=deadline):
+        listing = read(f"repos/{REPO}/actions/artifacts?name={name}&per_page={LISTING}", 10, until=until)
+        require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list), "listing")
+        rows = [row for row in listing["artifacts"] if isinstance(row, dict)
+                and row.get("name") == name and isinstance(row.get("workflow_run"), dict)
+                and row["workflow_run"].get("head_branch") == "develop"
+                and type(row["workflow_run"].get("repository_id")) is int
+                and row["workflow_run"].get("head_repository_id") == row["workflow_run"]["repository_id"]]
+        return sorted(rows, key=lambda row: row.get("id") if type(row.get("id")) is int else 0, reverse=True)
 
     def candidates():
         # Family-specific names avoid fetching a multi-GiB archive from a
@@ -237,40 +263,83 @@ def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develo
         for name in names:
             if clock() >= deadline:
                 return
-            listing = read(f"repos/{REPO}/actions/artifacts?name={name}&per_page={LISTING}", 10)
-            require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list), "listing")
-            rows = [row for row in listing["artifacts"] if isinstance(row, dict)
-                    and row.get("name") == name and isinstance(row.get("workflow_run"), dict)
-                    and row["workflow_run"].get("head_branch") == "develop"
-                    and type(row["workflow_run"].get("repository_id")) is int
-                    and row["workflow_run"].get("head_repository_id") == row["workflow_run"]["repository_id"]]
-            rows.sort(key=lambda row: row.get("id") if type(row.get("id")) is int else 0, reverse=True)
-            for row in rows:
+            for row in rows_for(name):
                 yield name, row
 
     root = Path.cwd() if root is None else root
+
+    def producer_inputs(origin, until=deadline):
+        require(str(origin["id"]) != env["GITHUB_RUN_ID"], "self")
+        require(ancestry(root, origin["head_sha"], env["GITHUB_SHA"], remaining(10, until)), "ancestry")
+        run = read(f"repos/{REPO}/actions/runs/{origin['id']}", 10, until=until)
+        attempt = run.get("run_attempt") if isinstance(run, dict) else None
+        require(type(attempt) is int and attempt > 0, "producer")
+        jobs = read(f"repos/{REPO}/actions/runs/{origin['id']}/attempts/{attempt}/jobs?per_page=100", 10,
+                    until=until)
+        return run, jobs
+
+    def exact_matches():
+        # The small index's name is a discovery hint. The bulk artifact still
+        # has to come from that same successful Publish attempt and seal this prefix.
+        if index is None:
+            return
+        try:
+            indexes = rows_for(index, exact_deadline)
+        except FAILURES:
+            return
+        for marker in indexes[:EXACT_CANDIDATES]:
+            if clock() >= exact_deadline:
+                break
+            try:
+                origin = validate_artifact(marker, index, max_bytes=MAX_INDEX_BYTES)
+                run, jobs = producer_inputs(origin, exact_deadline)
+                producer = validate_producer(run, jobs, marker, component)
+                path = f"repos/{REPO}/actions/runs/{origin['id']}/artifacts?name={names[0]}&per_page=2"
+                listing = read(path, 10, until=exact_deadline)
+                require(isinstance(listing, dict) and type(listing.get("total_count")) is int
+                        and listing["total_count"] == 1
+                        and isinstance(listing.get("artifacts"), list) and len(listing["artifacts"]) == 1,
+                        "index")
+                artifact = listing["artifacts"][0]
+                require(validate_artifact(artifact, names[0]) == origin, "index")
+                require(validate_producer(run, jobs, artifact, component) == producer, "index")
+            except FAILURES:
+                continue
+            yield artifact, producer
+
     download = destination.parent / "artifact.zip"
+
+    def restore_bundle(artifact, producer, *, exact_prefix=None):
+        try:
+            read(f"repos/{REPO}/actions/artifacts/{artifact['id']}/zip", DOWNLOAD_SECONDS, download)
+            unpack(download, artifact, destination, family, exact_prefix=exact_prefix)
+        except FAILURES:
+            discard(destination)
+            raise
+        finally:
+            discard(download)
+        return {"state": "RESTORED", **producer, "artifact_id": artifact["id"],
+                "artifact_digest": artifact["digest"]}
+
+    tried_exact = set()
+    for artifact, producer in exact_matches():
+        tried_exact.add(artifact["id"])
+        try:
+            return {**restore_bundle(artifact, producer, exact_prefix=prefix), "selection": "exact-graph"}
+        except FAILURES:
+            continue
+
     for name, artifact in islice(candidates(), CANDIDATES):
         try:
             origin = validate_artifact(artifact, name)
-            require(str(origin["id"]) != env["GITHUB_RUN_ID"], "self")
-            require(ancestry(root, origin["head_sha"], env["GITHUB_SHA"], remaining(10)), "ancestry")
-            run = read(f"repos/{REPO}/actions/runs/{origin['id']}", 10)
-            attempt = run.get("run_attempt") if isinstance(run, dict) else None
-            require(type(attempt) is int and attempt > 0, "producer")
-            jobs = read(f"repos/{REPO}/actions/runs/{origin['id']}/attempts/{attempt}/jobs?per_page=100", 10)
+            if artifact["id"] in tried_exact:
+                continue
+            run, jobs = producer_inputs(origin)
             producer = validate_producer(run, jobs, artifact, component)
-            read(f"repos/{REPO}/actions/artifacts/{artifact['id']}/zip", DOWNLOAD_SECONDS, download)
-            unpack(download, artifact, destination, family)
-            return {"state": "RESTORED", **producer, "artifact_id": artifact["id"],
-                    "artifact_digest": artifact["digest"]}
+            return restore_bundle(artifact, producer)
         except FAILURES as error:
-            # A partly written bundle must never reach the validator.
-            discard(destination)
             if isinstance(error, Refused) and str(error) == "deadline":
                 break
-        finally:
-            discard(download)
     return {"state": "MISS"}
 
 

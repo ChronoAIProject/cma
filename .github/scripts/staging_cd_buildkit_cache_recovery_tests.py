@@ -8,7 +8,8 @@ from unittest.mock import Mock
 
 import yaml
 
-from actions_cache_buildkit_recovery import MAX_INDEX_RETIREMENTS, authorized, recover
+from actions_cache_buildkit_inventory import MAX_INDEX_RETIREMENTS
+from actions_cache_buildkit_recovery import authorized, recover
 from actions_cache_retention import BUDGET
 from staging_cd_buildkit_cache_inventory_tests import blob, index
 from staging_cd_cache_retention_tests import CLOCK, Inventory, ROOT, entry
@@ -120,11 +121,41 @@ class NativeRecovery(unittest.TestCase):
         newest = (6 + MAX_INDEX_RETIREMENTS, 7 + MAX_INDEX_RETIREMENTS)
         for ordinal in newest:
             self.api.rows[ordinal] = index(ordinal)
+        old_keys = {self.idx.key, *(self.api.rows[ordinal].key for ordinal in old_ids)}
+        self.read_index.side_effect = lambda key, _: (
+            {self.orphan.key, self.other_orphan.key} if key in old_keys else {self.reachable.key})
         result = self.run_recovery(retire_indexes=True)
         self.assertEqual(result["confirmed_retired_indexes"], MAX_INDEX_RETIREMENTS)
         self.assertEqual(self.api.delete.call_count, MAX_INDEX_RETIREMENTS)
+        self.assertEqual(result["projected_newly_unreachable_bytes"], 0)
         self.assertTrue(set(newest) <= self.api.rows.keys())
         self.assertIn(self.orphan.id, self.api.rows)
+
+        remaining = self.run_recovery(retire_indexes=True)
+        self.assertEqual((remaining["status"], remaining["confirmed_retired_indexes"]), ("indexes-retired", 1))
+        self.assertIn(self.orphan.id, self.api.rows)
+        self.assertEqual(self.run_recovery(retire_indexes=True)["status"], "recovered")
+        self.assertTrue(set(newest) <= self.api.rows.keys())
+
+    def test_recovery_retires_indexes_that_together_cover_the_shortfall(self):
+        old, shared_a, shared_b, spare, latest = (index(i) for i in (1, 6, 7, 8, 9))
+        # The oldest index is eligible but its unique blob cannot cover the gap.
+        # The pair can unlock the larger blob only when both are retired.
+        self.api = BuildKitInventory(old, shared_a, shared_b, spare, latest, self.orphan,
+                                     self.other_orphan, self.reachable, self.unrelated)
+        references = {old.key: {self.other_orphan.key},
+                      shared_a.key: {self.orphan.key}, shared_b.key: {self.orphan.key},
+                      spare.key: {self.reachable.key}, latest.key: {self.reachable.key}}
+        self.api.rows[self.unrelated.id] = replace(self.unrelated, size=BUDGET - 120)
+        self.read_index.side_effect = lambda key, _: references[key]
+        result = self.run_recovery(retire_indexes=True)
+        self.assertEqual(result["status"], "indexes-retired")
+        self.assertEqual(result["confirmed_retired_indexes"], 2)
+        self.assertEqual(result["projected_newly_unreachable_bytes"], self.orphan.size)
+        self.assertEqual([call.args[0] for call in self.api.delete.call_args_list], [shared_a.id, shared_b.id])
+        self.assertIn(old.id, self.api.rows)
+        self.assertIn(self.orphan.id, self.api.rows)
+        self.assertTrue({spare.id, latest.id} <= self.api.rows.keys())
 
     def test_retirement_stops_if_a_replacement_disappears_after_observation(self):
         self.add_replacement_indexes()
@@ -165,3 +196,27 @@ class NativeRecovery(unittest.TestCase):
         retirement_step = next(step for step in job["steps"] if "CD_LEGACY_BUILDKIT_INDEX_RETIREMENT" in step.get("env", {}))
         self.assertIn("vars.CMA_LEGACY_BUILDKIT_INDEX_RETIREMENT == 'true'",
                       retirement_step["env"]["CD_LEGACY_BUILDKIT_INDEX_RETIREMENT"])
+
+    def test_automatic_inspection_requires_successful_staging_and_observed_pressure(self):
+        jobs = yaml.safe_load((ROOT / '.github/workflows/cache-retention.yml').read_text())['jobs']
+        sweep, inspect = jobs['sweep'], jobs['inspect_buildkit']
+        self.assertEqual(sweep['outputs'], {
+            'observed_bytes_to_admit': '${{ steps.preview.outputs.observed_bytes_to_admit }}',
+        })
+        preview = next(step for step in sweep['steps'] if step.get('id') == 'preview')
+        self.assertEqual(preview['run'], 'python3 -B .github/scripts/actions_cache_sweep.py')
+        self.assertEqual(inspect['needs'], 'sweep')
+        for condition in (
+            "github.event_name == 'workflow_dispatch' && inputs.inspect_buildkit",
+            "github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push'",
+            "github.event.workflow_run.head_repository.full_name == github.repository",
+            "github.event.workflow_run.path == '.github/workflows/staging-cd.yml'",
+            "github.event.workflow_run.conclusion == 'success'",
+            "vars.CMA_LEGACY_BUILDKIT_GC != 'true' && needs.sweep.result == 'success'",
+            "fromJSON(needs.sweep.outputs.observed_bytes_to_admit || '0') > 0",
+        ):
+            self.assertIn(condition, inspect['if'])
+        self.assertEqual(inspect['cache-mode'], 'read')
+        self.assertEqual(inspect['permissions'], {'actions': 'read', 'contents': 'read'})
+        self.assertFalse(inspect['concurrency']['cancel-in-progress'])
+        self.assertNotEqual(inspect['concurrency']['group'], jobs['recover_native_buildkit']['concurrency']['group'])

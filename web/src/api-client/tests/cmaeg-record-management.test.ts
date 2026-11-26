@@ -42,7 +42,7 @@ describe('channel record management', () => {
     },
     { ...valid, retirement_expected_version: null },
     { ...valid, pending_operation: null },
-    ...['create', 'update', 'delete', 'audit_routing', 'audit_attachments'].map(
+    ...['create', 'update', 'profile_revision', 'delete', 'audit_routing', 'audit_attachments'].map(
       (pending_operation) => ({ ...valid, pending_operation }),
     ),
     { state: 'invalid' },

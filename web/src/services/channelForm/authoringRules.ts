@@ -34,11 +34,6 @@ const extendedWrites = (discovery: RelayDiscovery) =>
 const extendedWritesOff = (discovery: RelayDiscovery) =>
   discovery.authoring !== undefined && discovery.authoring.dynamic_sources_writes_enabled !== true;
 
-/** Chat producers, including a managed connection, reply to the original conversation. */
-export function repliesToOrigin(draft: Fields): boolean {
-  return draft.connection_ref !== undefined || hasChat(sourceTypes(draft.sources));
-}
-
 /** The gateway's legacy partition predicate (`PartitionRule::validate_legacy`). */
 function legacyPartitionIssue(key: string, types: readonly string[]): AuthoringIssue | undefined {
   const custom = types.includes('custom');
@@ -186,15 +181,12 @@ export function nextSink(sinks: readonly Fields[]): Fields {
   return type ? { type } : { type: 'result_webhook', url: '', hmac_key_id: '' };
 }
 
-export function replyIssue(
-  reply: unknown,
-  toOrigin: boolean,
-  previous?: unknown,
-): AuthoringIssue | undefined {
+export function replyIssue(reply: unknown, previous?: unknown): AuthoringIssue | undefined {
   const value = object(reply);
   const sinks = records(value.sinks);
+  const old = object(previous);
   // Repeats a saved channel already had are not re-judged; they deliver nothing extra.
-  const saved = records(object(previous).sinks).map(sinkSignature);
+  const saved = records(old.sinks).map(sinkSignature);
   const repeatedBefore = (signature: string) =>
     saved.filter((item) => item === signature).length > 1;
   for (let index = 1; index < sinks.length; index++) {
@@ -206,10 +198,10 @@ export function replyIssue(
         message: `Reply destination ${index + 1} repeats destination ${duplicate + 1}. Remove it or choose a different destination.`,
       };
   }
-  // Chat replies go back to their conversation without a listed destination. A saved
-  // channel that already has no destination keeps its existing behavior.
-  const removedLast = previous === undefined || records(object(previous).sinks).length > 0;
-  if (value.auto_final === true && sinks.length === 0 && !toOrigin && removedLast)
+  // Existing channels may already rely on the gateway's implicit chat reply.
+  // Removing a destination or turning on automatic replies requires an explicit choice.
+  const retainedAutomatic = old.auto_final === true && saved.length === 0;
+  if (value.auto_final === true && sinks.length === 0 && !retainedAutomatic)
     return {
       path: '/reply/sinks',
       message:
@@ -244,6 +236,6 @@ export function validateAuthoringRules(discovery: RelayDiscovery, next: Fields, 
     (changed('partition') || changed('sources')
       ? partitionIssue(discovery, next.partition, next.sources)
       : undefined) ??
-    (changed('reply') ? replyIssue(next.reply, repliesToOrigin(next), previous?.reply) : undefined);
+    (changed('reply') ? replyIssue(next.reply, previous?.reply) : undefined);
   if (issue) throw new Error(`${issue.path}: ${issue.message}`);
 }

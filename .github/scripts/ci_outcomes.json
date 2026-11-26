@@ -695,6 +695,12 @@
           "cause": "transient",
           "next": "Re-run the failed jobs."
         },
+        "DEVELOP_ADVERTISEMENT_UNSETTLED": {
+          "title": "Advertised develop history does not settle the push",
+          "meaning": "The live ref and its available first-parent history did not establish that this push is current or superseded.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs after develop's ref and history agree with the push."
+        },
         "INVENTORY_CLAIM_CONFLICT": {
           "title": "Claim and reservation differ",
           "meaning": "A version claim and the pending reservation of its version name different objects in one tag advertisement, so the inventory is damaged and every read repeats it.",

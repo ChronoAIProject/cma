@@ -31,7 +31,7 @@ class DevelopHistory:
         return cls.from_head(reference["object"]["sha"], root=root, runner=runner)
 
     @classmethod
-    def from_head(cls, head, *, root=None, runner=subprocess.run):
+    def from_head(cls, head, *, root=None, runner=subprocess.run, depth=None):
         require(matches(r"[0-9a-f]{40}", head), "Develop head could not be verified")
         # This repository is public. History reads need no publication, App or
         # deployment credential, and never update a branch or the worktree.
@@ -50,10 +50,18 @@ class DevelopHistory:
 
         shallow = git("rev-parse", "--is-shallow-repository")
         require(shallow in ("true", "false"), "Develop ancestry completeness is unknown")
-        git("fetch", "--no-tags", "--filter=blob:none", *(["--unshallow"] if shallow == "true" else []),
-            "https://github.com/ChronoAIProject/cma.git", head)
-        require(git("rev-parse", "--is-shallow-repository") == "false",
-                "Develop ancestry is incomplete")
+        if depth is None:
+            git("fetch", "--no-tags", "--filter=blob:none", *(["--unshallow"] if shallow == "true" else []),
+                "https://github.com/ChronoAIProject/cma.git", head)
+            require(git("rev-parse", "--is-shallow-repository") == "false",
+                    "Develop ancestry is incomplete")
+        else:
+            # Planning needs only a positive first-parent witness. Fetching a
+            # bounded history for the advertised commit leaves the checkout pinned.
+            depth_option = (f"--depth={depth}",) if shallow == "true" else ()
+            git("fetch", "--no-tags", "--filter=blob:none", *depth_option, "--no-write-fetch-head",
+                "https://github.com/ChronoAIProject/cma.git", head)
         # Membership in this chain proves ancestry and excludes a merged PR's
         # side-branch commits. SemVer and tag creation time do not order sources.
-        return cls(head, git("rev-list", "--first-parent", head).splitlines())
+        limit = () if depth is None else (f"--max-count={depth}",)
+        return cls(head, git("rev-list", "--first-parent", *limit, head).splitlines())

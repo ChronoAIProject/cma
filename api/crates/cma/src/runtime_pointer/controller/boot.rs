@@ -1,5 +1,6 @@
 //! Publish the early writer before configuring or draining any native pool.
 use super::*;
+use crate::warm_pools::startup::WarmPoolStartup;
 
 impl RuntimePointerController {
     pub(crate) async fn register_boot(&self) -> Result<(), String> {
@@ -121,22 +122,28 @@ impl RuntimePointerController {
     pub(crate) async fn await_active_ready(
         &self,
         admission: Option<&crate::startup::Admission>,
-    ) -> Result<(), String> {
+    ) -> Result<WarmPoolStartup, String> {
         for _ in 0..3 {
             let before = self.release.snapshot();
             let ready = self
                 .pools
                 .await_default_ready_as(admission, Some((&self.release.lanes, &self.writer)))
                 .await;
-            if admission.is_some_and(crate::startup::Admission::is_draining) {
-                return Ok(());
+            let stopping = || admission.is_some_and(crate::startup::Admission::is_draining);
+            if stopping() || matches!(&ready, Ok(WarmPoolStartup::Stopping)) {
+                return Ok(WarmPoolStartup::Stopping);
             }
-            let after = self
-                .release
-                .refresh()
-                .await
-                .map_err(|error| error.to_string())?;
-            if before.agent == after.agent {
+            let after = self.release.refresh().await;
+            if stopping() {
+                return Ok(WarmPoolStartup::Stopping);
+            }
+            let after = after.map_err(|error| error.to_string())?;
+            let same_agent_revision = before.lane_revisions.map(|revisions| revisions.agent)
+                == after.lane_revisions.map(|revisions| revisions.agent);
+            if before.agent == after.agent
+                && (same_agent_revision
+                    || !matches!(&ready, Ok(WarmPoolStartup::CapacityDeferred(_))))
+            {
                 return ready.map_err(|error| {
                     format!("native warm pool startup readiness failed: {error:?}")
                 });

@@ -16,6 +16,7 @@ import { retainAgentShareForSignIn } from '../resources/agentShareToken';
 import { retainTaskViewer } from '../create/taskIdentity';
 import { retainAgentDraftOwner } from '../agent/draftIdentity';
 import { clearAgentTransport } from '../agent/transport/journal';
+import { clearNewChannelDraft } from '../services/channelForm/newChannelDraft';
 import { retainPreparationDraftOwner } from '../preparation/preparationDraftIdentity';
 import { releaseNavigationGuard } from '../routing/navigationGuard';
 import {
@@ -66,6 +67,7 @@ function clearSignedOutTab() {
   retainTaskViewer();
   retainAgentDraftOwner();
   retainPreparationDraftOwner();
+  clearNewChannelDraft();
   try {
     clearAgentTransport(sessionStorage);
   } catch {

@@ -5,6 +5,7 @@ from datetime import date
 import json
 import os
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -30,8 +31,8 @@ class CacheTests(unittest.TestCase):
                     "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "CD_COMPONENT": "eg",
                     "RUNNER_TEMP": str(self.root), "CD_TASKS": json.dumps([{"component": "eg", "mode": "resume"}])}
 
-    def cache(self):
-        return BuildCache(ROOT, self.env, ROOT, "eg")
+    def cache(self, *, day=None):
+        return BuildCache(ROOT, self.env, ROOT, "eg", cache_day=day)
 
     def populate(self, directory, target_member="release/incremental/synthetic/work-products.bin"):
         directory.mkdir()
@@ -62,6 +63,86 @@ class CacheTests(unittest.TestCase):
                 self.assertEqual(cache.export_retained_groups, 2)
                 self.assertFalse((cache.accepted / "compacted").exists())
                 tool.validate_bundle(cache.accepted, cache.key.prefix, family=cache.key.family)
+
+    def test_background_export_keeps_the_previous_seed_until_accepted(self):
+        cache = self.cache()
+        self.populate(cache.accepted)
+        tool = bridge()
+        tool.seal(cache.accepted, cache.key.prefix)
+        before = (cache.accepted / "manifest.json").read_bytes()
+        process = Mock()
+        process.wait.return_value = 0
+        process.poll.return_value = 0
+
+        def start(candidate, _context, **kwargs):
+            self.assertEqual(kwargs["namespace"], cache.namespace)
+            self.populate(candidate, target_member="release/incremental/new-seed/work-products.bin")
+            return process
+
+        with patch("staging_cd_build_cache.bridge", return_value=tool), \
+                patch.object(tool, "start_extract", side_effect=start):
+            with cache.background_export(self.root) as finish:
+                process.wait.assert_not_called()
+                self.assertEqual((cache.accepted / "manifest.json").read_bytes(), before)
+                self.assertTrue(finish())
+        self.assertNotEqual((cache.accepted / "manifest.json").read_bytes(), before)
+        tool.validate_bundle(cache.accepted, cache.key.prefix, family=cache.key.family)
+
+    def test_rejected_publication_terminates_the_running_export(self):
+        cache = self.cache()
+        tool = bridge()
+        with subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                              start_new_session=True) as process:
+            try:
+                with patch("staging_cd_build_cache.bridge", return_value=tool), \
+                        patch.object(tool, "start_extract", return_value=process):
+                    with self.assertRaisesRegex(Refusal, "fixture registry refused"):
+                        with cache.background_export(self.root):
+                            self.assertIsNone(process.poll())
+                            raise Refusal("fixture registry refused")
+                self.assertIsNotNone(process.poll())
+                self.assertFalse(cache.accepted.exists())
+            finally:
+                if process.poll() is None:
+                    process.kill()
+
+    def test_background_export_deducts_time_already_spent_publishing(self):
+        cache = self.cache()
+        tool = bridge()
+        process = Mock()
+        process.wait.side_effect = subprocess.TimeoutExpired("buildx", 80)
+        process.poll.return_value = None
+        with patch("staging_cd_build_cache.bridge", return_value=tool), \
+                patch.object(tool, "start_extract", return_value=process), \
+                patch("staging_cd_build_cache.time.monotonic", side_effect=[100, 380]), \
+                patch("staging_cd_build_cache.terminate") as terminate:
+            with cache.background_export(self.root) as finish:
+                self.assertFalse(finish())
+        process.wait.assert_called_once_with(timeout=80)
+        terminate.assert_called_once_with(process, grace_seconds=0)
+        self.assertEqual(cache.export_reason, "transfer-failed")
+        self.assertFalse(cache.accepted.exists())
+
+    def test_cache_output_failure_is_reported_as_withheld(self):
+        from staging_cd_publish import record_cache_export
+
+        cache = self.cache()
+        metrics = []
+        record_cache_export(cache, True, dict(self.env, GITHUB_OUTPUT=str(self.root)), metrics)
+        self.assertEqual(metrics, [{"operation": "export", "result": "withheld", "reason": "invalid"}])
+
+    def test_overlap_leaves_room_for_the_cache_and_registry_copies(self):
+        from staging_cd_build_cache import MAX_BUNDLE_BYTES
+
+        cache = self.cache()
+        archive = self.root / "image.tar"
+        archive.write_bytes(b"fixture")
+        required = 7 + 3 * MAX_BUNDLE_BYTES
+        with patch("staging_cd_build_cache.shutil.disk_usage", return_value=Mock(free=required - 1)) as disk:
+            self.assertFalse(cache.can_overlap_export(archive))
+            disk.return_value.free = required
+            self.assertTrue(cache.can_overlap_export(archive))
+        self.assertFalse(cache.can_overlap_export(self.root / "missing-image.tar"))
 
     def test_legacy_layer_cache_is_read_only(self):
         for event, ref in [('push', 'refs/heads/develop'),
@@ -248,17 +329,13 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(transfer.call_count, 2)
 
     def test_yesterdays_bundle_seeds_only_incremental_state_after_midnight(self):
-        import staging_cd_build_cache
         tool = bridge()
         yesterday, today = date(2026, 11, 20), date(2026, 11, 21)
-        with patch.object(staging_cd_build_cache, 'identity',
-                          side_effect=lambda root, component: identity(root, component, day=yesterday)):
-            producer = self.cache()
+        producer = self.cache(day=yesterday)
         self.populate(producer.accepted)
         tool.seal(producer.accepted, producer.key.prefix, family=producer.key.family)
-        with patch.object(staging_cd_build_cache, 'identity',
-                          side_effect=lambda root, component: identity(root, component, day=today)):
-            cache = self.cache()
+        cache = self.cache(day=today)
+        self.assertEqual(self.cache(day=producer.cache_day).key, producer.key)
         self.assertEqual(cache.key.family, producer.key.family)
         self.assertNotEqual(cache.key.prefix, producer.key.prefix)
         with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
@@ -391,6 +468,8 @@ class CacheTests(unittest.TestCase):
         archive, digest, registry, _, runner = fixtures.PublicationTests().fixture(self.root)
         cache = Mock(restore_result=result)
         cache.restore.return_value = True
+        finish_export = Mock()
+        cache.background_export.return_value = contextlib.nullcontext(finish_export)
         scanner = Mock(side_effect=ScanRefusal('synthetic refusal'))
         real_publish = publication.publish
         def publish(*args, **kwargs):
@@ -411,7 +490,8 @@ class CacheTests(unittest.TestCase):
         build.assert_called_once()
         scanner.assert_called_once()
         runner.assert_not_called()
-        cache.export_mounts.assert_not_called()
+        cache.background_export.assert_not_called()
+        finish_export.assert_not_called()
         self.assertFalse(Path(env['CD_RECEIPTS_PATH']).exists())
 
     def test_build_receives_cache_runtime_without_changing_image_arguments(self):
@@ -499,8 +579,12 @@ class CacheTests(unittest.TestCase):
         self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'", workflow)
         self.assertIn("run: python3 -B .github/scripts/staging_cd_cargo_artifact.py", workflow)
         self.assertIn("CD_CARGO_CACHE_FAMILY: ${{ steps.build-cache.outputs.family }}", workflow)
+        self.assertIn("CD_CARGO_CACHE_PREFIX: ${{ steps.build-cache.outputs.prefix }}", workflow)
         self.assertIn("name: ${{ steps.publication.outputs.build-cache-artifact }}", workflow)
-        self.assertIn("path: ${{ steps.build-cache.outputs.directory }}", workflow)
+        self.assertIn("path: ${{ steps.publication.outputs.build-cache-directory }}", workflow)
+        self.assertIn("if: steps.cargo-bundle.outcome == 'success'", workflow)
+        self.assertIn("name: ${{ steps.publication.outputs.build-cache-index }}", workflow)
+        self.assertIn("path: ${{ steps.publication.outputs.build-cache-directory }}/manifest.json", workflow)
         self.assertIn('actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd', workflow)
         self.assertIn('core.setSecret(value)', workflow)
         self.assertNotIn('core.info(value)', workflow)
