@@ -2,9 +2,9 @@ name: Staging CD catch-up
 
 # Allocation skips a lane while another run owns it. When that owner fails and
 # no push follows, nothing re-plans the lane; nor does anything re-deploy a
-# published final whose staging deployment failed. After every Staging CD run,
-# and hourly as a backstop, re-run the develop head's own push run once if a
-# lane was left behind. A re-run attempt is the same develop push event, so
+# published final whose staging deployment failed. Check after every Staging CD
+# run and every ten minutes. If a lane was left behind, re-run the develop head's
+# own push run once. A re-run attempt is the same develop push event, so
 # staging-cd.yml stays push-only and keeps every authority check.
 on:
   workflow_run:
@@ -12,7 +12,7 @@ on:
     types: [completed]
     branches: [develop]
   schedule:
-    - cron: '23 * * * *'
+    - cron: '3-59/10 * * * *'
 
 permissions: {}
 
