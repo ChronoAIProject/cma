@@ -134,10 +134,11 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
       {case: 'prepared_browser'}));
   }});
   const coverage = writerCoverage(registry, [], journey, 'prepared');
-  const verdict = journey.verdict === 'LOCAL_PREPARED_TWO_AM_PASS' && coverage.verdict === 'PASS'
-    ? 'PASS' : 'FAIL';
+  const journeyVerdict = journey.verdict === 'LOCAL_PREPARED_TWO_AM_PASS' ? 'PASS' : 'FAIL';
+  const verdict = journeyVerdict === 'PASS' && coverage.verdict === 'PASS' ? 'PASS' : 'FAIL';
   await writeFile(join(config.summary_dir, 'coverage.json'), JSON.stringify({
     schema: 'multi-am-prepared-coverage-v1', suite_verdict: verdict, source: config.expected_api_source,
+    journey_verdict: journeyVerdict,
     writer_coverage: coverage,
     steps: journey.steps.map(({name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
