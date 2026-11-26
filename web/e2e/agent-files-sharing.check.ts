@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
 import type { AgentShareLink } from '../src/api-client/index';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
@@ -6,6 +7,14 @@ import { LocalStartup, localTime } from './agent-startup-fixtures';
 // Public HTTP fixtures exercise the full browser UI, not a running Sandbox/backend.
 const longName = 'research-findings-with-a-deliberately-long-filename-for-truncation.md';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
+
+function hold() {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
 
 async function files(page: Page, writable = true) {
   await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
@@ -368,13 +377,20 @@ for (const { access, unavailable } of [
     await boundary.route(page, baseURL!);
     const filesystem = await files(page, access !== 'reader');
     let accessUnavailable = false;
+    let sharedTitle = 'Shared Agent';
+    let revalidateAt: string | null = null;
+    let revalidation: Promise<void> | undefined;
+    if (access === 'reader') {
+      await page.clock.install({ time: new Date(localTime) });
+      revalidateAt = new Date(Date.parse(localTime) + 30_000).toISOString();
+    }
     if (access !== 'owner') {
       await page.route('**/api/v1/agents/agt_contract', (route) =>
         route.fulfill({
           json: {
             access: 'shared',
             id: 'agt_contract',
-            title: 'Shared Agent',
+            title: sharedTitle,
             status: 'ready',
             created_at: localTime,
             updated_at: localTime,
@@ -412,6 +428,7 @@ for (const { access, unavailable } of [
     await page.route('**/api/v1/agents/agt_contract/environment', async (route) => {
       started();
       await completion;
+      await revalidation;
       if (unavailable) {
         return route.fulfill({
           status: 503,
@@ -429,7 +446,7 @@ for (const { access, unavailable } of [
           agent_id: 'agt_contract',
           policy_revision: 1,
           runtime_incarnation: null,
-          revalidate_at: null,
+          revalidate_at: revalidateAt,
           files: {
             state: 'available',
             reason: 'authorized_mounted_home',
@@ -491,7 +508,15 @@ for (const { access, unavailable } of [
           await expect(
             computer.getByRole('button', { name: 'notes.md', exact: true }),
           ).toBeVisible();
+          sharedTitle = `Shared Agent checked at ${width}px`;
           await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+          if (access !== 'owner') {
+            // Observe the published access result before sending another focus event.
+            // Foreground events coalesce while an access read is pending.
+            await expect(
+              page.getByRole('heading', { name: sharedTitle, exact: true }),
+            ).toBeAttached();
+          }
           await expect(computer.getByLabel('Current directory')).toContainText('/home/cma');
         }
         if (access !== 'owner') {
@@ -505,6 +530,64 @@ for (const { access, unavailable } of [
           await expect(
             computer.getByRole('button', { name: 'notes.md', exact: true }),
           ).toBeVisible();
+        }
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await computer.getByRole('button', { name: 'Sandbox root /home/', exact: true }).click();
+        await computer.getByRole('checkbox', { name: 'Show hidden' }).check();
+        await computer.getByRole('button', { name: '.dockerignore', exact: true }).click();
+        const preview = computer.getByRole('textbox', { name: 'Contents of .dockerignore' });
+        const dotfile = filesystem.contents.get('.dockerignore')!;
+        await expect(preview).toHaveValue(dotfile);
+        const downloadButton = computer.getByRole('button', { name: 'Download file' });
+        const downloadPath = '**/agt_contract/files/download?path=.dockerignore';
+        const downloadDotfile = async () => {
+          const [download] = await Promise.all([
+            page.waitForEvent('download', { timeout: 5_000 }),
+            downloadButton.click(),
+          ]);
+          expect(download.suggestedFilename()).toMatch(/^\.?dockerignore$/);
+          expect(await readFile((await download.path())!, 'utf8')).toBe(dotfile);
+        };
+        await downloadDotfile();
+        if (access === 'reader') {
+          const holdDownload = hold();
+          const holdAccess = hold();
+          await page.route(
+            downloadPath,
+            async (route) => {
+              await holdDownload.promise;
+              await route.abort();
+            },
+            { times: 1 },
+          );
+          try {
+            await Promise.all([page.waitForRequest(downloadPath), downloadButton.click()]);
+            await expect(computer.getByText('Downloading file…')).toBeVisible();
+            revalidateAt = null;
+            revalidation = holdAccess.promise;
+            await page.clock.fastForward(31_000);
+            await expect(computer.getByText('Checking file access…')).toBeVisible();
+            holdAccess.release();
+            const interrupted = 'Download was interrupted. Try downloading the file again.';
+            await expect(computer.getByRole('alert')).toContainText(interrupted);
+          } finally {
+            holdAccess.release();
+            holdDownload.release();
+          }
+          await downloadDotfile();
+          await page.route(
+            downloadPath,
+            (route) => route.fulfill({ status: 404, json: { code: 'resource_not_found' } }),
+            { times: 1 },
+          );
+          const unexpectedDownloads: string[] = [];
+          page.on('download', (download) => unexpectedDownloads.push(download.suggestedFilename()));
+          await downloadButton.click();
+          const denied =
+            'File access is no longer available. Ask the Agent owner to check your access.';
+          await expect(page.getByRole('alert').filter({ hasText: denied })).toBeVisible();
+          await expect(preview).toHaveCount(0);
+          expect(unexpectedDownloads).toEqual([]);
         }
       }
       await expect(filesTab).toHaveAttribute('aria-selected', 'true');

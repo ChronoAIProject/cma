@@ -185,6 +185,32 @@ it.each(['null', '[]', '"unexpected"', '{'])(
   },
 );
 
+it.each([
+  [401, 'not_authenticated', 'Sign in again to download the file.'],
+  [404, 'resource_not_found', 'File access is no longer available.'],
+  [503, 'file_unavailable', 'Download failed. Try downloading the file again.'],
+])('decodes a file download refusal with HTTP %i', async (status, code, message) => {
+  vi.stubGlobal('fetch', async () => Response.json({ code }, { status }));
+  await expect(agentFilesClient().download('agent', 'a.txt')).rejects.toMatchObject({
+    status,
+    code,
+    message: expect.stringContaining(message),
+  });
+});
+
+it('rejects HTML at the file download endpoint without accepting redirects', async () => {
+  const headers = { 'content-type': 'text/html' };
+  const fetcher = vi.fn(async () => new Response('<html>Sign in</html>', { headers }));
+  vi.stubGlobal('fetch', fetcher);
+  await expect(agentFilesClient().download('agent', 'a.txt')).rejects.toMatchObject({
+    code: 'invalid_file_download',
+  });
+  expect(fetcher).toHaveBeenCalledWith(
+    '/api/v1/agents/agent/files/download?path=a.txt',
+    expect.objectContaining({ cache: 'no-store', credentials: 'same-origin', redirect: 'error' }),
+  );
+});
+
 it('includes late headers and metadata cancellation in the four-second preview budget', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] });
   const cancel = vi.fn();

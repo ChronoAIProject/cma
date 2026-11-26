@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import { useAgentAccess } from './agentAccess';
 import { useOwnerViews } from './retainedOwnerViews';
@@ -14,6 +14,19 @@ export function useConsoleAgentAccess(
   const ownerViews = useOwnerViews();
   const authority = useMemo(() => ({ client, authEpoch }), [client, authEpoch]);
   const agentAccess = useAgentAccess(client.resourceViews, agentId, viewerId, authority);
+  const downloadScope = useMemo(
+    () => ({ authority, agentId, viewerId }),
+    [authority, agentId, viewerId],
+  );
+  const [denial, setDenial] = useState<{ scope: typeof downloadScope; message: string }>();
+  const reload = agentAccess.reload;
+  const onFileAccessChanged = useCallback(
+    (message?: string) => {
+      if (message) setDenial({ scope: downloadScope, message });
+      reload();
+    },
+    [downloadScope, reload],
+  );
   // A returning personal view already owns a transport. Its reopen path checks
   // identity itself; preparing another selection would add competing reads.
   const [opening, setOpening] = useState({
@@ -54,5 +67,10 @@ export function useConsoleAgentAccess(
       retired,
     agentAccess.personalLineage,
   );
-  return { agentAccess, accessUncertain, shared, personalAgentId };
+  const fileDownload = {
+    message: denial?.scope === downloadScope ? denial.message : undefined,
+    dismiss: () => setDenial(undefined),
+    onAccessChanged: onFileAccessChanged,
+  };
+  return { agentAccess, accessUncertain, shared, personalAgentId, fileDownload };
 }

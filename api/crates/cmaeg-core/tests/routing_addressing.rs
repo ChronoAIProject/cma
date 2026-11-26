@@ -9,7 +9,7 @@ use cmaeg_core::{
     activity::{Activity, RouteResolution},
     channel::ChannelDefinition,
     routing::{
-        addressing::{parse, Addressed},
+        addressing::{parse, validate_legacy_command, Addressed},
         RouteError,
     },
 };
@@ -75,6 +75,29 @@ fn two_relays() -> ChannelDefinition {
         telegram["bot_username"] = "tgbot".into();
         value["sources"] = json!([policy::relay("lark", policy::ROUTE), telegram]);
     })
+}
+
+#[test]
+fn legacy_relay_commands_require_the_explicit_default_target() {
+    let def = two_relays();
+    for (text, expected) in [
+        ("ordinary message", Ok(())),
+        ("/to default hello", Ok(())),
+        ("/to main hello", Ok(())),
+        ("/to@tgbot default hello", Ok(())),
+        (
+            "/to absent-fixture hello",
+            Err(RouteError::TargetUnknown("absent-fixture".into())),
+        ),
+        ("/to reviewer hello", Err(RouteError::KillSwitchClosed)),
+    ] {
+        let activity = message(relay_telegram(), text);
+        assert_eq!(
+            validate_legacy_command(&def, &activity, def.source_of(&activity.source)),
+            expected,
+            "{text}"
+        );
+    }
 }
 
 #[test]

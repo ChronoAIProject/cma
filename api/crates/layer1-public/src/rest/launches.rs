@@ -26,6 +26,10 @@ use super::BodyProblem;
 pub(super) fn routes() -> Router<TriggerRoutesState> {
     Router::new()
         .route("/api/v1/triggers/public/{public_id}/launches", post(create))
+        .route(
+            "/api/v2/triggers/public/{public_id}/launches",
+            post(super::launch_subject::create_bound),
+        )
         .route("/api/v1/launches", get(list))
         .route("/api/v1/launches/{id}", get(read))
         .route("/api/v1/launches/{id}/events", get(events))

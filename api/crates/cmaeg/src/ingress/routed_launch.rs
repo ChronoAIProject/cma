@@ -191,6 +191,9 @@ impl IngressState {
         if let Some(refusal) = custom::refusal(&request) {
             return refusal;
         }
+        if let Err(problem) = validate_legacy_command(&request) {
+            return LaunchOutcome::Refused(problem);
+        }
         self.launcher.launch_holding(request, hold).await
     }
 }

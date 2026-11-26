@@ -53,7 +53,7 @@ jobs:
       - name: Create restricted infrastructure reader token
         id: infra-token
         continue-on-error: true
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
         with:
           app-id: ${{ vars.CMA_INFRA_APP_ID }}
           private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
@@ -63,7 +63,7 @@ jobs:
       - name: Retry restricted infrastructure reader token
         id: infra-token-retry
         if: steps.infra-token.outcome == 'failure'
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
         with:
           app-id: ${{ vars.CMA_INFRA_APP_ID }}
           private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}

@@ -68,32 +68,53 @@ describe('scoped resource journal', () => {
       ).toBe(true);
     }
   });
-  it('tracks only admitted Launch resolutions and never owns reused resources', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'cma-e2e-ledger-'));
-    const journal = new Journal(directory, 'test-run');
-    const body = {
-      id: 'launch-test',
-      resolution: {
-        sandbox: { state: 'reused', id: 'existing-sandbox' },
-        workspace: { state: 'created', id: 'workspace-test' },
-        agent: { state: 'pending' },
-      },
-    };
-    journal.observe('/api/v1/launches/launch-test', 'GET', 200, body, 'visitor-test');
-    expect(journal.resources).toEqual([]);
+  it.each(['v1', 'v2'])(
+    'tracks only admitted %s Launch resolutions and never owns reused resources',
+    (version) => {
+      const directory = mkdtempSync(join(tmpdir(), 'cma-e2e-ledger-'));
+      const journal = new Journal(directory, 'test-run');
+      const body = {
+        id: 'launch-test',
+        resolution: {
+          sandbox: { state: 'reused', id: 'existing-sandbox' },
+          workspace: { state: 'created', id: 'workspace-test' },
+          agent: { state: 'pending' },
+        },
+      };
+      journal.observe('/api/v1/launches/launch-test', 'GET', 200, body, 'visitor-test');
+      expect(journal.resources).toEqual([]);
+      journal.observe(
+        `/api/${version}/triggers/public/public-test/launches`,
+        'POST',
+        202,
+        body,
+        'visitor-test',
+      );
+      expect(journal.resources.map((row) => row.kind)).toEqual(['launches', 'workspaces']);
+      journal.observe('/api/v1/launches/launch-test', 'GET', 200, body, 'visitor-test');
+      expect(journal.resources).toHaveLength(2);
+      expect(readFileSync(join(directory, 'cleanup.ndjson'), 'utf8')).not.toContain(
+        'existing-sandbox',
+      );
+    },
+  );
+  it('does not own refused, read-only or unsupported Launch routes', () => {
+    const journal = new Journal(mkdtempSync(join(tmpdir(), 'cma-e2e-ledger-')), 'test-run');
+    for (const version of ['v1', 'v2']) {
+      const path = `/api/${version}/triggers/public/public-test/launches`;
+      for (const status of [400, 401, 403, 409, 422, 429, 503])
+        journal.observe(path, 'POST', status, { id: 'not-admitted' }, 'visitor-test');
+      journal.observe(path, 'GET', 200, { id: 'read-only' }, 'visitor-test');
+      journal.observe(`${path}/extra`, 'POST', 201, { id: 'wrong-route' }, 'visitor-test');
+    }
     journal.observe(
-      '/api/v1/triggers/public/public-test/launches',
+      '/api/v3/triggers/public/public-test/launches',
       'POST',
-      202,
-      body,
+      201,
+      { id: 'unsupported' },
       'visitor-test',
     );
-    expect(journal.resources.map((row) => row.kind)).toEqual(['launches', 'workspaces']);
-    journal.observe('/api/v1/launches/launch-test', 'GET', 200, body, 'visitor-test');
-    expect(journal.resources).toHaveLength(2);
-    expect(readFileSync(join(directory, 'cleanup.ndjson'), 'utf8')).not.toContain(
-      'existing-sandbox',
-    );
+    expect(journal.resources).toEqual([]);
   });
   it('does not journal refusals or an arbitrary existing resource read', () => {
     const journal = new Journal(mkdtempSync(join(tmpdir(), 'cma-e2e-ledger-')), 'test-run');

@@ -87,7 +87,7 @@ export function AgentHeader({
     const item = [...menu, ...moreActions].find((item) => item.id === id && !('type' in item));
     return item ? { ...item, label } : { id, label, disabled: true, reason };
   };
-  const items: MenuEntry[] = [
+  const taskItems: MenuEntry[] = [
     action('rename-agent', 'Rename', 'Only the task owner can rename it.'),
     action(
       'update-prompt',
@@ -123,6 +123,8 @@ export function AgentHeader({
     ...(remove && !('type' in remove) ? [{ ...remove, label: 'Delete task', danger: true }] : []),
     ...(removeEnvironment ? [removeEnvironment] : []),
   ];
+  const taskItemIds = new Set(taskItems.map(({ id }) => id));
+  const suppliedItems = menu.filter(({ id }) => !taskItemIds.has(id));
   return (
     <header className="agent-toolbar">
       <div className="agent-toolbar__identity">
@@ -179,7 +181,7 @@ export function AgentHeader({
           align="end"
           placement="agent-toolbar__menu"
           label="More Agent actions"
-          items={items}
+          items={[...suppliedItems, ...taskItems]}
           anchor={
             <Button
               size="sm"
@@ -206,7 +208,12 @@ export function AgentHeader({
               id === 'export_retained_conversation'
             )
               onMoreAction?.(id);
-            else onMenuSelect?.(id);
+            else {
+              const item = suppliedItems.find((entry) => entry.id === id);
+              if (item && !('type' in item) && item.href !== undefined)
+                window.location.assign(item.href);
+              else onMenuSelect?.(id);
+            }
           }}
         />
       </div>

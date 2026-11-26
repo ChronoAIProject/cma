@@ -370,6 +370,9 @@ for (const action of ['button', 'Escape'] as const) {
       await expect(stop).toBeEnabled();
       await field.focus();
       await expect(page.getByText('Esc to stop', { exact: true })).toBeVisible();
+      await expect(stop).toHaveAccessibleDescription(
+        'Esc to stop Running Sandbox commands may continue.',
+      );
       if (action === 'Escape') await field.press('Escape');
       else await stop.click();
       await expect.poll(() => attempts).toBe(1);
@@ -385,7 +388,12 @@ for (const action of ['button', 'Escape'] as const) {
         body: { turn_sequence: 1, expected_agent_revision: 10, command: { type: 'cancel' } },
       });
       expect(fixture.writes[0]!.key).toBeTruthy();
+      const terminal = page.getByRole('status').filter({
+        hasText: /Response interrupted.*Running Sandbox commands may continue/,
+      });
+      await expect(terminal).toHaveCount(0);
       fixture.append({ type: 'turn_cancelled', turn_sequence: 1 });
+      await expect(terminal).toBeVisible();
       await expect(page.getByRole('button', { name: /Stop.*response/ })).toHaveCount(0);
       await page.reload();
       await expect(field).toBeVisible();
