@@ -6,6 +6,7 @@ const url = 'https://example.test/en/about/previous-releases';
 const suffix = '；访问 UTC：2026';
 const imported = `Node URL：${url}${suffix}`;
 const typed = 'https://example.test/typed/?q=one#results';
+const typedSuffix = '」后文';
 const pasted = 'https://example.test/pasted%EF%BC%9B';
 const explicit = 'https://example.test/合法中文路径；访问';
 
@@ -24,6 +25,35 @@ async function expectLinks(content: Locator, hrefs: string[]) {
     await expect(link).toHaveAttribute('target', '_blank');
   }
 }
+
+test('LOCAL CJK delimiters preserve link targets in Edit and Preview', async ({
+  page,
+  baseURL,
+  context,
+}) => {
+  const fixture = new LocalDocuments();
+  const paragraphs = [`${url}：访问`, `「${typed}${typedSuffix}`];
+  fixture.markdown = paragraphs.join('\n\n');
+  await fixture.route(page, baseURL!);
+  await context.route('https://example.test/**', (route) =>
+    route.fulfill({ status: 200, body: 'Synthetic link destination' }),
+  );
+  await page.goto(`/artifacts/${documentId}`);
+  const content = page.getByRole('textbox', { name: 'Document content', exact: true });
+  await expectLinks(content, [url, typed]);
+  await expect(content.locator('p')).toHaveText(paragraphs);
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await expectLinks(content, [url, typed]);
+  await expect(content.locator('p')).toHaveText(paragraphs);
+  const opened = page.waitForEvent('popup');
+  await content.getByRole('link', { name: typed, exact: true }).click();
+  const popup = await opened;
+  await expect(popup).toHaveURL(typed);
+  await popup.close();
+  await page.reload();
+  await expectLinks(content, [url, typed]);
+  expect(fixture.writes).toHaveLength(0);
+});
 
 test('LOCAL autolink bounds import, typing and paste through Preview, save and reopen', async ({
   page,
@@ -83,7 +113,7 @@ test('LOCAL autolink bounds import, typing and paste through Preview, save and r
     .toBe(true);
   await content.press('Enter');
   await page.keyboard.type(typed);
-  await page.keyboard.insertText('，后文');
+  await page.keyboard.insertText(typedSuffix);
   await expectLinks(content, [url, explicit, typed]);
   await content.press('Enter');
   await content.evaluate((node, text) => {
@@ -104,7 +134,7 @@ test('LOCAL autolink bounds import, typing and paste through Preview, save and r
     return data.getData('text/plain');
   });
   expect(copied).toContain(imported);
-  expect(copied).toContain(`${typed}，后文`);
+  expect(copied).toContain(`${typed}${typedSuffix}`);
   expect(copied).toContain(`${pasted}。后文`);
   expect(
     await content
@@ -121,7 +151,7 @@ test('LOCAL autolink bounds import, typing and paste through Preview, save and r
   await expect(status).toHaveText('Saved');
   expect(fixture.writes).toHaveLength(1);
   expect(fixture.markdown).toContain(`[${url}](${url})${suffix}`);
-  expect(fixture.markdown).toContain(`[${typed}](${typed})，后文`);
+  expect(fixture.markdown).toContain(`[${typed}](${typed})${typedSuffix}`);
   expect(fixture.markdown).toContain(`[${pasted}](${pasted})。后文`);
   expect(fixture.markdown).toContain(`[说明](${explicit})`);
   await page.reload();
