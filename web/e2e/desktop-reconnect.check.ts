@@ -8,7 +8,8 @@ test('LOCAL desktop stream drop and transient 503 recover without restoring inpu
 }) => {
   const fixture = new LocalAgentV2();
   fixture.boundary.agent = { ...fixture.boundary.agent, desktop: true };
-  let discovery = 0;
+  let streamDropped = false;
+  let reconnectDiscoveries = 0;
   try {
     await page.setViewportSize({ width: 1600, height: 1000 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -21,8 +22,8 @@ test('LOCAL desktop stream drop and transient 503 recover without restoring inpu
     await fixture.route(page, baseURL!);
     const stream = await desktopBoundary(page);
     await page.route('**/api/v1/agents/agt_contract/desktop', (route) => {
-      discovery++;
-      return discovery === 2
+      if (streamDropped) reconnectDiscoveries += 1;
+      return streamDropped && reconnectDiscoveries === 1
         ? route.fulfill({
             status: 503,
             json: { code: 'desktop_runtime_unavailable', detail: 'Synthetic failure' },
@@ -54,16 +55,23 @@ test('LOCAL desktop stream drop and transient 503 recover without restoring inpu
     await ready();
     await desktop.getByRole('button', { name: 'Take control', exact: true }).click();
     await expect(desktop).toHaveAttribute('data-controller', 'user');
-    await page.clock.fastForward(30_000);
+    expect(stream.connections).toHaveLength(1);
+    streamDropped = true;
     stream.disconnect();
     await expect(desktop.getByRole('status')).toContainText('Reconnecting');
     await expect(desktop.getByRole('button', { name: 'Take control', exact: true })).toBeDisabled();
-    await page.clock.fastForward(1000);
-    await expect.poll(() => discovery).toBe(2);
+    await page.clock.fastForward(999);
+    expect(reconnectDiscoveries).toBe(0);
+    await page.clock.runFor(1);
+    await expect.poll(() => reconnectDiscoveries).toBe(1);
     await expect(desktop.getByRole('status')).toContainText('temporarily unavailable');
-    await page.clock.fastForward(2000);
+    await page.clock.fastForward(1999);
+    expect(reconnectDiscoveries).toBe(1);
+    expect(stream.connections).toHaveLength(1);
+    await page.clock.runFor(1);
+    await expect.poll(() => reconnectDiscoveries).toBe(2);
     await ready();
-    expect(discovery).toBe(3);
+    expect(reconnectDiscoveries).toBe(2);
     expect(stream.connections).toHaveLength(2);
     await expect(desktop).toHaveAttribute('data-controller', 'view');
     expect(fixture.writes).toEqual([]);
