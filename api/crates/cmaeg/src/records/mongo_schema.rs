@@ -1,3 +1,6 @@
+#[path = "mongo_schema_predecessors.rs"]
+mod predecessors;
+use super::{create_fences::CREATE_FENCES, create_fences_floor};
 use super::{
     failure, COLLECTIONS, CONNECTIONS, INTERACTIONS, MEDIA_CONTINUATIONS, MIGRATIONS, RECORDS,
     SESSIONS, THREAD_FENCES, WHATSAPP_FLOWS,
@@ -10,6 +13,7 @@ use mongodb::{
     options::IndexOptions,
     Database, IndexModel,
 };
+pub(super) use predecessors::record_predecessors;
 
 // Publication reads this same requirement into the immutable image's OCI label.
 // Optional migration markers remain separate from the base startup contract.
@@ -20,7 +24,12 @@ pub fn role(database: &str, migration: bool) -> Document {
         "resource":{"db":database,"collection":*name},
         "actions":if migration {vec!["find","insert","update","createCollection","collMod","createIndex","listIndexes"]} else if *name==MIGRATIONS {vec!["find"]} else {vec!["find","insert","update","remove","listIndexes"]}
     }).collect();
-    doc! {"createRole":if migration {"cma_eg_migrator"}else{"cma_eg_runtime"},"privileges":grants,"roles":[]}
+    let role = doc! {"createRole":if migration {"cma_eg_migrator"}else{"cma_eg_runtime"},"privileges":grants,"roles":[]};
+    if migration {
+        crate::migrations::migration_role(role, database)
+    } else {
+        role
+    }
 }
 pub async fn verify(db: &Database) -> Result<(), RecordError> {
     verify_with_authority(
@@ -66,9 +75,11 @@ pub async fn verify_with_authority(
             let collection = resource.get_str("collection").map_err(|_| invalid())?;
             if resource.len() != 2
                 || resource.get_str("db").ok() != Some(db.name())
-                || (!COLLECTIONS.contains(&collection)
+                || (!collection.is_empty()
+                    && !COLLECTIONS.contains(&collection)
                     && !crate::activity::history::schema::COLLECTIONS.contains(&collection)
                     && ![
+                        CREATE_FENCES,
                         THREAD_FENCES,
                         WHATSAPP_FLOWS,
                         "eg_automation_records",
@@ -83,15 +94,21 @@ pub async fn verify_with_authority(
             }
             for action in grant.get_array("actions").map_err(|_| invalid())? {
                 let action = action.as_str().ok_or_else(&invalid)?;
-                let allowed = if crate::activity::history::schema::COLLECTIONS.contains(&collection)
-                {
+                let allowed = if collection.is_empty() {
+                    &["listCollections"][..]
+                } else if crate::activity::history::schema::COLLECTIONS.contains(&collection) {
                     crate::activity::history::schema::runtime_actions(collection)
                 } else if collection == USES {
                     &["find", "insert", "listIndexes"][..]
                 } else if collection == CUTOVERS {
                     &["find", "listIndexes"][..]
-                } else if [THREAD_FENCES, WHATSAPP_FLOWS, "eg_automation_records"]
-                    .contains(&collection)
+                } else if [
+                    CREATE_FENCES,
+                    THREAD_FENCES,
+                    WHATSAPP_FLOWS,
+                    "eg_automation_records",
+                ]
+                .contains(&collection)
                 {
                     &["find", "insert", "update", "listIndexes"][..]
                 } else if collection != MIGRATIONS {
@@ -164,6 +181,9 @@ pub async fn guard_migration_required(db: &Database) -> Result<bool, RecordError
         .is_none())
 }
 /// Independent optional migrations must preserve every supported marker.
+pub(crate) fn migration_predecessors() -> Vec<Document> {
+    predecessors::marker_predecessors()
+}
 pub(crate) fn migration_validator() -> Document {
     doc! {
         "$jsonSchema":{"bsonType":"object","additionalProperties":false,
@@ -175,13 +195,12 @@ pub(crate) fn migration_validator() -> Document {
             {"_id":"media_continuations","version":1},{"_id":"worker_credentials","version":1},
             {"_id":"worker_tracking_cutover","version":1},
             {"_id":"github_channel_guard","version":1},
+            {"_id":"channel_create_fences","version":1},
+            {"_id":create_fences_floor::VALIDATOR_CHANGE,"version":{"$in":[1,2,3]}},
             {"_id":"github_integrations","version":{"$in":[1,2,3,4,5,6]}}]
     }
 }
-pub async fn migrate(db: &Database) -> Result<(), RecordError> {
-    cma_service_auth::browser::migrate(db, SESSIONS)
-        .await
-        .map_err(failure)?;
+pub(super) fn record_validator(protected: bool) -> Document {
     let mut record_validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","blob","version","schema_version"],"properties":{
     "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0}}}};
     record_validator
@@ -190,7 +209,39 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
         .get_document_mut("properties")
         .unwrap()
         .insert("replica", super::replica_schema::projection_schema());
-    let mut interaction_validator = record_validator.clone();
+    if protected {
+        let schema = record_validator.get_document_mut("$jsonSchema").unwrap();
+        schema
+            .get_array_mut("required")
+            .unwrap()
+            .push("guard_revision".into());
+        schema
+            .get_document_mut("properties")
+            .unwrap()
+            .insert("guard_revision", doc! {"bsonType":"long","minimum":1});
+    }
+    record_validator
+}
+
+pub async fn migrate(db: &Database) -> Result<(), RecordError> {
+    cma_service_migrations::marker(
+        db,
+        MIGRATIONS,
+        "schema",
+        "version",
+        &[1, 2],
+        BASE_SCHEMA_VERSION,
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::marker(db, MIGRATIONS, "github_channel_guard", "version", &[1], 1)
+        .await
+        .map_err(failure)?;
+    cma_service_auth::browser::migrate(db, SESSIONS)
+        .await
+        .map_err(failure)?;
+    let ordinary = record_validator(false);
+    let mut interaction_validator = ordinary.clone();
     let interaction_schema = interaction_validator
         .get_document_mut("$jsonSchema")
         .unwrap();
@@ -203,53 +254,84 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
         .unwrap()
         .insert("expires_at", doc! {"bsonType":"date"});
     for (name, validator) in [
-        (RECORDS, record_validator.clone()),
-        (CONNECTIONS, record_validator),
-        (INTERACTIONS, interaction_validator),
         (MIGRATIONS, migration_validator()),
+        (CONNECTIONS, ordinary.clone()),
+        (INTERACTIONS, interaction_validator),
     ] {
-        match db.run_command(doc!{"create":name,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await{
-            Ok(_)=>{},Err(error) if matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code==48)=>{db.run_command(doc!{"collMod":name,"validator":validator,"validationLevel":"strict","validationAction":"error"}).await.map_err(failure)?;},Err(error)=>return Err(failure(error)),
-        }
+        let predecessors = if name == MIGRATIONS {
+            predecessors::marker_predecessors()
+        } else {
+            predecessors::record_predecessors(&validator)
+        };
+        cma_service_migrations::collection_with_predecessors(
+            db,
+            name,
+            validator,
+            true,
+            predecessors,
+        )
+        .await
+        .map_err(failure)?;
     }
+    let predecessors = predecessors::record_predecessors(&ordinary);
+    let protected = record_validator(true);
+    cma_service_migrations::collection_with_guarded_replacement(
+        db,
+        RECORDS,
+        ordinary,
+        true,
+        predecessors,
+        Some(&protected),
+        |validator| async move {
+            create_fences_floor::upgrade_legacy_validator(db, validator)
+                .await
+                .map_err(mongodb::error::Error::custom)
+        },
+    )
+    .await
+    .map_err(failure)?;
     for name in [RECORDS, CONNECTIONS, INTERACTIONS] {
-        db.collection::<Document>(name)
-            .create_index(
-                mongodb::IndexModel::builder()
-                    .keys(doc! {"owner":1,"_id":1})
+        cma_service_migrations::indexes(
+            db,
+            name,
+            vec![IndexModel::builder().keys(doc! {"owner":1,"_id":1}).build()],
+        )
+        .await
+        .map_err(failure)?;
+    }
+    cma_service_migrations::indexes(
+        db,
+        INTERACTIONS,
+        vec![IndexModel::builder()
+            .keys(doc! {"expires_at":1})
+            .options(
+                IndexOptions::builder()
+                    .expire_after(std::time::Duration::ZERO)
                     .build(),
             )
-            .await
-            .map_err(failure)?;
-    }
-    db.collection::<Document>(INTERACTIONS)
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! {"expires_at":1})
-                .options(
-                    IndexOptions::builder()
-                        .expire_after(std::time::Duration::ZERO)
-                        .build(),
-                )
-                .build(),
-        )
-        .await
-        .map_err(failure)?;
-    db.collection::<Document>(MIGRATIONS)
-        .update_one(
-            doc! {"_id":"schema"},
-            doc! {"$set":{"version":BASE_SCHEMA_VERSION}},
-        )
-        .upsert(true)
-        .await
-        .map_err(failure)?;
-    db.collection::<Document>(MIGRATIONS)
-        .update_one(
-            doc! {"_id":"github_channel_guard"},
-            doc! {"$set":{"version":1}},
-        )
-        .upsert(true)
-        .await
-        .map_err(failure)?;
+            .build()],
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::update(
+        db,
+        MIGRATIONS,
+        doc! {"_id":"schema"},
+        doc! {"$set":{"version":BASE_SCHEMA_VERSION}},
+        true,
+        false,
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::update(
+        db,
+        MIGRATIONS,
+        doc! {"_id":"github_channel_guard"},
+        doc! {"$set":{"version":1}},
+        true,
+        false,
+    )
+    .await
+    .map_err(failure)?;
     Ok(())
 }

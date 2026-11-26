@@ -142,7 +142,7 @@ pub(super) fn owner(subject: &str, organization: bool) -> Creator {
         organization,
     }
 }
-pub(super) fn connection(subject: &str, organization: bool) -> Connection {
+pub(crate) fn connection(subject: &str, organization: bool) -> Connection {
     let timestamp = now();
     Connection {
         id: uuid::Uuid::new_v4().to_string(),

@@ -4,9 +4,10 @@ RUN apk add --no-cache musl-dev
 WORKDIR /build
 COPY api/ ./
 ARG TARGETARCH
+ARG CHRONO_BUILD_SHA=development
 RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cma-image-manager-target-${TARGETARCH},target=/build/target,sharing=locked \
-    cargo build --release --locked --bin cma-image-manager && mkdir /out && cp target/release/cma-image-manager /out/
+    CHRONO_BUILD_SHA="${CHRONO_BUILD_SHA}" cargo build --release --locked --bin cma-image-manager && mkdir /out && cp target/release/cma-image-manager /out/
 FROM alpine:3.22
 ARG CHRONO_BUILD=development
 ARG CHRONO_BUILD_SHA=development

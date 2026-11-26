@@ -84,16 +84,21 @@ impl SandboxReconciler {
                     return Ok(false);
                 }
                 Err(SandboxStoreError::Unavailable(_))
-                    if failure == Some(transient::StartupFailure::NativePoolConfigurationDrift)
-                        || (failure
-                            == Some(transient::StartupFailure::NativePoolDefinitionAbsent)
-                            && sandbox.runtime.is_some()
-                            && sandbox
-                                .lifecycle
-                                .home
-                                .as_ref()
-                                .and_then(|home| home.native_pool.as_ref())
-                                .is_some_and(|pool| pool.claim.is_some()))
+                    if matches!(
+                        failure,
+                        Some(
+                            transient::StartupFailure::NativePoolConfigurationDrift
+                                | transient::StartupFailure::AdmittedSandboxSpecDrift
+                        )
+                    ) || (failure
+                        == Some(transient::StartupFailure::NativePoolDefinitionAbsent)
+                        && sandbox.runtime.is_some()
+                        && sandbox
+                            .lifecycle
+                            .home
+                            .as_ref()
+                            .and_then(|home| home.native_pool.as_ref())
+                            .is_some_and(|pool| pool.claim.is_some()))
                         || (self.startup_native_home_hold_enabled
                             && failure == Some(transient::StartupFailure::NativeHomeIdentity)) =>
                 {
@@ -102,6 +107,9 @@ impl SandboxReconciler {
                     let reason = match failure {
                         Some(transient::StartupFailure::NativePoolConfigurationDrift) => {
                             "native_pool_configuration_drift"
+                        }
+                        Some(transient::StartupFailure::AdmittedSandboxSpecDrift) => {
+                            "admitted_sandbox_spec_drift"
                         }
                         Some(transient::StartupFailure::NativePoolDefinitionAbsent) => {
                             "native_pool_definition_absent"
