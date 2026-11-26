@@ -130,7 +130,7 @@ pub use checkpoint::{
     RestoreBootstrapRequest, RestoreRequest, WriterState,
 };
 pub use conversation::{
-    has_reported_file_changes, reported_tool_call_text, reported_tool_text, AvailableCommand,
+    has_reported_initial_output, reported_tool_call_text, reported_tool_text, AvailableCommand,
     AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel, ConversationId,
     ConversationInput, ConversationInputGuard, ConversationInputSender, ConversationSendOutcome,
     ConversationSettingsSupport, ConversationUpdate, MessageId, PermissionDecision,
