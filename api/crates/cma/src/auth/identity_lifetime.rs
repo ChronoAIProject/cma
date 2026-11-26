@@ -55,14 +55,25 @@ impl VerificationLifetime {
         self
     }
 
-    fn failure(&self, auth: &AuthState) -> Option<VerificationCause> {
-        if self
-            .expires_at
+    #[cfg(test)]
+    pub(super) fn cap_for_cache(&mut self) {
+        let ttl = std::time::Duration::from_secs(30);
+        let at = Instant::now() + ttl;
+        let expiry = SystemTime::now() + ttl;
+        self.deadline = Some(self.deadline.map_or(at, |old| old.min(at)));
+        self.expires_at = Some(self.expires_at.map_or(expiry, |old| old.min(expiry)));
+    }
+
+    fn expired(&self) -> bool {
+        self.expires_at
             .is_some_and(|expiry| expiry <= SystemTime::now())
             || self
                 .deadline
                 .is_some_and(|deadline| Instant::now() >= deadline)
-        {
+    }
+
+    fn failure(&self, auth: &AuthState) -> Option<VerificationCause> {
+        if self.expired() {
             Some(VerificationCause::ConsumptionExpired)
         } else if !auth.identity_store.token_current(&self.key, &self.epoch) {
             Some(VerificationCause::ConsumptionEpochChanged)
@@ -70,6 +81,14 @@ impl VerificationLifetime {
             None
         }
     }
+}
+
+#[cfg(test)]
+pub(super) fn cache_fresh(evidence: &VerifiedSubject, expiry: Option<SystemTime>) -> bool {
+    evidence.verification.as_ref().is_some_and(|proof| {
+        !proof.expired()
+            && expiry.is_none_or(|bound| proof.expires_at.is_some_and(|until| until <= bound))
+    })
 }
 
 pub(super) fn current(auth: &AuthState, evidence: &VerifiedSubject) -> bool {
