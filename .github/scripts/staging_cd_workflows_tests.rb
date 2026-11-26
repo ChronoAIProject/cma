@@ -75,6 +75,24 @@ class StagingWorkflowTest < Minitest::Test
     refute publication.key?('if'), 'publication must always run and decide the outcome'
   end
 
+  def test_independent_runtime_promotions_wait_for_verified_am_when_selected
+    jobs = workflow('staging-cd').fetch('jobs')
+    %w[runtime runtime_omarchy].each do |lane|
+      release = "release_#{lane}"
+      assert_equal %w[allocate infrastructure], jobs.fetch(release).fetch('needs')
+      promotion = jobs.fetch("promote_#{lane}")
+      assert_equal ['allocate', 'infrastructure', release, 'promote_am'], promotion.fetch('needs')
+      condition = promotion.fetch('if')
+      assert_includes condition, '!cancelled()'
+      assert_includes condition, "needs.#{release}.result == 'success'"
+      assert_includes condition, "needs.#{release}.outputs.finalized == 'success'"
+      assert_includes condition, "fromJSON(needs.allocate.outputs.lanes)['am'] != 'am' ||"
+      assert_includes condition, "needs.promote_am.result == 'success' &&"
+      assert_includes condition, "fromJSON(needs.promote_am.outputs.component_result || '{}').components.am.state == 'controller-verified'"
+    end
+    refute_includes jobs.fetch('promote_contract').fetch('needs'), 'promote_am'
+  end
+
   def test_omarchy_releases_check_pinned_signing_keys_before_any_build_work
     steps = workflow('staging-release')['jobs']['publish']['steps']
     index = ->(name) { steps.index { |step| step['name'] == name } }
@@ -288,7 +306,9 @@ class StagingWorkflowTest < Minitest::Test
       assert_equal './.github/workflows/staging-release.yml', publisher['uses']
       assert_equal component, publisher.dig('with', 'component')
       assert_equal "Release #{component}", publisher['name'] # detector-cache producer identity
-      assert_equal %W[allocate infrastructure release_#{id}], promote['needs']
+      promotion_needs = %W[allocate infrastructure release_#{id}]
+      promotion_needs << 'promote_am' if component.start_with?('runtime')
+      assert_equal promotion_needs, promote['needs']
       assert_includes promote['if'], "needs.release_#{id}.outputs.finalized == 'success'"
       assert_includes promote['if'], "outputs.lanes)['#{component}'] == '#{component}'"
       assert_equal './.github/workflows/staging-promote.yml', promote['uses']
