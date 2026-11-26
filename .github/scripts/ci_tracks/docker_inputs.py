@@ -198,6 +198,9 @@ def ignore_patterns(text):
     return tuple(patterns)
 
 
+# Immutable snapshots often contain the same paths and Dockerignore rules.
+# Apply the complete ordered rule set once for each exact pair.
+@lru_cache(maxsize=32768)
 def ignored(path, text):
     result = False
     parts = path_parts(path)[0]

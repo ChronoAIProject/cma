@@ -218,6 +218,15 @@ class ImageTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 stage_sources(text, '', {})
 
+    def test_ignore_decisions_use_the_exact_ordered_rule_text(self):
+        entry = 'api/crates/sample/src/generated.rs'
+        exclude = '**/generated.rs'
+        include = '!api/crates/sample/src/generated.rs'
+        self.assertTrue(ignored(entry, exclude))
+        self.assertFalse(ignored(entry, f'{exclude}\n{include}'))
+        self.assertTrue(ignored(entry, f'{include}\n{exclude}'))
+        self.assertTrue(ignored(entry, exclude))
+
 
 if __name__ == '__main__':
     unittest.main()
