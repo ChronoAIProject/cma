@@ -4,8 +4,63 @@ use crate::Runner;
 use mongodb::{bson::Document, options::ClientOptions, Client};
 use std::{
     future::{Future, IntoFuture},
+    io::{self, Write},
+    sync::{Arc, Mutex},
     time::Duration,
 };
+
+#[derive(Clone, Default)]
+struct AbortLog(Arc<Mutex<Vec<u8>>>);
+
+impl Write for AbortLog {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl AbortLog {
+    fn subscriber(&self) -> impl tracing::Subscriber + Send + Sync + 'static {
+        let buffer = self.clone();
+        tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || buffer.clone())
+            .finish()
+    }
+
+    fn contains(&self, message: &str) -> bool {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).contains(message)
+    }
+}
+
+#[tokio::test]
+async fn lost_abort_task_is_reported_without_replacing_the_refusal() {
+    let log = AbortLog::default();
+    let task = tokio::spawn(std::future::pending::<()>());
+    task.abort();
+    let refusal = finish_abort(task, "activate", "original refusal")
+        .with_subscriber(log.subscriber())
+        .await;
+    assert_eq!(refusal, "original refusal");
+    assert!(log.contains("migration abort task did not finish"));
+    assert!(log.contains("cancelled=true"));
+}
+
+#[test]
+fn uncertain_abort_replies_are_not_acknowledged() {
+    assert!(acknowledged_abort(&doc! {"ok": 1.0}));
+    assert!(!acknowledged_abort(&doc! {}));
+    assert!(!acknowledged_abort(
+        &doc! {"ok": 1, "writeConcernError": {"code": 64}}
+    ));
+    assert!(!acknowledged_abort(
+        &doc! {"ok": 1, "errorLabels": ["UnknownTransactionCommitResult"]}
+    ));
+}
 
 async fn cancel_in_flight(
     db: &Database,
@@ -117,7 +172,7 @@ async fn cancelled_migration_calls_keep_opening_and_terminal_outcomes_consistent
             .session(&mut session)
             .await
             .unwrap();
-        abort(session).await;
+        abort_after(session, "fixture", "original refusal").await;
     };
     cancel_in_flight(
         &db,
@@ -138,6 +193,64 @@ async fn cancelled_migration_calls_keep_opening_and_terminal_outcomes_consistent
     .unwrap();
     assert_eq!(
         rows.find_one(doc! {"_id": "probe"})
+            .await
+            .unwrap()
+            .unwrap()
+            .get_i32("value")
+            .unwrap(),
+        0
+    );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable replica-set MongoDB fixture with failpoints"]
+async fn server_abort_failure_is_reported_and_preserves_the_refusal() {
+    let db = fixture().await;
+    let mut options = ClientOptions::parse(std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let app = format!("migration_abort_{}", uuid::Uuid::new_v4().simple());
+    options.app_name = Some(app.clone());
+    let worker = Client::with_options(options).unwrap().database(db.name());
+    let rows = worker.collection::<Document>("abort_probe");
+    rows.insert_one(doc! {"_id": "fixture", "value": 0_i32})
+        .await
+        .unwrap();
+    let mut session = start(&worker).await.unwrap();
+    rows.update_one(doc! {"_id": "fixture"}, doc! {"$inc": {"value": 1_i32}})
+        .session(&mut session)
+        .await
+        .unwrap();
+    db.client()
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": {"times": 1_i32},
+            "data": {"appName": app, "failCommands": ["abortTransaction"], "errorCode": 2_i32},
+        })
+        .await
+        .unwrap();
+
+    let log = AbortLog::default();
+    let refusal = abort_after(session, "claim", "original refusal")
+        .with_subscriber(log.subscriber())
+        .await;
+    assert_eq!(refusal, "original refusal");
+    assert!(log.contains("migration abort command failed"));
+    assert!(log.contains("code=2"));
+    let stored = db.collection::<Document>(rows.name());
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        stored
+            .update_one(doc! {"_id": "fixture"}, doc! {"$set": {"settled": true}})
+            .into_future(),
+    )
+    .await
+    .expect("abort retry did not release the row")
+    .unwrap();
+    assert_eq!(
+        stored
+            .find_one(doc! {"_id": "fixture"})
             .await
             .unwrap()
             .unwrap()

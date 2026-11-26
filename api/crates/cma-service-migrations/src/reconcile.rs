@@ -48,10 +48,7 @@ impl Runner {
         }.await;
         match result {
             Ok(()) => transaction::commit(session).await,
-            Err(reason) => {
-                transaction::abort(session).await;
-                Err(reason)
-            }
+            Err(reason) => Err(transaction::abort_after(session, "activate", reason).await),
         }
     }
 
@@ -78,10 +75,7 @@ impl Runner {
         }.await;
         match result {
             Ok(()) => transaction::commit(session).await,
-            Err(reason) => {
-                transaction::abort(session).await;
-                Err(reason)
-            }
+            Err(reason) => Err(transaction::abort_after(session, "reconcile", reason).await),
         }
     }
 }

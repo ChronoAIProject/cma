@@ -1,6 +1,12 @@
 //! Keep migration transactions safe across caller cancellation.
 use super::{database_error, Acknowledgment, ReadConcern, Result, WriteConcern};
-use mongodb::{bson::doc, ClientSession, Database};
+use mongodb::{
+    bson::{doc, Bson, Document},
+    error::ErrorKind,
+    ClientSession, Database,
+};
+use tokio::task::JoinHandle;
+use tracing::instrument::WithSubscriber;
 
 pub(super) async fn start(db: &Database) -> Result<ClientSession> {
     let mut session = db.client().start_session().await.map_err(database_error)?;
@@ -42,8 +48,68 @@ pub(super) async fn commit(mut session: ClientSession) -> Result<()> {
     .map_err(|_| UNKNOWN_COMMIT)?
 }
 
-pub(super) async fn abort(mut session: ClientSession) {
-    let _ = tokio::spawn(async move { session.abort_transaction().await }).await;
+pub(super) async fn abort_after(
+    mut session: ClientSession,
+    operation: &'static str,
+    reason: &'static str,
+) -> &'static str {
+    let task = tokio::spawn(
+        async move {
+            // The driver suppresses server abort errors. Observe the response on
+            // the original transaction first, then let the driver close its state.
+            let reply = session
+                .client()
+                .database("admin")
+                .run_command(doc! {"abortTransaction": 1_i32, "writeConcern": {"w": "majority"}})
+                .session(&mut session)
+                .await;
+            match reply {
+                Ok(reply) if acknowledged_abort(&reply) => {}
+                Ok(_) => tracing::warn!(operation, "migration abort acknowledgment was uncertain"),
+                Err(error) => match error.kind.as_ref() {
+                    // MongoDB has already ended this transaction.
+                    ErrorKind::Command(error) if error.code == 251 => {}
+                    ErrorKind::Command(error) => {
+                        tracing::warn!(
+                            operation,
+                            code = error.code,
+                            "migration abort command failed"
+                        );
+                    }
+                    _ => tracing::warn!(operation, "migration abort command failed"),
+                },
+            }
+            if session.abort_transaction().await.is_err() {
+                tracing::warn!(
+                    operation,
+                    "migration driver could not close the transaction"
+                );
+            }
+        }
+        .with_current_subscriber(),
+    );
+    finish_abort(task, operation, reason).await
+}
+
+fn acknowledged_abort(reply: &Document) -> bool {
+    let ok = matches!(reply.get("ok"), Some(Bson::Int32(1) | Bson::Int64(1)))
+        || matches!(reply.get("ok"), Some(Bson::Double(value)) if *value == 1.0);
+    ok && !reply.contains_key("writeConcernError") && !reply.contains_key("errorLabels")
+}
+
+async fn finish_abort(
+    task: JoinHandle<()>,
+    operation: &'static str,
+    reason: &'static str,
+) -> &'static str {
+    if let Err(error) = task.await {
+        tracing::warn!(
+            operation,
+            cancelled = error.is_cancelled(),
+            "migration abort task did not finish"
+        );
+    }
+    reason
 }
 
 #[cfg(test)]

@@ -152,10 +152,7 @@ impl Runner {
                     .map_err(|_| "migration claim commit unavailable")?;
                 Ok(lease)
             }
-            Err(reason) => {
-                transaction::abort(session).await;
-                Err(reason)
-            }
+            Err(reason) => Err(transaction::abort_after(session, "claim", reason).await),
         }
     }
     pub(super) fn lease_filter(&self, lease: &Lease) -> Document {
@@ -207,8 +204,7 @@ impl Runner {
         match result {
             Ok(()) => transaction::commit(session).await,
             Err(reason) => {
-                transaction::abort(session).await;
-                Err(reason)
+                Err(transaction::abort_after(session, "acknowledge effect", reason).await)
             }
         }
     }
@@ -227,10 +223,7 @@ impl Runner {
         }.await;
         match result {
             Ok(()) => transaction::commit(session).await,
-            Err(reason) => {
-                transaction::abort(session).await;
-                Err(reason)
-            }
+            Err(reason) => Err(transaction::abort_after(session, "finish", reason).await),
         }
     }
     /// The ledger remains blocked while a previously dispatched effect is uncertain.
