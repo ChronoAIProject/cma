@@ -15,26 +15,14 @@ test('LOCAL keeps the selected file actions visible when an inline preview is un
   baseURL,
 }) => {
   const fixture = new LocalAgentV2();
-  await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'light' });
-  const imageName = 'contact-sheet.jpg';
-  const image = await page.evaluate(() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1000;
-    canvas.height = 800;
-    const context = canvas.getContext('2d')!;
-    for (let page = 0; page < 4; page++) {
-      const x = 500 * (page % 2);
-      const y = 400 * Math.floor(page / 2);
-      context.fillStyle = 'white';
-      context.fillRect(x + 16, y + 16, 468, 368);
-      context.fillStyle = 'black';
-      context.font = '24px serif';
-      context.fillText(`Synthetic page ${page + 1}`, x + 32, y + 50);
-    }
-    return canvas.toDataURL('image/jpeg').split(',')[1]!;
-  });
   const files = new Map([
-    [imageName, Buffer.from(image, 'base64')],
+    [
+      'picture.png',
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=',
+        'base64',
+      ),
+    ],
     ['report.docx', docx],
     ['table.xlsx', Buffer.from([0x50, 0x4b, 3, 4, 0])],
     ['archive.zip', Buffer.from([0x50, 0x4b, 5, 6, 0])],
@@ -97,46 +85,8 @@ test('LOCAL keeps the selected file actions visible when an inline preview is un
     const fileRow = (name: string) => computer.getByRole('button', { name, exact: true });
     const download = preview.getByRole('button', { name: 'Download file' });
     await expect(preview).toBeHidden();
-    await fileRow(imageName).click();
-    const viewport = preview.getByRole('region', { name: 'Image viewport' });
-    const picture = viewport.getByRole('img', { name: imageName });
-    const box = (await viewport.boundingBox())!;
-    await preview.getByRole('button', { name: '100%', exact: true }).click();
-    await expect(picture).toHaveCSS('width', '1000px');
-    for (let step = 0; step < 7; step++) await viewport.press('+');
-    await expect(picture).toHaveCSS('width', '4000px');
-    expect(await viewport.boundingBox()).toEqual(box);
-    await page.mouse.move(box.x + 100, box.y + 100);
-    await page.mouse.down();
-    await page.mouse.move(box.x + 35, box.y + 40);
-    await page.mouse.up();
-    await expect.poll(() => viewport.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0);
-    await viewport.press('-');
-    await expect(picture).toHaveCSS('width', '3200px');
-    for (const modifier of ['Control', 'Meta']) {
-      await page.keyboard.down(modifier);
-      await page.mouse.wheel(0, -120);
-      await page.keyboard.up(modifier);
-      await expect(picture).toHaveCSS('width', '4000px');
-      await viewport.press('-');
-    }
-    await viewport.press('0');
-    await expect(picture).toBeInViewport({ ratio: 1 });
-    await preview.getByRole('button', { name: 'Full screen' }).click();
-    const dialog = page.getByRole('dialog', { name: imageName });
-    await page.setViewportSize({ width: 390, height: 700 });
-    await page.emulateMedia({ colorScheme: 'dark' });
-    const fullViewport = dialog.getByRole('region', { name: 'Image viewport' });
-    await expect(fullViewport.getByRole('img', { name: imageName })).toBeInViewport({ ratio: 1 });
-    expect((await fullViewport.boundingBox())!.height).toBeGreaterThan(500);
-    await dialog.getByRole('button', { name: 'Zoom in' }).click();
-    await dialog.getByRole('button', { name: 'Zoom out' }).click();
-    await dialog.getByRole('button', { name: 'Fit' }).click();
-    await expect(fullViewport.getByRole('img', { name: imageName })).toBeInViewport({ ratio: 1 });
-    await fullViewport.press('Escape');
-    await expect(dialog).toBeHidden();
-    await expect(preview.getByRole('button', { name: 'Full screen' })).toBeFocused();
-    await page.setViewportSize({ width: 1600, height: 1000 });
+    await fileRow('picture.png').click();
+    await expect(preview.getByRole('img', { name: 'picture.png' })).toBeVisible();
     await expect(download).toBeEnabled();
 
     await fileRow('report.docx').click();
@@ -147,9 +97,7 @@ test('LOCAL keeps the selected file actions visible when an inline preview is un
     for (const name of ['report.docx', 'table.xlsx', 'archive.zip', 'print.pdf', 'unknown.bin']) {
       if (name !== 'report.docx') await fileRow(name).click();
       await expect(fileRow(name)).toHaveAttribute('aria-current', 'true');
-      await expect(
-        preview.getByLabel('Selected file').filter({ hasText: new RegExp(`/home/.*${name}$`) }),
-      ).toBeVisible();
+      await expect(preview.getByLabel('Selected file')).toHaveText(new RegExp(`/home/.*${name}$`));
       await expect(
         preview.getByText('Preview unavailable. Download this file to view its contents.'),
       ).toBeVisible();

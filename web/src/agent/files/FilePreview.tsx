@@ -7,7 +7,6 @@ import {
 import { Button } from '../../ui/Button';
 import { IconDownloadOutline16, IconTrashOutline16 } from '../../ui/icons';
 import { SelectedFilePath } from './FilePaths';
-import { ImageViewer } from './ImagePreview';
 
 export function textContent(content: AgentFileContent): string | undefined {
   try {
@@ -39,7 +38,11 @@ function ImagePreview({
   readonly name: string;
 }) {
   return (
-    <ImageViewer src={`data:${imageType(name)};base64,${content.content_base64}`} name={name} />
+    <img
+      className="agent-files__image"
+      src={`data:${imageType(name)};base64,${content.content_base64}`}
+      alt={name}
+    />
   );
 }
 export function FilePreview({
@@ -112,7 +115,7 @@ export function FilePreview({
           {loading ? (
             <p role="status">Opening file…</p>
           ) : content && imageType(file.name) ? (
-            <ImagePreview key={file.path} content={content} name={file.name} />
+            <ImagePreview content={content} name={file.name} />
           ) : draft !== undefined ? (
             <>
               <textarea
