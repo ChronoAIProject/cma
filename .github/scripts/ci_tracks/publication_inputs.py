@@ -1,34 +1,28 @@
 """Publication inputs that select images from outside their build contexts."""
 
-import shlex
+import re
 import subprocess
 
 VERSION_FILE = 'api/crates/layer3-adapter/runtime-versions.json'
 RECIPE = 'api/crates/layer4-runtime/Dockerfile'
 CONTRACT_FILES = frozenset({VERSION_FILE, RECIPE})
 CONTRACT_IMAGES = frozenset({'cma-agent-manager', 'cma-runtime', 'cma-runtime-omarchy'})
-LABELS = frozenset({'dev.chrono.cma.runtime-contract', 'dev.chrono.cma.runtime-bootstrap',
-                    'dev.chrono.cma.home-layout'})
+DEBIAN_SNAPSHOT = re.compile(r'^ARG DEBIAN_SNAPSHOT=[0-9]{8}T[0-9]{6}Z$', re.MULTILINE)
 
 
-def runtime_labels(text, require):
-    labels = {key: set() for key in LABELS}
-    for line in text.replace('\\\n', ' ').splitlines():
-        if not line.strip() or line.split(maxsplit=1)[0].upper() != 'LABEL':
-            continue
-        for word in shlex.split(line, comments=True)[1:]:
-            key, separator, value = word.partition('=')
-            require(separator, 'Runtime contract label syntax is unmodeled')
-            if key in labels:
-                require(value.isascii() and value.isdecimal(), 'Runtime contract label is unmodeled')
-                labels[key].add(value)
-    require(all(len(values) == 1 for values in labels.values()), 'Runtime contract labels are ambiguous')
-    return tuple((key, next(iter(values))) for key, values in sorted(labels.items()))
+def packaging_signature(recipe):
+    from docker_inputs import instructions
 
-
-def require_label(condition, message):
-    if not condition:
-        raise ValueError(message)
+    # All recipe text except the one global package-index default must match.
+    # Comparing labels across all stages cannot establish either target's labels.
+    declarations = list(DEBIAN_SNAPSHOT.finditer(recipe))
+    if len(declarations) != 1:
+        return None
+    declaration = declarations[0]
+    prefix = recipe[:declaration.start()]
+    if any(op != 'ARG' for op, _ in instructions(prefix)):
+        return None
+    return prefix + 'ARG DEBIAN_SNAPSHOT' + recipe[declaration.end():]
 
 
 def contract_images(paths, read_recipes=None):
@@ -41,7 +35,8 @@ def contract_images(paths, read_recipes=None):
     if VERSION_FILE not in touched and read_recipes is not None:
         try:
             previous, current = read_recipes()
-            if runtime_labels(previous, require_label) == runtime_labels(current, require_label):
+            previous_signature = packaging_signature(previous)
+            if previous_signature is not None and previous_signature == packaging_signature(current):
                 return frozenset()
         except (OSError, ValueError, subprocess.SubprocessError):
             # An unavailable or ambiguous declaration cannot narrow the group.

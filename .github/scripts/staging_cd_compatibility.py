@@ -1,16 +1,32 @@
 """Conservatively keep AM/runtime contract transitions in one admitted set."""
 import os
 from pathlib import Path
+import shlex
 import subprocess
 
-from ci_tracks.publication_inputs import RECIPE, VERSION_FILE, runtime_labels as parse_runtime_labels
 from staging_cd_common import require
 
 GROUP = frozenset({"am", "runtime", "runtime-omarchy"})
+VERSION_FILE = "api/crates/layer3-adapter/runtime-versions.json"
+RECIPE = "api/crates/layer4-runtime/Dockerfile"
+LABELS = frozenset({"dev.chrono.cma.runtime-contract", "dev.chrono.cma.runtime-bootstrap",
+                    "dev.chrono.cma.home-layout"})
 
 
 def runtime_labels(text):
-    return parse_runtime_labels(text, require)
+    labels = {key: set() for key in LABELS}
+    for line in text.replace("\\\n", " ").splitlines():
+        if not line.strip() or line.split(maxsplit=1)[0].upper() != "LABEL":
+            continue
+        words = shlex.split(line, comments=True)
+        for word in words[1:]:
+            key, separator, value = word.partition("=")
+            require(separator, "Runtime contract label syntax is unmodeled")
+            if key in labels:
+                require(value.isascii() and value.isdecimal(), "Runtime contract label is unmodeled")
+                labels[key].add(value)
+    require(all(len(values) == 1 for values in labels.values()), "Runtime contract labels are ambiguous")
+    return tuple((key, next(iter(values))) for key, values in sorted(labels.items()))
 
 
 class ContractPolicy:

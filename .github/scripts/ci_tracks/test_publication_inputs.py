@@ -5,7 +5,7 @@ import unittest
 
 import batch_selection
 from image_inputs import changed_input_maps
-from publication_inputs import CONTRACT_FILES, CONTRACT_IMAGES, RECIPE
+from publication_inputs import CONTRACT_FILES, CONTRACT_IMAGES, RECIPE, contract_images
 from selection_cache import SelectionCache
 import selection
 import test_batch_selection
@@ -67,6 +67,16 @@ class PublicationInputsTests(unittest.TestCase):
                          sorted(CONTRACT_IMAGES | {'cma-web'}))
         self.assertEqual(len(CONTRACT_FILES), 2)
 
+    def test_snapshot_exemption_requires_one_global_default_and_an_identical_recipe(self):
+        old = 'ARG DEBIAN_SNAPSHOT=20261123T154646Z\n'
+        new = 'ARG DEBIAN_SNAPSHOT=20261124T215723Z\n'
+        stage = 'FROM scratch\n'
+        for before, after in ((stage + old, stage + new),
+                              (old + old + stage, new + old + stage),
+                              (old + stage, new + stage + 'RUN true\n')):
+            with self.subTest(before=before, after=after):
+                self.assertEqual(contract_images([RECIPE], lambda: (before, after)), CONTRACT_IMAGES)
+
     def test_unrelated_ci_tests_docs_and_similar_paths_do_not_publish(self):
         self.assertEqual(self.selected(
             '.github/workflows/ci.yml', '.github/workflows/ci-images.yml',
@@ -98,15 +108,23 @@ class PublicationHistoryTests(unittest.TestCase):
         seed = (self.root / RECIPE).read_text()
         labels = ('LABEL dev.chrono.cma.runtime-contract=3 '
                   'dev.chrono.cma.runtime-bootstrap=1 dev.chrono.cma.home-layout=2\n')
+        seed = seed.replace('FROM runtime AS omarchy\n', 'FROM scratch AS omarchy\n' + labels)
+        seed = seed.replace('FROM runtime AS default-runtime\n', 'FROM runtime AS default-runtime\n' + labels)
+        previous_snapshot = 'ARG DEBIAN_SNAPSHOT=20261123T154646Z\n'
+        current_snapshot = 'ARG DEBIAN_SNAPSHOT=20261124T215723Z\n'
         self.write('.dockerignore', RECIPE + '\n')
-        self.write(RECIPE, seed + labels + 'ARG DEBIAN_SNAPSHOT=old\n')
+        self.write(RECIPE, previous_snapshot + seed)
         self.pin_recipes()
         baseline = self.commit()
 
-        recipe = seed + labels + 'ARG DEBIAN_SNAPSHOT=new\n'
+        recipe = current_snapshot + seed
         self.write(RECIPE, recipe)
         self.pin_recipes()
         packaging = self.commit()
+        # The Standard target still declares the label after Omarchy loses it.
+        self.write(RECIPE, recipe.replace('dev.chrono.cma.runtime-bootstrap=1 ', '', 1))
+        self.pin_recipes()
+        missing_target_label = self.commit()
         self.write(RECIPE, recipe.replace('runtime-contract=3', 'runtime-contract=4'))
         self.pin_recipes()
         transition = self.commit()
@@ -114,9 +132,9 @@ class PublicationHistoryTests(unittest.TestCase):
         self.pin_recipes()
         ambiguous = self.commit()
 
-        revisions = [packaging, transition, ambiguous]
+        revisions = [packaging, missing_target_label, transition, ambiguous]
         expected = [sorted(CONTRACT_IMAGES - {'cma-agent-manager'}),
-                    sorted(CONTRACT_IMAGES), sorted(CONTRACT_IMAGES)]
+                    sorted(CONTRACT_IMAGES), sorted(CONTRACT_IMAGES), sorted(CONTRACT_IMAGES)]
         cache = SelectionCache(self.root / 'cache', 'e' * 64)
         batch = batch_selection.determine_many(self.root, revisions, cache)
         for head, actual, deployables in zip(revisions, batch, expected):
