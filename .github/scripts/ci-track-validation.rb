@@ -239,20 +239,6 @@ def check_flaky_tracker(workflows)
   require_check(writers.keys == [TRACKER], 'only the flaky tracker may write issues')
 end
 
-def check_version_label(workflow)
-  version = workflow.fetch('jobs').fetch('version-label')
-  require_check(version.fetch('name') == 'CI / Version label' && version.fetch('if') == '${{ !cancelled() }}', 'version gate missing')
-  require_check(version.fetch('needs') == ['changes'], 'version must use selector')
-  require_check(!version.key?('continue-on-error'), 'version job must propagate failure')
-  label_check = version.fetch('steps').last
-  require_check(label_check['run'] == 'python3 -B .github/scripts/ci_tracks/version_label.py' &&
-    !label_check.key?('if') && !label_check.key?('continue-on-error'), 'version validator missing or bypassed')
-  require_check(label_check.fetch('env') == {
-    'DEPLOYABLES' => '${{ needs.changes.outputs.deployables }}',
-    'SELECTOR_RESULT' => '${{ needs.changes.result }}', 'GH_TOKEN' => '${{ github.token }}'
-  }, 'version selector or live label context differs')
-end
-
 def validate(documents, actions)
   KeyProviderCIContract.check(documents)
   require_repo_secret_shards(documents)
@@ -297,7 +283,7 @@ def validate(documents, actions)
   }
   required.each do |key, (name, dependencies)|
     job = jobs.fetch(key)
-    require_check(job.fetch('name') == name && job.fetch('if') == 'always()', 'stable gate missing or conditional')
+    require_check(job.fetch('name') == name && job.fetch('if') == "always() && (#{verification_ref})", 'stable develop CI gate or ref guard missing')
     require_check(job.fetch('needs').sort == dependencies.sort, 'gate dependency omitted')
     require_check(job.fetch('steps').any? { |step| step.fetch('run', '').include?('ci_tracks/gate.py') }, 'gate validator missing')
   end
@@ -339,7 +325,8 @@ def validate(documents, actions)
   select_workflow = documents.fetch('ci-track-selection')
   require_check(select_workflow.fetch('jobs').fetch('changes') == jobs.fetch('changes').reject { |key, _| key == 'if' },
     'pull requests and post-merge CI must use identical selection')
-  %w[ci ci-pr-repo].each { |workflow| check_version_label(documents.fetch(workflow)) }
+  check_version_label(ci, "!cancelled() && (#{verification_ref})")
+  check_version_label(documents.fetch('ci-pr-repo'))
   selector = jobs.fetch('changes').fetch('steps').find { |step| step['id'] == 'select' }
   require_check(selector && selector['run'] == 'python3 -B .github/scripts/ci_tracks/selection.py --ci' &&
     !selector.key?('if') && !selector.key?('continue-on-error'), 'CI-specific selection must be required')
