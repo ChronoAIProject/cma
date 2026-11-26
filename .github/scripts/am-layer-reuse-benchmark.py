@@ -227,7 +227,12 @@ def diagnose(root, work, evidence):
     evidence["layer_bytes"] = sum(p.stat().st_size for p in members)
     evidence["layer_members"] = len(members)
     directory_shapes = []
-    known = {"blobs", "sha256", "ingest", "tmp", "temp", "metadata", "refs", "snapshots"}
+    known = {"blobs", "sha256", "ingest", "ingest-locks", "tmp", "temp", "metadata", "refs", "snapshots"}
+    locks = layers / "ingest-locks"
+    if locks.is_dir() and not locks.is_symlink():
+        lock_files = list(locks.iterdir())
+        evidence["ingest_locks"] = {"count": len(lock_files), "empty_regular": sum(
+            p.is_file() and not p.is_symlink() and p.stat().st_size == 0 for p in lock_files)}
     for path in sorted(layers.rglob("*")):
         if not path.is_dir() and not path.is_symlink():
             continue
@@ -266,6 +271,28 @@ print(json.dumps(result))
 '''
     evidence["seal"] = json.loads(run([sys.executable, "-B", "-c", classify, str(layers), str(work / "layers.tar")],
                                      cwd=CONTROL / ".github/scripts", timeout=360))
+    if evidence["seal"]["status"] != "sealed":
+        return
+    validator = CONTROL / ".github/scripts/buildkit_cache_archive.py"
+    start = time.monotonic()
+    run([sys.executable, "-B", str(validator), "restore", str(work / "restored"), str(work / "layers.tar")], timeout=360)
+    evidence["restore_seconds"] = round(time.monotonic() - start, 3)
+    edited = edit(root, work / "index")
+    edited_tree = run(["git", "rev-parse", edited + "^{tree}"], cwd=root).decode().strip()
+    updated = next_reservation("am", edited, edited_tree, 1, "patch", int(os.environ["GITHUB_RUN_ID"]),
+                               int(os.environ["GITHUB_RUN_ATTEMPT"]), [], [reservation])
+    warm = work / "edited"
+    snapshot(root, edited, warm)
+    _, recipe, arguments = identity(updated, warm, staging_am_opt_level="0")
+    with builder(work / "restored", seed=False) as (cache, namespace, name):
+        args = ["docker", "buildx", "build", "--progress=rawjson", "--platform", "linux/amd64", "--builder", name,
+                "--file", str(warm / recipe["dockerfile"]), "--target", "dependencies", "--output", "type=cacheonly",
+                "--cache-from", f"type=local,src={work / 'restored'}", "--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + namespace]
+        for key, value in sorted(arguments.items()):
+            args += ["--build-arg", key + "=" + value]
+        cache.run([*args, str(warm)], timeout=1800)
+        evidence["dependency_replay"] = cache.timing
+        evidence["dependency_hit"] = cache.timing["local_cache_imports"] == 1 and cache.timing["cached_dependency_steps"] > 0
 
 
 def main():
