@@ -448,16 +448,6 @@ pub(crate) async fn verify_with_authority(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn verify_activity_index_authority(
-    status: &Document,
-    database: &str,
-    authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
-    build: bool,
-) -> Result<(), StoreError> {
-    verify_index_operation_authority(status, database, authority, &["activity"], build)
-}
-
 pub(crate) fn verify_index_operation_authority(
     status: &Document,
     database: &str,
