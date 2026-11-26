@@ -122,12 +122,21 @@ impl SandboxStore for MongoSandboxStore {
         self.desktop_verified_runtime_image.as_deref() == Some(target)
     }
 
-    fn managed_runtime_target<'a>(&self, sandbox: &Sandbox, target: &'a str) -> Option<&'a str> {
-        (!target.is_empty()
-            && !self.default_pool_holds.image(target)
-            && (!sandbox.has_managed_desktop_image()
-                || self.desktop_runtime_target_is_qualified(target)))
-        .then_some(target)
+    fn machine_runtime_target_is_qualified(&self, id: &SandboxId, target: &str) -> bool {
+        self.managed_machine_updates.includes(id)
+            && crate::agent_lifecycle::valid_immutable_image(target)
+    }
+
+    fn managed_runtime_target_is_held(&self, target: &str) -> bool {
+        self.default_pool_holds.image(target)
+    }
+
+    async fn qualify_retained_machine(
+        &self,
+        sandbox: &Sandbox,
+        at: &str,
+    ) -> Result<Option<Sandbox>, SandboxStoreError> {
+        crate::store::managed_machine_origin::qualify(self, sandbox, at).await
     }
 
     async fn unpublished_runtime_recovery_snapshot(

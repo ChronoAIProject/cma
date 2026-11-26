@@ -176,10 +176,14 @@ pub(super) async fn reuse_profile_agent(
             .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
         advance_workspace(store, workspace, &next_workspace, scope.session()).await?;
         let mut next_sandbox = sandbox.clone();
+        let destination = store
+            .managed_resume_destination(sandbox, scope.session())
+            .await
+            .map_err(ApplyError::Domain)?;
         let revival = next_sandbox
             .record_creation_admission_with_managed_runtime(
                 SandboxReviveCause::TriggerLaunch,
-                store.managed_agent_release_for(sandbox).as_deref(),
+                destination.as_deref(),
                 admission.event_at.clone(),
             )
             .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;

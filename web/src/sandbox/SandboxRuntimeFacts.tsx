@@ -85,6 +85,7 @@ export function SandboxRuntimeFacts({
     ...(sandboxId === undefined ? [] : [['Sandbox ID', sandboxId]]),
     ['Current runtime', current || 'Not reported'],
     ...(update?.imageOrigin === 'managed_desktop' ? [['Runtime channel', 'Managed Agent']] : []),
+    ...(update?.imageOrigin === 'managed_machine' ? [['Runtime channel', 'Managed Machine']] : []),
     ...(update === undefined
       ? []
       : [

@@ -128,11 +128,47 @@ pub trait SandboxStore: Send + Sync {
         false
     }
 
+    fn machine_runtime_target_is_qualified(&self, _id: &SandboxId, _target: &str) -> bool {
+        false
+    }
+
+    fn managed_runtime_target_is_held(&self, _target: &str) -> bool {
+        false
+    }
+
+    async fn qualify_retained_machine(
+        &self,
+        _sandbox: &Sandbox,
+        _at: &str,
+    ) -> Result<Option<Sandbox>, SandboxStoreError> {
+        Ok(None)
+    }
+
     fn managed_runtime_target<'a>(&self, sandbox: &Sandbox, target: &'a str) -> Option<&'a str> {
-        (!target.is_empty()
-            && (!sandbox.has_managed_desktop_image()
-                || self.desktop_runtime_target_is_qualified(target)))
-        .then_some(target)
+        use crate::released_runtime::ReleasedLane;
+        let qualified = match sandbox.managed_runtime_lane() {
+            Some(ReleasedLane::Machine) => {
+                self.machine_runtime_target_is_qualified(&sandbox.id, target)
+            }
+            Some(ReleasedLane::Agent) if sandbox.has_managed_desktop_image() => {
+                self.desktop_runtime_target_is_qualified(target)
+            }
+            _ => true,
+        };
+        (!target.is_empty() && qualified && !self.managed_runtime_target_is_held(target))
+            .then_some(target)
+    }
+
+    /// The compatible target from one captured release. Explicitly pinned
+    /// custom images cannot borrow either managed lane.
+    fn managed_runtime_for_release<'a>(
+        &self,
+        sandbox: &Sandbox,
+        release: &'a layer3_adapter::ReleasedRuntime,
+    ) -> Option<(crate::released_runtime::ReleasedLane, &'a str)> {
+        let lane = sandbox.managed_runtime_lane()?;
+        let target = self.managed_runtime_target(sandbox, lane.version_in(release)?)?;
+        Some((lane, target))
     }
 
     fn capture_released_runtime(&self) -> Option<layer3_adapter::ReleasedRuntime> {
