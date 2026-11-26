@@ -181,7 +181,7 @@ async fn retrying_a_machine_reopen_keeps_the_admitted_target_after_a_release() {
     let (store, id) = parked(Some("image-v3"));
     let before = store.get_sandbox(&id).await.unwrap().unwrap();
     let released = Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
-        "unrelated-agent-release".into(),
+        "unrelated-agent-release",
         Some("image-v3".into()),
     ));
     let service = SandboxRuntimeUpdateService::with_released(store.clone(), released)
