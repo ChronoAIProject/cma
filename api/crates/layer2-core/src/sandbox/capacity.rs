@@ -4,9 +4,17 @@ use std::collections::BTreeMap;
 use super::{service, SandboxService, SandboxServiceError, SandboxStatus};
 use crate::{Caller, Capability};
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SandboxQuotaUsage {
+    pub active: u64,
+    pub retiring_charged: u64,
+    pub retiring_released: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct SandboxCapacitySnapshot {
     pub counts: Vec<(SandboxStatus, u64)>,
+    pub retiring_released: u64,
     pub public_owner_limit: Option<u16>,
     pub observed_at: String,
 }
@@ -17,7 +25,18 @@ pub struct OwnerSandboxCapacity {
     pub live: u64,
     pub available: u64,
     pub counts_by_status: BTreeMap<String, u64>,
+    pub retiring_released: u64,
     pub observed_at: String,
+}
+
+impl OwnerSandboxCapacity {
+    pub fn quota_usage(&self) -> SandboxQuotaUsage {
+        SandboxQuotaUsage {
+            active: self.counts_by_status.get("active").copied().unwrap_or(0),
+            retiring_charged: self.counts_by_status.get("retiring").copied().unwrap_or(0),
+            retiring_released: self.retiring_released,
+        }
+    }
 }
 
 impl SandboxService {
@@ -60,6 +79,7 @@ impl SandboxService {
             live,
             available: u64::from(limit).saturating_sub(live),
             counts_by_status,
+            retiring_released: snapshot.retiring_released,
             observed_at: snapshot.observed_at,
         })
     }

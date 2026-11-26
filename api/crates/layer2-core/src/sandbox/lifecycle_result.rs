@@ -80,6 +80,10 @@ pub struct SandboxLifecycleResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_due_at: Option<String>,
     pub continuing: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_slot_released: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked_retirement_step: Option<&'static str>,
     pub actions: Vec<SandboxLifecycleAction>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after_seconds: Option<u64>,
@@ -104,6 +108,33 @@ impl SandboxLifecycleResult {
         now: SystemTime,
         owner_can_retire: bool,
     ) -> Option<Self> {
+        if sandbox.status == SandboxStatus::Retiring {
+            let exhausted = sandbox.retirement_retry_exhausted();
+            let mut result = retirement_admitted_at
+                .and_then(|at| {
+                    Self::from_admission(format!("{}:retire:{at}", sandbox.id), at, now, exhausted)
+                })
+                .unwrap_or_else(Self::unknown_failure);
+            result.owner_slot_released = Some(sandbox.retirement_released_owner_slot());
+            if exhausted {
+                result.code = Some("retirement_retry_exhausted");
+                result.blocked_retirement_step = match sandbox.work.step {
+                    SandboxWorkStep::StopAgents => Some("stop_agents"),
+                    SandboxWorkStep::RevokeRetirementCredentials => {
+                        Some("revoke_retirement_credentials")
+                    }
+                    SandboxWorkStep::TeardownRuntime => Some("teardown_runtime"),
+                    SandboxWorkStep::MarkRetired => Some("mark_retired"),
+                    _ => None,
+                };
+            } else if retirement_admitted_at.is_none() {
+                result.state = SandboxLifecycleResultState::InProgress;
+                result.code = None;
+                result.continuing = true;
+                result.retry_after_seconds = Some(5);
+            }
+            return Some(result);
+        }
         let mut result = if sandbox.status == SandboxStatus::Failed {
             failed_admission
                 .and_then(|admission| {
@@ -116,10 +147,7 @@ impl SandboxLifecycleResult {
                 })
                 .unwrap_or_else(Self::unknown_failure)
         } else {
-            let (operation_id, started_at) = if sandbox.status == SandboxStatus::Retiring {
-                let at = retirement_admitted_at?;
-                (format!("{}:retire:{at}", sandbox.id), at)
-            } else if let Some(operation) = &sandbox.lifecycle.operation {
+            let (operation_id, started_at) = if let Some(operation) = &sandbox.lifecycle.operation {
                 let authority = operation.authority();
                 (
                     authority.operation_id.clone(),
@@ -163,6 +191,8 @@ impl SandboxLifecycleResult {
             started_at: None,
             result_due_at: None,
             continuing: false,
+            owner_slot_released: None,
+            blocked_retirement_step: None,
             actions: vec![SandboxLifecycleAction::Observe],
             retry_after_seconds: None,
         }
@@ -213,6 +243,8 @@ impl SandboxLifecycleResult {
             started_at: Some(started_at.into()),
             result_due_at: Some(crate::rfc3339_at(UNIX_EPOCH + Duration::from_secs(due))),
             continuing: !failed,
+            owner_slot_released: None,
+            blocked_retirement_step: None,
             actions: vec![SandboxLifecycleAction::Observe],
             retry_after_seconds: (!failed).then_some(5),
         })
