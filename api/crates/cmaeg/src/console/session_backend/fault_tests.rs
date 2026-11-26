@@ -13,7 +13,8 @@ use std::time::Duration;
 #[tokio::test]
 #[ignore = "requires authenticated disposable Mongo replica set with failpoints"]
 async fn uncertain_create_and_delete_reconcile_without_reinsertion() {
-    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").expect("disposable Mongo fixture required");
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI")
+        .expect("disposable Mongo fixture required");
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_console_fault_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);

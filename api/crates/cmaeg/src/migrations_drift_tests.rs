@@ -97,9 +97,10 @@ async fn shared_startup_execution_identity_cannot_attest_drain() {
     let db = fixture().await;
     let password = uuid::Uuid::new_v4().to_string();
     db.run_command(doc! {"createUser":"fixture-startup","pwd":&password,"roles":[{"role":"readWrite","db":db.name()},{"role":"dbAdmin","db":db.name()}]}).await.unwrap();
-    let mut options = ClientOptions::parse(std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap())
-        .await
-        .unwrap();
+    let mut options =
+        ClientOptions::parse(std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
     options.credential = Some(
         Credential::builder()
             .username("fixture-startup".to_owned())
@@ -126,9 +127,10 @@ async fn shared_startup_execution_identity_cannot_attest_drain() {
         .unwrap();
     let operator_password = uuid::Uuid::new_v4().to_string();
     db.run_command(doc! {"createUser":"fixture-operator","pwd":&operator_password,"roles":[{"role":format!("{LEDGER}_operator"),"db":db.name()}]}).await.unwrap();
-    let mut options = ClientOptions::parse(std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap())
-        .await
-        .unwrap();
+    let mut options =
+        ClientOptions::parse(std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
     options.credential = Some(
         Credential::builder()
             .username("fixture-operator".to_owned())

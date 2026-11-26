@@ -255,7 +255,7 @@ fn staging_loads_with_each_graduated_gate_alone_explicitly_false() {
 
 #[test]
 fn the_staging_fixture_matches_live_keys_and_file_handling() {
-    assert_eq!(STAGING.len(), 51);
+    assert_eq!(STAGING.len(), 50);
     let live = |key: &str| {
         STAGING
             .iter()
