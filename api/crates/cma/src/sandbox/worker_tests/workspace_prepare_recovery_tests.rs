@@ -2,12 +2,14 @@ use super::*;
 use crate::sandbox::workspace_worker::{
     WorkspaceWorker, WorkspaceWorkerConfig, WorkspaceWorkerDependencies,
 };
-use layer2_core::sandbox::store::WorkspaceStore;
+use layer2_core::sandbox::store::{WorkspaceLifecycleStore, WorkspaceStore};
 use layer2_core::sandbox::{
     CreateInlineWorkspace, InlineWorkspaceSource, ProvisioningExecution, TypedFailure, Workspace,
     WorkspaceService, WorkspaceStatus, WorkspaceWorkStep,
 };
-use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
+use layer3_adapter::hosted::{
+    HostedAgentOpenSettings, HostedBackend, HostedControlTransport, ProviderHostedControlTransport,
+};
 use layer3_adapter::provider::ProviderSandboxRequest;
 use layer3_adapter::wire::{
     AgentOpenReceipt, FencedReceipt, FencedRequest, ResponseFrame, WireFailure, WireOperation,
@@ -18,6 +20,7 @@ use layer3_adapter::{
 };
 
 struct RecoveryProbe {
+    transport: Option<ProviderHostedControlTransport>,
     backend: InMemoryHostedBackend,
     requests: Mutex<Vec<WorkspacePrepareRecoveryRequest>>,
     rejection: Mutex<Option<AdapterError>>,
@@ -44,6 +47,14 @@ impl HostedBackend for RecoveryProbe {
         handle: &RuntimeHandle,
         frame: RequestFrame,
     ) -> layer3_adapter::Result<ResponseFrame> {
+        if let Some(transport) = self.transport.as_ref().filter(|_| {
+            matches!(
+                frame,
+                RequestFrame::PrepareWorkspace(_) | RequestFrame::RecoverWorkspacePrepare(_)
+            )
+        }) {
+            return transport.exchange(handle, frame).await;
+        }
         {
             let mut reply = self.failure_reply.lock().unwrap();
             if reply
@@ -163,6 +174,7 @@ impl Fixture {
             .await
             .unwrap();
         let probe = Arc::new(RecoveryProbe {
+            transport: None,
             backend: harness.backend.clone(),
             requests: Mutex::default(),
             rejection: Mutex::default(),
@@ -182,9 +194,16 @@ impl Fixture {
         self.worker_with_config(WorkspaceWorkerConfig::new("recovery-worker", "test"))
     }
     fn worker_with_config(&self, config: WorkspaceWorkerConfig) -> Arc<WorkspaceWorker> {
+        self.worker_with_store(self.harness.store.clone(), config)
+    }
+    fn worker_with_store(
+        &self,
+        store: Arc<dyn WorkspaceLifecycleStore>,
+        config: WorkspaceWorkerConfig,
+    ) -> Arc<WorkspaceWorker> {
         WorkspaceWorker::new(
             WorkspaceWorkerDependencies {
-                store: self.harness.store.clone(),
+                store,
                 adapter: Arc::new(
                     CodexAdapter::new(self.probe.clone(), CodexSandboxSpec::default())
                         .with_home_volumes(self.homes.clone()),
@@ -389,3 +408,6 @@ async fn workspace_prepare_observations_persist_first_and_terminal_across_worker
             .contains("opaque provider diagnostic"));
     }
 }
+
+#[path = "workspace_prepare_observations_mongo_tests.rs"]
+mod observation_mongo;
