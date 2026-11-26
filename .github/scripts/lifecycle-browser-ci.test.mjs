@@ -11,6 +11,7 @@ const suites = [
   {
     name: "Local resource lifecycle contracts",
     id: "resource_lifecycle",
+    timeoutMinutes: 8,
     config: "resource-lifecycle",
     evidence: "CMA_LIFECYCLE_EVIDENCE_DIR",
     directory: "cma-resource-lifecycle",
@@ -31,6 +32,7 @@ const suites = [
   {
     name: "Local Sandbox status filter contracts",
     id: "sandbox_status_filter",
+    timeoutMinutes: 5,
     config: "sandbox-status-filter",
     evidence: "CMA_SANDBOX_FILTER_EVIDENCE_DIR",
     directory: "cma-sandbox-filter",
@@ -46,7 +48,10 @@ function verify(workflow, config, suite) {
   const job = jobRunning(workflow, suite.name);
   const step = job.split(`name: "${suite.name}"`)[1]?.split("\n      -")[0];
   assert.ok(step, `Web must execute ${suite.config}`);
-  assert.match(step, /timeout-minutes: 5/);
+  assert.equal(
+    step.match(/^\s*timeout-minutes: (\d+)$/m)?.[1],
+    String(suite.timeoutMinutes),
+  );
   assert.ok(step.includes(`id: ${suite.id}\n`));
   assert.ok(
     step.includes(
