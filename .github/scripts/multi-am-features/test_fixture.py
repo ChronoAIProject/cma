@@ -22,6 +22,26 @@ from readiness_scaling import observe_never_ready, observe_scale
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_csi_registration_waits_for_the_hostpath_driver(self):
+        with tempfile.TemporaryDirectory() as directory:
+            infra = Infrastructure(directory)
+            states = ['', '{"spec":{"drivers":null}}',
+                      '{"spec":{"drivers":[{"name":"another-driver"}]}}',
+                      '{"spec":{"drivers":[{"name":"hostpath.csi.k8s.io"}]}}']
+            with patch.object(infra, 'k', side_effect=states) as k, patch('infrastructure.time.sleep'):
+                infra.wait_for_csi_registration()
+            self.assertEqual(k.call_count, len(states))
+
+    def test_csi_registration_fails_with_a_named_deadline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            infra = Infrastructure(directory)
+            infra.deadline = 100
+            with patch.object(infra, 'k', return_value='{"spec":{"drivers":null}}'), \
+                    patch('infrastructure.time.monotonic', side_effect=[80, 80, 99, 100]), \
+                    patch('infrastructure.time.sleep'):
+                with self.assertRaisesRegex(ValueError, 'rwop_csi_driver_missing'):
+                    infra.wait_for_csi_registration()
+
     def test_startup_witness_rejects_membership_before_ready_and_removes_pod(self):
         changes = []
         env = [{'name': 'POD_IP', 'valueFrom': {'fieldRef': {'fieldPath': 'status.podIP'}}}]

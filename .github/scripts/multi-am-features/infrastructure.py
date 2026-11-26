@@ -113,6 +113,17 @@ class Infrastructure:
                  ['cluster', 'node', 'created', 'node_id', 'volumes', 'previous_volumes']}
         (self.output / 'cluster-state.private.json').write_text(json.dumps(state))
 
+    def wait_for_csi_registration(self):
+        deadline = min(self.deadline, time.monotonic() + 45)
+        while (remaining := deadline - time.monotonic()) > 0:
+            node = json.loads(self.k(['get', 'csinode', self.node, '-o', 'json',
+                                      '--ignore-not-found'], timeout=min(remaining, 10)) or '{}')
+            drivers = node.get('spec', {}).get('drivers') or []
+            if any(driver['name'] == 'hostpath.csi.k8s.io' for driver in drivers):
+                return
+            time.sleep(max(0, min(deadline - time.monotonic(), 1)))
+        raise ValueError('rwop_csi_driver_missing')
+
     def setup(self, artifacts, revision, run_id, attempt, release_packet=None):
         self.stage = 'checkout_binding'
         if self.command(['git', 'rev-parse', 'HEAD']).strip() != revision:
@@ -175,9 +186,7 @@ class Infrastructure:
         self.k(['-n', 'cma-native-storage', 'rollout', 'status',
                 'statefulset/csi-hostpathplugin', '--timeout=180s'], timeout=190)
         self.stage = 'csi_driver_registration'
-        drivers = json.loads(self.k(['get', 'csinode', self.node, '-o', 'json']))['spec']['drivers']
-        if not any(d['name'] == 'hostpath.csi.k8s.io' for d in drivers):
-            raise ValueError('rwop_csi_driver_missing')
+        self.wait_for_csi_registration()
         # Only the owned cluster's DNS is changed. Preserve the other Corefile
         # plugins and send TLS SNI to the same names used by the native client.
         self.stage = 'fixture_dns'
