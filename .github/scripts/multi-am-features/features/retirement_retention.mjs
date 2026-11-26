@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import {check, hash, id} from '../cma/core.mjs';
+import {assertOwner, check, hash, id, other, poll} from '../cma/core.mjs';
 
 export async function retirementRetention({adapter, user, outsider, record, cleanup}) {
   const {agentId, sandboxId} = record;
@@ -18,6 +18,36 @@ export async function retirementRetention({adapter, user, outsider, record, clea
   const protectedState = await snapshot();
   check(protectedState?.status === 'active' && protectedState.children?.[0]?.status === 'ready' &&
     protectedState.children[0].last_seq >= before.children[0].last_seq, 'retirement_foreign_delete_changed_state');
+  const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
+  const ingress = other(owner.am);
+  const stopPath = agentPath + '/stop', stop = {body: {}, key: randomUUID(), allowed: [202]};
+  await user.request(ingress, 'POST', stopPath, stop);
+  const stopped = await poll(async () => (await user.request(owner.am, 'GET', agentPath)).body, value => {
+    check(value?.id === agentId && value.sandbox?.id === sandboxId, 'stop_readback_wrong_lineage');
+    return value.status === 'stopped';
+  }, {timeout: 90000, code: 'stop_did_not_reach_terminal_state'});
+  check(stopped.stop_reason === 'owner', 'stop_reason_not_owner');
+  const disposition = await snapshot();
+  check(disposition?.status === 'active' && disposition.children?.[0]?.status === 'stopped'
+    && disposition.children[0].last_seq > protectedState.children[0].last_seq, 'stop_terminal_snapshot_unbound');
+  await user.request(owner.am, 'POST', stopPath, stop);
+  const changed = await user.request(ingress, 'POST', stopPath, {...stop, body: {reason: 'owner'}, allowed: [422]});
+  check(changed.body?.code === 'idempotency_key_reused', 'stop_changed_request_refusal_untyped');
+  const stoppedEvents = [];
+  for (const am of [ingress, owner.am]) {
+    const detail = (await user.request(am, 'GET', agentPath)).body;
+    check(detail?.id === agentId && detail.sandbox?.id === sandboxId
+      && detail.status === 'stopped' && detail.stop_reason === stopped.stop_reason, 'stop_peer_readback_changed');
+    const {body: log} = await user.request(am, 'GET', agentPath + '/events?after=' + protectedState.children[0].last_seq);
+    check(Array.isArray(log?.items) && log.next === undefined, 'stop_event_tail_unbound');
+    const matches = log.items.filter(entry => entry.kind?.type === 'stopped' && entry.kind.reason === 'owner');
+    check(matches.length === 1 && Number.isSafeInteger(matches[0].seq), 'stop_event_missing_or_duplicated');
+    stoppedEvents.push(matches[0].seq);
+  }
+  check(stoppedEvents[0] === stoppedEvents[1], 'stop_event_peer_mismatch');
+  const replayed = await snapshot();
+  check(replayed?.children?.[0]?.revision === disposition.children[0].revision
+    && replayed.children[0].last_seq === disposition.children[0].last_seq, 'stop_replay_mutated_terminal_agent');
   await cleanup(record);
   const retained = await snapshot();
   check(retained?.status === 'retired' && retained.runtime_detached === true && retained.purge_deadline_future === true &&
@@ -40,5 +70,6 @@ export async function retirementRetention({adapter, user, outsider, record, clea
   }
   check(events[0] === events[1], 'retirement_peer_history_mismatch');
   return {agent_sha256: hash(agentId), sandbox_sha256: hash(sandboxId), terminal_event_count: 1,
+    stop_ingress: ingress, stop_owner: owner.am, stop_owner_epoch: owner.epoch, stop_events: 1,
     retained_history: true, observed_future_purge_deadline: true};
 }

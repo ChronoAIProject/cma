@@ -149,6 +149,7 @@
           "routing": "journey"
         },
         {"case": "ownerless_pause_revive_open", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "retirement_retains_terminal_evidence", "minimum_runs": 1, "phases": [], "routing": "journey"},
         {"case": "writer.shared_conversation_ingress", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},
         {
           "case": "writer.queued_edit_cancel",

@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {retirementRetention} from './retirement_retention.mjs';
 
-function fixture({foreignDeleteWrites = false, deadlineFuture = true, duplicateRetirement = false} = {}) {
+function fixture({foreignDeleteWrites = false, deadlineFuture = true, duplicateRetirement = false,
+  duplicateStop = false, stopReplayWrites = false} = {}) {
   const record = {agentId: 'fixture-agent', sandboxId: 'fixture-sandbox'};
   const sandboxPath = `/api/v1/sandboxes/${record.sandboxId}`;
   const agentPath = `/api/v1/agents/${record.agentId}`;
   const attempts = [];
-  let retired = false, deleteEffect = false, ownerCleanupCount = 0;
+  let retired = false, stopped = false, deleteEffect = false, ownerCleanupCount = 0, stopKey, revision = 1;
   const outsider = {request: async (am, method, path, options) => {
     assert.equal(method, 'DELETE');
     assert.deepEqual(options.allowed, [404]);
@@ -15,14 +16,43 @@ function fixture({foreignDeleteWrites = false, deadlineFuture = true, duplicateR
     if (foreignDeleteWrites) deleteEffect = true;
     return {status: 404};
   }};
-  const adapter = {lifecycleSnapshot: async input => {
+  const adapter = {ownerOf: async ({agentId}) => ({agent_id: agentId, am: 'a', epoch: 7, pod_uid: 'owner-pod'}),
+    lifecycleSnapshot: async input => {
     assert.deepEqual(input, {sandboxId: record.sandboxId, agentIds: [record.agentId]});
     return retired ? {status: 'retired', runtime_detached: true, purge_deadline_future: deadlineFuture,
       children: [{status: 'deleted', last_seq: 7}]}
-      : {status: deleteEffect ? 'retiring' : 'active', children: [{status: 'ready', last_seq: 4}]};
+      : {status: deleteEffect ? 'retiring' : 'active',
+        children: [{status: stopped ? 'stopped' : 'ready', last_seq: stopped ? 5 : 4, revision}]};
   }};
-  const user = {request: async (_am, method, path) => {
+  const user = {request: async (am, method, path, options) => {
+    if (path === agentPath + '/stop') {
+      assert.equal(method, 'POST');
+      if (stopKey) assert.equal(options.key, stopKey);
+      if (options.body.reason) {
+        assert.equal(am, 'b');
+        assert.deepEqual(options.allowed, [422]);
+        return {status: 422, body: {code: 'idempotency_key_reused'}};
+      }
+      if (stopKey) {
+        assert.equal(am, 'a');
+        if (stopReplayWrites) revision += 1;
+      } else {
+        assert.equal(am, 'b');
+        stopKey = options.key;
+        stopped = true;
+        revision += 1;
+      }
+      return {status: 202};
+    }
     assert.equal(method, 'GET');
+    if (path === agentPath + '/events?after=4') {
+      const event = {seq: 5, kind: {type: 'stopped', reason: 'owner'}};
+      return {body: {items: duplicateStop ? [event, {...event, seq: 6}] : [event]}};
+    }
+    if (!retired && path === agentPath) {
+      assert(stopped);
+      return {body: {id: record.agentId, sandbox: {id: record.sandboxId}, status: 'stopped', stop_reason: 'owner'}};
+    }
     assert(retired);
     if (path === agentPath) return {body: {id: record.agentId, status: 'deleted'}};
     if (path === sandboxPath) return {body: {id: record.sandboxId, status: 'retired'}};
@@ -41,6 +71,8 @@ test('both Managers refuse foreign cleanup and retain one exact terminal publica
   const {context, attempts, count} = fixture();
   const proof = await retirementRetention(context);
   assert.equal(proof.terminal_event_count, 1);
+  assert.equal(proof.stop_events, 1);
+  assert.equal(proof.stop_ingress, 'b');
   assert.equal(proof.observed_future_purge_deadline, true);
   assert.equal(attempts.length, 4);
   assert.equal(count(), 1);
@@ -49,6 +81,8 @@ test('both Managers refuse foreign cleanup and retain one exact terminal publica
 test('a foreign side effect, early purge deadline or duplicate retirement fails', async () => {
   for (const [input, expected] of [
     [{foreignDeleteWrites: true}, /retirement_foreign_delete_changed_state/],
+    [{duplicateStop: true}, /stop_event_missing_or_duplicated/],
+    [{stopReplayWrites: true}, /stop_replay_mutated_terminal_agent/],
     [{deadlineFuture: false}, /retirement_retained_state_or_deadline_missing/],
     [{duplicateRetirement: true}, /retirement_history_missing_or_duplicated/],
   ]) {
