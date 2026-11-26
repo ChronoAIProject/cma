@@ -23,6 +23,7 @@
           "counts_by_status": {
             "active": 1
           },
+          "retiring_released": 0,
           "observed_at": "2026-09-05T00:00:00Z"
         },
         "bodyKind": "json"
