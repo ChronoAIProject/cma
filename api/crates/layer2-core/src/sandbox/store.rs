@@ -444,6 +444,10 @@ struct State {
         std::collections::BTreeMap<String, super::agent_io::CommandAuthorizationAudit>,
     agent_command_keys: HashMap<(String, String), crate::ids::AgentCommandId>,
     agent_command_orders: HashMap<AgentId, super::agent_io::CommandLane>,
+    #[cfg(test)]
+    held_runtime_target: Option<String>,
+    #[cfg(test)]
+    expected_recovery_release: Option<layer3_adapter::ReleasedRuntime>,
     sandboxes: HashMap<SandboxId, Sandbox>,
     workspaces: HashMap<WorkspaceId, Workspace>,
     worktrees: HashMap<WorktreeId, Worktree>,
