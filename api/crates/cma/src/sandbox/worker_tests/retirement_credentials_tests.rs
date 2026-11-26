@@ -184,7 +184,11 @@ async fn permanent_revocation_outage_finishes_retry_budget_and_retains_custody()
     assert_eq!(terminal.credential.revoke_debt.len(), 1);
     assert_eq!(terminal.runtime, active.runtime);
     assert!(terminal.purge_after.is_none());
-    let restarted = h.worker_with("retirement-successor", h.credentials.clone(), Duration::ZERO);
+    let restarted = h.worker_with(
+        "retirement-successor",
+        h.credentials.clone(),
+        Duration::ZERO,
+    );
     assert!(!restarted
         .run_one(&active.id, now + Duration::from_secs(3600))
         .await

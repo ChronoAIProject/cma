@@ -5,18 +5,42 @@ use crate::sandbox::SandboxWorkStep;
 #[tokio::test]
 async fn stopped_retirement_retries_only_at_the_current_revision_and_original_step() {
     let fixture = fixture();
-    let mut parent = sandbox("sbx_stopped_retirement", "owner-a", SandboxStatus::Active, "v2");
+    let mut parent = sandbox(
+        "sbx_stopped_retirement",
+        "owner-a",
+        SandboxStatus::Active,
+        "v2",
+    );
     let at = "2026-11-26T00:00:00Z";
     parent.begin_retirement(at.into()).unwrap();
-    parent.work.schedule(SandboxWorkStep::RevokeRetirementCredentials, at.into());
+    parent
+        .work
+        .schedule(SandboxWorkStep::RevokeRetirementCredentials, at.into());
     parent.work.attempts = crate::sandbox::work_retry::WORK_RETRY_BUDGET;
-    let fence = parent.work.claim("worker".into(), at, "2026-11-26T00:01:00Z".into()).unwrap();
+    let fence = parent
+        .work
+        .claim("worker".into(), at, "2026-11-26T00:01:00Z".into())
+        .unwrap();
     parent.work.stop_retirement("worker", fence).unwrap();
-    fixture.sandboxes.create_sandbox(parent.clone()).await.unwrap();
+    fixture
+        .sandboxes
+        .create_sandbox(parent.clone())
+        .await
+        .unwrap();
     let operator = caller([Capability::ControlAnySandbox]);
-    assert!(!fixture.service.retire_sandbox(&operator, &parent.id, None).await.unwrap().changed);
+    assert!(
+        !fixture
+            .service
+            .retire_sandbox(&operator, &parent.id, None)
+            .await
+            .unwrap()
+            .changed
+    );
     assert!(matches!(
-        fixture.service.retire_sandbox(&operator, &parent.id, Some(parent.revision - 1)).await,
+        fixture
+            .service
+            .retire_sandbox(&operator, &parent.id, Some(parent.revision - 1))
+            .await,
         Err(OperatorError::InvalidState(_))
     ));
     let result = fixture
