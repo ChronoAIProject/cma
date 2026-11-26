@@ -164,6 +164,26 @@ impl OwnershipStore for MemoryOwnershipStore {
             .cloned())
     }
 
+    async fn reconciliation_owners(
+        &self,
+        ids: &[&AgentId],
+    ) -> Result<Vec<ReconciliationOwner>, OwnershipError> {
+        self.accessible()?;
+        let now = self.now();
+        let state = self.state.lock().unwrap();
+        Ok(ids
+            .iter()
+            .filter_map(|id| {
+                let lease = state.owners.get(*id)?.1.as_ref()?;
+                let remaining_ms = u64::try_from(lease.expires_at_ms.checked_sub(now)?).ok()?;
+                Some(ReconciliationOwner {
+                    token: lease.token.clone(),
+                    remaining_ms,
+                })
+            })
+            .collect())
+    }
+
     async fn has_owner_history(&self, id: &AgentId) -> Result<bool, OwnershipError> {
         self.accessible()?;
         Ok(self.state.lock().unwrap().owners.contains_key(id))

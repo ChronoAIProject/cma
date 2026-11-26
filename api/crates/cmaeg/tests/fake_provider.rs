@@ -54,6 +54,9 @@ pub struct FakeProviderConfig {
     pub conversation_delete_status: Option<(u16, String)>,
     pub malformed_frame: bool,
     pub disconnect_after: Option<usize>,
+    pub recovery_status: Option<&'static str>,
+    pub recovery_replay_status: Option<&'static str>,
+    pub recovery_wrong_metadata: bool,
     pub reject_binding: bool,
     pub binding_pause: Option<Arc<BindingPause>>,
     /// Exact binding PUT refusals by zero-based attempt; other attempts succeed.
@@ -100,6 +103,9 @@ impl Default for FakeProviderConfig {
             conversation_delete_status: None,
             malformed_frame: false,
             disconnect_after: None,
+            recovery_status: None,
+            recovery_replay_status: None,
+            recovery_wrong_metadata: false,
             reject_binding: false,
             binding_pause: None,
             binding_failures: std::collections::BTreeMap::new(),
@@ -180,6 +186,8 @@ impl FakeProvider {
             .route("/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}", get(event_context))
             .route("/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets", post(reset::reset))
             .route("/api/v2/responses", post(responses))
+            .route("/api/v2/responses/{response_id}", get(recovery_snapshot))
+            .route("/api/v2/responses/{response_id}/events", get(recovery_events))
             .with_state(state.clone());
         let (shutdown, signal) = oneshot::channel();
         tokio::spawn(async move {
@@ -234,6 +242,87 @@ async fn agent_card() -> Json<Value> {
     Json(
         json!({"name":"fake","capabilities":{"streaming":true,"activity_items":true,"client_tools":true,"cancel":true,"rich_input":true}}),
     )
+}
+
+fn recovery_response(state: &StateData, id: &str, status: &str) -> Option<Value> {
+    if id != "resp_fake" || state.config.recovery_status.is_none() {
+        return None;
+    }
+    let requests = state.requests.lock().unwrap();
+    let submission = requests
+        .iter()
+        .find(|request| request.method == "POST" && request.path == "/api/v2/responses")?;
+    let request: Value = serde_json::from_str(&submission.body).unwrap();
+    let metadata = if state.config.recovery_wrong_metadata {
+        json!({"cmaeg.event":"unrelated"})
+    } else {
+        request["metadata"].clone()
+    };
+    let mut response = json!({
+        "id":id, "object":"response", "status":status,
+        "conversation":{"id":"agt_test"}, "metadata":metadata,
+        "output":[{"type":"message","content":[{"type":"output_text","text":"recovered answer"}]}]
+    });
+    if status == "failed" {
+        response["error"] =
+            json!({"code":"provider_test_failed","message":"provider test failure"});
+    }
+    if status == "incomplete" {
+        response["incomplete_details"] = json!({"reason":"test_incomplete"});
+    }
+    Some(response)
+}
+
+async fn recovery_snapshot(
+    State(state): State<Arc<StateData>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    record(
+        &state,
+        "GET",
+        format!("/api/v2/responses/{id}"),
+        headers,
+        Bytes::new(),
+    );
+    state
+        .config
+        .recovery_status
+        .and_then(|status| recovery_response(&state, &id, status))
+        .map_or_else(
+            || StatusCode::NOT_FOUND.into_response(),
+            |value| Json(value).into_response(),
+        )
+}
+
+async fn recovery_events(
+    State(state): State<Arc<StateData>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    record(
+        &state,
+        "GET",
+        format!("/api/v2/responses/{id}/events"),
+        headers,
+        Bytes::new(),
+    );
+    let status = state.config.recovery_replay_status.unwrap_or("completed");
+    let Some(response) = recovery_response(&state, &id, status) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let event = format!("response.{status}");
+    let frame = json!({
+        "type":event,"sequence_number":0,"response_id":id,"response":response
+    });
+    (
+        [
+            ("content-type", "text/event-stream"),
+            ("x-cma-response-id", &id),
+        ],
+        format!("event: {event}\nid: 0\ndata: {frame}\n\n"),
+    )
+        .into_response()
 }
 
 async fn bind(
