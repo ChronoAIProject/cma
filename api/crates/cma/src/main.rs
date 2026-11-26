@@ -158,17 +158,7 @@ async fn run() {
         }
         return;
     }
-    if arguments
-        .first()
-        .is_some_and(|a| a == "--repair-measured-usage")
-    {
-        match store::sandbox_usage_export::repair_command(&arguments).await {
-            Ok(result) => println!("{result}"),
-            Err(error) => {
-                eprintln!("{error}");
-                std::process::exit(2);
-            }
-        }
+    if store::sandbox_usage_export::run_repair_command(&arguments).await {
         return;
     }
     if retirement_archive::is_command(&arguments) {

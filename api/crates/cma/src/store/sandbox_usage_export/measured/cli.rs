@@ -1,7 +1,24 @@
 use super::*;
 use mongodb::{options::ClientOptions, Client};
 
-pub(crate) async fn command(arguments: &[String]) -> Result<serde_json::Value, &'static str> {
+pub(crate) async fn run_repair_command(arguments: &[String]) -> bool {
+    if !arguments
+        .first()
+        .is_some_and(|argument| argument == "--repair-measured-usage")
+    {
+        return false;
+    }
+    match command(arguments).await {
+        Ok(result) => println!("{result}"),
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+    }
+    true
+}
+
+async fn command(arguments: &[String]) -> Result<serde_json::Value, &'static str> {
     let [_, source, minute, evidence, predecessor, mode] = arguments else {
         return Err("usage: --repair-measured-usage SOURCE_STREAM MINUTE_SECONDS EVIDENCE_DIGEST PREDECESSOR_EVENT --dry-run|--apply");
     };

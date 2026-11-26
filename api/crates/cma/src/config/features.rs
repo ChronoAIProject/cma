@@ -211,10 +211,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
             )?,
-            native_retirement_capture_enabled: flag(
-                lookup,
-                "CHRONO_NATIVE_RETIREMENT_CAPTURE_ENABLED",
-            )?,
+            native_retirement_capture_enabled: flag(lookup, gates::RETIREMENT_CAPTURE)?,
             reviewed_sandbox_retirement_enabled: flag(
                 lookup,
                 "CHRONO_REVIEWED_SANDBOX_RETIREMENT_ENABLED",
