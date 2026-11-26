@@ -50,7 +50,7 @@ async fn measure_idle(
         (false, 10_000) => 2,
         (false, _) => 4,
     };
-    f.meter.clear();
+    f.meter.start_opening();
     let cohort_started = Instant::now();
     let opening = (0..100).map(|index| {
         let (agents, replicas, client) = (&agents, &replicas, &client);
@@ -111,16 +111,18 @@ async fn measure_idle(
     let mut longest_by_route = [Duration::ZERO; 2];
     let report_opening = |phase, counts: [usize; 2], longest: [Duration; 2]| {
         let cohort_elapsed = cohort_started.elapsed();
-        let (commands, checkouts) = {
-            let stats = f.meter.stats.lock().unwrap();
-            (stats.commands.values().sum::<u64>(), stats.checkouts)
-        };
+        let mongo = f.meter.opening_stats();
         eprintln!(
             "observation_open phase={phase} shared={shared_observation} agents={} \
-            observers=100 history={rows} distinct={distinct} commands={commands} \
-            checkouts={checkouts} concurrent_opens={concurrent_opens} \
+            observers=100 history={rows} distinct={distinct} commands={} \
+            checkouts={} concurrent_opens={concurrent_opens} \
+            longest_checkout={:?} longest_command={:?} \
             cohort_elapsed={cohort_elapsed:?} longest_open={:?}",
             agents.len(),
+            mongo.commands,
+            mongo.checkouts,
+            mongo.longest_checkout,
+            mongo.longest_command,
             longest[0].max(longest[1]),
         );
         for (replica, route) in OBSERVATION_ROUTES.into_iter().enumerate() {
@@ -145,6 +147,7 @@ async fn measure_idle(
     }
     drop(opening);
     report_opening("complete", count_by_route, longest_by_route);
+    f.meter.finish_opening();
     for response in opened {
         consumers.push(tokio::spawn(async move {
             let mut body = response.bytes_stream();
