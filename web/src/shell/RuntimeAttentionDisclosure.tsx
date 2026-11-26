@@ -24,7 +24,8 @@ export function RuntimeAttentionDisclosure({
       sandbox.sandboxId === selectedSandboxId ||
       (selectedAgentId !== undefined && sandbox.agentIds.includes(selectedAgentId)),
   );
-  const visible = attention.freshness !== 'unknown' && attention.failedSandboxes.length > 0;
+  const failedCount = attention.failedSandboxes.length;
+  const visible = attention.freshness !== 'unknown' && failedCount > 0;
   useLayoutEffect(() => {
     if (visible && disclosure.current && (revealAgents || selectedFailure))
       disclosure.current.open = true;
@@ -36,7 +37,8 @@ export function RuntimeAttentionDisclosure({
       <summary>
         <CharacterAvatar pose="failed" tone="error" still size={24} />
         <span>
-          {attention.failedSandboxes.length} updates failed{fresh ? '' : ' (last known)'} · Fix
+          {failedCount} {failedCount === 1 ? 'update' : 'updates'} failed
+          {fresh ? '' : ' (last known)'} · Fix
         </span>
       </summary>
       {!fresh ? (

@@ -50,7 +50,11 @@ async fn quota_preflight_preserves_replay_and_existing_targets_without_preparati
         service
             .create(&owner.caller, Some(&owner), None, refused, "refused")
             .await,
-        Err(AgentLifecycleProvisioningError::SandboxLimitReached { limit: 1, live: 1 })
+        Err(AgentLifecycleProvisioningError::SandboxLimitReached {
+            limit: 1,
+            live: 1,
+            ..
+        })
     ));
     assert_eq!(
         db.collection::<Document>("agent_lifecycle_operations")
@@ -199,7 +203,11 @@ async fn worker_quota_failure_metadata_is_gated_and_survives_restart() {
             .unwrap()
             .contains("sandbox limit reached"));
         let expected = enabled.then_some(
-            layer1_public::rest::AgentLifecycleFailure::SandboxLimitReached { limit: 1, live: 1 },
+            layer1_public::rest::AgentLifecycleFailure::SandboxLimitReached {
+                limit: 1,
+                live: 1,
+                quota_usage: Some(Default::default()),
+            },
         );
         assert_eq!(record.failure, expected);
         let raw = db

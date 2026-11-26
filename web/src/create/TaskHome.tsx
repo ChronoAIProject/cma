@@ -125,8 +125,11 @@ function TaskHomeContent({
       ? { owner: viewerId, intentKey: intent.key, workspaceId, sandboxId }
       : undefined,
   );
-  const quotaFailed =
-    operation?.status === 'failed' && operation.failure?.code === 'sandbox_limit_reached';
+  const quotaFailure =
+    operation?.status === 'failed' && operation.failure?.code === 'sandbox_limit_reached'
+      ? operation.failure
+      : undefined;
+  const quotaFailed = quotaFailure !== undefined;
   const failure = lifecycleFailureMessage(
     lifecycle.failure,
     intent?.receipt ? retryTaskStatus : lifecycle.connection ? continueTask : recoverTask,
@@ -450,6 +453,9 @@ function TaskHomeContent({
         <p role="alert">
           The Sandbox environment limit is now reached. Your task draft is saved. Manage
           environments and check capacity before starting again.
+          {quotaFailure?.quota_usage
+            ? ` Active: ${quotaFailure.quota_usage.active}. Deletions using slots: ${quotaFailure.quota_usage.retiring_charged}. Deletions that released slots: ${quotaFailure.quota_usage.retiring_released}.`
+            : null}
         </p>
       ) : null}
       <RepositoryPreparationHelp

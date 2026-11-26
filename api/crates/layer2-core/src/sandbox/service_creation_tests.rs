@@ -117,7 +117,11 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
             .create(&manual, request(reference.clone()))
             .await
             .unwrap_err(),
-        SandboxServiceError::SandboxLimitReached { limit: 3, live: 3 }
+        SandboxServiceError::SandboxLimitReached {
+            limit: 3,
+            live: 3,
+            usage: Default::default()
+        }
     );
     let visitor_store = Arc::new(InMemorySandboxStore::default());
     let visitor_service = SandboxService::new(
@@ -158,7 +162,11 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
             .create_for_launch(&launcher, Capability::LaunchTriggers, trigger_request)
             .await
             .unwrap_err(),
-        SandboxServiceError::SandboxLimitReached { limit: 1, live: 1 }
+        SandboxServiceError::SandboxLimitReached {
+            limit: 1,
+            live: 1,
+            usage: Default::default()
+        }
     );
     assert_eq!(
         visitor_service
@@ -195,7 +203,11 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
             .create_for_launch(&dual, Capability::LaunchTriggers, launch("launch-dual-2"))
             .await
             .unwrap_err(),
-        SandboxServiceError::SandboxLimitReached { limit: 1, live: 1 }
+        SandboxServiceError::SandboxLimitReached {
+            limit: 1,
+            live: 1,
+            usage: Default::default()
+        }
     );
     dual_service
         .create_for_launch(&dual, Capability::CreateSandbox, launch("launch-dual-2"))

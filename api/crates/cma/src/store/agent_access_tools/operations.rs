@@ -34,6 +34,14 @@ impl MongoAgentAccessToolSource {
             validation::request(&snapshot, &record.request, record.fence)?;
         } else {
             require_conversation(&snapshot, record.conversation.as_deref(), false)?;
+            if record.request.restart_runtime.is_some()
+                && !crate::store::agent_tool_open::matches(
+                    &snapshot.resource.lineage,
+                    &record.request,
+                )
+            {
+                return Err(Error::Refused);
+            }
         }
         // Discovery returns no Agent identity and cannot admit a grant or a
         // command. The transaction's snapshot proves the current receipt,
@@ -271,6 +279,9 @@ impl MongoAgentAccessToolSource {
         }
         let conversation = record.conversation.ok_or(Error::Refused)?;
         require_conversation(&snapshot, Some(&conversation), true)?;
+        if !crate::store::agent_tool_open::published(&snapshot.resource.lineage, &record.request) {
+            return Err(Error::Refused);
+        }
         super::super::resource_access::fence_lineage(&self.store, &snapshot.resource, session)
             .await?;
         Ok(AuthenticatedAgentAccess {
@@ -295,13 +306,6 @@ fn require_conversation(
         .agent
         .as_ref()
         .ok_or(Error::Refused)?;
-    let process = snapshot
-        .resource
-        .lineage
-        .sandbox
-        .runtime
-        .as_ref()
-        .ok_or(Error::Refused)?;
     if conversation.is_some_and(|value| {
         agent
             .conversation
@@ -309,8 +313,7 @@ fn require_conversation(
             .as_deref()
             .is_some_and(|id| id != value)
             || (published && agent.conversation.conversation_id.as_deref() != Some(value))
-    }) || (published && agent.conversation.runtime_generation != process.provision_generation)
-    {
+    }) {
         return Err(Error::Refused);
     }
     Ok(())

@@ -57,6 +57,8 @@ fn failed_result_wire_fixture_omits_retry_after() {
             started_at: Some("2026-11-16T00:00:00Z".into()),
             result_due_at: Some("2026-11-16T00:01:30Z".into()),
             continuing: false,
+            owner_slot_released: None,
+            blocked_retirement_step: None,
             actions: vec![
                 SandboxLifecycleAction::Observe,
                 SandboxLifecycleAction::Retire,

@@ -105,7 +105,7 @@ impl SandboxWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if failure.retryable {
+        if sandbox.status == SandboxStatus::Retiring || failure.retryable {
             return self.retry_failure(sandbox, failure, now).await;
         }
         let expected_revision = sandbox.revision;
@@ -146,14 +146,24 @@ impl SandboxWorker {
         let expected_revision = sandbox.revision;
         let step = sandbox.work.step;
         let fence = self.claimed_fence(&sandbox)?;
-        sandbox
-            .work
-            .retry(&self.config.holder, fence, rfc3339_at(now + decision.delay))
-            .map_err(|_| SandboxStoreError::Conflict)?;
+        let event_at = rfc3339_at(now);
+        let exhausted = sandbox.status == SandboxStatus::Retiring
+            && step.is_retirement()
+            && sandbox.work.attempts >= failure.retry_kind().retry_budget();
+        if exhausted {
+            sandbox
+                .work
+                .stop_retirement(&self.config.holder, fence)
+                .map_err(|_| SandboxStoreError::Conflict)?;
+        } else {
+            sandbox
+                .work
+                .retry(&self.config.holder, fence, rfc3339_at(now + decision.delay))
+                .map_err(|_| SandboxStoreError::Conflict)?;
+        }
         sandbox.revision = expected_revision
             .checked_add(1)
             .ok_or(SandboxStoreError::Conflict)?;
-        let event_at = rfc3339_at(now);
         sandbox.updated_at = event_at.clone();
         commit_advance(
             &self.dependencies.store,
@@ -166,6 +176,10 @@ impl SandboxWorker {
             },
         )
         .await?;
+        if exhausted {
+            metrics::counter!("cma_sandbox_retirement_retry_exhausted_total").increment(1);
+            return Ok(());
+        }
         super::retry::native_retry_published(native_retry);
         if let Some(telemetry) = telemetry {
             telemetry.published();
