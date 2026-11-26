@@ -9,6 +9,7 @@ use tokio::process::Command;
 
 const LEDGER: &str = cmaeg::migrations::LEDGER;
 const MARKERS: &str = "eg_schema_migrations";
+const FENCES: &str = "eg_channel_create_fences";
 
 async fn cli(db: &Database, uri: &url::Url, args: &[&str]) -> Output {
     tokio::time::timeout(
@@ -55,7 +56,7 @@ async fn activate(db: &Database, uri: &url::Url) {
     );
 }
 
-async fn snapshot(db: &Database) -> (Vec<Document>, Vec<Document>) {
+async fn snapshot(db: &Database) -> (Vec<Document>, Vec<Document>, Vec<Document>) {
     let mut schemas: Vec<_> = db.list_collections().await.unwrap()
         .try_collect::<Vec<_>>().await.unwrap().into_iter()
         .filter(|collection| collection.name != LEDGER)
@@ -76,7 +77,15 @@ async fn snapshot(db: &Database) -> (Vec<Document>, Vec<Document>) {
         .try_collect()
         .await
         .unwrap();
-    (schemas, markers)
+    let floors = db
+        .collection::<Document>(FENCES)
+        .find(doc! {"_id":"writer_floor"})
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    (schemas, markers, floors)
 }
 
 #[tokio::test]
@@ -238,4 +247,67 @@ async fn channel_writer_floor_requires_drain_and_refuses_unknown_catalog_before_
         .contains("Gateway Channel create fence floor inspection failed"));
     assert_eq!(snapshot(&db).await, drifted);
     db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn channel_writer_floor_refuses_extra_fence_index_and_missing_required_collection() {
+    let uri = url::Url::parse(&std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap()).unwrap();
+    let admin = Client::with_uri_str(uri.as_str()).await.unwrap();
+    let seed = admin.database(&format!(
+        "channel_floor_seed_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    assert!(cli(&seed, &uri, &["--migrate"]).await.status.success());
+    let floor_args = [
+        "--migrate-channel-create-fence-floor",
+        "--all-writers-drained",
+    ];
+    assert!(cli(&seed, &uri, &floor_args).await.status.success());
+    let validator = seed
+        .list_collections()
+        .filter(doc! {"name":FENCES})
+        .await
+        .unwrap()
+        .try_next()
+        .await
+        .unwrap()
+        .unwrap()
+        .options
+        .validator
+        .unwrap();
+    seed.drop().await.unwrap();
+
+    for extra_index in [true, false] {
+        let db = admin.database(&format!("channel_floor_{}", uuid::Uuid::new_v4().simple()));
+        assert!(cli(&db, &uri, &["--migrate"]).await.status.success());
+        if extra_index {
+            db.run_command(doc! {
+                "create":FENCES,"validator":&validator,
+                "validationLevel":"strict","validationAction":"error",
+            })
+            .await
+            .unwrap();
+            db.run_command(doc! {
+                "createIndexes":FENCES,"indexes":[{"key":{"revision":1},"name":"unexpected_revision"}],
+            }).await.unwrap();
+        } else {
+            db.collection::<Document>(cmaeg::records::mongo::RECORDS)
+                .drop()
+                .await
+                .unwrap();
+        }
+        let before = snapshot(&db).await;
+        assert!(before.2.is_empty());
+        assert!(before.1.iter().all(|row| !matches!(
+            row.get_str("_id"),
+            Ok("channel_validator_change" | "channel_create_fences")
+        )));
+        let refused = cli(&db, &uri, &floor_args).await;
+        assert!(!refused.status.success());
+        assert!(String::from_utf8_lossy(&refused.stderr)
+            .contains("Gateway Channel create fence floor inspection failed"));
+        assert_eq!(snapshot(&db).await, before);
+        db.drop().await.unwrap();
+    }
 }

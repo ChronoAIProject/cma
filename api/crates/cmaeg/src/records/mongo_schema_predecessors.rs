@@ -94,7 +94,7 @@ pub(super) fn marker_predecessors() -> Vec<Document> {
     ]
 }
 
-pub(super) fn record_predecessors(current: &Document) -> Vec<Document> {
+pub(in crate::records) fn record_predecessors(current: &Document) -> Vec<Document> {
     let mut without_replica = current.clone();
     without_replica
         .get_document_mut("$jsonSchema")
@@ -102,12 +102,19 @@ pub(super) fn record_predecessors(current: &Document) -> Vec<Document> {
         .get_document_mut("properties")
         .unwrap()
         .remove("replica");
-    let mut without_guard = without_replica.clone();
+    let mut without_replica_or_guard = without_replica.clone();
+    without_replica_or_guard
+        .get_document_mut("$jsonSchema")
+        .unwrap()
+        .get_document_mut("properties")
+        .unwrap()
+        .remove("guard_revision");
+    let mut without_guard = current.clone();
     without_guard
         .get_document_mut("$jsonSchema")
         .unwrap()
         .get_document_mut("properties")
         .unwrap()
         .remove("guard_revision");
-    vec![without_replica, without_guard]
+    vec![without_replica, without_replica_or_guard, without_guard]
 }

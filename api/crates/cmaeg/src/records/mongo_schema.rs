@@ -13,6 +13,7 @@ use mongodb::{
     options::IndexOptions,
     Database, IndexModel,
 };
+pub(super) use predecessors::record_predecessors;
 
 // Publication reads this same requirement into the immutable image's OCI label.
 // Optional migration markers remain separate from the base startup contract.

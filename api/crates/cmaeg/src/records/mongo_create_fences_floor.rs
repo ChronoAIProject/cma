@@ -187,23 +187,11 @@ pub(crate) async fn verify(db: &Database, issuer: &str) -> Result<bool, RecordEr
         .read_concern(ReadConcern::majority())
         .await
         .map_err(failure)?;
-    let indexes = fences
-        .list_indexes()
-        .await
-        .map_err(failure)?
-        .try_collect::<Vec<_>>()
-        .await
-        .map_err(failure)?;
     if validator_phase(db).await? != Some(FENCED_WRITERS)
         || !row.is_some_and(|row| {
             row.get_str("issuer").ok() == Some(issuer) && row.get_i32("version").ok() == Some(1)
         })
-        || indexes.len() != 1
-        || indexes[0].keys != doc! {"_id": 1}
-        || indexes[0]
-            .options
-            .as_ref()
-            .is_some_and(|options| options.expire_after.is_some())
+        || !fence_indexes_match(db).await?
         || !channel_validator_is_strict(db).await?
     {
         return Err(RecordError::Unavailable(
@@ -211,6 +199,25 @@ pub(crate) async fn verify(db: &Database, issuer: &str) -> Result<bool, RecordEr
         ));
     }
     Ok(true)
+}
+
+async fn fence_indexes_match(db: &Database) -> Result<bool, RecordError> {
+    let indexes = db
+        .collection::<Document>(CREATE_FENCES)
+        .list_indexes()
+        .await
+        .map_err(failure)?
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(failure)?;
+    let [index] = indexes.as_slice() else {
+        return Ok(false);
+    };
+    Ok(index.keys == doc! {"_id": 1}
+        && index
+            .options
+            .as_ref()
+            .is_none_or(|options| options.expire_after.is_none()))
 }
 
 async fn channel_validator_is_strict(db: &Database) -> Result<bool, RecordError> {
@@ -265,12 +272,15 @@ async fn marker_catalog(db: &Database) -> Result<(), RecordError> {
 }
 
 async fn channel_catalog(db: &Database) -> Result<(), RecordError> {
+    let ordinary = schema::record_validator(false);
+    let mut predecessors = schema::record_predecessors(&ordinary);
+    predecessors.push(ordinary);
     cma_service_migrations::collection_with_guarded_replacement(
         db,
         RECORDS,
         schema::record_validator(true),
         false,
-        vec![schema::record_validator(false)],
+        predecessors,
         None,
         |validator| async move { set_channel_validator(db, validator).await.map(|_| ()) },
     )
@@ -279,6 +289,21 @@ async fn channel_catalog(db: &Database) -> Result<(), RecordError> {
 }
 
 pub(crate) async fn inspect_migration(db: &Database, issuer: &str) -> Result<bool, RecordError> {
+    let names = db
+        .list_collection_names()
+        .filter(doc! {"name":{"$in":[MIGRATIONS, RECORDS, CREATE_FENCES]}})
+        .await
+        .map_err(failure)?;
+    if !names.iter().any(|name| name == MIGRATIONS) || !names.iter().any(|name| name == RECORDS) {
+        return Err(RecordError::Unavailable(
+            "Channel create fence floor requires the base schema".into(),
+        ));
+    }
+    if names.iter().any(|name| name == CREATE_FENCES) && !fence_indexes_match(db).await? {
+        return Err(RecordError::Unavailable(
+            "Channel create fence index inventory drift".into(),
+        ));
+    }
     let catalog_ready = cma_service_migrations::inspect(async {
         marker_catalog(db)
             .await
