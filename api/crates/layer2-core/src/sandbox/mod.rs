@@ -260,9 +260,13 @@ pub use title_effect::{
 mod title_store;
 mod warmup;
 mod workspace;
+mod workspace_prepare_observations;
 mod workspace_prepare_recovery;
 mod workspace_service;
 mod workspace_work;
+pub use workspace_prepare_observations::{
+    WorkspacePrepareObservation, WorkspacePrepareObservations,
+};
 pub use workspace_prepare_recovery::{
     WorkspacePrepareRecovery, WorkspacePrepareRecoveryAttempt, WorkspacePrepareRecoveryCompletion,
 };
