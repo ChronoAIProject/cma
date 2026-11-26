@@ -16,6 +16,24 @@ pub(super) fn validate(value: &Value) {
             }
             return;
         }
+        if value["status"] == "retiring" && result.get("operation_id").is_none() {
+            // Older Retiring records may lack a durable admission timestamp.
+            assert!(result["owner_slot_released"].is_boolean());
+            assert_eq!(result["actions"], serde_json::json!(["observe"]));
+            assert!(result.get("started_at").is_none());
+            assert!(result.get("result_due_at").is_none());
+            if result["code"] == "retirement_retry_exhausted" {
+                assert_eq!(result["state"], "failed");
+                assert_eq!(result["continuing"], false);
+                assert!(result.get("retry_after_seconds").is_none());
+            } else {
+                assert!(result.get("code").is_none());
+                assert_eq!(result["state"], "in_progress");
+                assert_eq!(result["continuing"], true);
+                assert_eq!(result["retry_after_seconds"], 5);
+            }
+            return;
+        }
         let seconds = |key: &str| {
             layer2_core::seconds_from_rfc3339(result[key].as_str().expect("timestamp is a string"))
                 .expect("valid lifecycle timestamp")
@@ -57,6 +75,8 @@ fn failed_result_wire_fixture_omits_retry_after() {
             started_at: Some("2026-11-16T00:00:00Z".into()),
             result_due_at: Some("2026-11-16T00:01:30Z".into()),
             continuing: false,
+            owner_slot_released: None,
+            blocked_retirement_step: None,
             actions: vec![
                 SandboxLifecycleAction::Observe,
                 SandboxLifecycleAction::Retire,

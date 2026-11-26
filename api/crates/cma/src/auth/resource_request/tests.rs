@@ -35,7 +35,7 @@ impl Drop for Fixture {
 
 impl Fixture {
     async fn new() -> Self {
-        let descriptor = descriptor::Descriptor::from_request(
+        let descriptor = request_descriptor(
             &Method::GET,
             &"/api/v1/agents".parse().unwrap(),
             &HeaderMap::new(),
@@ -101,7 +101,7 @@ impl Fixture {
         )
         .with_agent_key_service(Some("cma-service".into()))
         .with_resource_request_enabled(enabled);
-        *auth.metadata.write().await = Some(ProviderMetadata {
+        *auth.fixture_metadata().write().await = Some(ProviderMetadata {
             authorization_endpoint: format!("{}/authorize", self.base),
             token_endpoint: format!("{}/token", self.base),
             introspection_endpoint: Some(format!("{}/introspect", self.base)),
@@ -112,7 +112,7 @@ impl Fixture {
 
     async fn bind(&self, method: Method, uri: &str, headers: &HeaderMap) {
         self.evidence.write().await["resource_request"] = serde_json::to_value(
-            descriptor::Descriptor::from_request(&method, &uri.parse().unwrap(), headers).unwrap(),
+            request_descriptor(&method, &uri.parse().unwrap(), headers).unwrap(),
         )
         .unwrap();
     }

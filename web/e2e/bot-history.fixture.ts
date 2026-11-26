@@ -29,9 +29,6 @@ export async function routeHistoryBot(page: Page) {
       },
     }),
   );
-  await page.route('**/api/image-manager/v1/images?scope=all', (route) =>
-    route.fulfill({ json: { items: [] } }),
-  );
   await page.route('**/api/v1/bots**', (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;

@@ -1,22 +1,6 @@
 use super::*;
 
 #[test]
-fn image_manager_retirement_requires_a_strict_opt_in() {
-    let key = "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED";
-    for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-        let flags = FeatureFlags::from_lookup(&mut |name| {
-            Ok((name == key).then_some(value).flatten().map(str::to_owned))
-        })
-        .unwrap();
-        assert_eq!(flags.image_manager_retirement, enabled);
-    }
-    assert!(
-        FeatureFlags::from_lookup(&mut |name| { Ok((name == key).then(|| "enabled".into())) })
-            .is_err()
-    );
-}
-
-#[test]
 fn startup_health_serving_requires_a_strict_opt_in() {
     let key = "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED";
     for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {

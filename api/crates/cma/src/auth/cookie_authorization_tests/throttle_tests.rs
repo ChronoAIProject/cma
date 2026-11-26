@@ -166,7 +166,13 @@ async fn cancelling_a_throttled_flight_releases_capacity_without_detached_retrie
     let before = fixture.control.requests.load(Ordering::SeqCst);
     tokio::time::sleep(Duration::from_millis(1050)).await;
     assert_eq!(fixture.control.requests.load(Ordering::SeqCst), before);
-    assert_eq!(fixture.auth.verification_slots.available_permits(), 64);
+    assert_eq!(
+        fixture
+            .auth
+            .fixture_verification_slots()
+            .available_permits(),
+        64
+    );
 }
 
 #[tokio::test]

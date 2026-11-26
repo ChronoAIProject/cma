@@ -80,7 +80,7 @@ impl Fixture {
     }
 
     pub async fn new() -> Self {
-        let uri = std::env::var("CMA_IM_TEST_MONGODB_URI")
+        let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI")
             .unwrap_or_else(|_| panic!("authenticated disposable Mongo required"));
         let admin = Client::with_uri_str(&uri)
             .await

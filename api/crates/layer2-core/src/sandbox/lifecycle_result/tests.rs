@@ -13,6 +13,37 @@ fn at(offset: u64) -> SystemTime {
 }
 
 #[test]
+fn exhausted_retirement_preserves_the_original_operation_and_reports_terminal_failure() {
+    let mut sandbox = lifecycle_test_support::sandbox();
+    let admitted = lifecycle_test_support::NOW;
+    sandbox.begin_retirement(admitted.into()).unwrap();
+    let pending = SandboxLifecycleResult::observe(&sandbox, Some(admitted), at(90), true).unwrap();
+    assert!(pending.continuing);
+
+    sandbox.work.attempts = crate::sandbox::work_retry::WORK_RETRY_EXTERNAL_BUDGET;
+    let fence = sandbox
+        .work
+        .claim(
+            "worker".into(),
+            &crate::rfc3339_at(at(120)),
+            crate::rfc3339_at(at(180)),
+        )
+        .unwrap();
+    sandbox.work.stop_retirement("worker", fence).unwrap();
+    sandbox.validate().unwrap();
+    let failed = SandboxLifecycleResult::observe(&sandbox, Some(admitted), at(120), true).unwrap();
+    assert_eq!(failed.state, SandboxLifecycleResultState::Failed);
+    assert_eq!(failed.code, Some("retirement_retry_exhausted"));
+    assert_eq!(failed.blocked_retirement_step, Some("stop_agents"));
+    assert_eq!(failed.owner_slot_released, Some(false));
+    assert!(!failed.continuing);
+    assert_eq!(failed.retry_after_seconds, None);
+    assert_eq!(failed.operation_id, pending.operation_id);
+    assert_eq!(failed.started_at, pending.started_at);
+    assert_eq!(failed.actions, [SandboxLifecycleAction::Observe]);
+}
+
+#[test]
 fn durable_admission_bounds_observation_without_cancelling_slow_reopen() {
     let mut sandbox = lifecycle_test_support::sandbox();
     sandbox.lifecycle.checkpoints.latest = Some(lifecycle_test_support::checkpoint(
@@ -186,14 +217,31 @@ fn failure_and_retirement_never_advertise_unavailable_retries_or_retirement() {
         vec![SandboxLifecycleAction::Observe]
     );
     sandbox.begin_retirement(crate::rfc3339_at(at(3))).unwrap();
-    assert!(SandboxLifecycleResult::observe_with_admission(
+    let retirement_without_admission = SandboxLifecycleResult::observe_with_admission(
         &sandbox,
         None,
         Some(&admission),
         at(100),
-        true
+        true,
     )
-    .is_none());
+    .unwrap();
+    assert_eq!(
+        retirement_without_admission.state,
+        SandboxLifecycleResultState::InProgress
+    );
+    assert_eq!(
+        retirement_without_admission.actions,
+        vec![SandboxLifecycleAction::Observe]
+    );
+    assert!(retirement_without_admission.continuing);
+    assert_eq!(retirement_without_admission.retry_after_seconds, Some(5));
+    assert_eq!(
+        retirement_without_admission.owner_slot_released,
+        Some(false)
+    );
+    assert!(retirement_without_admission.operation_id.is_none());
+    assert!(retirement_without_admission.started_at.is_none());
+    assert!(retirement_without_admission.result_due_at.is_none());
     let retirement =
         SandboxLifecycleResult::observe(&sandbox, Some(lifecycle_test_support::NOW), at(90), true)
             .unwrap();

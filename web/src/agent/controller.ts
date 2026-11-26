@@ -445,6 +445,7 @@ export function useAgentController(
     pending,
     initialSendPending: pending === 'send' && initialSend,
     actionError: actionError ?? streamError,
+    streamError,
     reload,
     refreshDetail,
     applyAgentTitle,

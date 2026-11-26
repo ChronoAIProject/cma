@@ -105,8 +105,8 @@ for (const width of [1440, 390, 320]) {
       const boundary = parked();
       const empty = {
         ...boundary.sandbox,
-        id: 'sbx_empty',
-        name: 'Environment without Agents',
+        id: 'sbx_0123456789abcdef0123456789abcdef',
+        name: 'Environment without Agents sandbox 0123456789abcdef0123456789abcdef',
         workspaces: [],
         workspace_count: 0,
         worktree_count: 0,
@@ -116,11 +116,13 @@ for (const width of [1440, 390, 320]) {
       await page.route('**/api/v1/sandboxes?*', (route) =>
         route.fulfill({ json: { items: [boundary.sandbox, empty] } }),
       );
-      await page.route('**/api/v1/sandboxes/sbx_empty', (route) => route.fulfill({ json: empty }));
-      await page.route('**/api/v1/sandboxes/sbx_empty/events', (route) =>
+      await page.route(`**/api/v1/sandboxes/${empty.id}`, (route) =>
+        route.fulfill({ json: empty }),
+      );
+      await page.route(`**/api/v1/sandboxes/${empty.id}/events`, (route) =>
         route.fulfill({ json: [] }),
       );
-      await page.route('**/api/v1/resource-access/sandbox/sbx_empty', (route) =>
+      await page.route(`**/api/v1/resource-access/sandbox/${empty.id}`, (route) =>
         route.fulfill({
           json: {
             capabilities: ['view_details', 'view_history', 'manage_sharing'],
@@ -149,6 +151,26 @@ for (const width of [1440, 390, 320]) {
         'data-motion',
         'still',
       );
+      const name = disclosure.getByRole('button', { name: empty.name, exact: true });
+      await expect(disclosure.getByText(empty.id, { exact: true })).toBeVisible();
+      expect(
+        await name.evaluate((button) => {
+          const id = button.parentElement!.querySelector('code')!;
+          const textBounds = (element: Element) => {
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            return range.getBoundingClientRect();
+          };
+          const nameText = textBounds(button);
+          const idText = textBounds(id);
+          const row = button.parentElement!.getBoundingClientRect();
+          return {
+            nameFits: nameText.left >= row.left && nameText.right <= row.right,
+            idFits: idText.left >= row.left && idText.right <= row.right,
+            separate: nameText.bottom <= idText.top,
+          };
+        }),
+      ).toEqual({ nameFits: true, idFits: true, separate: true });
       await capture(page, info, 'runtime-attention', dark);
       await sidebar.getByRole('button', { name: 'Environments', exact: true }).click();
       await sidebar.getByRole('button', { name: 'Filter', exact: true }).click();
@@ -169,10 +191,8 @@ for (const width of [1440, 390, 320]) {
           .locator('[role="treeitem"][aria-level="1"]'),
       ).toHaveCount(2);
       await sidebar.getByRole('button', { name: 'Tasks', exact: true }).click();
-      await disclosure
-        .getByRole('button', { name: 'Environment without Agents', exact: true })
-        .click();
-      await expect(page).toHaveURL(`${baseURL}/sandboxes/sbx_empty`);
+      await name.click();
+      await expect(page).toHaveURL(`${baseURL}/sandboxes/${empty.id}`);
       noEffects(boundary);
     });
 

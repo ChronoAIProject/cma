@@ -40,6 +40,7 @@ mod home_backup_expiry;
 mod http_serving;
 mod image_manager_retirement;
 mod media_continuations;
+#[cfg(test)]
 use cma_am_auth::permissions;
 mod producer_token;
 mod profile_authoring;
@@ -285,8 +286,8 @@ async fn run() {
         }
         return;
     }
-    if store::provenance_progress::is_command(&arguments) {
-        match store::provenance_progress::command(&arguments).await {
+    if let Some(result) = store::backfill_progress_command(&arguments).await {
+        match result {
             Ok(result) => println!("{result}"),
             Err(message) => {
                 eprintln!("{message}");

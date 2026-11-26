@@ -22,7 +22,7 @@ fn limits() -> SessionLimits {
 #[tokio::test]
 #[ignore = "requires authenticated disposable Mongo replica set"]
 async fn mongo_sessions_cross_client_cas_revocation_expiry_and_caps() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI")
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI")
         .expect("authenticated disposable Mongo fixture required");
     let first = Client::with_uri_str(&uri).await.unwrap();
     let second = Client::with_uri_str(&uri).await.unwrap();

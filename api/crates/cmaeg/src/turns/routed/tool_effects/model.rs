@@ -1,4 +1,4 @@
-use super::super::{storage, ExecutionError};
+use super::super::{storage, AcceptedAnswerIdentity, ExecutionError};
 use crate::{
     delivery::retained_receipt::StoredReceipt,
     ingress::routing_store::{AdmittedPlan, EventIdentity, StoredTarget},
@@ -31,6 +31,8 @@ pub(super) struct Root {
     pub payload_hash: String,
     pub bytes: usize,
     pub expires_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<AcceptedAnswerIdentity>,
     pub state: State,
     #[serde(skip)]
     pub version: u64,
@@ -55,6 +57,9 @@ impl Root {
             || self.identity != plan.identity
             || self.admission != plan.admission_id
             || self.target != target.id
+            || self.answer.as_ref().is_some_and(|answer| {
+                answer.operation_id(&target.id).ok().as_deref() != Some(self.operation.as_str())
+            })
             || self.request_hash != plan.request_hash
             || self.retained_until != plan.retained_until
             || self.bytes == 0
@@ -62,8 +67,8 @@ impl Root {
             || self.version == 0
             || self.expires_at <= 0
             || self.expires_at > self.retained_until
-            || matches!(&self.state, State::Settled { receipt } if unresolved(receipt))
-            || matches!(&self.state, State::Unknown { receipt: Some(receipt) } if !unresolved(receipt))
+            || matches!(&self.state, State::Settled { receipt } if receipt.requires_reconciliation())
+            || matches!(&self.state, State::Unknown { receipt: Some(receipt) } if !receipt.requires_reconciliation())
             || [&self.operation, &self.content_hash, &self.payload_hash]
                 .into_iter()
                 .any(|v| !super::super::tool_operation::valid_hash(v))
@@ -99,12 +104,4 @@ pub(super) fn operation(
         &capability.event,
         key,
     ))?))
-}
-
-// A failed aggregate with confirmed earlier parts is partial delivery, even if
-// a transport classified its final failure more narrowly than Unknown.
-pub(super) fn unresolved(receipt: &StoredReceipt) -> bool {
-    use crate::delivery::intents::DeliveryOutcome;
-    matches!(receipt.delivery, DeliveryOutcome::Unknown { .. })
-        || (receipt.has_parts() && !matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. }))
 }

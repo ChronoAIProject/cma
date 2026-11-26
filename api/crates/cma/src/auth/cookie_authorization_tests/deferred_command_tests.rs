@@ -55,7 +55,9 @@ async fn delayed_command_refuses_a_currently_erasing_actor_and_owner() {
         .unwrap();
     let command = envelope(reference);
     assert!(fixture.auth.authorize_command(&command).await.is_ok());
-    Arc::get_mut(&mut fixture.auth).unwrap().standing = Arc::new(DeletingCommandOwner);
+    Arc::get_mut(&mut fixture.auth)
+        .unwrap()
+        .set_fixture_standing(Arc::new(DeletingCommandOwner));
     assert_eq!(
         fixture.auth.authorize_command(&command).await,
         Err(CommandAuthorizationError::Revoked)

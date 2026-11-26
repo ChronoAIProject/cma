@@ -1,5 +1,5 @@
 use super::*;
-use crate::agent_lifecycle::{ImageManagerResolver, InlineAgentLifecycle};
+use crate::agent_lifecycle::{InlineAgentLifecycle, RetiredImageResolver};
 use crate::store::{MongoAgentLifecycleStore, MongoProfileStore, MongoSandboxStore};
 use authority::{task_experience_policy, PersonalAuthority};
 use axum::body::{to_bytes, Body};
@@ -192,7 +192,7 @@ async fn fixture_with_support(
         store.clone(),
         layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         profiles,
-        ImageManagerResolver::new("http://127.0.0.1:1".into(), false).unwrap(),
+        Arc::new(RetiredImageResolver),
         ProfileCapacityBounds {
             min_cpu_millis: 100,
             max_cpu_millis: 8000,

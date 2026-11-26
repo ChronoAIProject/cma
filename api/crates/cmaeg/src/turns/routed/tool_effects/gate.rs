@@ -1,4 +1,4 @@
-use super::super::live_scope::Scope;
+use super::super::{answer_dispatch::DispatchBoundary, live_scope::Scope};
 use super::{
     model::{Payload, Root, State},
     store::Store,
@@ -10,10 +10,7 @@ use crate::{
     turns::routed::{storage, RoutedToolReplies},
 };
 use futures_util::future::BoxFuture;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 use tokio::time::Instant;
 
 pub(super) struct Gate {
@@ -25,11 +22,11 @@ pub(super) struct Gate {
     pub scope: Arc<Scope>,
     pub channel_version: u64,
     pub deadline: Instant,
-    pub cancelled: AtomicBool,
+    pub boundary: DispatchBoundary,
 }
 impl Gate {
     fn live(&self) -> bool {
-        !self.cancelled.load(Ordering::SeqCst)
+        !self.boundary.is_closed()
             && self.scope.live()
             && Instant::now() < self.deadline
             && self.payload.capability.expires_at > (self.tools.journal.clock)()
@@ -47,6 +44,7 @@ impl Gate {
                 &self.payload.capability,
                 &self.plan,
                 &self.target,
+                self.root.answer.as_ref(),
             )
             .await
             .map_err(|error| {
@@ -96,7 +94,7 @@ impl SendGate for Gate {
         })
     }
     fn commit(&self) -> bool {
-        self.live()
+        self.live() && self.boundary.commit()
     }
     fn progress(&self) {}
 }
@@ -109,6 +107,6 @@ fn refused() -> GateRefusal {
 pub(super) struct Cancel(pub Arc<Gate>);
 impl Drop for Cancel {
     fn drop(&mut self) {
-        self.0.cancelled.store(true, Ordering::SeqCst);
+        self.0.boundary.close();
     }
 }

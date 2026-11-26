@@ -428,4 +428,17 @@ fn assert_provenance_fences(
         validation::validate(&rotated, &parent, conversation, runtime, request, fence).unwrap();
     assert_eq!(scope.id().unwrap(), initial.id().unwrap());
     assert_eq!(proxy.credential_generation, 2);
+
+    let mut second = initial.clone();
+    second.numbered_open =
+        Some(layer3_adapter::AgentProcessAction::Open.operation_id(initial.agent_id.as_str(), 2));
+    let mut third = second.clone();
+    third.numbered_open =
+        Some(layer3_adapter::AgentProcessAction::Open.operation_id(initial.agent_id.as_str(), 3));
+    assert_eq!(second.request_sha256, third.request_sha256);
+    assert_ne!(second.id().unwrap(), third.id().unwrap());
+    assert!(serde_json::to_value(initial)
+        .unwrap()
+        .get("numbered_open")
+        .is_none());
 }

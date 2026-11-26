@@ -169,12 +169,22 @@ impl SandboxWorker {
             return self.retry_failure(sandbox, failure, now).await;
         }
         if let Some(home) = &mut sandbox.lifecycle.home {
+            let was_released = home.released;
             if let Err(error) =
                 crate::sandbox::home::release_home(self.dependencies.adapter.as_ref(), home).await
             {
                 return self
                     .retry_failure(sandbox, adapter_failure(error), now)
                     .await;
+            }
+            if !was_released {
+                let expected = sandbox.revision;
+                sandbox.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
+                sandbox.updated_at = sandbox.updated_at.max(rfc3339_at(now));
+                self.dependencies
+                    .store
+                    .save_sandbox(expected, sandbox.clone())
+                    .await?;
             }
         }
         let policy = match self.config.policy.current_sandbox_policy().await {

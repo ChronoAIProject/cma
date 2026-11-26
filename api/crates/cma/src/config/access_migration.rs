@@ -13,7 +13,7 @@ impl AgentAccessMigration {
     }
 }
 
-pub(super) fn parse(
+pub(crate) fn parse(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
 ) -> Result<Option<AgentAccessMigration>, String> {
     let key = "CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION";

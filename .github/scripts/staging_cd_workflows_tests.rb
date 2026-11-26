@@ -4,6 +4,8 @@ require 'minitest/autorun'
 require_relative 'workflow-yaml'
 require 'json'
 require 'open3'
+require 'fileutils'
+require 'tmpdir'
 
 class StagingWorkflowTest < Minitest::Test
   ROOT = File.expand_path('..', __dir__)
@@ -196,7 +198,10 @@ class StagingWorkflowTest < Minitest::Test
       assert_includes producer.fetch('if'), "vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true'"
       assert_operator producer.fetch('timeout-minutes'), :<=, 240
       assert_operator job['steps'].index(producer), :<, job['steps'].index(publication)
-      assert_equal '${{ steps.producer.outputs.prepared }}', publication.fetch('env').fetch('CD_PREPARED_ARCHIVE')
+      assert_equal '${{ inputs.protected_web && 30 || 270 }}', publication.fetch('timeout-minutes')
+      assert_equal "${{ (inputs.protected_web && inputs.web_archive != '' && 'true') || steps.producer.outputs.prepared }}",
+                   publication.fetch('env').fetch('CD_PREPARED_ARCHIVE')
+      assert_equal "${{ inputs.protected_web && 'required' || '' }}", publication.dig('env', 'CD_WEB_CONTINUITY')
     end
     transport = File.read(File.join(ROOT, 'scripts/staging_cd_transport.sh'))
     %w[Acquire::http::Timeout DPkg::Lock::Timeout].each { |option| assert_includes transport, option }
@@ -235,7 +240,8 @@ class StagingWorkflowTest < Minitest::Test
       name = File.basename(file, File.extname(file))
       WorkflowYAML.load_file(file)['jobs'].each do |id, job|
         next unless [promote, writer].include?(job['uses'])
-        if name == 'staging-promote' && %w[deploy redeploy].include?(id)
+        if (name == 'staging-promote' && %w[deploy redeploy].include?(id)) ||
+           (name == 'staging-web-continuity-epoch' && id == 'promote')
           # Jobs inside one reusable call share the caller's slot; a nested
           # acquisition of the same group would deadlock the retry.
           refute job.key?('concurrency'), 'the outer promotion already owns the writer lock'
@@ -262,6 +268,54 @@ class StagingWorkflowTest < Minitest::Test
     admission = workflow('staging-promote')['jobs']['admit']
     assert admission['steps'].any? { |step| step.dig('env', 'CD_RESOLVE_MODE') == 'automatic' }
     assert_equal '${{ needs.admit.outputs.started_at }}', workflow('staging-promote').dig('jobs', 'deploy', 'with', 'started_at')
+  end
+
+  def test_protected_web_builds_before_one_writer_epoch
+    wrapper = workflow('staging-web-continuity')
+    epoch = workflow('staging-web-continuity-epoch')
+    raw, protected_job = %w[raw protected].map { |id| wrapper.fetch('jobs').fetch(id) }
+    observer, release, promote = %w[observe release promote].map { |id| epoch.fetch('jobs').fetch(id) }
+    assert_equal 'cma-staging-web-release', raw.dig('concurrency', 'group')
+    refute raw.key?('secrets')
+    refute raw.key?('environment')
+    assert_equal 'raw', protected_job['needs']
+    assert_equal 'cma-staging-deploy-set', protected_job.dig('concurrency', 'group')
+    assert_equal '${{ needs.raw.outputs.artifact }}', protected_job.dig('with', 'archive')
+    assert epoch.fetch('jobs').values.none? { |job| job.key?('concurrency') }
+    scope_step = observer.fetch('steps').find { |step| step['id'] == 'preimage' }
+    assert_includes scope_step.fetch('run'), 'staging_cd_web_preimage.py'
+    credential_steps = observer.fetch('steps').select { |step| step.dig('env', 'CD_NYXID_CLIENT_ID') }
+    assert_equal ['preimage'], credential_steps.map { |step| step['id'] }
+    assert_equal 'observe', release['needs']
+    refute release.key?('secrets')
+    assert_equal true, release.dig('with', 'protected_web')
+    assert_equal '${{ needs.observe.outputs.scope }}', release.dig('with', 'web_scope')
+    assert_equal 'release', promote['needs']
+    assert_equal "needs.release.outputs.finalized == 'success'", promote['if']
+    assert_equal 'web', promote.dig('with', 'lane')
+    staging = workflow('staging-cd').fetch('jobs')
+    entry = staging.fetch('protected_web')
+    assert_equal 'Publish protected Web', entry['name']
+    assert_match(/\Avars\.CMA_STAGING_WEB_CONTINUITY == 'true' && /, entry['if'])
+    %w[release_web promote_web].each do |job|
+      assert_match(/\Avars\.CMA_STAGING_WEB_CONTINUITY != 'true' && /, staging.fetch(job)['if'])
+    end
+  end
+
+  def test_protected_web_callers_forward_oidc_to_deployment_only
+    entry = workflow('staging-cd').fetch('jobs').fetch('protected_web')
+    wrapper = workflow('staging-web-continuity').fetch('jobs')
+    epoch = workflow('staging-web-continuity-epoch').fetch('jobs')
+    promotion = workflow('staging-promote').fetch('jobs')
+
+    [entry, wrapper.fetch('protected'), epoch.fetch('promote'),
+     promotion.fetch('deploy'), promotion.fetch('redeploy')].each do |job|
+      assert_equal 'write', job.fetch('permissions')['id-token'], job.fetch('name')
+    end
+    [wrapper.fetch('raw'), epoch.fetch('observe'), epoch.fetch('release'),
+     promotion.fetch('admit'), promotion.fetch('readmit')].each do |job|
+      refute job.fetch('permissions').key?('id-token'), job.fetch('name')
+    end
   end
 
   def test_credentials_and_write_permissions_cannot_reach_build_or_redeploy
@@ -303,7 +357,8 @@ class StagingWorkflowTest < Minitest::Test
     assert_empty requirements.fetch('env', {})
     %w[staging-cd staging-release staging-promote redeploy-staging].each do |name|
       workflow(name)['jobs'].each_value do |job|
-        if %w[./.github/workflows/staging-promote.yml ./.github/workflows/staging-deploy.yml].include?(job['uses'])
+        if %w[./.github/workflows/staging-promote.yml ./.github/workflows/staging-deploy.yml
+              ./.github/workflows/staging-web-continuity.yml].include?(job['uses'])
           job = job.reject { |field, _| field == 'secrets' }
         end
         %w[NYXID_CHRONO_CD_KEY CD_NYXID_CLIENT_ID CD_NYXID_CLIENT_SECRET].each { |field| refute_includes job.to_s, field }
@@ -315,7 +370,7 @@ class StagingWorkflowTest < Minitest::Test
   def test_secret_forwarding_is_explicit_at_each_promotion_hop
     keys = %w[CMA_INFRA_APP_PRIVATE_KEY CD_NYXID_CLIENT_ID CD_NYXID_CLIENT_SECRET]
     expected = keys.to_h { |key| [key, "${{ secrets.#{key} }}"] }
-    %w[staging-promote staging-deploy].each do |name|
+    %w[staging-promote staging-deploy staging-web-continuity staging-web-continuity-epoch].each do |name|
       config = workflow(name)
       assert_equal keys.to_h { |key| [key, {'required' => true}] }, (config['on'] || config[true])['workflow_call']['secrets']
       reads = config.fetch('jobs').to_s.scan(/secrets\.([A-Za-z0-9_]+)/).flatten.uniq.sort
@@ -527,10 +582,16 @@ class StagingWorkflowTest < Minitest::Test
     assert_includes release.dig('jobs', 'finalize', 'if'), "needs.publish.outputs.disposition == ''"
     report = workflow('staging-cd').dig('jobs', 'recheck', 'steps').last.fetch('env')
     refute report.key?('CD_AM_DISPOSITION')
-    %w[web am eg runtime runtime_omarchy].each do |key|
+    %w[am eg runtime runtime_omarchy].each do |key|
       assert_equal "${{ needs.release_#{key}.outputs.disposition }}", report["CD_DISPOSITION_#{key.upcase}"]
       assert_equal "${{ needs.release_#{key}.outputs.finalized }}", report["CD_FINALIZED_#{key.upcase}"]
     end
+    %w[disposition finalized].each do |field|
+      expression = report["CD_#{field.upcase}_WEB"]
+      assert_includes expression, "true' && toJSON(needs.protected_web.outputs.#{field})"
+      assert_includes expression, "|| toJSON(needs.release_web.outputs.#{field})"
+    end
+    assert_includes report['CD_PROMOTE_WEB'], 'needs.protected_web.outputs.promotion'
   end
 
   def test_each_package_write_grant_delegates_only_to_the_publisher
@@ -543,6 +604,85 @@ class StagingWorkflowTest < Minitest::Test
       job['uses'] = './.github/workflows/staging-promote.yml'
       assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
       job['uses'] = original
+    end
+    %w[staging-cd staging-web-continuity staging-web-continuity-epoch].zip(%w[protected_web protected release]).each do |workflow, id|
+      job = inputs[workflow]['jobs'][id]
+      original = job['uses']
+      job['uses'] = './.github/workflows/staging-promote.yml'
+      assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
+      job['uses'] = original
+    end
+  end
+
+  def test_journey_publication_is_independent_of_cma_promotion
+    jobs = workflow('staging-cd').fetch('jobs')
+    job = jobs.fetch('release_journey_probe')
+    refute job.key?('needs')
+    refute job.key?('environment')
+    jobs.each_value { |row| refute_includes Array(row['needs']), 'release_journey_probe' }
+    steps = job.fetch('steps')
+    select = steps.find { |row| row['id'] == 'select' }
+    assert_includes select.fetch('run'), 'api/crates/cma-journey-probe'
+    build = steps.find { |row| row['run'].to_s.end_with?('staging_cd_journey_probe.py build') }
+    publish = steps.find { |row| row['id'] == 'publish' }
+    assert_operator steps.index(build), :<, steps.index(publish)
+    refute build.key?('env')
+    assert_equal "steps.select.outputs.changed == 'true'", build['if']
+    receipt = steps.find { |row| row['name'] == 'Retain journey publication evidence' }
+    assert_includes receipt.dig('with', 'path'), '/journey-image/publication.json'
+  end
+
+  def test_journey_publication_authority_stays_with_the_scanned_publisher
+    require_relative 'ci-contract'
+    inputs = CIContract.load_inputs
+    job = inputs['staging-cd']['jobs']['release_journey_probe']
+    publish = job['steps'].find { |row| row['id'] == 'publish' }
+    run = publish['run']
+    publish['run'] = 'docker push image'
+    assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
+    publish['run'] = run
+    job['permissions']['id-token'] = 'write'
+    assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
+  end
+
+  def test_journey_selector_rebuilds_for_recipe_and_shared_identity_changes
+    steps = workflow('staging-cd').dig('jobs', 'release_journey_probe', 'steps')
+    selector = steps.find { |row| row['id'] == 'select' }.fetch('run')
+    Dir.mktmpdir('journey-selector-') do |root|
+      git = lambda do |*args|
+        output, status = Open3.capture2e('git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                                        '-c', 'commit.gpgsign=false', *args, chdir: root)
+        assert status.success?, output
+        output.strip
+      end
+      checkout = File.join(root, '.github', 'scripts')
+      FileUtils.mkdir_p(checkout)
+      receipt = File.join(checkout, 'staging_cd_receipts.py')
+      File.write(receipt, "IDENTITY_LABEL = 'fixture.before'\n")
+      recipe = File.join(root, 'api', 'crates', 'cma-journey-probe', 'Dockerfile')
+      FileUtils.mkdir_p(File.dirname(recipe))
+      File.write(recipe, "FROM scratch AS journey-probe\n")
+      git.call('init', '-q')
+      git.call('add', '.')
+      git.call('commit', '-qm', 'Baseline')
+
+      changes = {
+        File.join(root, 'README.md') => ['unrelated change', false],
+        receipt => ["IDENTITY_LABEL = 'fixture.after'\n", true],
+        recipe => ["FROM scratch AS journey-probe\nUSER 10001:10001\n", true]
+      }
+      changes.each do |path, (content, selected)|
+        before = git.call('rev-parse', 'HEAD')
+        File.write(path, content)
+        git.call('add', '.')
+        git.call('commit', '-qm', 'Isolated change')
+        github_output = File.join(root, 'selector-output')
+        env = { 'PREVIOUS_SHA' => before, 'GITHUB_SHA' => git.call('rev-parse', 'HEAD'), 'GITHUB_OUTPUT' => github_output }
+        output, status = Open3.capture2e(env, 'bash', '-ec', selector, chdir: root)
+        assert status.success?, output
+        assert_equal "changed=#{selected}\n", File.read(github_output)
+        File.delete(github_output)
+      end
     end
   end
 
@@ -644,8 +784,8 @@ class StagingWorkflowTest < Minitest::Test
   def test_publication_signal_waits_for_every_publisher_and_isolates_dispatch_credentials
     jobs = workflow('staging-cd')['jobs']
     signal = jobs.fetch('publication_signal')
-    publishers = %w[web am eg runtime runtime_omarchy]
-    assert_equal ['allocate', *publishers.map { |name| "release_#{name}" }], signal['needs']
+    publishers = %w[am eg runtime runtime_omarchy]
+    assert_equal ['allocate', 'release_web', 'protected_web', *publishers.map { |name| "release_#{name}" }], signal['needs']
     assert_includes signal['if'], "vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true'"
     assert_equal({ 'contents' => 'read', 'actions' => 'read' }, signal['permissions'])
     refute signal.key?('environment')
@@ -655,6 +795,10 @@ class StagingWorkflowTest < Minitest::Test
       assert_equal "$" + "{{ needs.release_#{name}.outputs.finalized }}", verify['env']["CD_FINALIZED_#{name.upcase}"]
       assert_equal "$" + "{{ needs.release_#{name}.result }}", verify['env']["CD_PUBLISH_#{name.upcase}"]
     end
+    assert_includes verify['env']['CD_FINALIZED_WEB'], 'toJSON(needs.protected_web.outputs.finalized)'
+    assert_includes verify['env']['CD_FINALIZED_WEB'], 'toJSON(needs.release_web.outputs.finalized)'
+    assert_includes verify['env']['CD_PUBLISH_WEB'], 'needs.protected_web.outputs.publish_result'
+    assert_includes verify['env']['CD_PUBLISH_WEB'], '|| needs.release_web.result'
     assert_equal '${{ runner.temp }}/publication-signal.json', retain['with']['path']
     assert_equal 'error', retain['with']['if-no-files-found']
     refute signal['steps'][0...-1].to_s.include?('secrets.')
@@ -806,7 +950,8 @@ class StagingWorkflowTest < Minitest::Test
     'redeploy-staging' => { 'resolve' => %w[infra-token] },
     'staging-cd' => { 'infrastructure' => %w[infra-token] },
     'staging-deploy' => { 'deploy' => %w[infra-token infra-checkout], 'report' => %w[evidence] },
-    'staging-release' => { 'publish' => %w[receipts], 'finalize' => %w[receipts-download] }
+    'staging-release' => { 'publish' => %w[web-archive receipts], 'finalize' => %w[receipts-download] },
+    'staging-web-continuity-epoch' => { 'observe' => %w[infra-token infra-checkout] }
   }.freeze
   # Optional steps whose failure only costs time; publication decides the outcome later.
   OPTIONAL = ['Expose cache runtime to the Buildx client', 'Check release ownership',
@@ -843,7 +988,7 @@ class StagingWorkflowTest < Minitest::Test
         end
       end
     end
-    assert_equal 7, optional.size
+    assert_equal 10, optional.size
     # A job is never repeated or made optional, and no other step may hide its failure.
     REPEATED.each_key do |name|
       workflow(name)['jobs'].each do |job_id, job|
@@ -857,7 +1002,7 @@ class StagingWorkflowTest < Minitest::Test
       end
     end
     # Consumers accept the output of whichever attempt succeeded.
-    %w[redeploy-staging staging-cd staging-deploy].each do |name|
+    %w[redeploy-staging staging-cd staging-deploy staging-web-continuity-epoch].each do |name|
       text = File.read(File.join(ROOT, 'workflows', name + '.yml'))
       uses = text.scan(/steps\.infra-token\.outputs\.token[^}]*/)
       refute_empty uses
@@ -871,7 +1016,7 @@ class StagingWorkflowTest < Minitest::Test
   def test_release_artifact_handoffs_use_verified_zip_archives
     upload = 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9'
     download = 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333'
-    %w[staging-cd staging-release staging-promote staging-deploy cache-retention publish prod-deploy].each do |name|
+    %w[staging-cd staging-release staging-promote staging-deploy staging-web-continuity cache-retention publish prod-deploy].each do |name|
       steps = workflow(name).fetch('jobs').values.flat_map { |job| job.fetch('steps', []) }
       artifacts = steps.select { |step| step['uses'].to_s.match?(%r{\Aactions/(upload|download)-artifact@}) }
       refute_empty artifacts, name

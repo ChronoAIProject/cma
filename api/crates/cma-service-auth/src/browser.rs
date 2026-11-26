@@ -67,21 +67,9 @@ impl BrowserAuth {
         let url = url::Url::parse(origin).map_err(|_| AuthError::Configuration)?;
         if url.scheme() != "https"
             || url.origin().ascii_serialization() != origin
-            || !["/api/event-gateway", "/api/image-manager"].contains(&prefix)
-            || !["/event-gateway", "/image-manager"].contains(&landing)
-            || !["eg_auth_sessions", "im_auth_sessions"].contains(&collection)
+            || (collection, prefix, landing)
+                != ("eg_auth_sessions", "/api/event-gateway", "/event-gateway")
         {
-            return Err(AuthError::Configuration);
-        }
-        let expected = match auth.service {
-            crate::Service::EventGateway => {
-                ("eg_auth_sessions", "/api/event-gateway", "/event-gateway")
-            }
-            crate::Service::ImageManager => {
-                ("im_auth_sessions", "/api/image-manager", "/image-manager")
-            }
-        };
-        if (collection, prefix, landing) != expected {
             return Err(AuthError::Configuration);
         }
         let key = aead::UnboundKey::new(&aead::AES_256_GCM, encryption_key)

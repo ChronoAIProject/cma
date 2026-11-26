@@ -5,15 +5,6 @@ use crate::{
     agent_lifecycle::guidance, config::Config, store::MongoStores, warm_pools::NativeWarmPools,
 };
 
-pub(super) fn image_manager_resolver(
-    config: &Config,
-) -> Result<Arc<crate::agent_lifecycle::ImageManagerResolver>, String> {
-    crate::agent_lifecycle::ImageManagerResolver::new(
-        config.image_manager_base_url.clone(),
-        config.features.image_manager_retirement,
-    )
-}
-
 pub(super) fn configure_inline_lifecycle(
     config: &Config,
     stores: &MongoStores,

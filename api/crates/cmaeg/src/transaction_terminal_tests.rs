@@ -12,7 +12,7 @@ use mongodb::{
 use std::time::{Duration, Instant};
 
 fn fixture_uri() -> String {
-    std::env::var("CMA_IM_TEST_MONGODB_URI").expect("disposable Mongo fixture required")
+    std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").expect("disposable Mongo fixture required")
 }
 
 struct Fixture {

@@ -12,6 +12,9 @@ import {
   STOP_RESPONSE_GUIDANCE,
 } from './stopAgentCopy';
 
+export const WORKSPACE_READ_RECONNECTING =
+  'Workspace status is temporarily unavailable (HTTP 503). Reconnecting.';
+
 export function errorMessage(error: unknown): string {
   const approval = approvalBaselineMessage(error);
   if (approval !== undefined) return approval;
@@ -76,7 +79,12 @@ export function retainHistoryOnFailure(
   agentId: string,
 ): AgentResourceState | undefined {
   return transientReadFailure(error) && current.status === 'ready' && current.detail.id === agentId
-    ? { ...current, historyLoading: false, historyUnavailable: true }
+    ? {
+        ...current,
+        historyLoading: false,
+        historyUnavailable: true,
+        ...(error instanceof WorkspaceReadUnavailable ? { workspaceUnavailable: true } : {}),
+      }
     : undefined;
 }
 

@@ -57,8 +57,6 @@ export async function popupFixture(page: Page, baseURL: string) {
         visitor: false,
         capabilities: ['use_own_sandboxes', 'launch_triggers'],
       });
-    if (url.pathname === '/api/v1/ui/image-manager-retirement' && request.method() === 'GET')
-      return reply(false);
     if (url.pathname === '/api/v1/profile-authoring/services' && request.method() === 'GET')
       return reply([{ id: 'api-github', catalog_id: 'catalog-github', name: 'GitHub' }]);
     if (url.pathname === '/auth/login') {

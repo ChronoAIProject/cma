@@ -23,7 +23,7 @@ impl Fixture {
         omit: Option<&str>,
         missing: Option<&str>,
     ) -> Self {
-        let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+        let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
         let client = Client::with_uri_str(&uri).await.unwrap();
         let name = format!("erasure_authority_{}", uuid::Uuid::new_v4().simple());
         let admin = client.database(&name);
