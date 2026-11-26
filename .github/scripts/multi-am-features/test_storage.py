@@ -11,7 +11,7 @@ from unittest.mock import patch
 from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'owner'))
-from storage import PREFIX, SUGGESTIONS_PATH, Storage
+from storage import MODEL_RESPONSES_PATH, PREFIX, Storage
 
 
 class StorageBoundaryTests(unittest.TestCase):
@@ -87,9 +87,13 @@ class StorageBoundaryTests(unittest.TestCase):
         body = {'stream': False, 'text': {'format': {'name': 'contextual_suggestions'}}}
         with patch.object(self.handler, 'check_grant', return_value=401) as grants, \
              patch('storage.http.client.HTTPSConnection') as connect:
-            self.assertEqual(self.request('POST', SUGGESTIONS_PATH, {**body, 'stream': True}, json_body=True)[0], 404)
+            self.assertEqual(self.request('POST', MODEL_RESPONSES_PATH, {**body, 'stream': True}, json_body=True)[0], 404)
+            versioned_path = MODEL_RESPONSES_PATH.removesuffix('/responses') + '/v1/responses'
+            self.assertEqual(self.request('POST', versioned_path, body, json_body=True)[0], 404)
+            wrong_format = {'stream': False, 'store': False, 'text': {'format': {'name': 'unknown'}}}
+            self.assertEqual(self.request('POST', MODEL_RESPONSES_PATH, wrong_format, json_body=True)[0], 404)
             grants.assert_not_called()
-            self.assertEqual(self.request('POST', SUGGESTIONS_PATH, body, json_body=True)[0], 401)
+            self.assertEqual(self.request('POST', MODEL_RESPONSES_PATH, body, json_body=True)[0], 401)
             grants.assert_called_once_with('llm')
             connect.assert_not_called()
             grants.return_value = 200
@@ -98,11 +102,15 @@ class StorageBoundaryTests(unittest.TestCase):
             response.status = 200
             response.read.return_value = b'{}'
             response.getheader.return_value = 'application/json'
-            self.assertEqual(self.request('POST', SUGGESTIONS_PATH, body, json_body=True), (200, b'{}'))
+            self.assertEqual(self.request('POST', MODEL_RESPONSES_PATH, body, json_body=True), (200, b'{}'))
             connect.assert_called_once_with('provider.localhost.direct', 8080, timeout=45)
             peer.request.assert_called_once_with('POST', '/v1/responses', json.dumps(body).encode(),
                                                  {'Content-Type': 'application/json'})
             peer.close.assert_called_once_with()
+            connect.reset_mock()
+            title = {'stream': False, 'store': False}
+            self.assertEqual(self.request('POST', MODEL_RESPONSES_PATH, title, json_body=True), (200, b'{}'))
+            connect.assert_called_once_with('provider.localhost.direct', 8080, timeout=10)
 
 
 if __name__ == '__main__':

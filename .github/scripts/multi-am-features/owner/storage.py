@@ -16,8 +16,7 @@ PREFIX = '/api/v1/proxy/s/chrono-storage-service/api/buckets/cma-ci-documents/ob
 LIMIT = 2 * 1024 * 1024
 SKILL_PATH = re.compile(r'/api/v1/proxy/s/ornn-api/api/v1/skills/'
                         r'(two-am-(?:before|after)-restart)(/versions/1\.0/download)?')
-SUGGESTIONS_PATH = '/api/v1/proxy/s/chrono-llm-public/v1/responses'
-TITLE_PATH = '/api/v1/proxy/s/chrono-llm-public/responses'
+MODEL_RESPONSES_PATH = '/api/v1/proxy/s/chrono-llm-public/responses'
 
 
 def skill_archive(skill):
@@ -68,7 +67,7 @@ class Storage(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             body = self.body()
-            if self.path in (SUGGESTIONS_PATH, TITLE_PATH):
+            if self.path == MODEL_RESPONSES_PATH:
                 return self.model_response(body)
             if self.path == '/oauth/token':
                 form = parse_qs(body.decode(), strict_parsing=True)
@@ -135,17 +134,17 @@ class Storage(BaseHTTPRequestHandler):
         request = json.loads(body)
         if not isinstance(request, dict) or request.get('stream') is not False:
             return self.reply(404, {'error': 'unsupported_route'})
-        if self.path == TITLE_PATH and request.get('store') is not False:
-            return self.reply(404, {'error': 'unsupported_route'})
-        if self.path == SUGGESTIONS_PATH and (not isinstance(request.get('text'), dict)
-                or not isinstance(request['text'].get('format'), dict)
-                or request['text']['format'].get('name') != 'contextual_suggestions'):
+        text = request.get('text')
+        output_format = text.get('format') if isinstance(text, dict) else None
+        suggestions = isinstance(output_format, dict) and output_format.get('name') == 'contextual_suggestions'
+        title = 'text' not in request and request.get('store') is False
+        if not (suggestions or title):
             return self.reply(404, {'error': 'unsupported_route'})
         grant = self.check_grant('llm')
         if grant != 200:
             return self.reply(grant, {'error': 'fixture_model_grant_unavailable'})
         connection = http.client.HTTPSConnection('provider.localhost.direct', 8080,
-                                                  timeout=10 if self.path == TITLE_PATH else 45)
+                                                  timeout=45 if suggestions else 10)
         try:
             connection.request('POST', '/v1/responses', body, {'Content-Type': 'application/json'})
             response = connection.getresponse()
