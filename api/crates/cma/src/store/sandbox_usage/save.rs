@@ -17,7 +17,10 @@ pub(in crate::store) async fn save(
     release: Option<(&ReleasedRuntime, ReleasedLane)>,
 ) -> Result<(), SandboxStoreError> {
     let at = sandbox.updated_at.clone();
-    for _ in 0..TRANSACTION_ATTEMPTS {
+    for attempt in 0..TRANSACTION_ATTEMPTS {
+        // Known-aborted saves must let a competing parent writer settle.
+        // The previous session is dropped before this bounded retry delay.
+        crate::store::contention::backoff(attempt).await;
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
             Err(error) if is_transient(&error) => continue,
