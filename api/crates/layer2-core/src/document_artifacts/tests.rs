@@ -340,3 +340,94 @@ async fn concurrent_title_changes_cannot_overwrite_each_other() {
     assert!(a == Err(DocumentError::Conflict) || b == Err(DocumentError::Conflict));
     assert_eq!(s.read(&owner, &doc.id, None).await.unwrap().revision, 2);
 }
+
+#[tokio::test]
+async fn document_deletion_fences_owner_revision_and_replays_the_original_receipt() {
+    let (service, store) = fixture();
+    let owner = caller("owner");
+    let guest = caller("guest");
+    let doc = service.create(&owner, "create", body()).await.unwrap();
+    assert_eq!(
+        service.delete(&owner, &doc.id, "delete", 1).await,
+        Err(DocumentError::Unavailable)
+    );
+    let service = service.with_deletion_enabled(true);
+    for (revision, markdown) in [(1, "# Replacement".to_owned()), (2, body().markdown)] {
+        service
+            .update(
+                &owner,
+                &doc.id,
+                &format!("edit-{revision}"),
+                UpdateDocument {
+                    expected_revision: revision,
+                    title: None,
+                    markdown: Some(markdown),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let shared = service
+        .grant(
+            &owner,
+            &doc.id,
+            "grant",
+            "guest",
+            GrantDocument {
+                expected_revision: 3,
+                permission: DocumentPermission::Read,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        service
+            .delete(&guest, &doc.id, "delete", shared.revision)
+            .await,
+        Err(DocumentError::NotFound)
+    );
+    assert_eq!(
+        service.delete(&owner, &doc.id, "delete", 1).await,
+        Err(DocumentError::Conflict)
+    );
+    let receipt = service
+        .delete(&owner, &doc.id, "delete", shared.revision)
+        .await
+        .unwrap();
+    assert_eq!(receipt.revision, shared.revision + 1);
+    assert_eq!(
+        service
+            .delete(&owner, &doc.id, "delete", shared.revision)
+            .await
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        service.delete(&owner, &doc.id, "delete", 1).await,
+        Err(DocumentError::IdempotencyConflict)
+    );
+    assert_eq!(
+        service
+            .delete(&guest, &doc.id, "delete", shared.revision)
+            .await,
+        Err(DocumentError::NotFound)
+    );
+    assert_eq!(
+        service.read(&owner, &doc.id, None).await,
+        Err(DocumentError::NotFound)
+    );
+    assert_eq!(
+        service.read(&guest, &doc.id, None).await,
+        Err(DocumentError::NotFound)
+    );
+    assert_eq!(
+        service.source(&owner, &doc.id, None, None).await,
+        Err(DocumentError::NotFound)
+    );
+    assert_eq!(
+        service.create(&owner, "create", body()).await,
+        Err(DocumentError::NotFound)
+    );
+    assert!(store.get(&doc.id).await.unwrap().is_none());
+    assert!(store.tombstone(&doc.id).await.unwrap().is_some());
+}

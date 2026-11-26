@@ -215,19 +215,25 @@ async fn confirmed_runtime_describes_only_its_authorized_deliverable_and_loses_a
         unconfigured["result"]["structuredContent"]["error"],
         json!({"code":"verification_unavailable", "retryable":false})
     );
-    let malformed = rpc(
-        "tools/call",
-        json!({"name":"describe_deliverable","arguments":{"kind":"live_file","path":1}}),
-    );
-    let malformed = body(
-        app.clone()
-            .oneshot(request(&stub, &malformed))
-            .await
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(malformed["error"]["code"], -32602);
-    assert!(malformed.get("result").is_none());
+    for arguments in [
+        json!({"kind":"live_file","path":1}),
+        json!({"kind":"live_file"}),
+        json!({"kind":"unsupported_fixture_kind"}),
+    ] {
+        let malformed = rpc(
+            "tools/call",
+            json!({"name":"describe_deliverable","arguments":arguments}),
+        );
+        let malformed = body(
+            app.clone()
+                .oneshot(request(&stub, &malformed))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(malformed["result"], denied["result"]);
+        assert!(malformed.get("error").is_none());
+    }
     let revoked_app = agent_delivery_tools_router(
         Arc::new(RevokingAuth {
             auth,

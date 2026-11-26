@@ -18,10 +18,12 @@ async fn execute(arguments: &[String]) -> Result<serde_json::Value, &'static str
     enum Action {
         Status,
         Prepare(String),
+        Bind(String, String, String),
         Install(Inventory, bool),
     }
     let action = match arguments.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["--document-quota-status"] => Action::Status,
+        ["--document-quota-bind-storage", activation, inventory, namespace, "--writers-drained"] => Action::Bind((*activation).into(), (*inventory).into(), (*namespace).into()),
         ["--document-quota-prepare", id] if valid_activation(id) => Action::Prepare((*id).into()),
         ["--document-quota-install", path, mode @ ("--dry-run" | "--apply")] => {
             let file = std::fs::File::open(path).map_err(|_| "inventory file unavailable")?;
@@ -70,6 +72,7 @@ async fn execute(arguments: &[String]) -> Result<serde_json::Value, &'static str
     let dry_run = matches!(&action, Action::Install(_, false));
     match action {
         Action::Status => {},
+        Action::Bind(activation, inventory, namespace) => store.bind_storage(&activation, &inventory, &namespace).await.map_err(|_| "storage binding refused; verify the original inventory and storage namespace")?,
         Action::Prepare(id) => store.prepare(&id).await.map_err(|_| "source-write fence refused; inspect retained activation state")?,
         Action::Install(inventory, apply) => store.install(&database, &inventory, apply).await.map_err(|_| "baseline import refused; keep source writes fenced and retain the original inventory")?,
     }

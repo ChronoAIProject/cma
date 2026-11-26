@@ -1,17 +1,20 @@
 //! Commit Document metadata and its immutable source marker in one transaction.
 use super::{
     mongo::{decode, encode, MongoDocumentStore},
+    object_authority::{Authority, State},
     quota::{object_row, IO},
+    reclamation_slots,
 };
 use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     commit_transaction, is_confirmed_body_retry, is_duplicate_key, start_transaction, CommitOutcome,
 };
 use layer2_core::document_artifacts::{
-    digest, DocumentError, DocumentSourceReservation, StoredDocument,
+    digest, DocumentError, DocumentSourceFence, DocumentSourceReservation, DocumentSourceWrite,
+    StoredDocument,
 };
 use mongodb::{
-    bson::{doc, Document, Timestamp},
+    bson::{doc, DateTime, Document, Timestamp},
     error::UNKNOWN_TRANSACTION_COMMIT_RESULT,
     options::ReadConcern,
     ClientSession, Collection,
@@ -23,6 +26,7 @@ struct Publication<'a> {
     record: &'a StoredDocument,
     metadata: Document,
     source: &'a DocumentSourceReservation,
+    fence: Option<&'a DocumentSourceFence>,
     reservation: Document,
     marker: Document,
     edit: Option<(i64, &'a str, &'a str)>,
@@ -31,10 +35,10 @@ struct Publication<'a> {
 pub(super) async fn publish(
     store: &MongoDocumentStore,
     record: &StoredDocument,
-    source: &DocumentSourceReservation,
+    write: &DocumentSourceWrite,
     edit: Option<(u64, &str)>,
 ) -> Result<bool, DocumentError> {
-    let publication = prepare(record, source, edit)?;
+    let publication = prepare(record, &write.source, write.fence.as_ref(), edit)?;
     tokio::time::timeout(IO, publication.run(store))
         .await
         .map_err(|_| {
@@ -46,6 +50,7 @@ pub(super) async fn publish(
 fn prepare<'a>(
     record: &'a StoredDocument,
     source: &'a DocumentSourceReservation,
+    fence: Option<&'a DocumentSourceFence>,
     edit: Option<(u64, &'a str)>,
 ) -> Result<Publication<'a>, DocumentError> {
     let metadata = encode(record)?;
@@ -72,6 +77,7 @@ fn prepare<'a>(
         record,
         metadata,
         source,
+        fence,
         reservation,
         marker: source_marker(source),
         edit,
@@ -94,7 +100,7 @@ pub(super) async fn reconcile_after_majority_read(
         .unwrap()
         .unwrap();
     let time = session.operation_time().unwrap();
-    prepare(record, source, edit)?
+    prepare(record, source, None, edit)?
         .reconcile(&store.rows, &ledger, time)
         .await
 }
@@ -147,7 +153,7 @@ impl Publication<'_> {
                 Err(error) if is_confirmed_body_retry(&error) => continue,
                 Err(_) => return Err(DocumentError::Unavailable),
             }
-            let result = self.write(&store.rows, &ledger, &mut session).await;
+            let result = self.write(store, &ledger, &mut session).await;
             match result {
                 Ok(true) => {}
                 result => {
@@ -181,10 +187,11 @@ impl Publication<'_> {
 
     async fn write(
         &self,
-        rows: &Collection<Document>,
+        store: &MongoDocumentStore,
         ledger: &Collection<Document>,
         session: &mut ClientSession,
     ) -> Result<bool, WriteError> {
+        let rows = &store.rows;
         // Establish the transaction on a read so cancelling its first command
         // cannot strand a lock on the Document.
         if ledger
@@ -193,6 +200,36 @@ impl Publication<'_> {
             .await?
             .as_ref()
             != Some(&self.reservation)
+        {
+            return Err(WriteError::Domain(DocumentError::Corrupt));
+        }
+        let state = ledger
+            .find_one(doc! {"_id":super::quota::STATE})
+            .session(&mut *session)
+            .await?
+            .ok_or(WriteError::Domain(DocumentError::Unavailable))?;
+        if state.contains_key("storage_namespace_sha256")
+            || super::quota::generation_enabled(&state).map_err(WriteError::Domain)?
+        {
+            super::reclamation_binding::Binding::read(
+                &state,
+                store
+                    .configured_namespace()
+                    .ok_or(WriteError::Domain(DocumentError::Unavailable))?,
+            )
+            .map_err(WriteError::Domain)?;
+        }
+        // The legacy marker branch must compete with a reclamation claim too.
+        let owner = super::quota::owner_id(&self.source.owner_hash);
+        if ledger
+            .update_one(
+                doc! {"_id":owner,"document_schema_version":1_i64,"kind":"owner"},
+                doc! {"$inc":{"fence":1_i64}},
+            )
+            .session(&mut *session)
+            .await?
+            .matched_count
+            != 1
         {
             return Err(WriteError::Domain(DocumentError::Corrupt));
         }
@@ -228,15 +265,43 @@ impl Publication<'_> {
             .session(&mut *session)
             .await?
         {
-            Some(row) if row == self.marker => {}
-            Some(_) => return Err(WriteError::Domain(DocumentError::Corrupt)),
-            None => {
+            Some(row) if row == self.marker && self.fence.is_none() => {}
+            Some(row) => {
+                let mut authority = Authority::decode(&row).map_err(WriteError::Domain)?;
+                let fence = self
+                    .fence
+                    .ok_or(WriteError::Domain(DocumentError::Unavailable))?;
+                if authority.source != *self.source {
+                    return Err(WriteError::Domain(DocumentError::Corrupt));
+                }
+                let expected = authority.condition();
+                authority
+                    .publish(fence.generation(), fence.reservation_id(), DateTime::now())
+                    .map_err(WriteError::Domain)?;
+                if ledger
+                    .replace_one(expected, authority.encoded())
+                    .session(&mut *session)
+                    .await?
+                    .matched_count
+                    != 1
+                {
+                    return Err(WriteError::Domain(DocumentError::Conflict));
+                }
+                reclamation_slots::publish(ledger, self.source, &mut *session)
+                    .await
+                    .map_err(|error| match error {
+                        super::quota::QuotaError::Driver(error) => WriteError::Driver(error),
+                        super::quota::QuotaError::Domain(error) => WriteError::Domain(error),
+                    })?;
+            }
+            None if self.fence.is_none() => {
                 // A future claim for an unpublished object must use this same identity.
                 ledger
                     .insert_one(self.marker.clone())
                     .session(&mut *session)
                     .await?;
             }
+            None => return Err(WriteError::Domain(DocumentError::Corrupt)),
         }
         Ok(true)
     }
@@ -254,14 +319,19 @@ impl Publication<'_> {
             .snapshot_time(time)
             .await
             .map_err(super::quota::unavailable)?;
-        let current = rows
+        let raw = rows
             .find_one(doc! { "_id": &self.record.metadata.id })
             .read_concern(ReadConcern::snapshot())
             .session(&mut snapshot)
             .await
             .map_err(super::quota::unavailable)?
-            .ok_or(DocumentError::Unavailable)
-            .and_then(|row| decode(&row))?;
+            .ok_or(DocumentError::Unavailable)?;
+        let deleted = super::deletion::decode_audit(&raw)?;
+        let terminal = deleted.is_some();
+        let current = match deleted {
+            Some((_, audit)) => audit,
+            None => decode(&raw)?,
+        };
         let exact = match self.edit {
             Some((_, key, fingerprint)) => current.receipts.get(key).is_some_and(|receipt| {
                 receipt.fingerprint == fingerprint
@@ -272,16 +342,30 @@ impl Publication<'_> {
         if current.metadata.owner_subject != self.record.metadata.owner_subject
             || !exact
             || !references(&current, self.record.metadata.revision, self.source)
-            || ledger
-                .find_one(doc! { "_id": &self.marker["_id"] })
-                .read_concern(ReadConcern::snapshot())
-                .session(&mut snapshot)
-                .await
-                .map_err(super::quota::unavailable)?
-                .as_ref()
-                != Some(&self.marker)
         {
             return Err(DocumentError::Unavailable);
+        }
+        let row = ledger
+            .find_one(doc! { "_id": &self.marker["_id"] })
+            .read_concern(ReadConcern::snapshot())
+            .session(&mut snapshot)
+            .await
+            .map_err(super::quota::unavailable)?
+            .ok_or(DocumentError::Unavailable)?;
+        if row != self.marker || self.fence.is_some() {
+            let authority = Authority::decode(&row)?;
+            let compatible = self.fence.map_or(authority.generation == 1, |fence| {
+                authority.generation == fence.generation()
+                    && authority.reservation == fence.reservation_id()
+            });
+            if !compatible
+                || !(authority.state == State::Published
+                    || (terminal
+                        && matches!(authority.state, State::DeletePending | State::Settled)))
+                || authority.source != *self.source
+            {
+                return Err(DocumentError::Unavailable);
+            }
         }
         // Another attempt with the same key could have supplied the durable
         // response. Reload it through the normal creation or receipt replay.

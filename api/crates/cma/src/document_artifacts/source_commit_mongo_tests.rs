@@ -1,3 +1,5 @@
+#[path = "deletion_mongo_tests.rs"]
+mod deletion_tests;
 use super::*;
 use crate::document_artifacts::{
     source_commit::{reconcile_after_majority_read, source_marker},
@@ -372,7 +374,9 @@ async fn document_quota_source_commits_recover_the_winning_attempt_timestamps() 
     let owner = owner();
     starts.lock().unwrap().clear();
     let created = service.create(&owner, "create", create()).await.unwrap();
-    assert_eq!(*starts.lock().unwrap(), ["update", "find"]);
+    // Reservation reads the durable generation gate before publication opens
+    // its own read-first transaction.
+    assert_eq!(*starts.lock().unwrap(), ["find", "find"]);
     let mut alternate = store.get(&created.id).await.unwrap().unwrap();
     let timestamp = "2026-01-01T00:00:00Z";
     alternate.metadata.created_at = timestamp.into();
@@ -398,7 +402,7 @@ async fn document_quota_source_commits_recover_the_winning_attempt_timestamps() 
         .update(&owner, &created.id, "edit", body.clone())
         .await
         .unwrap();
-    assert_eq!(*starts.lock().unwrap(), ["update", "find"]);
+    assert_eq!(*starts.lock().unwrap(), ["find", "find"]);
     let mut alternate = store.get(&created.id).await.unwrap().unwrap();
     alternate.metadata.updated_at = timestamp.into();
     alternate.revisions.last_mut().unwrap().metadata.created_at = timestamp.into();
@@ -429,5 +433,47 @@ async fn document_quota_source_commits_recover_the_winning_attempt_timestamps() 
             .unwrap(),
         2
     );
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB replica set"]
+async fn document_deletion_fences_metadata_and_preserves_the_charged_reclaim_obligation() {
+    let database = database().await;
+    let store = MongoDocumentStore::new(database.clone()).with_source_commits(true);
+    store.ensure_indexes().await.unwrap();
+    let quota = store.quota(true);
+    activate(&quota, &database, &[]).await;
+    let blobs = Arc::new(Blobs::default());
+    let service = service(&store, blobs.clone(), true).with_deletion_enabled(true);
+    let owner = owner();
+    let doc = service.create(&owner, "create", create()).await.unwrap();
+    let before = usage(&quota, "owner").await;
+    let live = store.get(&doc.id).await.unwrap().unwrap();
+    let (left, right) = tokio::join!(
+        service.delete(&owner, &doc.id, "delete", 1),
+        service.delete(&owner, &doc.id, "delete", 1)
+    );
+    assert_eq!(left.unwrap(), right.unwrap());
+    let tombstone = store.tombstone(&doc.id).await.unwrap().unwrap();
+    assert_eq!(tombstone.receipt.revision, 2);
+    assert!(store.get(&doc.id).await.unwrap().is_none());
+    assert!(!store.insert(&live).await.unwrap());
+    assert_eq!(usage(&quota, "owner").await, before);
+    assert_eq!(
+        quota.reserve(&reservation(&doc.id, "new source")).await,
+        Err(DocumentError::NotFound)
+    );
+    let pending = quota.rows.find_one(doc! {"_id": crate::document_artifacts::deletion::obligation_id(&tombstone.owner_hash, &doc.id)}).await.unwrap().unwrap();
+    assert_eq!(
+        pending.get_str("request_hash").unwrap(),
+        tombstone.request_hash
+    );
+    assert!(blobs
+        .store
+        .0
+        .lock()
+        .await
+        .contains_key(&reservation(&doc.id, "original").object_key()));
     database.drop().await.unwrap();
 }
