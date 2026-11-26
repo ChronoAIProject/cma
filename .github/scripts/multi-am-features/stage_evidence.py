@@ -6,7 +6,8 @@ import re
 
 TARGET = 'agent_scheduler_failure'
 PHASES = {'discovery', 'reconciliation', 'execution', 'publication'}
-FAILURES = {'conflict_unclassified', 'store_unavailable', 'stored_data_invalid',
+FAILURES = {'conflict_unclassified', 'store_conflict', 'store_unavailable', 'stored_data_invalid',
+            'ownership_stale', 'ownership_unavailable', 'ownership_invalid', 'incompatible_protocol',
             'domain_refusal', 'task_panicked', 'task_cancelled'}
 PUBLICATION_FAILURES = {'known_aborted_cas', 'owner_authority_refused',
                         'work_lease_changed', 'unknown_commit'}
@@ -14,7 +15,7 @@ WORK_STEPS = {'install_skill', 'wait_for_workspace', 'add_worktree', 'materializ
               'publish_ready', 'publish_connection', 'dispatch_first_message', 'fence_interaction',
               'close_process', 'publish_stopped', 'ensure_process_closed', 'remove_home',
               'remove_worktree', 'publish_deleted', 'restart_conversation', 'restart_teardown', 'none'}
-FIELDS = ('phase', 'failure', 'next_step')
+FIELDS = ('phase', 'failure', 'cause_class', 'next_step')
 
 
 def fields(line):
@@ -60,8 +61,15 @@ def summarize(directory):
             value = fields(line)
             if value is None:
                 continue
-            phase, failure = value.get('phase'), value.get('failure')
-            allowed = PUBLICATION_FAILURES if phase == 'publication' else FAILURES
+            phase = value.get('phase')
+            publication = phase == 'publication'
+            if 'cause_class' in value and (publication or 'failure' in value):
+                rejected += 1
+                continue
+            # New scheduler events emit a cause class. Publication diagnostics
+            # still emit their narrower failure vocabulary on the same target.
+            failure = value.get('cause_class', value.get('failure'))
+            allowed = PUBLICATION_FAILURES if publication else FAILURES
             # External log values may be arrays or objects. Reject them before
             # set membership so one malformed event cannot abort the summary.
             if (not isinstance(phase, str) or not isinstance(failure, str)
@@ -69,7 +77,7 @@ def summarize(directory):
                 rejected += 1
                 continue
             next_step = value.get('next_step', '')
-            if 'next_step' in value and (phase != 'publication' or not isinstance(next_step, str)
+            if 'next_step' in value and (not publication or not isinstance(next_step, str)
                     or next_step not in WORK_STEPS):
                 rejected += 1
                 continue

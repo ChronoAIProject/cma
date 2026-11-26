@@ -7,6 +7,26 @@ from stage_evidence import fields, summarize
 
 
 class StageEvidenceTests(unittest.TestCase):
+    def test_current_scheduler_cause_class_preserves_the_emitted_classification(self):
+        records = [
+            'ERROR agent_scheduler_failure: phase="execution" cause_class="store_conflict" detail_code="private"',
+            json.dumps({'target': 'agent_scheduler_failure', 'fields': {
+                'phase': 'reconciliation', 'cause_class': 'ownership_stale', 'agent_hash': 'private'}}),
+            'INFO agent_scheduler_failure: phase="publication" cause_class="unknown_commit"',
+            'INFO agent_scheduler_failure: phase="execution" cause_class="known_aborted_cas"',
+            'INFO agent_scheduler_failure: phase="execution" failure="task_panicked" cause_class="store_conflict"',
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'am-a-0.full.private.log').write_text('\n'.join(records))
+            result = summarize(root)
+            self.assertEqual(result['occurrences'], [
+                {'am': 'a', 'phase': 'execution', 'failure': 'store_conflict', 'count': 1},
+                {'am': 'a', 'phase': 'reconciliation', 'failure': 'ownership_stale', 'count': 1},
+            ])
+            self.assertEqual(result['unrecognized_scheduler_events'], 3)
+            self.assertNotIn('private', json.dumps(result))
+
     def test_text_and_json_fields_keep_generic_conflict_unclassified(self):
         examples = [
             '2026-11-16T00:00:00Z ERROR agent_scheduler_failure: failed phase="execution" failure="conflict_unclassified" agent_hash="private-test"',
