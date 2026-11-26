@@ -97,15 +97,50 @@ impl UserDirectoryStore for MemoryRecipientDirectory {
 }
 
 #[derive(Default)]
-pub struct MemoryDocuments(pub Mutex<BTreeMap<String, StoredDocument>>);
+pub struct MemoryDocuments(
+    pub Mutex<BTreeMap<String, StoredDocument>>,
+    Mutex<BTreeMap<String, (DocumentTombstone, StoredDocument)>>,
+);
 #[async_trait::async_trait]
 impl DocumentStore for MemoryDocuments {
     async fn get(&self, id: &str) -> Result<Option<StoredDocument>, DocumentError> {
         Ok(self.0.lock().await.get(id).cloned())
     }
+    async fn tombstone(&self, id: &str) -> Result<Option<DocumentTombstone>, DocumentError> {
+        Ok(self
+            .1
+            .lock()
+            .await
+            .get(id)
+            .map(|(tombstone, _)| tombstone.clone()))
+    }
+    async fn delete(
+        &self,
+        owner: &str,
+        tombstone: &DocumentTombstone,
+    ) -> Result<bool, DocumentError> {
+        tombstone.validate()?;
+        let mut rows = self.0.lock().await;
+        let mut deleted = self.1.lock().await;
+        if tombstone.owner_hash != digest(owner.as_bytes()) {
+            return Err(DocumentError::Corrupt);
+        }
+        let id = &tombstone.receipt.id;
+        if !rows.get(id).is_some_and(|row| {
+            row.metadata.owner_subject == owner
+                && row.metadata.revision == tombstone.expected_revision
+        }) {
+            return Ok(false);
+        }
+        let audit = rows.remove(id).ok_or(DocumentError::Corrupt)?;
+        deleted.insert(id.clone(), (tombstone.clone(), audit));
+        Ok(true)
+    }
     async fn insert(&self, record: &StoredDocument) -> Result<bool, DocumentError> {
         let mut rows = self.0.lock().await;
-        if rows.contains_key(&record.metadata.id) {
+        if rows.contains_key(&record.metadata.id)
+            || self.1.lock().await.contains_key(&record.metadata.id)
+        {
             return Ok(false);
         }
         rows.insert(record.metadata.id.clone(), record.clone());
