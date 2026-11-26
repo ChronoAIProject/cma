@@ -195,11 +195,6 @@
     "kind": "fixture",
     "reason": "Bounded pure CPU comparison of the legacy and raw BSON decoders; explicit invocation in the usage qualification runner, no MongoDB."
   },
-  "store::trigger_definitions::reference_integration_tests::publication_uses_current_visibility_but_preview_uses_exact_revision": {
-    "kind": "deferred",
-    "reason": "Existing trigger-reference refusal mismatch; restore selection with its separately owned fix.",
-    "issue": "https://github.com/ChronoAIProject/cma/issues/1854"
-  },
   "store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration": {
     "kind": "fixture",
     "reason": "Requires optimized usage qualification binaries plus exact compiled-source identity and private CPU output path; supporting in-memory phase calibration, no MongoDB."
