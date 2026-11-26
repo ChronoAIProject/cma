@@ -216,13 +216,11 @@ class CacheTests(unittest.TestCase):
         self.assertFalse(pending.exists())
         self.assertFalse(cache.exports_layers())
 
-    def test_am_layer_archive_includes_intermediate_dependency_results(self):
+    def test_am_publication_does_not_export_optional_dependency_layers(self):
         env = dict(self.env, CD_COMPONENT='am', CD_LAYER_ARCHIVE_CACHE='enabled',
                    CD_LAYER_CACHE_WRITER_FLOOR='verified')
         cache = BuildCache(ROOT, env, ROOT, 'am')
-        pending = cache.layer_root / 'pending'
-        self.assertIn('type=local,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true,dest=' + str(pending),
-                      cache.build_options())
+        self.assertNotIn('--cache-to', cache.build_options())
         self.assertFalse(cache.exports_layers())
 
     def test_only_develop_producers_can_prepare_or_transfer_cargo_caches(self):

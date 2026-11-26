@@ -109,16 +109,12 @@ class BuildCache:
             if (self.env.get("CD_LAYER_ARCHIVE_RESTORED") == "true"
                     and restored.is_dir() and not restored.is_symlink()):
                 args += ["--cache-from", "type=local,src=" + str(restored)]
-            if self.env.get("CD_LAYER_CACHE_WRITER_FLOOR") == "verified":
+            if self.component != "am" and self.env.get("CD_LAYER_CACHE_WRITER_FLOOR") == "verified":
                 try:
                     (self.layer_root / "replay.json").unlink(missing_ok=True)
                     if pending.exists():
                         shutil.rmtree(pending)
-                    # AM's cargo-chef output is an intermediate stage, absent
-                    # from the final image layers. The sealed archive's byte
-                    # and admission bounds apply to either export mode.
-                    mode = "max" if self.component == "am" else "min"
-                    args += ["--cache-to", f"type=local,mode={mode},image-manifest=true,oci-mediatypes=true,ignore-error=true,dest=" + str(pending)]
+                    args += ["--cache-to", "type=local,mode=min,image-manifest=true,oci-mediatypes=true,ignore-error=true,dest=" + str(pending)]
                     self.layer_export_requested = True
                 except OSError:
                     # The ordinary build can continue with its available reads.

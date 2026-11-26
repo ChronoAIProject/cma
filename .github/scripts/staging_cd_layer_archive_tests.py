@@ -12,7 +12,7 @@ import yaml
 import buildkit_cache_archive as archive
 from actions_cache_retention import BUDGET
 from actions_cargo_budget import Account as CargoAccount, SCHEMA as CARGO_SCHEMA, stored_bound
-from actions_layer_admission import Account, PREFIX, reserve, retire_verified, select, source_run
+from actions_layer_admission import Account, PREFIX, reserve, retire_verified, select, select_am_receipt, source_run
 from staging_cd_cache_retention_tests import Inventory, entry
 from staging_cd_cache_retention_tests import ROOT
 
@@ -161,6 +161,62 @@ class AdmissionTests(unittest.TestCase):
 
 
 class ProducerTests(unittest.TestCase):
+    def test_detached_am_source_requires_successful_publish_and_finalize(self):
+        run = {"id": 42, "run_attempt": 2, "head_sha": "a" * 40}
+        artifact = {"name": "staging-receipts-42-2-am", "id": 17, "size_in_bytes": 100,
+                    "expired": False, "digest": "sha256:" + "a" * 64}
+        job = {"run_id": 42, "run_attempt": 2, "head_sha": "a" * 40,
+               "status": "completed", "conclusion": "success"}
+        publish = dict(job, name="Release am / Publish", steps=[{
+            "name": "Retain only public publication receipts", "conclusion": "success"}])
+        finalize = dict(job, name="Release am / Finalize", steps=[{
+            "name": "Publish digest-bound final tags and remove successful reservations", "conclusion": "success"}])
+        api = Mock()
+        api.list.side_effect = [[artifact], [publish, finalize]]
+        self.assertEqual(select_am_receipt(api, run), 17)
+        for broken in ([publish], [publish, dict(finalize, conclusion="failure")],
+                       [publish, dict(finalize, run_attempt=1)]):
+            api.list.side_effect = [[artifact], broken]
+            self.assertIsNone(select_am_receipt(api, run))
+
+    def test_detached_am_export_is_bound_to_finalized_recipe_and_withholds_failures(self):
+        from staging_cd_am_dependency_archive import export
+        from staging_cd_receipts_tests import fixture_receipt
+        from staging_cd_layer_reuse import read_replay
+        receipt = fixture_receipt(component="am", run_id=42, run_attempt=2)
+        release = receipt["identity"]
+        run = {"id": 42, "run_attempt": 2, "head_sha": "a" * 40}
+        with TemporaryDirectory() as directory:
+            parent = Path(directory)
+            path = parent / "receipts.json"
+            path.write_text(json.dumps([receipt]))
+            original = path.read_bytes()
+
+            def runner(args, **_):
+                if args[0] == "git":
+                    return b"b" * 40
+                self.assertIn("dependencies", args)
+                self.assertIn("type=cacheonly", args)
+                self.assertIn("linux/amd64", args)
+                location = next(value.split("dest=", 1)[1] for value in args if value.startswith("type=local,"))
+                populate(Path(location))
+                return b""
+
+            with patch("staging_cd_am_dependency_archive.snapshot"), \
+                    patch("staging_cd_am_dependency_archive.identity", return_value=(release, {"dockerfile": "api/crates/cma/Dockerfile"}, {})):
+                for problem in (OSError("disk full"), ValueError("oversize archive")):
+                    with patch("staging_cd_am_dependency_archive.seal", side_effect=problem):
+                        with self.assertRaises(type(problem)):
+                            export(parent, parent, run, runner=runner)
+                    self.assertFalse((parent / "archive.tar").exists())
+                    self.assertFalse((parent / "replay.json").exists())
+                    self.assertEqual(path.read_bytes(), original)
+                export(parent, parent, run, runner=runner)
+                value = read_replay(parent / "replay.json", sealed=True)
+                self.assertEqual(value["kind"], "am-dependencies")
+                self.assertEqual(value["reservation"]["source"], release["source"])
+                self.assertEqual(path.read_bytes(), original)
+
     def test_only_exact_successful_protected_publication_is_selected(self):
         run = {"id": 42, "run_attempt": 2, "head_sha": "a" * 40}
         artifact = {"name": "cma-layer-cache-am-42-2", "id": 17, "size_in_bytes": 100,
@@ -208,6 +264,7 @@ class ProducerTests(unittest.TestCase):
         step = next(s for s in publisher['steps'] if s.get('id') == 'seal-layer-archive')
         self.assertIn("vars.CMA_BOUNDED_LAYER_CACHE == 'true'", step['if'])
         self.assertIn('success()', step['if'])
+        self.assertIn("inputs.component != 'am'", step['if'])
         workflow = yaml.safe_load((workflows / 'cache-retention.yml').read_text())
         writer = workflow['jobs']['retain_layers']
         self.assertEqual(writer['cache-mode'], 'write')
@@ -218,6 +275,9 @@ class ProducerTests(unittest.TestCase):
         self.assertIn("vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true'", writer['if'])
         self.assertIn("github.event_name == 'workflow_run'", writer['if'])
         self.assertIn("github.event.workflow_run.path == '.github/workflows/staging-cd.yml'", writer['if'])
+        self.assertTrue(writer['continue-on-error'])
+        self.assertTrue(any(s.get('name') == 'Reconstruct and seal qualified AM dependency stage'
+                            for s in writer['steps']))
         save = writer['steps'][-1]
         self.assertTrue(save['uses'].startswith('actions/cache/save@'))
         self.assertEqual(save['if'], "steps.reserve-layer-archive.outputs.allowed == 'true'")
@@ -355,6 +415,20 @@ class RetirementTests(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(ValueError, 'did not reuse'):
                         prove(self.restored, stored, replay, env, builder=builder)
+            replay.write_text(json.dumps({'reservation': reservation, 'mount_namespace': mount,
+                                          'kind': 'am-dependencies'}))
+            seal_replay(replay, stored)
+            for dependency_steps in (0, 1):
+                def dependency_builder(_root, _actual, _directory, *, cache, progress):
+                    self.assertNotEqual(cache.mount, mount)
+                    progress.update(complete=True, local_cache_imports=1, cached_build_steps=1,
+                                    cached_dependency_steps=dependency_steps)
+                if dependency_steps:
+                    self.assertEqual(prove(self.restored, stored, replay, env, builder=dependency_builder),
+                                     hashlib.sha256(stored.read_bytes()).hexdigest())
+                else:
+                    with self.assertRaisesRegex(ValueError, 'did not reuse AM dependencies'):
+                        prove(self.restored, stored, replay, env, builder=dependency_builder)
 
 
 if __name__ == "__main__":

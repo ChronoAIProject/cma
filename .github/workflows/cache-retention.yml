@@ -174,7 +174,7 @@ jobs:
         component: [am, eg, web, runtime, runtime-omarchy]
     cache-mode: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 65
     continue-on-error: true
     permissions:
       contents: write
@@ -184,6 +184,7 @@ jobs:
         timeout-minutes: 2
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Select candidate from successful protected publication
         id: layer-candidate
         timeout-minutes: 3
@@ -224,6 +225,20 @@ jobs:
         run: |
           echo '::error title=Layer archive unavailable::Candidate download was withheld because both attempts failed. Each attempt is limited to 5 minutes.'
           exit 1
+      - name: Set up detached AM dependency builder
+        if: matrix.component == 'am' && steps.layer-candidate.outputs.artifact != ''
+        timeout-minutes: 3
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+        with:
+          cache-binary: false
+      - name: Reconstruct and seal qualified AM dependency stage
+        if: matrix.component == 'am' && steps.layer-candidate.outputs.artifact != ''
+        timeout-minutes: 35
+        env:
+          CD_COMPONENT: am
+          CD_LAYER_ARCHIVE_CACHE: enabled
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
+        run: python3 -B .github/scripts/staging_cd_am_dependency_archive.py
       - name: Validate candidate before reservation
         if: steps.layer-candidate.outputs.artifact != ''
         timeout-minutes: 5
