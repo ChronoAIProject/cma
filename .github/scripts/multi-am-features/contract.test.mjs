@@ -48,6 +48,19 @@ test('known admission replay follows its original Agent to the current non-owner
   assert.deepEqual(calls, [{am: 'b', method: 'POST', path: '/api/v1/agents', key: 'known-key'}]);
 });
 
+test('an explicit admission replay reaches the selected ingress', async () => {
+  const api = new API({bearer: 'direct-admission-routing-fixture'});
+  api.routedAgents.add('agent');
+  api.bindAdmission('known-key', 'agent');
+  api.router = {dispatch: async () => assert.fail('the fixture must use its selected ingress')};
+  api.rawRequest = async (am, method, path, options) => {
+    assert.deepEqual([am, method, path, options.key], ['a', 'POST', '/api/v1/agents', 'known-key']);
+    return {body: {id: 'known-operation'}};
+  };
+  assert.equal((await api.request('a', 'POST', '/api/v1/agents', {key: 'known-key', direct: true})).body.id,
+    'known-operation');
+});
+
 test('requests sharing a credential reserve distinct slots across AM clients and preserve independent actors', async () => {
   const waits = [];
   const pacer = new RequestPacer({now: () => 100, sleep: async ms => { waits.push(ms); }});

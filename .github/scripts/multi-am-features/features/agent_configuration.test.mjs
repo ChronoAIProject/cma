@@ -198,7 +198,7 @@ test('busy refusal must be the typed business boundary and must not mutate state
 });
 
 test('lifecycle replay keeps the acknowledged key and original body around changed-payload refusal', async () => {
-  const record = {key: 'original-key', operationId: 'original-operation', createBody: {name: 'Original'}};
+  const record = {am: 'a', key: 'original-key', operationId: 'original-operation', createBody: {name: 'Original'}};
   const calls = [];
   const api = {request: async (am, method, path, options) => {
     calls.push({am, method, path, ...structuredClone(options)});
@@ -206,6 +206,8 @@ test('lifecycle replay keeps the acknowledged key and original body around chang
   }};
   await verifyLifecycleReplay(api, record);
   assert.equal(calls.length, 3); assert.ok(calls.every(call => call.key === record.key));
+  assert.deepEqual(calls.map(call => call.am), ['b', 'b', 'a']);
+  assert.ok(calls.every(call => call.direct));
   assert.deepEqual(calls[0].body, record.createBody);
   assert.notDeepEqual(calls[1].body, record.createBody);
   assert.deepEqual(calls[2].body, record.createBody);
@@ -213,7 +215,7 @@ test('lifecycle replay keeps the acknowledged key and original body around chang
 
 test('changed-payload refusal cannot poison the original admission identity', async () => {
   let count = 0;
-  const record = {key: 'original-key', operationId: 'original-operation', createBody: {name: 'Original'}};
+  const record = {am: 'b', key: 'original-key', operationId: 'original-operation', createBody: {name: 'Original'}};
   const api = {request: async () => ({body: ++count === 1 ? {id: record.operationId}
     : count === 2 ? {code: 'agent_busy'} : {id: 'new-operation'}})};
   await assert.rejects(verifyLifecycleReplay(api, record), /altered_admission_replaced_original/);

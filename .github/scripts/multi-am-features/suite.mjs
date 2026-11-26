@@ -243,11 +243,14 @@ try {
               agentId: context.record.agentId, sandboxId: context.record.sandboxId}),
             'lifecycle_always_on_browser') : undefined,
           verifyAdmission: async stage => {
+            const path = '/api/v1/agents/' + context.record.agentId;
             for (const am of ['a', 'b']) {
-              const detail = (await context.api.rawRequest(am, 'GET',
-                '/api/v1/agents/' + context.record.agentId)).body;
+              const {body: detail} = await context.api.rawRequest(am, 'GET', path);
               check(detail.id === context.record.agentId && detail.sandbox?.id === context.record.sandboxId
                 && detail.status === 'ready', 'always_on_public_agent_unavailable_' + stage);
+              const {body: provenance} = await context.api.rawRequest(am, 'GET', path + '/provenance');
+              check(provenance?.agent_id === detail.id && provenance.creation_origin === 'manual'
+                && provenance.details?.trigger == null, 'always_on_lifecycle_provenance_changed');
             }
             // Replay only acknowledged creation custody; altered payload must
             // refuse without replacing the original receipt or creating again.

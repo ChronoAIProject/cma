@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual as equal} from 'node:util';
-import {check} from '../cma/core.mjs';
+import {check, other} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 import {probeProvider} from './provider_probe.mjs';
 
@@ -193,12 +193,14 @@ export async function assertWriterTitle(api, adapter, resource) {
 }
 
 export async function verifyLifecycleReplay(api, resource) {
-  const options = {body: resource.createBody, key: resource.key, allowed: [202]};
-  const replay = await api.request('a', 'POST', '/api/v1/agents', options);
+  check(['a', 'b'].includes(resource.am), 'original_admission_ingress_missing');
+  const peer = other(resource.am);
+  const options = {body: resource.createBody, key: resource.key, allowed: [202], direct: true};
+  const replay = await api.request(peer, 'POST', '/api/v1/agents', options);
   check(replay.body.id === resource.operationId, 'admission_replay_identity_changed');
-  const refused = await api.request('a', 'POST', '/api/v1/agents', {
+  const refused = await api.request(peer, 'POST', '/api/v1/agents', {
     ...options, body: {...resource.createBody, name: 'Altered ' + randomUUID()}, allowed: [409]});
   check(refused.body?.code === 'agent_busy', 'altered_admission_wrong_refusal');
-  const original = await api.request('a', 'POST', '/api/v1/agents', options);
+  const original = await api.request(resource.am, 'POST', '/api/v1/agents', options);
   check(original.body.id === resource.operationId, 'altered_admission_replaced_original');
 }

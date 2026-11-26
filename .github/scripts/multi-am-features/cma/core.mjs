@@ -185,7 +185,7 @@ export class API {
       ?? this.commandAgents.get(path.match(/^\/api\/v2\/commands\/([^/?]+)/)?.[1])
       ?? this.sandboxAgents.get(path.match(/^\/api\/v1\/admin\/sandboxes\/([^/?]+)/)?.[1])
       ?? (method === 'POST' && path === '/api/v1/agents' ? this.admissionAgents.get(options.key) : undefined);
-    const response = this.router && this.routingEnabled && this.routedAgents.has(agent)
+    const response = this.router && this.routingEnabled && !options.direct && this.routedAgents.has(agent)
       ? await this.router.dispatch(agent, ingress => this.rawRequest(ingress, method, path, options))
       : await this.rawRequest(am, method, path, options);
     const command = response.body?.control?.receipt?.command_id ?? response.body?.receipt?.command_id;
