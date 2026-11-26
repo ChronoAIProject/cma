@@ -18,20 +18,43 @@ fn required(name: &str) -> Result<String, Box<dyn std::error::Error>> {
 }
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
     let args: Vec<_> = std::env::args().skip(1).collect();
+    let filter = tracing_subscriber::EnvFilter::from_default_env();
+    if args
+        .first()
+        .is_some_and(|arg| arg == "--migrate" || arg.starts_with("--migration-"))
+    {
+        use tracing_subscriber::filter::{FilterExt, LevelFilter, Targets};
+        use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
+        let migrations = Targets::new().with_target("cma_service_migrations", LevelFilter::WARN);
+        tracing_subscriber::registry()
+            .with(
+                fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(std::io::stderr)
+                    .with_filter(filter.or(migrations)),
+            )
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    }
     let db_name = required(CMA_IM_MONGODB_DATABASE)?;
     if args == ["--print-runtime-role"] {
         println!("{}", schema::runtime_role(&db_name));
+        return Ok(());
+    }
+    if args == ["--print-migration-operator-role"] {
+        println!(
+            "{}",
+            cma_service_migrations::operator_role(&db_name, cma_image_manager::migrations::LEDGER)
+        );
         return Ok(());
     }
     if args == ["--print-migration-role"] {
         println!("{}", schema::migration_role(&db_name));
         return Ok(());
     }
-    if !args.is_empty() && args != ["--migrate"] {
+    if !args.is_empty() && args != ["--migrate"] && !args[0].starts_with("--migration-") {
         return Err(
             "usage: cma-image-manager [--migrate|--print-runtime-role|--print-migration-role]"
                 .into(),
@@ -39,8 +62,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mongo = mongodb::Client::with_uri_str(required(CMA_IM_MONGODB_URI)?).await?;
     let database = mongo.database(&db_name);
-    if args == ["--migrate"] {
-        schema::migrate(&database).await?;
+    if !args.is_empty() {
+        cma_image_manager::migrations::cli(&database, &args).await?;
         return Ok(());
     }
     let authority = cma_service_auth::mongodb_authority::MongoAuthorityMode::from_env(

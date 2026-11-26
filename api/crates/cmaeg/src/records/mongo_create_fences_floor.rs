@@ -29,24 +29,36 @@ async fn validator_phase(db: &Database) -> Result<Option<i32>, RecordError> {
 }
 
 async fn begin_validator_change(db: &Database, next: i32) -> Result<bool, RecordError> {
-    let rows = db.collection::<Document>(MIGRATIONS);
-    let majority = WriteConcern::builder().w(Acknowledgment::Majority).build();
-    rows.update_one(
+    let filter = doc! {"_id": VALIDATOR_CHANGE, "version": IDLE};
+    let change = doc! {"$set": {"version": next}};
+    cma_service_migrations::update(
+        db,
+        MIGRATIONS,
         doc! {"_id": VALIDATOR_CHANGE},
         doc! {"$setOnInsert": {"version": IDLE}},
+        true,
+        false,
     )
-    .upsert(true)
-    .write_concern(majority.clone())
     .await
     .map_err(failure)?;
-    let result = rows
-        .update_one(
-            doc! {"_id": VALIDATOR_CHANGE, "version": IDLE},
-            doc! {"$set": {"version": next}},
-        )
-        .write_concern(majority)
-        .await
-        .map_err(failure)?;
+    if cma_service_migrations::describing() {
+        cma_service_migrations::update(db, MIGRATIONS, filter, change, false, false)
+            .await
+            .map_err(failure)?;
+        return Ok(true);
+    }
+    let rows = db.collection::<Document>(MIGRATIONS);
+    let result = cma_service_migrations::effect(
+        db,
+        doc! {"update":MIGRATIONS,"updates":[{"q":&filter,"u":&change,"upsert":false,"multi":false}]},
+        async {
+            rows.update_one(filter, change)
+                .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+                .await
+        },
+    )
+    .await
+    .map_err(failure)?;
     if result.matched_count == 1 {
         return Ok(true);
     }
@@ -73,14 +85,16 @@ pub(super) async fn upgrade_legacy_validator(
         if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command)
             if matches!(command.code, 2 | 13 | 26)))
     {
-        db.collection::<Document>(MIGRATIONS)
-            .update_one(
-                doc! {"_id": VALIDATOR_CHANGE, "version": LEGACY_UPGRADE},
-                doc! {"$set": {"version": IDLE}},
-            )
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
-            .await
-            .map_err(failure)?;
+        cma_service_migrations::update(
+            db,
+            MIGRATIONS,
+            doc! {"_id": VALIDATOR_CHANGE, "version": LEGACY_UPGRADE},
+            doc! {"$set": {"version": IDLE}},
+            false,
+            false,
+        )
+        .await
+        .map_err(failure)?;
     }
     result.map_err(failure)?;
     Ok(())
@@ -90,19 +104,15 @@ async fn set_channel_validator(
     db: &Database,
     validator: Document,
 ) -> mongodb::error::Result<Document> {
-    let response = db
-        .run_command(doc! {
+    cma_service_migrations::command(
+        db,
+        doc! {
             "collMod": RECORDS, "validator": validator,
             "validationLevel": "strict", "validationAction": "error",
             "writeConcern": {"w": "majority"}
-        })
-        .await?;
-    if response.contains_key("writeConcernError") {
-        return Err(mongodb::error::Error::custom(
-            "Channel validator majority acknowledgement is unresolved",
-        ));
-    }
-    Ok(response)
+        },
+    )
+    .await
 }
 
 pub fn role(database: &str, migration: bool) -> Document {
@@ -177,23 +187,11 @@ pub(crate) async fn verify(db: &Database, issuer: &str) -> Result<bool, RecordEr
         .read_concern(ReadConcern::majority())
         .await
         .map_err(failure)?;
-    let indexes = fences
-        .list_indexes()
-        .await
-        .map_err(failure)?
-        .try_collect::<Vec<_>>()
-        .await
-        .map_err(failure)?;
     if validator_phase(db).await? != Some(FENCED_WRITERS)
         || !row.is_some_and(|row| {
             row.get_str("issuer").ok() == Some(issuer) && row.get_i32("version").ok() == Some(1)
         })
-        || indexes.len() != 1
-        || indexes[0].keys != doc! {"_id": 1}
-        || indexes[0]
-            .options
-            .as_ref()
-            .is_some_and(|options| options.expire_after.is_some())
+        || !fence_indexes_match(db).await?
         || !channel_validator_is_strict(db).await?
     {
         return Err(RecordError::Unavailable(
@@ -201,6 +199,25 @@ pub(crate) async fn verify(db: &Database, issuer: &str) -> Result<bool, RecordEr
         ));
     }
     Ok(true)
+}
+
+async fn fence_indexes_match(db: &Database) -> Result<bool, RecordError> {
+    let indexes = db
+        .collection::<Document>(CREATE_FENCES)
+        .list_indexes()
+        .await
+        .map_err(failure)?
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(failure)?;
+    let [index] = indexes.as_slice() else {
+        return Ok(false);
+    };
+    Ok(index.keys == doc! {"_id": 1}
+        && index
+            .options
+            .as_ref()
+            .is_none_or(|options| options.expire_after.is_none()))
 }
 
 async fn channel_validator_is_strict(db: &Database) -> Result<bool, RecordError> {
@@ -223,9 +240,118 @@ async fn channel_validator_is_strict(db: &Database) -> Result<bool, RecordError>
     }))
 }
 
-pub async fn migrate(db: &Database, issuer: &str) -> Result<(), RecordError> {
+fn fence_validator() -> Document {
+    doc! {"$or": [
+        {"$and": [{"_id": "writer_floor"}, {"version": 1}, {"issuer": {"$type": "string"}}]},
+        {"$jsonSchema": {"bsonType": "object", "required": ["_id", "revision", "cancelled"],
+            "additionalProperties": false,
+            "properties": {
+                "_id": {"bsonType": "object", "required": ["issuer", "kind", "subject", "record"],
+                    "additionalProperties": false,
+                    "properties": {
+                        "issuer": {"bsonType": "string"}, "kind": {"enum": ["human", "organization"]},
+                        "subject": {"bsonType": "string"}, "record": {"bsonType": "string"}
+                    }
+                },
+                "revision": {"bsonType": "long", "minimum": 1}, "cancelled": {"bsonType": "bool"}
+            }
+        }}
+    ]}
+}
+
+async fn marker_catalog(db: &Database) -> Result<(), RecordError> {
+    cma_service_migrations::collection_with_predecessors(
+        db,
+        MIGRATIONS,
+        schema::migration_validator(),
+        false,
+        schema::migration_predecessors(),
+    )
+    .await
+    .map_err(failure)
+}
+
+async fn channel_catalog(db: &Database) -> Result<(), RecordError> {
+    let ordinary = schema::record_validator(false);
+    let mut predecessors = schema::record_predecessors(&ordinary);
+    predecessors.push(ordinary);
+    cma_service_migrations::collection_with_guarded_replacement(
+        db,
+        RECORDS,
+        schema::record_validator(true),
+        false,
+        predecessors,
+        None,
+        |validator| async move { set_channel_validator(db, validator).await.map(|_| ()) },
+    )
+    .await
+    .map_err(failure)
+}
+
+pub(crate) async fn inspect_migration(db: &Database, issuer: &str) -> Result<bool, RecordError> {
+    let names = db
+        .list_collection_names()
+        .filter(doc! {"name":{"$in":[MIGRATIONS, RECORDS, CREATE_FENCES]}})
+        .await
+        .map_err(failure)?;
+    if !names.iter().any(|name| name == MIGRATIONS) || !names.iter().any(|name| name == RECORDS) {
+        return Err(RecordError::Unavailable(
+            "Channel create fence floor requires the base schema".into(),
+        ));
+    }
+    if names.iter().any(|name| name == CREATE_FENCES) && !fence_indexes_match(db).await? {
+        return Err(RecordError::Unavailable(
+            "Channel create fence index inventory drift".into(),
+        ));
+    }
+    let catalog_ready = cma_service_migrations::inspect(async {
+        marker_catalog(db)
+            .await
+            .map_err(|_| "Channel migration-marker validator unavailable")?;
+        cma_service_migrations::collection(db, CREATE_FENCES, fence_validator(), false)
+            .await
+            .map_err(|_| "Channel create fence validator unavailable")?;
+        channel_catalog(db)
+            .await
+            .map_err(|_| "Channel record validator unavailable")
+    })
+    .await
+    .map_err(|reason| RecordError::Unavailable(reason.into()))?;
     if installed(db).await? {
-        verify(db, issuer).await?;
+        if !catalog_ready {
+            return Err(RecordError::Unavailable(
+                "Channel create fence catalog drift".into(),
+            ));
+        }
+        return verify(db, issuer).await;
+    }
+
+    if !matches!(
+        validator_phase(db).await?,
+        None | Some(IDLE | FENCED_WRITERS)
+    ) {
+        return Err(RecordError::Unavailable(
+            "Channel validator migration is in progress or unresolved".into(),
+        ));
+    }
+    let retained = db
+        .collection::<Document>(CREATE_FENCES)
+        .find_one(doc! {"_id": "writer_floor"})
+        .read_concern(ReadConcern::majority())
+        .await
+        .map_err(failure)?;
+    if retained.is_some_and(|row| {
+        row.get_str("issuer").ok() != Some(issuer) || row.get_i32("version").ok() != Some(1)
+    }) {
+        return Err(RecordError::Unavailable(
+            "Channel create fence writer floor is incompatible".into(),
+        ));
+    }
+    Ok(false)
+}
+
+pub async fn migrate(db: &Database, issuer: &str) -> Result<(), RecordError> {
+    if !cma_service_migrations::describing() && inspect_migration(db, issuer).await? {
         return Ok(());
     }
     let url = url::Url::parse(issuer)
@@ -243,78 +369,56 @@ pub async fn migrate(db: &Database, issuer: &str) -> Result<(), RecordError> {
             "invalid Channel create fence issuer".into(),
         ));
     }
-    let write = WriteConcern::builder().w(Acknowledgment::Majority).build();
-    db.run_command(doc! {
-        "collMod": MIGRATIONS, "validator": schema::migration_validator(),
-        "validationLevel": "strict", "validationAction": "error",
-        "writeConcern": {"w": "majority"}
-    })
+    marker_catalog(db).await?;
+    begin_validator_change(db, FENCED_WRITERS).await?;
+    cma_service_migrations::collection(db, CREATE_FENCES, fence_validator(), true)
+        .await
+        .map_err(failure)?;
+    cma_service_migrations::update(
+        db,
+        CREATE_FENCES,
+        doc! {"_id": "writer_floor", "issuer": issuer, "version": 1},
+        doc! {"$setOnInsert": {"issuer": issuer, "version": 1}},
+        true,
+        false,
+    )
     .await
     .map_err(failure)?;
-    begin_validator_change(db, FENCED_WRITERS).await?;
-    let fence_validator = doc! {"$or": [
-        {"$and": [{"_id": "writer_floor"}, {"version": 1}, {"issuer": {"$type": "string"}}]},
-        {"$jsonSchema": {"bsonType": "object", "required": ["_id", "revision", "cancelled"],
-            "additionalProperties": false,
-            "properties": {
-                "_id": {"bsonType": "object", "required": ["issuer", "kind", "subject", "record"],
-                    "additionalProperties": false,
-                    "properties": {
-                        "issuer": {"bsonType": "string"}, "kind": {"enum": ["human", "organization"]},
-                        "subject": {"bsonType": "string"}, "record": {"bsonType": "string"}
-                    }
-                },
-                "revision": {"bsonType": "long", "minimum": 1}, "cancelled": {"bsonType": "bool"}
-            }
-        }}
-    ]};
-    let create = db
-        .run_command(doc! {
-            "create": CREATE_FENCES, "validator": &fence_validator,
-            "validationLevel": "strict", "validationAction": "error",
-            "writeConcern": {"w": "majority"}
-        })
-        .await;
-    match create {
-        Ok(_) => {}
-        Err(error) if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command) if command.code == 48) =>
-        {
-            db.run_command(doc! {
-                "collMod": CREATE_FENCES, "validator": fence_validator,
-                "validationLevel": "strict", "validationAction": "error",
-                "writeConcern": {"w": "majority"}
-            })
-            .await
-            .map_err(failure)?;
-        }
-        Err(error) => return Err(failure(error)),
+    channel_catalog(db).await?;
+    let without_floor =
+        doc! {"$or": [{"guard_revision": {"$exists": false}}, {"guard_revision": 0}]};
+    cma_service_migrations::update(
+        db,
+        RECORDS,
+        without_floor,
+        doc! {"$set": {"guard_revision": 1_i64}},
+        false,
+        true,
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::update(
+        db,
+        MIGRATIONS,
+        doc! {"_id": MARKER},
+        doc! {"$set": {"version": 1}},
+        true,
+        false,
+    )
+    .await
+    .map_err(failure)?;
+    if cma_service_migrations::describing() {
+        return Ok(());
     }
-    db.collection::<Document>(CREATE_FENCES)
-        .update_one(
-            doc! {"_id": "writer_floor", "issuer": issuer, "version": 1},
-            doc! {"$setOnInsert": {"issuer": issuer, "version": 1}},
-        )
-        .upsert(true)
-        .write_concern(write.clone())
-        .await
-        .map_err(failure)?;
-    set_channel_validator(db, schema::record_validator(true))
-        .await
-        .map_err(failure)?;
-    db.collection::<Document>(RECORDS)
-        .update_many(
-            doc! {"$or": [{"guard_revision": {"$exists": false}}, {"guard_revision": 0}]},
-            doc! {"$set": {"guard_revision": 1_i64}},
-        )
-        .write_concern(write.clone())
-        .await
-        .map_err(failure)?;
-    db.collection::<Document>(MIGRATIONS)
-        .update_one(doc! {"_id": MARKER}, doc! {"$set": {"version": 1}})
-        .upsert(true)
-        .write_concern(write)
-        .await
-        .map_err(failure)?;
-    verify(db, issuer).await?;
-    Ok(())
+    require_installed(db, issuer).await
+}
+
+async fn require_installed(db: &Database, issuer: &str) -> Result<(), RecordError> {
+    if inspect_migration(db, issuer).await? {
+        Ok(())
+    } else {
+        Err(RecordError::Unavailable(
+            "Gateway Channel create fence floor postcondition unavailable".into(),
+        ))
+    }
 }
