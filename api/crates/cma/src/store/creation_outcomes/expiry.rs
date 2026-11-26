@@ -58,13 +58,16 @@ impl CreationOutcomes {
             {
                 continue;
             }
-            publication::recover_failed_operation(
+            let settled = publication::recover_failed_operation(
                 &self.database,
                 &SubjectId::new(owner),
                 &fence,
                 operation,
             )
             .await?;
+            if settled {
+                tracing::info!(creation_proof = %fence.record_id, "Recovered terminal Sandbox creation evidence");
+            }
         }
         if count < BATCH {
             *after = None;
@@ -127,8 +130,11 @@ impl CreationOutcomes {
             exact.insert("owner", owner);
             exact.insert("identity", identity);
             exact.insert("generation", generation);
-            self.records.update_one(exact, doc! {"$set":{"state":{"kind":"refused","code":RefusalCode::CreationExpired.code()}}})
+            let result = self.records.update_one(exact, doc! {"$set":{"state":{"kind":"refused","code":RefusalCode::CreationExpired.code()}}})
                 .await.map_err(driver)?;
+            if result.matched_count == 1 {
+                tracing::info!(creation_proof = %id, "Recovered expired unlinked Sandbox creation evidence");
+            }
         }
         Ok(())
     }

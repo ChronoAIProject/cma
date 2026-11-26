@@ -1,6 +1,8 @@
 //! Periodic bounded discovery and cancellable, renewable worker claims.
 use super::*;
 use crate::store::HEARTBEAT;
+use layer1_public::rest::{creation_outcomes::RefusalCode, AgentLifecycleFailure};
+use layer2_core::sandbox::store::CreationFence;
 
 pub(super) const PREPARATION_FAILED: &str = "Agent runtime preparation failed";
 
@@ -15,6 +17,33 @@ pub(super) fn readiness_delay(started: tokio::time::Instant) -> Duration {
 }
 
 impl InlineAgentLifecycle {
+    async fn record_terminal_failure(
+        &self,
+        owner: &SubjectId,
+        lease: &LifecycleLease,
+        fence: Option<&CreationFence>,
+        message: &str,
+        failure: Option<AgentLifecycleFailure>,
+        code: RefusalCode,
+    ) -> Result<(), layer2_core::StoreError> {
+        if let Some(fence) = fence {
+            if (code == RefusalCode::SandboxLimitReached
+                || self.operations.creation_terminal_settlement_enabled())
+                && self
+                    .operations
+                    .fail_fenced_creation(owner, lease, fence, message, failure.clone(), code)
+                    .await?
+            {
+                return Ok(());
+            }
+        }
+        // A created association is already authoritative. A failure after
+        // allocation must update the operation without rewriting that proof.
+        self.operations
+            .fail_with_metadata(lease, message, failure)
+            .await
+    }
+
     pub(crate) fn drain_handle(&self) -> LifecycleDrain {
         self.tasks.clone()
     }
@@ -122,8 +151,14 @@ impl InlineAgentLifecycle {
             Ok(profiles) => profiles,
             Err(error) => {
                 return self
-                    .operations
-                    .fail_with_metadata(&lease, &error.to_string(), None)
+                    .record_terminal_failure(
+                        &SubjectId::new(record.owner),
+                        &lease,
+                        creation_fence.as_ref(),
+                        &error.to_string(),
+                        None,
+                        RefusalCode::CreationFailed,
+                    )
                     .await;
             }
         };
@@ -246,36 +281,23 @@ impl InlineAgentLifecycle {
                         _ => None,
                     })
                     .flatten();
-                let message = error.to_string();
-                if let Some(fence) = &creation_fence {
-                    use layer1_public::rest::creation_outcomes::RefusalCode;
-                    let quota = matches!(
-                        error,
-                        AgentLifecycleProvisioningError::SandboxLimitReached { .. }
-                    );
-                    if (quota || self.operations.creation_terminal_settlement_enabled())
-                        && self
-                            .operations
-                            .fail_fenced_creation(
-                                &caller.subject,
-                                &lease,
-                                fence,
-                                &message,
-                                failure.clone(),
-                                if quota {
-                                    RefusalCode::SandboxLimitReached
-                                } else {
-                                    RefusalCode::CreationFailed
-                                },
-                            )
-                            .await?
-                    {
-                        return Ok(());
-                    }
-                }
-                self.operations
-                    .fail_with_metadata(&lease, &message, failure)
-                    .await
+                let code = if matches!(
+                    error,
+                    AgentLifecycleProvisioningError::SandboxLimitReached { .. }
+                ) {
+                    RefusalCode::SandboxLimitReached
+                } else {
+                    RefusalCode::CreationFailed
+                };
+                self.record_terminal_failure(
+                    &caller.subject,
+                    &lease,
+                    creation_fence.as_ref(),
+                    &error.to_string(),
+                    failure,
+                    code,
+                )
+                .await
             }
         }
     }

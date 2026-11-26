@@ -1,5 +1,7 @@
 use layer1_public::rest::creation_outcomes::lower_hex;
 
+const TERMINAL_SETTLEMENT: &str = "CHRONO_SANDBOX_CREATION_TERMINAL_SETTLEMENT_ENABLED";
+
 #[derive(Clone)]
 pub(crate) struct CreationOutcomesConfig {
     pub(crate) deployment: String,
@@ -46,10 +48,13 @@ impl CreationOutcomesConfig {
             .ok_or_else(|| format!("{day_key} must be a positive UTC Unix day"))?;
         let legacy_custody =
             super::features::flag(lookup, "CHRONO_SANDBOX_CREATION_OUTCOME_LEGACY_CUSTODY")?;
-        let terminal_settlement = super::features::flag(
-            lookup,
-            "CHRONO_SANDBOX_CREATION_TERMINAL_SETTLEMENT_ENABLED",
-        )?;
+        // An enabled, configured coverage epoch must normally settle its
+        // terminal proofs. Keep an explicit emergency off-switch for rollout.
+        let terminal_settlement = match lookup(TERMINAL_SETTLEMENT)?.as_deref() {
+            None | Some("true") => true,
+            Some("false") => false,
+            _ => return Err(format!("{TERMINAL_SETTLEMENT} must be true or false")),
+        };
         Ok(Some(Self {
             deployment,
             epoch,
@@ -57,5 +62,51 @@ impl CreationOutcomesConfig {
             legacy_custody,
             terminal_settlement,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_settlement_defaults_on_only_with_covered_lookup() {
+        for (lookup_enabled, override_value, expected) in [
+            (false, None, None),
+            (false, Some("true"), None),
+            (true, None, Some(true)),
+            (true, Some("true"), Some(true)),
+            (true, Some("false"), Some(false)),
+        ] {
+            let config = CreationOutcomesConfig::from_lookup(&mut |key| {
+                Ok(match key {
+                    "CHRONO_SANDBOX_CREATION_OUTCOME_LOOKUP_ENABLED" => {
+                        Some(lookup_enabled.to_string())
+                    }
+                    "CHRONO_SANDBOX_CREATION_OUTCOME_DEPLOYMENT" => Some("d".repeat(64)),
+                    "CHRONO_SANDBOX_CREATION_OUTCOME_EPOCH" => Some("e".repeat(32)),
+                    "CHRONO_SANDBOX_CREATION_OUTCOME_FIRST_UTC_DAY" => Some("20000".into()),
+                    TERMINAL_SETTLEMENT => override_value.map(str::to_owned),
+                    _ => None,
+                })
+            })
+            .unwrap();
+            assert_eq!(config.map(|config| config.terminal_settlement), expected);
+        }
+    }
+
+    #[test]
+    fn terminal_settlement_rejects_invalid_configuration() {
+        let config = CreationOutcomesConfig::from_lookup(&mut |key| {
+            Ok(match key {
+                "CHRONO_SANDBOX_CREATION_OUTCOME_LOOKUP_ENABLED" => Some("true".into()),
+                "CHRONO_SANDBOX_CREATION_OUTCOME_DEPLOYMENT" => Some("d".repeat(64)),
+                "CHRONO_SANDBOX_CREATION_OUTCOME_EPOCH" => Some("e".repeat(32)),
+                "CHRONO_SANDBOX_CREATION_OUTCOME_FIRST_UTC_DAY" => Some("20000".into()),
+                TERMINAL_SETTLEMENT => Some("invalid".into()),
+                _ => None,
+            })
+        });
+        assert!(matches!(config, Err(message) if message.contains(TERMINAL_SETTLEMENT)));
     }
 }
