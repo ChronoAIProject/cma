@@ -3,7 +3,15 @@ use super::*;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn recovered_dispatch_resumes_graceful_stop_through_capture_outage() {
-    super::super::faults::recovered_dispatch_resumes_graceful_stop().await;
+    for capture_enabled in [false, true] {
+        for credential_hold in [false, true] {
+            super::super::faults::recovered_dispatch_resumes_graceful_stop(
+                capture_enabled,
+                credential_hold,
+            )
+            .await;
+        }
+    }
 }
 
 #[tokio::test]

@@ -41,6 +41,24 @@ impl SandboxWorker {
         sandbox: &mut Sandbox,
         now: SystemTime,
     ) -> Result<(), WorkerFailure> {
+        let before = sandbox.credential.clone();
+        let result = self.reconcile_retirement_credentials(sandbox, now).await;
+        if result
+            .as_ref()
+            .is_err_and(|failure| failure.credential_issuance_pending)
+        {
+            // The final issuance check can fail after local revocations. Keep
+            // the claimed parent intact for the compute suspension fence.
+            sandbox.credential = before;
+        }
+        result
+    }
+
+    async fn reconcile_retirement_credentials(
+        &self,
+        sandbox: &mut Sandbox,
+        now: SystemTime,
+    ) -> Result<(), WorkerFailure> {
         let credentials = &self.dependencies.credentials;
         credentials
             .settle_revocations(sandbox)
