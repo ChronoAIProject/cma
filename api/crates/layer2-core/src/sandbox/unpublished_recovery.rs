@@ -79,6 +79,7 @@ pub struct SandboxUnpublishedRecoveryRequest {
     pub snapshot: SandboxUnpublishedRecoverySnapshot,
     pub proof: SandboxUnpublishedRecoveryProof,
     pub target_runtime_version: String,
+    pub released_runtime: Option<layer3_adapter::ReleasedRuntime>,
     pub automatic: bool,
     pub requested_at: String,
 }

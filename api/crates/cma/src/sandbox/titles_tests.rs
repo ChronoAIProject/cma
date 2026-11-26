@@ -15,6 +15,9 @@ use layer2_core::AgentId;
 
 use super::*;
 
+#[path = "titles/content_type_tests.rs"]
+mod content_type_tests;
+
 const NOW: &str = "2026-09-05T00:00:00Z";
 const BEARER: &str = "sandbox-title-bearer";
 const DEPLOYMENT_MODEL: &str = "deployment-model";

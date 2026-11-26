@@ -2,7 +2,8 @@ import { Fragment, useRef, useState } from 'react';
 import type { WarmPoolView } from '@cma/client';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
+import { Modal } from '../ui/Modal';
+import { ValidatedNumberInput } from './ValidatedNumberInput';
 import { TableActions, TableCell, TableNote } from '../ui/Table';
 import type { StatusTone } from '../vocabulary/status';
 import type { OperatorClient } from './client';
@@ -58,7 +59,13 @@ export function WarmPoolRow({
   const [review, setReview] = useState(false);
   const [failure, setFailure] = useState<OperatorFailure>();
   const [saved, setSaved] = useState(false);
+  const [disableRequested, setDisableRequested] = useState(false);
+  const disableConfirmation = useRef(false);
   const submitting = useRef(false);
+  const cancelDisable = () => {
+    disableConfirmation.current = false;
+    setDisableRequested(false);
+  };
   const needsReview = review || revision !== pool.revision;
   async function save(replicas: number) {
     if (submitting.current || needsReview || (previousRuntime && replicas !== 0)) return;
@@ -141,15 +148,14 @@ export function WarmPoolRow({
                 if (validPoolNumber(target)) void save(Number(target));
               }}
             >
-              <Input
+              <ValidatedNumberInput
                 aria-label="Ready Sandbox target"
-                type="number"
                 required
                 min={0}
                 max={1000}
                 step={1}
                 value={target}
-                disabled={busy || needsReview}
+                disabled={busy || needsReview || disableRequested}
                 onChange={(event) => {
                   setTarget(event.target.value);
                   setSaved(false);
@@ -161,6 +167,7 @@ export function WarmPoolRow({
                 disabled={
                   busy ||
                   needsReview ||
+                  disableRequested ||
                   !validPoolNumber(target) ||
                   Number(target) === pool.target_replicas
                 }
@@ -173,8 +180,11 @@ export function WarmPoolRow({
         <TableActions>
           <Button
             size="sm"
-            disabled={busy || needsReview || pool.target_replicas === 0}
-            onClick={() => void save(0)}
+            disabled={busy || needsReview || disableRequested || pool.target_replicas === 0}
+            onClick={() => {
+              disableConfirmation.current = true;
+              setDisableRequested(true);
+            }}
           >
             Disable pool
           </Button>
@@ -204,6 +214,40 @@ export function WarmPoolRow({
           </div>
         </TableNote>
       ) : null}
+      <Modal
+        open={disableRequested}
+        title="Disable warm pool"
+        onClose={cancelDisable}
+        footer={
+          <div className="operator-actions">
+            <Button onClick={cancelDisable}>Cancel</Button>
+            <Button
+              variant="primary"
+              disabled={busy || needsReview || pool.target_replicas === 0}
+              onClick={() => {
+                // The closing dialog can retain its old handler during its exit animation.
+                if (
+                  !disableConfirmation.current ||
+                  busy ||
+                  needsReview ||
+                  pool.target_replicas === 0
+                )
+                  return;
+                cancelDisable();
+                void save(0);
+              }}
+            >
+              Confirm disable
+            </Button>
+          </div>
+        }
+      >
+        <p>
+          Disable pool {pool.id} ({label}), reducing its target from {pool.target_replicas} to 0?
+          This removes spare capacity for new work. Claimed Sandboxes keep running.
+        </p>
+        {needsReview ? <p>Read the current target before confirming this change.</p> : null}
+      </Modal>
     </Fragment>
   );
 }

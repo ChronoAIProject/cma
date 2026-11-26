@@ -142,6 +142,16 @@ it('blocks an invalid Workspace repository and submits the corrected URL with it
   await user.click(create);
   expect(transport.fetch).not.toHaveBeenCalled();
 
+  // URL parsing normalizes an explicit default port, but the Workspace API
+  // requires the literal github.com authority.
+  await user.clear(repository);
+  await user.type(repository, 'https://github.com:443/example/workspace');
+  await user.click(reference);
+  expect(repository).toHaveAttribute('aria-invalid', 'true');
+  expect(create).toBeDisabled();
+  await user.click(create);
+  expect(transport.fetch).not.toHaveBeenCalled();
+
   const validUrl = 'https://github.com/example/workspace';
   await user.clear(repository);
   await user.type(repository, validUrl);

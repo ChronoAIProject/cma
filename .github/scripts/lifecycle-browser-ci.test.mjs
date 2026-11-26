@@ -23,6 +23,8 @@ const suites = [
       "agent-stop-deletion",
       "parked-runtime-status",
       "parked-task-deletion",
+      "home-navigation-simplification",
+      "retired-agent",
     ],
   },
   {

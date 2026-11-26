@@ -47,6 +47,7 @@ impl Fixture {
             .unwrap();
         custody
             .insert(CredentialMaterial {
+                github_route: None,
                 sandbox_id: sandbox.id,
                 owner: sandbox.owner,
                 authority: sandbox.credential.current.unwrap(),

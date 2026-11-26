@@ -4,27 +4,32 @@ import {
   useHistoryRetry,
   retainCurrentMetadata,
 } from './historyPublication';
-import { controlBaselineReady, responseControlAvailability } from './controlReadiness';
+import * as controlReadiness from './controlReadiness';
 import { observeRead } from './transport/readObserver';
 import { retrySchedule } from './transport/readRetry';
 import { useAgentTitle } from './useAgentTitle';
 import { usePreparationProgress } from './preparationProgress';
 import { queueObservationRevision } from './queueObservationRevision';
 import { ReadinessWake } from './readinessWait';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useControllerMode } from './controllerMode';
 import { agentReadRetryAt, errorMessage, retainHistoryOnFailure } from './controllerError';
 import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
 export { loadAgent, type ReadyAgent } from './loadAgent';
-import type { CmaWebClient } from '../api/client';
-import { CommandKeys } from '../api/client';
+import { CommandKeys, type CmaWebClient } from '../api/client';
 import type { AgentLiveEvent } from '../api/types';
-import { useSandboxInput } from './sandboxInput';
+import { accessCheckedInputAvailability, useSandboxInput } from './sandboxInput';
 import { ConversationHydration } from './transport/hydration';
 import { useRetainedAgentState } from './retainedState';
 import { reopenAgent } from './reopenAgent';
+import {
+  observeApprovalProjection,
+  approvalProjectionView,
+} from './transport/approvalProjectionObserver';
 import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
-import { IdentityChangedError, isIdentityChanged } from './transport/identity';
+import { lifecycleCommands } from './lifecycleCommands';
+import { useAgentActionError, useAgentIdentityChange } from './actionError';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedInputs } from './transport/queuedInputsStatus';
 import { usePresentedAgent, usePresentedRetainedInputs } from './presentation';
@@ -38,24 +43,7 @@ export function useAgentController(
   agentId: string | undefined,
   options: AgentControllerOptions = {},
 ): AgentController {
-  const suspended = options.suspended === true;
-  const {
-    agentId: lineageAgentId,
-    workspaceId: lineageWorkspaceId,
-    sandboxId: lineageSandboxId,
-  } = options.authorizedLineage ?? {};
-  const lineage = useMemo(
-    () =>
-      !suspended &&
-      options.viewerId !== undefined &&
-      lineageAgentId === agentId &&
-      lineageAgentId !== undefined &&
-      lineageWorkspaceId !== undefined &&
-      lineageSandboxId !== undefined
-        ? { agentId: lineageAgentId, workspaceId: lineageWorkspaceId, sandboxId: lineageSandboxId }
-        : undefined,
-    [agentId, suspended, options.viewerId, lineageAgentId, lineageWorkspaceId, lineageSandboxId],
-  );
+  const { suspended, lineage, retained } = useControllerMode(client, agentId, options);
   const [revision, setRevision] = useState(0);
   const [replayRevision, setReplayRevision] = useState(0);
   const [requestRevision, setRequestRevision] = useState(0);
@@ -89,7 +77,7 @@ export function useAgentController(
     state.detail.id === agentId &&
     state.conversation.activeRunId !== undefined;
   const [pending, setPending] = useState<AgentCommand>();
-  const [actionError, setActionError] = useState<string>();
+  const [actionError, setActionError, recoverInputError] = useAgentActionError();
   const [streamError, setStreamError] = useState<string>();
   const [keys] = useState(() => new CommandKeys());
   const actionAbortRef = useRef<AbortController | undefined>(undefined);
@@ -97,28 +85,21 @@ export function useAgentController(
   const replayAbortRef = useRef<AbortController | undefined>(undefined);
   const liveCursor = useRef(0);
   const hydration = useRef(new ConversationHydration());
-  const onIdentityChange = useCallback(
-    (error: unknown) => {
-      if (!isIdentityChanged(error)) return false;
-      actionAbortRef.current?.abort();
-      replayAbortRef.current?.abort();
-      setPending(undefined);
-      setActionError(undefined);
-      setStreamError(undefined);
-      setState({ status: 'error', message: new IdentityChangedError().message });
-      return true;
-    },
-    [setState],
+  const onIdentityChange = useAgentIdentityChange(
+    actionAbortRef,
+    replayAbortRef,
+    setPending,
+    setActionError,
+    setStreamError,
+    setState,
   );
   const hierarchyChanged = useRef(options.onHierarchyChange);
   useEffect(() => {
     hierarchyChanged.current = options.onHierarchyChange;
   }, [options.onHierarchyChange]);
-
   const summary = options.summary;
   const detail = state.status === 'ready' ? state.detail : undefined;
   useAgentSummary(agentId, detail, summary, setState);
-
   const applyLive = useCallback(
     (event: AgentLiveEvent) => {
       if (agentId === undefined) return;
@@ -136,7 +117,6 @@ export function useAgentController(
     },
     [agentId, setState],
   );
-
   const reload = useAgentReload(
     agentId,
     stateRef,
@@ -262,6 +242,7 @@ export function useAgentController(
     lineage,
     publishHistory,
     revision,
+    setActionError,
     setState,
     stateRef,
     suspended,
@@ -273,7 +254,7 @@ export function useAgentController(
   const historyLoading =
     state.status === 'ready' && state.detail.id === agentId && state.historyLoading === true;
   const historyIncomplete = historyLoading || historyUnavailable;
-  const controlReady = controlBaselineReady(state, agentId, suspended);
+  const controlReady = controlReadiness.controlBaselineReady(state, agentId, suspended);
   const v2 =
     !suspended && state.status === 'ready' && state.detail.id === agentId ? state.v2 : undefined;
   useHistoryRetry({
@@ -364,6 +345,7 @@ export function useAgentController(
               setState({ ...current, conversation });
             },
             setStreamError,
+            observeApprovalProjection(v2, agentId, controller.signal, stateRef, setState),
           );
     void replay.catch((error: unknown) => {
       if (controller.signal.aborted || onIdentityChange(error)) return;
@@ -397,7 +379,7 @@ export function useAgentController(
     };
   }, [agentId, client, options.viewerId, suspended]);
   const applyAgentTitle = useAgentTitle(agentId, setState);
-  const { run, command, recoverPending } = useAgentActions({
+  const { run, command, recoverPending, initialSend } = useAgentActions({
     agentId: suspended ? undefined : agentId,
     client,
     historyIncomplete: historyIncomplete || suspended,
@@ -421,12 +403,18 @@ export function useAgentController(
     onIdentityChange,
     options,
   });
-  const presented = usePresentedAgent(state, summary);
+  const presented = usePresentedAgent(approvalProjectionView(state), summary);
   const legacy = client.agentTransport?.legacySession(
     suspended ? undefined : agentId,
     options.viewerId,
   );
-  const retainedInputs = usePresentedRetainedInputs(v2, legacy, pending, onIdentityChange);
+  const retainedInputs = usePresentedRetainedInputs(
+    v2,
+    legacy,
+    pending,
+    onIdentityChange,
+    recoverInputError,
+  );
   const controlNotice = useControlStatus(v2, onIdentityChange);
   const queuedInputs = useQueuedInputs(
     v2,
@@ -435,38 +423,27 @@ export function useAgentController(
     state.status === 'ready' ? queueObservationRevision(state.conversation) : '',
     onIdentityChange,
     requestRevision,
+    state.status === 'ready' && state.detail.id === agentId
+      ? state.conversation.messages
+      : undefined,
   );
-  const interruptTurn = (strict: boolean) =>
-    command(
-      'interrupt',
-      (id, key, signal) => client.interruptAgent(id, { idempotencyKey: key, signal }),
-      strict,
-    );
   return {
+    retained,
     ...retainedInputs,
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
     controlNotice,
     controlBaselineReady: controlReady,
-    responseControls: responseControlAvailability(state, agentId, suspended),
-    controlsUnavailable:
-      suspended ||
-      (v2 !== undefined &&
-        state.status === 'ready' &&
-        state.conversation.responseBinding === undefined),
+    responseControls: controlReadiness.responseControlAvailability(state, agentId, suspended),
+    controlsUnavailable: controlReadiness.controlsUnavailable(state, v2 !== undefined, suspended),
     recoverPending: v2 === undefined && legacy === undefined ? undefined : recoverPending,
     state: presented,
-    inputAvailability: suspended
-      ? {
-          allowed: false,
-          notice:
-            'Checking Agent access. Your conversation and draft are retained; actions are unavailable until access is verified.',
-        }
-      : inputAvailability,
+    inputAvailability: accessCheckedInputAvailability(inputAvailability, suspended),
     resourceAvailability: suspended
       ? { state: 'unavailable', notice: 'Agent access is being checked. Live resources are held.' }
       : resourceAvailability,
     progressObservation,
     pending,
+    initialSendPending: pending === 'send' && initialSend,
     actionError: actionError ?? streamError,
     reload,
     refreshDetail,
@@ -488,13 +465,6 @@ export function useAgentController(
         : (content, onAccepted, onReceiptObserved, onRefused, onOrdinaryInput) =>
             run(content, onAccepted, onReceiptObserved, onRefused, 'interrupt', onOrdinaryInput),
     approve: (approvalId, decision) => run({ id: approvalId, decision }),
-    interruptForControl: () => interruptTurn(true),
-    interrupt: () => interruptTurn(false),
-    stop: () =>
-      command('stop', (id, key, signal) => client.stopAgent(id, { idempotencyKey: key, signal })),
-    delete: () =>
-      command('delete', (id, key, signal) =>
-        client.deleteAgent(id, { idempotencyKey: key, signal }),
-      ),
+    ...lifecycleCommands(client, command),
   };
 }

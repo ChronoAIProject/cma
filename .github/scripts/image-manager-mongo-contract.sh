@@ -80,10 +80,22 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
 contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma-image-manager) and kind(test) and (binary(=mongo_isolation) or binary(=browser_session))'
 
+# Migration contracts require isolated credentials, real DDL and a replica set.
+contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma-service-migrations) and kind(lib)'
+contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma-image-manager) and kind(lib) and test(~migrations::tests::)'
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~migrations::)'
+
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_forms_storage)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_media_continuation_storage)'
+# A cancelled commit or abort must not strand its row locks, and the runtime
+# grant must end its own session (#3299). Failpoints are server-global.
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~transaction_terminal::)'
 # History migration and writer grants require this authenticated replica set.
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~activity::history::mongo_tests::)'
@@ -93,6 +105,8 @@ contract_nextest eg run \
   -E 'package(=cmaeg) and test(=worker_credentials::mongo::integration_tests::worker_history_cross_client_visibility_append_only_grants_and_cutover_barrier)' \
   --run-ignored only --test-threads 1
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(=channels::create_cleanup_tests::retirement_at_the_record_limit_preserves_tracked_worker_credentials)'
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~whatsapp_retention_on_real_mongo)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=mongo_isolation)'
@@ -100,6 +114,8 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=management) and test(~github_integrations::)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=management) and test(~organization_channels::)'
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(test) and binary(=management) and test(=record_management::mongo_legacy_read_is_owned_and_read_only)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=github_source)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
@@ -122,6 +138,9 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
 
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(=records::mongo::replica_schema::tests::replica_migration_recovers_after_second_index_conflict)'
+
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and (test(~channels::create_fence_tests::) or test(~records::mongo::create_fences::tests::))'
 
 # Explicit selection keeps replica delivery tests environmental in normal unit
 # runs while requiring their real authenticated Mongo execution in this gate.
@@ -159,7 +178,12 @@ CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
 # The gateway reset journey also opens M1's store on this authenticated fixture.
 CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
   contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
-  -E 'package(=cma) and test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors)'
+  -E 'package(=cma) and (test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors) or test(=store::bindings::reset_tests::gateway_reset_tests::profile_reset_receipt_replays_after_a_later_channel_revision))'
 
 contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure)'
+
+CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
+  CMA_TEST_CMA_EXECUTABLE="${CARGO_TARGET_DIR:-$PWD/target}/debug/cma" \
+  contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma) and test(=store::agent_log_segments::active_proof::prepare::tests::active_proof_operator_cli_uses_generated_isolated_role)'

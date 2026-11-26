@@ -3,6 +3,13 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['admin-runtime-migration-malformed', 'invalid_runtime_migration'],
+  ['retained-runtime-policy-invalid', 'runtime_canary_invalid'],
+  ['retained-runtime-preview-invalid', 'runtime_canary_invalid'],
+  ['retained-runtime-grant-invalid', 'runtime_canary_invalid'],
+  ['retained-runtime-redeem-invalid', 'runtime_canary_invalid'],
+  ['retained-runtime-abort-invalid', 'runtime_canary_invalid'],
+  ['bound-launch-missing', 'command_subject_condition_invalid'],
   ['revocation-post-invalid_revision', 'invalid_share_command'],
   ['task-template-missing-field', 'task_template_field_required'],
   ['task-template-unknown-id', 'task_template_id_unknown'],
@@ -37,6 +44,7 @@ export const localCodes = new Map([
   ['usage-admin-sandboxes-zero-limit', 'invalid_query'],
 
   ['preparation-reserve-missing-key', 'invalid_binding'],
+  ['binding-profile-transfer-invalid', 'invalid_binding'],
   ['document-source-invalid', 'invalid_document_request'],
   ['filesystem-content-reject-invalid-max-bytes', 'invalid_file_request'],
   ['filesystem-write-reject-malformed-json', 'invalid_file_request'],

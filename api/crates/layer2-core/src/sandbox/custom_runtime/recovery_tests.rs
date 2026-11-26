@@ -58,6 +58,7 @@ fn custom_runtime_unpublished_recovery_preserves_admitted_pin_and_explicit_reque
         },
         snapshot: snapshot.clone(),
         target_runtime_version: image('b'),
+        released_runtime: None,
         automatic: true,
         requested_at: RECOVERY_AT.into(),
     };

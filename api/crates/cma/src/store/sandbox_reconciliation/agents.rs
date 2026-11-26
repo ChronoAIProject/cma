@@ -19,6 +19,7 @@ use super::super::sandbox_mongo::{is_duplicate_key, signed, MongoSandboxStore};
 use super::telemetry::{self, measure};
 use super::transaction::ApplyError;
 
+mod restart;
 pub(super) mod scoped;
 
 pub(in crate::store) async fn settle_reopen_agents<'session>(
@@ -143,7 +144,7 @@ pub(super) async fn publish_agents(
     let mut logs = Vec::new();
     let mut encoded_logs = Vec::new();
     for (current, complete) in rows {
-        let filter = fence_filter(store, &current, session).await?;
+        let mut filter = fence_filter(store, &current, session).await?;
         let complete = match complete {
             Source::Legacy(summary) => Some(summary),
             Source::Head(_) => None,
@@ -203,7 +204,13 @@ pub(super) async fn publish_agents(
                 );
                 agents.push(change.agent.clone());
                 logs.extend(batch);
-                doc! { "$set": fields }
+                let mut update = doc! { "$set": fields };
+                if let Some(unset) =
+                    restart::restrict_to_retired_runtime(&current, request, &mut filter)?
+                {
+                    update.insert("$unset", unset);
+                }
+                update
             }
             None => {
                 // Terminal Agent evidence participates in the same snapshot decision.

@@ -47,6 +47,7 @@ async fn renewed_snapshot_reconciles_lost_commit_acknowledgement_after_expiry() 
     let result = store
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision: revision,
             sandbox: Box::new(original.clone()),
             event_at: at(0),

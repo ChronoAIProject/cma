@@ -1,10 +1,9 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { buildIdentity, buildIdentityEvidence } from './build/identity';
 import { replicaRecoveryEnabled, recoveryEvidence } from './build/recovery';
 import { systemText } from './build/systemText';
 import { devFixtures } from './build/devFixtures';
-import { optionalTopographicImport } from './build/topographicImport';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig(({ command, mode }) => {
@@ -14,7 +13,6 @@ export default defineConfig(({ command, mode }) => {
     // `npm run dev:fixtures` only: answers /auth and /api locally (build/devFixtures.ts).
     plugins: [
       react(),
-      optionalTopographicImport(),
       buildIdentityEvidence(identity),
       recoveryEvidence(identity, recovery),
       ...(command === 'serve' && mode === 'fixtures' ? [devFixtures()] : []),
@@ -41,6 +39,12 @@ export default defineConfig(({ command, mode }) => {
       __CHRONO_WEB_REPLICA_RECOVERY_ENABLED__: JSON.stringify(recovery),
     },
     test: {
+      include:
+        mode === 'approval-contract'
+          ? ['src/api-client/tests/external-approval-wire.contract.ts']
+          : configDefaults.include,
+      // Web CI runs this browser fixture suite with node:test.
+      exclude: [...configDefaults.exclude, 'e2e/owner-timing/run.test.mjs'],
       globals: true,
       // Components under test render real DOM and use browser focus behavior.
       environment: 'jsdom',

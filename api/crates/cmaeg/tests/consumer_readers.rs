@@ -23,6 +23,10 @@ const ALLOWED: &[(&str, &str)] = &[
         "storage: delete and rekey act on the stored binding",
     ),
     (
+        "channels/create_cleanup_tests.rs",
+        "storage fixtures: exercise incomplete records and retained credentials",
+    ),
+    (
         "channels/creation.rs",
         "storage: creation binds the stored provider",
     ),
@@ -35,6 +39,14 @@ const ALLOWED: &[(&str, &str)] = &[
         "storage: restore validates the stored profile digest",
     ),
     (
+        "channels/profile_revision.rs",
+        "management: baseline and publish retained revisions on the stored binding",
+    ),
+    (
+        "channels/profile_assignment_tests.rs",
+        "storage fixtures: publish and retain synthetic worker revisions",
+    ),
+    (
         "connections/",
         "connection flows stay default-only by design",
     ),
@@ -45,6 +57,10 @@ const ALLOWED: &[(&str, &str)] = &[
     (
         "http/management_responses.rs",
         "public projection of the stored binding",
+    ),
+    (
+        "http/record_management.rs",
+        "public owner inspection projects the retained binding independently of serving consumers",
     ),
     (
         "http/schema.rs",
@@ -150,11 +166,20 @@ fn a_direct_read_outside_the_allowlist_is_reported() {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("turns")).unwrap();
     std::fs::create_dir_all(root.join("connections")).unwrap();
+    std::fs::create_dir_all(root.join("http")).unwrap();
     let read = "let slug = &channel.definition.provider.slug;";
     std::fs::write(root.join("turns/runner.rs"), read).unwrap();
     std::fs::write(root.join("connections/service.rs"), read).unwrap();
+    std::fs::write(root.join("http/record_management.rs"), read).unwrap();
+    std::fs::write(root.join("http/record_management_extra.rs"), read).unwrap();
     std::fs::write(root.join("turns/notes.txt"), read).unwrap();
     let found = offenders(&root);
     std::fs::remove_dir_all(&root).unwrap();
-    assert_eq!(found, ["turns/runner.rs: definition.provider"]);
+    assert_eq!(
+        found,
+        [
+            "http/record_management_extra.rs: definition.provider",
+            "turns/runner.rs: definition.provider"
+        ]
+    );
 }

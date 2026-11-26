@@ -25,6 +25,8 @@ pub(crate) struct RoutedStore {
     pub(crate) releases: AtomicUsize,
     pub(crate) returned: Mutex<Option<OwnershipError>>,
     withhold_reply: AtomicBool,
+    reply_waiting: tokio::sync::Notify,
+    reply_allowed: tokio::sync::Notify,
 }
 
 #[async_trait::async_trait]
@@ -63,7 +65,8 @@ impl OwnershipStore for RoutedStore {
                 .expect("withhold only a committed real Mongo renewal");
             // Lose the successful reply at the store/coordinator boundary.
             // Mongo has committed; the coordinator learns only its own timeout.
-            std::future::pending::<()>().await;
+            self.reply_waiting.notify_one();
+            self.reply_allowed.notified().await;
         }
         *self.returned.lock().unwrap() = result.as_ref().err().cloned();
         result
@@ -112,7 +115,19 @@ impl RoutedStore {
             releases: AtomicUsize::new(0),
             returned: Mutex::new(None),
             withhold_reply: AtomicBool::new(false),
+            reply_waiting: tokio::sync::Notify::new(),
+            reply_allowed: tokio::sync::Notify::new(),
         })
+    }
+
+    #[cfg(feature = "qualification-hooks")]
+    pub(crate) async fn wait_for_held_reply(&self) {
+        self.reply_waiting.notified().await;
+    }
+
+    #[cfg(feature = "qualification-hooks")]
+    pub(crate) fn allow_held_reply(&self) {
+        self.reply_allowed.notify_one();
     }
     pub(crate) async fn arm(&self, fault: Fault) {
         if matches!(fault, Fault::WithheldReply) {

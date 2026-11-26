@@ -112,6 +112,33 @@ test('LOCAL owner Resume checks the paused Sandbox before one keyed request', as
     };
     return route.fulfill({ status: 202, json: boundary.sandbox });
   });
+  const expectStoppedInBothMenus = async () => {
+    await page.goto(`/agents/${boundary.agent.id}`);
+    await navigation(page, true);
+    for (const [menu, label] of [
+      [page.getByRole('button', { name: 'More Agent actions', exact: true }), 'Stop agent'],
+      [
+        resourceRow(page, 'agent', boundary.agent.id).getByRole('button', {
+          name: /^Options for /,
+        }),
+        'Stop',
+      ],
+    ] as const) {
+      await menu.click();
+      const stop = page.getByRole('menuitem', {
+        name: `${label} Agent is already stopped.`,
+        exact: true,
+      });
+      await expect(stop).toHaveAttribute('aria-disabled', 'true');
+      await stop.click({ force: true });
+      await stop.press('Enter');
+      await stop.press('Space');
+      await expect(page.getByRole('dialog', { name: 'Stop Agent', exact: true })).toHaveCount(0);
+      await page.keyboard.press('Escape');
+    }
+    noEffects(boundary);
+  };
+  await expectStoppedInBothMenus();
   await page.goto(`/sandboxes/${boundary.sandbox.id}`);
   const resume = page.getByRole('button', { name: 'Resume', exact: true });
   await expect(resume).toBeEnabled();
@@ -126,7 +153,7 @@ test('LOCAL owner Resume checks the paused Sandbox before one keyed request', as
   expect(reviveKeys).toHaveLength(1);
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeEnabled();
 
-  await page.goto(`/agents/${boundary.agent.id}`);
+  await expectStoppedInBothMenus();
   await page.getByRole('button', { name: 'More Agent actions', exact: true }).click();
   const remove = page.getByRole('menuitem', { name: /^Delete task\b/ });
   await expect(remove).toBeEnabled();
@@ -311,7 +338,12 @@ for (const { combined, uncertain } of [
       await expect.poll(() => deletes.length).toBe(2);
       expect(deletes[1]).toBe(deletes[0]);
     }
-    await expect(page.getByText('Deleting 1 Agent')).toBeVisible();
+    if (combined && uncertain) {
+      await expect(progress).toHaveCount(0);
+      await expect(page.getByText('Deleting 1 Agent')).toHaveCount(0);
+    } else {
+      await expect(page.getByText('Deleting 1 Agent')).toBeVisible();
+    }
     expect(deletes).toHaveLength(combined && uncertain ? 2 : 1);
     expect(deletes[0]).not.toBe(stops[0]!.key);
     const detailFirst = !combined && !uncertain;
@@ -320,10 +352,7 @@ for (const { combined, uncertain } of [
     // before the reopened status dialog observes cleanup.
     await page.goto('/agent-manager');
     await page.reload();
-    await page
-      .getByRole('region', { name: 'Deletion request', exact: true })
-      .getByRole('button', { name: 'View status', exact: true })
-      .click();
+    await page.getByRole('button', { name: 'View deletion status', exact: true }).click();
     const reopen = page.getByRole('button', { name: /View Agent deletion status/ });
     await expect(reopen).toBeEnabled();
     if (detailFirst) await page.clock.pauseAt(new Date(Date.now() + 500));

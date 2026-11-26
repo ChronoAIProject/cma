@@ -1,5 +1,6 @@
 //! Evidence-backed Mongo admission of automatic Sandbox maintenance.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use layer2_core::ids::SandboxId;
 use layer2_core::now_rfc3339;
@@ -19,16 +20,28 @@ use super::sandboxes::read_sandbox;
 use transaction::{attempt as apply_attempt, reconcile, ApplyError, MaintenanceRequest};
 
 mod consented;
+mod custom_runtime;
+mod desktop_custody;
 mod evidence;
 #[cfg(test)]
 pub(crate) mod mongo_integration_tests;
 mod policy_fence;
 mod retained_availability;
+pub(crate) mod retained_transition;
 mod retry;
+mod reviewed_retirement;
+pub(super) mod runtime_activity;
 mod transaction;
 
 #[async_trait::async_trait]
 impl SandboxMaintenanceStore for MongoSandboxStore {
+    async fn admit_custom_runtime_migration(
+        &self,
+        admission: layer2_core::sandbox::store::SandboxCustomRuntimeMigrationAdmission,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        custom_runtime::admit(self, admission).await
+    }
+
     async fn sandbox_maintenance_candidates(
         &self,
         page: &PageRequest,
@@ -132,7 +145,7 @@ impl SandboxMaintenanceStore for MongoSandboxStore {
         request: SandboxImageRotationRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
         validate_image_rotation_request(&request)?;
-        schedule(self, MaintenanceRequest::Rotation(request)).await
+        custom_runtime::schedule_rotation(self, request).await
     }
 }
 
@@ -140,10 +153,33 @@ async fn schedule(
     store: &MongoSandboxStore,
     request: MaintenanceRequest,
 ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+    Ok(schedule_receipt(store, request).await?.outcome)
+}
+
+async fn schedule_receipt(
+    store: &MongoSandboxStore,
+    request: MaintenanceRequest,
+) -> Result<transaction::MaintenanceReceipt, SandboxStoreError> {
+    if request.requires_desktop_guard() {
+        let id = request.sandbox_id().clone();
+        let store = store.clone();
+        return desktop_custody::run(&id, move |custody| async move {
+            schedule_owned(&store, request, Some(custody)).await
+        })
+        .await;
+    }
+    schedule_owned(store, request, None).await
+}
+
+async fn schedule_owned(
+    store: &MongoSandboxStore,
+    request: MaintenanceRequest,
+    mut custody: Option<desktop_custody::Custody>,
+) -> Result<transaction::MaintenanceReceipt, SandboxStoreError> {
     let mut last_transient = None;
     let mut retries = retry::Retries::new();
     while retries.next().await {
-        let mut session = match store.client.start_session().await {
+        let mut session = match store.client.start_session().causal_consistency(true).await {
             Ok(session) => session,
             Err(error) if is_transient(&error) => {
                 last_transient = Some(error.to_string());
@@ -151,6 +187,17 @@ async fn schedule(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
+        if let Some(basis) = request.basis() {
+            if let layer2_core::sandbox::store::RuntimeMigrationClearance::Observed { proof } =
+                &basis.clearance
+            {
+                let watermark = proof.final_observation.watermark;
+                session.advance_operation_time(mongodb::bson::Timestamp {
+                    time: watermark.seconds,
+                    increment: watermark.increment,
+                });
+            }
+        }
         let receipt = match apply_attempt(
             store,
             &request,
@@ -161,30 +208,59 @@ async fn schedule(
         {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
         if receipt.event.is_none() {
-            let _ = session.abort_transaction().await;
-            return Ok(receipt.outcome);
+            let _ = session.abort_guarded().await;
+            return Ok(receipt);
+        }
+        if let Some(basis) = request.basis() {
+            if let Err(error) =
+                basis.validate_at(layer2_core::sandbox::store::runtime_migration_now_ms()?)
+            {
+                let _ = session.abort_guarded().await;
+                return Err(error);
+            }
+        }
+        if let Some(custody) = &mut custody {
+            custody.commit_started();
         }
         match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => return Ok(receipt.outcome),
+            CommitOutcome::Committed => {
+                if let Some(custody) = &mut custody {
+                    custody.confirmed();
+                }
+                return Ok(receipt);
+            }
             CommitOutcome::Retry(error) => {
-                let _ = session.abort_transaction().await;
+                if let Some(custody) = &mut custody {
+                    custody.confirmed();
+                }
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
             }
             CommitOutcome::Unknown(error) => {
+                if let Some(custody) = &mut custody {
+                    // Already owned before effects. Do not acquire another
+                    // reconciliation slot or move finality outside that owner.
+                    custody
+                        .reconcile(session.operation_time(), |snapshot_time| {
+                            reconcile(store, &receipt, snapshot_time)
+                        })
+                        .await?;
+                    return Ok(receipt);
+                }
                 let snapshot_time = session.operation_time().ok_or_else(|| {
                     SandboxStoreError::Unavailable(format!(
                         "sandbox maintenance commit remained unknown without an operation time: {error}"
@@ -195,7 +271,7 @@ async fn schedule(
                 let store = store.clone();
                 return wait_for_reconciliation("sandbox maintenance commit", async move {
                     if reconcile(&store, &receipt, snapshot_time).await? {
-                        Ok(receipt.outcome)
+                        Ok(receipt)
                     } else {
                         Err(SandboxStoreError::Unavailable(format!(
                             "sandbox maintenance commit remained unknown: {unresolved}"
@@ -210,6 +286,9 @@ async fn schedule(
                 })?;
             }
             CommitOutcome::Failed(error) => {
+                if let Some(custody) = &mut custody {
+                    custody.confirmed();
+                }
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         }
@@ -237,7 +316,7 @@ async fn preview(
         IntegrityFailurePolicy::ReportOnly,
     )
     .await;
-    let abort = session.abort_transaction().await;
+    let abort = session.abort_guarded().await;
     if result.is_ok() {
         abort.map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
     }

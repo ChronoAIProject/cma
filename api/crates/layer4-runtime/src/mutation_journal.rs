@@ -111,6 +111,14 @@ pub(crate) fn find_operation(
     lookup::find_by_id(config, operation_id, scope_subject)
 }
 
+pub(crate) fn find_proof_record(
+    config: &RuntimeConfig,
+    operation_id: &str,
+    scope_subject: &Subject,
+) -> Result<Option<Record>> {
+    lookup::find_for_proof(config, operation_id, scope_subject)
+}
+
 fn read_exact(config: &RuntimeConfig, operation: &Operation) -> Result<Option<Record>> {
     validation::validate_operation(operation, config)?;
     let Some(record) = lookup::find(config, operation)? else {

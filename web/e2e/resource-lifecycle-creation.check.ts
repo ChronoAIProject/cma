@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { LocalStartup } from './agent-startup-fixtures';
+import type { TriggerPreview } from '../src/api-client/index';
+import { LocalStartup, recorded } from './agent-startup-fixtures';
 import {
   insideViewport,
   lifecycleViewports,
@@ -7,6 +8,58 @@ import {
   noEffects,
   taskAdmission,
 } from './resource-lifecycle.fixture';
+
+for (const state of ['closed', 'unavailable'] as const) {
+  test(`LOCAL ${state} registration removes signup without starting work`, async ({
+    page,
+    baseURL,
+  }) => {
+    const boundary = new LocalStartup();
+    await boundary.route(page, baseURL!);
+    await page.route('**/auth/session', (route) =>
+      route.fulfill({ json: { authenticated: false } }),
+    );
+    let available = true;
+    await page.route('**/auth/signup-options', (route) =>
+      !available && state === 'unavailable'
+        ? route.fulfill({ status: 503, json: { code: 'unavailable' } })
+        : route.fulfill({
+            json: {
+              social_providers: ['github'],
+              email_signup: true,
+              invite_code_required: false,
+              register_available: available,
+            },
+          }),
+    );
+    await page.route('**/api/v1/triggers/public/public_contract', (route) =>
+      route.fulfill({
+        json: {
+          ...recorded<TriggerPreview>('triggers.json', 'triggers-preview'),
+          always_review: true,
+        },
+      }),
+    );
+    await page.goto('/t/public_contract');
+    const register = page.getByRole('button', { name: 'Create account', exact: true });
+    await expect(register).toBeVisible();
+    noEffects(boundary);
+    available = false;
+    await page.reload();
+    await expect(
+      page.getByText(
+        state === 'closed'
+          ? 'New accounts are not available. Sign in to an existing account.'
+          : 'Account options are unavailable. You can still sign in to an existing account.',
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(register).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Try it', exact: true })).toBeEnabled();
+    await expect(page).toHaveURL(/\/t\/public_contract$/);
+    noEffects(boundary);
+  });
+}
 
 for (const viewport of lifecycleViewports) {
   test(`LOCAL task page and contextual modal controls remain reachable at ${viewport.width}x${viewport.height}`, async ({
@@ -35,6 +88,8 @@ for (const viewport of lifecycleViewports) {
     await task.press('Shift+Enter');
     await task.pressSequentially('and this line');
     await expect(task).toHaveValue('Keep this task\nand this line');
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Templates', exact: true })).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(page.getByRole('button', { name: 'Cloud computer', exact: true })).toBeFocused();
     await page.keyboard.press('Tab');

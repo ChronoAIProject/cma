@@ -209,7 +209,7 @@ export function assertConnectionProof(value, expected) {
     assert.equal(command.method, "POST");
     assert.ok(
       typeof command.path === "string" &&
-        /^\/(?:auth\/connections\/(?:start|check|cancel)|api\/v1\/(?:triggers\/public\/[a-zA-Z0-9_.-]+\/launches|launches\/[a-zA-Z0-9_.-]+\/start))$/.test(
+        /^\/(?:auth\/connections\/(?:start|check|cancel)|api\/v[12]\/triggers\/public\/[a-zA-Z0-9_.-]+\/launches|api\/v1\/launches\/[a-zA-Z0-9_.-]+\/start)$/.test(
           command.path,
         ),
       "Unexpected connection journey command",

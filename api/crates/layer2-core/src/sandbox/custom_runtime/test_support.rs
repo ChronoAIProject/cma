@@ -5,17 +5,17 @@ use crate::sandbox::store::{
 };
 use crate::sandbox::*;
 
-pub(super) const HOLDER: &str = "custom-runtime-test";
-pub(super) const END: &str = "2026-09-05T01:00:00Z";
+pub(in crate::sandbox) const HOLDER: &str = "custom-runtime-test";
+pub(in crate::sandbox) const END: &str = "2026-09-05T01:00:00Z";
 
-pub(super) fn image(digit: char) -> String {
+pub(in crate::sandbox) fn image(digit: char) -> String {
     format!(
         "registry.example/runtime@sha256:{}",
         digit.to_string().repeat(64)
     )
 }
 
-pub(super) fn custom() -> Sandbox {
+pub(in crate::sandbox) fn custom() -> Sandbox {
     let mut sandbox = crate::sandbox::runtime_update_test_support::native();
     sandbox.profile.content.runtime_image = Some(image('a'));
     sandbox.profile.digest = crate::profiles::content_digest(&sandbox.profile.content).unwrap();
@@ -24,7 +24,11 @@ pub(super) fn custom() -> Sandbox {
     sandbox
 }
 
-pub(super) fn request(sandbox: &Sandbox, digit: char, key: &str) -> SandboxCustomRuntimeMigration {
+pub(in crate::sandbox) fn request(
+    sandbox: &Sandbox,
+    digit: char,
+    key: &str,
+) -> SandboxCustomRuntimeMigration {
     SandboxCustomRuntimeMigration {
         request_key: key.into(),
         expected_revision: sandbox.revision,
@@ -34,7 +38,7 @@ pub(super) fn request(sandbox: &Sandbox, digit: char, key: &str) -> SandboxCusto
     }
 }
 
-pub(super) fn queue(
+pub(in crate::sandbox) fn queue(
     sandbox: &mut Sandbox,
     digit: char,
     key: &str,
@@ -46,14 +50,14 @@ pub(super) fn queue(
     request
 }
 
-pub(super) fn admit(sandbox: &mut Sandbox, digit: char) {
+pub(in crate::sandbox) fn admit(sandbox: &mut Sandbox, digit: char) {
     let identity = SandboxRotationIdentity::capture(sandbox, &[]).unwrap();
     sandbox
         .begin_image_rotation(image(digit), identity, NOW.into())
         .unwrap();
 }
 
-pub(super) fn step(
+pub(in crate::sandbox) fn step(
     value: &mut Sandbox,
     f: impl FnOnce(&mut Sandbox, u64) -> Result<(), SandboxModelError>,
 ) {
@@ -117,7 +121,7 @@ pub(super) fn step(
     value.validate().unwrap();
 }
 
-pub(super) fn suspend(value: &mut Sandbox) {
+pub(in crate::sandbox) fn suspend(value: &mut Sandbox) {
     step(value, |v, f| {
         v.complete_lifecycle_persistent_pause(HOLDER, f, NOW.into())
     });
@@ -129,7 +133,7 @@ pub(super) fn suspend(value: &mut Sandbox) {
     });
 }
 
-pub(super) fn pause(value: &mut Sandbox) {
+pub(in crate::sandbox) fn pause(value: &mut Sandbox) {
     value.begin_pause(NOW.into(), None).unwrap();
     suspend(value);
     step(value, |v, f| {
@@ -137,7 +141,7 @@ pub(super) fn pause(value: &mut Sandbox) {
     });
 }
 
-pub(super) fn provision(value: &mut Sandbox, digit: char) {
+pub(in crate::sandbox) fn provision(value: &mut Sandbox, digit: char) {
     let old = value.lifecycle.suspended_runtime.clone().unwrap();
     let source = value.retained_home_recovery().unwrap().clone();
     step(value, |v, f| {
@@ -165,7 +169,7 @@ pub(super) fn provision(value: &mut Sandbox, digit: char) {
     });
 }
 
-pub(super) fn finish(value: &mut Sandbox) {
+pub(in crate::sandbox) fn finish(value: &mut Sandbox) {
     step(value, |v, f| {
         v.complete_lifecycle_credential_delivery(HOLDER, f, NOW.into())
     });

@@ -371,6 +371,19 @@ async fn apply_with_sources(
     })?;
     let mutation =
         apply_unpublished_runtime_recovery(&current, request).map_err(ApplyError::Domain)?;
+    if let Some(release) = &request.released_runtime {
+        if release.agent != request.target_runtime_version {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+        store
+            .fence_released_admission(
+                release,
+                layer2_core::released_runtime::ReleasedLane::Agent,
+                session,
+            )
+            .await
+            .map_err(ApplyError::Domain)?;
+    }
     validate_in_transaction(store, &current.sandbox.id, last_seq, session).await?;
     // Actual writes to every child serialize native proof with dispatch, cleanup,
     // Workspace setup and lifecycle publication. Preserve every child byte.

@@ -64,8 +64,10 @@ it.each(['Provisioning', 'Installing'])(
     expect(within(group).getByRole('treeitem').querySelector('.tree-row__state')).toHaveTextContent(
       label,
     );
-    const tree = within(group.parentElement!);
-    await user.click(tree.getByText('Deletion progress (1)'));
+    const tree = within(group.closest<HTMLElement>('.manager-navigation')!);
+    const footer = tree.getByText('Cleaning up 1 sandboxes');
+    expect(footer.closest('.manager-navigation__list')).toBeNull();
+    await user.click(footer);
     expect(tree.getByRole('button', { name: 'View status for retiring fixture' })).toBeVisible();
     expect(screen.queryByText('retired fixture')).not.toBeInTheDocument();
     view.rerender(

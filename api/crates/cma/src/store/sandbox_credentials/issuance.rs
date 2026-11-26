@@ -149,6 +149,7 @@ pub(super) async fn accept(
         || material.owner != intent.owner
         || material.authority.generation != intent.generation
         || !material.source.is_managed()
+        || !material.matches_connection(sandbox)
     {
         return Err(corrupt());
     }

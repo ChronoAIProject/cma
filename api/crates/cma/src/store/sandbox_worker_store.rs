@@ -1,5 +1,6 @@
 //! Mongo work discovery, lease claims, and terminal sandbox purge.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt as _;
 use layer2_core::sandbox::store::{
     SandboxStore, SandboxStoreError, SandboxWorkerStore, MAX_PAGE_SIZE,
@@ -31,6 +32,26 @@ impl SandboxWorkerStore for MongoSandboxStore {
         sandbox: &layer2_core::sandbox::Sandbox,
     ) -> Result<Option<String>, SandboxStoreError> {
         super::native_prepared::completed_installation_digest(self, sandbox).await
+    }
+
+    async fn canary_runtime_image(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+    ) -> Result<Option<layer3_adapter::RuntimeImage>, SandboxStoreError> {
+        let database = self.client.database(&self.sandboxes.namespace().db);
+        super::agent_lifecycle_operations::canary_admission::runtime_image(&database, sandbox).await
+    }
+
+    async fn admitted_runtime_release(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+    ) -> Result<Option<layer3_adapter::ReleasedRuntime>, SandboxStoreError> {
+        let Some(lanes) = &self.released_lanes else {
+            return Ok(None);
+        };
+        let database = self.client.database(&self.sandboxes.namespace().db);
+        super::agent_lifecycle_operations::released::admitted_release(&database, lanes, sandbox)
+            .await
     }
 
     async fn due_sandbox_work(
@@ -224,16 +245,16 @@ impl SandboxWorkerStore for MongoSandboxStore {
             match purge_in_transaction(self, id, expected_revision, &mut session).await {
                 Ok(()) => {}
                 Err(PurgeError::Conflict) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Conflict);
                 }
                 Err(PurgeError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(PurgeError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             }
@@ -330,6 +351,19 @@ async fn purge_in_transaction(
         return Err(PurgeError::Conflict);
     }
     let sandbox = read_sandbox(&aggregate).map_err(|_| PurgeError::Conflict)?;
+    if store
+        .agents
+        .find_one(doc! {
+            "sandbox_id": id.as_str(),
+            "record.conversation.turn_timeout": {"$exists": true}
+        })
+        .session(&mut *session)
+        .await
+        .map_err(PurgeError::Driver)?
+        .is_some()
+    {
+        return Err(PurgeError::Conflict);
+    }
     if sandbox.retirement_archive_pending()
         || sandbox.status != SandboxStatus::Retired
         || sandbox.runtime.is_some()

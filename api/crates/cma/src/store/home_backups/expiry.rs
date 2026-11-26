@@ -1,6 +1,7 @@
 //! Destructive effects are admitted durably and settled only with exact evidence.
 use super::*;
 use crate::store::sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::ClientSession;
 
 fn canonical(value: &str) -> Result<(), HomeBackupError> {
@@ -250,7 +251,7 @@ impl HomeBackupDeletionStore for MongoHomeBackupStore {
                 Ok(next)
             }
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 Err(error)
             }
         }
@@ -287,7 +288,7 @@ impl HomeBackupDeletionStore for MongoHomeBackupStore {
                 Ok(next)
             }
             result => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 Err(result
                     .err()
                     .map(failed)

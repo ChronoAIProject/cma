@@ -2,7 +2,9 @@
   "name": "cma-local-scale-tests",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs && npm run test:python",
     "test:python": "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s test -p '*_test.py'",
@@ -10,7 +12,15 @@
     "coverage": "node --experimental-test-coverage --test-coverage-include='lib/**' --test-coverage-include='scenarios/**' --test-coverage-lines=80 --test-coverage-functions=80 --test test/*.test.mjs",
     "lint": "eslint . --max-warnings=0 && node check.mjs",
     "run": "node run.mjs",
-    "run:ha": "node run.mjs --scenario ha"
+    "run:ha": "node run.mjs --scenario ha",
+    "test:staging:browser": "node --test staging/*.test.mjs"
   },
-  "devDependencies": { "eslint": "9.39.0", "@eslint/js": "9.39.0", "globals": "16.5.0" }
+  "devDependencies": {
+    "eslint": "9.39.0",
+    "@eslint/js": "9.39.0",
+    "globals": "16.5.0",
+    "esbuild": "0.28.2",
+    "eventsource-parser": "4.1.0",
+    "@playwright/test": "1.58.2"
+  }
 }

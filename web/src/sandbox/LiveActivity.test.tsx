@@ -4,7 +4,7 @@ import { ApiError } from '@cma/client';
 import type { SandboxEvent } from '../api/types';
 import type { CmaWebClient } from '../api/client';
 import { agentClient } from '../test/agent';
-import { activityEntries, activityEntry, activityLimit } from './activity';
+import { activityDisplayEntries, activityEntries, activityEntry, activityLimit } from './activity';
 import { LiveActivity } from './LiveActivity';
 import { SandboxActivity } from './SandboxActivity';
 
@@ -18,6 +18,53 @@ const event = (seq: number, kind: SandboxEvent['kind'] = { type: 'created' }): S
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+it('orders a display copy by real time then source and numeric sequence without changing ingestion', () => {
+  const rows = [
+    { id: 'sandbox-10', at, message: 'Sandbox tenth' },
+    { id: 'sandbox-2', at, message: 'Sandbox second' },
+    { id: 'agent-12', at, message: 'Agent twelfth' },
+    { id: 'agent-3', at, message: 'Agent third' },
+    { id: 'sandbox-20', at: '2026-09-08T23:59:59Z', message: 'Earlier timestamp' },
+  ];
+  const original = structuredClone(rows);
+  render(<LiveActivity entries={rows} />);
+  expect(
+    screen.getAllByRole('listitem').map((row) => row.querySelector('span')?.textContent),
+  ).toEqual([
+    'Earlier timestamp',
+    'Agent third',
+    'Agent twelfth',
+    'Sandbox second',
+    'Sandbox tenth',
+  ]);
+  expect(rows).toEqual(original);
+  expect(activityDisplayEntries(rows).map(({ id }) => id)).toEqual([
+    'sandbox-20',
+    'agent-3',
+    'agent-12',
+    'sandbox-2',
+    'sandbox-10',
+  ]);
+});
+
+it('keeps the existing retained window and equal-identity order when sorting display rows', () => {
+  const rows = Array.from({ length: activityLimit + 1 }, (_, index) => ({
+    id: `sandbox-${index + 1}`,
+    at: new Date(Date.parse(at) - index * 1000).toISOString(),
+    message: String(index),
+  }));
+  const displayed = activityDisplayEntries(rows);
+  expect(displayed).toHaveLength(activityLimit);
+  expect(displayed[0]?.id).toBe('sandbox-101');
+  expect(displayed.at(-1)?.id).toBe('sandbox-2');
+  expect(displayed.some(({ id }) => id === 'sandbox-1')).toBe(false);
+  const equal = [
+    { id: 'agent-2', at, message: 'First observation' },
+    { id: 'agent-2', at, message: 'Second observation' },
+  ];
+  expect(activityDisplayEntries(equal)).toEqual(equal);
 });
 
 it('translates only lifecycle vocabulary, never payloads or unknown values', () => {

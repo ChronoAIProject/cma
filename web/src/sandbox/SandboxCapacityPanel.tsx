@@ -18,10 +18,12 @@ export function SandboxCapacityPanel({
   client,
   capacity,
   presentation,
+  onEnvironments,
 }: {
   readonly client: CmaWebClient;
   readonly capacity: ReturnType<typeof useSandboxCapacity>;
   readonly presentation?: 'home';
+  readonly onEnvironments?: () => void;
 }) {
   const [manage, setManage] = useState(false);
   const value = capacity.value;
@@ -31,7 +33,6 @@ export function SandboxCapacityPanel({
         <EnvironmentInventory client={client} onClose={() => setManage(false)} />
       ) : null;
     const near = !capacity.error && value?.available === 1;
-    const retiring = value?.counts_by_status.retiring ?? 0;
     return (
       <section
         className="sandbox-capacity-home"
@@ -55,32 +56,20 @@ export function SandboxCapacityPanel({
           <p role="status">Checking Sandbox capacity…</p>
         ) : near ? (
           <p className="sandbox-capacity-home__near">
-            <span>1 environment slot left</span>
+            <span>1 slot left</span>
           </p>
         ) : (
           <div className="sandbox-capacity-home__message">
             <IconWarningOutline16 />
             <div>
-              <strong>All {value.limit} Sandbox environment slots are in use</strong>
-              {retiring ? (
-                <p>
-                  {retiring}{' '}
-                  {retiring === 1
-                    ? 'environment is being deleted and still uses a slot.'
-                    : 'environments are being deleted and still use slots.'}{' '}
-                  Slots become available when deletion is confirmed.
-                </p>
-              ) : null}
+              <strong>Environment limit reached</strong>
             </div>
           </div>
         )}
         {!near ? (
           <div className="sandbox-capacity__actions">
-            <Button
-              variant={capacity.error ? 'outline' : 'primary'}
-              onClick={() => setManage(true)}
-            >
-              Manage environments
+            <Button variant="outline" size="sm" onClick={onEnvironments ?? (() => setManage(true))}>
+              Environments
             </Button>
             {capacity.error ? (
               <Button
@@ -96,9 +85,6 @@ export function SandboxCapacityPanel({
                 Refresh Sandbox capacity
               </Button>
             )}
-            <DocsLink view="environments-and-capacity">
-              Help with environments and capacity
-            </DocsLink>
           </div>
         ) : null}
         {manage ? <EnvironmentInventory client={client} onClose={() => setManage(false)} /> : null}

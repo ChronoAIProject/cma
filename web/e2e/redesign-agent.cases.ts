@@ -191,13 +191,15 @@ export function registerComputerSkillsRedesignCases() {
         await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
         const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
         await expect(desktop.getByRole('status')).toContainText('Reconnecting');
-        for (const [index, delay] of [1000, 2000, 4000, 8000, 16000, 30000].entries()) {
+        const delays = [1000, 2000, 4000, 8000, 16000, ...Array<number>(8).fill(30_000)];
+        for (const [index, delay] of delays.entries()) {
           await page.clock.fastForward(delay);
           await expect.poll(() => settled).toBe(index + 2);
-          await expect(desktop.getByRole('status')).toContainText(
-            index === 5 ? 'Could not reconnect' : 'Reconnecting',
-          );
+          await expect(desktop.getByRole('status')).toContainText('Reconnecting');
         }
+        await page.clock.fastForward(28_999);
+        await expect(desktop.getByRole('status')).toContainText('Reconnecting');
+        await page.clock.runFor(1);
         await expect(
           desktop.getByRole('heading', { name: 'Automatic reconnect attempts have stopped' }),
         ).toBeVisible();
@@ -209,13 +211,13 @@ export function registerComputerSkillsRedesignCases() {
           await expect(
             desktop.getByRole('heading', { name: 'Automatic reconnect attempts have stopped' }),
           ).toBeVisible();
-          expect(settled).toBe(7);
+          expect(settled).toBe(14);
         }
-        expect(settled).toBe(7);
+        expect(settled).toBe(14);
         expect(stream.connections).toHaveLength(0);
         available = true;
         await desktop.getByRole('button', { name: 'Reconnect view', exact: true }).click();
-        await expect.poll(() => settled).toBe(8);
+        await expect.poll(() => settled).toBe(15);
         await expect
           .poll(async () => {
             await page.clock.runFor(50);
@@ -229,7 +231,7 @@ export function registerComputerSkillsRedesignCases() {
         await page.getByRole('button', { name: 'Close computer', exact: true }).click();
         await expect(desktop).toHaveCount(0);
         await page.clock.fastForward(60_000);
-        expect(settled).toBe(8);
+        expect(settled).toBe(15);
         expect(fixture.writes).toEqual([]);
         expect(fixture.boundary.writes).toEqual([]);
       } finally {

@@ -32,6 +32,8 @@ mod deferred_command_tests;
 mod gateway_session_tests;
 #[path = "cookie_authorization_tests/personal_owner_tests.rs"]
 mod personal_owner_tests;
+#[path = "cookie_authorization_tests/protected_outage_counts.rs"]
+mod protected_outage_counts;
 #[path = "cookie_authorization_tests/protected_outage_tests.rs"]
 mod protected_outage_tests;
 #[path = "cookie_authorization_tests/provider_overlap_tests.rs"]
@@ -43,6 +45,8 @@ mod session_routes_tests;
 #[path = "cookie_authorization_tests/tenant_isolation_tests.rs"]
 mod tenant_isolation_tests;
 
+#[path = "cookie_authorization_tests/cause_diagnostic_tests.rs"]
+mod cause_diagnostic_tests;
 #[path = "cookie_authorization_tests/diagnostic_tests.rs"]
 mod diagnostic_tests;
 #[path = "cookie_authorization_tests/final_diagnostic_tests.rs"]
@@ -84,6 +88,7 @@ struct ProviderControl {
     discovery: RwLock<Reply>,
     userinfo: RwLock<Reply>,
     introspection: RwLock<Reply>,
+    introspection_arrival: RwLock<Option<Arc<Gate>>>,
     organization: RwLock<Reply>,
     exchange: RwLock<Reply>,
     organization_token: RwLock<String>,
@@ -132,6 +137,11 @@ async fn userinfo(State(control): State<Arc<ProviderControl>>) -> Response {
 }
 
 async fn introspection(State(control): State<Arc<ProviderControl>>) -> Response {
+    let gate = control.introspection_arrival.read().await.clone();
+    if let Some(gate) = gate {
+        gate.reached.notify_one();
+        gate.release.notified().await;
+    }
     respond(&control, &control.introspection).await
 }
 
@@ -180,6 +190,7 @@ impl Fixture {
             introspection: RwLock::new(Reply::json(json!({
                 "active": true, "sub": "owner", "permissions": ["cma:sandbox:use"],
             }))),
+            introspection_arrival: RwLock::new(None),
             organization: RwLock::new(Reply::json(json!({"id":"org", "your_role":"admin"}))),
             exchange: RwLock::new(Reply::json(json!({
                 "access_token":"rotated-fixture-token", "refresh_token":"rotated-fixture-refresh",

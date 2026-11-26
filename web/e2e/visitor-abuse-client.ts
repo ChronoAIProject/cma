@@ -336,7 +336,10 @@ export class TC117Client {
     );
     identifier(name, 'evidence name');
     const record = {
+      schema: 'cma-tc117-scenario-v1',
       campaign: 'TC-117',
+      run,
+      journalRun: this.journal.run,
       case: name,
       status,
       startedAt: this.startedAt,

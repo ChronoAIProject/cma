@@ -1,9 +1,19 @@
 //! Commit or abort one publication snapshot, including prepared eligibility.
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 use crate::store::agent_capacity_recovery::observations::{cohort, Outcome, Stage};
 use crate::store::agent_write_coordination::CLEANUP_RETRY_DEADLINE;
 use layer2_core::sandbox::store::{AgentWorkPublication, AgentWorkPublicationParents};
+
+#[derive(Default)]
+pub(super) struct PublicationGuards<'a> {
+    pub(super) rebuild_parents: Option<&'a AgentWorkPublicationParents>,
+    pub(super) skill_result: Option<&'a layer2_core::sandbox::store::AgentSkillResultGuard>,
+    pub(super) adoption: Option<&'a pending_adoption::Prepared>,
+    pub(super) adoption_not_selected: bool,
+    pub(super) observed_connection: Option<AgentWorkPublicationParents>,
+}
 
 enum Completion {
     Published,
@@ -59,6 +69,21 @@ pub(super) async fn commit(
         Completion::PreparedIneligible => Ok(false),
         Completion::KnownAborted => Err(SandboxStoreError::Conflict),
     }
+}
+
+pub(in crate::store) async fn commit_repeated_failure(
+    store: &MongoSandboxStore,
+    retry: &layer2_core::sandbox::store::AgentRepeatedFailure,
+) -> Result<(), SandboxStoreError> {
+    commit(
+        store,
+        retry.mutation.clone(),
+        None,
+        Some(&retry.marker),
+        None,
+    )
+    .await
+    .map(|_| ())
 }
 
 pub(super) async fn try_publish(
@@ -163,7 +188,7 @@ async fn run(
             Ok(receipt) => receipt,
             Err(ApplyError::StagePending(source)) => {
                 session
-                    .abort_transaction()
+                    .abort_guarded()
                     .await
                     .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
                 drop(writer);
@@ -175,34 +200,34 @@ async fn run(
             }
             Err(ApplyError::PendingReplayed) => {
                 session
-                    .abort_transaction()
+                    .abort_guarded()
                     .await
                     .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
                 cohort(Stage::Completed, Outcome::Replay);
                 return Ok(Completion::Published);
             }
             Err(ApplyError::PreparedIneligible) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(Completion::PreparedIneligible);
             }
             Err(ApplyError::StaleProposal) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(Completion::KnownAborted);
             }
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if staged.is_some() {
                     cohort(Stage::Blocked, Outcome::Refused);
                 }
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if positively_aborted(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error);
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
@@ -215,7 +240,7 @@ async fn run(
             .as_ref()
             .is_some_and(|prepared| !prepared.lease_live())
         {
-            if let Err(error) = session.abort_transaction().await {
+            if let Err(error) = session.abort_guarded().await {
                 tracing::warn!(error_kind = ?error.kind, "Expired pending publication abort was not acknowledged");
             }
             cohort(Stage::Blocked, Outcome::KnownAbort);
@@ -224,7 +249,7 @@ async fn run(
         // Once commit is sent, the original transaction must settle or
         // reconcile even if the work lease expires while waiting for Mongo.
         if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(SandboxStoreError::Conflict);
         }
         match commit_transaction(&mut session).await {

@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const standingPermission = 'auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure';
+const activeProofOperator = 'package(=cma) and test(=store::agent_log_segments::active_proof::prepare::tests::active_proof_operator_cli_uses_generated_isolated_role)';
+
+const gatewayResetJourneys = 'package(=cma) and (test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors) or test(=store::bindings::reset_tests::gateway_reset_tests::profile_reset_receipt_replays_after_a_later_channel_revision))';
 
 // Independent inventory of every invocation, including replica delivery and
 // the exact owner-key contract. Check complete arguments in source and archive mode.
@@ -13,14 +16,20 @@ const selections = [
   ['package(=cmaeg) and kind(lib) and test(~console::session_backend::)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=console) and test(~shared_)', 'only', true],
   ['package(=cma-image-manager) and kind(test) and (binary(=mongo_isolation) or binary(=browser_session))', 'only', true],
+  ['package(=cma-service-migrations) and kind(lib)', 'only', true],
+  ['package(=cma-image-manager) and kind(lib) and test(~migrations::tests::)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~migrations::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~optional_forms_storage)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~optional_media_continuation_storage)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~transaction_terminal::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~activity::history::mongo_tests::)', 'only', true],
   ['package(=cmaeg) and test(=worker_credentials::mongo::integration_tests::worker_history_cross_client_visibility_append_only_grants_and_cutover_barrier)', 'only', false],
+  ['package(=cmaeg) and kind(lib) and test(=channels::create_cleanup_tests::retirement_at_the_record_limit_preserves_tracked_worker_credentials)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~whatsapp_retention_on_real_mongo)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=mongo_isolation)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~github_integrations::)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~organization_channels::)', 'only', true],
+  ['package(=cmaeg) and kind(test) and binary(=management) and test(=record_management::mongo_legacy_read_is_owned_and_read_only)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=github_source)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~tools::threads::ledger::mongo_tests::)', 'only', true],
   ['package(=cma) and (test(~store::isolation::tests::real_) or test(~store::migrations::tests::segments_runtime::))', 'only', false],
@@ -29,6 +38,7 @@ const selections = [
   ['package(=cmaeg) and kind(test) and binary(=replica_admission_mongo)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~replicas::partition_discovery::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(=records::mongo::replica_schema::tests::replica_migration_recovers_after_second_index_conflict)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and (test(~channels::create_fence_tests::) or test(~records::mongo::create_fences::tests::))', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~turns::routed::replica_tool_tests::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~turns::routed::replica_legacy_tool_tests::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~turns::routed::compatibility_mongo_tests::)', 'only', true],
@@ -40,8 +50,9 @@ const selections = [
   ['package(=cmaeg) and kind(lib) and test(~replicas::mongo_tests::)', 'only', true],
   ['package(=cma) and test(~gateway::tests::)', 'only', false],
   ['package(=cma) and test(~sender_context_tests::)', 'only', true],
-  ['package(=cma) and test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors)', 'only', true],
+  [gatewayResetJourneys, 'only', true],
   [`package(=cma) and test(=${standingPermission})`, 'only', true],
+  [activeProofOperator, 'only', true],
 ];
 
 function fixture(reuse, scenario = 'success') {
@@ -67,7 +78,8 @@ const log = process.env.CMA_TEST_LOG;
 const scenario = process.env.CMA_TEST_SCENARIO;
 if (command === 'openssl') { console.log('ab'.repeat(Number(args[2]))); process.exit(0); }
 fs.appendFileSync(log, JSON.stringify({command,args,uri:process.env.CMA_IM_TEST_MONGODB_URI,
-  caller:process.env.CHRONO_TEST_MONGODB_URI,failpoint:process.env.CHRONO_TEST_MONGODB_FAILPOINT_URI})+'\\n');
+  caller:process.env.CHRONO_TEST_MONGODB_URI,failpoint:process.env.CHRONO_TEST_MONGODB_FAILPOINT_URI,
+  cma:process.env.CMA_TEST_CMA_EXECUTABLE})+'\\n');
 if (command === 'cargo') {
   if (scenario === 'test-error') process.exit(8);
 } else if (args[0] === 'run') {
@@ -97,7 +109,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 32);
+      assert.equal(selections.length, 40);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];
@@ -109,8 +121,10 @@ for (const reuse of [false, true]) {
         assert.match(row.uri, /^mongodb:\/\/contract-admin:[a-f0-9]+@127\.0\.0\.1:32778\/admin\?directConnection=true$/);
       }
       for (const row of calls) {
-        const needsStore = row.command === 'cargo' && (row.args.includes('package(=cma) and test(~sender_context_tests::)') || row.args.includes('package(=cma) and test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors)'));
-        assert.equal(row.caller, needsStore ? row.uri : undefined, 'only sender and reset contracts receive the owned M1 fixture URI');
+        const isActiveProofOperator = row.command === 'cargo' && row.args.includes(activeProofOperator);
+        const needsStore = row.command === 'cargo' && (isActiveProofOperator || row.args.includes('package(=cma) and test(~sender_context_tests::)') || row.args.includes(gatewayResetJourneys));
+        assert.equal(row.caller, needsStore ? row.uri : undefined, 'only M1 store contracts receive the owned fixture URI');
+        assert.equal(row.cma, isActiveProofOperator ? join(f.metadata, '..', 'debug', 'cma') : undefined);
         assert.equal(row.failpoint, undefined);
       }
       assert.ok(calls.filter(row => row.command === 'docker' && row.args[0] !== 'rm' && row.args[0] !== 'container' && row.args[0] !== 'inspect').every(row => row.uri === undefined));

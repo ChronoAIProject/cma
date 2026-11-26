@@ -1,6 +1,6 @@
 //! Build a terminal mutation from an exact, durably drained producer seal.
 use layer3_adapter::{
-    stale_turn::{StaleTurnSeal, StaleTurnTarget},
+    stale_turn::{SealedOutput, StaleTurnSeal, StaleTurnTarget},
     AgentSlot, ConversationUpdate, RuntimeHandle,
 };
 use sha2::{Digest, Sha256};
@@ -57,6 +57,23 @@ impl StaleTurnSettlement {
     }
 
     pub fn target(
+        snapshot: &AgentMessageSnapshot,
+        parent: &Sandbox,
+        command: &AdmittedAgentCommand,
+        owner: &OwnershipToken,
+    ) -> Result<StaleTurnTarget, SandboxStoreError> {
+        if snapshot
+            .checkpoint
+            .as_ref()
+            .is_some_and(|checkpoint| !checkpoint.assembly.is_empty())
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        Self::receipt_target(snapshot, parent, command, owner)
+    }
+
+    /// Identify the receipt to read for a previously admitted stop.
+    pub fn receipt_target(
         snapshot: &AgentMessageSnapshot,
         parent: &Sandbox,
         command: &AdmittedAgentCommand,
@@ -126,7 +143,8 @@ impl StaleTurnSettlement {
                         || operation.intent.kind() != AgentOperationKind::SendMessage
                 })
             || snapshot.checkpoint.as_ref().is_none_or(|checkpoint| {
-                !checkpoint.matches(agent) || !checkpoint.assembly.is_empty()
+                !checkpoint.matches(agent)
+                    || (!checkpoint.assembly.is_empty() && checkpoint.output.is_none())
             })
         {
             return Err(SandboxStoreError::Conflict);
@@ -165,7 +183,7 @@ impl StaleTurnSettlement {
         seal: StaleTurnSeal,
         appended_at: String,
     ) -> Result<Self, SandboxStoreError> {
-        let target = Self::target(&snapshot, &parent, &command, &ownership)?;
+        let target = Self::receipt_target(&snapshot, &parent, &command, &ownership)?;
         let previous = snapshot
             .checkpoint
             .as_ref()
@@ -173,6 +191,8 @@ impl StaleTurnSettlement {
         previous.validate()?;
         if !seal.matches(&target)
             || !seal.matches_durable_output(previous.output.as_ref())
+            || (!previous.assembly.is_empty()
+                && !matches!(&seal.output, SealedOutput::Through { .. }))
             || seconds_from_rfc3339(&appended_at).is_none()
         {
             return Err(SandboxStoreError::Conflict);

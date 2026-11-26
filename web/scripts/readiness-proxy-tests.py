@@ -80,6 +80,12 @@ server {
         add_header Cache-Control 'private, no-store' always;
         add_header Referrer-Policy no-referrer always;
         if ($arg_limit = 0) { return 400 '{"code":"invalid_query"}'; }
+        if ($arg_reject = true) {
+            add_header Cache-Control 'private, no-store' always;
+            add_header Referrer-Policy no-referrer always;
+            add_header Referrer-Policy strict-origin-when-cross-origin always;
+            return 401 '{"code":"authentication_required"}';
+        }
         return 202 '{"reached":"agent-manager"}';
     }
 """
@@ -114,25 +120,22 @@ server {
                 time.sleep(0.1)
 
     @classmethod
-    def post(cls, method, path, size):
-        connection = http.client.HTTPConnection("127.0.0.1", cls.port, timeout=10)
-        try:
-            connection.request(method, path, body=b"x" * size,
-                               headers={"Content-Type": "application/json"})
-            response = connection.getresponse()
-            return response.status, response.read()
-        finally:
-            connection.close()
+    def get(cls, path):
+        return cls.request("GET", path)
 
     @classmethod
-    def get(cls, path):
-        connection = http.client.HTTPConnection("127.0.0.1", cls.port, timeout=2)
+    def post(cls, method, path, size):
+        return cls.request(method, path, body=b"x" * size,
+                           headers={"Content-Type": "application/json"})
+
+    @classmethod
+    def request(cls, method, path, body=None, headers=None):
+        connection = http.client.HTTPConnection("127.0.0.1", cls.port, timeout=10)
         try:
-            connection.request("GET", path)
+            connection.request(method, path, body=body, headers=headers or {})
             response = connection.getresponse()
             headers = {key.lower(): value for key, value in response.getheaders()}
-            if "referrer-policy" in headers:
-                headers["referrer-policy"] = response.getheader("Referrer-Policy")
+            headers["referrer-policy"] = response.headers.get_all("Referrer-Policy", [])
             return response.status, headers, response.read()
         finally:
             connection.close()
@@ -175,29 +178,38 @@ server {
             ("POST", "/api/agent-manager/v1/agents/agent-a/artifacts", 2 * mib),
         ]:
             with self.subTest(path=path):
-                self.assertEqual(
-                    self.post(method, path, size), (202, b'{"reached":"agent-manager"}')
-                )
+                status, _, body = self.post(method, path, size)
+                self.assertEqual((status, body), (202, b'{"reached":"agent-manager"}'))
         # The raised bounds are route-scoped; other API routes keep nginx's default.
-        status, _ = self.post("PATCH", "/api/v1/agents/agent-a/settings", mib + 1)
+        status, _, _ = self.post("PATCH", "/api/v1/agents/agent-a/settings", mib + 1)
         self.assertEqual(status, 413)
 
     def test_document_response_keeps_one_strict_referrer_policy(self):
-        for path, expected in [
-            ("/api/v1/documents/doc-a", 202),
-            ("/api/v1/documents/doc-a/source", 202),
-            ("/api/v1/documents?limit=0", 400),
-            ("/api/agent-manager/v1/documents/doc-a/source", 202),
-        ]:
-            with self.subTest(path=path):
-                status, headers, _ = self.get(path)
-                self.assertEqual(status, expected)
-                self.assertEqual(headers["referrer-policy"], "no-referrer")
-                self.assertEqual(headers["cache-control"], "private, no-store")
+        for prefix in ("/api/v1/documents", "/api/agent-manager/v1/documents"):
+            for suffix, expected in [
+                ("/doc-a", 202),
+                ("/doc-a/source", 202),
+                ("?limit=0", 400),
+                ("?reject=true", 401),
+                ("/doc-a/source?reject=true", 401),
+            ]:
+                with self.subTest(path=prefix + suffix):
+                    status, headers, _ = self.get(prefix + suffix)
+                    self.assertEqual(status, expected)
+                    self.assertEqual(headers["referrer-policy"], ["no-referrer"])
+                    self.assertEqual(headers["cache-control"], "private, no-store")
         self.assertEqual(
             self.get("/api/v1/agents")[1]["referrer-policy"],
-            "strict-origin-when-cross-origin",
+            ["strict-origin-when-cross-origin"],
         )
+
+    def test_nginx_document_error_has_one_strict_referrer_policy(self):
+        for prefix in ("/api/v1/documents", "/api/agent-manager/v1/documents"):
+            for suffix, size in [("", 7 * 1024 * 1024 + 1), ("/doc-a/source", 1024 * 1024 + 1)]:
+                with self.subTest(path=prefix + suffix):
+                    status, headers, _ = self.post("POST", prefix + suffix, size)
+                    self.assertEqual(status, 413)
+                    self.assertEqual(headers["referrer-policy"], ["no-referrer"])
 
     def test_monitor_rejects_malformed_or_incomplete_assertions(self):
         for body in [b"{", b"null", b"[]", b'{}', b'{"status":"ready"}']:

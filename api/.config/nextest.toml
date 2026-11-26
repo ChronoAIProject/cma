@@ -1,5 +1,6 @@
 # Nextest profiles for the CMA workspace. An invocation that selects no profile
 # keeps nextest's built-in defaults.
+experimental = ["wrapper-scripts"]
 
 # Ordinary disposable-Mongo PR partitions (mongo-contract-tests.sh count:i/n,
 # reached through --shard 1/8 ... 8/8) select this profile. Dedicated
@@ -21,6 +22,15 @@
 # .github/scripts/mongo-contract-exceptions.json.
 [profile.mongo-ordinary]
 slow-timeout = { period = "60s", terminate-after = 22 }
+
+# Each nextest run enumerates its binaries again before per-test timers start.
+# Reuse the bounded discovery path for that phase only.
+[scripts.wrapper.mongo-list]
+command = { command-line = "../.github/scripts/mongo-list-guard.py", relative-to = "workspace-root" }
+
+[[profile.mongo-ordinary.scripts]]
+platform = "cfg(unix)"
+list-wrapper = "mongo-list"
 
 # The one existing ordinary contract above the default budget: 567-911 s
 # observed. 46 x 60 s = 2760 s keeps 3x headroom. Overrides record measured

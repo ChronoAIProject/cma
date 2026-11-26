@@ -88,6 +88,29 @@ test('autoscale preserves canaries during stress removal and requires workload e
   assert.throws(() => checkSnapshot({ ...snapshot(), am: { ...snapshot().am, metricsAvailable: false } }, 100));
 });
 
+test('a hung autoscale observation aborts before stress and cohort cleanup', async () => {
+  for (const stalledSample of [1, 2, 3]) {
+    const driver = fakeDriver();
+    const original = driver.snapshot;
+    let sampled = 0;
+    let signal;
+    driver.snapshot = async (cohort, options) => {
+      if (++sampled !== stalledSample) return original(cohort, options);
+      signal = options.signal;
+      return new Promise(() => {});
+    };
+    driver.cleanup = async () => {
+      assert.equal(signal?.aborted, true);
+      assert.equal(signal.reason.code, 'scaling_observation_deadline_exceeded');
+      driver.cleaned++;
+    };
+    await assert.rejects(autoscale(driver, { ...config, scaleTimeoutMs: 25 }, { time: fakeTime() }),
+      { code: 'scaling_observation_deadline_exceeded' });
+    assert.equal(driver.cleaned, 1);
+    assert.equal(driver.stopped, stalledSample === 1 ? 0 : 1);
+  }
+});
+
 test('suite reports failures, aborts later gates and never turns missing fixtures into a GO', async () => {
   const driver = fakeDriver(); const progress = [];
   const report = await runSuite(config, driver, { time: fakeTime(), checkpoint: async () => {}, samples: async () => ({}), progress: (line) => progress.push(line) });

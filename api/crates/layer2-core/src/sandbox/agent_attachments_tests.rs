@@ -310,6 +310,7 @@ pub(super) fn persistent_home() -> SandboxHome {
     let request = NativePoolClaimRequest {
         pool: NativePoolBinding {
             spec: NativePoolSpec {
+                cold_canary: false,
                 image: RuntimeImage {
                     uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
                     labels: std::collections::BTreeMap::from([
@@ -378,6 +379,9 @@ async fn attachment_runtime_writer_requires_actual_capability_and_exact_boot() {
             agent_model_catalog: false,
             agent_browser: false,
             agent_resource_preparation: false,
+            agent_process_restart: false,
+            exact_github_credential_route: false,
+            github_repository_scope: false,
             sandbox_id: "sbx_test".into(),
             generation: 1,
             home_identity: home.attachment().unwrap().identity().unwrap(),

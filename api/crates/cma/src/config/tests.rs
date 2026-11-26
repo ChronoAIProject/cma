@@ -8,6 +8,7 @@ mod machine_pools;
 mod native;
 #[path = "runtime_canary_tests.rs"]
 mod runtime_canaries;
+pub(crate) use runtime_canaries::{desktop_canary_config, retained_runtime_config};
 mod home_tests {
     include!("home_tests.rs");
 }

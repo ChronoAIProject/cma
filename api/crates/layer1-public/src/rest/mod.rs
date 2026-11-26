@@ -50,7 +50,7 @@ mod agent_artifacts_tests;
 mod agent_channel_usage;
 pub(crate) mod sandbox_metrics;
 mod sandbox_usage;
-pub use sandbox_metrics::sandbox_metrics_router;
+pub use sandbox_metrics::{sandbox_metrics_router, UsageReportViewDisabled};
 pub use sandbox_usage::sandbox_usage_router;
 mod agent_provider_associations;
 pub use agent_provider_associations::agent_provider_associations_router;
@@ -66,6 +66,7 @@ mod agent_worktree_recovery;
 mod dependency_diagnostics;
 mod message_feedback;
 mod message_feedback_reasons;
+mod owner_agent_restart;
 mod suggestion_shapes;
 mod suggestions;
 pub use agent_channel_usage::agent_channel_usage_router;
@@ -75,9 +76,11 @@ mod agent_channel_usage_tests;
 mod agent_provenance;
 mod agent_provenance_inventory;
 pub use agent_provenance_inventory::agent_provenance_inventory_router;
+mod agent_original_request;
 #[cfg(test)]
 mod agent_provenance_inventory_tests;
 mod agent_reads;
+mod agent_reply_preview;
 pub(crate) mod agent_retained_output;
 mod agent_shared_shapes;
 mod agent_source;
@@ -85,6 +88,8 @@ pub use agent_provenance::agent_provenance_router;
 mod agent_history;
 mod agent_lifecycle;
 mod desktop_creation;
+pub mod retained_runtime_transition;
+pub mod runtime_canary;
 pub use desktop_creation::DesktopCreationScope;
 #[cfg(test)]
 mod agent_provenance_tests;
@@ -164,6 +169,7 @@ mod gateway_interactions;
 mod gateway_records;
 pub use gateway_connections::gateway_connection_record_router;
 pub use gateway_interactions::gateway_interaction_router;
+pub mod creation_outcomes;
 #[cfg(test)]
 mod gateway_records_tests;
 mod hierarchy_shared_shapes;
@@ -176,6 +182,7 @@ pub(crate) mod instances_problem;
 mod instances_tests;
 mod launch_events;
 mod launch_quota;
+mod launch_subject;
 mod launches;
 mod public_names;
 mod sandbox_always_on;
@@ -207,7 +214,7 @@ pub use agent_lifecycle::{
     AgentLifecycleOperationReadError, AgentLifecycleOperationReader, AgentLifecycleOperationView,
     AgentLifecyclePermissions, AgentLifecycleProfile, AgentLifecycleProvisioner,
     AgentLifecycleProvisioningError, AgentLifecycleRepository, AgentLifecycleSkill,
-    AgentLifecycleTitleMode, RepositoryAccessRefusal,
+    AgentLifecycleTitleMode, GitHubRepositoryNeed, RepositoryAccessRefusal, RepositoryScopeRepair,
 };
 pub use agent_source::agent_source_router;
 pub use agents::{

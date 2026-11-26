@@ -6,6 +6,7 @@ import {
   type Browser,
   type BrowserContext,
   type Page,
+  type Request,
   type TestInfo,
 } from '@playwright/test';
 import {
@@ -19,6 +20,7 @@ import {
   type TriggerFixture,
 } from './environment';
 import { Journal } from './journal';
+import { settlesWithin, teardownRemaining, teardownWindow } from './teardown';
 import { publicApiPath } from './public-api-path';
 import {
   assertConnectionProof,
@@ -62,6 +64,12 @@ export class Harness {
   readonly violations: string[] = [];
   private readonly contexts: { context: BrowserContext; role: Role }[] = [];
   private readonly observations = new Set<Promise<void>>();
+  private readonly requests = new Map<Request, { promise: Promise<void>; settle: () => void }>();
+  private readonly opening = new Set<Promise<BrowserContext>>();
+  private disposing = false;
+  private disposal?: Promise<void>;
+  private blocked?: string;
+  private ambiguousReceipt = false;
   private identityFlow = false;
   private journeyProof?: Record<string, unknown>;
   private connectionProof?: ConnectionProof;
@@ -74,14 +82,27 @@ export class Harness {
     if (visitor !== undefined) this.fixture.accounts.visitor = visitor;
   }
   async open(role: Role): Promise<Page> {
+    if (this.disposing) throw new Error('Fixture teardown has started');
     if (role === 'visitor' && this.fixture.visitors[this.caseId] === undefined)
       throw new Error('This scenario has no isolated visitor fixture');
     const account = this.fixture.accounts[role];
-    const context = await this.browser.newContext({
+    const opening = this.browser.newContext({
       storageState: account.storageState,
       serviceWorkers: 'block',
     });
+    this.opening.add(opening);
+    let context: BrowserContext;
+    try {
+      context = await opening;
+    } finally {
+      this.opening.delete(opening);
+    }
     this.contexts.push({ context, role });
+    if (this.disposing) {
+      this.retain('context_open_during_teardown');
+      await settlesWithin(context.close(), 2_000);
+      throw new Error('Context opened during fixture teardown');
+    }
     const session = await context.request.get(`${this.config.baseURL}/auth/session`);
     const identity = session.ok() ? object(await session.json()) : undefined;
     if (role === 'signup') {
@@ -92,6 +113,17 @@ export class Harness {
     }
     context.on('request', (request) => {
       const url = new URL(request.url());
+      if (
+        !this.disposing &&
+        url.origin === this.config.baseURL &&
+        url.pathname.startsWith('/api/')
+      ) {
+        let settle!: () => void;
+        const promise = new Promise<void>((resolve) => {
+          settle = resolve;
+        });
+        this.requests.set(request, { promise, settle });
+      }
       if (
         url.origin === this.config.baseURL &&
         !['GET', 'HEAD', 'OPTIONS'].includes(request.method())
@@ -105,8 +137,20 @@ export class Harness {
           key: request.headers()['idempotency-key'],
         });
     });
+    context.on('requestfailed', (request) => {
+      if (this.requests.has(request) && !['GET', 'HEAD', 'OPTIONS'].includes(request.method()))
+        this.ambiguousReceipt = true;
+      this.finishRequest(request);
+    });
     await context.route('**/*', async (route) => {
       const request = route.request();
+      const target = new URL(request.url());
+      if (
+        this.disposing &&
+        target.origin === this.config.baseURL &&
+        target.pathname.startsWith('/api/')
+      )
+        return route.abort('blockedbyclient');
       if (['GET', 'HEAD', 'OPTIONS'].includes(request.method())) return route.continue();
       const url = new URL(request.url());
       if (
@@ -130,7 +174,11 @@ export class Harness {
       const url = new URL(response.url());
       if (url.origin !== this.config.baseURL || !url.pathname.startsWith('/api/')) return;
       const task = (async () => {
-        if (!isJsonMediaType(response.headers()['content-type'] ?? '')) return;
+        if (!isJsonMediaType(response.headers()['content-type'] ?? '')) {
+          if (!['GET', 'HEAD', 'OPTIONS'].includes(response.request().method()))
+            this.ambiguousReceipt = true;
+          return;
+        }
         let text: string;
         try {
           text = await response.text();
@@ -171,9 +219,14 @@ export class Harness {
           JSON.parse(text),
           account.subject,
         );
-      })().catch(() => {
-        this.violations.push('response_inspection_failed');
-      });
+      })()
+        .catch(() => {
+          this.violations.push('response_inspection_failed');
+        })
+        .finally(() => {
+          this.finishRequest(response.request());
+          if (this.blocked) this.retain(this.blocked);
+        });
       this.observations.add(task);
       void task.finally(() => this.observations.delete(task));
     });
@@ -257,6 +310,7 @@ export class Harness {
     return JSON.parse(text) as T;
   }
   async command(page: Page, method: 'POST' | 'DELETE', path: string, data?: unknown) {
+    if (this.disposing) throw new Error('Fixture teardown has started');
     // Direct commands only affect resources already created by this run.
     if (
       !this.journal.resources.some(
@@ -307,7 +361,10 @@ export class Harness {
     const launch = await this.readLaunch(page, id);
     expect(launch.resolution.agent.id).toBeTruthy();
     const destination = `${this.config.baseURL}/agents/${launch.resolution.agent.id}`;
-    if (page.url() !== destination) await page.goto(destination);
+    if (page.url() !== destination) {
+      await this.flush();
+      if (page.url() !== destination) await page.goto(destination);
+    }
     await expect(page.locator('#agent-message')).toBeVisible();
     return launch;
   }
@@ -347,29 +404,74 @@ export class Harness {
   async flush() {
     await Promise.all([...this.observations]);
   }
-  async dispose() {
-    await this.flush();
+  private finishRequest(request: Request) {
+    this.requests.get(request)?.settle();
+    this.requests.delete(request);
+  }
+  private retain(reason: string) {
+    this.journal.record({ action: 'cleanup_blocked', reason });
+    this.blocked ??= reason;
+    for (const resource of this.journal.resources)
+      this.journal.record({ action: 'cleanup_blocked', ...resource, reason });
+  }
+  dispose(remainingMs = 10_000): Promise<void> {
+    if (!this.disposal) {
+      this.disposing = true;
+      this.disposal = this.finish(remainingMs);
+    }
+    return this.disposal;
+  }
+  private async finish(remainingMs: number) {
+    const { observationMs, releaseMs } = teardownWindow(remainingMs);
     const failures: unknown[] = [];
-    const cleaned = new Set<string>();
-    for (const { context, role } of this.contexts.reverse()) {
-      try {
-        const subject = this.fixture.accounts[role].subject;
-        if (!cleaned.has(subject)) {
-          await this.journal.cleanup(context.request, this.config.baseURL, subject);
-          cleaned.add(subject);
+    try {
+      const drained =
+        observationMs > 0 &&
+        (await settlesWithin(
+          (async () => {
+            await Promise.all([...this.opening]);
+            await Promise.all([...this.requests.values()].map((request) => request.promise));
+            await this.flush();
+          })(),
+          observationMs,
+        ));
+      if (!drained || this.blocked || this.ambiguousReceipt || this.violations.length) {
+        this.retain('response_observation_incomplete');
+      } else {
+        const cleaned = new Set<string>();
+        for (const { context, role } of [...this.contexts].reverse()) {
+          try {
+            const subject = this.fixture.accounts[role].subject;
+            if (!cleaned.has(subject)) {
+              await this.journal.cleanup(context.request, this.config.baseURL, subject);
+              cleaned.add(subject);
+            }
+          } catch (error) {
+            failures.push(error);
+          }
         }
-        if (role === 'signup')
+      }
+    } catch (error) {
+      failures.push(error);
+      this.retain('response_observation_incomplete');
+    } finally {
+      const releases = Promise.allSettled(
+        this.contexts.map(({ context }) => Promise.resolve().then(() => context.close())),
+      );
+      if (
+        !(await settlesWithin(releases, releaseMs)) ||
+        (await releases).some((row) => row.status === 'rejected')
+      )
+        this.retain('context_release_incomplete');
+      for (const { role } of this.contexts) {
+        if (role === 'signup' && this.fixture.accounts.signup.subject)
           this.journal.record({
             action: 'external_account_cleanup_required',
             subject: this.fixture.accounts.signup.subject,
           });
-      } catch (error) {
-        failures.push(error);
-      } finally {
-        await context.close();
       }
     }
-    if (failures.length)
+    if (this.blocked || failures.length)
       throw new Error('Scoped fixture cleanup is incomplete; consult cleanup.ndjson');
     expect(this.violations).toEqual([]);
   }
@@ -381,9 +483,9 @@ export const test = base.extend<{ harness: Harness }>({
       await runTest(harness);
     } finally {
       try {
-        await harness.attachJourneyProof(info);
+        await harness.dispose(teardownRemaining(info));
       } finally {
-        await harness.dispose();
+        await harness.attachJourneyProof(info);
       }
     }
   },

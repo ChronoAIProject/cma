@@ -116,6 +116,12 @@ export async function redesignHomeFixture(
     const workspace = workspaces.find((item) => path === `/api/v1/workspaces/${item.id}`);
     if (workspace) return reply(workspace);
     if (path === '/api/v1/agents/provenance') return reply({ items: [] });
+    if (
+      workspaces.some((workspace) =>
+        workspace.agents.some((agent) => path === `/api/v1/agents/${agent.id}/reply-preview`),
+      )
+    )
+      return reply({ code: 'not_found' }, 404);
     const agent = workspaces
       .flatMap((item) => item.agents)
       .find(

@@ -2,6 +2,8 @@ use super::*;
 use layer2_core::budget::{BudgetError, ModelRequest, RequestBudget, RequestScope, RequestUsage};
 use layer3_adapter::{ConversationUpdate, PromptResponse, TurnStopReason};
 
+#[path = "request_budget_tests/http_tests.rs"]
+mod http_tests;
 #[path = "request_budget_tests/ordinary_parent.rs"]
 mod ordinary_parent;
 #[path = "request_budget_tests/settlement_tests.rs"]
@@ -11,12 +13,43 @@ pub(in crate::store) async fn completed(
     client: &Client,
     name: &str,
 ) -> (Arc<MongoSandboxStore>, RequestScope, ModelRequest) {
+    let (store, scope, request) = completed_without_finality(client, name, None).await;
+    // Fixture for the future authoritative gateway settlement contract. CMA's
+    // ordinary runtime terminal events never assert these finality fields.
+    store
+        .model_budget
+        .update_one(
+            doc! {"_id": format!("turn:{}:{}", scope.agent_id, scope.turn_sequence)},
+            doc! {"$set": {"record.reservation.final_usage_known": true,
+            "record.reservation.final_model_calls": 1_i64}},
+        )
+        .await
+        .unwrap();
+    (store, scope, request)
+}
+
+async fn completed_without_finality(
+    client: &Client,
+    name: &str,
+    turn_limit: Option<u64>,
+) -> (Arc<MongoSandboxStore>, RequestScope, ModelRequest) {
     let (store, agent, parent, execution, _, _) = composed(client, name).await;
     let policy = super::super::budget_tests::configure(&store, &agent.owner).await;
-    store.budget_settings.update_one(doc! {"_id": "platform"}, doc! {"$set": {
-        "settings.model_budget.owners.0.policy.owner_day_limit": (policy.owner_day_limit * 4) as i64,
+    let mut limits = doc! {
+        "settings.model_budget.owners.0.policy.owner_day_limit": (turn_limit.unwrap_or(policy.owner_day_limit) * 4) as i64,
         "settings.model_budget.request_models": [{"model": "request-fixture", "input_overhead_tokens": 1_i64}]
-    }}).await.unwrap();
+    };
+    if let Some(turn_limit) = turn_limit {
+        limits.insert(
+            "settings.model_budget.owners.0.policy.turn_limit",
+            turn_limit as i64,
+        );
+    }
+    store
+        .budget_settings
+        .update_one(doc! {"_id": "platform"}, doc! {"$set": limits})
+        .await
+        .unwrap();
     let admitted = record(
         store
             .reserve_command(live_request(&agent, &parent, "parent-turn"))
@@ -40,17 +73,6 @@ pub(in crate::store) async fn completed(
         )
         .await
         .unwrap();
-    // Fixture for the future authoritative gateway settlement contract. CMA's
-    // ordinary runtime terminal events never assert these finality fields.
-    store
-        .model_budget
-        .update_one(
-            doc! {"_id": format!("turn:{}:{turn}", agent.id.as_str())},
-            doc! {"$set": {"record.reservation.final_usage_known": true,
-            "record.reservation.final_model_calls": 1_i64}},
-        )
-        .await
-        .unwrap();
     let scope = RequestScope {
         agent_id: agent.id,
         turn_sequence: turn,
@@ -58,7 +80,7 @@ pub(in crate::store) async fn completed(
     };
     let request = ModelRequest {
         model: "request-fixture".into(),
-        input_bytes: policy.turn_limit / 2,
+        input_bytes: turn_limit.unwrap_or(policy.turn_limit) / 2,
         max_output_tokens: 1,
         fingerprint: "b".repeat(64),
     };

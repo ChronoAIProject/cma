@@ -1,4 +1,5 @@
 //! Durable custody for one exact whole-runtime retirement.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::{retirement_debt_is_local, SandboxStoreError, WorkAuthority};
 use layer2_core::sandbox::{Agent, AgentCleanupDebt, RuntimeBinding, Sandbox, SandboxHome};
 use layer2_core::{AgentId, SandboxId, SubjectId};
@@ -254,7 +255,7 @@ impl MongoSandboxStore {
         }
         let stored = record_bson(observation).map_err(SandboxStoreError::Corrupt)?;
         let result = self.sandboxes.update_one(
-            super::work_schema::query(doc! {
+            super::work_claim_authority::without_ledger_maintenance(super::work_schema::query(doc! {
                 "_id": parent.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "record.owner": parent.owner.as_str(),
@@ -262,7 +263,7 @@ impl MongoSandboxStore {
                 "record.work.step": record_bson(&parent.work.step).map_err(SandboxStoreError::Corrupt)?,
                 "record.runtime": record_bson(&observation.binding).map_err(SandboxStoreError::Corrupt)?,
                 FIELD: {"$exists":false},
-            }),
+            })),
             doc! {"$set":{OBSERVATION: stored}},
         ).await.map_err(unavailable)?;
         if result.matched_count == 1 {
@@ -363,11 +364,11 @@ async fn transact(
         match result {
             Ok(()) => {}
             Err(LifecycleLoadError::Driver(error)) if retryable_body_error(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 continue;
             }
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(match error {
                     LifecycleLoadError::Driver(error) => unavailable(error),
                     LifecycleLoadError::Domain(error) => error,

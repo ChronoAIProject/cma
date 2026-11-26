@@ -1,5 +1,5 @@
 use super::{
-    api_error, handle, model, parse_handle, pods, rejected, unavailable, AgentSandboxClient,
+    api_error, handle, model, parse_handle, rejected, unavailable, AgentSandboxClient,
     SPEC_ANNOTATION,
 };
 use crate::{
@@ -107,9 +107,7 @@ impl AgentSandboxClient {
             object.remove("shutdownPolicy");
         }
         if !super::pool::contains_spec(&actual.data["spec"], &admitted) {
-            return Err(rejected(
-                "Sandbox spec differs from its admitted configuration",
-            ));
+            return Err(crate::AdapterError::AdmittedSandboxSpecDrift);
         }
         Ok(())
     }
@@ -352,47 +350,31 @@ impl AgentSandboxClient {
                     )
                     .await
                     .map_err(api_error)?;
-                let pods = self
-                    .pods
-                    .list(
-                        &ListParams::default()
-                            .labels(&pods::selector(name))
-                            .limit(100),
-                    )
-                    .await
-                    .map_err(api_error)?;
                 if objects
                     .metadata
                     .continue_
                     .as_ref()
                     .is_some_and(|s| !s.is_empty())
-                    || pods
-                        .metadata
-                        .continue_
-                        .as_ref()
-                        .is_some_and(|s| !s.is_empty())
                 {
                     return Err(unavailable("deletion observation is incomplete"));
                 }
-                if !objects
+                let original_exists = objects
                     .items
                     .iter()
-                    .any(|o| o.uid().as_deref() == Some(uid))
-                    && !pods.items.iter().any(|p| {
-                        p.metadata
-                            .owner_references
-                            .as_ref()
-                            .is_some_and(|os| os.iter().any(|o| o.uid == uid))
-                    })
-                {
+                    .any(|object| object.uid().as_deref() == Some(uid));
+                let pod_absence = if original_exists {
+                    None
+                } else {
+                    self.pools.member_pod_absence_version(uid).await?
+                };
+                if let Some(pod_version) = pod_absence {
                     return Ok((
                         objects
                             .metadata
                             .resource_version
+                            .filter(|version| !version.is_empty())
                             .ok_or_else(|| unavailable("missing Sandbox list version"))?,
-                        pods.metadata
-                            .resource_version
-                            .ok_or_else(|| unavailable("missing Pod list version"))?,
+                        pod_version,
                     ));
                 }
                 tokio::time::sleep(super::observation::refresh_delay(started.elapsed())).await;

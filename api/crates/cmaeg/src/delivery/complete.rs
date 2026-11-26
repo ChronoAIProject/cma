@@ -1,7 +1,7 @@
 //! One bounded NyxID exchange per ordinary logical reply after coordinated rollout.
 use super::{
     event::now,
-    gate::expired,
+    gate::{expired, within_deadline},
     intents::{DeliveryOutcome, IntentReceipt},
     relay_client::{unknown, Credential, RelayClient},
     render::{LiteralText, RelayText},
@@ -83,7 +83,8 @@ impl Sender {
             Ok(ticket) => ticket,
             Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
         };
-        let Some(mut slot) = self.pacing.acquire(route_id).await else {
+        let Some(mut slot) = within_deadline(ctx.gate, self.pacing.acquire(route_id), None).await
+        else {
             return (
                 refused(
                     rendering,
@@ -127,7 +128,12 @@ impl Sender {
             );
         };
         effects.first_send_done = true;
-        let (mut delivery, outbound) = self.relay.send_prepared(credential, &prepared).await;
+        let (mut delivery, outbound) = within_deadline(
+            ctx.gate,
+            self.relay.send_prepared(credential, &prepared),
+            (unknown("side_message_delivery_timeout"), None),
+        )
+        .await;
         drop(permit);
         if message.whatsapp_template.is_some()
             && matches!(
@@ -194,8 +200,12 @@ impl Sender {
         {
             if let (Some(reference), Some(outbound)) = (message_ref.as_ref(), outbound.as_deref()) {
                 message_ref = Some(
-                    self.lark_effect_reference(ctx.channel, event, reference.clone(), outbound)
-                        .await,
+                    within_deadline(
+                        ctx.gate,
+                        self.lark_effect_reference(ctx.channel, event, reference.clone(), outbound),
+                        reference.clone(),
+                    )
+                    .await,
                 );
             }
         }

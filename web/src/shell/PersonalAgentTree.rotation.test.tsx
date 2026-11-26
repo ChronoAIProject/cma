@@ -104,8 +104,11 @@ describe('Agent navigation during environment updates', () => {
       const onNavigate = vi.fn();
       const onAction = vi.fn();
       const { container } = render(tree({ items: items({ status }), onNavigate, onAction }));
-      const group = screen.getByRole('group', { name: 'Needs attention' });
-      const row = within(group).getByRole('treeitem');
+      expect(screen.queryByRole('group', { name: 'Needs attention' })).not.toBeInTheDocument();
+      expect(screen.getByText('1 updates failed · Fix')).toBeVisible();
+      const row = within(
+        screen.getByRole('list', { name: 'Environments with failed updates' }),
+      ).getByRole('treeitem');
       expect(row).toHaveTextContent('Runtime update failed');
       expect(row).toHaveAccessibleName(/Runtime update failed/);
       if (status === 'ready') expect(row).toHaveTextContent('Turn ended');
@@ -116,7 +119,7 @@ describe('Agent navigation during environment updates', () => {
       expect(container.querySelector('[data-pose="preparing"]')).toBeNull();
       const actor = userEvent.setup();
       await actor.click(screen.getByRole('button', { name: 'Options for Agent one' }));
-      expect(screen.getByRole('menuitem', { name: /^Delete/ })).toHaveAttribute(
+      expect(screen.getByRole('menuitem', { name: /^Delete(?: Available|$)/ })).toHaveAttribute(
         'aria-disabled',
         'true',
       );
@@ -126,7 +129,7 @@ describe('Agent navigation during environment updates', () => {
     },
   );
 
-  it('filters parked updates by Needs attention and genuinely starting Agents by Preparing', () => {
+  it('filters parked updates by Needs attention and genuinely starting Agents by Preparing', async () => {
     const starting = navigationFixture('provisioning', 'starting').map((item) => ({
       ...item,
       workspaces: item.workspaces.map((workspace) => ({
@@ -140,16 +143,49 @@ describe('Agent navigation during environment updates', () => {
     }));
     const mixed = [...items({ status: 'working' }), ...starting];
     const { rerender } = render(tree({ items: mixed, statusFilter: 'all' }));
+    expect(screen.getByText('1 updates failed · Fix').closest('details')).not.toHaveAttribute(
+      'open',
+    );
+    await userEvent.click(screen.getByText('1 updates failed · Fix'));
     expect(
       screen.getByRole('treeitem', { name: /Agent one.*Runtime update failed/ }),
     ).toBeVisible();
     expect(screen.getByRole('treeitem', { name: /Starting Agent.*Preparing/ })).toBeVisible();
 
+    await userEvent.click(screen.getByText('1 updates failed · Fix'));
     rerender(tree({ items: mixed, statusFilter: 'needs_attention' }));
-    expect(screen.getByRole('treeitem')).toHaveAccessibleName(/Agent one.*Runtime update failed/);
+    const failedAgent = screen.getByRole('treeitem');
+    expect(failedAgent).toHaveAccessibleName(/Agent one.*Runtime update failed/);
+    expect(failedAgent).toBeVisible();
 
     rerender(tree({ items: mixed, statusFilter: 'starting' }));
     expect(screen.getByRole('treeitem')).toHaveAccessibleName(/Starting Agent.*Preparing/);
+  });
+
+  it('reveals a different selected Agent after the failed environment disclosure is closed', async () => {
+    const user = userEvent.setup();
+    const twoAgents = items({ id: 'agt_one' }).map((item) => ({
+      ...item,
+      workspaces: item.workspaces.map((workspace) => ({
+        ...workspace,
+        agents: [
+          workspace.agents[0]!,
+          { ...workspace.agents[0]!, id: 'agt_two', title: 'Agent two' },
+        ],
+      })),
+    }));
+    const draw = (agentId: string) => tree({ items: twoAgents, route: { kind: 'agent', agentId } });
+    const view = render(draw('agt_one'));
+    const selectedAgent = (name: string) => screen.getByText(name).closest('[role="treeitem"]');
+    expect(selectedAgent('Agent one')).toHaveAttribute('aria-selected', 'true');
+    expect(selectedAgent('Agent one')).toBeVisible();
+
+    await user.click(screen.getByText('1 updates failed · Fix'));
+    expect(selectedAgent('Agent one')).not.toBeVisible();
+
+    view.rerender(draw('agt_two'));
+    expect(selectedAgent('Agent two')).toHaveAttribute('aria-selected', 'true');
+    expect(selectedAgent('Agent two')).toBeVisible();
   });
 
   it.each(['failed', 'stopped'] as const)(
@@ -157,7 +193,7 @@ describe('Agent navigation during environment updates', () => {
     (taskStatus) => {
       render(tree({ items: items({ taskStatus }) }));
       const row = within(screen.getByRole('group', { name: 'Earlier' })).getByRole('treeitem');
-      expect(row).toHaveTextContent(taskStatus === 'failed' ? 'Failed' : 'Stopped');
+      expect(row).toHaveTextContent(taskStatus === 'failed' ? 'Failed' : 'Response interrupted');
       expect(row).toHaveTextContent('Runtime update failed');
       expect(screen.queryByRole('group', { name: 'Active' })).not.toBeInTheDocument();
     },
@@ -214,9 +250,8 @@ describe('Agent navigation during environment updates', () => {
       );
       expect(screen.queryByRole('treeitem')).not.toBeInTheDocument();
       expect(screen.queryByRole('group', { name: 'Needs attention' })).not.toBeInTheDocument();
-      if (state === 'retired')
-        expect(screen.queryByText(/Deletion progress/)).not.toBeInTheDocument();
-      else expect(screen.getByText(/Deletion progress/)).toBeInTheDocument();
+      if (state === 'retired') expect(screen.queryByText(/Cleaning up/)).not.toBeInTheDocument();
+      else expect(screen.getByText(/Cleaning up/)).toBeInTheDocument();
     },
   );
 

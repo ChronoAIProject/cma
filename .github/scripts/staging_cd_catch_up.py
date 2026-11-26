@@ -4,14 +4,15 @@ Allocation skips a lane while another run owns its newest reservation. When
 that owner's build then fails, nothing plans the lane again until the next
 develop push. Likewise a lane whose newest final was published but never
 proven on staging waits for the next push, whose allocation resumes it.
-After each Staging CD run completes, and hourly as a backstop, this check
-re-runs the develop head's own push run once when no Staging CD run is
+This check runs after each Staging CD run completes and every ten minutes.
+It re-runs the develop head's own push run once when no Staging CD run is
 active, that run's allocation completed, and some lane's newest version is
 either an unfinalized reservation of an earlier run or a final of a settled
-owner that no controller proof covers. A re-run for finals alone waits for
-the hourly check, once every staging run has settled for a while, so a stuck
-app or a namespace fence that failed the deploy can clear first, and never
-follows a cancelled head. A re-run attempt
+owner that no controller proof covers. A re-run for finals alone waits until
+every staging run has settled for a while so a stuck app or a namespace fence
+that failed the deploy can clear first, and never follows a cancelled head.
+A completion check that needs to wait schedules a fresh check outside the
+shared catch-up lock. A re-run attempt
 is the same develop push event, so every push-only authority, cache and
 admission check applies unchanged, its admission clock starts afresh, and
 staging-cd.yml gains no trigger. Like any allocation it also retries the
@@ -27,8 +28,8 @@ An unreadable controller outcome is reported as unknown and never re-runs.
 A head run whose plan stopped at its completion gate (a budget-stopped plan,
 or tags that could not be read), or whose allocation stopped at its
 settlement gate (a transient read, write or budget refusal), is re-run once
-too, with the same settling: from the hourly check, once every staging run
-has settled, never after a cancelled head, and never by the bot's own
+too, with the same settling: once every staging run has settled, never after
+a cancelled head, and never by the bot's own
 attempt. Reservations a stopped allocation committed belong to its settled
 attempt, so the re-run attempt reserves their sources again. A spent head
 whose plan or allocation stopped at its gate again is never caught up: it is
@@ -79,6 +80,7 @@ TIMESTAMP = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"
 BEHIND = ("unfinalized-reservation", "unproven-final", "undeployed-final")
 UNKNOWN = "controller-unknown"
 Lane = collections.namedtuple("Lane", "component reason version")
+Decision = collections.namedtuple("Decision", "reason run lanes settle_until", defaults=(None,))
 
 
 def push_run(run):
@@ -89,20 +91,21 @@ def push_run(run):
             and isinstance(run.get("repository"), dict) and run["repository"].get("full_name") == REPOSITORY)
 
 
-def advertised(runner=subprocess.run):
-    # The repository is public. One advertisement binds develop to every tag.
+def advertised(runner=subprocess.run, *, include_tags=True):
+    # One advertisement binds develop to every tag. The write fence only needs develop.
+    patterns = [DEVELOP, "refs/tags/*"] if include_tags else [DEVELOP]
     env = {key: value for key, value in os.environ.items() if key in ("PATH", "LANG", "LC_ALL")}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
     result = runner(["git", "-c", "credential.helper=", "-c", "http.extraHeader=", "ls-remote", "--refs",
-                     REMOTE, DEVELOP, "refs/tags/*"], env=env, text=True, capture_output=True,
+                     REMOTE, *patterns], env=env, text=True, capture_output=True,
                     timeout=60, check=False)
     if result.returncode != 0:
-        raise Refusal("Release tag inventory is incomplete") from ci_retry.cli_cause(result.stderr)
-    require(len(result.stdout) <= 16 * 1024 * 1024, "Release tag inventory is incomplete")
+        raise Refusal("Release ref inventory is incomplete") from ci_retry.cli_cause(result.stderr)
+    require(len(result.stdout) <= 16 * 1024 * 1024, "Release ref inventory is incomplete")
     refs = {}
     for line in result.stdout.splitlines():
         oid, _, ref = line.partition("\t")
-        require(matches(r"[0-9a-f]{40}", oid) and (ref == DEVELOP or ref.startswith("refs/tags/"))
+        require(matches(r"[0-9a-f]{40}", oid) and (ref == DEVELOP or (include_tags and ref.startswith("refs/tags/")))
                 and ref not in refs, "Release tag inventory is malformed")
         refs[ref] = oid
     require(DEVELOP in refs, "Develop head could not be verified")
@@ -262,9 +265,17 @@ def undeployed(owner, since):
 
 
 def run_jobs(api, run):
-    jobs = api.request(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100")
-    require(isinstance(jobs, dict) and isinstance(jobs.get("jobs"), list), "Head run jobs could not be read")
-    return [job for job in jobs["jobs"] if isinstance(job, dict)]
+    listing = api.request(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100")
+    require(isinstance(listing, dict) and isinstance(listing.get("jobs"), list)
+            and type(listing.get("total_count")) is int and listing["total_count"] == len(listing["jobs"]),
+            "Head run jobs could not be read")
+    jobs = listing["jobs"]
+    require(all(isinstance(job, dict) and type(job.get("id")) is int and job["id"] > 0
+                and type(job.get("run_id")) is int and job["run_id"] == run["id"]
+                and type(job.get("run_attempt")) is int and job["run_attempt"] == run["run_attempt"]
+                and job.get("head_sha") == run["head_sha"] for job in jobs)
+            and len({job["id"] for job in jobs}) == len(jobs), "Head run job identity differs")
+    return jobs
 
 
 def allocated(jobs):
@@ -275,7 +286,8 @@ def allocated(jobs):
 def stopped_at(jobs, name, gate):
     """The job failed at its gate for a transient stop, not at a refusal or an error."""
     rows = [job for job in jobs if job.get("name") == name]
-    if len(rows) != 1 or rows[0].get("conclusion") != "failure" or not isinstance(rows[0].get("steps"), list):
+    if (len(rows) != 1 or rows[0].get("status") != "completed" or rows[0].get("conclusion") != "failure"
+            or not isinstance(rows[0].get("steps"), list)):
         return False
     failed = [step.get("name") for step in rows[0]["steps"] if isinstance(step, dict)
               and step.get("conclusion") == "failure"]
@@ -290,25 +302,31 @@ def allocation_stopped(jobs):
     return stopped_at(jobs, ALLOCATION_JOB, ALLOCATION_GATE)
 
 
-def settled(run, now):
+def settle_deadline(runs, now):
+    """When the newest completion settles, or None without a trustworthy clock."""
+    finished = [run.get("updated_at") for run in runs]
+    if not all(matches(TIMESTAMP, value) for value in finished):
+        return None
     try:
-        finished = datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")).timestamp()
-    except (AttributeError, KeyError, TypeError, ValueError):
-        return False
-    return now - finished >= SETTLE_SECONDS
+        latest = max(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() for value in finished)
+    except (OSError, OverflowError, ValueError):
+        return None
+    deadline = int(latest) + SETTLE_SECONDS
+    return deadline if latest <= now else None
 
 
-def decide(api, read_refs, read_controller, *, event=None, now=None):
+def decide(api, read_refs, read_controller, *, now=None):
     listing = api.request("actions/workflows/staging-cd.yml/runs?branch=develop&per_page=100")
     require(isinstance(listing, dict) and isinstance(listing.get("workflow_runs"), list)
             and all(isinstance(run, dict) for run in listing["workflow_runs"]), "Staging runs could not be read")
+    staging_runs = listing["workflow_runs"]
     # The last run to finish decides; a running one (or a pending re-run) will.
-    if any(run.get("status") != "completed" for run in listing["workflow_runs"]):
-        return "run-active", None, []
+    if any(run.get("status") != "completed" for run in staging_runs):
+        return Decision("run-active", None, [])
     refs = read_refs()
-    runs = [run for run in listing["workflow_runs"] if run.get("head_sha") == refs[DEVELOP]]
+    runs = [run for run in staging_runs if run.get("head_sha") == refs[DEVELOP]]
     if not runs:
-        return "head-run-missing", None, []
+        return Decision("head-run-missing", None, [])
     require(len(runs) == 1 and push_run(runs[0]) and runs[0].get("path") == WORKFLOW,
             "Develop head run identity is invalid")
     run = runs[0]
@@ -322,54 +340,62 @@ def decide(api, read_refs, read_controller, *, event=None, now=None):
     if not spent and not allocated(jobs):
         # A plan or an allocation stopped at its transient gate is re-run once,
         # as a re-run for finals alone is: never after a cancelled head, and
-        # only from the hourly check once every staging run has settled. Any
-        # other failed plan or allocation is a failure to retry on the next
-        # push, not a skip.
+        # only once every staging run has settled. A failure outside its gate
+        # waits for the next push.
         if stage is None:
-            return "head-unallocated", None, []
+            return Decision("head-unallocated", None, [])
         if run.get("conclusion") == "cancelled":
-            return "cancelled", None, []
+            return Decision("cancelled", None, [])
         current = time.time() if now is None else now
-        if event != "schedule" or not all(settled(row, current) for row in listing["workflow_runs"]):
-            return stage + "-waiting", None, []
-        return stage + "-rerun", run, []
+        deadline = settle_deadline(staging_runs, current)
+        if deadline is None or deadline > current:
+            return Decision(stage + "-waiting", None, [], deadline)
+        return Decision(stage + "-rerun", run, [])
     wait, lanes = left_behind(api, refs, run, jobs, read_controller)
     if wait:
-        return wait, None, []
+        return Decision(wait, None, [])
     late = [lane for lane in lanes if lane.reason in BEHIND]
     if spent and stage:
         # Its last attempt stopped at the gate again, so the head's own sources
         # were never allocated: whatever its lanes show, it is not caught up.
-        return stage + "-exhausted", run, lanes
+        return Decision(stage + "-exhausted", run, lanes)
     if late and spent:
-        return "exhausted", run, lanes
+        return Decision("exhausted", run, lanes)
     if late and all(lane.reason != BEHIND[0] for lane in late):
         # A person or a job timeout cancelled the head; a build left behind still re-runs.
         if run.get("conclusion") == "cancelled":
-            return "cancelled", None, lanes
+            return Decision("cancelled", None, lanes)
         # A deploy failure's cause may outlast its run; the single retry waits for it.
         current = time.time() if now is None else now
-        if event != "schedule" or not all(settled(row, current) for row in listing["workflow_runs"]):
-            return "final-waiting", None, lanes
+        deadline = settle_deadline(staging_runs, current)
+        if deadline is None or deadline > current:
+            return Decision("final-waiting", None, lanes, deadline)
     if late:
-        return "rerun", run, lanes
+        return Decision("rerun", run, lanes)
     if spent:
-        return "head-caught-up", None, lanes
-    return (UNKNOWN if lanes else "nothing-behind"), None, lanes
+        return Decision("head-caught-up", None, lanes)
+    return Decision(UNKNOWN if lanes else "nothing-behind", None, lanes)
 
 
-def rerun(api, run, *, sleep=time.sleep):
+def rerun(api, run, read_head, *, sleep=time.sleep):
     path = f"actions/runs/{run['id']}"
+
+    def same_push(row):
+        return (push_run(row) and row["id"] == run["id"] and row["head_sha"] == run["head_sha"]
+                and row.get("path") == WORKFLOW)
+
     current = api.request(path)
-    require(push_run(current) and current["id"] == run["id"] and current["run_attempt"] == run["run_attempt"]
+    require(same_push(current) and current["run_attempt"] == run["run_attempt"]
             and current.get("status") == "completed", "Develop head run changed before its catch-up")
+    if read_head() != run["head_sha"]:
+        return None
     try:
         api.request(path + "/rerun", {"enable_debug_logging": False})
     except Refusal:
         pass  # GitHub answers 201 without a body; a lost answer is settled by reading back.
     for attempt in range(3):
         after = api.request(path)
-        require(push_run(after) and after["id"] == run["id"], "Develop head run identity is invalid")
+        require(same_push(after), "Develop head run identity is invalid")
         if after["run_attempt"] > run["run_attempt"]:
             return after["run_attempt"]
         if attempt < 2:
@@ -406,10 +432,17 @@ def main():
         try:
             authorized(env)
             api = GitHub(env.get("GH_TOKEN"), deadline=time.monotonic() + SECONDS)
-            reason, run, lanes = decide(api, advertised, controller_reader(env), event=env["GITHUB_EVENT_NAME"])
+            reason, run, lanes, settle_until = decide(api, advertised, controller_reader(env))
             outcome.update(reason=reason, lanes=lanes)
+            if settle_until is not None and env.get("GITHUB_OUTPUT"):
+                with Path(env["GITHUB_OUTPUT"]).open("a") as output:
+                    print(f"settle_until={settle_until}", file=output)
             if reason in RERUNS:
-                outcome.update(run=run["id"], attempt=rerun(api, run))
+                attempt = rerun(api, run, lambda: advertised(include_tags=False)[DEVELOP])
+                if attempt is None:
+                    outcome.update(reason="head-moved", lanes=[])
+                else:
+                    outcome.update(run=run["id"], attempt=attempt)
             elif reason in EXHAUSTED:
                 outcome.update(run=run["id"], attempt=run["run_attempt"])
         except Refusal as error:

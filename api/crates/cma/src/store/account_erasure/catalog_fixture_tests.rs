@@ -160,6 +160,10 @@ fn fixtures(subject: &str, suffix: &str) -> Vec<(&'static str, Document)> {
             doc! {"_id":{"subject":subject,"operation":"fixture","key":&id}},
         ),
         (
+            "sandbox_creation_proofs",
+            doc! {"_id": &id,"owner":subject},
+        ),
+        (
             "provider_tool_opens",
             doc! {"_id":&id,"record":{"scope":{"agent_id":&agent}}},
         ),

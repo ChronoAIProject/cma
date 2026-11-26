@@ -7,23 +7,37 @@ pub(super) async fn register(
     live_agents: &Arc<LiveAgentRegistry>,
 ) -> Result<Option<Arc<crate::agent_manager::AgentManager>>, String> {
     match &config.agent_manager_replicas {
-        Some(settings) => {
-            let manager = crate::agent_manager::AgentManager::register(
+        Some(settings) => Ok(Some(
+            crate::agent_manager::AgentManager::register_configured(
                 stores.sandbox_model.clone(),
                 live_agents.clone(),
-                settings.relay_address.clone(),
-                settings.max_owned_agents,
-                config.features.ownership_cleanup_pacing,
-                config.features.batch_ownership_renewal,
+                settings,
+                &config.features,
             )
-            .await?;
-            if config.features.receiver_housekeeping_containment {
-                manager.enable_receiver_containment();
-            }
-            Ok(Some(manager))
-        }
+            .await?,
+        )),
         None => Ok(None),
     }
+}
+
+pub(super) fn owner_restart(
+    config: &Config,
+    stores: &MongoStores,
+    adapter: &Arc<dyn layer3_adapter::SandboxAdapter>,
+    projections: AgentProjectionServices,
+) -> AgentProjectionServices {
+    if !config.features.owner_agent_restart_enabled
+        || !config.features.owner_stop_settlement_enabled
+    {
+        return projections;
+    }
+    projections.with_owner_agent_restart(layer2_core::sandbox::AgentRestartService::new(
+        stores.sandbox_model.clone(),
+        Arc::new(crate::sandbox::agent_process_proof::RestartObservation {
+            adapter: adapter.clone(),
+            deployment_id: config.deployment_id.clone(),
+        }),
+    ))
 }
 
 pub(super) fn relay(

@@ -1,4 +1,5 @@
 //! Prepared health probes may briefly own capacity; no transaction waits for them.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::time::Duration;
 
 use super::*;
@@ -94,40 +95,40 @@ impl MongoSandboxStore {
             {
                 Ok(receipt) => receipt,
                 Err(AdmissionError::PreparedLeaseBusy) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     prepared_lease_waits += 1;
                     delay = PREPARED_POLL.min(PREPARED_WAIT.saturating_sub(started.elapsed()));
                     continue;
                 }
                 Err(AdmissionError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(AdmissionError::Retry(error)) | Err(AdmissionError::Driver(error))
                     if is_transient(&error) =>
                 {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     failures += 1;
                     delay = admission_retry_delay(failures);
                     continue;
                 }
                 Err(AdmissionError::Retry(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     failures += 1;
                     delay = admission_retry_delay(failures);
                     continue;
                 }
                 Err(AdmissionError::Duplicate) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return match durable_replay(self, &admission).await? {
                         Some(sandbox) => Ok(SandboxAdmissionResult::Existing(sandbox)),
                         None => Err(SandboxStoreError::Duplicate),
                     };
                 }
                 Err(AdmissionError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };

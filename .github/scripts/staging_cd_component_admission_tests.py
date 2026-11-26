@@ -13,14 +13,15 @@ from unittest.mock import Mock, patch
 from staging_cd_admission_report import write_admission
 from staging_cd_common import Refusal
 from staging_cd_compatibility import ContractPolicy, GROUP
-from staging_cd_component_admission import automatic_admission
+from staging_cd_component_admission import automatic_admission, verified_resume
 from staging_cd_history import DevelopHistory
 from staging_cd_invoke import deploy
 from staging_cd_deploy_result_tests import fixture_result
 import staging_cd_invoke_tests
+from staging_cd_promotion import proof
 from staging_cd_receipts import canonical
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt, fixture_tag
-from staging_cd_set import verify_set
+from staging_cd_set import private_document, verify_set
 from staging_cd_versions import DEPLOYABLES
 from staging_cd_watermark import require_current_versions
 import staging_cd_set_report as report
@@ -45,6 +46,38 @@ class ComponentAdmissionTests(unittest.TestCase):
 
     def admit(self, keys):
         return automatic_admission(self.matrix(keys), self.api, self.registry, policy=self.policy)
+
+    def test_queued_resume_requires_current_receipts_for_the_whole_admitted_set(self):
+        keys = ["web", "eg"]
+        matrix = self.matrix(keys)
+        value, failures = self.admit(keys)
+        components = private_document(value)["components"]
+        confirmed = {"writer": "f" * 40, "stamp": proof(components)}
+        evidence = dict.fromkeys(keys, confirmed)
+        read = Mock(return_value=evidence)
+        self.assertTrue(verified_resume(matrix, value, failures, self.api, read))
+        del evidence["eg"]
+        self.assertFalse(verified_resume(matrix, value, failures, self.api, read))
+        read.return_value = {key: {"writer": "f" * 40, "stamp": proof({key: release})}
+                             for key, release in components.items()}
+        self.assertFalse(verified_resume(matrix, value, failures, self.api, read))
+        wrong = dict(components, eg=dict(components["eg"], image="sha256:" + "a" * 64))
+        read.return_value = dict.fromkeys(keys, {"writer": "f" * 40, "stamp": proof(wrong)})
+        self.assertFalse(verified_resume(matrix, value, failures, self.api, read))
+        read.side_effect = OSError()
+        self.assertFalse(verified_resume(matrix, value, failures, self.api, read))
+
+    def test_new_publication_or_partial_admission_never_uses_an_old_proof(self):
+        matrix = self.matrix(["web"])
+        value, failures = self.admit(["web"])
+        read = Mock()
+        reservation = dict(self.receipts["web"]["identity"], schema="cma-version-reservation-v1")
+        del reservation["build"]
+        matrix["include"][0]["tasks"] = canonical([
+            {"mode": "publish", "component": "web", "reservation": reservation}])
+        self.assertFalse(verified_resume(matrix, value, failures, self.api, read))
+        self.assertFalse(verified_resume(self.matrix(["web"]), value, {"eg": "publication-unqualified"}, self.api, read))
+        read.assert_not_called()
 
     def unavailable(self, *keys):
         self.api.tags.side_effect = lambda key: [] if key in keys else [fixture_tag(self.receipts[key])]
@@ -82,7 +115,8 @@ class ComponentAdmissionTests(unittest.TestCase):
 
     def test_every_lane_with_a_pending_successor_deploys_but_a_higher_final_is_withheld(self):
         keys, apps = sorted(DEPLOYABLES), ['am', 'eg', 'web']
-        successors = [DEPLOYABLES[key] + '/pending/v0.10.2' for key in keys]
+        newer = {key: DEPLOYABLES[key] + '/v' + ('0.10.3' if key == 'runtime' else '0.10.2') for key in keys}
+        successors = [tag.replace('/v', '/pending/v') for tag in newer.values()]
         pending = self.advertisement(*successors)
         self.api.require_current_versions.side_effect = pending
         value, failures = self.admit(keys)
@@ -92,7 +126,7 @@ class ComponentAdmissionTests(unittest.TestCase):
         self.execute(value, check=pending)
         for key in keys:
             with self.subTest(component=key):
-                final = self.advertisement(*successors, DEPLOYABLES[key] + '/v0.10.2')
+                final = self.advertisement(*successors, newer[key])
                 self.api.require_current_versions.side_effect = final
                 narrowed, failures = self.admit(keys)
                 self.assertEqual(set(narrowed['receipts']), set(keys) - {key})

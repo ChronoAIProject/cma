@@ -33,7 +33,7 @@ export function OwnerMessageStream({
       media={conversationMedia(
         agentId,
         client?.files,
-        authorized,
+        authorized && !stream.retained,
         stream.conversation.runtimeMetadata?.workingDirectory,
       )}
     />

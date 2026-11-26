@@ -87,8 +87,9 @@ function SettingsEditor({
   const [current, setCurrent] = useState<StoredPlatformSettings>();
   const [failure, setFailure] = useState<OperatorFailure>();
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [needsReview, setNeedsReview] = useState(false);
+  const [needsReview, setNeedsReview] = useState<'draft' | 'write'>();
   const [spendErrors, setSpendErrors] = useState<SpendErrors>({});
   const submitting = useRef(false);
   const spendChanged = budgetChanged(base.model_budget, draft.model_budget);
@@ -107,6 +108,37 @@ function SettingsEditor({
       setAvailability(latest);
     } catch (error) {
       setFailure(operatorFailure(error));
+    }
+  };
+  const refresh = async () => {
+    if (submitting.current) return;
+    // Uncertain writes still require review even when the visible draft is clean.
+    const retainDraft = needsReview === 'write' || JSON.stringify(draft) !== JSON.stringify(base);
+    submitting.current = true;
+    setRefreshing(true);
+    setBusy(true);
+    setFailure(undefined);
+    try {
+      const latest = await client.admin.readSettings();
+      setAvailability(latest);
+      if (retainDraft) {
+        setCurrent(latest);
+        setNeedsReview(needsReview === 'write' ? 'write' : 'draft');
+      } else {
+        setDraft(latest.settings);
+        setBase(latest.settings);
+        setRevision(latest.revision);
+        setCurrent(undefined);
+        setNeedsReview(undefined);
+        setSpendErrors({});
+        setSaved(false);
+      }
+    } catch (error) {
+      setFailure(operatorFailure(error));
+    } finally {
+      submitting.current = false;
+      setRefreshing(false);
+      setBusy(false);
     }
   };
   const save = async () => {
@@ -136,7 +168,7 @@ function SettingsEditor({
       setFailure(problem);
       if (problem.code === 'model_budget_writes_unavailable') setAvailability({});
       if (problem.conflict || problem.uncertain) {
-        setNeedsReview(true);
+        setNeedsReview('write');
         await reread();
       }
     } finally {
@@ -180,7 +212,7 @@ function SettingsEditor({
                     setRevision(current.revision);
                     setAvailability(current);
                     setCurrent(undefined);
-                    setNeedsReview(false);
+                    setNeedsReview(undefined);
                     setFailure(undefined);
                     setSpendErrors({});
                   }
@@ -197,7 +229,7 @@ function SettingsEditor({
                     setRevision(current.revision);
                     setAvailability(current);
                     setCurrent(undefined);
-                    setNeedsReview(false);
+                    setNeedsReview(undefined);
                     setFailure(undefined);
                     setSpendErrors({});
                   }
@@ -247,13 +279,7 @@ function SettingsEditor({
       availability.model_request_budget_writes_available !== true ||
       availability.platform_spend_writes_available !== true ? (
         <div className="operator-actions">
-          <Button
-            disabled={busy}
-            onClick={() => {
-              setNeedsReview(true);
-              void reread();
-            }}
-          >
+          <Button disabled={busy} onClick={() => void refresh()}>
             Refresh settings availability
           </Button>
           {spendSaveBlocked ? (
@@ -413,10 +439,10 @@ function SettingsEditor({
         <Button
           type="submit"
           variant="primary"
-          disabled={busy || needsReview || spendSaveBlocked}
+          disabled={busy || needsReview !== undefined || spendSaveBlocked}
           icon={<IconCheckOutline16 />}
         >
-          {busy ? 'Saving' : 'Save settings'}
+          {refreshing ? 'Refreshing' : busy ? 'Saving' : 'Save settings'}
         </Button>
         <Presence>
           {saved ? <p role="status">Settings saved at revision {revision}.</p> : null}

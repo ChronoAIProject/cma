@@ -14,6 +14,7 @@ import {
 } from './client';
 import { ConnectionWizardView } from './ConnectionWizardView';
 import { ConnectionIntentRecovery, savedConnection } from './intentRecovery';
+import { needsManualGitHubRepair } from './RepositoryConnectionRepair';
 import { rememberSameTabReturn } from './sameTabReturn';
 import './Connections.css';
 
@@ -30,6 +31,7 @@ interface WizardProps {
   readonly presentation?: 'inline' | 'dialog';
   readonly dialogTitle?: string;
   readonly description?: string;
+  readonly repositoryRecovery?: boolean;
   readonly client?: ConnectionClient;
 }
 
@@ -61,6 +63,7 @@ function ConnectionSequence({
   onRecoverySelected,
   forceSubscription = false,
   expectedOwner,
+  repositoryRecovery = false,
   presentation = 'inline',
   dialogTitle = 'Connect required services',
   description = 'Connect the accounts this sandbox needs. CMA verifies each connection automatically, then continues opening your Sandbox.',
@@ -132,6 +135,7 @@ function ConnectionSequence({
 
   const startNext = async (current: ConnectionReport) => {
     if (starting.current || !sequence.current || !live.current) return;
+    if (repositoryRecovery && needsManualGitHubRepair(current)) return;
     const next =
       current.services.find((row) => row.service === intentRecovery.pending?.service_id) ??
       current.services.find(
@@ -186,6 +190,29 @@ function ConnectionSequence({
     }
   };
 
+  const cancelConnection = (mode: 'cancel' | 'repair', saved?: StartedConnection) => {
+    generation.current += 1;
+    cancelled.current = true;
+    starting.current = false;
+    recovery.current?.abort();
+    recovery.current = null;
+    recoveryPopup.current?.close();
+    recoveryPopup.current = null;
+    setBusy(false);
+    sequence.current = false;
+    setRunning(false);
+    const active = attempt.current ?? intentRecovery.pending ?? saved;
+    if (active !== undefined) void client.cancel(target, active).catch(() => undefined);
+    try {
+      intentRecovery.interrupt(true, mode === 'cancel');
+    } catch {
+      /* Cancellation remains fenced in memory. */
+    }
+    persist(undefined);
+    popup.current?.close();
+    popup.current = null;
+  };
+
   useEffect(() => {
     live.current = true;
     generation.current += 1;
@@ -219,6 +246,12 @@ function ConnectionSequence({
           throw new Error('Your CMA account changed. Reopen this connection step to continue.');
         owner.current = result.owner;
         intentRecovery.bind(result, forceSubscription ? undefined : saved);
+        if (repositoryRecovery && needsManualGitHubRepair(result)) {
+          onRecoverySelected();
+          cancelConnection('repair', saved?.owner === result.owner ? saved : undefined);
+          setReport(result);
+          return;
+        }
         if (recoveryEnabled) {
           if (saved !== undefined && intentRecovery.pending === undefined) persist(undefined);
           saved = undefined;
@@ -342,7 +375,7 @@ function ConnectionSequence({
     };
     // The serialized target makes this lifecycle independent of parent renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, client, forceSubscription, expectedOwner]);
+  }, [key, client, forceSubscription, expectedOwner, repositoryRecovery]);
 
   const connect = () => {
     if (busy || report === undefined) return;
@@ -369,26 +402,7 @@ function ConnectionSequence({
     else void startNext(report);
   };
   const cancel = () => {
-    generation.current += 1;
-    cancelled.current = true;
-    starting.current = false;
-    recovery.current?.abort();
-    recovery.current = null;
-    recoveryPopup.current?.close();
-    recoveryPopup.current = null;
-    setBusy(false);
-    sequence.current = false;
-    setRunning(false);
-    const active = attempt.current ?? intentRecovery.pending;
-    if (active !== undefined) void client.cancel(target, active).catch(() => undefined);
-    try {
-      intentRecovery.interrupt(true);
-    } catch {
-      /* Cancellation remains fenced in memory. */
-    }
-    persist(undefined);
-    popup.current?.close();
-    popup.current = null;
+    cancelConnection('cancel');
     onCancel?.();
   };
   const authorize = async () => {
@@ -473,6 +487,7 @@ function ConnectionSequence({
         connect,
         cancel,
         authorize,
+        repositoryRepair: repositoryRecovery ? target : undefined,
         resumeRequired: intentRecovery.needsResume,
       }}
     />

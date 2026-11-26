@@ -1,7 +1,8 @@
 import { selectAgentAction } from './agentActionDispatch';
 import { useTreeFocus } from './useTreeFocus';
 import { Presence } from '../ui/Presence';
-import { useId, useState } from 'react';
+import { useId } from 'react';
+import { useTreeCollapse } from './useTreeCollapse';
 import {
   sandboxChildrenAvailable,
   sandboxChildrenReadable,
@@ -10,7 +11,6 @@ import {
 import { sandboxStatusPresentation } from '../sandbox/presentation';
 import { sandboxHasParkedRuntimeUpdate } from '../sandbox/parkedRuntimeUpdate';
 import { taskPresentation } from './taskPresentation';
-import type { AppRoute } from '../routing/routes';
 import { toneDot } from '../ui/Badge';
 import {
   IconBranchOutline16,
@@ -20,7 +20,6 @@ import {
   IconFolderOpenOutline16,
   IconPauseOutline16,
 } from '../ui/icons';
-import type { NavigationSandbox } from './navigation';
 import { TreeRow } from './TreeRow';
 import { agentActions, sandboxActions, workspaceActions } from './treeActions';
 import { CreationBadge, useTreeCreation } from './treeCreation';
@@ -30,77 +29,21 @@ import { taskActivityOrder } from './taskGroups';
 import { activityLabel, agentSignal, stateMeta, keyboardNavigation } from './treePresentation';
 import { PersonalAgentTree } from './PersonalAgentTree';
 import { DeletionProgressList } from './DeletionProgressList';
-import type { CurrentTask } from './taskStatus';
 export { activityLabel } from './treePresentation';
-import type { ResourceViewsClient } from '../resources/client';
 import { useChannelFacts } from '../resources/useChannelFacts';
 import { ChannelBadge, TreeFactsSummary, treeAgentIds } from './treeChannel';
 import { agentDisplayTitle } from '../agent/presentation';
 import { sandboxFilterEmpty, sandboxNavigation } from './navigationStatuses';
 
-export interface TreePermissions {
-  readonly createWorkspace: boolean;
-  readonly createAgent: boolean;
-  readonly pauseSandbox: boolean;
-  readonly deleteSandbox: boolean;
-  readonly removeWorkspace: boolean;
-  readonly stopAgent: boolean;
-  readonly deleteAgent: boolean;
-  readonly exportHistory: boolean;
-}
-
-export type TreeAction =
-  | { readonly kind: 'new_workspace'; readonly sandboxId: string }
-  | { readonly kind: 'pause_sandbox'; readonly sandboxId: string }
-  | { readonly kind: 'revive_sandbox'; readonly sandboxId: string }
-  | { readonly kind: 'delete_sandbox'; readonly sandboxId: string }
-  | { readonly kind: 'new_agent'; readonly workspaceId: string }
-  | { readonly kind: 'new_agent'; readonly sandboxId: string }
-  | { readonly kind: 'remove_workspace'; readonly workspaceId: string }
-  | { readonly kind: 'stop_agent'; readonly agentId: string }
-  | { readonly kind: 'delete_agent'; readonly agentId: string }
-  | { readonly kind: 'export_history'; readonly agentId: string }
-  | { readonly kind: 'export_retained_conversation'; readonly agentId: string };
-
-export interface TreeProps {
-  readonly currentTask?: CurrentTask;
-  readonly active?: boolean;
-  readonly resourceClient?: ResourceViewsClient;
-  readonly viewerId: string;
-  readonly view?: 'agent' | 'sandbox';
-  readonly statusFilter?: string;
-  readonly items: readonly NavigationSandbox[];
-  readonly refreshError?: string;
-  readonly lifecycleBusy?: boolean;
-  readonly busySandboxIds?: ReadonlySet<string>;
-  readonly deletingSandboxIds?: ReadonlySet<string>;
-  readonly onViewDeletion?: (sandboxId: string) => void;
-  readonly route: AppRoute;
-  readonly permissions: TreePermissions;
-  readonly onNavigate: (route: AppRoute) => void;
-  readonly onAgentIntent?: (agentId: string, active: boolean) => void;
-  readonly onAction: (action: TreeAction) => void;
-}
-
-function storageKey(viewerId: string): string {
-  return `cma:tree:${viewerId}:collapsed`;
-}
-
-function restored(viewerId: string): Set<string> {
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(storageKey(viewerId)) ?? '[]');
-    return new Set(
-      Array.isArray(parsed)
-        ? parsed.filter((value): value is string => typeof value === 'string')
-        : [],
-    );
-  } catch {
-    return new Set();
-  }
-}
+import type { TreeProps } from './treeTypes';
+export type { TreeAction, TreePermissions, TreeProps } from './treeTypes';
 
 export function Tree({
   currentTask,
+  selectedRetired,
+  onShowAll,
+  attention,
+  showDeletionProgress = true,
   active = true,
   resourceClient,
   viewerId,
@@ -138,25 +81,18 @@ export function Tree({
   );
   const groupId = useId();
   const focus = useTreeFocus();
-  const [collapsed, setCollapsed] = useState(() => restored(viewerId));
-  const toggle = (node: string) => {
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (next.has(node)) next.delete(node);
-      else next.add(node);
-      localStorage.setItem(storageKey(viewerId), JSON.stringify([...next]));
-      return next;
-    });
-  };
+  const { collapsed, toggle } = useTreeCollapse(viewerId);
 
   return (
     <div className="resource-tree" {...focus}>
-      <DeletionProgressList
-        sandboxes={deletingItems.map(({ sandbox }) => sandbox)}
-        onViewStatus={(id) =>
-          onViewDeletion ? onViewDeletion(id) : onNavigate({ kind: 'sandbox', sandboxId: id })
-        }
-      />
+      {showDeletionProgress ? (
+        <DeletionProgressList
+          sandboxes={deletingItems.map(({ sandbox }) => sandbox)}
+          onViewStatus={(id) =>
+            onViewDeletion ? onViewDeletion(id) : onNavigate({ kind: 'sandbox', sandboxId: id })
+          }
+        />
+      ) : null}
       <Presence>
         {refreshError === undefined ? null : (
           <p className="resource-tree__notice" role="alert">
@@ -168,6 +104,9 @@ export function Tree({
         <PersonalAgentTree
           viewerId={viewerId}
           currentTask={currentTask}
+          selectedRetired={selectedRetired}
+          onShowAll={onShowAll}
+          attention={attention}
           active={active}
           items={visibleItems}
           statusFilter={statusFilter}

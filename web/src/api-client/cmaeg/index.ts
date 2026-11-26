@@ -2,7 +2,12 @@ import { CmaegOutbound, type PrepareOutboundOptions } from './outbound.js';
 import type { PrepareOutboundMessage } from './types.js';
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from '../config.js';
 import type { OperationOptions } from '../http.js';
-import { CmaegChannels, type CreateChannelOptions, type ListChannelOptions } from './channels.js';
+import {
+  CmaegChannels,
+  type ChannelRecordManagementOptions,
+  type CreateChannelOptions,
+  type ListChannelOptions,
+} from './channels.js';
 import {
   CmaegConnections,
   type ConnectionOptions,
@@ -144,6 +149,17 @@ export class Cmaeg {
   recoverChannel(id: string, options?: OperationOptions) {
     return this.#channels.recoverChannel(id, options);
   }
+  /** Inspect a retained record using its storage ID and optional organization scope. */
+  getChannelRecordManagement(recordId: string, options?: ChannelRecordManagementOptions) {
+    return this.#channels.getChannelRecordManagement(recordId, options);
+  }
+  retireLegacyChannelRecord(
+    recordId: string,
+    expectedVersion: number,
+    options?: ChannelRecordManagementOptions,
+  ) {
+    return this.#channels.retireLegacyChannelRecord(recordId, expectedVersion, options);
+  }
   updateChannel(id: string, body: ChannelUpdateRequest, options?: OperationOptions) {
     return this.#channels.updateChannel(id, body, options);
   }
@@ -265,7 +281,11 @@ export class Cmaeg {
 }
 
 export { signWebhook, type WebhookHeaders } from './signing.js';
-export type { CreateChannelOptions, ListChannelOptions } from './channels.js';
+export type {
+  ChannelRecordManagementOptions,
+  CreateChannelOptions,
+  ListChannelOptions,
+} from './channels.js';
 export type { EventOptions, StreamEventOptions } from './events.js';
 export type { GatewayStreamEvent, GatewayMediaStreamEvent } from './stream.js';
 export type {

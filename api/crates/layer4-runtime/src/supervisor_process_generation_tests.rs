@@ -226,6 +226,324 @@ async fn abrupt_process_loss_requires_a_new_runtime_generation_before_reopen() {
     ));
 }
 
+pub(in crate::supervisor) fn restart_open(
+    supervisor: &Supervisor,
+    fence: u64,
+    launch: &AgentLaunch,
+) -> RequestFrame {
+    let mut request = FencedRequest::new(fence, launch.clone());
+    request.restart_runtime = Some(layer3_adapter::AgentRestartRuntime {
+        runtime: layer3_adapter::RuntimeStatusRequest {
+            sandbox_id: supervisor.config.sandbox_id.clone(),
+            generation: supervisor.config.generation,
+            home_identity: supervisor.config.home_identity.clone().unwrap(),
+        },
+        boot_id: supervisor.boot_id.clone(),
+    });
+    RequestFrame::OpenAgent(request)
+}
+
+#[tokio::test]
+async fn file_process_generation_teardown_closes_the_live_successor_on_its_pinned_boot() {
+    use crate::bridge::Outbound;
+    use layer3_adapter::wire::{AgentProcessCloseProof, AgentRestartFence};
+
+    let mut fixture = Fixture::new();
+    fixture.config.agent_process_restart_enabled = true;
+    let supervisor = installed(&fixture).await;
+    let mut initial = prepare_agent(&fixture, &supervisor).await;
+    initial.args[1] = r#"while IFS= read -r line; do printf '%s\n' "$line"; done"#.into();
+    assert!(matches!(
+        supervisor.dispatch(open(1, &initial)).await,
+        ResponseFrame::OpenAgent(_)
+    ));
+    let prior = supervisor.bridge("agent").await.unwrap();
+    let close = AgentCloseRequest::new("agent:agent:close:v1", initial.agent_id.clone());
+    assert!(matches!(
+        supervisor
+            .dispatch(RequestFrame::CloseAgent(FencedRequest::new(
+                2,
+                close.clone()
+            )))
+            .await,
+        ResponseFrame::CloseAgent(_)
+    ));
+    assert!(prior.is_ended());
+    let mut successor = initial.clone();
+    successor.operation_id = "agent:agent:open:2:v1".into();
+    successor.request_sha256 = "c".repeat(64);
+    let open = restart_open(&supervisor, 3, &successor);
+    let RequestFrame::OpenAgent(pinned) = &open else {
+        unreachable!()
+    };
+    let mut close_successor = AgentRestartFence {
+        predecessor: AgentProcessCloseProof {
+            runtime: pinned.restart_runtime.clone().unwrap(),
+            close,
+            open_request_sha256: initial.request_sha256.clone(),
+            worktree_path: initial.cwd.clone(),
+        },
+        successor_operation_id: successor.operation_id.clone(),
+        authority_fence: 4,
+        successor_open_request_sha256: Some(successor.request_sha256.clone()),
+    };
+    assert!(matches!(
+        supervisor.dispatch(open).await,
+        ResponseFrame::OpenAgent(_)
+    ));
+    let bridge = supervisor.bridge("agent").await.unwrap();
+    let mut output = bridge.subscribe();
+    assert!(bridge.send(b"new process response".to_vec()).await);
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), output.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        Outbound::Frame(b"new process response".to_vec())
+    );
+    let wrong_boot = std::mem::replace(
+        &mut close_successor.predecessor.runtime.boot_id,
+        "replacement-boot".into(),
+    );
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::FenceAgentRestart(close_successor.clone()))
+                .await
+        ),
+        "agent_process_close_runtime_changed"
+    );
+    assert!(!bridge.is_ended());
+    close_successor.predecessor.runtime.boot_id = wrong_boot;
+    for _ in 0..2 {
+        assert_eq!(
+            supervisor
+                .dispatch(RequestFrame::FenceAgentRestart(close_successor.clone()))
+                .await,
+            ResponseFrame::FenceAgentRestart(close_successor.clone())
+        );
+    }
+    assert!(bridge.is_ended());
+    assert_eq!(
+        status(supervisor.dispatch(fixture.status()).await).agent_processes,
+        0
+    );
+    assert!(Path::new(&successor.cwd).join(".git").is_file());
+    assert!(Path::new(&successor.home)
+        .join("conversation-fixture")
+        .is_file());
+}
+
+#[tokio::test]
+async fn owner_stop_close_proof_requires_the_latest_exact_native_pair() {
+    check_owner_stop_close_proof(true).await;
+    check_owner_stop_close_proof(false).await;
+}
+
+async fn check_owner_stop_close_proof(started_successor: bool) {
+    let mut fixture = Fixture::new();
+    fixture.config.agent_process_restart_enabled = true;
+    let supervisor = installed(&fixture).await;
+    let launch = prepare_agent(&fixture, &supervisor).await;
+    assert!(matches!(
+        supervisor.dispatch(open(1, &launch)).await,
+        ResponseFrame::OpenAgent(_)
+    ));
+    let RequestFrame::CloseAgent(close) = close(2) else {
+        unreachable!();
+    };
+    let proof = layer3_adapter::wire::AgentProcessCloseProof {
+        runtime: layer3_adapter::AgentRestartRuntime {
+            runtime: layer3_adapter::RuntimeStatusRequest {
+                sandbox_id: fixture.config.sandbox_id.clone(),
+                generation: fixture.config.generation,
+                home_identity: fixture.config.home_identity.clone().unwrap(),
+            },
+            boot_id: supervisor.boot_id.clone(),
+        },
+        close: close.request.clone(),
+        open_request_sha256: launch.request_sha256.clone(),
+        worktree_path: launch.cwd.clone(),
+    };
+    let request = RequestFrame::ProveAgentProcessClosed(proof.clone());
+    assert_eq!(
+        failure(supervisor.dispatch(request.clone()).await),
+        "agent_process_close_unproved"
+    );
+    assert!(matches!(
+        supervisor.dispatch(RequestFrame::CloseAgent(close)).await,
+        ResponseFrame::CloseAgent(_)
+    ));
+    assert_eq!(
+        supervisor.dispatch(request.clone()).await,
+        ResponseFrame::ProveAgentProcessClosed(proof.clone())
+    );
+    let mut different = proof.clone();
+    different.runtime.boot_id = "replaced-runtime".into();
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::ProveAgentProcessClosed(different))
+                .await
+        ),
+        "agent_process_close_runtime_changed"
+    );
+    let mut different = proof.clone();
+    different.worktree_path.push_str("-other");
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::ProveAgentProcessClosed(different))
+                .await
+        ),
+        "agent_process_close_unproved"
+    );
+
+    let mut successor = launch;
+    successor.operation_id = "agent:agent:open:2:v1".into();
+    successor.request_sha256 = "c".repeat(64);
+    let fence = layer3_adapter::wire::AgentRestartFence {
+        predecessor: proof,
+        successor_operation_id: successor.operation_id.clone(),
+        authority_fence: 4,
+        successor_open_request_sha256: None,
+    };
+    let fence_request = RequestFrame::FenceAgentRestart(fence.clone());
+    if started_successor {
+        let operation = crate::mutation_journal::Operation::open_agent(&successor);
+        supervisor
+            .mutations
+            .admit(3, std::slice::from_ref(&operation))
+            .await
+            .unwrap();
+        assert_eq!(
+            failure(supervisor.dispatch(request.clone()).await),
+            "agent_process_close_unproved"
+        );
+        assert_eq!(
+            failure(supervisor.dispatch(fence_request.clone()).await),
+            "agent_process_close_unproved"
+        );
+        assert!(!supervisor.mutations.admitted(&operation).await.unwrap());
+        assert!(matches!(
+            supervisor
+                .mutations
+                .begin::<layer3_adapter::wire::AgentOpenReceipt>(&operation)
+                .await
+                .unwrap(),
+            crate::mutation_store::Begin::New(_)
+        ));
+        assert_eq!(
+            failure(supervisor.dispatch(request.clone()).await),
+            "agent_process_close_unproved"
+        );
+        assert_eq!(
+            failure(supervisor.dispatch(fence_request).await),
+            "agent_process_close_unproved"
+        );
+        assert!(!supervisor.mutations.completed(&operation).await.unwrap());
+        assert!(supervisor.bridge("agent").await.is_none());
+        return;
+    }
+
+    let operation = crate::mutation_journal::Operation::open_agent(&successor);
+    let pending_authority = crate::mutation_scope::root(&fixture.config, &operation.subject)
+        .join("mutation-authority/.authority-fixture.tmp");
+    std::fs::write(&pending_authority, b"unfinished authority publication").unwrap();
+    assert_eq!(
+        failure(supervisor.dispatch(fence_request.clone()).await),
+        "agent_process_authority_unsettled"
+    );
+    assert!(pending_authority.is_file());
+    std::fs::remove_file(pending_authority).unwrap();
+
+    let predecessor_close =
+        crate::mutation_journal::Operation::close_agent(&fence.predecessor.close);
+    let authority_path =
+        crate::mutation_authority::Record::new(&fixture.config, 2, &predecessor_close)
+            .inventory_name(&fixture.config);
+    let valid = std::fs::read(&authority_path).unwrap();
+    let mut record: serde_json::Value = serde_json::from_slice(&valid).unwrap();
+    record["sandbox_id"] = serde_json::json!("sbx_foreign");
+    let corrupt = serde_json::to_vec(&record).unwrap();
+    std::fs::write(&authority_path, &corrupt).unwrap();
+    let authority_snapshot = || {
+        std::fs::read_dir(authority_path.parent().unwrap())
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (entry.file_name(), std::fs::read(entry.path()).unwrap())
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let snapshot = authority_snapshot();
+    for proof_request in [request.clone(), fence_request.clone()] {
+        assert_eq!(
+            failure(supervisor.dispatch(proof_request).await),
+            "mutation_authority_corrupt"
+        );
+        assert_eq!(authority_snapshot(), snapshot);
+    }
+    std::fs::write(&authority_path, valid).unwrap();
+    assert_eq!(
+        supervisor.dispatch(request.clone()).await,
+        ResponseFrame::ProveAgentProcessClosed(fence.predecessor.clone())
+    );
+
+    let mut wrong_boot = fence.clone();
+    wrong_boot.predecessor.runtime.boot_id = "replaced-runtime".into();
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::FenceAgentRestart(wrong_boot))
+                .await
+        ),
+        "agent_process_close_runtime_changed"
+    );
+    // Repeating the same request after a lost acknowledgement preserves its fence.
+    for _ in 0..2 {
+        assert_eq!(
+            supervisor.dispatch(fence_request.clone()).await,
+            ResponseFrame::FenceAgentRestart(fence.clone())
+        );
+    }
+    for prior_fence in [3, 4] {
+        assert_eq!(
+            failure(
+                supervisor
+                    .dispatch(restart_open(&supervisor, prior_fence, &successor))
+                    .await
+            ),
+            "mutation_authority_stale"
+        );
+    }
+    assert!(supervisor.bridge("agent").await.is_none());
+    assert!(!supervisor.mutations.admitted(&operation).await.unwrap());
+    assert!(!supervisor
+        .mutations
+        .has_process_writer("agent", 2)
+        .await
+        .unwrap());
+    assert!(matches!(
+        supervisor
+            .dispatch(restart_open(&supervisor, 5, &successor))
+            .await,
+        ResponseFrame::OpenAgent(_)
+    ));
+    assert_eq!(
+        failure(supervisor.dispatch(fence_request).await),
+        "agent_process_close_unproved"
+    );
+    assert!(matches!(
+        supervisor.dispatch(close_incarnation(6, 2)).await,
+        ResponseFrame::CloseAgent(_)
+    ));
+    assert_eq!(
+        failure(supervisor.dispatch(request).await),
+        "agent_process_close_unproved"
+    );
+}
+
 #[tokio::test]
 async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
     let mut fixture = Fixture::new();
@@ -238,12 +556,45 @@ async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
     let home_file = Path::new(&initial.home).join("conversation-fixture");
     let retained = std::fs::read(&home_file).unwrap();
 
+    let pinned_legacy_open = restart_open(&supervisor, 1, &initial);
+    let RequestFrame::OpenAgent(pinned) = &pinned_legacy_open else {
+        unreachable!()
+    };
+    let mut pinned_close = FencedRequest::new(
+        1,
+        AgentCloseRequest::new("agent:agent:close:v1", AgentSlot::new("agent")),
+    );
+    pinned_close
+        .restart_runtime
+        .clone_from(&pinned.restart_runtime);
+    let close_operation = crate::mutation_journal::Operation::close_agent(&pinned_close.request);
+    for request in [pinned_legacy_open, RequestFrame::CloseAgent(pinned_close)] {
+        assert_eq!(
+            failure(supervisor.dispatch(request).await),
+            "agent_process_restart_runtime_unexpected"
+        );
+    }
+    assert!(supervisor
+        .mutations
+        .recovery_fence(&close_operation)
+        .await
+        .unwrap()
+        .is_none());
+    let legacy_open = open(1, &initial);
+    assert!(serde_json::to_value(&legacy_open)
+        .unwrap()
+        .get("restart_runtime")
+        .is_none());
     assert!(matches!(
-        supervisor.dispatch(open(1, &initial)).await,
+        supervisor.dispatch(legacy_open).await,
         ResponseFrame::OpenAgent(_)
     ));
     assert_eq!(
-        failure(supervisor.dispatch(open(2, &replacement)).await),
+        failure(
+            supervisor
+                .dispatch(restart_open(&supervisor, 2, &replacement))
+                .await
+        ),
         "agent_process_predecessor_unclosed"
     );
     assert_eq!(
@@ -253,16 +604,25 @@ async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
     let closed = supervisor.dispatch(close(3)).await;
     assert!(matches!(closed, ResponseFrame::CloseAgent(_)));
     assert_eq!(
-        failure(supervisor.dispatch(open(3, &replacement)).await),
+        failure(
+            supervisor
+                .dispatch(restart_open(&supervisor, 3, &replacement))
+                .await
+        ),
         "mutation_authority_stale"
     );
     let mut moved = replacement.clone();
     moved.cwd = moved.cwd.replace("/project/", "/another-project/");
     assert_ne!(moved.cwd, replacement.cwd);
     assert_eq!(
-        failure(supervisor.dispatch(open(4, &moved)).await),
+        failure(
+            supervisor
+                .dispatch(restart_open(&supervisor, 4, &moved))
+                .await
+        ),
         "agent_process_predecessor_unclosed"
     );
+    let pinned = restart_open(&supervisor, 4, &replacement);
     drop(supervisor);
 
     fixture.config.agent_process_restart_enabled = false;
@@ -271,8 +631,29 @@ async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
         supervisor.dispatch(credential()).await,
         ResponseFrame::Credential(_)
     ));
+    let operation = crate::mutation_journal::Operation::open_agent(&replacement);
+    assert_eq!(
+        failure(supervisor.dispatch(pinned).await),
+        "agent_process_restart_runtime_changed"
+    );
     assert_eq!(
         failure(supervisor.dispatch(open(4, &replacement)).await),
+        "agent_process_restart_runtime_missing"
+    );
+    assert!(!supervisor.mutations.admitted(&operation).await.unwrap());
+    assert!(supervisor
+        .mutations
+        .recovery_fence(&operation)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(supervisor.bridge("agent").await.is_none());
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(restart_open(&supervisor, 4, &replacement))
+                .await
+        ),
         "agent_process_restart_disabled"
     );
     assert_eq!(
@@ -287,9 +668,16 @@ async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
         supervisor.dispatch(credential()).await,
         ResponseFrame::Credential(_)
     ));
-    let opened = supervisor.dispatch(open(4, &replacement)).await;
+    let opened = supervisor
+        .dispatch(restart_open(&supervisor, 4, &replacement))
+        .await;
     assert!(matches!(opened, ResponseFrame::OpenAgent(_)), "{opened:?}");
-    assert_eq!(supervisor.dispatch(open(4, &replacement)).await, opened);
+    assert_eq!(
+        supervisor
+            .dispatch(restart_open(&supervisor, 4, &replacement))
+            .await,
+        opened
+    );
     let bridge = supervisor.bridge("agent").await.unwrap();
 
     // The delayed request replays its original receipt without touching the new bridge.
@@ -319,7 +707,9 @@ async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
     replacement.operation_id = "agent:agent:open:3:v1".into();
     replacement.request_sha256 = "d".repeat(64);
     assert!(matches!(
-        supervisor.dispatch(open(6, &replacement)).await,
+        supervisor
+            .dispatch(restart_open(&supervisor, 6, &replacement))
+            .await,
         ResponseFrame::OpenAgent(_)
     ));
     let request = close_incarnation(7, 3);

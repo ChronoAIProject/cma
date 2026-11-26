@@ -1,4 +1,5 @@
 //! Admit owner-approved quiescence and its workflow receipt in one transaction.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::agent_access::AgentAccessError;
 use layer2_core::sandbox::store::{
     apply_sandbox_lifecycle_command, SandboxLifecycleCommand, SandboxLifecycleCommandApplication,
@@ -121,7 +122,7 @@ impl MongoSandboxStore {
             let receipt = match apply(self, lease, action, &mut session).await {
                 Ok(receipt) => receipt,
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if error.transient() {
                         continue;
                     }
@@ -129,7 +130,7 @@ impl MongoSandboxStore {
                 }
             };
             if receipt.maintenance.event.is_none() {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(receipt.maintenance.outcome);
             }
             match commit_transaction(&mut session).await {
@@ -324,7 +325,7 @@ async fn apply(
                 requested_at.clone(),
                 SandboxReviveCause::ExplicitRequest,
             );
-            command.managed_runtime_version = store.managed_agent_release();
+            command.managed_runtime_version = store.managed_agent_release_for(&current);
             match apply_sandbox_lifecycle_command(current.clone(), &command).map_err(domain)? {
                 SandboxLifecycleCommandApplication::Commit {
                     expected_revision,
@@ -437,7 +438,7 @@ async fn reconcile(
     receipt: &Receipt,
     time: Timestamp,
 ) -> Result<bool, AgentAccessError> {
-    if !super::transaction::reconcile(store, &receipt.maintenance, time)
+    if !super::reconcile(store, &receipt.maintenance, time)
         .await
         .map_err(|_| AgentAccessError::Unavailable)?
     {

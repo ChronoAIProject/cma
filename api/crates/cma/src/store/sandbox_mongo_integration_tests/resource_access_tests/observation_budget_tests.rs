@@ -21,9 +21,19 @@ mod observation_refresh;
 mod response_shared;
 
 async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::Stats {
+    measure_idle(rows, many, distinct, seconds, true).await.0
+}
+
+async fn measure_idle(
+    rows: u64,
+    many: bool,
+    distinct: bool,
+    seconds: u64,
+    shared_observation: bool,
+) -> (meter::Stats, Duration) {
     let mut f = Fixture::semantic(rows).await;
     let agents = agents(&mut f, many, distinct).await;
-    let replicas = budget_servers(&f).await;
+    let replicas = budget_servers_with_observation(&f, shared_observation).await;
     let client = reqwest::Client::builder()
         .no_proxy()
         .connect_timeout(Duration::from_secs(2))
@@ -31,6 +41,8 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
         .unwrap();
     let mut consumers = Vec::new();
     // Opening is measured separately, never confused with steady idle work.
+    // The unshared baseline seeks the retained prefix for every observer.
+    let open_timeout = Duration::from_secs(if shared_observation { 15 } else { 30 });
     f.meter.clear();
     let opening = (0..100).map(|index| {
         let (agents, replicas, client) = (&agents, &replicas, &client);
@@ -54,14 +66,14 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
             let url = format!("{}{}", replicas[index % 2].address, path);
             let started = Instant::now();
             let response = tokio::time::timeout(
-                Duration::from_secs(15),
+                open_timeout,
                 client
                     .get(url)
                     .bearer_auth(format!("observer:{}", agent.owner))
                     .send(),
             )
             .await
-            .unwrap()
+            .unwrap_or_else(|_| panic!("observer {index} timed out opening history {rows} (shared={shared_observation})"))
             .unwrap();
             let status = response.status();
             if status != reqwest::StatusCode::OK {
@@ -73,8 +85,11 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
         }
     });
     let mut longest_open = Duration::ZERO;
+    // The unshared route seeks the retained prefix per observer. Ramp it
+    // gradually so the idle window starts with a fully connected cohort.
+    let concurrent_opens = if shared_observation { 16 } else { 4 };
     for (response, elapsed) in futures_util::stream::iter(opening)
-        .buffer_unordered(16)
+        .buffer_unordered(concurrent_opens)
         .collect::<Vec<_>>()
         .await
     {
@@ -89,14 +104,47 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
     }
     let cold = f.meter.stats.lock().unwrap().clone();
     eprintln!(
-        "shared_open agents={} observers=100 history={rows} distinct={distinct} commands={} longest_open={longest_open:?}",
+        "observation_open shared={shared_observation} agents={} observers=100 history={rows} distinct={distinct} commands={} longest_open={longest_open:?}",
         agents.len(),
         cold.commands.values().sum::<u64>()
     );
+    if shared_observation {
+        assert_shared_slots(&replicas, &agents).await;
+    }
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    f.meter.clear();
+    let started = Instant::now();
+    for _ in 0..seconds {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(
+            consumers.iter().all(|task| !task.is_finished()),
+            "all 100 observers must remain connected"
+        );
+    }
+    let (elapsed, stats) = {
+        let stats = f.meter.stats.lock().unwrap();
+        (started.elapsed(), stats.clone())
+    };
+    for consumer in consumers {
+        consumer.abort();
+    }
+    drop(replicas);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    f.client.database(&f.name).drop().await.unwrap();
+    assert!(stats.checkouts > 0, "idle window recorded no checkouts");
+    if shared_observation {
+        assert_shared_idle(&stats, agents.len(), seconds, elapsed);
+    }
+    let commands = stats.commands.values().sum::<u64>();
+    eprintln!("observation_idle shared={shared_observation} agents={} observers=100 replicas=2 distinct={distinct} history={rows} seconds={:.3} commands={commands} checkouts={} head_cohort_refreshes={} bytes={} details={:?}", agents.len(), elapsed.as_secs_f64(), stats.checkouts, stats.snapshots, stats.bytes, stats.commands);
+    (stats, elapsed)
+}
+
+async fn assert_shared_slots(replicas: &[Server], agents: &[Agent]) {
     // A remote observer holds one slot on ingress and one on its read owner;
     // a local observer holds one total, including its local hint subscription.
     let mut owners = Vec::new();
-    for agent in &agents {
+    for agent in agents {
         let destination = replicas[0]
             .observation
             .destination(&agent.id, &agent.created_at)
@@ -126,25 +174,17 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
         expected_slots,
         "every observer consumes exactly one permit per participating replica"
     );
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    f.meter.clear();
-    let started = Instant::now();
-    for _ in 0..seconds {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        assert!(
-            consumers.iter().all(|task| !task.is_finished()),
-            "all 100 observers must remain connected"
-        );
-    }
-    let elapsed = started.elapsed().as_secs_f64();
-    let stats = f.meter.stats.lock().unwrap().clone();
+}
+
+fn assert_shared_idle(stats: &meter::Stats, agent_count: usize, seconds: u64, elapsed: Duration) {
+    let elapsed = elapsed.as_secs_f64();
     let commands = stats.commands.values().sum::<u64>();
     assert!(
         (commands as f64 / elapsed) <= 100.0,
         "{commands} commands/{elapsed}s: {:?}",
         stats.commands
     );
-    assert_eq!(stats.per_agent_heads.len(), agents.len());
+    assert_eq!(stats.per_agent_heads.len(), agent_count);
     for (id, times) in &stats.per_agent_heads {
         assert!(
             times.len() as u64 <= seconds + 1,
@@ -160,7 +200,7 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
             "periodic refreshes must be separated by at least one second"
         );
     }
-    assert!(stats.snapshots <= agents.len() as u64 * (seconds + 1));
+    assert!(stats.snapshots <= agent_count as u64 * (seconds + 1));
     assert!(
         stats
             .commands
@@ -169,14 +209,21 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
         "idle streams must not traverse history: {:?}",
         stats.commands
     );
-    eprintln!("shared_idle agents={} observers=100 replicas=2 distinct={distinct} history={rows} seconds={elapsed:.3} commands={commands} commands_per_second={:.3} head_cohort_refreshes={} bytes={} details={:?}", agents.len(), commands as f64 / elapsed, stats.snapshots, stats.bytes, stats.commands);
-    for consumer in consumers {
-        consumer.abort();
-    }
-    drop(replicas);
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    f.client.database(&f.name).drop().await.unwrap();
-    stats
+}
+
+fn assert_checkout_reduction(
+    rows: u64,
+    baseline: &(meter::Stats, Duration),
+    shared: &(meter::Stats, Duration),
+) {
+    let (baseline, baseline_elapsed) = baseline;
+    let (shared, shared_elapsed) = shared;
+    let baseline_rate = baseline.checkouts as f64 / baseline_elapsed.as_secs_f64();
+    let shared_rate = shared.checkouts as f64 / shared_elapsed.as_secs_f64();
+    assert!(
+        shared_rate <= baseline_rate * 0.30,
+        "history {rows}: expected at least 70% fewer idle checkouts/s, baseline {baseline_rate:.2}, shared {shared_rate:.2}"
+    );
 }
 
 #[tokio::test]
@@ -184,8 +231,14 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
 async fn observation_two_serving_replicas_keep_idle_work_independent_of_history() {
     // Cover multiple three-second membership and ten-second driver heartbeat
     // periods so a boundary crossing cannot dominate the history-growth ratio.
-    let h = measure(1_000, false, false, 30).await;
-    let ten_h = measure(10_000, false, false, 30).await;
+    let baseline = measure_idle(1_000, false, false, 30, false).await;
+    let shared = measure_idle(1_000, false, false, 30, true).await;
+    assert_checkout_reduction(1_000, &baseline, &shared);
+    let (h, _) = shared;
+    let shared = measure_idle(10_000, false, false, 30, true).await;
+    let baseline = measure_idle(10_000, false, false, 30, false).await;
+    assert_checkout_reduction(10_000, &baseline, &shared);
+    let (ten_h, _) = shared;
     assert!(ten_h.commands.values().sum::<u64>() * 100 <= h.commands.values().sum::<u64>() * 110);
     measure(100, true, false, 10).await;
     measure(100, true, true, 10).await;

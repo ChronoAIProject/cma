@@ -35,7 +35,9 @@ export function InlineWorkspaceCard({
   const command = useCreationCommand(onCreated);
   const connections = useConnectionGate();
   const repositoryUrl = url.trim();
-  const repositoryReady = repositoryUrl !== '' && validRepository(repositoryUrl);
+  // The Workspace API checks the raw authority before URL normalization.
+  const repositoryReady =
+    repositoryUrl.startsWith('https://github.com/') && validRepository(repositoryUrl);
   const repositoryError = repositoryTouched && !repositoryReady;
   const ready = sourceType === GIT_SOURCE ? repositoryReady : name.trim().length > 0;
 

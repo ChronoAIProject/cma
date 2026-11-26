@@ -101,6 +101,34 @@ it('places Computer after Share and before More and reports its actual expanded 
   );
 });
 
+it('retains Agent provenance and recovery supplied alongside curated actions', async () => {
+  const user = userEvent.setup();
+  const onMenuSelect = vi.fn();
+  render(
+    draw({
+      onMenuSelect,
+      menu: [
+        { id: 'rename-agent', label: 'Rename' },
+        { type: 'label', id: 'creation-origin', text: 'Created by Trigger' },
+        { id: 'published-trigger', label: 'Published Trigger: Review', href: '/t/trigger-1' },
+        { id: 'subscription-sign-in', label: 'Sign in to your ChatGPT subscription again' },
+      ],
+    }),
+  );
+
+  await user.click(screen.getByRole('button', { name: 'More Agent actions' }));
+  expect(screen.getByText('Created by Trigger')).toBeVisible();
+  expect(screen.getByRole('menuitem', { name: 'Published Trigger: Review' })).toHaveAttribute(
+    'href',
+    '/t/trigger-1',
+  );
+  expect(screen.getAllByRole('menuitem', { name: /^Rename$/ })).toHaveLength(1);
+  await user.click(
+    screen.getByRole('menuitem', { name: 'Sign in to your ChatGPT subscription again' }),
+  );
+  expect(onMenuSelect).toHaveBeenCalledExactlyOnceWith('subscription-sign-in');
+});
+
 it('retains a reason while access is uncertain and omits unavailable capabilities', async () => {
   const user = userEvent.setup();
   const onDetailsOpenChange = vi.fn();
@@ -209,45 +237,70 @@ it.each(['mouse', 'keyboard'] as const)(
   },
 );
 
-it.each(['stopped', 'failed', 'runtime-unavailable', 'busy', 'no-permission', 'shared'] as const)(
-  'preserves sidebar Stop eligibility for %s',
-  async (condition) => {
-    const onMoreAction = vi.fn();
-    const status = condition === 'stopped' || condition === 'failed' ? condition : 'ready';
-    render(
-      draw({
+it.each([
+  'stopped',
+  'failed',
+  'stopped-without-runtime',
+  'failed-without-runtime',
+  'runtime-unavailable',
+  'sandbox-paused',
+  'sandbox-failed',
+  'busy',
+  'no-permission',
+  'shared',
+] as const)('preserves sidebar Stop eligibility for %s', async (condition) => {
+  const onMoreAction = vi.fn();
+  const status = condition.startsWith('stopped')
+    ? 'stopped'
+    : condition.startsWith('failed')
+      ? 'failed'
+      : 'ready';
+  render(
+    draw({
+      status,
+      moreActions: agentHeaderMenu(
         status,
-        moreActions: agentHeaderMenu(
-          status,
-          condition === 'shared'
-            ? undefined
-            : { ...permissions, stopAgent: condition !== 'no-permission' },
-          {
-            sandbox: condition === 'runtime-unavailable' ? undefined : sandboxFixture(),
-            busy: condition === 'busy',
-          },
-        ),
-        onMoreAction,
-      }),
+        condition === 'shared'
+          ? undefined
+          : { ...permissions, stopAgent: condition !== 'no-permission' },
+        {
+          sandbox:
+            condition === 'runtime-unavailable' || condition.endsWith('without-runtime')
+              ? undefined
+              : sandboxFixture(
+                  condition === 'sandbox-paused'
+                    ? 'paused'
+                    : condition === 'sandbox-failed'
+                      ? 'failed'
+                      : 'active',
+                ),
+          busy: condition === 'busy',
+        },
+      ),
+      onMoreAction,
+    }),
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: 'More Agent actions' }));
+  const stop = screen.queryByRole('menuitem', { name: /^Stop agent/ });
+  if (condition === 'shared' || condition === 'no-permission') expect(stop).not.toBeInTheDocument();
+  else {
+    expect(stop).toHaveAttribute('aria-disabled', 'true');
+    if (status === 'stopped') expect(stop).toHaveTextContent('Agent is already stopped.');
+    if (status === 'failed') expect(stop).toHaveTextContent('There is no running Agent to stop.');
+    if (condition === 'busy')
+      expect(stop).toHaveTextContent('Another action is still being confirmed.');
+    if (condition === 'runtime-unavailable')
+      expect(stop).toHaveTextContent('Sandbox status is unavailable. Refresh and try again.');
+    if (condition === 'sandbox-paused') expect(stop).toHaveTextContent('The Sandbox is paused.');
+    if (condition === 'sandbox-failed')
+      expect(stop).toHaveTextContent('The Sandbox runtime is unavailable.');
+    await user.click(stop!);
+  }
+  expect(onMoreAction).not.toHaveBeenCalled();
+  if (condition === 'stopped' || condition === 'failed')
+    expect(screen.getByRole('menuitem', { name: 'Delete task' })).not.toHaveAttribute(
+      'aria-disabled',
+      'true',
     );
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'More Agent actions' }));
-    const stop = screen.queryByRole('menuitem', { name: /^Stop agent/ });
-    if (condition === 'shared' || condition === 'no-permission')
-      expect(stop).not.toBeInTheDocument();
-    else {
-      expect(stop).toHaveAttribute('aria-disabled', 'true');
-      if (condition === 'busy')
-        expect(stop).toHaveTextContent('Another action is still being confirmed.');
-      if (condition === 'runtime-unavailable')
-        expect(stop).toHaveTextContent('Sandbox status is unavailable. Refresh and try again.');
-      await user.click(stop!);
-    }
-    expect(onMoreAction).not.toHaveBeenCalled();
-    if (condition === 'stopped' || condition === 'failed')
-      expect(screen.getByRole('menuitem', { name: 'Delete task' })).not.toHaveAttribute(
-        'aria-disabled',
-        'true',
-      );
-  },
-);
+});

@@ -6,6 +6,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+cma-service-migrations = { path = "../cma-service-migrations" }
 cma-allocator-qualification = { path = "../cma-allocator-qualification" }
 aes = "0.8"
 cbc = "0.1"
@@ -25,6 +26,9 @@ rustls = { workspace = true }
 tokio-rustls = { workspace = true }
 webpki-roots = { workspace = true }
 cmaeg-core = { path = "../cmaeg-core" }
+cmaeg-engine = { path = "../cmaeg-engine" }
+cmaeg-execution = { path = "../cmaeg-execution" }
+cmaeg-http = { path = "../cmaeg-http" }
 axum = { workspace = true }
 dashmap = { workspace = true }
 futures-util = { workspace = true }
@@ -50,7 +54,6 @@ tracing-subscriber = { workspace = true }
 utoipa = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
-pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 quick-xml = "=0.41.0"
 zip = { workspace = true }
 

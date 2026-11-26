@@ -1,0 +1,20 @@
+[package]
+name = "cmaeg-execution"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+cmaeg-core = { path = "../cmaeg-core" }
+cmaeg-engine = { path = "../cmaeg-engine" }
+dashmap = { workspace = true }
+metrics = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+futures-util = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }

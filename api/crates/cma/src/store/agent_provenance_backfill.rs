@@ -8,6 +8,7 @@ use super::{
         MongoSandboxStore, TRANSACTION_ATTEMPTS,
     },
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use layer2_core::{
     sandbox::store::{
@@ -86,16 +87,16 @@ impl AgentProvenanceBackfillStore for MongoSandboxStore {
                         if !error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT)
                             && (is_transient(&error) || is_duplicate_key(&error)) =>
                     {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         continue;
                     }
                     Err(error) => {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         return Err(map_error(error));
                     }
                 };
             if outcome == ProvenanceBackfillOutcome::Retained {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(outcome);
             }
             match commit_transaction(&mut session).await {

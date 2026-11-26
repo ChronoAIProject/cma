@@ -1,5 +1,6 @@
 //! Bounded trusted-prefix checks and fail-closed invalidation.
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(super) async fn validate_summary(
     store: &MongoSandboxStore,
@@ -217,7 +218,7 @@ pub(in crate::store) async fn trusted_summary(
         &result,
         Err(TransactionLogError::Domain(SandboxStoreError::Corrupt(_)))
     ) {
-        let _ = session.abort_transaction().await;
+        let _ = session.abort_guarded().await;
         quarantine_row(store, row).await?;
     }
     if store.bounded_log_enabled(&agent.id) {

@@ -1,4 +1,5 @@
 //! One-time suspended recovery settlement and predecessor exclusion.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::{
     sandbox::{
         apply_suspended_reopen, store::SandboxRuntimeLossRequest, RetainedReopenReplay,
@@ -196,15 +197,15 @@ pub(in crate::store) async fn admit_suspended(
         let (receipt, event, repeat) = match apply(store, &request, scope).await {
             Ok(Applied::Commit(receipt, event, repeat)) => (receipt, event, repeat),
             Ok(Applied::Replay(accepted)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(accepted);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 continue;
             }
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error.domain());
             }
         };

@@ -32,9 +32,22 @@ pub struct ConversationState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_turn: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_timeout: Option<super::turn_timeout::TurnTimeout>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<AgentOperationRecord>,
     #[serde(default)]
     pub queued_messages: Vec<QueuedAgentMessage>,
+}
+
+impl ConversationState {
+    pub(super) fn interrupt_active_turn(&mut self) -> Option<super::AgentLogKind> {
+        let turn_sequence = self.active_turn.take()?;
+        let terminal = super::AgentLogKind::TurnInterrupted { turn_sequence };
+        if let Some(task) = self.observations.task_acceptance.as_mut() {
+            task.observe_execution(Some(turn_sequence), std::slice::from_ref(&terminal));
+        }
+        Some(terminal)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,6 +134,22 @@ pub struct Agent {
 }
 
 impl Agent {
+    /// Derive the terminal event once the caller has proved the current native Close.
+    /// The command record still carries the exact delivery outcome before the Stop.
+    pub fn settle_owner_stop_turn(&mut self) -> Option<super::AgentLogKind> {
+        if self.work.step != AgentWorkStep::PublishStopped
+            || self.requested_stop_reason != Some(AgentStopReason::Owner)
+            || !self
+                .work
+                .receipts
+                .iter()
+                .any(|receipt| receipt.step == AgentWorkStep::CloseProcess)
+        {
+            return None;
+        }
+        self.conversation.interrupt_active_turn()
+    }
+
     pub fn validate_for_admission(&self, worktree: &Worktree) -> Result<(), SandboxModelError> {
         self.validate_lineage(worktree)?;
         if self.work.step == AgentWorkStep::WaitForWorkspace
@@ -145,6 +174,7 @@ impl Agent {
             || self.conversation.runtime_generation.is_some()
             || self.conversation.last_seq != 1
             || self.conversation.active_turn.is_some()
+            || self.conversation.turn_timeout.is_some()
             || self.conversation.settings.is_some()
             || !self.conversation.preferences.is_empty()
             || self.conversation.managed_guidance_revision != 0
@@ -186,6 +216,16 @@ impl Agent {
 
     pub fn validate_conversation(&self) -> Result<(), SandboxModelError> {
         self.validate_worktree_recoveries()?;
+        if self
+            .conversation
+            .turn_timeout
+            .as_ref()
+            .is_some_and(|timeout| {
+                timeout.validate().is_err() || !timeout.binding().matches_incarnation(self)
+            })
+        {
+            return Err(SandboxModelError::invalid_value("agent.turn_timeout"));
+        }
         let identity_shape = match (
             self.conversation.conversation_id.as_deref(),
             self.conversation.runtime_generation,
@@ -335,11 +375,15 @@ impl Agent {
                     | AgentWorkStep::DispatchFirstMessage
                     | AgentWorkStep::None
             );
+        // Workspace readiness only observes the parents before a fenced
+        // publication. Stop can supersede that claim without a runtime wait.
+        let readiness_only =
+            self.work.step == AgentWorkStep::WaitForWorkspace && self.has_no_runtime_effects();
         let cleanup_not_before = self
             .work
             .lease
             .as_ref()
-            .filter(|lease| !process_is_published && lease.expires_at > at)
+            .filter(|lease| !process_is_published && !readiness_only && lease.expires_at > at)
             .map(|lease| lease.expires_at.clone());
         self.work
             .schedule(super::AgentWorkStep::FenceInteraction, at);
@@ -381,6 +425,49 @@ impl Agent {
             .checked_add(1)
             .ok_or_else(|| SandboxModelError::invalid_value("agent.revision"))?;
         Ok(())
+    }
+
+    /// Select the process named by the admitted Open, including an uncertain Open
+    /// that still needs cleanup. The initial incarnation keeps its legacy ID.
+    pub fn close_process_request(
+        &self,
+    ) -> Result<layer3_adapter::AgentCloseRequest, SandboxModelError> {
+        use layer3_adapter::{AgentCloseRequest, AgentProcessAction, AgentSlot};
+
+        let incarnation = self
+            .open_process_incarnation()?
+            .ok_or_else(|| SandboxModelError::invalid_value("agent.work.open_process"))?;
+        Ok(AgentCloseRequest::new(
+            AgentProcessAction::Close.operation_id(self.id.as_str(), incarnation),
+            AgentSlot::new(self.id.as_str()),
+        ))
+    }
+
+    pub(super) fn open_process_incarnation(&self) -> Result<Option<u64>, SandboxModelError> {
+        let mut opens = self
+            .work
+            .receipts
+            .iter()
+            .filter(|receipt| receipt.step == AgentWorkStep::OpenConversation)
+            .map(|receipt| receipt.operation_id.as_str())
+            .chain(
+                self.work
+                    .cleanup_debt
+                    .iter()
+                    .filter(|debt| debt.step == AgentWorkStep::OpenConversation)
+                    .map(|debt| debt.operation_id.as_str()),
+            );
+        let invalid = || SandboxModelError::invalid_value("agent.work.open_process");
+        let Some(operation) = opens.next() else {
+            return Ok(None);
+        };
+        if opens.next().is_some() {
+            return Err(invalid());
+        }
+        layer3_adapter::AgentProcessAction::Open
+            .incarnation(self.id.as_str(), operation)
+            .map(Some)
+            .ok_or_else(invalid)
     }
 
     pub fn operation_id(&self, step: super::AgentWorkStep) -> String {

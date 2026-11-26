@@ -7,6 +7,18 @@ pub const AGENT_TURN_NO_PROGRESS: &str = "agent_turn_no_progress";
 /// Public Agent failures are a closed vocabulary, including for retained history.
 /// Class and detail are both untrusted; neither supplies public diagnostic text.
 pub fn public_agent_turn_failure(failure: &TypedFailure) -> TypedFailure {
+    use super::turn_timeout::TurnTimeoutCause;
+    let policy = match failure.class.as_str() {
+        "agent_turn_timeout" => Some(TurnTimeoutCause::ServiceDeadline),
+        "approval_timeout" => Some(TurnTimeoutCause::ApprovalBudget),
+        "approval_denied" => Some(TurnTimeoutCause::ApprovalDenied),
+        "approval_expired" => Some(TurnTimeoutCause::ApprovalExpired),
+        "approval_wait_disconnected" => Some(TurnTimeoutCause::ApprovalDisconnected),
+        _ => None,
+    };
+    if let Some(policy) = policy {
+        return policy.failure();
+    }
     let (class, detail, continuation) = match failure.class.as_str() {
         "upstream_timeout" => ("upstream_timeout", "The upstream model service timed out.", true),
         "upstream_unavailable" => ("upstream_unavailable", "The upstream model service is temporarily unavailable.", true),

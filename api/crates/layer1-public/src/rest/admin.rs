@@ -22,6 +22,7 @@ use crate::AuthenticatedCaller;
 use super::{problem_document, problem_response};
 
 mod activity;
+pub(super) mod binding_holds;
 pub(crate) use activity::{
     __path_activity, __path_activity_actors, activity, activity_actors, ActivityActorView,
     ActivityPageView, ActivityView,
@@ -32,6 +33,7 @@ pub(super) mod auto_pause;
 pub(super) mod ceilings;
 mod pending_homes;
 pub(super) mod profiles;
+pub(super) mod runtime_migration;
 pub(super) mod runtime_update;
 pub(super) mod sandboxes;
 pub(super) mod settings;
@@ -42,12 +44,17 @@ pub mod warm_pools;
 /// Provider-neutral services used by the operator REST surface.
 #[derive(Clone)]
 pub struct AdminState {
+    pub(super) binding_diagnostics:
+        Option<Arc<layer2_core::binding_diagnostics::BindingDiagnosticsService>>,
     pub(super) warm_pools: Option<Arc<dyn warm_pools::WarmPoolAdministration>>,
     pub(super) users: Option<Arc<layer2_core::UserDirectory>>,
     pub(super) settings: Arc<PlatformSettingsService>,
     pub(super) sandboxes: Arc<SandboxOperatorService>,
     pub(super) activity: Arc<ActivityService>,
     pub(super) runtime_inventory: Option<Arc<dyn RuntimeInventory>>,
+    pub(super) runtime_migrations:
+        Option<Arc<layer2_core::sandbox::SandboxCustomRuntimeMigrationService>>,
+    pub(super) runtime_activity: Option<Arc<layer2_core::sandbox::RuntimeActivityVerifier>>,
     pub(super) runtime_updates: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
     pub(super) auto_pause: Option<Arc<layer2_core::sandbox::SandboxAutoPauseService>>,
     pub(super) spend: Option<Arc<layer2_core::budget::PlatformSpendService>>,
@@ -62,6 +69,7 @@ impl AdminState {
         activity: Arc<ActivityService>,
     ) -> Self {
         Self {
+            binding_diagnostics: None,
             users: None,
             warm_pools: None,
             settings,
@@ -70,6 +78,8 @@ impl AdminState {
             runtime_inventory: None,
             runtime_updates: None,
             auto_pause: None,
+            runtime_migrations: None,
+            runtime_activity: None,
             spend: None,
             admission_control: None,
             admission_ceilings: None,
@@ -81,8 +91,26 @@ impl AdminState {
         self
     }
 
+    pub fn with_binding_diagnostics(
+        mut self,
+        service: Arc<layer2_core::binding_diagnostics::BindingDiagnosticsService>,
+    ) -> Self {
+        self.binding_diagnostics = Some(service);
+        self
+    }
+
     pub fn with_warm_pools(mut self, service: Arc<dyn warm_pools::WarmPoolAdministration>) -> Self {
         self.warm_pools = Some(service);
+        self
+    }
+
+    pub fn with_runtime_migrations(
+        mut self,
+        service: Arc<layer2_core::sandbox::SandboxCustomRuntimeMigrationService>,
+        verifier: Option<Arc<layer2_core::sandbox::RuntimeActivityVerifier>>,
+    ) -> Self {
+        self.runtime_migrations = Some(service);
+        self.runtime_activity = verifier;
         self
     }
 
@@ -122,13 +150,23 @@ impl AdminState {
 
 /// Compose every route beneath the deliberately isolated admin path segment.
 pub fn router(state: AdminState) -> Router {
+    let diagnostics = if state.binding_diagnostics.is_some() {
+        Router::new().route(
+            "/api/v1/admin/runtime-binding-holds",
+            get(binding_holds::read),
+        )
+    } else {
+        Router::new()
+    };
     Router::new()
+        .merge(diagnostics)
         .merge(settings::routes(state.settings.clone()))
         .merge(spend::routes())
         .merge(admission::routes())
         .merge(auto_pause::routes())
         .merge(sandboxes::routes())
         .merge(runtime_update::routes())
+        .merge(runtime_migration::routes())
         .merge(profiles::routes())
         .merge(triggers::routes())
         .merge(warm_pools::routes())

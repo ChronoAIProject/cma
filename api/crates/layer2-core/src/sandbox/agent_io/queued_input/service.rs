@@ -8,6 +8,9 @@ use super::{
     QueuedInputView,
 };
 use crate::resource_access::{AccessPurpose, CallerContext, ResourceCapability, ResourceTarget};
+
+const QUEUED_EDIT_ATTEMPTS: usize = 3;
+
 impl AgentCommandService {
     pub async fn edit_queued_input(
         &self,
@@ -35,16 +38,15 @@ impl AgentCommandService {
         )
         .await
         .map_err(|_| CommandLedgerError::Unavailable)??;
-        let deadline = command
+        let mut attempt_deadline = command
             .authority_deadline
             .map_or(deadline, |limit| limit.min(deadline));
-        let mut attempt_deadline = deadline;
         command.authority_deadline = Some(attempt_deadline);
         let resource = ResourceTarget::Agent {
             agent_id: edit.agent_id.clone(),
         };
         let capability = ResourceCapability::OperateAgent;
-        for attempt in 0..2 {
+        for attempt in 1..=QUEUED_EDIT_ATTEMPTS {
             let agent = authorized
                 .snapshot
                 .lineage
@@ -77,7 +79,17 @@ impl AgentCommandService {
             )
             .await
             .map_err(|_| CommandLedgerError::Unavailable)??;
-            match result?? {
+            let outcome = result?.inspect_err(|error| {
+                if matches!(
+                    error,
+                    CommandLedgerError::Conflict
+                        | CommandLedgerError::StaleClaim
+                        | CommandLedgerError::NotAdmissible
+                ) {
+                    tracing::info!(attempt, reason = "store_conflict", "Queued edit refused");
+                }
+            })?;
+            match outcome {
                 QueuedInputOutcome::NotAdmitted => {
                     return Err(super::super::QueuedCancellationError::NotAdmitted);
                 }
@@ -86,15 +98,28 @@ impl AgentCommandService {
                         request.replay(value.record, Some(value.binding), value.response)?;
                     return Ok(value.into());
                 }
-                QueuedInputOutcome::StaleObservation if attempt == 0 => {}
-                QueuedInputOutcome::StaleObservation => break,
+                QueuedInputOutcome::StaleObservation => {
+                    if attempt == QUEUED_EDIT_ATTEMPTS {
+                        tracing::info!(
+                            attempt,
+                            reason = "stale_observation_exhausted",
+                            "Queued edit refused"
+                        );
+                        break;
+                    }
+                    tracing::info!(
+                        attempt,
+                        reason = "stale_observation",
+                        "Refreshing queued edit authorization"
+                    );
+                }
             }
 
             // This store outcome proves the transaction stopped before writing.
             // Keep the original edit and refresh only the live observation.
             command.require_current_authority()?;
             let (fresh_authorized, fresh) = tokio::time::timeout_at(
-                deadline,
+                attempt_deadline,
                 self.prepare(context, credential, source, edit.clone()),
             )
             .await
@@ -123,6 +148,11 @@ impl AgentCommandService {
                     .capabilities()
                     .eq(authorized.decision.capabilities())
             {
+                tracing::info!(
+                    attempt,
+                    reason = "refresh_scope_changed",
+                    "Queued edit refused"
+                );
                 return Err(CommandLedgerError::Conflict.into());
             }
             command.expected_agent_revision = fresh.expected_agent_revision;
@@ -130,7 +160,7 @@ impl AgentCommandService {
             command.admission_audit = fresh.admission_audit;
             attempt_deadline = fresh
                 .authority_deadline
-                .map_or(deadline, |limit| limit.min(deadline));
+                .map_or(attempt_deadline, |limit| limit.min(attempt_deadline));
             command.authority_deadline = Some(attempt_deadline);
             authorized = fresh_authorized;
         }

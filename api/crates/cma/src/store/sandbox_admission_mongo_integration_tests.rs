@@ -21,6 +21,8 @@ const LATER: &str = "2026-09-05T00:01:00Z";
 
 #[path = "sandbox_admission/canary_tests.rs"]
 mod canary;
+#[path = "sandbox_admission/runtime_image_origin_mongo_tests.rs"]
+mod runtime_image_origin;
 
 mod visitor_limit;
 

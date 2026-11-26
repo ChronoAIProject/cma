@@ -1,3 +1,4 @@
+import { useChannelWriteGuard } from './useChannelWriteGuard';
 import { useRef, useState } from 'react';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
@@ -22,15 +23,18 @@ interface Check {
 }
 export function ChannelNodeTests({
   channelId,
+  writable = true,
   channelVersion,
   selection,
   denied,
 }: {
   readonly channelId: string;
+  readonly writable?: boolean;
   readonly channelVersion?: number;
   readonly selection: ChannelSelection;
   readonly denied: Denied;
 }) {
+  const canWrite = useChannelWriteGuard(writable);
   const key = selectionKey(selection);
   const [results, setResults] = useState<Record<string, Result>>({});
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
@@ -39,7 +43,7 @@ export function ChannelNodeTests({
   const result = results[key];
   const busy = pending.has(key);
   async function test() {
-    if (running.current.has(key)) return;
+    if (!canWrite() || running.current.has(key)) return;
     running.current.add(key);
     setPending(new Set(running.current));
     setResults((values) => ({ ...values, [key]: { text: '', requestedVersion: channelVersion } }));
@@ -107,7 +111,7 @@ export function ChannelNodeTests({
             ? 'Starts a short test turn with this consumer’s saved settings. It does not send a message to the external platform.'
             : 'Starts a short test turn with the default consumer. It does not test platform ingress or external message delivery.'}
       </p>
-      <Button disabled={busy} onClick={() => void test()}>
+      <Button disabled={!writable || busy} onClick={() => void test()}>
         {busy
           ? source
             ? 'Checking configuration…'

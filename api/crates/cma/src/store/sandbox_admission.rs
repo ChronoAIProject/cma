@@ -21,9 +21,9 @@ mod global;
 mod names;
 mod public_owner;
 mod retry;
+mod runtime_image_origin;
 
 const REPLAY_CANDIDATE_LIMIT: i64 = 2;
-
 pub(super) enum AdmissionError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
@@ -107,6 +107,13 @@ async fn apply<F>(
 where
     F: Fn() -> String + Sync,
 {
+    if let Some(fence) = &admission.creation_fence {
+        if store.creation_writer_epoch.as_deref() != Some(fence.epoch.as_str()) {
+            return Err(AdmissionError::Domain(SandboxStoreError::Unavailable(
+                "Sandbox creation epoch is unsupported".into(),
+            )));
+        }
+    }
     let resource_policy = store
         .bindings
         .admit_sandbox(admission, session)
@@ -144,7 +151,13 @@ where
             SandboxStoreError::AccountDeletionInProgress,
         ));
     }
-    let canary_lease = canary::verify(&database, admission, session).await?;
+    let image_admission = canary::verify(
+        &database,
+        admission,
+        store.runtime_image_origin_enabled,
+        session,
+    )
+    .await?;
     if catalogue {
         catalogue::admit(&database, &admission.sandbox, session).await?;
     }
@@ -217,8 +230,11 @@ where
     .await?;
     global::admit(store, admission, &ceilings, session).await?;
     let mut sandbox = admission.sandbox.clone();
+    image_admission
+        .record_origin(store, &mut sandbox, session)
+        .await?;
     sandbox.name = names::choose_name(store, session, owner, &admission.name).await?;
-    let prepared_outcome = if let Some(lease) = canary_lease {
+    let prepared_outcome = if let canary::ImageAdmission::Canary(lease) = image_admission {
         canary::bind(&database, &lease, &sandbox.id, session).await?;
         "miss_runtime_canary_cold_only"
     } else if admission.binding.is_none() {
@@ -289,6 +305,19 @@ where
                 AdmissionError::Driver(error)
             }
         })?;
+    if !super::creation_outcomes::publish_sandbox(
+        &database,
+        admission,
+        sandbox.id.as_str(),
+        session,
+    )
+    .await
+    .map_err(AdmissionError::Driver)?
+    {
+        return Err(AdmissionError::Domain(SandboxStoreError::Unavailable(
+            "Sandbox creation evidence fence is no longer held".into(),
+        )));
+    }
     Ok(AdmissionReceipt::Created {
         sandbox,
         event,

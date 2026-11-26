@@ -9,6 +9,7 @@ fn historical_connection(sandbox_id: SandboxId) -> DesktopConnection {
         session_id: "retained-session".into(),
         runtime_id: "retained-runtime".into(),
         _lease: Some(Arc::new(Mutex::new(())).try_lock_owned().unwrap()),
+        migration_guard: None,
         owned: None,
     }
 }

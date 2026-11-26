@@ -174,6 +174,8 @@ async fn production_startup_injects_the_same_default_into_admin_and_sandbox_poli
                         startup_schema: Default::default(),
                         shared_observation: false,
                         initial_settings: InitialSettings::new(enabled),
+                        released: None,
+                        runtime_pointer_required: false,
                     },
                 )
                 .await

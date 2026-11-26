@@ -35,7 +35,6 @@ pub trait SandboxAdapter: Send + Sync {
     fn startup_binding_headroom(&self, _handles: &[RuntimeHandle]) -> Option<usize> {
         None
     }
-    /// Abilities proved for the admitted runtime contract.
     fn capabilities(&self) -> AdapterCapabilities;
     async fn open_desktop(&self, _: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
         Err(unsupported("runtime desktop is unavailable"))
@@ -43,14 +42,12 @@ pub trait SandboxAdapter: Send + Sync {
     fn desktop_ownership(&self, _: &RuntimeHandle) -> Option<&dyn DesktopOwnedRuntime> {
         None
     }
-    /// Issue before Mongo acquisition so delayed confirmation cannot extend time.
     async fn desktop_ownership_challenge(
         &self,
         handle: &RuntimeHandle,
     ) -> Result<crate::DesktopOwnershipChallenge> {
         challenge(self.desktop_ownership(handle), handle).await
     }
-    /// Never fall back to an unfenced socket when ownership is required.
     async fn open_desktop_owned(
         &self,
         handle: &RuntimeHandle,
@@ -109,6 +106,10 @@ pub trait SandboxAdapter: Send + Sync {
     }
     async fn verify_suspended_runtime(&self, _request: &RuntimeAdoptionRequest) -> Result<()> {
         Err(unsupported("runtime suspension observation is unavailable"))
+    }
+    /// Optional startup policy control for an admitted retained home.
+    fn retained_startup_policy(&self) -> Option<&dyn crate::RetainedStartupPolicyControl> {
+        None
     }
     /// Delete a persisted provider identity and all Pods without requiring a live process.
     async fn teardown_retained_runtime(&self, _handle: &RuntimeHandle) -> Result<()> {

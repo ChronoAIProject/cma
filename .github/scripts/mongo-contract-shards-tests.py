@@ -17,6 +17,7 @@ PARTITIONS = runpy.run_path(str(ROOT / "mongo-contract-partitions.py"))
 GATE = runpy.run_path(str(ROOT / "mongo-contract-gate.py"))
 SCHEDULE = PARTITIONS["SCHEDULE"]
 DiscoveryTests = runpy.run_path(str(ROOT / "mongo-contract-discovery-tests.py"))["DiscoveryTests"]
+ListGuardTests = runpy.run_path(str(ROOT / "mongo-list-guard-tests.py"))["ListGuardTests"]
 
 
 class SchedulingTests(unittest.TestCase):

@@ -1,6 +1,7 @@
 //! Additive resource-policy and share data. Legacy aggregate records keep their
 //! owner fields, revisions, profile pins, conversation and runtime attachment.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::resource_access::{
     ResourceAccessSnapshot, ResourceAccessStore, ResourceAccessStoreError, ResourceTarget,
 };
@@ -123,7 +124,7 @@ impl ResourceAccessStore for MongoSandboxStore {
                 .await
                 .map_err(|_| ResourceAccessStoreError::Unavailable)?;
             let result = sandbox_inventory::read(self, organization, query, &mut session).await;
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             match result {
                 Ok(page) => return Ok(page),
                 Err(ReadError::Domain(error)) => return Err(error),
@@ -152,7 +153,7 @@ impl ResourceAccessStore for MongoSandboxStore {
             let result =
                 sandbox_inventory::read_shared(self, recipient, organizations, query, &mut session)
                     .await;
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             match result {
                 Ok(page) => return Ok(page),
                 Err(ReadError::Domain(error)) => return Err(error),
@@ -198,7 +199,7 @@ impl ResourceAccessStore for MongoSandboxStore {
                 .await
                 .map_err(|_| ResourceAccessStoreError::Unavailable)?;
             let result = inventory::read(self, organization, query, page, &mut session).await;
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             match result {
                 Ok(page) => return Ok(page),
                 Err(ReadError::Domain(error)) => return Err(error),
@@ -258,7 +259,7 @@ impl ResourceAccessStore for MongoSandboxStore {
             .await;
             // These are read-only snapshots; abort releases the transaction
             // while preserving the same session for every row in the batch.
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             match result {
                 Ok(snapshots) => return Ok(snapshots),
                 Err(ReadError::Domain(error)) => return Err(error),

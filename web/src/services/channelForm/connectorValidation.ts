@@ -1,5 +1,7 @@
 import { object, records, strings, text, type Fields } from './model';
 
+export const missingLarkAllowedSender = 'Add at least one allowed sender ID.';
+
 export function botIdMessage(value: unknown, platform: 'telegram' | 'discord') {
   const id = text(value);
   const maximum = platform === 'telegram' ? '9223372036854775807' : '18446744073709551615';
@@ -36,7 +38,7 @@ export function validateConnectorFields(draft: Fields) {
       const admission = object(source.admission);
       if (admission.type === 'allowlist') {
         const senders = strings(admission.sender_ids);
-        if (!senders.length) check('admission', 'Add at least one allowed sender ID.');
+        if (!senders.length) check('admission', missingLarkAllowedSender);
         const blank = senders.findIndex((sender) => !sender.trim());
         if (blank !== -1) check(`admission/${blank}`, 'Enter a sender ID.');
       }

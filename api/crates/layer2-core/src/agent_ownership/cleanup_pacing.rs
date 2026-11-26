@@ -69,7 +69,7 @@ impl CleanupPacing {
         }
     }
 
-    fn begin<'a>(&'a self, authority: &'a Authority) -> Option<Attempt<'a>> {
+    pub(super) fn begin<'a>(&'a self, authority: &'a Authority) -> Option<Attempt<'a>> {
         if !self.enabled {
             return Some(Attempt {
                 pacing: None,
@@ -106,7 +106,7 @@ impl CleanupPacing {
         })
     }
 
-    fn deferred(&self, id: &AgentId) -> bool {
+    pub(super) fn deferred(&self, id: &AgentId) -> bool {
         if !self.enabled {
             return false;
         }
@@ -152,7 +152,7 @@ impl CleanupPacing {
     }
 }
 
-struct Attempt<'a> {
+pub(super) struct Attempt<'a> {
     pacing: Option<&'a CleanupPacing>,
     authority: &'a Authority,
     binding: Option<[u8; 32]>,
@@ -160,7 +160,7 @@ struct Attempt<'a> {
 }
 
 impl Attempt<'_> {
-    fn confirmed(&mut self) {
+    pub(super) fn confirmed(&mut self) {
         self.acknowledged = true;
     }
 }
@@ -252,6 +252,12 @@ impl OwnershipCoordinator {
         &self,
         authority: &Arc<Authority>,
     ) -> Result<bool, OwnershipError> {
+        if self.contains_failures() {
+            return self
+                .retirement_background(authority)
+                .await
+                .map(|result| result.is_some());
+        }
         let Some(mut attempt) = self.cleanup_pacing.begin(authority) else {
             return Ok(false);
         };

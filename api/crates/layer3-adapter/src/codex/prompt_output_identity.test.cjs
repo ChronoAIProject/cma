@@ -7,6 +7,7 @@ const { test } = require("node:test");
 const { setTimeout: delay } = require("node:timers/promises");
 const { controlledBinary, control } = require("./native_control_fixture.cjs");
 const { processRpc } = require("./native_tools_fixture.cjs");
+const { applyNativeBoundDispatch, withoutNativeBoundDispatch } = require("./native_bound_dispatch.cjs");
 const { bridgePath } = require("./persist_conversations.cjs");
 const { promptOutputIdentity, withoutPromptOutputIdentity } = require("./prompt_output_identity.cjs");
 
@@ -42,11 +43,21 @@ async function until(read, description) {
 }
 
 test("prompt output patch requires the reviewed source and is reversible", () => {
-  const installed = readFileSync(program, "utf8");
+  const installed = withoutNativeBoundDispatch(readFileSync(program, "utf8"));
   const original = withoutPromptOutputIdentity(installed);
   assert.equal(promptOutputIdentity(original), installed);
   assert.throws(() => promptOutputIdentity(installed), /Unexpected ACP source/);
   assert.throws(() => promptOutputIdentity("unreviewed"), /Unexpected ACP source/);
+});
+
+test("native dispatch composition preserves the reviewed prompt output source", () => {
+  const installed = readFileSync(program, "utf8");
+  const identity = withoutNativeBoundDispatch(installed);
+  const candidate = applyNativeBoundDispatch(identity);
+  assert.equal(withoutNativeBoundDispatch(candidate), identity);
+  assert.throws(() => withoutNativeBoundDispatch(candidate + "\n"), /Unexpected pre-binding ACP composition/);
+  assert.throws(() => applyNativeBoundDispatch(candidate), /Unexpected ACP composition/);
+  if (installed !== identity) assert.equal(candidate, installed);
 });
 
 async function checkDelayedOutput(intermediateTurns) {

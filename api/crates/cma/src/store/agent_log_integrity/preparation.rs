@@ -1,33 +1,50 @@
 //! Serial, bounded preparation before an explicit cohort can use trusted reads.
 use super::*;
 use crate::store::sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::time::Duration;
+use tokio::time::{timeout_at, Instant};
+
+#[cfg(test)]
+mod tests;
+
+const COHORT_CAP: usize = 16;
+const AGENT_BUDGET: Duration = Duration::from_secs(10);
+const COHORT_BUDGET: Duration = Duration::from_secs(60);
 
 impl MongoSandboxStore {
-    pub(crate) async fn prepare_bounded_admission(
-        mut self,
-        ids: &[AgentId],
-    ) -> Result<Self, String> {
-        if ids.len() > 16 {
-            return Err("Agent log admission cohort exceeds preparation budget".into());
-        }
+    pub(crate) async fn prepare_bounded_admission(self, ids: &[AgentId]) -> Result<Self, String> {
         // No tasks are detached and no user request performs cohort preparation.
         // A timed-out session is dropped/aborted by the driver. An ambiguous
         // metadata-only commit can be verified safely on the next startup.
-        let result = tokio::time::timeout(Duration::from_secs(60), async {
-            for id in ids {
-                tokio::time::timeout(Duration::from_secs(10), prepare(&self, id))
-                    .await
-                    .map_err(|_| "Agent log preparation timed out")??;
-                self.bounded_admission_agents.insert(id.clone());
-            }
-            Ok::<_, String>(())
+        prepare_cohort(self, ids, Instant::now, async |store, id| {
+            prepare(store, id).await?;
+            store.bounded_admission_agents.insert(id.clone());
+            Ok(())
         })
         .await
-        .map_err(|_| "Agent log cohort preparation exceeded 60 seconds")?;
-        result?;
-        Ok(self)
     }
+}
+
+async fn prepare_cohort<T>(
+    mut state: T,
+    ids: &[AgentId],
+    now: impl Fn() -> Instant,
+    mut prepare_agent: impl AsyncFnMut(&mut T, &AgentId) -> Result<(), String>,
+) -> Result<T, String> {
+    if ids.len() > COHORT_CAP {
+        return Err("Agent log admission cohort exceeds preparation budget".into());
+    }
+    timeout_at(now() + COHORT_BUDGET, async {
+        for id in ids {
+            timeout_at(now() + AGENT_BUDGET, prepare_agent(&mut state, id))
+                .await
+                .map_err(|_| "Agent log preparation timed out")??;
+        }
+        Ok(state)
+    })
+    .await
+    .map_err(|_| "Agent log cohort preparation exceeded 60 seconds")?
 }
 
 pub(super) async fn prepare(store: &MongoSandboxStore, id: &AgentId) -> Result<(), String> {
@@ -64,7 +81,7 @@ pub(super) async fn prepare(store: &MongoSandboxStore, id: &AgentId) -> Result<(
     let semantic = match audit_checkpoint(store, &agent, &entries, &mut session).await {
         Ok(semantic) if semantic.valid => semantic,
         _ => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err("preparation semantic checkpoint unavailable".into());
         }
     };
@@ -85,7 +102,7 @@ pub(super) async fn prepare(store: &MongoSandboxStore, id: &AgentId) -> Result<(
         .await
         .map_err(|_| "preparation CAS unavailable")?;
     if result.matched_count != 1 {
-        let _ = session.abort_transaction().await;
+        let _ = session.abort_guarded().await;
         return Err("preparation conflicted with an Agent writer".into());
     }
     match commit_transaction(&mut session).await {

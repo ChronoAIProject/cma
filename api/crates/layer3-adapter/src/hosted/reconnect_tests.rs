@@ -166,6 +166,74 @@ async fn reconnect_never_reinterprets_general_rejection_or_ambiguous_response() 
 }
 
 #[tokio::test]
+async fn restart_conflict_preserves_runtime_pin_without_legacy_retry() {
+    use std::sync::atomic::Ordering;
+
+    let (backend, adapter, handle, mut request) = fixture(false).await;
+    request.operation_id = "agent:agent-restored:open:2:v1".into();
+    let runtime = crate::AgentRestartRuntime {
+        runtime: crate::RuntimeStatusRequest {
+            sandbox_id: SANDBOX.into(),
+            generation: 1,
+            home_identity: "a".repeat(43),
+        },
+        boot_id: "b".repeat(32),
+    };
+    *backend.restart_reply.lock().unwrap() = Some((runtime.clone(), RestartReply::Conflict));
+    request.restart_runtime = Some(runtime);
+    let before = backend.opens.load(Ordering::SeqCst);
+    let (updates, _receiver) = mpsc::channel(4);
+    rejected(adapter.open_agent(&handle, 3, &request, updates).await);
+    assert_eq!(backend.opens.load(Ordering::SeqCst), before);
+    let (updates, _receiver) = mpsc::channel(4);
+    assert!(matches!(
+        adapter
+            .reconnect_agent(&handle, 3, &request, CONVERSATION, updates)
+            .await,
+        Err(AdapterError::OperationIdentityConflict(_))
+    ));
+    assert_eq!(backend.opens.load(Ordering::SeqCst), before + 1);
+}
+
+#[tokio::test]
+async fn restart_validates_explicit_resume_before_open_and_checks_the_returned_conversation() {
+    use std::sync::atomic::Ordering;
+
+    let (backend, adapter, handle, original) = fixture(false).await;
+    let runtime = crate::AgentRestartRuntime {
+        runtime: crate::RuntimeStatusRequest {
+            sandbox_id: SANDBOX.into(),
+            generation: 1,
+            home_identity: "a".repeat(43),
+        },
+        boot_id: "b".repeat(32),
+    };
+    let request = |conversation: &str| {
+        let mut request = AgentOpenRequest::new(
+            "agent:agent-restored:open:2:v1",
+            original.options.clone(),
+            Some(conversation.into()),
+        );
+        request.restart_runtime = Some(runtime.clone());
+        request
+    };
+    let before = backend.opens.load(Ordering::SeqCst);
+    let (updates, _receiver) = mpsc::channel(4);
+    rejected(
+        adapter
+            .open_agent(&handle, 3, &request("\ninvalid"), updates)
+            .await,
+    );
+    assert_eq!(backend.opens.load(Ordering::SeqCst), before);
+
+    let request = request(CONVERSATION);
+    *backend.restart_reply.lock().unwrap() = Some((runtime, RestartReply::WrongConversation));
+    let (updates, _receiver) = mpsc::channel(4);
+    rejected(adapter.open_agent(&handle, 3, &request, updates).await);
+    assert_eq!(backend.opens.load(Ordering::SeqCst), before + 1);
+}
+
+#[tokio::test]
 async fn alternate_reconnect_requires_exact_options_conversation_and_receipt() {
     for corruption in ["options", "conversation", "receipt"] {
         let (backend, adapter, handle, mut original) = fixture(true).await;

@@ -125,7 +125,7 @@ async fn predecessor_spreadsheet_v1_replays_its_original_effects_after_reopen() 
             .unwrap(),
     );
     let restarted = fixture::facade(store.clone(), reopened_profiles, reopened.clone())
-        .with_session_guidance_v4(true);
+        .with_session_guidance(true, false);
     let _slots = restarted
         .worker_slots
         .clone()

@@ -89,6 +89,7 @@ async fn prepared_open_ready_uses_one_fresh_inspection_and_real_handshake_throug
                 operation_id: "prepared-open-credential".into(),
                 value: RuntimeCredential::new("opaque-sandbox-key"),
                 custody_generation: Some(3),
+                github_route: None,
             },
         )
         .await

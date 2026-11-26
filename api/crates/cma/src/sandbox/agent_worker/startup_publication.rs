@@ -66,7 +66,9 @@ impl AgentWorker {
             if !holds_startup_authority(&agent, &self.config.holder, at) {
                 return Err(SandboxStoreError::Conflict);
             }
-            match publish(agent.clone(), at).await {
+            // Do not embed the full commit future in the retry and open frames.
+            // The same attempt stays inside its existing authority and task scope.
+            match Box::pin(publish(agent.clone(), at)).await {
                 Err(SandboxStoreError::Conflict) if attempt + 1 < MAX_PUBLICATION_ATTEMPTS => {
                     let current = self
                         .dependencies

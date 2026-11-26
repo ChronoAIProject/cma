@@ -118,6 +118,15 @@ async fn run_arguments(arguments: Vec<std::ffi::OsString>) -> Result<(), String>
         return ledger_import::cutover_command()
             .map_err(|error| format!("{}: {error}", error.code));
     }
+    if arguments
+        .first()
+        .is_some_and(|arg| arg == "--export-ledger-v1-evidence")
+    {
+        if arguments.len() != 2 {
+            return Err("ledger_evidence_arguments_invalid".into());
+        }
+        return ledger_import::evidence::command(arguments[1].clone().into()).await;
+    }
     if arguments.len() == 1 && arguments[0] == "--inspect-ledger-v1" {
         return ledger_import::inspect_command().await;
     }

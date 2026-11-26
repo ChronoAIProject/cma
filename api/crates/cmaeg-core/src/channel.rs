@@ -1,7 +1,7 @@
 //! Channel definitions and their stateless gateway policy.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::{collections::BTreeSet, str::FromStr};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use utoipa::ToSchema;
@@ -27,7 +27,11 @@ pub use lark_resources::{LarkMessageEffectsBinding, LarkResourceBinding, LarkRes
 pub mod native_lark;
 mod partition;
 mod platform;
+mod profile_revision;
 mod provider;
+pub use profile_revision::{
+    ProfilePublication, ProfileRevisionView, ProfileRevisions, RetainedProfileRevision,
+};
 pub use provider::{ConformanceLevel, ProviderBinding, ProviderTarget};
 mod routing;
 mod routing_validation;
@@ -282,6 +286,9 @@ impl ChannelDefinition {
             mutation.validate()?;
         }
         self.validate_head()?;
+        if let Some(revisions) = &self.secrets.profile_revisions {
+            revisions.validate(self)?;
+        }
         if self.validate_legacy_sources_and_partition().is_err() {
             sources::validate_extended_sources(&self.sources, &self.secrets)?;
             self.partition.validate_extended(&self.sources)?;
@@ -377,65 +384,5 @@ impl ChannelDefinition {
         OffsetDateTime::parse(&self.created_at, &Rfc3339)
             .map_err(|_| ValidationError::new("/created_at", "must be RFC 3339"))?;
         Ok(())
-    }
-
-    /// Serialize the private blob consumed by the sealing layer.
-    pub fn to_blob_json(&self) -> Value {
-        let mut object = serde_json::to_value(self)
-            .expect("channel definition is serializable without private fields")
-            .as_object()
-            .cloned()
-            .expect("channel definition is an object");
-        let mut secrets = json!({
-            "agent_key_hash": self.secrets.agent_key_hash,
-            "channel_key": self.secrets.channel_key.as_ref().map(Secret::as_str),
-            "hmac_secrets": self.secrets.hmac_secrets.iter().map(|(key, secret)| {
-                json!([key, secret.as_str()])
-            }).collect::<Vec<_>>(),
-            "provider_credential": self.secrets.provider_credential.as_ref().map(Secret::as_str),
-            "telegram_bot_token": self.secrets.telegram_bot_token.as_ref().map(Secret::as_str),
-            "telegram_webhook_secret": self.secrets.telegram_webhook_secret.as_ref().map(Secret::as_str),
-        });
-        // Emitted only when present, so a legacy blob keeps its exact bytes and
-        // an older image, which refuses the unknown key, can still read it.
-        if let Some(credentials) = &self.secrets.native_lark {
-            secrets["native_lark"] = credentials.private_json();
-        }
-        if let Some(credentials) = &self.secrets.whatsapp {
-            secrets["whatsapp"] = credentials.private_json();
-        }
-        if let Some(token) = &self.secrets.discord_bot_token {
-            secrets["discord_bot_token"] = json!(token.as_str());
-        }
-        if !self.secrets.consumer_keys.is_empty() {
-            secrets["consumer_keys"] = self
-                .secrets
-                .consumer_keys
-                .iter()
-                .map(|(id, secret)| json!([id, secret.as_str()]))
-                .collect();
-        }
-        if let Some(mutation) = &self.mutation {
-            object.insert(
-                "mutation".into(),
-                serde_json::to_value(mutation).expect("mutation serializes"),
-            );
-        }
-        object.insert("secrets".into(), secrets);
-        Value::Object(object)
-    }
-
-    /// Serialize the public view, retaining only the hash needed for auth.
-    pub fn to_public_json(&self) -> Value {
-        let mut object = serde_json::to_value(self)
-            .expect("channel definition is serializable without private fields")
-            .as_object()
-            .cloned()
-            .expect("channel definition is an object");
-        object.insert(
-            "secrets".into(),
-            json!({ "agent_key_hash": self.secrets.agent_key_hash }),
-        );
-        Value::Object(object)
     }
 }

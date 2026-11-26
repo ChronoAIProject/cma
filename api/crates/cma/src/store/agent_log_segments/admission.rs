@@ -285,7 +285,7 @@ pub(in crate::store) async fn apply_catalogue(
             &mut next_sandbox,
             &workspace,
             cause,
-            store.managed_agent_release().as_deref(),
+            store.managed_agent_release_for(&sandbox).as_deref(),
         )
         .map_err(ApplyError::Domain)?;
     advance_workspace(store, &workspace, &next_workspace, scope.session()).await?;

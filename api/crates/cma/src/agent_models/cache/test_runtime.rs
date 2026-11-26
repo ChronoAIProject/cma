@@ -4,7 +4,7 @@ use std::sync::{
     Mutex,
 };
 use tokio::sync::mpsc;
-pub(super) struct Probe {
+pub(crate) struct Probe {
     pub calls: AtomicUsize,
     pub delay_ms: AtomicUsize,
     pub status: Mutex<Result<RuntimeStatus>>,

@@ -85,12 +85,20 @@ test('LOCAL expired-lease response with Draft retains the Start until its origin
   expect(packet.command.key).toBeTruthy();
   expect(packet.command.key).toBe(commands[0]?.key);
   expect(JSON.stringify(packet.command.body)).toBe(commands[0]?.body);
+  const retainedCommand = async () => {
+    const raw = await page.evaluate((key) => sessionStorage.getItem(key), storageKey);
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw!)).toEqual({ ...packet, generation: expect.any(String) });
+    return raw;
+  };
   await retry.click();
   await expect(retry).toBeEnabled();
   expect(commands).toHaveLength(2);
+  const inFlightAttempt = await retainedCommand();
+  expect(inFlightAttempt).not.toBe(retained);
   await page.clock.fastForward(120_001);
   expect(commands).toHaveLength(2);
-  expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBe(retained);
+  expect(await retainedCommand()).toBe(inFlightAttempt);
   const readsBeforeRecovery = statesRead.length;
   await retry.click();
   await expect(retry).toBeEnabled();
@@ -100,7 +108,8 @@ test('LOCAL expired-lease response with Draft retains the Start until its origin
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect(page.getByRole('checkbox')).toBeChecked();
   await expect(page.getByRole('checkbox')).toBeDisabled();
-  expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBe(retained);
+  const recoveryAttempt = await retainedCommand();
+  expect(recoveryAttempt).not.toBe(inFlightAttempt);
   await page.screenshot({ path: info.outputPath('recovery-required-still-draft.png') });
   await page.reload();
   await expect(page.getByRole('region', { name: 'CMA sign-in required' })).toBeVisible();
@@ -108,13 +117,13 @@ test('LOCAL expired-lease response with Draft retains the Start until its origin
   await expect(page.getByRole('checkbox')).toBeChecked();
   await expect(page.getByRole('checkbox')).toBeDisabled();
   expect(commands).toHaveLength(3);
-  expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBe(retained);
+  expect(await retainedCommand()).toBe(recoveryAttempt);
   await page.getByRole('button', { name: 'Sign in to CMA', exact: true }).click();
   await page.getByRole('link', { name: 'Open CMA sign-in', exact: true }).click();
   await page.getByRole('button', { name: 'Check signed-in account', exact: true }).click();
   await expect(retry).toBeEnabled();
   expect(commands).toHaveLength(3);
-  expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBe(retained);
+  expect(await retainedCommand()).toBe(recoveryAttempt);
   originalCompleted = true;
   launch = recorded<Launch>('launches.json', 'launch-ready-start');
   await retry.click();

@@ -37,6 +37,7 @@ async fn service_access_revives_with_new_authority_and_preserves_existing_conver
         .store
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision: paused.revision,
             sandbox: Box::new(granted.clone()),
             event_at: rfc3339_at(pause_at),

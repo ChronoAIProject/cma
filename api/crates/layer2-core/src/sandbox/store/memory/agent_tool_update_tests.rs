@@ -464,3 +464,6 @@ async fn file_diffs_on_initial_tool_events_survive_the_status_only_completion() 
         .unwrap();
     assert!(store.agent_log(&working.id, 0, 200).await.unwrap().iter().any(|entry| matches!(&entry.kind, AgentLogKind::ToolOutputReported { output, .. } if output.text.contains("+extra"))));
 }
+
+#[path = "deliverable_output_tests.rs"]
+mod deliverable_output_tests;

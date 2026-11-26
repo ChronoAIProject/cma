@@ -299,3 +299,98 @@ async fn split_issuance_is_default_off_requires_existing_discord_edit_gate_and_o
             .is_none());
     }
 }
+
+#[tokio::test]
+async fn event_side_message_replays_confirmed_telegram_prefix_after_its_second_part_times_out() {
+    use super::{
+        gate::{AttemptPermit, GateRefusal, RouteTicket, SendGate, Ungated},
+        side_messages::SideMessageDelivery,
+    };
+    use crate::{
+        ingress::routing_store::test_server::Server,
+        telegram::media_fixture::{Answer, Fixture},
+        tools::{reply_targets::receipts, side_messages::claim_side_message},
+    };
+    use futures_util::future::BoxFuture;
+    use std::time::Duration;
+
+    struct Deadline(tokio::time::Instant);
+    impl SendGate for Deadline {
+        fn enter_route<'a>(
+            &'a self,
+            route: &'a str,
+        ) -> BoxFuture<'a, Result<RouteTicket, GateRefusal>> {
+            Ungated.enter_route(route)
+        }
+        fn commit(&self) -> bool {
+            true
+        }
+        fn attempt(&self) -> BoxFuture<'_, Result<AttemptPermit, GateRefusal>> {
+            Ungated.attempt()
+        }
+        fn progress(&self) {}
+        fn transport_deadline(&self) -> Option<tokio::time::Instant> {
+            Some(self.0)
+        }
+    }
+
+    let platform = Fixture::new().await;
+    let (mut sender, channel, mut event) = super::telegram_media_tests::setup(&platform);
+    sender.relay = sender.relay.with_native_split_text_refs(true);
+    platform.answer(Answer::ok());
+    platform.answer(Answer {
+        delay: Duration::from_secs(12),
+        ..Answer::ok()
+    });
+
+    let backend = Server::start_realtime().await;
+    event.expires_at = time::OffsetDateTime::now_utc().unix_timestamp() + 900;
+    let store = receipts::Store::new(backend.records.clone(), sender.keys.clone());
+    let owner = &channel.definition.owner.subject;
+    let message = serde_json::from_value(json!({"text":"x".repeat(4001)})).unwrap();
+    let receipts::Admission::Claimed(claim) =
+        claim_side_message(&store, &event, "split-timeout", &message, owner)
+            .await
+            .unwrap()
+    else {
+        panic!("the initial side message must reserve its receipt");
+    };
+    let delivery = SideMessageDelivery::new(&sender);
+    let started = tokio::time::Instant::now();
+    let receipt = delivery
+        .send(
+            &channel,
+            &event,
+            &message,
+            &Deadline(started + Duration::from_secs(4)),
+        )
+        .await;
+    assert!(matches!(receipt.delivery, DeliveryOutcome::Unknown { .. }));
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the second part must use the side-send deadline"
+    );
+    assert_eq!(receipt.message_parts.len(), 1);
+    assert_eq!(
+        receipt.message_parts[0]
+            .message_ref
+            .open(&sender.keys)
+            .unwrap()
+            .payload
+            .platform_message_id,
+        "800"
+    );
+    store.finish(claim, &receipt).await.unwrap();
+    let receipts::Admission::Replay(replay) =
+        claim_side_message(&store, &event, "split-timeout", &message, owner)
+            .await
+            .unwrap()
+    else {
+        panic!("the exact retry must replay its retained receipt");
+    };
+    assert_eq!(
+        serde_json::to_value(replay).unwrap(),
+        serde_json::to_value(receipt).unwrap()
+    );
+    assert_eq!(platform.calls().len(), 2);
+}

@@ -46,6 +46,9 @@ impl HostedControlTransport for Transport {
             agent_model_catalog: true,
             agent_browser: false,
             agent_resource_preparation: false,
+            agent_process_restart: false,
+            exact_github_credential_route: false,
+            github_repository_scope: false,
         }))
     }
     async fn open_agent(
@@ -153,12 +156,25 @@ pub(super) struct Homes {
 #[async_trait::async_trait]
 impl HomeVolumeStore for Homes {
     async fn inventory(&self) -> layer3_adapter::Result<Vec<HomeVolumeAttachment>> {
-        assert_eq!(self.control.other_settled.load(Ordering::SeqCst), 8);
+        self.control.assert_siblings_settled();
         assert!(self.control.cleanup.load(Ordering::SeqCst) > 0);
         self.control.record("HOME_PHASE", "");
         self.inner.inventory().await
     }
     async fn verify(&self, home: &HomeVolumeAttachment) -> layer3_adapter::Result<()> {
+        if self
+            .control
+            .hold_next_home_check
+            .swap(false, Ordering::SeqCst)
+        {
+            self.control.home_check_entered.notify_one();
+            self.control
+                .home_check_gate
+                .acquire()
+                .await
+                .unwrap()
+                .forget();
+        }
         self.inner.verify(home).await
     }
     async fn prepare(&self, _: &HomeVolumeRequest) -> layer3_adapter::Result<HomeVolumeReceipt> {

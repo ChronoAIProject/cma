@@ -14,6 +14,46 @@ pub struct ReleasedRuntime {
     pub agent: String,
     /// The pinned machine-lane image, when this deployment provides one.
     pub machine: Option<String>,
+    /// Independent revisions for transactional admission against either lane.
+    /// Static deployment pins have no durable release revision.
+    pub lane_revisions: Option<ReleasedLaneRevisions>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReleasedLaneRevisions {
+    pub agent: u64,
+    pub machine: Option<u64>,
+}
+
+impl ReleasedRuntime {
+    /// The deployment-owned image for `uri` when it is one of this release's
+    /// lanes, labelled with the runtime contract this build supports.
+    pub fn image(&self, uri: &str) -> Option<crate::RuntimeImage> {
+        (uri == self.agent || self.machine.as_deref() == Some(uri))
+            .then(|| released_image(uri.to_owned()))
+    }
+}
+
+/// Metadata for a deployment-owned, pinned CMA runtime image; never a user
+/// image. Cold allocation and administered warm pools use the same contract.
+pub fn released_image(uri: String) -> crate::RuntimeImage {
+    crate::RuntimeImage {
+        uri,
+        labels: std::collections::BTreeMap::from([
+            (
+                crate::RUNTIME_CONTRACT_LABEL.into(),
+                crate::RUNTIME_CONTRACT_VERSION.to_string(),
+            ),
+            (
+                crate::runtime_bootstrap::RUNTIME_BOOTSTRAP_LABEL.into(),
+                "1".into(),
+            ),
+            (
+                crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
+                "2".into(),
+            ),
+        ]),
+    }
 }
 
 /// The release a caller captured is no longer current. Retry the admission
@@ -23,6 +63,7 @@ pub struct ReleasedRuntime {
 pub struct StaleReleasedRuntime;
 
 /// The authority for new work's default images.
+#[async_trait::async_trait]
 pub trait ReleasedRuntimeSource: Send + Sync + std::fmt::Debug {
     /// The current release. Take it once per admitted operation.
     fn snapshot(&self) -> ReleasedRuntime;
@@ -30,6 +71,9 @@ pub trait ReleasedRuntimeSource: Send + Sync + std::fmt::Debug {
     /// Confirm a captured snapshot is still the release before admitting work
     /// against it. A replica that missed a change refuses here and retries.
     fn require_current(&self, released: &ReleasedRuntime) -> Result<(), StaleReleasedRuntime>;
+
+    /// A durable fence may discover a change before the background refresh.
+    async fn refresh_after_stale(&self) {}
 }
 
 /// The deployment's configured pins. They never change for the process.
@@ -42,6 +86,7 @@ impl PinnedReleasedRuntime {
             revision: 0,
             agent: agent.into(),
             machine,
+            lane_revisions: None,
         })
     }
 }

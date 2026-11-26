@@ -1,3 +1,8 @@
+import {
+  creationOutcome,
+  creationOutcomeRequest,
+  type CreationOutcomeRequest,
+} from './instances/creation-outcome.js';
 import { sandboxCapacity } from './instances/capacity.js';
 import type { ResolvedConfig } from './config.js';
 import type { OperationOptions } from './http.js';
@@ -62,6 +67,15 @@ export interface AccessibleSandboxListOptions extends SandboxListOptions {
 /** Owner-scoped Sandbox provisioning, hierarchy reads, and lifecycle commands. */
 export class Sandboxes {
   constructor(private readonly config: ResolvedConfig) {}
+
+  lookupCreation(body: CreationOutcomeRequest, options: OperationOptions = {}) {
+    input(creationOutcomeRequest, body);
+    return read(this.config, '/api/v1/sandbox-creation-outcomes/lookup', creationOutcome, {
+      ...options,
+      method: 'POST',
+      body,
+    });
+  }
 
   capacity(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/sandboxes/capacity', sandboxCapacity, options);

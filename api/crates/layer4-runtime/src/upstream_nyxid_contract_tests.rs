@@ -52,6 +52,7 @@ impl Peer {
                 operation_id: "contract-install".into(),
                 value: RuntimeCredential::new("contract-scoped-fixture"),
                 custody_generation: Some(1),
+                github_route: None,
             })
             .await
             .unwrap();

@@ -1,5 +1,6 @@
 //! Public registration receipts and their transaction-fenced capacity counter.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
@@ -269,11 +270,11 @@ impl RegistrationCapacity for MongoRegistrationCapacityStore {
                     }
                 },
                 Err(AttemptError::Unreadable) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Ok(false);
                 }
                 Err(AttemptError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if is_transient(&error) || is_duplicate_key(&error) {
                         continue;
                     }

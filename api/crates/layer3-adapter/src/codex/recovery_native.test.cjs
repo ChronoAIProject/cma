@@ -8,6 +8,8 @@ const { createInterface } = require('node:readline');
 const { setTimeout: delay } = require('node:timers/promises');
 const { test } = require('node:test');
 
+require('./credit_boundary_native.test.cjs');
+
 const evidence = process.env.CMA_EOF_EVIDENCE_ROOT || require('node:os').tmpdir();
 const nativeTarget = process.arch === 'arm64' ? 'codex-linux-arm64/vendor/aarch64-unknown-linux-musl' : 'codex-linux-x64/vendor/x86_64-unknown-linux-musl';
 const binary = process.env.CMA_CODEX_TEST_BINARY || '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/' + nativeTarget + '/bin/codex';
@@ -125,6 +127,7 @@ test('bridge-only SIGTERM gives pinned native stdio EOF, flushes interrupted tur
     'ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66',
     'fc9f74358c6ce5aeda4ac164c1daf83c513fb0f18df4b75f3d20bd0816fc6fa7',
     '8f0c023269496f9ad21aa2958491772fefe65011b9aebaf674c67d2aaa9fbcf4',
+    '11c84d6c37f3b2e15020405a2301df3ed8c16ed2d9b05c3a3a43620bba78a7d4',
     'ddb625f66a5a14d94df3512a525c4a674a359e564602c09085769c8b61e2bca1',
     'e26bce27dbdcf4d665e081b4a81762542795e2af6453da2a2f050fab5110f484'].includes(sha(fs.readFileSync(bridgeProgram))), 'bridge must match reviewed source');
   assert(['cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40',
@@ -268,6 +271,7 @@ test('cold load preserves a crashed previous process turn without restarting it 
     'ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66',
     'fc9f74358c6ce5aeda4ac164c1daf83c513fb0f18df4b75f3d20bd0816fc6fa7',
     '8f0c023269496f9ad21aa2958491772fefe65011b9aebaf674c67d2aaa9fbcf4',
+    '11c84d6c37f3b2e15020405a2301df3ed8c16ed2d9b05c3a3a43620bba78a7d4',
     'ddb625f66a5a14d94df3512a525c4a674a359e564602c09085769c8b61e2bca1',
     'e26bce27dbdcf4d665e081b4a81762542795e2af6453da2a2f050fab5110f484'].includes(sha(fs.readFileSync(bridgeProgram))));
   const directory = fs.mkdtempSync(join(evidence, 'cma-preboot-history-'));

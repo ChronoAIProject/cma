@@ -21,7 +21,7 @@ impl Sandbox {
         &self,
         target: &str,
     ) -> Result<(), SandboxModelError> {
-        if self.profile.content.runtime_image.is_none() {
+        if self.has_managed_runtime_image() {
             return Ok(());
         }
         self.validate_custom_runtime()?;

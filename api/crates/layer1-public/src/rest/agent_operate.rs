@@ -13,7 +13,9 @@ use layer2_core::AgentId;
 use super::agent_openapi_shapes::{
     AgentTextRequest, ApprovalDecisionRequest, InputAcceptedView, StopAgentRequest,
 };
-use super::agents::{execute_command, execute_empty_command, AgentRoutesState};
+use super::agents::{
+    execute_command, execute_command_with_claim, execute_empty_command, AgentRoutesState,
+};
 use super::idempotency::{operation_scope, IdempotencyKey, RequestBody};
 use super::instance_problem::InstanceProblem;
 use super::BodyProblem;
@@ -251,20 +253,45 @@ pub(crate) async fn stop(
     body: Result<RequestBody<StopAgentRequest>, BodyProblem>,
 ) -> Response {
     let service = state.agents.clone();
+    #[cfg(feature = "qualification-hooks")]
+    let qualification_state = state.clone();
     let operation_caller = caller.clone();
-    execute_command(
+    let agent_id = AgentId(id.clone());
+    execute_command_with_claim(
         &state,
         &caller,
         key,
         format!("agent:stop:{id}"),
         body,
-        move |body| async move {
-            let _reason = body.reason;
-            service
-                .stop(&operation_caller, &AgentId(id), AgentStopReason::Owner)
-                .await
-                .map_err(InstanceProblem::from_stop)?;
-            Ok(StatusCode::ACCEPTED.into_response())
+        move |body, _guard| {
+            #[cfg(feature = "qualification-hooks")]
+            let qualification = qualification_state.qualification_for(
+                _guard,
+                layer2_core::qualification::ControlOperation::Stop,
+                &agent_id,
+            );
+            async move {
+                let _reason = body.reason;
+                #[cfg(feature = "qualification-hooks")]
+                if let Some((checkpoint, context)) = qualification {
+                    service
+                        .stop_with_checkpoint(
+                            &operation_caller,
+                            &agent_id,
+                            AgentStopReason::Owner,
+                            context,
+                            checkpoint.as_ref(),
+                        )
+                        .await
+                        .map_err(InstanceProblem::from_stop)?;
+                    return Ok(StatusCode::ACCEPTED.into_response());
+                }
+                service
+                    .stop(&operation_caller, &agent_id, AgentStopReason::Owner)
+                    .await
+                    .map_err(InstanceProblem::from_stop)?;
+                Ok(StatusCode::ACCEPTED.into_response())
+            }
         },
     )
     .await

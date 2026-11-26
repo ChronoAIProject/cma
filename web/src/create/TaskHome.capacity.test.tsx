@@ -1,3 +1,4 @@
+import { selectTaskTemplate } from '../test/taskTemplateSelection';
 import type { SandboxCapacity } from '@cma/client';
 import type { CmaWebClient } from '../api/client';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -62,11 +63,11 @@ it('keeps ten parents counted with eight Agents and browses every owner inventor
       onCreated={() => {}}
     />,
   );
-  expect(await screen.findByText('All 10 Sandbox environment slots are in use')).toBeVisible();
+  expect(await screen.findByText('Environment limit reached')).toBeVisible();
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Keep this task' } });
   expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
   expect(screen.getByLabelText('Your task')).toBeEnabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Manage environments' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Environments' }));
   const dialog = await screen.findByRole('dialog', { name: 'Manage environments' });
   expect(await within(dialog).findByRole('link', { name: 'Empty paused' })).toHaveAttribute(
     'href',
@@ -194,12 +195,12 @@ it('revalidates an expired snapshot before fresh submission', async () => {
       onCreated={() => {}}
     />,
   );
-  await screen.findByText('1 environment slot left');
+  await screen.findByText('1 slot left');
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Check first' } });
   const now = Date.now();
   vi.spyOn(Date, 'now').mockReturnValue(now + 11_000);
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  expect(await screen.findByText('All 10 Sandbox environment slots are in use')).toBeVisible();
+  expect(await screen.findByText('Environment limit reached')).toBeVisible();
   expect(read).toHaveBeenCalledTimes(2);
   expect(create).not.toHaveBeenCalled();
 });
@@ -223,8 +224,8 @@ it.each(['ctrlKey', 'metaKey', 'submit'])(
         onCreated={() => {}}
       />,
     );
-    await screen.findByText('1 environment slot left');
-    fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+    await screen.findByText('1 slot left');
+    selectTaskTemplate('Research a topic');
     const topic = screen.getByLabelText('Topic');
     fireEvent.change(topic, { target: { value: 'Retained research topic' } });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
@@ -232,7 +233,7 @@ it.each(['ctrlKey', 'metaKey', 'submit'])(
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 11_000);
     if (submission === 'submit') fireEvent.submit(topic.closest('form')!);
     else fireEvent.keyDown(topic, { key: 'Enter', [submission]: true });
-    expect(await screen.findByText('All 10 Sandbox environment slots are in use')).toBeVisible();
+    expect(await screen.findByText('Environment limit reached')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
     expect(topic).toHaveValue('Retained research topic');
     expect(create).not.toHaveBeenCalled();
@@ -267,9 +268,9 @@ it('converges after committed retirement within fifteen seconds without any subm
       onCreated={() => {}}
     />,
   );
-  await screen.findByText('All 10 Sandbox environment slots are in use');
+  await screen.findByText('Environment limit reached');
   snapshot = free;
   await act(() => vi.advanceTimersByTimeAsync(10_000));
-  expect(screen.getByText('1 environment slot left')).toBeVisible();
+  expect(screen.getByText('1 slot left')).toBeVisible();
   expect(create).not.toHaveBeenCalled();
 });

@@ -1,4 +1,3 @@
-import { TopographicBackdrop } from '../decoration/TopographicBackdrop';
 import { Presence } from '../ui/Presence';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { LandingCharacter } from './LandingCharacter';
@@ -119,7 +118,6 @@ export function SignInLanding({
             </Presence>
           </div>
           <div className="brand-home sign-in-landing__brand">
-            <TopographicBackdrop placement="landing" />
             <LandingCharacter key={String(failed)} />
           </div>
         </section>

@@ -46,9 +46,9 @@ async fn old_channel_validator_is_upgraded_before_github_admission_without_manua
             "required":["_id","owner","blob","version","schema_version"],
             "properties": {
                 "_id":{"bsonType":"string"},
-                "owner":{"bsonType":"string"},
+                "owner":{"bsonType":"string","minLength":1,"maxLength":512},
                 "blob":{"bsonType":"binData"},
-                "version":{"bsonType":"long"},
+                "version":{"bsonType":"long","minimum":1},
                 "schema_version":{"enum":[1]}
             }
         }
@@ -366,6 +366,20 @@ async fn incomplete_upgrade_stays_unavailable_and_resumes_after_the_external_fau
 async fn concurrent_startups_converge_on_one_usable_integration_store() {
     let mut fixture = Fixture::new(false).await;
     fixture.allow_startup_migration().await;
+    let database = fixture.database.admin.database(&fixture.database.name);
+    database
+        .collection::<mongodb::bson::Document>("eg_schema_migrations")
+        .delete_one(mongodb::bson::doc! {"_id":"github_channel_guard"})
+        .await
+        .unwrap();
+    let ledger = database.collection::<mongodb::bson::Document>(cmaeg::migrations::LEDGER);
+    let baseline_fence = ledger
+        .find_one(mongodb::bson::doc! {"_id":"runner"})
+        .await
+        .unwrap()
+        .unwrap()
+        .get_i64("fence")
+        .unwrap();
     let mut startups = Vec::new();
     for number in 0..2 {
         let address = free_address();
@@ -399,6 +413,9 @@ async fn concurrent_startups_converge_on_one_usable_integration_store() {
         for line in log.lines().filter(|line| line.contains("GitHub")) {
             eprintln!("{line}");
         }
+    }
+    for migration in ["gateway-base-v2", "gateway-automation-v6"] {
+        assert_eq!(ledger.count_documents(mongodb::bson::doc!{"kind":"attempt","migration":migration,"outcome":"completed","fence":{"$gt":baseline_fence},"effects":{"$gt":0}}).await.unwrap(),1);
     }
     let body = json!({"app_id":42,"display_name":"Concurrent startup"});
     let created = fixture

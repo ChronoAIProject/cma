@@ -458,3 +458,41 @@ fn production_barriers_preserve_terminal_across_modeled_cache_loss_and_second_re
         }
     }
 }
+
+#[test]
+fn owner_stop_close_proof_checks_durability_of_the_visible_terminal_record() {
+    let fixture = Fixture::new("close-proof-durability", Status::Completed, false);
+    let path = &fixture.path;
+    assert!(!fixture.temporary.exists());
+    let guard = FaultGuard::arm(Some(Step::Directory(fixture.directory().into())));
+    assert_eq!(
+        find_proof_record(
+            &fixture.config,
+            &fixture.operation.operation_id,
+            &fixture.operation.subject
+        )
+        .unwrap_err()
+        .code,
+        "mutation_journal_io_failed"
+    );
+    assert_eq!(guard.completed(), [Step::File(path.clone())]);
+    assert_eq!(std::fs::read(path).unwrap(), fixture.terminal_bytes);
+    drop(guard);
+
+    let guard = FaultGuard::arm(None);
+    let proof = find_proof_record(
+        &fixture.config,
+        &fixture.operation.operation_id,
+        &fixture.operation.subject,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(proof, fixture.terminal);
+    assert_eq!(
+        guard.completed(),
+        [
+            Step::File(path.clone()),
+            Step::Directory(fixture.directory().into())
+        ]
+    );
+}

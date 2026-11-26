@@ -10,6 +10,8 @@ on:
         value: "${{ jobs.changes.outputs.eg }}"
       web:
         value: "${{ jobs.changes.outputs.web }}"
+      approval_contract:
+        value: "${{ jobs.changes.outputs.approval_contract }}"
       am_packages:
         value: "${{ jobs.changes.outputs.am_packages }}"
       eg_packages:
@@ -30,13 +32,14 @@ jobs:
       am: "${{ steps.select.outputs.am }}"
       eg: "${{ steps.select.outputs.eg }}"
       web: "${{ steps.select.outputs.web }}"
+      approval_contract: "${{ steps.select.outputs.approval_contract }}"
       am_packages: "${{ steps.select.outputs.am_packages }}"
       eg_packages: "${{ steps.select.outputs.eg_packages }}"
       test_tracks: "${{ steps.select.outputs.test_tracks }}"
       deployables: "${{ steps.select.outputs.deployables }}"
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
         with:
           fetch-depth: 0
       -
@@ -45,12 +48,12 @@ jobs:
         working-directory: "."
         run: "python3 -c 'import os,tomllib; v=tomllib.load(open(\"api/rust-toolchain.toml\",\"rb\"))[\"toolchain\"][\"channel\"]; open(os.environ[\"GITHUB_OUTPUT\"],\"a\").write(\"channel=\"+v+\"\\n\")'"
       -
-        uses: "dtolnay/rust-toolchain@stable"
+        uses: "dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca"
         with:
           toolchain: "${{ steps.toolchain.outputs.channel }}"
           components: "rustfmt, clippy"
       -
-        uses: "actions/setup-python@v6"
+        uses: "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1"
         with:
           python-version: "3.12"
       -

@@ -1,4 +1,4 @@
-import type { AgentTaskStatus } from '@cma/client';
+import { ApiError, type AgentTaskStatus } from '@cma/client';
 import { scopeValue } from './scope';
 import { useAccessSummaries } from './useAccessSummaries';
 import { ResourceAccessSummary } from './ResourceAccessSummary';
@@ -10,8 +10,9 @@ import { ResourceLink } from './ResourceLink';
 import { Button } from '../ui/Button';
 import { creationLabels } from '../agent/provenance';
 import { TreeRow } from '../shell/TreeRow';
+import '../shell/Tree.css';
 import { keyboardNavigation } from '../shell/treePresentation';
-import { taskStateMeta, taskStatus } from '../shell/taskStatus';
+import { taskStateMeta, taskStatus, taskWords } from '../shell/taskStatus';
 import { taskTitle } from '../shell/taskTitle';
 import { IconAgentPresetOutline16 } from '../ui/icons';
 import { channelLabel } from './channelLabels';
@@ -37,6 +38,8 @@ export function SharedAgentNavigation({
   const cursor = cursors.at(-1);
   const read = useMemo(
     () => async (signal: AbortSignal) => {
+      // Leave time to commit the authorized inventory before its 15-second read deadline.
+      const deadline = performance.now() + 12_000;
       const page = await client.agents.provenanceInventory({
         shared,
         organization,
@@ -56,11 +59,40 @@ export function SharedAgentNavigation({
           throw new Error('Shared Agent order changed. Refresh this scope.');
         previous = row.agent_id;
       }
-      return { value: page };
+      // The provenance projection can retain the creation placeholder while
+      // the authorized point read contains the current title.
+      const titles = new Map<string, string>();
+      const refused = new Set<string>();
+      let next = 0;
+      const worker = async () => {
+        while (next < page.items.length) {
+          signal.throwIfAborted();
+          const remaining = Math.floor(deadline - performance.now());
+          if (remaining <= 0) return;
+          const row = page.items[next++]!;
+          try {
+            const detail = await client.agents.readAccessible(row.agent_id, {
+              signal,
+              timeoutMs: Math.min(3000, remaining),
+            });
+            signal.throwIfAborted();
+            titles.set(row.agent_id, taskTitle({ id: detail.id, title: detail.title }));
+          } catch (error) {
+            signal.throwIfAborted();
+            if (error instanceof ApiError && [401, 403, 404, 410].includes(error.status))
+              refused.add(row.agent_id);
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(4, page.items.length) }, worker));
+      return {
+        value: { ...page, items: page.items.filter((row) => !refused.has(row.agent_id)), titles },
+      };
     },
     [client, cursor, organization, shared, statusFilter],
   );
   const current = useAuthorizedRead(read, true);
+  const page = current.state.status === 'ready' ? current.state.value : undefined;
   const stale = current.state.status === 'ready' && current.state.stale;
   const accessSummaries = useAccessSummaries(
     client,
@@ -89,7 +121,7 @@ export function SharedAgentNavigation({
             <p>No Agents match this scope and status on this page.</p>
           ) : (
             <div
-              className="agent-navigation"
+              className="agent-navigation shared-agent-navigation"
               role="tree"
               aria-label={label}
               onKeyDown={keyboardNavigation}
@@ -99,19 +131,35 @@ export function SharedAgentNavigation({
                   key={row.agent_id}
                   nodeId={`agent:${row.agent_id}`}
                   level={1}
-                  label={taskTitle({ id: row.agent_id, title: row.title })}
+                  label={
+                    page?.titles.get(row.agent_id) ??
+                    taskTitle({
+                      id: row.agent_id,
+                      title: row.title === 'New Agent' ? undefined : row.title,
+                    })
+                  }
                   icon={<IconAgentPresetOutline16 />}
                   route={{ kind: 'agent', agentId: row.agent_id }}
                   selected={route?.kind === 'agent' && route.agentId === row.agent_id}
                   disabled={stale}
                   meta={
                     <>
-                      {taskStateMeta(
-                        taskStatus({ status: row.status, taskStatus: row.task_status }),
-                        stale,
-                      )}
-                      <span>{creationLabels[row.creation_origin]}</span>
-                      <span>{channelLabel(row.channel_usage)}</span>
+                      <span
+                        title={
+                          taskWords[taskStatus({ status: row.status, taskStatus: row.task_status })]
+                        }
+                      >
+                        {taskStateMeta(
+                          taskStatus({ status: row.status, taskStatus: row.task_status }),
+                          stale,
+                        )}
+                      </span>
+                      <span title={creationLabels[row.creation_origin]}>
+                        {creationLabels[row.creation_origin]}
+                      </span>
+                      <span title={channelLabel(row.channel_usage)}>
+                        {channelLabel(row.channel_usage)}
+                      </span>
                       <ResourceAccessSummary compact value={accessSummaries.get(row.agent_id)} />
                     </>
                   }

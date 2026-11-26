@@ -472,3 +472,6 @@ async fn spend_stop_defers_automatic_unpublished_recovery_until_it_lifts() {
             .unpublished_recovery_attempted
     );
 }
+
+#[path = "reconciliation_release_source_tests.rs"]
+mod release_source_tests;

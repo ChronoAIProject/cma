@@ -5,6 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+cma-service-migrations = { path = "../cma-service-migrations" }
 cma-service-auth = { path = "../cma-service-auth" }
 async-trait.workspace = true
 axum.workspace = true

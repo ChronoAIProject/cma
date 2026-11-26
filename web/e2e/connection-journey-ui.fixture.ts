@@ -176,7 +176,11 @@ export async function connectionWizardFixture(
         cancellations.push(body);
         return reply({});
       }
-      if (path === '/api/v1/triggers/public/public-fixture/launches') {
+      if (path === '/api/v2/triggers/public/public-fixture/launches') {
+        assert.equal(request.method, 'POST');
+        const verified = `v1.${Buffer.from(owner).toString('base64url')}`;
+        assert.equal(request.headers['x-cma-expected-subject'], verified);
+        response.setHeader('X-CMA-Verified-Subject', verified);
         creates += 1;
         return reply(launch, 201);
       }
@@ -326,7 +330,8 @@ export async function connectionWizardFixture(
         return path === '/auth/session' ||
           path.startsWith('/auth/connections/') ||
           path.startsWith('/api/v1/launches/') ||
-          path.startsWith('/api/v1/triggers/public/')
+          path.startsWith('/api/v1/triggers/public/') ||
+          path === '/api/v2/triggers/public/public-fixture/launches'
           ? route.continue()
           : route.fallback();
       });

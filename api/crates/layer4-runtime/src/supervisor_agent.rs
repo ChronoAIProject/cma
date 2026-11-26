@@ -253,13 +253,20 @@ impl Supervisor {
         launch: AgentLaunch,
         ticket: Ticket,
     ) -> Result<ResponseFrame> {
-        let environment = match self.launch_environment(&launch) {
+        let mut environment = match self.launch_environment(&launch) {
             Ok(environment) => environment,
             Err(error) => {
                 ticket.fail(&error).await?;
                 return Err(error);
             }
         };
+        if self.credential.has_github_repository_scope().await {
+            environment.insert(
+                crate::github_proxy::ACCESS_PATH_ENV.into(),
+                crate::upstream::github_scope::ACCESS_PATH.into(),
+            );
+        }
+
         let bridge = match Bridge::start_with_recovery(
             &launch,
             &environment,

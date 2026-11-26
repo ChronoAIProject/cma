@@ -63,3 +63,23 @@ it.each([
   rerender(initial);
   expect(result.current.panel).toBeUndefined();
 });
+
+it('keeps the newest tab when an earlier open or automatic fallback is applied', () => {
+  const { result } = renderHook(() => useAgentPanel('owner', 'agent-one'));
+  const { setComputerOpen, setPanel } = result.current;
+  act(() => setComputerOpen(true));
+  expect(result.current.panel).toBe('browser');
+  act(() => setPanel('files'));
+  act(() => setComputerOpen(true));
+  act(() => setPanel('browser', 'activity'));
+  expect(result.current.panel).toBe('files');
+
+  act(() => setPanel('activity'));
+  act(() => setPanel('browser', 'activity'));
+  expect(result.current.panel).toBe('browser');
+
+  act(() => setComputerOpen(false));
+  expect(result.current.panel).toBeUndefined();
+  act(() => setComputerOpen(true));
+  expect(result.current.panel).toBe('browser');
+});

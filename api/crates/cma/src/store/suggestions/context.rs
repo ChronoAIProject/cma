@@ -94,6 +94,17 @@ pub(super) async fn current_transaction(
     session: &mut ClientSession,
     snapshot: bool,
 ) -> Result<bool, ContextError> {
+    Ok(current_parent(store, work, session, snapshot)
+        .await?
+        .is_some())
+}
+
+pub(super) async fn current_parent(
+    store: &MongoSandboxStore,
+    work: &SuggestionWork,
+    session: &mut ClientSession,
+    snapshot: bool,
+) -> Result<Option<Sandbox>, ContextError> {
     let Some(row) = store
         .agents
         .find_one(doc! {"_id":work.agent_id.as_str()})
@@ -101,7 +112,7 @@ pub(super) async fn current_transaction(
         .await
         .map_err(ContextError::Driver)?
     else {
-        return Ok(false);
+        return Ok(None);
     };
     let agent = crate::store::agents::read_agent(&row)
         .map_err(|error| ContextError::Domain(unavailable(error)))?;
@@ -112,7 +123,7 @@ pub(super) async fn current_transaction(
         .await
         .map_err(ContextError::Driver)?
     else {
-        return Ok(false);
+        return Ok(None);
     };
     let sandbox: Sandbox = crate::store::work_schema::read(&row)
         .map_err(|error| ContextError::Domain(unavailable(error)))?;
@@ -135,7 +146,7 @@ pub(super) async fn current_transaction(
         snapshot,
     )
     .await?;
-    Ok(work_is_current(work, &agent, &sandbox, &tail, newer))
+    Ok(work_is_current(work, &agent, &sandbox, &tail, newer).then_some(sandbox))
 }
 
 pub(in crate::store) async fn enqueue(

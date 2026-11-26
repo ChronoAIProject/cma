@@ -1,30 +1,18 @@
 //! Replayable allocation-day projection. The allocated ledger is read-only.
 use super::usage_reports::{
-    allocation_operation, decode, encode, expires, unavailable, ReportingStore,
-    ALLOCATION_DB_DEADLINE,
+    allocation_operation, unavailable, ReportingStore, ALLOCATION_DB_DEADLINE,
 };
+use cma_am_reporting::usage_rollups::{cache_update, match_cached_rollup};
 use layer2_core::{
     sandbox_metrics::{allocation, MetricsError, Range, Result},
     sandbox_usage::SandboxUsage,
 };
 use mongodb::bson::doc;
-use serde::{Deserialize, Serialize};
 mod cold_range;
 mod source;
+pub(crate) use cma_am_reporting::usage_rollups::COLLECTION;
 pub(crate) use source::AllocationDelta;
 use std::collections::BTreeMap;
-pub(crate) const COLLECTION: &str = "sandbox_usage_rollups";
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Rollup {
-    schema_version: u32,
-    sandbox_id: String,
-    owner: String,
-    day: u64,
-    source_watermark: u64,
-    range: Range,
-    projection: allocation::Projection,
-}
 pub(crate) async fn initialize(store: &ReportingStore) -> Result<()> {
     store
         .index(COLLECTION, doc! {"sandbox_id":1,"day":1}, true, false)
@@ -48,30 +36,16 @@ impl ReportingStore {
         range: Range,
     ) -> Result<BTreeMap<String, allocation::Projection>> {
         let _timer = self.time_read("allocation_rollups")?;
-        if states.len() > 200 || range.seconds() > 86_400 {
-            return Err(MetricsError::Busy);
-        }
         let ids: Vec<_> = states.iter().map(|s| s.sandbox_id.as_str()).collect();
-        let day = range.from / 86_400 * 86_400;
-        let mut cached = BTreeMap::new();
-        let mut cursor = self
-            .collection(COLLECTION)
-            .find(doc! {"sandbox_id":{"$in":&ids},"day":day as i64})
-            .max_time(ALLOCATION_DB_DEADLINE)
-            .session(&mut *session)
-            .await
-            .map_err(unavailable)?;
-        while let Some(d) = cursor
-            .next(&mut *session)
-            .await
-            .transpose()
-            .map_err(unavailable)?
-        {
-            let r: Rollup = decode(&d)?;
-            if states.iter().any(|s| valid_rollup(s, range, day, &r)) {
-                cached.insert(r.sandbox_id, r.projection);
-            }
-        }
+        let mut cached = cma_am_reporting::usage_rollups::read_rollups(
+            self.collection(COLLECTION),
+            session,
+            states,
+            &ids,
+            range,
+            ALLOCATION_DB_DEADLINE,
+        )
+        .await?;
         let missing: Vec<_> = ids
             .into_iter()
             .filter(|id| !cached.contains_key(*id))
@@ -101,46 +75,4 @@ impl ReportingStore {
         }
         Ok(cached)
     }
-}
-
-fn valid_rollup(state: &SandboxUsage, range: Range, day: u64, rollup: &Rollup) -> bool {
-    rollup.schema_version == 1
-        && (rollup.projection.period.projected_tail_seconds == 0
-            || state.current_allocation() == state.allocation)
-        && rollup.day == day
-        && rollup.range == range
-        && state.sandbox_id.as_str() == rollup.sandbox_id
-        && state.owner.as_str() == rollup.owner
-        && (state.revision == rollup.source_watermark
-            || (state.revision > rollup.source_watermark
-                && rollup.projection.period.complete
-                && rollup.projection.period.projected_tail_seconds == 0))
-}
-
-fn cache_update(
-    state: &SandboxUsage,
-    range: Range,
-    projection: &allocation::Projection,
-) -> Result<mongodb::bson::Document> {
-    let day = range.from / 86_400 * 86_400;
-    let record = Rollup {
-        schema_version: 1,
-        sandbox_id: state.sandbox_id.to_string(),
-        owner: state.owner.to_string(),
-        day,
-        source_watermark: state.revision,
-        range,
-        projection: projection.clone(),
-    };
-    let key = format!("{}:{day}", state.sandbox_id);
-    let document = doc! {"_id":&key,"document_schema_version":1_i64,
-    "sandbox_id":state.sandbox_id.as_str(),"day":day as i64,
-    "expires_at":expires(day+31*86_400),"record":encode(&record)?};
-    Ok(doc! {"q":{"_id":key},"u":[{"$replaceWith":{"$cond":[
-        {"$or":[
-            {"$eq":[{"$type":"$record"},"missing"]},
-            {"$lt":["$record.source_watermark",state.revision as i64]},
-        ]},
-        {"$literal":document},"$$ROOT",
-    ]}}],"upsert":true,"multi":false})
 }

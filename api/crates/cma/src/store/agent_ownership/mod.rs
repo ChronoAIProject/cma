@@ -3,7 +3,7 @@
 use futures_util::TryStreamExt;
 use layer2_core::agent_ownership::{
     Member, Membership, OwnershipError, OwnershipFailure, OwnershipLease, OwnershipStore,
-    OwnershipToken, DEFAULT_LEASE_MS, PROTOCOL_VERSION,
+    OwnershipToken, ReconciliationOwner, DEFAULT_LEASE_MS, PROTOCOL_VERSION,
 };
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::AgentId;
@@ -16,6 +16,7 @@ use super::sandbox_mongo::{
 };
 
 mod acquisition;
+mod binding_diagnostics;
 mod effects;
 mod failure;
 mod membership;
@@ -75,13 +76,7 @@ impl MongoAgentOwnership {
         super::schema::initialize_collections(&database, &[MEMBERS, OWNERS])
             .await
             .map_err(unavailable)?;
-        let store = Self {
-            client: client.clone(),
-            receiver_diagnostics_enabled,
-            members: majority_collection(&database, MEMBERS),
-            owners: majority_collection(&database, OWNERS),
-            database,
-        };
+        let store = Self::from_database(client, database, receiver_diagnostics_enabled);
         store
             .members
             .create_index(
@@ -108,6 +103,49 @@ impl MongoAgentOwnership {
             .await
             .map_err(unavailable)?;
         Ok(store)
+    }
+
+    fn from_database(
+        client: &Client,
+        database: Database,
+        receiver_diagnostics_enabled: bool,
+    ) -> Self {
+        Self {
+            client: client.clone(),
+            receiver_diagnostics_enabled,
+            members: majority_collection(&database, MEMBERS),
+            owners: majority_collection(&database, OWNERS),
+            database,
+        }
+    }
+
+    #[cfg(feature = "qualification-hooks")]
+    pub(crate) async fn prepare_qualification_renewal(
+        uri: &str,
+        name: &str,
+    ) -> Result<std::sync::Arc<dyn OwnershipStore>, &'static str> {
+        let mut options = mongodb::options::ClientOptions::parse(uri)
+            .await
+            .map_err(|_| "qualification MongoDB configuration refused")?;
+        options.app_name = Some("cma-qualification-renewal".into());
+        options.min_pool_size = Some(0);
+        options.max_pool_size = Some(1);
+        super::transaction_barrier::bind(&mut options, name);
+        let client =
+            Client::with_options(options).map_err(|_| "qualification MongoDB client refused")?;
+        let database = client.database(name);
+        // Open and verify this separate pool before the local plan can arm.
+        // The ordinary composition owns collections, indexes and all other calls.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            database.run_command(doc! {"ping": 1}),
+        )
+        .await
+        .map_err(|_| "qualification MongoDB startup timed out")?
+        .map_err(|_| "qualification MongoDB startup failed")?;
+        Ok(std::sync::Arc::new(Self::from_database(
+            &client, database, false,
+        )))
     }
 
     async fn server_now(&self) -> Result<i64, OwnershipError> {
@@ -263,6 +301,45 @@ impl OwnershipStore for MongoAgentOwnership {
             .transpose()
     }
 
+    async fn reconciliation_owners(
+        &self,
+        ids: &[&AgentId],
+    ) -> Result<Vec<ReconciliationOwner>, OwnershipError> {
+        let ids: Vec<_> = ids.iter().map(|id| id.as_str()).collect();
+        let mut rows = self
+            .owners
+            .aggregate([
+                doc! {"$match": {
+                    "_id": {"$in": &ids}, "instance_id": {"$type": "string"},
+                    "expires_at": {"$type": "date"},
+                    "$expr": {"$gt": ["$expires_at", "$$NOW"]},
+                }},
+                doc! {"$project": {
+                    "document_schema_version": 1, "instance_id": 1, "epoch": 1, "protocol": 1,
+                    "expires_at": 1, "remaining_ms": {"$subtract": ["$expires_at", "$$NOW"]},
+                }},
+            ])
+            .batch_size(ids.len() as u32 + 1)
+            .await
+            .map_err(unavailable)?;
+        let mut owners = Vec::new();
+        while let Some(row) = rows.try_next().await.map_err(unavailable)? {
+            let (Ok(lease), Some(remaining_ms)) = (
+                owner_from(&row),
+                row.get_i64("remaining_ms")
+                    .ok()
+                    .and_then(|millis| u64::try_from(millis).ok()),
+            ) else {
+                continue;
+            };
+            owners.push(ReconciliationOwner {
+                token: lease.token,
+                remaining_ms,
+            });
+        }
+        Ok(owners)
+    }
+
     async fn has_owner_history(&self, id: &AgentId) -> Result<bool, OwnershipError> {
         self.owners
             .find_one(doc! {"_id": id.as_str()})
@@ -278,6 +355,15 @@ impl OwnershipStore for MongoAgentOwnership {
         instance_id: &str,
     ) -> Result<Option<OwnershipLease>, OwnershipError> {
         self.acquire_owner(agent_id, instance_id).await
+    }
+
+    async fn reconcile_acquisition(
+        &self,
+        agent_id: &AgentId,
+        instance_id: &str,
+    ) -> Result<Option<OwnershipToken>, OwnershipError> {
+        self.reconcile_owner_acquisition(agent_id, instance_id)
+            .await
     }
 
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError> {
@@ -334,6 +420,8 @@ fn invalid(error: impl std::fmt::Display) -> OwnershipError {
     OwnershipError::Invalid(error.to_string())
 }
 
+#[cfg(test)]
+mod mongo_failure_containment_tests;
 #[cfg(test)]
 pub(crate) mod mongo_renewal_faults;
 #[cfg(test)]

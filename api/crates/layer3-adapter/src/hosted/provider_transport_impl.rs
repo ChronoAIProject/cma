@@ -2,6 +2,18 @@ use super::*;
 
 #[async_trait::async_trait]
 impl super::super::HostedControlTransport for super::ProviderHostedControlTransport {
+    fn stale_turn_producer(&self) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
+        self.qualified_stale_turn_producer()
+    }
+
+    async fn verify_retained_startup_policy(
+        &self,
+        handle: &RuntimeHandle,
+        readback: &crate::RetainedStartupPolicyReadback<'_>,
+    ) -> crate::Result<crate::RuntimeStartupPolicyObservation> {
+        self.verify_retained_policy(handle, readback).await
+    }
+
     async fn challenge_retirement_receiver(
         &self,
         handle: &RuntimeHandle,

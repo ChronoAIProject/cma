@@ -32,12 +32,7 @@ pub(in crate::store::sandbox_maintenance) async fn clear(
         .find(doc! {"sandbox_id": sandbox.as_str()})
         .hint(Hint::Name(EXPIRY_INDEX.into()))
         .limit(MAX_LEASE_ROWS + 1)
-        .projection(doc! {
-            "sandbox_id": 1, "document_schema_version": 1, "lease_expires_at": 1,
-            "issued_at_ms": 1, "expires_at_ms": 1, "epoch": 1, "runtime_id": 1, "boot_id": 1,
-            "database_now": "$$NOW",
-            "stored_field_count": {"$size": {"$objectToArray": "$$ROOT"}},
-        })
+        .projection(projection())
         .session(&mut *session)
         .await
         .map_err(ApplyError::Driver)?;
@@ -61,7 +56,20 @@ pub(in crate::store::sandbox_maintenance) async fn clear(
     Ok(true)
 }
 
-fn expired(row: &Document, sandbox: &SandboxId, observed_at_ms: i64) -> Option<bool> {
+pub(in crate::store::sandbox_maintenance) fn projection() -> Document {
+    doc! {
+        "sandbox_id": 1, "document_schema_version": 1, "lease_expires_at": 1,
+        "issued_at_ms": 1, "expires_at_ms": 1, "epoch": 1, "runtime_id": 1, "boot_id": 1,
+        "database_now": "$$NOW",
+        "stored_field_count": {"$size": {"$objectToArray": "$$ROOT"}},
+    }
+}
+
+pub(in crate::store::sandbox_maintenance) fn expired(
+    row: &Document,
+    sandbox: &SandboxId,
+    observed_at_ms: i64,
+) -> Option<bool> {
     // Mongo's equality predicate can also match an array containing the parent ID.
     if row.get_str("sandbox_id").ok()? != sandbox.as_str() {
         return None;
@@ -92,8 +100,9 @@ fn expired(row: &Document, sandbox: &SandboxId, observed_at_ms: i64) -> Option<b
     ]
     .into_iter()
     .any(|field| row.contains_key(field));
+    let database_now = row.get_datetime("database_now").ok()?.timestamp_millis();
     if !exclusive {
-        return Some(expiry <= observed_at_ms);
+        return Some(expiry <= observed_at_ms.min(database_now));
     }
     if !versioned {
         return None;
@@ -112,7 +121,6 @@ fn expired(row: &Document, sandbox: &SandboxId, observed_at_ms: i64) -> Option<b
         expires_at_ms: row.get_i64("expires_at_ms").ok()?,
     };
     authority.validate().ok()?;
-    let database_now = row.get_datetime("database_now").ok()?.timestamp_millis();
     if expiry != authority.expires_at_ms || authority.issued_at_ms > database_now {
         return None;
     }

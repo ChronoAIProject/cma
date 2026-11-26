@@ -1,37 +1,13 @@
 use utoipa::OpenApi;
+mod admin_runtime;
 pub mod agent_delegations;
 mod agent_manager;
 mod composition;
 mod identity;
 mod projections;
 use self::projections::*;
-use super::admin::profiles::{ProfilePageView, ProfileSummaryView};
-use super::admin::sandboxes::{
-    AgentSummaryView, SandboxDetailView, SandboxPageView, SandboxSummaryView, WorkspaceSummaryView,
-};
-use super::admin::settings::{
-    InactivitySettingsBody, MarketplaceSettingsBody, PatchRequest, PlatformDefaultsBody,
-    PlatformLimitsBody, PlatformSettingsBody, ProfileReferenceBody, ReplaceRequest, ResetRequest,
-    RetentionSettingsBody, SettingsView, TriggerSettingsBody, UsageReportingSettingsBody,
-};
-use super::admin::{
-    ActivityActorView, ActivityPageView, ActivityView, RuntimeEntryView, RuntimeInventoryView,
-};
-use super::agent_openapi_shapes::*;
-use super::agent_shared_shapes::*;
-use super::instances_openapi_shapes::{
-    CreateInlineWorkspaceRequest, CreateSandboxRequest, CreateWorkspaceRequest, FailureView,
-    OwnerAgentSummaryView, OwnerSandboxDetailView, OwnerSandboxPageView, OwnerSandboxSummaryView,
-    OwnerWorkspaceSummaryView, ProfileReferenceView, SandboxEventView, SandboxLimitsView,
-    SandboxView, WorkspaceDetailView, WorkspaceListView, WorkspaceSourceView, WorkspaceView,
-    WorktreeListView, WorktreeView,
-};
-use super::launch_events::*;
-use super::problems::ProblemDocument;
-use super::profile_authoring::shapes::*;
-use super::profiles_openapi_shapes::*;
-use super::trigger_openapi_shapes::*;
-#[rustfmt::skip] use super::gateway_records::{GatewayRecordHeadView as GatewayRecordHead, GatewayRecordPageView as GatewayRecordPage, GatewayRecordView as GatewayRecord, PutGatewayRecordRequest as PutGatewayRequest, PutGatewayRecordView as PutGateway};
+mod schemas;
+use self::schemas::*;
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -104,6 +80,7 @@ use super::trigger_openapi_shapes::*;
         super::trigger_placements::list,
         super::trigger_placements::retire,
         super::launches::create,
+        super::launch_subject::create_bound,
         super::launches::list,
         super::launches::read,
         super::launches::events,
@@ -146,8 +123,10 @@ use super::trigger_openapi_shapes::*;
         super::profiles_marketplace::read,
         super::profiles_marketplace::fork,
         super::agents::create,
-        super::agents::create_lifecycle,
+        super::agents::lifecycle_creation::create_lifecycle,
         super::agents::read_lifecycle_operation,
+        super::agents::cancel_lifecycle_operation,
+        super::creation_outcomes::routes::lookup,
         super::agents::list,
         super::agents::read,
         super::agent_access_requests::list,
@@ -169,6 +148,7 @@ use super::trigger_openapi_shapes::*;
         super::agent_provenance_inventory::list,
         super::agents::delete_agent,
         super::agent_worktree_recovery::recover_worktree,
+        super::owner_agent_restart::restart,
         super::agent_operate::input,
         super::agent_operate::steer,
         super::agent_operate::interrupt,
@@ -178,7 +158,7 @@ use super::trigger_openapi_shapes::*;
         super::agent_reads::transcript,
         super::agent_reads::usage,
         super::agent_reads::resources,
-        super::sandboxes::create,
+        super::sandboxes::creation::create,
         super::sandboxes::list,
         super::sandboxes::read,
         super::sandboxes::remove,
@@ -203,22 +183,21 @@ use super::trigger_openapi_shapes::*;
         super::admin::sandboxes::read,
         super::admin::sandboxes::events,
         super::admin::sandboxes::retire, super::admin::sandboxes::always_on, super::admin::auto_pause::preview, super::admin::auto_pause::pause_idle_now,
-        super::admin::runtime_update::update,
         super::admin::profiles::list,
         super::admin::profiles::retire,
         super::admin::triggers::pause,
         super::admin::triggers::resume,
         super::admin::runtime_inventory,
+        super::admin::binding_holds::read,
         super::admin::activity,
         super::admin::activity_actors,
-        super::admin::warm_pools::list,
-        super::admin::warm_pools::configure,
-        super::admin::warm_pools::resize,
         super::bindings::put_binding, super::bindings::get_binding, super::bindings::delete_binding, super::bindings::put_conversation, super::bindings::delete_conversation,
     ),
     components(schemas(
         super::desktop::DesktopDescriptor,
         super::agent_access_requests::AgentAccessRequestView,
+        super::agent_access_requests::GithubApprovalContextView,
+        super::agent_access_requests::GithubConnectionApprovalBody,
         super::agent_access_requests::AgentAccessRequestList,
         super::agent_access_requests::AgentAccessStatusView,
         super::agent_access_requests::AgentAccessConnection,
@@ -388,8 +367,7 @@ use super::trigger_openapi_shapes::*;
         WorktreeSummaryView,
         WorkspaceContextView,
         SandboxContextView,
-        InstanceProfileReferenceView,
-        SandboxProfileReferenceView,
+        InstanceProfileReferenceView, SandboxProfileReferenceView,
         FirstMessageStateView,
         AgentListItemView,
         AgentPageView,
@@ -461,10 +439,6 @@ use super::trigger_openapi_shapes::*;
         ProfilePageView,
         RuntimeEntryView,
         RuntimeInventoryView,
-        super::admin::warm_pools::WarmPoolList,
-        super::admin::warm_pools::WarmPoolView,
-        super::admin::warm_pools::ConfigureWarmPoolBody,
-        super::admin::warm_pools::ResizeWarmPoolBody,
         ActivityView,
         ActivityPageView,
         ActivityActorView,

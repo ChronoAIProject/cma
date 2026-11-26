@@ -1,5 +1,6 @@
 //! Production accepted-work entry. Every call obtains fresh resource authority;
 //! an admission switch never cancels receipt lookup or accepted settlement.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::sync::Arc;
 
 use layer2_core::{
@@ -96,7 +97,7 @@ impl RecoveryService {
             Ok(activation)
         }
         .await;
-        let _ = scope.release().abort_transaction().await;
+        let _ = scope.release().abort_guarded().await;
         checked.map_err(transactions::error)
     }
     pub(crate) fn new(store: MongoSandboxStore, access: Arc<ResourceAccessService>) -> Self {
@@ -155,7 +156,7 @@ impl RecoveryService {
             &mut scope,
         )
         .await;
-        let _ = scope.release().abort_transaction().await;
+        let _ = scope.release().abort_guarded().await;
         result.map_err(transactions::error)
     }
 

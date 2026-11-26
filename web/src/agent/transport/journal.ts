@@ -6,7 +6,7 @@ import { QueuedCancellationJournal } from './queuedJournal';
 import { QueuedInputJournal } from './queuedInputJournal';
 import { InterruptionJournal } from './interruptionJournal';
 import { LegacySuggestionJournal } from './legacySuggestionJournal';
-import { bindDraftCommand } from '../draftDelivery';
+import { bindDraftCommand, DraftBindingError } from '../draftDelivery';
 import { acceptDraftCommand, clearOwnerDrafts } from '../draftStorage';
 import {
   promptIntentJournal,
@@ -321,8 +321,12 @@ export class AgentTransportJournal {
       receipt: null,
       ...(answerContext === undefined ? {} : { answerContext }),
     };
+    if (
+      bindDraftCommand(this.identity.user, this.agent, input, intent.key, this.storage) ===
+      'unavailable'
+    )
+      throw new DraftBindingError();
     this.save({ ...current, input: intent });
-    bindDraftCommand(this.identity.user, this.agent, input, intent.key, this.storage);
     return intent;
   }
 

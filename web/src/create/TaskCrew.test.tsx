@@ -1,7 +1,57 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { navigationFixture, parkedRuntimeUpdateFixture } from '../test/hierarchy';
 import { TaskCrew } from './TaskCrew';
+
+it('renders only a real reply and its source time, never a resource timestamp or placeholder', () => {
+  const navigation = { status: 'ready' as const, items: navigationFixture('active', 'working') };
+  const { rerender } = render(<TaskCrew navigation={navigation} onNavigate={vi.fn()} />);
+  expect(screen.queryByText(/Updated|Replied|Open the conversation for details/)).toBeNull();
+  expect(screen.queryByText('Atlas')).toBeNull();
+  const text = '<img src=x onerror=synthetic> **Stored reply**';
+  rerender(
+    <TaskCrew
+      navigation={navigation}
+      onNavigate={vi.fn()}
+      previews={{
+        agt_1: {
+          text,
+          truncated: false,
+          messageSequence: 9,
+          turnSequence: 3,
+          appendedAt: '2026-11-23T10:00:00Z',
+        },
+      }}
+    />,
+  );
+  expect(screen.getByText(text)).toBeVisible();
+  const card = screen.getByRole('button', { name: 'Agent one, Working' });
+  expect(card.querySelector('img')).toBeNull();
+  expect(card.querySelector('time')).toHaveAttribute('datetime', '2026-11-23T10:00:00Z');
+  expect(within(card).queryByText('Working')).toBeNull();
+  expect(screen.getByText('Working')).toBeVisible();
+});
+
+it('clears real reply content when the navigation observation becomes stale', () => {
+  render(
+    <TaskCrew
+      navigation={{ status: 'ready', items: navigationFixture(), refreshError: 'Stale' }}
+      onNavigate={vi.fn()}
+      previews={{
+        agt_1: {
+          text: 'Previously read reply',
+          truncated: false,
+          messageSequence: 9,
+          turnSequence: 3,
+          appendedAt: '2026-11-23T10:00:00Z',
+        },
+      }}
+    />,
+  );
+  expect(screen.queryByText('Previously read reply')).toBeNull();
+  expect(screen.queryByText(/Replied/)).toBeNull();
+  expect(screen.getByText('Status unavailable')).toBeVisible();
+});
 
 it('uses the existing lifecycle presentation and navigates only on an explicit card click', () => {
   const onNavigate = vi.fn();

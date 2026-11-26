@@ -49,7 +49,7 @@ async fn late_allocation_after_provider_marker_prevents_drain_and_definition_rem
 }
 
 #[tokio::test]
-async fn pending_allocation_prevents_admission_marker_or_any_provider_mutation() {
+async fn pending_allocation_prevents_both_retirement_markers() {
     let (store, provider) = fixture(&[true]);
     reconcile(&store, &provider).await;
     assert_eq!(*store.calls.lock().unwrap(), ["drain-scan", "finish:false"]);
@@ -201,7 +201,7 @@ async fn actual_reconciler_keeps_replaced_uid_failure_unapplied_and_preserves_or
 }
 
 #[tokio::test]
-async fn lost_binding_ack_retries_only_zero_before_the_admission_barrier() {
+async fn lost_binding_ack_preserves_retirement_marker_and_reuses_binding() {
     let (store, provider) = fixture(&[]);
     store.target.lock().unwrap().binding = None;
     store.bind_response_loss.store(true, Ordering::SeqCst);
@@ -210,11 +210,17 @@ async fn lost_binding_ack_retries_only_zero_before_the_admission_barrier() {
         *store.calls.lock().unwrap(),
         [
             "drain-scan",
-            "configure:0",
+            "persist-retiring",
+            "inventory",
             "persist-binding",
             "finish:false",
         ]
     );
+    let interrupted = store.target.lock().unwrap().clone();
+    assert!(interrupted.retiring);
+    assert_eq!(interrupted.target_replicas, 0);
+    assert_eq!(interrupted.binding, Some(provider.binding()));
+
     store.calls.lock().unwrap().clear();
     store.retirement_block.lock().unwrap().push_back(true);
     reconcile(&store, &provider).await;
@@ -231,6 +237,7 @@ async fn lost_binding_ack_retries_only_zero_before_the_admission_barrier() {
             "finish:true",
         ]
     );
+    assert_eq!(store.target.lock().unwrap().revision, interrupted.revision);
 }
 
 #[tokio::test(start_paused = true)]

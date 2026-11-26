@@ -22,30 +22,51 @@ test('LOCAL long tool paths preserve visible status at desktop and mobile widths
   ];
   await boundary.route(page, baseURL!);
   await page.goto('/agents/agt_contract');
-  await expect(page.locator('.agent-event--tool strong')).toHaveText(title);
+  const group = page.getByRole('button', { name: /^Read 1 file/ });
+  await expect(group).toHaveAttribute('aria-expanded', 'false');
+  await group.click();
+  const tool = page.getByRole('article', { name: `Tool call: ${title}`, exact: true });
+  const literal = tool.locator('.tool-call__literal');
+  const status = tool.getByRole('img', { name: 'Completed', exact: true });
+  await expect(literal).toHaveText(title);
+  await expect(literal).toHaveAttribute('title', title);
+  await expect(status).toBeVisible();
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     await expect
       .poll(() =>
-        page.locator('.agent-event--tool').evaluate((row) => {
+        tool.evaluate((row) => {
           const bounds = row.getBoundingClientRect();
+          const status = row.querySelector('[role="img"]')!.getBoundingClientRect();
+          const literal = row.querySelector('.tool-call__literal')!.getBoundingClientRect();
           return {
             rowFits: bounds.left >= 0 && bounds.right <= innerWidth + 1,
-            overflowing: [...row.querySelectorAll<HTMLElement>('strong, span')].filter(
-              (child) =>
-                child.scrollWidth > child.clientWidth + 1 ||
-                child.getBoundingClientRect().right > bounds.right ||
-                child.getBoundingClientRect().left < bounds.left,
-            ).length,
+            statusFits:
+              status.width > 0 &&
+              status.left >= literal.right &&
+              status.right <= bounds.right &&
+              status.top >= bounds.top &&
+              status.bottom <= bounds.bottom,
+            pageFits: document.documentElement.scrollWidth <= innerWidth + 1,
           };
         }),
       )
-      .toEqual({ rowFits: true, overflowing: 0 });
+      .toEqual({ rowFits: true, statusFits: true, pageFits: true });
+    await tool.getByRole('button', { expanded: false }).click();
+    await expect(tool.locator('.tool-call__details')).toHaveText(title);
+    await expect
+      .poll(() =>
+        tool
+          .locator('.tool-call__details pre')
+          .evaluate((details) => details.scrollWidth <= details.clientWidth + 1),
+      )
+      .toBe(true);
     await page.screenshot({
       path: info.outputPath(`tool-path-${width}.png`),
       fullPage: true,
       animations: 'disabled',
     });
+    await tool.getByRole('button', { expanded: true }).click();
   }
   expect(boundary.writes).toEqual([]);
   expect(boundary.unexpected).toEqual([]);

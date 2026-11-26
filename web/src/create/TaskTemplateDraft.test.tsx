@@ -11,6 +11,7 @@ import {
 } from './taskDraft';
 import { emptyTemplate, taskTemplates } from './taskTemplateModel';
 import { retainTaskViewer } from './taskIdentity';
+import { selectTaskTemplate } from '../test/taskTemplateSelection';
 
 afterEach(() => {
   sessionStorage.clear();
@@ -36,7 +37,10 @@ function setup(overrides: Partial<CmaWebClient> = {}) {
   };
   return { ...render(<TaskHome {...props} />), props, create };
 }
-const click = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
+const click = (name: string) =>
+  taskTemplates.some((template) => template.name === name)
+    ? selectTaskTemplate(name)
+    : fireEvent.click(screen.getByRole('button', { name }));
 const fill = (label: string, value: string) =>
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 const draftRevision = (): string =>

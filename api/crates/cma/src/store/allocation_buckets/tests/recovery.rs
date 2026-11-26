@@ -45,8 +45,8 @@ async fn unknown_commit_reconciles_buckets_and_progress_before_retry() {
         .unwrap()
         .unwrap();
     assert_projection(
-        &DayBucket::read(&saved).unwrap().total.projection,
-        &b.total.projection,
+        &DayBucket::read(&saved).unwrap().total().projection,
+        &b.total().projection,
     );
     assert!(checkpoint(&store, Lane::Backfill)
         .await

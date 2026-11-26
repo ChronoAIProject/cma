@@ -279,6 +279,20 @@ prior provider mutation was reconciled; a successful PUT does. Separately,
 re-encrypts the record with the current gateway master key. Rekey is an operator
 operation, not agent-key rotation; retain keys needed for old channel pointers.
 
+An owner can retire an incomplete channel with
+`DELETE /v1/channels/{channel_id}?expected_version=N&retire_unready=true`.
+Use the storage version from the channel record management read for the initial
+request. HTTP 202 confirms the channel is retired and provider cleanup is
+pending. The original create cannot activate it, and event intake stays closed.
+The request preserves the provider binding and any outstanding effect. It can
+be used while the provider or its credentials are unavailable.
+Repeat the same retirement request to recover a lost response. Stale versions
+and channels whose creation is complete are refused. Use the reported
+`retirement_expected_version` to identify the retained retirement. An earlier
+create may still have provider work in flight, even when the current record also
+shows a tracked mutation. Ordinary DELETE holds the record while that work
+remains unresolved.
+
 ### Flow H — Replica restart and recovery boundaries
 
 ```mermaid
@@ -641,6 +655,11 @@ A persisted channel whose original creation has not completed returns 409
 `conflict` with detail beginning `channel_creation_pending`. The owner must
 complete the original creation request using its exact reserved `record_id`
 and original policy/credentials. Repeated event delivery cannot finish creation.
+Channel and routing edits use this same refusal before admitting an update,
+even when the supplied version equals the stored version. Refresh the channel
+after its original creation completes. A first-attempt edit refused this way
+may retain an editable draft; a request with an earlier uncertain outcome must
+retain its original request identity for recovery.
 
 ## 4. Opaque references
 
@@ -800,6 +819,9 @@ thirty-minute run.
 An optional `Idempotency-Key` header of 1–256 ASCII bytes replays an identical
 create for the same creator on the same replica for ten minutes. Different
 content under the same key returns 409. It is not durable or cross-replica.
+When the request supplies a record UUID, cached success also requires the
+matching ready channel to remain present and free of an admitted deletion.
+A stale cache entry returns 409.
 
 A creator may additionally reserve a canonical UUID in the optional `record_id`
 create field. CMAEG stores an encrypted pending definition at that identity before
@@ -820,6 +842,74 @@ allocating another. A provider that is not allowlisted is refused with 400
 Deletion releases the reservation; callers must never reuse a retired record UUID
 or race cleanup against an outstanding create attempt.
 
+`GET /v1/channel-records/cancel-create-capability` returns `{"contract_version":1}`
+to an authenticated creator with Channel delete permission when the Gateway can
+enforce cancellation on every writer. Availability can change, so callers must
+confirm the cancellation result.
+
+`POST /v1/channel-records/{record_id}/cancel-create` uses the original Gateway
+destination, creator bearer and canonical UUID v4. It takes no body. A 200 reply
+with `status: "creation_fenced_absent"` means any future create for that
+creator and record identity is permanently fenced. The version 1 receipt
+includes the original UUID, the authenticated issuer, human subject and kind,
+and the NyxBot binding derived from that UUID. A repeat returns the same
+receipt. An owned record returns 409 and remains eligible for exact-version
+deletion. An unresolved managed Connection claim also returns 409.
+A record owned by someone else has the same visibility as an absent
+record for the caller. An unavailable capability or an ambiguous response
+provides no receipt.
+
+
+`GET /v1/channel-records/{record_id}/management` inspects a retained record,
+including a legacy record without creation metadata. It requires the creator
+bearer permission `cma-eg:channels:read` and applies the existing `X-CMAEG-Owner`
+organization authorization. After authorization, `record_id` must be a canonical
+lowercase UUID v4. GET and HEAD return `Cache-Control: no-store` and the protocol
+version header, including errors.
+
+The response contains `record_id`, the current storage `version`, and a tagged
+`record`. A valid definition exposes its name, owner, provider slug and conformance
+level, and these independent states:
+
+- `creation`: `legacy` when creation metadata is absent, otherwise `incomplete`
+  or `complete` according to the retained flag.
+- `address`: `not_recorded` without creation metadata, `unverifiable` when the
+  saved channel ID cannot be verified, or `available` with the original
+  `channel_id` and ordinary `endpoints`. Verification checks the retained key,
+  record identity and configured current or retained record origin. No new ID is
+  issued, and an unverifiable ID is withheld.
+- Optional `pending_operation`: one of `create`, `update`, `delete`,
+  `audit_routing`, or `audit_attachments`. Other operation details are withheld.
+- Optional `retirement_expected_version`: the admitted version for an explicit
+  retirement of an incomplete channel. Provider cleanup is pending.
+
+A valid legacy record can include `retirement` when the service can retire it.
+Send `DELETE /v1/channel-records/{record_id}/management?expected_version=<version>`
+with the version from `retirement.expected_version`. This requires
+`cma-eg:channels:delete` and the same owner authorization as the management read.
+`available` permits a new retirement. `blocked_missing_credential` means the
+original provider credential is absent and the deployment operator must
+establish cleanup authority. `pending` identifies a retained retirement
+that accepts the original expected version. `cleanup_unconfirmed` means a provider
+effect needs reconciliation and a repeat request receives 409. A confirmed
+absent binding satisfies cleanup. Success returns 204 and removes the record
+from inventory. Another attempt against the removed record returns 404 without
+repeating the provider operation. Records with a saved address use ordinary
+channel deletion.
+
+An owned, decoded definition that fails validation returns only
+`{"record_id":"<record>","version":1,"record":{"state":"invalid"}}`.
+Missing records and decoded owner or embedded record-ID mismatches return opaque
+404 responses. An unopenable blob or undecodable definition, including a saved
+channel ID rejected during type decoding, returns a sanitized 500. Store failure
+returns 503; malformed path IDs return 400 before a record lookup.
+
+This read does not write channel records, publish index entries, repair bindings,
+contact channel providers or perform cleanup. Existing identity and service-token
+authentication still applies. An available address or complete creation flag does
+not establish current provider readiness or permission to retry or retire a
+channel. The storage version is an observation, not mutation authorization.
+The existing recovery response remains unchanged.
 
 A channel response has this shape (ellipsis denotes the previously supplied
 profile/policy objects, not a literal JSON value):
@@ -840,6 +930,10 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels` | Optional `after` opaque cursor; no body | 200 `{items:[...],next_cursor}` with up to 50 owner-scoped channel responses | 401 unauthenticated; 503 record store unavailable |
 | `POST /v1/channels` | Complete create body; optional idempotency header and reserved record UUID | 201 channel response | 409 reused key with different content; 503 cache capacity |
 | `GET /v1/channel-records/{record_id}` | No body | 200 recovered channel response | 404 absent, unreserved, or other owner |
+| `GET /v1/channel-records/cancel-create-capability` | No body | 200 cancellation contract version | 503 when cancellation is unavailable |
+| `POST /v1/channel-records/{record_id}/cancel-create` | No body | 200 creator-scoped cancellation receipt | 409 when the creator still owns a record |
+| `GET /v1/channel-records/{record_id}/management` | No body | 200 tagged retained-record summary | 400 malformed UUID; 404 absent or other owner; 500 unreadable record; 503 store unavailable |
+| `DELETE /v1/channel-records/{record_id}/management` | Query `expected_version` | 204 legacy channel retired | 400 invalid record or missing version; 404 absent or other owner; 409 stale version or cleanup unconfirmed; 503 store unavailable |
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
 | `GET /v1/channels/{channel_id}/activity` | No body | 200 bounded recent activity snapshot with cursor, retention and truncation | 404 absent or other owner; 503 store unavailable |
 | `GET /v1/channels/{channel_id}/activity/stream` | Optional `Last-Event-ID` or `cursor` | SSE `activity`/`reset` full snapshots; initial snapshot on every connection | 400 invalid cursor; 404 absent or other owner |
@@ -847,6 +941,8 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels/{channel_id}/activity/history/events/{event_id}/details` | Required detail `cursor`; opaque history event ID | 200 sealed-generation detail parts and optional `next_cursor` | 400 invalid cursor; 404 absent or other owner; 410 expired export; 503 unavailable |
 | `GET /v1/channels/{channel_id}/partition` | Required `partition_key`; optional `consumer_id` (default `default`) | 200 retained CMA conversation mapping and current Agent status | 400 unsupported affinity; 404 absent/hidden channel or mapping |
 | `POST /v1/channels/{channel_id}/partition/resets` | Required `Idempotency-Key` and owner reset body below | 200 reserved successor receipt; no-store | 409 disabled, ineligible target, changed mapping or reused key; uncertain failures require exact retry |
+| `POST /v1/channels/{channel_id}/profile-revisions/baseline` | Channel owner's `expected_version` | 200 profile revision receipt; no-store | Stale version or incomplete baseline evidence is refused |
+| `PUT /v1/channels/{channel_id}/profile-revisions` | Channel owner's `expected_version`, complete `profile` and `agent_key` | 200 profile revision receipt; no-store | Stale version or unqualified profile publication is refused |
 | `PUT /v1/channels/{channel_id}` | Complete create policy plus required `expected_version`; optional credential patch | 200 channel response with incremented version | 409 stale version |
 | `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version; 409 `provider_rejected` when the provider refuses to release the binding |
 | `POST /v1/channels/{channel_id}/test` | No body | 200 `{"accepted_after_ms":42,"first_text":"...","level":"l1"}` | Provider refusal, timeout or no usable result |
@@ -2541,6 +2637,19 @@ shared-guard settlement, permitting reconciliation after a crash. No-key routed
 requests retain their earlier content-hash behavior. Legacy live replies retain
 their existing delivery/storage semantics even with a valid optional key.
 
+A provider can look up side-message support with
+`GET /v1/events/{event_ref}/side-messages` and the same agent bearer it uses
+for event replies. A 200 response with `available: true` confirms support for
+the event's original chat. Older and disabled gateways return 404.
+
+Send a side message with `POST /v1/events/{event_ref}/side-messages`, a body
+of `{"text":"I’m checking that now."}`, and one 1–128 visible ASCII byte
+`Idempotency-Key`. Use it for progress or other text that should leave the
+automatic answer and failure notice eligible for delivery. The Gateway keeps
+the original chat and thread and uses a separate delivery receipt. Retry with
+the exact key and body. A changed body under the same key returns 409. A
+pending or unknown delivery retains that key without retrying the platform send.
+
 Native MCP preserves the four original names above, and lists
 `readEventAttachment` only when media is enabled. NyxID's OpenAPI discovery
 normalizes operation IDs to lowercase, so its discovered tool names are
@@ -3807,10 +3916,16 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/channels` | `listChannels` |
 | `POST /v1/channels` | `createChannel` |
 | `GET /v1/channel-records/{record_id}` | `recoverChannel` |
+| `GET /v1/channel-records/cancel-create-capability` | `cancelCreateCapability` |
+| `POST /v1/channel-records/{record_id}/cancel-create` | `cancelChannelCreate` |
+| `GET /v1/channel-records/{record_id}/management` | `getChannelRecordManagement` |
+| `DELETE /v1/channel-records/{record_id}/management` | `retireLegacyChannelRecord` |
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `GET /v1/channels/{channel_id}/partition` | `inspectChannelPartition` |
 | `POST /v1/channels/{channel_id}/partition/resets` | `resetChannelPartition` |
+| `POST /v1/channels/{channel_id}/profile-revisions/baseline` | `baselineChannelProfileRevisions` |
+| `PUT /v1/channels/{channel_id}/profile-revisions` | `publishChannelProfileRevision` |
 | `GET /v1/channels/{channel_id}/activity` | `getChannelActivity` |
 | `GET /v1/channels/{channel_id}/activity/history` | `getChannelActivityHistory` |
 | `GET /v1/channels/{channel_id}/activity/history/events/{event_id}/details` | `getChannelActivityHistoryDetails` |
@@ -3839,6 +3954,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/events/{event_ref}/reply-target` | `createReplyTarget` |
 | `POST /v1/reply-targets/{reply_target_ref}/messages` | `replyToTarget` |
 | `POST /v1/events/{event_ref}/replies` | `replyToEvent` |
+| `GET /v1/events/{event_ref}/side-messages` | `getSideMessageCapability` |
+| `POST /v1/events/{event_ref}/side-messages` | `sendSideMessage` |
 | `POST /v1/events/{event_ref}/form-preparation` | `prepareFormReply` |
 | `GET /v1/events/{event_ref}/form-preparation` | `readFormPreparation` |
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |

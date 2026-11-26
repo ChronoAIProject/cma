@@ -128,6 +128,10 @@ impl GrantAuthority for Nyxid {
         Some(&self.api_origin)
     }
 
+    fn management_url(&self) -> Option<Url> {
+        Some(self.management_url.clone())
+    }
+
     async fn account(
         &self,
         auth: &AuthState,

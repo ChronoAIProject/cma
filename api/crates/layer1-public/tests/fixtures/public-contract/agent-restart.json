@@ -1,0 +1,271 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agent-restart-accepted",
+      "operation": "POST /api/v1/agents/{id}/restart",
+      "scenario": "owner_agent_restart_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_restart_contract/restart",
+        "headers": {
+          "idempotency-key": "owner-restart"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_restart_contract",
+          "worktree_id": "wkt_restart_contract",
+          "operation_id": "restart-fixture",
+          "accepted_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-restart-replay",
+      "operation": "POST /api/v1/agents/{id}/restart",
+      "scenario": "owner_agent_restart_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_restart_contract/restart",
+        "headers": {
+          "idempotency-key": "owner-restart"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_restart_contract",
+          "worktree_id": "wkt_restart_contract",
+          "operation_id": "restart-fixture",
+          "accepted_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-restart-foreign",
+      "operation": "POST /api/v1/agents/{id}/restart",
+      "scenario": "owner_agent_restart_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_restart_contract/restart",
+        "headers": {
+          "idempotency-key": "owner-restart"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-restart-runtime-unsupported",
+      "operation": "POST /api/v1/agents/{id}/restart",
+      "scenario": "owner_agent_restart_runtime_unsupported",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_restart_contract/restart",
+        "headers": {
+          "idempotency-key": "owner-restart"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-restart-runtime-unsupported",
+          "title": "agent restart runtime unsupported",
+          "status": 409,
+          "detail": "This Sandbox runtime does not support Agent restart. Update the Sandbox to a runtime that supports Agent restart, then try again.",
+          "code": "agent_restart_runtime_unsupported"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-restart-turn-unsettled",
+      "operation": "POST /api/v1/agents/{id}/restart",
+      "scenario": "owner_agent_restart_turn_unsettled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_restart_contract/restart",
+        "headers": {
+          "idempotency-key": "owner-restart"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-restart-turn-unsettled",
+          "title": "agent restart turn unsettled",
+          "status": 409,
+          "detail": "The stopped Agent still has an unsettled turn. Ask support to reconcile it before retrying Agent restart or updating this Sandbox.",
+          "code": "agent_restart_turn_unsettled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-restart-forbidden",
+      "operation": "POST /api/v1/agents/{id}/restart",
+      "scenario": "owner_agent_restart_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_restart_contract/restart",
+        "headers": {
+          "idempotency-key": "owner-restart"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-restart-anonymous",
+      "operation": "POST /api/v1/agents/{id}/restart",
+      "scenario": "owner_agent_restart_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_restart_contract/restart",
+        "headers": {
+          "idempotency-key": "owner-restart"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-restart-missing-key",
+      "operation": "POST /api/v1/agents/{id}/restart",
+      "scenario": "owner_agent_restart_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_restart_contract/restart",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-restart-invalid-key",
+      "operation": "POST /api/v1/agents/{id}/restart",
+      "scenario": "owner_agent_restart_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_restart_contract/restart",
+        "headers": {
+          "idempotency-key": "invalid key"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-restart-disabled",
+      "operation": "POST /api/v1/agents/{id}/restart",
+      "scenario": "owner_agent_restart_disabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_restart_contract/restart",
+        "headers": {
+          "idempotency-key": "owner-restart"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

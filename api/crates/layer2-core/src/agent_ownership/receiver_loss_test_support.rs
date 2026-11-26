@@ -31,6 +31,20 @@ impl ReceiverRevocation for Receiver {
             ))
         }
     }
+
+    async fn settle_typed(
+        &self,
+        _: layer3_adapter::owner_protocol::ReceiverConfirmationCustody,
+        _: &layer3_adapter::owner_protocol::ReceiverSettlementWatch,
+    ) -> Result<
+        layer3_adapter::owner_protocol::ReceiverCleanup,
+        layer3_adapter::owner_protocol::ReceiverSettlementFailure,
+    > {
+        self.revoke()
+            .await
+            .map(|()| layer3_adapter::owner_protocol::ReceiverCleanup::Acknowledged)
+            .map_err(|_| layer3_adapter::owner_protocol::ReceiverSettlementFailure::Unavailable)
+    }
 }
 
 pub(super) struct Store {
@@ -126,8 +140,12 @@ impl OwnershipStore for Store {
     }
 }
 
-async fn start(store: Arc<dyn OwnershipStore>, id: &str) -> Arc<OwnershipCoordinator> {
-    OwnershipCoordinator::register(
+async fn start(
+    store: Arc<dyn OwnershipStore>,
+    id: &str,
+    policy: MaintenancePolicy,
+) -> Arc<OwnershipCoordinator> {
+    OwnershipCoordinator::register_with_policy(
         store,
         Member {
             instance_id: id.into(),
@@ -138,6 +156,8 @@ async fn start(store: Arc<dyn OwnershipStore>, id: &str) -> Arc<OwnershipCoordin
             owned_agents: 0,
             max_owned_agents: DEFAULT_MAX_OWNED_AGENTS,
         },
+        false,
+        policy,
     )
     .await
     .unwrap()
@@ -155,6 +175,10 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) async fn new(renew_before_pause: bool) -> Self {
+        Self::with_policy(renew_before_pause, MaintenancePolicy::Legacy).await
+    }
+
+    pub(super) async fn with_policy(renew_before_pause: bool, policy: MaintenancePolicy) -> Self {
         let inner = Arc::new(MemoryOwnershipStore::default());
         let store = Arc::new(Store {
             inner: inner.clone(),
@@ -170,7 +194,7 @@ impl Fixture {
             hide_renewal_until_publish: AtomicBool::new(false),
             unpublished_renewal: AtomicBool::new(false),
         });
-        let manager = start(store.clone(), "manager-a").await;
+        let manager = start(store.clone(), "manager-a", policy).await;
         let cancelled = manager
             .acquire(&AgentId("cancelled".into()))
             .await
@@ -181,7 +205,7 @@ impl Fixture {
             .await
             .unwrap()
             .unwrap();
-        let peer = start(inner.client(), "manager-b").await;
+        let peer = start(inner.client(), "manager-b", policy).await;
         let mut peer_owner = None;
         for index in 0..100 {
             if let Some(owner) = peer

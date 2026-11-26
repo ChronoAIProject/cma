@@ -1,5 +1,6 @@
 //! Workspace renewal retains the parent boundary of its original acquisition.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::{SandboxStoreError, WorkLeaseGrant};
 use layer2_core::sandbox::{SandboxStatus, Workspace};
 use mongodb::bson::doc;
@@ -60,7 +61,7 @@ pub(super) async fn grant(
         },
         other => {
             // An unacknowledged abort still never grants renewed authority.
-            if let Err(error) = session.abort_transaction().await {
+            if let Err(error) = session.abort_guarded().await {
                 tracing::warn!(error = %error, "Workspace renewal abort was not acknowledged");
             }
             other

@@ -262,19 +262,21 @@ it('resumes shared desktop and repository only on explicit connection action wit
   await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus());
   fireEvent.keyDown(document, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-  expect(computerOption('Shared desktop')).toBeChecked();
-  expect(computerOption('Shared desktop')).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.queryByRole('button', { name: /^Cloud computer/ })).not.toBeInTheDocument();
+  expect(screen.getByText('Shared desktop')).toBeInTheDocument();
   expect(writes).toHaveLength(1);
   const checksBeforeRefresh = checks;
   first.unmount();
   authorized = true;
   render(<TaskHome {...props} />);
   await screen.findByRole('button', { name: 'Continue original task' });
-  expect(computerOption('Shared desktop')).toBeChecked();
-  expect(computerOption('Shared desktop')).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.queryByRole('button', { name: /^Cloud computer/ })).not.toBeInTheDocument();
+  expect(screen.getByText('Shared desktop')).toBeInTheDocument();
   expect(writes).toHaveLength(1);
   expect(checks).toBe(checksBeforeRefresh);
-  fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Next task draft' } });
+  fireEvent.change(screen.getByLabelText('Follow-up draft'), {
+    target: { value: 'Next task draft' },
+  });
   fireEvent.click(screen.getByRole('button', { name: 'Continue original task' }));
   await waitFor(() => expect(writes).toHaveLength(2));
   expect(writes[1]).toEqual(writes[0]);
@@ -284,7 +286,7 @@ it('resumes shared desktop and repository only on explicit connection action wit
     machine_included: true,
   });
   expect(checks).toBe(checksBeforeRefresh + 1);
-  expect(screen.getByLabelText('Your task')).toHaveValue('Next task draft');
+  expect(screen.getByLabelText('Follow-up draft')).toHaveValue('Next task draft');
 });
 
 it.each(['client', 'account', 'context', 'unmount'] as const)(
@@ -379,5 +381,5 @@ it('keeps the receipt without opening an Agent whose parent ownership is not pro
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await waitFor(() => expect(parentReads).toBeGreaterThan(0));
   expect(onCreated).not.toHaveBeenCalled();
-  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Start task' })).not.toBeInTheDocument();
 });

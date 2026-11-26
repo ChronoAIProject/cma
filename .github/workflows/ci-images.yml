@@ -5,18 +5,24 @@ on:
       components:
         type: "string"
         required: true
+      changed_deployables:
+        default: "[]"
+        type: "string"
 permissions:
   contents: "read"
+  actions: "read"
   issues: "read"
 jobs:
   images:
     concurrency:
-      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'cma-develop-cache-readers' || format('ci-image-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.component) }}
+      # Develop writes one BuildKit scope per component. Serialize writers to
+      # the same scope while letting independent image checks run in parallel.
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('cma-develop-ci-image-{0}', matrix.component) || format('ci-image-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.component) }}
       queue: max
       cancel-in-progress: false
     name: "Image (${{ matrix.component }})"
     runs-on: "ubuntu-24.04"
-    timeout-minutes: 60
+    timeout-minutes: 95
     strategy:
       fail-fast: false
       matrix:
@@ -40,7 +46,7 @@ jobs:
           python3 -B .github/scripts/runtime_image_hygiene_tests.py
           python3 -B .github/scripts/runtime_image_machine_id_tests.py
       -
-        uses: "actions/setup-node@v6"
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
         with:
           node-version: "24.15.0"
           package-manager-cache: false
@@ -65,19 +71,32 @@ jobs:
         with:
           cache-image: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
       -
-        uses: "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f"
+        uses: "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e"
         with:
           cache-binary: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
       -
+        name: "Load the exact finalized staging image"
+        id: staging-image
+        if: >-
+          vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true' && github.event_name == 'push' &&
+          github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma' &&
+          ((matrix.component == 'api' && contains(fromJSON(inputs.changed_deployables), 'cma-agent-manager')) ||
+           (matrix.component == 'runtime' && contains(fromJSON(inputs.changed_deployables), 'cma-runtime')))
+        timeout-minutes: 32
+        env:
+          IMAGE_COMPONENT: "${{ matrix.component }}"
+          GH_TOKEN: ${{ github.token }}
+        run: "python3 -B .github/scripts/ci_staging_image.py"
+      -
         name: "Prepare API Cargo cache identity"
-        if: "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'merge_group')"
+        if: "steps.staging-image.outputs.adopted != 'true' && (matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'merge_group'))"
         id: "api-cargo-cache"
         run: "python3 .github/scripts/api-cargo-cache.py prepare"
       -
         name: "Restore API Cargo cache archive"
-        if: "matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'"
+        if: "steps.staging-image.outputs.adopted != 'true' && (matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success')"
         id: "api-cargo-cache-restore"
-        uses: "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830"
+        uses: "actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25"
         timeout-minutes: 3
         continue-on-error: true
         with:
@@ -88,22 +107,44 @@ jobs:
           enableCrossOsArchive: false
       -
         name: "Inject API Cargo cache mounts"
-        if: "matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'"
+        if: "steps.staging-image.outputs.adopted != 'true' && (matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success')"
         timeout-minutes: 3
         run: "python3 .github/scripts/api-cargo-cache.py inject"
       -
         name: "Set immutable image version"
+        if: "steps.staging-image.outputs.adopted != 'true'"
         id: "build-identity"
         run: "echo \"version=git-${GITHUB_SHA:0:12}\" >> \"$GITHUB_OUTPUT\""
       -
         name: "Resolve OS security refresh key"
+        if: "steps.staging-image.outputs.adopted != 'true'"
         id: "os-refresh"
         env:
           IMAGE_COMPONENT: "${{ matrix.component }}"
           PER_BUILD_KEY: "${{ github.run_id }}-${{ github.run_attempt }}"
         run: "python3 .github/scripts/os_refresh_key.py \"$IMAGE_COMPONENT\" api/crates/layer4-runtime/Dockerfile \"$PER_BUILD_KEY\" >> \"$GITHUB_OUTPUT\""
+      - name: Restore bounded layer archive
+        id: layer-restore
+        if: steps.staging-image.outputs.adopted != 'true' && vars.CMA_BOUNDED_LAYER_CACHE == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: |
+            ${{ runner.temp }}/cma-layer-cache/archive.tar
+            ${{ runner.temp }}/cma-layer-cache/replay.json
+          key: cma-layer-archive-v1-${{ matrix.component == 'api' && 'am' || matrix.component == 'cmaeg' && 'eg' || matrix.component }}--${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: cma-layer-archive-v1-${{ matrix.component == 'api' && 'am' || matrix.component == 'cmaeg' && 'eg' || matrix.component }}--
+          fail-on-cache-miss: false
+      - name: Validate restored layer archive
+        id: layer-validate
+        if: steps.layer-restore.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: python3 -B .github/scripts/buildkit_cache_archive.py restore "$RUNNER_TEMP/cma-layer-cache/restored" "$RUNNER_TEMP/cma-layer-cache/archive.tar"
       -
         name: "Build image for all target platforms"
+        if: "steps.staging-image.outputs.adopted != 'true'"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
         with:
           context: "."
@@ -117,10 +158,12 @@ jobs:
             RUNTIME_DESKTOP=0
             OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
             ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
-          cache-from: "type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}"
-          cache-to: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,version=2,mode=max,ignore-error=true,scope={0}', matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component) || '' }}"
+          cache-from: |
+            type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}
+            ${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}
       -
         name: "Load native image for scanning"
+        if: "steps.staging-image.outputs.adopted != 'true'"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
         with:
           context: "."
@@ -136,10 +179,12 @@ jobs:
             RUNTIME_DESKTOP=0
             OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
             ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
-          cache-from: "type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}"
+          cache-from: |
+            type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}
+            ${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}
       -
         name: "Extract API Cargo cache before pruning"
-        if: "github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'"
+        if: "steps.staging-image.outputs.adopted != 'true' && (github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true')"
         id: "api-cargo-cache-export"
         timeout-minutes: 3
         run: "python3 .github/scripts/api-cargo-cache.py extract"
@@ -161,7 +206,7 @@ jobs:
       -
         name: "Restore Trivy databases"
         if: "github.event_name != 'push' || github.ref != 'refs/heads/develop'"
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: ${{ github.workspace }}/.cache/trivy
           # Trivy uses daily keys. Restore the newest eligible database and let the scanner refresh it.
@@ -201,7 +246,7 @@ jobs:
           GH_TOKEN: "${{ github.token }}"
         run: "python3 -B .github/scripts/image_vulnerability_gate.py --component runtime --report \"$RUNNER_TEMP/runtime-vulnerabilities.json\" --base \"$BASE_SHA\""
       -
-        uses: "actions/setup-node@v6"
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
         if: "matrix.component == 'runtime'"
         with:
           node-version: 26
@@ -218,7 +263,7 @@ jobs:
       -
         name: "Retain runtime image evidence"
         if: "always() && matrix.component == 'runtime'"
-        uses: "actions/upload-artifact@v4"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "runtime-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}"
           path: |
@@ -240,7 +285,7 @@ jobs:
       -
         name: "Retain ledger storage evidence"
         if: "always() && (matrix.component == 'runtime')"
-        uses: "actions/upload-artifact@v4"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "ledger-storage-${{ matrix.component }}-${{ github.run_id }}-${{ github.run_attempt }}"
           path: "${{ runner.temp }}/ledger-storage.json"
@@ -251,7 +296,7 @@ jobs:
         if: "matrix.component == 'web'"
         run: "python3 .github/scripts/web-build-identity.py cma-web:ci \"$GITHUB_SHA\" \"git-${GITHUB_SHA:0:12}\""
       -
-        uses: "actions/setup-node@v6"
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
         if: "matrix.component == 'web'"
         with:
           node-version: "24.15.0"
@@ -300,7 +345,7 @@ jobs:
         name: "Retain web image browser evidence"
         if: "always() && matrix.component == 'web'"
         timeout-minutes: 3
-        uses: "actions/upload-artifact@v4"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "web-image-browser-${{ github.run_id }}-${{ github.run_attempt }}"
           path: "${{ runner.temp }}/web-image-upload/"
@@ -309,7 +354,7 @@ jobs:
           compression-level: 0
       -
         name: "Export tested native image"
-        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "steps.staging-image.outputs.adopted != 'true' && (success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository))"
         timeout-minutes: 10
         env:
           IMAGE_COMPONENT: "${{ matrix.component }}"
@@ -332,9 +377,9 @@ jobs:
         run: "python3 -B .github/scripts/ci_image_secret_scan.py \"$IMAGE_COMPONENT\" \"$RUNNER_TEMP/ci-native-image\" \"$GITHUB_SHA\""
       -
         name: "Retain tested native image"
-        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "steps.staging-image.outputs.adopted != 'true' && (success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository))"
         timeout-minutes: 10
-        uses: "actions/upload-artifact@v4"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "ci-native-image-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
           path: "${{ runner.temp }}/ci-native-image/"
@@ -343,8 +388,8 @@ jobs:
           retention-days: 1
       -
         name: "Save accepted API Cargo cache archive"
-        if: "success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'"
-        uses: "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830"
+        if: "steps.staging-image.outputs.adopted != 'true' && (success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && vars.CMA_LAYER_CACHE_WRITER_FLOOR != 'true' && steps.api-cargo-cache-export.outputs.ready == 'true')"
+        uses: "actions/cache/save@caa296126883cff596d87d8935842f9db880ef25"
         timeout-minutes: 3
         continue-on-error: true
         with:

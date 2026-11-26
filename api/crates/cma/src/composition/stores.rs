@@ -4,6 +4,13 @@ use std::sync::Arc;
 use crate::{config::Config, store::MongoStores};
 
 pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String> {
+    // The one released-default authority, shared by every consumer of new work
+    // and by every store copy handed out while the stores open.
+    let released: Arc<dyn layer3_adapter::ReleasedRuntimeSource> =
+        Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+            config.runtime.sandbox_image.clone(),
+            config.runtime.machine_sandbox_image.clone(),
+        ));
     let mut stores = MongoStores::connect_with_policy(
         &config.mongodb_uri,
         &config.mongodb_database,
@@ -22,6 +29,8 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             initial_settings: crate::store::settings_defaults::InitialSettings::new(
                 config.features.visitor_two_sandbox_defaults,
             ),
+            released: Some(released.clone()),
+            runtime_pointer_required: config.runtime.runtime_pointer.is_some(),
         },
     )
     .await
@@ -47,20 +56,16 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_global_sandbox_limit(config.global_sandbox_limit)
             .with_launch_admission_policy(config.features.launch_admission_policy()),
     );
-    // One released-default authority, shared by every consumer of new work.
-    stores.released_runtime = Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
-        config.runtime.sandbox_image.clone(),
-        config.runtime.machine_sandbox_image.clone(),
-    ));
+    let mut sandbox_model = (*stores.sandbox_model).clone();
+    sandbox_model.runtime_image_origin_enabled = config.features.runtime_image_origin_enabled;
+    sandbox_model.desktop_verified_runtime_image = config.desktop_verified_runtime_image.clone();
+    let sandbox_model = sandbox_model
+        .configure_active_log_proofs(config.features.active_log_proofs)
+        .await?;
     stores.sandbox_model = Arc::new(
-        (*stores.sandbox_model)
-            .clone()
-            .with_released_runtime(stores.released_runtime.clone()),
-    );
-    stores.sandbox_model = Arc::new(
-        (*stores.sandbox_model)
-            .clone()
+        sandbox_model
             .with_runtime_loss_bounded_proof(config.features.runtime_loss_bounded_proof_enabled)
+            .with_agent_inspection_parking(config.features.agent_inspection_parking)
             .with_ownership_retry_hints(config.features.ownership_retry_hints_enabled)
             .with_renewable_work(config.agent_manager_replicas.is_some())
             .with_title_effect_custody(config.agent_manager_replicas.is_some())
@@ -100,10 +105,48 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
                 .map_err(|_| "Agent Manager ownership store is unavailable")?,
         );
     }
+    if let (Some(policy), Some(path)) = (
+        &config.runtime.migration.policy,
+        &config.runtime.migration.bundle_path,
+    ) {
+        if policy.deployment_id != config.deployment_id || config.agent_manager_replicas.is_some() {
+            return Err(
+                "runtime migration policy requires the exact single-AM/OFF deployment".into(),
+            );
+        }
+        let verifier = Arc::new(layer2_core::sandbox::RuntimeActivityVerifier::new(
+            stores.sandbox_model.clone(),
+            policy.qualified_sources.first().cloned(),
+            policy.scoped_sandboxes.clone(),
+        ));
+        let authority = Arc::new(
+            super::runtime_migration::FileRuntimeMigrationAuthority::new(
+                policy.clone(),
+                path.clone(),
+                verifier.clone(),
+            ),
+        );
+        stores.sandbox_model = Arc::new(
+            (*stores.sandbox_model)
+                .clone()
+                .with_runtime_migration_authority(
+                    authority,
+                    verifier,
+                    config.runtime.migration.enabled,
+                ),
+        );
+    }
     Ok(Arc::new(
         stores
             .with_empty_discovery(config.features.empty_discovery)
-            .with_writer_policy(config.task_experience.clone()),
+            .with_writer_policy(config.task_experience.clone())
+            .with_creation_writer_epoch(
+                config.creation_writer_epoch.as_deref(),
+                config
+                    .creation_outcomes
+                    .as_ref()
+                    .is_some_and(|outcomes| outcomes.terminal_settlement),
+            ),
     ))
 }
 
@@ -131,5 +174,15 @@ pub(super) fn admission_ceilings(
     Arc::new(
         layer2_core::admission::AdmissionCeilingsService::new(stores.admission_ceilings.clone())
             .with_writes_enabled(config.features.admission_ceilings_writes_enabled),
+    )
+}
+
+pub(super) fn admission_control(
+    stores: &MongoStores,
+    config: &Config,
+) -> Arc<layer2_core::admission::AdmissionControlService> {
+    Arc::new(
+        layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
+            .with_writes_enabled(config.features.admission_control_writes_enabled),
     )
 }

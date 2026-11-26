@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
 const { readFileSync, writeFileSync } = require("node:fs");
+const { withoutNativeBoundDispatch } = require("./native_bound_dispatch.cjs");
 const { bridgePath } = require("./persist_conversations.cjs");
 const { createPromptOutputBuffer } = require("./prompt_output_buffer.cjs");
 
@@ -63,6 +64,7 @@ function promptOutputIdentity(source) {
 }
 
 function withoutPromptOutputIdentity(source) {
+  source = withoutNativeBoundDispatch(source);
   if (!source.includes(guardedState)) {
     assert(!source.includes("output.route(async (event)"), "Unexpected prompt output identity patch");
     return source;

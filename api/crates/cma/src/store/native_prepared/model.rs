@@ -99,6 +99,20 @@ impl NativePreparedPlan {
         &self.warm
     }
 
+    pub(crate) fn for_runtime(&self, image: &str) -> Result<Self, SandboxStoreError> {
+        let mut plan = self.clone();
+        if plan.warm.runtime_version != image {
+            plan.warm.runtime_version = image.into();
+            if plan.machine() {
+                let profile = &mut plan.warm.profile;
+                profile.content.runtime_image = Some(image.into());
+                profile.digest = digest(&profile.content)?;
+            }
+            plan.validate()?;
+        }
+        Ok(plan)
+    }
+
     pub(crate) fn machine(&self) -> bool {
         !self.warm.profile.content.environment_variables.is_empty()
     }

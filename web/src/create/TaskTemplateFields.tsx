@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -9,6 +9,7 @@ import {
   type TemplateIssue,
 } from './taskTemplateModel';
 import './TaskTemplateFields.css';
+import { spreadsheetLinkIssue } from './spreadsheetLinkValidation';
 
 export type TaskTemplateAvailability = 'checking' | 'supported' | 'unsupported' | 'error';
 
@@ -68,6 +69,9 @@ export function TaskTemplateFields({
 }) {
   const definition = templateDefinition(template.id);
   const fields: Readonly<Record<string, string>> = template.fields;
+  const localErrorId = useId();
+  const linkIssue = spreadsheetLinkIssue(template);
+  const localIssue = issue?.field === linkIssue?.field ? undefined : linkIssue;
   return (
     <fieldset className="task-template-fields" data-template={template.id}>
       <legend>{definition.name}</legend>
@@ -79,14 +83,25 @@ export function TaskTemplateFields({
             data-template-field={key}
             value={fields[key] ?? ''}
             required
-            aria-invalid={issue?.field === key || undefined}
-            aria-describedby={issue?.field === key ? errorId : undefined}
+            aria-invalid={issue?.field === key || localIssue?.field === key || undefined}
+            aria-describedby={
+              issue?.field === key ? errorId : localIssue?.field === key ? localErrorId : undefined
+            }
             onChange={(event) =>
               onChange(changeTemplateField(template, key, event.target.value, allowV2))
             }
           />
         </label>
       ))}
+      {localIssue ? (
+        <div
+          className="task-template-fields__field task-home__alert"
+          id={localErrorId}
+          role="alert"
+        >
+          {localIssue.message}
+        </div>
+      ) : null}
       {onClear ? (
         <Button variant="outline" onClick={onClear}>
           Write a task without a template

@@ -80,8 +80,8 @@ impl LiveAgentStopper for DurableLiveAgentStopper {
             if !agent.status.is_live() {
                 continue;
             }
-            has_live_agents = true;
             let stopping = self.ensure_stopping(sandbox, agent).await?;
+            has_live_agents |= stopping.status.is_live();
             self.registry.fence(
                 &stopping.id,
                 stopping.conversation.runtime_generation,
@@ -128,6 +128,7 @@ fn validate_stop_work(sandbox: &Sandbox, agent: &Agent) -> Result<(), SandboxDep
         AgentWorkStep::FenceInteraction
             | AgentWorkStep::CloseProcess
             | AgentWorkStep::PublishStopped
+            | AgentWorkStep::RestartTeardown
     ) {
         Ok(())
     } else {
@@ -156,6 +157,19 @@ fn validate_control_result(
         return Err(SandboxDependencyError::Security(
             AGENT_BOUNDARY_INVALID.into(),
         ));
+    }
+    if observed.status == layer2_core::sandbox::AgentStatus::Starting
+        && observed.work.step == AgentWorkStep::RestartConversation
+        && result.status == layer2_core::sandbox::AgentStatus::Stopped
+        && result.stop_reason == Some(AgentStopReason::Owner)
+        && result.stopped_at.is_some()
+        && result.work.step == AgentWorkStep::None
+        && result.work.lease.is_none()
+        && result.work.cleanup_debt.is_empty()
+        && result.work.next_fence == observed.work.next_fence
+        && observed.revision.checked_add(1) == Some(result.revision)
+    {
+        return Ok(());
     }
     if !result.status.is_live()
         || result.requested_stop_reason != Some(AgentStopReason::SandboxRetired)
@@ -200,6 +214,8 @@ fn control_store_failure(
         }
         AgentControlStoreError::NotFound
         | AgentControlStoreError::StatusConflict { .. }
+        | AgentControlStoreError::RestartEvidenceRequired
+        | AgentControlStoreError::RestartTurnUnsettled
         | AgentControlStoreError::StopReasonConflict
         | AgentControlStoreError::WorktreeRecoveryConflict
         | AgentControlStoreError::LimitReached { .. }

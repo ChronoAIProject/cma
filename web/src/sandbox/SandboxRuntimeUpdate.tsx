@@ -83,8 +83,18 @@ export function SandboxRuntimeUpdate({
     command.intent !== undefined && !command.intent.receipt && !command.intent.refused;
   const submitting = command.busy;
   const state = current.state;
-  const copy = statusCopy[state];
+  const unavailableUpdate = state === 'available' && !current.canUpdate;
+  const copy = unavailableUpdate
+    ? {
+        title: 'Runtime update unavailable',
+        detail: 'A newer managed runtime version is available.',
+      }
+    : statusCopy[state];
   const lifecycle = runtimeLifecycleNotice(sandboxStatus, current, stale);
+  const blockedReason =
+    sandboxStatus === 'failed' && unavailableUpdate
+      ? 'Runtime updates are blocked by the Sandbox failure. Open Technical details for the reported failure.'
+      : current.blockedReason;
   const title =
     lifecycle?.title ??
     (submitting
@@ -117,7 +127,7 @@ export function SandboxRuntimeUpdate({
                   ? 'ongoing'
                   : state === 'queued'
                     ? 'neutral'
-                    : state === 'failed'
+                    : state === 'failed' || (sandboxStatus === 'failed' && unavailableUpdate)
                       ? 'error'
                       : state === 'up_to_date'
                         ? 'done'
@@ -155,14 +165,20 @@ export function SandboxRuntimeUpdate({
         </div>
       </div>
       <Presence>{message ? <p role="alert">{message}</p> : null}</Presence>
-      {current.blockedReason ? <p id={reasonId}>{current.blockedReason}</p> : null}
+      {blockedReason ? <p id={reasonId}>{blockedReason}</p> : null}
       {technicalDetails === 'disclosure' ? (
         <details className="sandbox-runtime-details">
           <summary>Technical details</summary>
-          <SandboxRuntimeFacts sandboxId={sandboxId} update={current} target={target} copyable />
+          <SandboxRuntimeFacts
+            sandboxId={sandboxId}
+            update={current}
+            target={target}
+            sandboxStatus={sandboxStatus}
+            copyable
+          />
         </details>
       ) : (
-        <SandboxRuntimeFacts update={current} target={target} />
+        <SandboxRuntimeFacts update={current} target={target} sandboxStatus={sandboxStatus} />
       )}
       {unresolved ? (
         <Button disabled={unavailable} onClick={command.retry}>
@@ -171,7 +187,7 @@ export function SandboxRuntimeUpdate({
       ) : state !== 'up_to_date' ? (
         <Button
           disabled={unavailable || !current.canUpdate}
-          aria-describedby={current.blockedReason ? reasonId : undefined}
+          aria-describedby={blockedReason ? reasonId : undefined}
           onClick={() =>
             command.start(
               state === 'failed'

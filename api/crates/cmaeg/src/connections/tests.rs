@@ -15,7 +15,7 @@ use crate::{
     ManagementConfig,
 };
 use axum::{
-    extract::{Path, Query, State},
+    extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, put},
@@ -90,7 +90,10 @@ impl Fixture {
                 "/api/v1/gateway/connection-records/{id}",
                 put(save).get(load).delete(delete),
             )
-            .route("/api/v1/gateway/channel-records/{id}", get(load_channel))
+            .route(
+                "/api/v1/gateway/channel-records/{id}",
+                put(save).get(load_channel).delete(delete),
+            )
             .route(
                 "/oauth/token",
                 axum::routing::post(store_diagnostics::deny_auth),
@@ -118,6 +121,9 @@ impl Fixture {
             .clone()
             .unwrap_or_else(|| RecordClient::new(&self.base, SERVICE_TOKEN).unwrap())
     }
+    pub(super) fn lose_put_ack_for(&self, id: &str) {
+        *self.peer.lose_next_put_for.lock().unwrap() = Some(id.to_owned());
+    }
     pub(super) fn store(&self) -> Store {
         Store::new(self.records(), self.keys.clone())
     }
@@ -136,7 +142,7 @@ pub(super) fn owner(subject: &str, organization: bool) -> Creator {
         organization,
     }
 }
-pub(super) fn connection(subject: &str, organization: bool) -> Connection {
+pub(crate) fn connection(subject: &str, organization: bool) -> Connection {
     let timestamp = now();
     Connection {
         id: uuid::Uuid::new_v4().to_string(),
@@ -208,6 +214,7 @@ fn authenticated(headers: &HeaderMap) -> bool {
 async fn save(
     State(peer): State<Arc<Peer>>,
     Path(id): Path<String>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
@@ -216,7 +223,11 @@ async fn save(
     }
     before_mutation(&peer, &id).await;
     peer.requests.lock().unwrap().push(body.clone());
-    let mut rows = peer.rows.lock().unwrap();
+    let mut rows = if uri.path().starts_with("/api/v1/gateway/channel-records/") {
+        peer.channels.lock().unwrap()
+    } else {
+        peer.rows.lock().unwrap()
+    };
     let previous = rows.get(&id).map(|row| row.version);
     if previous != body["expected_version"].as_u64() {
         return (
@@ -281,6 +292,7 @@ async fn load_channel(
 async fn delete(
     State(peer): State<Arc<Peer>>,
     Path(id): Path<String>,
+    OriginalUri(uri): OriginalUri,
     Query(query): Query<BTreeMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
@@ -288,7 +300,11 @@ async fn delete(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     before_mutation(&peer, &id).await;
-    let mut rows = peer.rows.lock().unwrap();
+    let mut rows = if uri.path().starts_with("/api/v1/gateway/channel-records/") {
+        peer.channels.lock().unwrap()
+    } else {
+        peer.rows.lock().unwrap()
+    };
     let Some(current) = rows.get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };

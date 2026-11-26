@@ -20,6 +20,7 @@ export interface OperatorClient {
   readonly admin: Pick<
     Administration,
     | 'listSandboxes'
+    | 'bindingHolds'
     | 'readSandbox'
     | 'sandboxEvents'
     | 'retireSandbox'

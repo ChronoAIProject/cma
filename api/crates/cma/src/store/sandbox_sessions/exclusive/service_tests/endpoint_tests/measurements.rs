@@ -190,7 +190,7 @@ async fn matched_public_desktop_connect_windows() {
     println!(
         "DESKTOP_PUBLIC_MEASUREMENT={}",
         json!({
-            "mode":mode, "diagnostics":diagnostic,
+            "schema":1, "mode":mode, "diagnostics":diagnostic,
             "boundary":"authenticated public discovery through first returned synthetic echo frame",
             "replicas":"independent routers, AuthStates, resource/auth Mongo clients and concrete adapters in one CMA process",
             "receiver":"actual authenticated receiver child with synthetic display",

@@ -1,3 +1,4 @@
+import { selectTaskTemplate } from '../test/taskTemplateSelection';
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { createClient } from '@cma/client';
@@ -57,7 +58,7 @@ it.each(['off', 'unsupported', 'missing', 'checking', 'error'] as const)(
     fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'Edited topic' } });
     expect(saved().template).toEqual({ ...retained, fields: { topic: 'Edited topic' } });
     expect(saved().text).toBe('Independent free text');
-    fireEvent.click(screen.getByRole('button', { name: 'Write code' }));
+    selectTaskTemplate('Write code');
     expect(saved().template.version).toBe(1);
     expect(view.create).not.toHaveBeenCalled();
   },
@@ -79,7 +80,7 @@ it('does not upgrade legacy hydration, capability arrival, reselection or an unc
   expect(saved().template.version).toBe(1);
   await act(async () => finish(true));
   expect(saved().template.version).toBe(1);
-  fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+  selectTaskTemplate('Research a topic');
   fireEvent.change(screen.getByLabelText('Topic'), { target: { value: '' } });
   expect(saved().template.version).toBe(1);
   fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'Explicit new topic' } });
@@ -135,7 +136,7 @@ it('keeps a retained v2 draft and refuses v2 submission on a v1-only service wit
 it('replays a retained v2 request with its original body/key after the service loses v2 support', async () => {
   const first = setup({ readTaskTemplateV2Support: async () => true });
   await ready();
-  fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+  selectTaskTemplate('Research a topic');
   fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'Original v2 command' } });
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await screen.findByRole('button', { name: 'Recover original task' });

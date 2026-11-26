@@ -8,64 +8,64 @@ use layer2_core::sandbox::store::{
     AgentWorkClaimError, AgentWorkDiscovery, AgentWorkMutation, AgentWorkerStore, Page,
     PageRequest, SandboxStoreError, StartupWorkFilter, MAX_PAGE_SIZE,
 };
-use mongodb::bson::{doc, Bson};
+use layer2_core::sandbox::Agent;
+use mongodb::bson::doc;
 use std::time::Duration;
 
 use super::child_writer_claims::{persist_observed, ChildWriterClaim};
 use super::sandbox_mongo::{MongoSandboxStore, TRANSACTION_ATTEMPTS};
 
+mod creation_admission;
+
 #[async_trait::async_trait]
 impl AgentWorkerStore for MongoSandboxStore {
+    async fn agent_restart_teardown(
+        &self,
+        claimed: &Agent,
+    ) -> Result<layer2_core::sandbox::store::AgentRestartTeardown, SandboxStoreError> {
+        super::agent_control_transaction::restart_teardown::load(self, claimed).await
+    }
+
+    async fn publish_agent_restart_teardown(
+        &self,
+        publication: layer2_core::sandbox::store::AgentRestartTeardownPublication,
+    ) -> Result<(), SandboxStoreError> {
+        super::agent_control_transaction::restart_teardown::publish(self, &publication).await
+    }
+
+    async fn agent_restart_work(
+        &self,
+        claimed: &Agent,
+    ) -> Result<layer2_core::sandbox::store::AgentRestartWork, SandboxStoreError> {
+        super::agent_control_transaction::load_restart_work(self, claimed).await
+    }
+
+    async fn restart_connection_open(
+        &self,
+        agent: &Agent,
+    ) -> Result<Option<layer3_adapter::AgentOpenRequest>, SandboxStoreError> {
+        super::agent_control_transaction::load_restart_connection(self, agent).await
+    }
+
+    async fn prepare_agent_restart_dispatch(
+        &self,
+        request: layer2_core::sandbox::store::AgentRestartDispatch,
+    ) -> Result<Agent, SandboxStoreError> {
+        super::agent_control_transaction::prepare_restart_dispatch(self, &request).await
+    }
+
+    async fn has_owner_stop_receipt(
+        &self,
+        agent: &layer2_core::sandbox::Agent,
+    ) -> Result<bool, SandboxStoreError> {
+        super::agent_control_receipt::observe_owner_stop_receipt(self, agent).await
+    }
+
     async fn agent_create_admission(
         &self,
         agent: &layer2_core::sandbox::Agent,
     ) -> Result<Option<layer2_core::sandbox::store::AgentCreateAdmission>, SandboxStoreError> {
-        let layer2_core::sandbox::AgentOrigin::Lifecycle { operation_id } = &agent.origin else {
-            return Ok(None);
-        };
-        let Some(record) = self
-            .lifecycle_operations
-            .find_one(doc! { "_id": operation_id })
-            .projection(
-                doc! { "created_at": 1, "owner": 1, "input.request.desktop": 1,
-                "input.request.machine_included": 1 },
-            )
-            .max_time(Duration::from_millis(200))
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        else {
-            return Ok(None);
-        };
-        if record.get_str("owner").ok() != Some(agent.owner.as_str()) {
-            return Ok(None);
-        }
-        let admitted_at_ms = record
-            .get_datetime("created_at")
-            .ok()
-            .map(|value| value.timestamp_millis());
-        let request = record
-            .get_document("input")
-            .ok()
-            .and_then(|input| input.get_document("request").ok());
-        let valid_bool = |key: &str| {
-            request
-                .and_then(|request| request.get(key))
-                .is_none_or(|value| matches!(value, Bson::Boolean(_)))
-        };
-        let (desktop, machine_included) = match request {
-            Some(request) if valid_bool("desktop") && valid_bool("machine_included") => (
-                Some(request.get_bool("desktop").unwrap_or(false)),
-                Some(request.get_bool("machine_included").unwrap_or(false)),
-            ),
-            _ => (None, None),
-        };
-        Ok(admitted_at_ms.map(
-            |admitted_at_ms| layer2_core::sandbox::store::AgentCreateAdmission {
-                admitted_at_ms,
-                desktop,
-                machine_included,
-            },
-        ))
+        creation_admission::read(self, agent).await
     }
 
     async fn agent_command_admission_generation(
@@ -346,6 +346,32 @@ impl AgentWorkerStore for MongoSandboxStore {
             .map_err(|error| error.store_error)
     }
 
+    fn agent_inspection_parking_enabled(&self) -> bool {
+        self.agent_inspection_parking
+    }
+
+    async fn agent_inspection_parked(&self, id: &AgentId) -> Result<bool, SandboxStoreError> {
+        super::agent_inspection_park::parked(self, id).await
+    }
+
+    async fn park_agent_inspection(
+        &self,
+        owner: &layer2_core::agent_ownership::OwnershipToken,
+        claimed: &Agent,
+        binding: &layer2_core::sandbox::RuntimeBinding,
+        failure: layer2_core::agent_ownership::OwnershipFailure,
+    ) -> Result<bool, SandboxStoreError> {
+        super::agent_inspection_park::park(self, owner, claimed, binding, failure).await
+    }
+
+    async fn confirm_agent_inspection(
+        &self,
+        claimed: &Agent,
+        binding: &layer2_core::sandbox::RuntimeBinding,
+    ) -> Result<(), SandboxStoreError> {
+        super::agent_inspection_park::confirm(self, claimed, binding).await
+    }
+
     async fn claim_agent_work_observed(
         &self,
         id: &AgentId,
@@ -367,6 +393,11 @@ impl AgentWorkerStore for MongoSandboxStore {
             else {
                 return Ok(None);
             };
+            if super::agent_inspection_park::has_marker(&row)
+                && self.agent_inspection_parked(id).await?
+            {
+                return Ok(None);
+            }
             let mut agent = super::agents::read_agent(&row)?;
             if super::agent_worker_transaction::pending_adoption::witness::blocks_claim(
                 self, &row, &agent,

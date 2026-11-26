@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::resource_access::{
     plan_share_mutation, ResourceAccessSnapshot, ResourceAccessStoreError, ResourceShare,
     ResourceShareStore, ShareChange, ShareMutation, ShareMutationReceipt,
@@ -44,11 +45,11 @@ impl ResourceShareStore for MongoSandboxStore {
             let receipt = match apply(self, &request, &mut session).await {
                 Ok(receipt) => receipt,
                 Err(ReadError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(ReadError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if is_confirmed_body_retry(&error) {
                         continue;
                     }

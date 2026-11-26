@@ -3,6 +3,30 @@ use crate::sandbox::lifecycle_test_support::{agent, sandbox, NOW};
 use crate::sandbox::*;
 use crate::{SandboxId, SubjectId};
 
+#[test]
+fn retirement_requires_native_finality_for_pending_restart_custody() {
+    let mut parent = sandbox();
+    parent.status = SandboxStatus::Retiring;
+    let mut request = loss_request(&parent);
+    for step in [
+        AgentWorkStep::RestartConversation,
+        AgentWorkStep::RestartTeardown,
+    ] {
+        let mut pending = agent("agt_restart", "conversation", 1);
+        pending.work.step = step;
+        request.native_retirement_finality = false;
+        assert_eq!(
+            precheck_agent_recovery(&parent, &pending, &request).unwrap(),
+            Some(SandboxRuntimeLossOutcome::NotEligible),
+        );
+        request.native_retirement_finality = true;
+        assert_eq!(
+            precheck_agent_recovery(&parent, &pending, &request).unwrap(),
+            None
+        );
+    }
+}
+
 fn loss_request(value: &Sandbox) -> SandboxRuntimeLossRequest {
     SandboxRuntimeLossRequest {
         sandbox_id: value.id.clone(),

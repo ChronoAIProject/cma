@@ -25,12 +25,12 @@ pub(super) async fn schedule(
         let (result, receipt) = match apply(store, operation, scope).await {
             Ok(value) => value,
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 tokio::task::yield_now().await;
                 continue;
             }
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(match error {
                     ApplyError::Domain(error) => error,
                     ApplyError::Driver(error) => unavailable(error),

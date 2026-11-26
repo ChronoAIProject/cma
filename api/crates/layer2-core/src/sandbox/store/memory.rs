@@ -48,6 +48,8 @@ mod queued_inputs;
 mod queued_inputs_tests;
 mod suggestions;
 use events::{append_sandbox_event, bounded_events};
+mod custom_runtime;
+use custom_runtime::validate_new_sandbox;
 #[cfg(test)]
 mod launch_command_tests;
 mod lifecycle;
@@ -70,6 +72,7 @@ mod retained_recovery_tests;
 mod retained_reopen;
 #[cfg(test)]
 mod retained_reopen_tests;
+mod runtime_activity;
 mod sandbox_controls;
 mod sessions;
 mod targeted_controls;
@@ -229,18 +232,7 @@ impl SandboxStore for InMemorySandboxStore {
     }
 
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
-        if !sandbox.credential.service_grants.is_empty()
-            || sandbox.credential.service_scope.is_some()
-        {
-            return Err(SandboxStoreError::InvalidTransaction(
-                "service access requires an existing sandbox and an atomic grant",
-            ));
-        }
-        if sandbox.origin.replay_key().is_some() {
-            return Err(SandboxStoreError::InvalidTransaction(
-                "origin-bound sandboxes require atomic admission",
-            ));
-        }
+        validate_new_sandbox(&sandbox)?;
         let mut state = self.lock();
         if state.sandboxes.values().any(|stored| {
             stored.owner == sandbox.owner
@@ -266,6 +258,9 @@ impl SandboxStore for InMemorySandboxStore {
         let mut state = self.lock();
         if state.sandboxes.get(&id).is_some_and(|current| {
             current.owner != sandbox.owner
+                || current.lifecycle.custom_runtime != sandbox.lifecycle.custom_runtime
+                || current.lifecycle.runtime_migration_admission
+                    != sandbox.lifecycle.runtime_migration_admission
                 || current
                     .validate_retirement_archive_successor(&sandbox)
                     .is_err()
@@ -460,6 +455,7 @@ impl AgentStore for InMemorySandboxStore {
             || current.owner != agent.owner
             || current.profile != agent.profile
             || current.conversation.settings != agent.conversation.settings
+            || current.conversation.turn_timeout != agent.conversation.turn_timeout
             || current.work.resolved_skills != agent.work.resolved_skills
             || current.work.live_skills != agent.work.live_skills
         {

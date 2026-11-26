@@ -104,6 +104,7 @@ impl SandboxWorker {
             return Err(refuse_at(id, "checkpoint_conversation"));
         }
         let guard = AgentReopenGuard {
+            owner_restart: None,
             sandbox: SandboxMutationGuard::capture(&sandbox),
             agent_fence: agent.work.next_fence,
             native_conversation_id: conversation.clone(),

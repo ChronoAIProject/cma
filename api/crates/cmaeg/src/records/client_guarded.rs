@@ -25,6 +25,7 @@ impl RecordClient {
                 channel_version,
                 authority_guards,
                 None,
+                None,
             )
             .await
     }
@@ -81,6 +82,7 @@ impl RecordClient {
                     version,
                     guards,
                     Some(projection),
+                    None,
                 )
                 .await
         } else {
@@ -127,6 +129,42 @@ impl RecordClient {
             .as_ref()
             .ok_or_else(|| RecordError::Rejected("indexed admission requires direct Mongo".into()))?
             .list_admission_roots(deployment, owner, after, limit)
+            .await
+    }
+}
+
+impl RecordClient {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn put_profile_admission(
+        &self,
+        id: &str,
+        owner: &str,
+        blob: &[u8],
+        expires_at: i64,
+        profile: &crate::channels::profile_assignment::Admission,
+        guards: &[AuthorityGuard],
+        projection: Option<crate::records::mongo::ReplicaProjection>,
+    ) -> Result<u64, RecordError> {
+        let database = self
+            .database
+            .as_ref()
+            .ok_or_else(|| {
+                RecordError::Unavailable("profile admission requires local records".into())
+            })?
+            .for_kind(crate::records::RecordKind::Interaction);
+        self.record_url(id)?;
+        database
+            .guarded_insert_interaction(
+                id,
+                owner,
+                blob,
+                expires_at,
+                &profile.channel_record_id,
+                profile.channel_version,
+                guards,
+                projection,
+                profile.insert.as_ref(),
+            )
             .await
     }
 }

@@ -6,6 +6,9 @@ use layer2_core::sandbox::{SandboxStatus, WorkspaceStatus};
 #[cfg(test)]
 #[path = "connection_diagnostics_tests.rs"]
 mod diagnostics_tests;
+#[cfg(test)]
+#[path = "context_diagnostics_tests.rs"]
+mod inspection_tests;
 #[path = "context_overlap.rs"]
 mod overlap;
 
@@ -30,7 +33,7 @@ fn report_inspection(
         tracing::info!(target: TARGET, parent: None,
             agent_sha256 = %fields.agent_sha256, sandbox_sha256 = fields.sandbox_sha256.as_deref(),
             instance_sha256 = %fields.instance_sha256, receiver_sha256 = fields.receiver_sha256.as_deref(),
-            step = ?step, elapsed_ms = elapsed.as_millis() as u64, parent_overlap,
+            epoch = fields.epoch, step = ?step, elapsed_ms = elapsed.as_millis() as u64, parent_overlap,
             succeeded = error.is_none(), reason, "Agent runtime inspection completed");
     });
 }
@@ -142,10 +145,14 @@ impl AgentWorker {
         }
         let inspection = self.inspection_correlation(agent);
         let inspection_started = tokio::time::Instant::now();
-        let attached = crate::sandbox::runtime_attachment::inspect_bound_runtime(
-            self.dependencies.adapter.as_ref(),
+        let attached = super::super::inspection_park::observe(
+            agent,
             &sandbox,
-            &self.config.deployment_id,
+            crate::sandbox::runtime_attachment::inspect_bound_runtime(
+                self.dependencies.adapter.as_ref(),
+                &sandbox,
+                &self.config.deployment_id,
+            ),
         )
         .await;
         self.observe_runtime_startup(&sandbox, inspection_started, &attached);
@@ -173,6 +180,7 @@ impl AgentWorker {
             }
             failure
         })?;
+        self.confirm_inspection(agent, &sandbox).await?;
         Ok(AgentContext {
             sandbox,
             workspace,

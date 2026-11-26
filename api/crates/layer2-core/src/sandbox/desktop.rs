@@ -16,6 +16,7 @@ pub use layer3_adapter::DesktopFrame;
 mod authorization;
 mod owned;
 mod timing;
+use super::runtime_migration_guard::{try_acquire_desktop_runtime_guard, DesktopRuntimeGuard};
 pub use authorization::DesktopAuthorization;
 
 #[derive(Debug, thiserror::Error)]
@@ -48,6 +49,7 @@ pub struct DesktopService {
     reads: Arc<AgentReadService>,
     adapter: Arc<dyn SandboxAdapter>,
     admission: DesktopAdmission,
+    migration_tracking: bool,
 }
 
 pub struct DesktopConnection {
@@ -56,6 +58,7 @@ pub struct DesktopConnection {
     session_id: String,
     runtime_id: String,
     _lease: Option<OwnedMutexGuard<()>>,
+    migration_guard: Option<DesktopRuntimeGuard>,
     owned: Option<owned::ConnectionState>,
 }
 
@@ -107,11 +110,17 @@ impl DesktopService {
             reads,
             adapter,
             admission: DesktopAdmission::Disabled,
+            migration_tracking: false,
         }
     }
 
     pub fn with_admission(mut self, admission: DesktopAdmission) -> Self {
         self.admission = admission;
+        self
+    }
+
+    pub fn with_runtime_migration_tracking(mut self, enabled: bool) -> Self {
+        self.migration_tracking = enabled;
         self
     }
 
@@ -216,6 +225,7 @@ impl DesktopService {
             // Uncertainty retains the durable claim while dropping our socket.
             owned.close(&self.reads).await;
             connection.connection.take();
+            connection.migration_guard.take();
         } else {
             // Preserve the legacy handoff: slow persistence cannot retain the
             // old runtime socket or the local exclusive viewer lease.
@@ -225,6 +235,7 @@ impl DesktopService {
             }
             self.close(connection.sandbox_id.clone(), connection.session_id.clone())
                 .await;
+            connection.migration_guard.take();
         }
     }
 

@@ -28,6 +28,15 @@ fn explicit_commands_retain_audit_identity_and_gate_cas() {
         assert_eq!(agent, "agent-original");
         assert_eq!(id, "audit-original");
     }
+    let proof = parse::operation(&args(&[
+        "--agent-log-active-proof-prepare",
+        "agent-fixture",
+    ]))
+    .unwrap();
+    assert!(matches!(proof, Operation::ActiveProof(id) if id == "agent-fixture"));
+    let role =
+        parse::operation(&args(&["--print-agent-log-operator-role", "active-proof"])).unwrap();
+    assert_eq!(role.access(), Access::ActiveProof);
     let read =
         parse::operation(&args(&["--agent-log-gate-status", "agent_log_segments_v1"])).unwrap();
     assert_eq!(read.access(), Access::GateRead);
@@ -94,7 +103,12 @@ fn gate_control_requires_both_collections_in_the_verified_inventory() {
 
 #[test]
 fn operator_authority_accepts_exact_grants_and_refuses_missing_or_excess_grants() {
-    for access in [Access::Audit, Access::GateRead, Access::GateWrite] {
+    for access in [
+        Access::Audit,
+        Access::ActiveProof,
+        Access::GateRead,
+        Access::GateWrite,
+    ] {
         let grants = authority::role("fixture", access)
             .get_array("privileges")
             .unwrap()

@@ -15,6 +15,10 @@ from staging_cd_receipts_tests import fixture_identity
 
 
 class ArtifactTests(unittest.TestCase):
+    @staticmethod
+    def convert(command, **_options):
+        Path(command[-1].removeprefix("oci-archive:")).write_bytes(b"synthetic OCI image")
+
     def fixture(self):
         expected = fixture_identity()
         run = {"id": 10, "run_attempt": 1, "event": "pull_request", "status": "completed", "conclusion": "success",
@@ -56,7 +60,7 @@ class ArtifactTests(unittest.TestCase):
         expected, run, metadata, api, download, _ = self.queue_fixture()
         self.assertTrue(qualifies(metadata, expected, run))
         with tempfile.TemporaryDirectory() as directory, patch("staging_cd_artifacts.inspect") as inspect:
-            path = try_reuse(expected, Path(directory), api, "fixture", download, Mock())
+            path = try_reuse(expected, Path(directory), api, "fixture", download, self.convert)
         inspect.assert_called_once()
         self.assertEqual(path.name, "image.oci.tar")
         paths = [call.args[0] for call in api.request.call_args_list]
@@ -114,7 +118,7 @@ class ArtifactTests(unittest.TestCase):
         api.request.side_effect = [pr, {"workflow_runs": [queue]}, {"total_count": 0, "artifacts": []},
                                    {"workflow_runs": [pr_run]}, {"total_count": 1, "artifacts": [artifact]}]
         with tempfile.TemporaryDirectory() as directory, patch("staging_cd_artifacts.inspect"):
-            self.assertIsNotNone(try_reuse(expected, Path(directory), api, "fixture", download, Mock()))
+            self.assertIsNotNone(try_reuse(expected, Path(directory), api, "fixture", download, self.convert))
         self.assertEqual(api.request.call_args_list[-1].args[0], "actions/runs/10/artifacts?per_page=100")
 
     def test_current_ci_manifests_cannot_qualify_until_they_bind_the_release_build(self):
@@ -140,13 +144,17 @@ class ArtifactTests(unittest.TestCase):
         expected, _, _, api, download = self.fixture()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            runner = Mock()
+            runner = Mock(side_effect=self.convert)
             with patch("staging_cd_artifacts.inspect") as inspect:
                 path = try_reuse(expected, root, api, "fixture", download, runner)
             self.assertEqual(path, root / "image.oci.tar")
             self.assertEqual(runner.call_count, 1)
             self.assertEqual(runner.call_args.args[0][:2], ["skopeo", "copy"])
-            inspect.assert_called_once_with(path, expected, runner, allow_qualified=True)
+            inspected_path, identity, _ = inspect.call_args.args
+            self.assertEqual(inspected_path.name, path.name)
+            self.assertEqual(identity, expected)
+            self.assertEqual(inspect.call_args.kwargs, {"allow_qualified": True, "compatibility": None})
+            self.assertEqual(list(root.iterdir()), [path])
 
     def test_split_pr_artifact_uses_only_the_component_workflow(self):
         expected, run, _, api, download = self.fixture()
@@ -157,7 +165,7 @@ class ArtifactTests(unittest.TestCase):
         )
         api.request.side_effect = responses
         with tempfile.TemporaryDirectory() as directory, patch("staging_cd_artifacts.inspect"):
-            self.assertIsNotNone(try_reuse(expected, Path(directory), api, "fixture", download, Mock()))
+            self.assertIsNotNone(try_reuse(expected, Path(directory), api, "fixture", download, self.convert))
         self.assertEqual(api.request.call_args_list[-1].args[0], "actions/runs/10/artifacts?per_page=100")
 
     def test_unqualified_manifest_falls_back_before_using_image_archive(self):
@@ -165,29 +173,44 @@ class ArtifactTests(unittest.TestCase):
         metadata.pop("buildFingerprint")
         with tempfile.TemporaryDirectory() as directory:
             runner = Mock()
-            self.assertIsNone(try_reuse(expected, Path(directory), api, "fixture", download, runner))
+            misses = []
+            self.assertIsNone(try_reuse(expected, Path(directory), api, "fixture", download, runner,
+                                        on_miss=misses.append))
+            self.assertEqual(misses, ["manifest:buildFingerprint"])
             runner.assert_not_called()
             self.assertFalse((Path(directory) / "qualified.docker.tar.gz").exists())
 
-    def test_unreachable_pr_artifact_falls_back_to_building(self):
+    def test_optional_candidate_lookup_or_download_failure_falls_back(self):
         transient = Refusal("GitHub API request failed")
         transient.__cause__ = ci_retry.TransientError()
-        cases = (("api", transient), ("download", subprocess.TimeoutExpired("gh", 600)),
-                 ("download", Refusal("CI artifact checksum differs")))
-        for stage, error in cases:
-            with self.subTest(stage=stage, error=error), tempfile.TemporaryDirectory() as directory:
+        cases = (("api", transient, "unreachable"),
+                 ("api", Refusal("GitHub API request failed"), "candidate-unavailable"),
+                 ("download", subprocess.TimeoutExpired("gh", 600), "unreachable"),
+                 ("download", Refusal("CI artifact checksum differs"), "candidate-unavailable"))
+        for stage, error, reason in cases:
+            with self.subTest(stage=stage, reason=reason), tempfile.TemporaryDirectory() as directory:
                 expected, _, _, api, download = self.fixture()
                 if stage == "api":
                     api.request.side_effect = error
                 else:
                     download = Mock(side_effect=error)
-                runner = Mock()
-                if ci_retry.classify(error) == ci_retry.TRANSIENT:
-                    self.assertIsNone(try_reuse(expected, Path(directory), api, "fixture", download, runner))
-                else:
-                    with self.assertRaisesRegex(Refusal, "checksum"):
-                        try_reuse(expected, Path(directory), api, "fixture", download, runner)
+                runner, misses = Mock(), []
+                root = Path(directory)
+                self.assertIsNone(try_reuse(expected, root, api, "fixture", download, runner, on_miss=misses.append))
+                self.assertEqual(misses, [reason])
+                self.assertEqual(list(root.iterdir()), [])
                 runner.assert_not_called()
+
+    def test_different_merge_preview_never_downloads_its_archive(self):
+        expected, _, _, api, _ = self.fixture()
+        pr, runs, listing = list(api.request.side_effect)
+        listing["artifacts"][0]["name"] = "ci-native-image-web-" + "d" * 40 + "-10-1"
+        api.request.side_effect = [pr, runs, listing]
+        download, misses = Mock(), []
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertIsNone(try_reuse(expected, Path(directory), api, "fixture", download, on_miss=misses.append))
+        self.assertEqual(misses, ["no-artifact"])
+        download.assert_not_called()
 
     def test_reuse_reads_and_download_share_one_budget(self):
         expected, _, _, api, download = self.fixture()
@@ -196,7 +219,7 @@ class ArtifactTests(unittest.TestCase):
             seen.append(deadline)
             download(artifact, destination, token)
         with tempfile.TemporaryDirectory() as directory, patch("staging_cd_artifacts.inspect"):
-            try_reuse(expected, Path(directory), api, "fixture", recording, Mock(), clock=lambda: 1000.0)
+            try_reuse(expected, Path(directory), api, "fixture", recording, self.convert, clock=lambda: 1000.0)
         deadline = 1000.0 + REUSE_SECONDS
         self.assertEqual([call.kwargs["deadline"] for call in api.request.call_args_list], [deadline] * 3)
         self.assertEqual(seen, [deadline])
@@ -265,14 +288,53 @@ class ArtifactTests(unittest.TestCase):
             untouched.assert_not_called()
             self.assertEqual(target.read_bytes(), b"foreign")
 
-    def test_substituted_artifact_content_is_rejected_before_conversion(self):
+    def test_unreadable_or_substituted_archive_never_converts(self):
         expected, _, metadata, api, download = self.fixture()
         metadata["archiveSha256"] = "0" * 64
+
+        def corrupt(_artifact, destination, _token, **_options):
+            destination.write_bytes(b"not a zip file")
+
         with tempfile.TemporaryDirectory() as directory:
-            runner = Mock()
-            with self.assertRaises(Refusal):
-                try_reuse(expected, Path(directory), api, "fixture", download, runner)
+            root = Path(directory)
+            runner, misses = Mock(), []
+            self.assertIsNone(try_reuse(expected, root, api, "fixture", download, runner, on_miss=misses.append))
+            expected, _, _, api, _ = self.fixture()
+            self.assertIsNone(try_reuse(expected, root, api, "fixture", corrupt, runner, on_miss=misses.append))
+            self.assertEqual(misses, ["candidate-invalid", "candidate-invalid"])
+            self.assertEqual(list(root.iterdir()), [])
             runner.assert_not_called()
+
+    def test_invalid_oci_or_expired_conversion_keeps_no_candidate(self):
+        for expires in (False, True):
+            with self.subTest(expires=expires), tempfile.TemporaryDirectory() as directory:
+                expected, _, _, api, download = self.fixture()
+                root = Path(directory)
+                source_root = root / "source"
+                misses = []
+                now = 1000.0
+
+                def copy(command, *, timeout):
+                    nonlocal now
+                    self.assertEqual(timeout, 600)
+                    self.convert(command)
+                    if expires:
+                        now += REUSE_SECONDS
+
+                def inspect(path, _expected, runner, *, allow_qualified, compatibility):
+                    self.assertTrue(allow_qualified)
+                    self.assertEqual(compatibility, {"fixture": "trusted release proof"})
+                    if expires:
+                        runner(["skopeo", "inspect"], timeout=120)
+                    raise Refusal("Native image platform is invalid")
+
+                with patch("staging_cd_artifacts.inspect", side_effect=inspect), \
+                        patch("staging_cd_artifacts.from_source", return_value={"fixture": "trusted release proof"}) as contract:
+                    self.assertIsNone(try_reuse(expected, root, api, "fixture", download, copy, clock=lambda: now,
+                                                on_miss=misses.append, source_root=source_root))
+                contract.assert_called_once_with(expected["component"], expected["source"], source_root)
+                self.assertEqual(misses, ["candidate-invalid"])
+                self.assertEqual(list(root.iterdir()), [])
 
 
 if __name__ == "__main__":

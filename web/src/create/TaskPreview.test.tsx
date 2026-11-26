@@ -1,3 +1,4 @@
+import { selectTaskTemplate } from '../test/taskTemplateSelection';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { unavailableClient, type CmaWebClient } from '../api/client';
@@ -30,7 +31,7 @@ async function setup(overrides: Partial<CmaWebClient> = {}) {
   await waitFor(() =>
     expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Write a document' }));
+  selectTaskTemplate('Write a document');
   await waitFor(() => expect(screen.getByLabelText('Document type')).toHaveFocus());
   return create;
 }

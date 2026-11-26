@@ -16,6 +16,67 @@ async fn real_allocation_buckets_activate_only_with_confined_namespace_grants() 
 }
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn real_cancelled_terminal_command_can_end_its_own_session_under_the_exact_runtime_grant() {
+    use mongodb::{
+        options::{ClientOptions, Credential},
+        Client,
+    };
+    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_terminal_grant_{}", uuid::Uuid::new_v4().simple());
+    let db = admin.database(&name);
+    db.run_command(role(&name)).await.unwrap();
+    let password = uuid::Uuid::new_v4().to_string();
+    db.run_command(doc! {"createUser":"terminal-runtime","pwd":&password,
+    "roles":[{"role":"cma_am_runtime","db":&name}]})
+        .await
+        .unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.credential = Some(
+        Credential::builder()
+            .username("terminal-runtime".to_owned())
+            .password(password)
+            .source(name.clone())
+            .build(),
+    );
+    let runtime = Client::with_options(options).unwrap();
+    let agents = runtime.database(&name).collection::<Document>("agents");
+    let mut session = runtime.start_session().await.unwrap();
+    session.start_transaction().await.unwrap();
+    agents
+        .find_one(doc! {})
+        .session(&mut session)
+        .await
+        .expect("the runtime grant reads agents");
+    // Control: the credential really is confined to its grant.
+    let foreign = runtime
+        .database(&format!("{name}_foreign"))
+        .collection::<Document>("agents")
+        .find_one(doc! {})
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(foreign.kind.as_ref(), mongodb::error::ErrorKind::Command(c) if c.code == 13),
+        "the runtime credential must be refused outside its grant"
+    );
+    // The guard's recovery command needs no privilege beyond owning the session (#3288).
+    crate::store::transaction_terminal::kill_session(&runtime, session.id())
+        .await
+        .expect("a runtime credential may end its own session");
+    assert!(
+        agents
+            .find_one(doc! {})
+            .session(&mut session)
+            .await
+            .is_err(),
+        "ending the session aborts its open transaction"
+    );
+    drop(session);
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn real_transaction_barrier_is_authorized_by_the_exact_runtime_grant() {
     use mongodb::{
         bson::Document,
@@ -560,4 +621,75 @@ mod observation_grants_tests {
         validate(&status(grants.clone()), "cma").unwrap();
         assert!(validate_observation_grants(&status(grants), "cma").is_err());
     }
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn real_measured_custody_role_can_be_added_and_revoked_with_capture_off() {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use mongodb::{
+        options::{ClientOptions, Credential},
+        Client,
+    };
+    use std::{sync::Arc, time::Duration};
+
+    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_measured_role_{}", uuid::Uuid::new_v4().simple());
+    let db = admin.database(&name);
+    db.run_command(required_role(&name)).await.unwrap();
+    let password = uuid::Uuid::new_v4().to_string();
+    db.run_command(doc! {"createUser": "runtime", "pwd": &password,
+    "roles": [{"role": "cma_am_runtime", "db": &name}]})
+        .await
+        .unwrap();
+    db.create_collection(MEASURED_CUSTODY).await.unwrap();
+    let privilege = doc! {"resource": {"db": &name, "collection": MEASURED_CUSTODY},
+    "actions": MEASURED_CUSTODY_ACTIONS};
+    let key = crate::store::AuthEncryptionKey::from_base64(&STANDARD.encode([7_u8; 32])).unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.credential = Some(
+        Credential::builder()
+            .username("runtime".to_owned())
+            .password(password)
+            .source(name.clone())
+            .build(),
+    );
+    for (command, widened) in [
+        (None, false),
+        (Some("grantPrivilegesToRole"), true),
+        (Some("revokePrivilegesFromRole"), false),
+    ] {
+        if let Some(command) = command {
+            db.run_command(doc! {command: "cma_am_runtime", "privileges": [privilege.clone()]})
+                .await
+                .unwrap();
+        }
+        let runtime = Client::with_options(options.clone()).unwrap();
+        let stores = crate::store::MongoStores::open(
+            runtime.clone(),
+            &name,
+            "measured-role-fixture",
+            &key,
+            Duration::from_secs(86_400),
+            Arc::new(crate::store::checkpoint_storage::RetiredCheckpointStorage),
+            ("measured-role-fixture", None),
+        )
+        .await
+        .unwrap();
+        stores.ping().await.unwrap();
+        let rows = runtime
+            .database(&name)
+            .collection::<Document>(MEASURED_CUSTODY);
+        assert_eq!(rows.find_one(doc! {}).await.is_ok(), widened);
+        assert!(rows.delete_one(doc! {}).await.is_err());
+    }
+    assert_eq!(
+        db.collection::<Document>(MEASURED_CUSTODY)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    db.drop().await.unwrap();
 }

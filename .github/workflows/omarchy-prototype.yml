@@ -18,14 +18,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - name: Reserve space on the disposable runner
         timeout-minutes: 3
         run: |
           test "$GITHUB_ACTIONS" = true
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
           df -h /
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 24.15.0
       - name: Download retained donor with verified CMA runtime binaries
@@ -82,7 +82,7 @@ jobs:
         run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" /tmp/omarchy-evidence/image-tmp
       - name: Retain startup results before the full image scan
         if: always() && steps.build.outcome == 'success'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: omarchy-startup-${{ github.sha }}
           path: /tmp/omarchy-evidence/
@@ -110,7 +110,7 @@ jobs:
           python3 .github/scripts/omarchy-export.py "$GITHUB_SHA" /tmp/omarchy-image /tmp/omarchy-evidence
       - name: Retain candidate image
         if: always() && steps.build.outcome == 'success'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: omarchy-runtime-candidate-${{ github.sha }}
           path: /tmp/omarchy-image/
@@ -118,7 +118,7 @@ jobs:
           retention-days: 7
       - name: Retain verification evidence
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: omarchy-runtime-evidence-${{ github.sha }}
           path: /tmp/omarchy-evidence/

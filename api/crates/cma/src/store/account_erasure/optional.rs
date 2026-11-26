@@ -1,6 +1,8 @@
 //! Fresh namespace and command authority receipts, never persisted capabilities.
 use super::{CohortBlock, Error};
-use crate::store::{agent_observation, allocation_buckets, durability::majority_collection};
+use crate::store::{
+    agent_observation, allocation_buckets, creation_outcomes, durability::majority_collection,
+};
 use mongodb::{
     bson::{doc, Document},
     error::ErrorKind,
@@ -10,11 +12,16 @@ use mongodb::{
 pub(super) struct Receipt {
     pub allocation_absent: bool,
     pub observer_absent: bool,
+    pub creation_proofs_absent: bool,
+    pub active_log_proofs_absent: bool,
 }
 impl Receipt {
     pub fn skips(&self, collection: &str) -> bool {
         (self.allocation_absent && collection == allocation_buckets::COLLECTION)
             || (self.observer_absent && collection == agent_observation::COLLECTION)
+            || (self.creation_proofs_absent && collection == creation_outcomes::COLLECTION)
+            || (self.active_log_proofs_absent
+                && collection == crate::store::agent_log_segments::active_proof::COLLECTION)
     }
 }
 
@@ -46,6 +53,14 @@ pub(super) async fn inspect(
         .await?,
         observer_absent: absent(db, agent_observation::COLLECTION, agent_shared_observation)
             .await?,
+        // Disabling the reader can leave proofs that still belong to this owner.
+        creation_proofs_absent: absent(db, creation_outcomes::COLLECTION, Some(false)).await?,
+        active_log_proofs_absent: absent(
+            db,
+            crate::store::agent_log_segments::active_proof::COLLECTION,
+            Some(false),
+        )
+        .await?,
     })
 }
 

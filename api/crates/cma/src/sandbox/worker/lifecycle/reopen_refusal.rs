@@ -3,6 +3,7 @@ use std::future::Future;
 use layer2_core::agent_ownership::observed_transport;
 use layer2_core::sandbox::store::{ReopenRefusalFence, SandboxStoreError};
 use layer2_core::sandbox::{Agent, Sandbox, SandboxImageRotationPhase, SandboxLifecycleOperation};
+use layer3_adapter::ReleasedRuntime;
 use tokio::time::{timeout_at, Instant};
 
 use super::super::support::{adapter_failure, WorkerFailure};
@@ -11,6 +12,14 @@ use super::SandboxWorker;
 
 impl SandboxWorker {
     pub(super) fn reopen_output_refusal_enabled(&self, sandbox: &Sandbox) -> bool {
+        self.reopen_output_refusal_enabled_for(sandbox, self.config.release().as_ref())
+    }
+
+    fn reopen_output_refusal_enabled_for(
+        &self,
+        sandbox: &Sandbox,
+        release: Option<&ReleasedRuntime>,
+    ) -> bool {
         if !self.config.reopen_output_refusal_enabled || !sandbox.supports_retained_runtime_update()
         {
             return false;
@@ -32,7 +41,7 @@ impl SandboxWorker {
                     && request.completed_at.is_none()
                     && request.target_version == *target_runtime_version
             })
-            && self.config.released.snapshot().agent == *target_runtime_version
+            && self.config.default_version(release) == *target_runtime_version
     }
 
     pub(super) async fn reopen_refusal_fence(
@@ -40,7 +49,8 @@ impl SandboxWorker {
         sandbox: &Sandbox,
         agent: &Agent,
     ) -> Result<Option<ReopenRefusalFence>, SandboxStoreError> {
-        if !self.reopen_output_refusal_enabled(sandbox) {
+        let released = self.config.release();
+        if !self.reopen_output_refusal_enabled_for(sandbox, released.as_ref()) {
             return Ok(None);
         }
         let snapshot = self
@@ -55,6 +65,7 @@ impl SandboxWorker {
             agent_revision: agent.revision,
             checkpoint: snapshot.checkpoint.map(Box::new),
             owner: None,
+            released,
         }))
     }
 }

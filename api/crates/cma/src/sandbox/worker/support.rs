@@ -197,6 +197,7 @@ async fn commit_advance(
     store
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision,
             sandbox: Box::new(sandbox),
             event_at,
@@ -237,6 +238,7 @@ pub(super) fn material_matches(
         && material.owner == sandbox.owner
         && material.source == sandbox.credential.source
         && material.matches_source()
+        && material.matches_connection(sandbox)
         && &material.authority == pending
 }
 
@@ -363,6 +365,7 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         }
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
+        | AdapterError::NativePoolDefinitionAbsent { .. }
         | AdapterError::Unavailable(_) => WorkerFailure::retryable(
             "runtime dependency unavailable",
         )
@@ -389,6 +392,8 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
             WorkerFailure::resource_quota("requested sandbox capacity is unavailable")
         }
         AdapterError::Rejected(_)
+        | AdapterError::AdmittedSandboxSpecDrift
+        | AdapterError::NativePoolConfigurationDrift
         | AdapterError::DesktopFailed
         | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)

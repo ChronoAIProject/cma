@@ -3,6 +3,38 @@ import { expect, it } from 'vitest';
 import { agent, transport } from './resource-fixtures.js';
 import type { AgentLifecycleCreateRequest } from '../index.js';
 
+it.each([undefined, '2026-11-23T08:00:00Z'])(
+  'preserves the optional durable acceptance time %s without deriving one from progress',
+  async (accepted_at) => {
+    const test = transport();
+    const operation = {
+      id: 'original-operation',
+      status: 'running',
+      phase: 'agent_startup',
+      events: [],
+      ...(accepted_at === undefined ? {} : { accepted_at }),
+    };
+    test.answer(operation);
+    for (let attempt = 0; attempt < 2; attempt += 1)
+      expect(await test.client.agents.readLifecycle(operation.id)).toEqual(operation);
+  },
+);
+
+it.each([null, 123, 'not a timestamp'])(
+  'rejects an invalid acceptance time %j',
+  async (accepted_at) => {
+    const test = transport();
+    test.answer({
+      id: 'original-operation',
+      status: 'running',
+      phase: 'agent_startup',
+      events: [],
+      accepted_at,
+    });
+    await expect(test.client.agents.readLifecycle('original-operation')).rejects.toThrow();
+  },
+);
+
 it.each(['inferred', true, { mode: 'automatic' }])(
   'rejects invalid title mode %j before admitting a lifecycle request',
   async (title_mode) => {

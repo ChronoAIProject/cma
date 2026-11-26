@@ -33,6 +33,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
   vi.restoreAllMocks();
   sessionStorage.clear();
@@ -64,6 +65,51 @@ function fixture() {
   };
   return { client, connected, report };
 }
+
+it.each([false, true])(
+  'cancels a hosted start acknowledged after manual GitHub repair (recovery=%s)',
+  async (recovery) => {
+    vi.stubEnv('VITE_CONNECTION_INTENT_RECOVERY_ENABLED', String(recovery));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ owner: 'owner' })),
+    );
+    const { client, report } = fixture();
+    let resolve!: (result: StartedConnection) => void;
+    vi.mocked(client.start).mockImplementationOnce(
+      () => new Promise((complete) => (resolve = complete)),
+    );
+    const ready = vi.fn();
+    render(<ConnectionWizard target={target} client={client} repositoryRecovery onReady={ready} />);
+    await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+    const active = vi.mocked(client.start).mock.calls[0]![1];
+    vi.mocked(client.check).mockResolvedValue({
+      ...report(),
+      services: report().services.map((row) =>
+        row.service === active.service_id ? { ...row, connection_mode: 'manual' } : row,
+      ),
+    });
+    await poll();
+    expect(screen.getByRole('button', { name: 'Verify again' })).toBeVisible();
+    vi.mocked(client.cancel).mockClear();
+    const hosted = {
+      ...active,
+      owner: 'owner',
+      hosted_url: 'https://identity.example.test/github',
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    };
+    await act(async () => resolve(hosted));
+    expect(client.cancel).toHaveBeenCalledExactlyOnceWith(target, hosted);
+    const key = JSON.stringify(target);
+    expect(sessionStorage.getItem(`cma.connection.${key}`)).toBeNull();
+    const recoveryState = sessionStorage.getItem(`cma.connection-recovery.v1.${key}:false`);
+    expect(JSON.parse(recoveryState ?? '{}')).not.toHaveProperty('pending');
+    expect(popup.location.href).toBe('');
+    expect(ready).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Verify again' })).toBeVisible();
+  },
+);
 
 it('reuses the unacknowledged connection intent after a lost start response', async () => {
   vi.stubEnv('VITE_CONNECTION_INTENT_RECOVERY_ENABLED', 'true');

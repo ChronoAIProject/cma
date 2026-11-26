@@ -18,6 +18,7 @@ pub(super) const DEADLINE: Duration = Duration::from_millis(2500);
 const ATTEMPT: Duration = Duration::from_millis(750);
 const ATTEMPTS: u32 = 3;
 
+#[cfg(test)]
 pub(super) async fn verify(
     auth: &AuthState,
     metadata: Option<&ProviderMetadata>,
@@ -50,7 +51,7 @@ pub(super) async fn verify_detailed(
             record(
                 Endpoint::Verification,
                 Stage::Admission,
-                Reason::Capacity,
+                Reason::VerificationCapacity,
                 None,
                 error,
             )
@@ -62,7 +63,7 @@ pub(super) async fn verify_detailed(
         record(
             Endpoint::Verification,
             Stage::Admission,
-            Reason::Capacity,
+            Reason::FenceCapacity,
             None,
             &error,
         );

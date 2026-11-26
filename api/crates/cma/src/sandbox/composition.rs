@@ -57,6 +57,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub native_create_retry_enabled: bool,
     pub reopen_output_refusal_enabled: bool,
     pub cleanup_continuation_enabled: bool,
+    pub owner_stop_settlement_enabled: bool,
     pub bounded_live_fragments: bool,
     pub quiet_output: Option<layer2_core::sandbox::AgentOutputCoalescePolicy>,
     pub coordinated_ingress: bool,
@@ -70,6 +71,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub defer_foreign_reconciliation: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
     pub sandbox_binding_hold_metrics: bool,
+    pub startup_native_home_hold_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -90,6 +92,7 @@ pub(crate) struct SandboxLifecycleComposition {
     capacity_worker: Arc<AgentWorker>,
     capacity_recovery: Option<SandboxScheduler>,
     stale_turns: Option<super::stale_turn_reconciliation::Worker>,
+    turn_timeouts: super::turn_timeout_worker::Worker,
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
     updates: Arc<DurableAgentUpdateRecorder>,
@@ -97,6 +100,10 @@ pub(crate) struct SandboxLifecycleComposition {
 }
 
 impl SandboxLifecycleComposition {
+    pub(crate) fn binding_diagnostics(&self) -> Arc<dyn crate::binding_diagnostics::LocalSource> {
+        self.reconciliation.binding_diagnostics()
+    }
+
     pub(crate) fn register_inline_lifecycle(
         &mut self,
         drain: crate::agent_lifecycle::LifecycleDrain,
@@ -126,6 +133,10 @@ impl SandboxLifecycleComposition {
         );
         let sandbox_admitted = Arc::clone(&dependencies.store.sandbox_admitted);
         let agent_admitted = Arc::clone(&dependencies.store.agent_admitted);
+        let turn_timeouts = super::turn_timeout_worker::Worker::new(
+            dependencies.store.clone(),
+            config.ownership.clone(),
+        );
         let stale_turns = if config.stale_turn_reconciliation {
             config.ownership.as_ref().map(|ownership| {
                 super::stale_turn_reconciliation::Worker::new(
@@ -158,6 +169,7 @@ impl SandboxLifecycleComposition {
         ))
         .with_background_resumption(config.sandbox_reconciliation_reserved_lane)
         .with_binding_hold_metrics(config.sandbox_binding_hold_metrics)
+        .with_startup_native_home_hold(config.startup_native_home_hold_enabled)
         .with_runtime_loss_bounded_proof(config.runtime_loss_bounded_proof_enabled)
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_released_runtime(config.released.clone())
@@ -249,6 +261,7 @@ impl SandboxLifecycleComposition {
         .with_work_retry_policy(config.work_retry_policy_enabled)
         .with_managed_documents(config.managed_documents_enabled)
         .with_access_transport_migration(config.access_transport_migration);
+        agent_config.owner_stop_settlement_enabled = config.owner_stop_settlement_enabled;
         if config.native_retirement_finality_enabled {
             agent_config.retirement_reporter = Some(dependencies.store.clone());
         }
@@ -325,6 +338,7 @@ impl SandboxLifecycleComposition {
             capacity_worker: agent_worker.clone(),
             capacity_recovery: None,
             stale_turns,
+            turn_timeouts,
             agent: AgentScheduler::new(agent_worker, agent_admitted)
                 .with_resumable_reconciliation(config.resume_agent_reconciliation)
                 .with_event_driven_reconciliation(
@@ -394,6 +408,10 @@ impl SandboxLifecycleComposition {
                 workers.get("agent_stale_turn_reconciliation"),
             ));
         }
+        shutdown.push(
+            self.turn_timeouts
+                .spawn(shutdown.subscribe(), workers.get("agent_turn_timeout")),
+        );
         shutdown.push(self.warmup.spawn(shutdown.subscribe()));
         let signal = shutdown.subscribe();
         shutdown.push(

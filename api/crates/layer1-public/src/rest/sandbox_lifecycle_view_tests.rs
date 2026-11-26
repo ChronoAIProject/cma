@@ -40,6 +40,7 @@ async fn parked_runtime_result_reaches_list_and_owner_detail_without_runtime_met
                 started_at: Some(NOW.into()),
                 completed_at: None,
                 failure: None,
+                retained_transition: None,
             }),
         });
         if revive {

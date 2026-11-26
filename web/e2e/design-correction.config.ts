@@ -12,7 +12,6 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev -- --host 127.0.0.1 --port 4644 --strictPort',
     url: 'http://127.0.0.1:4644',
-    env: { VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED: 'true' },
     reuseExistingServer: false,
   },
   use: {

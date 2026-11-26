@@ -116,6 +116,7 @@ async fn lifecycle_callback_distinguishes_unknown_retained_deleted_and_missing_a
             store.save_agent(1, agent.clone()).await.unwrap();
         }
         let view = AgentLifecycleOperationView {
+            accepted_at: None,
             failure: None,
             id: "operation".into(),
             status: "running".into(),

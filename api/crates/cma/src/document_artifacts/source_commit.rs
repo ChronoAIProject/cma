@@ -3,6 +3,7 @@ use super::{
     mongo::{decode, encode, MongoDocumentStore},
     quota::{object_row, IO},
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     commit_transaction, is_confirmed_body_retry, is_duplicate_key, start_transaction, CommitOutcome,
 };
@@ -150,7 +151,7 @@ impl Publication<'_> {
             match result {
                 Ok(true) => {}
                 result => {
-                    if session.abort_transaction().await.is_err() {
+                    if session.abort_guarded().await.is_err() {
                         tracing::warn!("document source publication abort was not acknowledged");
                     }
                     match result {

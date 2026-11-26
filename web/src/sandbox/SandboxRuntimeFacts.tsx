@@ -29,6 +29,28 @@ export function runtimeLifecycleNotice(
         'The latest runtime status could not be confirmed. Last reported details are shown below.',
       tone: 'warning',
     };
+  if (update.state === 'up_to_date' && update.currentVersionConfirmed === false)
+    return {
+      title: 'Runtime version unconfirmed',
+      detail: 'The current Desktop runtime could not be confirmed.',
+      tone: 'neutral',
+    };
+  if (
+    update.state === 'up_to_date' &&
+    update.currentVersionConfirmed === true &&
+    update.currentVersion !== update.latestVersion
+  )
+    return {
+      title: 'Desktop runtime update unavailable',
+      detail: 'The current version is shown below.',
+      tone: 'neutral',
+    };
+  if (update.state === 'up_to_date' && !update.preservesHome)
+    return {
+      title: 'Managed runtime updates unavailable',
+      detail: 'This Sandbox is not eligible for automatic CMA runtime updates.',
+      tone: 'neutral',
+    };
   if (
     update.state === 'up_to_date' &&
     (status !== 'active' ||
@@ -49,25 +71,39 @@ export function SandboxRuntimeFacts({
   update,
   target = update?.targetVersion,
   copyable = false,
+  sandboxStatus,
 }: {
   readonly sandboxId?: string;
   readonly runtimeVersion?: string;
   readonly update?: SandboxRuntimeUpdate;
   readonly target?: string;
   readonly copyable?: boolean;
+  readonly sandboxStatus?: SandboxDetail['status'];
 }) {
   const current = update === undefined ? runtimeVersion : update.currentVersion;
   const rows = [
     ...(sandboxId === undefined ? [] : [['Sandbox ID', sandboxId]]),
     ['Current runtime', current || 'Not reported'],
-    ...(update === undefined ? [] : [['Latest runtime', update.latestVersion]]),
+    ...(update?.imageOrigin === 'managed_desktop' ? [['Runtime channel', 'Managed Agent']] : []),
+    ...(update === undefined
+      ? []
+      : [
+          [
+            update.preservesHome ? 'Latest runtime' : 'Latest managed runtime',
+            update.latestVersion,
+          ],
+        ]),
     ...(target && target !== update?.latestVersion ? [['Requested runtime', target]] : []),
     ...(update === undefined
       ? []
       : [
           [
             'Automatic updates',
-            `Daily at ${update.schedule.localTime} SGT (${update.schedule.timezone}), when idle`,
+            !update.preservesHome
+              ? 'Not available for this Sandbox'
+              : sandboxStatus === 'failed' && !update.canUpdate
+                ? 'Unavailable while the Sandbox needs attention'
+                : `Daily at ${update.schedule.localTime} SGT (${update.schedule.timezone}), when idle`,
           ],
         ]),
   ];
@@ -79,7 +115,9 @@ export function SandboxRuntimeFacts({
           <div key={name}>
             <dt>{name}</dt>
             <dd>
-              {name === 'Automatic updates' || value === 'Not reported' ? (
+              {name === 'Automatic updates' ||
+              name === 'Runtime channel' ||
+              value === 'Not reported' ? (
                 value
               ) : (
                 <code>{value}</code>

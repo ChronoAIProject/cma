@@ -109,6 +109,17 @@ impl Ledger {
             .await
     }
 
+    pub(crate) async fn has_process_writer(&self, key: v1::ResourceKey) -> Result<bool> {
+        self.verify()?;
+        let config = Arc::clone(&self.config);
+        self.storage
+            .call(move |db| {
+                let scope = config.generation.to_be_bytes();
+                Ok(!authority::load(db, &config, &key, &scope)?.is_empty())
+            })
+            .await
+    }
+
     pub(crate) async fn started_page(&self, generation: u64, after: String) -> Result<Vec<Record>> {
         self.verify()?;
         if (generation != 0

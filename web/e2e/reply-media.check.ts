@@ -25,13 +25,13 @@ wav.write('data', 36);
 wav.writeUInt32LE(1600, 40);
 
 for (const theme of ['light', 'dark']) {
-  test(`LOCAL ${theme} reply media loads through authorized files and duration survives reload`, async ({
+  test(`LOCAL ${theme} reply media loads through authorized files and timestamp survives reload`, async ({
     page,
     baseURL,
   }, info) => {
     const boundary = new LocalStartup();
-    const started = '2026-10-27T08:00:00Z';
-    const finished = '2026-10-27T10:03:04Z';
+    const finished = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    const started = new Date(Date.parse(finished) - 7_384_000).toISOString();
     const content = [
       'Results are ready.',
       '![Plot](sandbox:/home/cma/plot.png)',
@@ -108,9 +108,10 @@ for (const theme of ['light', 'dark']) {
     await page.locator('.agent-content__media').nth(3).scrollIntoViewIfNeeded();
     await page.getByRole('button', { name: 'Retry preview' }).click();
     await expect(page.getByRole('img', { name: 'Retry image' })).toBeVisible();
-    await expect(page.getByLabel('Turn duration')).toHaveText(
-      'Worked for 2 hours 3 minutes 4 seconds.',
-    );
+    const timestamp = page.locator('.message--assistant .message__timestamp');
+    await expect(timestamp).toHaveAttribute('datetime', finished);
+    await expect(timestamp).toHaveText(/^\d+ days? ago$/);
+    await expect(page.getByLabel('Turn duration')).toHaveCount(0);
     expect(reads).toEqual(
       expect.arrayContaining([
         'cma/plot.png',
@@ -119,11 +120,11 @@ for (const theme of ['light', 'dark']) {
         'cma/retry.png',
       ]),
     );
-    await page.screenshot({ path: info.outputPath('media-and-duration.png'), fullPage: true });
+    await page.screenshot({ path: info.outputPath('media-and-timestamp.png'), fullPage: true });
     await page.reload();
-    await expect(page.getByLabel('Turn duration')).toHaveText(
-      'Worked for 2 hours 3 minutes 4 seconds.',
-    );
+    await expect(timestamp).toHaveAttribute('datetime', finished);
+    await expect(timestamp).toHaveText(/^\d+ days? ago$/);
+    await expect(page.getByLabel('Turn duration')).toHaveCount(0);
     expect(boundary.errors).toEqual([]);
     expect(boundary.unexpected).toEqual([]);
     expect(boundary.writes).toEqual([]);

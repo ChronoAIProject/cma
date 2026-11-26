@@ -25,6 +25,7 @@ mod commands;
 mod conversations;
 mod custody;
 mod key_classification;
+mod profile_transfer;
 mod reprovision;
 mod reset;
 #[cfg(test)]
@@ -81,19 +82,34 @@ impl BindingCollections {
         let assessment = observer
             .assess(Contract::Binding, schema::inspect(database))
             .await?;
-        Ok(Self {
-            safety: assessment.capability,
+        Ok(Self::handles(database, assessment.capability))
+    }
+
+    pub(in crate::store) fn handles(database: &Database, safety: schema::BindingSafety) -> Self {
+        Self {
+            safety,
             records: majority_collection(database, BINDINGS),
             conversations: majority_collection(database, CONVERSATIONS),
             tool_opens: majority_collection(database, TOOL_OPENS),
             tool_relays: majority_collection(database, TOOL_RELAYS),
             preparations: majority_collection(database, reprovision::PREPARATIONS),
-        })
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl BindingStore for MongoSandboxStore {
+    async fn transfer_profile_conversation(
+        &self,
+        request: layer2_core::sandbox::binding::ProfileTransferRequest,
+        enabled: bool,
+    ) -> Result<
+        layer2_core::sandbox::binding::ProfileTransferReceipt,
+        layer2_core::sandbox::binding::BindingError,
+    > {
+        self.transfer_conversation(request, enabled).await
+    }
+
     async fn conversation_reset_state(
         &self,
         binding: &str,

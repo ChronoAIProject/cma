@@ -14,11 +14,13 @@ export async function desktopBoundary(
   const connections: number[] = [];
   const painters: (() => void)[] = [];
   const starters: (() => void)[] = [];
+  const closers: (() => void)[] = [];
   const inputs: { kind: 'key' | 'pointer'; down?: boolean; keysym?: number; buttons?: number }[] =
     [];
   await page.routeWebSocket('**/api/v1/agents/agt_contract/desktop/ws', (socket) => {
     const index = connections.length;
     connections.push(index);
+    closers.push(() => socket.close());
     const paint = () => {
       // One actual, opaque black RRE framebuffer rectangle. A handshake alone
       // must not dismiss the loading surface or enable input.
@@ -91,5 +93,6 @@ export async function desktopBoundary(
     inputs,
     paint: () => painters.at(-1)?.(),
     connect: () => starters.at(-1)?.(),
+    disconnect: () => closers.at(-1)?.(),
   };
 }

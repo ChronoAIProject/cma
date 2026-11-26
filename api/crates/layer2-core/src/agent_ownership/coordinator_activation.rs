@@ -18,13 +18,24 @@ impl OwnershipCoordinator {
         member: Member,
         enabled: bool,
     ) -> Arc<Self> {
-        Self::prepare_with_options(store, member, enabled, false)
+        Self::prepare_with_policy(store, member, enabled, MaintenancePolicy::Legacy)
     }
 
-    pub fn prepare_with_options(
+    pub fn prepare_with_policy(
         store: Arc<dyn OwnershipStore>,
         member: Member,
         cleanup_pacing: bool,
+        policy: MaintenancePolicy,
+    ) -> Arc<Self> {
+        Self::prepare_with_policy_options(store, member, cleanup_pacing, policy, false)
+    }
+
+    /// Prepare membership with both the failure policy and optional batch renewal.
+    pub fn prepare_with_policy_options(
+        store: Arc<dyn OwnershipStore>,
+        member: Member,
+        cleanup_pacing: bool,
+        policy: MaintenancePolicy,
         batch_renewal: bool,
     ) -> Arc<Self> {
         let capacity = member.max_owned_agents as usize;
@@ -33,13 +44,20 @@ impl OwnershipCoordinator {
             batch_maintenance: (batch_renewal && store.supports_batch_renewal())
                 .then(Mutex::default),
             store,
-            owned: Mutex::new(BTreeMap::new()),
+            policy,
+            capacity,
+            cleanup_slots: tokio::sync::Semaphore::new(4),
+            owned: std::sync::Mutex::new(BTreeMap::new()),
+            #[cfg(feature = "qualification-hooks")]
+            qualification_renewal: std::sync::OnceLock::new(),
             acquisition: Mutex::new(()),
             cancelled_cursor: AtomicUsize::new(0),
             // Already passed: nothing is ready until registration sets it.
             member_deadline: std::sync::Mutex::new(Instant::now()),
             skipped_heartbeats: AtomicU32::new(0),
             draining: AtomicBool::new(false),
+            lifecycle: watch::channel(Lifecycle::Serving).0,
+            retry: Mutex::new(super::super::heartbeat_retry::RetryState::new()),
             failed: watch::channel(false).0,
             cleanup_pacing: super::super::cleanup_pacing::CleanupPacing::new(
                 cleanup_pacing,
@@ -48,6 +66,22 @@ impl OwnershipCoordinator {
             registration: std::sync::Mutex::new(Some(member)),
             registered: AtomicBool::new(false),
         })
+    }
+
+    /// Develop's batch-renewal entry point retains the legacy failure policy.
+    pub fn prepare_with_options(
+        store: Arc<dyn OwnershipStore>,
+        member: Member,
+        cleanup_pacing: bool,
+        batch_renewal: bool,
+    ) -> Arc<Self> {
+        Self::prepare_with_policy_options(
+            store,
+            member,
+            cleanup_pacing,
+            MaintenancePolicy::Legacy,
+            batch_renewal,
+        )
     }
 
     pub fn is_registered(&self) -> bool {

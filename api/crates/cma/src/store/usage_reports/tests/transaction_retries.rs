@@ -96,8 +96,7 @@ impl Fixture {
         }));
         let client = Client::with_options(options).unwrap();
         let mut store = (*successor).clone();
-        store.db = client.database(successor.db.name());
-        store.client = client;
+        store.persistence = store.persistence.with_client(client);
         Self {
             store: Arc::new(store),
             successor,

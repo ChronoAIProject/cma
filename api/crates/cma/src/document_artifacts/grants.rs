@@ -1,4 +1,5 @@
 //! Recipient authority and the document revision share one durable transaction.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::{
     document_artifacts::{DocumentError, StoredDocument},
     SubjectId,
@@ -46,23 +47,23 @@ pub(super) async fn exchange(
         }.await;
         let matched = match result {
             Ok(None) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(DocumentError::ShareRecipientUnavailable);
             }
             Ok(Some(false)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(false);
             }
             Ok(Some(true)) => true,
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if error.contains_label("TransientTransactionError") {
                     continue;
                 }
                 return Err(DocumentError::Unavailable);
             }
         };
-        match session.commit_transaction().await {
+        match session.commit_guarded().await {
             Ok(()) => return Ok(matched),
             // An unknown commit can already have persisted the grant receipt.
             // The exact operation key reconciles it; never repeat its effects.

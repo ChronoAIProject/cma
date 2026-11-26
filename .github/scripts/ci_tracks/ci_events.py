@@ -1,8 +1,12 @@
 """Validate the CI event boundary independently of CD comparison policy."""
 
+import os
 import re
 
-from git_comparison import check_sha
+if __package__:
+    from .git_comparison import check_sha
+else:
+    from git_comparison import check_sha
 
 # GitHub names each merge-queue entry's branch after its base branch and PR.
 # Only the develop queue is supported; main still merges reviewed release PRs.
@@ -13,6 +17,14 @@ QUEUE_REF = re.compile(r'refs/heads/gh-readonly-queue/develop/pr-([1-9][0-9]*)-[
 # history; this only admits the name.
 RELEASE_BRANCH = re.compile(r'release/[0-9A-Za-z][0-9A-Za-z._-]{0,62}')
 CANDIDATE_REF_PREFIX = 'refs/heads/tl/release/'
+VERIFICATION_EVENTS = {'schedule', 'workflow_dispatch'}
+
+
+def verification_head():
+    head = check_sha(os.environ['GITHUB_SHA'])
+    if os.environ['GITHUB_REF'] != 'refs/heads/develop' or head == '0' * 40:
+        raise ValueError('full CI verification requires a live develop commit')
+    return head
 
 
 def release_head(ref):
@@ -47,6 +59,9 @@ def full_ci_required(event, event_name, repository):
     repository_name(repository)
     if event['repository']['full_name'] != repository:
         raise ValueError('event repository differs')
+    if event_name in VERIFICATION_EVENTS:
+        verification_head()
+        return True
     if event_name == 'push':
         ref = event['ref']
         candidate = (isinstance(ref, str) and ref.startswith(CANDIDATE_REF_PREFIX)

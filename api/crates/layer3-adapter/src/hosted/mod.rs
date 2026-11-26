@@ -16,6 +16,8 @@ mod acp_turn;
 mod adapter;
 mod agent_sandbox_backend;
 mod backend;
+mod retained_startup_policy;
+pub use retained_startup_policy::HostedRetainedStartupPolicy;
 mod capacity_recovery;
 pub use capacity_recovery::CapacityRecoveryNativeTransport;
 mod channel_tools;
@@ -25,6 +27,7 @@ mod context_goal;
 mod control_correlation;
 mod credit_error_json;
 mod deployment;
+mod deployment_request;
 mod home;
 #[cfg(test)]
 mod home_tests;
@@ -44,6 +47,8 @@ mod provider_endpoint;
 mod provider_http;
 mod provider_tools;
 mod provider_transport;
+#[cfg(test)]
+mod released_selection_tests;
 mod reply;
 mod retained_json;
 mod runtime_decode;
@@ -58,8 +63,6 @@ pub use adapter::HostedAdapter;
 pub use agent_sandbox_backend::{
     AgentSandboxBackend, NativeStatusInspection, RuntimeBackends, RuntimeRoutingStore,
 };
-#[doc(hidden)]
-pub use backend::RuntimeRecoveryCommand;
 pub use backend::{HostedAgentOpenSettings, HostedAgentRuntime, HostedBackend};
 pub use channel_tools::{HostedChannelToolBinding, HostedChannelToolSource};
 pub use checkpoint_store::{
@@ -73,6 +76,7 @@ pub(crate) use deployment::{
 pub use deployment::{
     HostedDeployment, MODEL_PROXY_BASE_URL, NYXID_PROXY_BASE_URL, PLACEHOLDER_CREDENTIAL,
 };
+pub(crate) use deployment_request::JOURNAL_RECOVERY;
 pub use managed_context::HostedContextRefresh;
 pub use memory::{InMemoryHostedBackend, InMemoryRuntimeSnapshot};
 pub(crate) use nonexecuting::IdleBootstrapProof;
@@ -137,4 +141,15 @@ pub fn observed_permission_id(
     Some(acp_inbound::permission_id(
         &acp_inbound::permission_locator(request.session_id.0.as_ref(), call, &request.options),
     ))
+}
+
+/// Trusted provider-rendered maintenance command; never user-supplied exec.
+/// The lifecycle adapter supplies authority for inspection or admitted recovery.
+/// Configuration belongs on stdin, not in Kubernetes command arguments.
+/// Fields are crate-private to keep command construction inside the adapter.
+#[doc(hidden)]
+pub struct RuntimeRecoveryCommand {
+    pub(crate) program: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) input: Vec<u8>,
 }

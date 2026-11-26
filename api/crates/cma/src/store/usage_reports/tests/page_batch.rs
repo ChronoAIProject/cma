@@ -23,8 +23,7 @@ async fn observed() -> (ReportingStore, Commands) {
     }));
     let client = Client::with_options(options).unwrap();
     let mut store = (*fixture).clone();
-    store.db = client.database(fixture.db.name());
-    store.client = client;
+    store.persistence = store.persistence.with_client(client);
     (store, commands)
 }
 

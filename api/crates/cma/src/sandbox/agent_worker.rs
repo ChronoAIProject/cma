@@ -34,6 +34,7 @@ pub(super) use connection_recovery_progress::same_recovery_claim;
 mod create_completion;
 mod first_message;
 mod first_message_publication;
+mod inspection_park;
 mod ledger_retry;
 mod ledger_telemetry;
 mod live_skills;
@@ -41,6 +42,8 @@ mod ownership_pacing;
 mod prepared_open_ready;
 mod prepared_replay;
 mod reconcile;
+mod restart;
+mod restart_teardown;
 pub(crate) use reconcile::ConnectionSweep;
 mod startup;
 mod startup_hold_work;
@@ -90,6 +93,7 @@ pub(crate) struct AgentWorkerConfig {
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
     pub cleanup_continuation_enabled: bool,
+    pub owner_stop_settlement_enabled: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub holder: String,
@@ -115,6 +119,7 @@ impl AgentWorkerConfig {
             retry_single_marker_enabled: false,
             work_retry_policy_enabled: false,
             cleanup_continuation_enabled: false,
+            owner_stop_settlement_enabled: false,
             managed_documents_enabled: false,
             access_transport_migration: None,
             holder: holder.into(),
@@ -342,6 +347,8 @@ impl AgentWorker {
             AgentWorkStep::RemoveHome => Box::pin(self.remove_home(agent, now)),
             AgentWorkStep::RemoveWorktree => Box::pin(self.remove_worktree(agent, now)),
             AgentWorkStep::PublishDeleted => Box::pin(self.publish_deleted(agent, now)),
+            AgentWorkStep::RestartConversation => Box::pin(self.restart_conversation(agent, now)),
+            AgentWorkStep::RestartTeardown => Box::pin(self.restart_teardown(agent, now)),
             AgentWorkStep::None => Box::pin(async { Err(SandboxStoreError::Conflict) }),
         }
     }

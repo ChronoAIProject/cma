@@ -3,7 +3,10 @@ use super::definition::{
     build_definition, build_update, channel_pointer, validate_create_request,
     validate_update_request, ChannelCreateRequest, ChannelUpdateRequest, SourceRequest,
 };
-pub use super::lifecycle::{delete, rekey};
+pub(crate) use super::inspection::inspect;
+pub use super::inspection::{load, load_by_record};
+pub(crate) use super::lifecycle::retire_unready;
+pub use super::lifecycle::{delete, delete_legacy, rekey};
 pub use super::state::{
     CreatedChannel, LoadedChannel, ManagementError, ManagementState, RecordedChannel,
 };
@@ -11,13 +14,13 @@ pub use super::test_turn::{test_consumer, test_turn, TestResult};
 use crate::{
     auth::Creator,
     providers::{BindingRequest, ProviderError, ToolsAdvertisement},
-    records::{RecordError, RecordValue},
+    records::RecordValue,
 };
 use cmaeg_core::{
     channel::{ChannelDefinition, ConformanceLevel},
     ids::{BindingId, ChannelId, RecordId},
     profile::canonical_json,
-    seal::{open_blob, seal_blob, ChannelPointer, MasterKeyRing, OpenError},
+    seal::{seal_blob, ChannelPointer, MasterKeyRing, OpenError},
     ValidationError,
 };
 use uuid::Uuid;
@@ -28,7 +31,7 @@ pub async fn create(
     mut request: ChannelCreateRequest,
 ) -> Result<CreatedChannel, ManagementError> {
     custom_attachments_allowed(state, &request.sources)?;
-    crate::connections::binding::expand_create(state, creator, &mut request).await?;
+    let claim = crate::connections::binding::expand_create(state, creator, &mut request).await?;
     validate_create_request(&request).map_err(ManagementError::Invalid)?;
     if request.profile.metadata.owner.subject != creator.subject {
         return Err(ManagementError::Invalid(ValidationError::new(
@@ -57,12 +60,14 @@ pub async fn create(
     }) {
         return Err(ManagementError::Invalid(ValidationError::new("/record_id", "native Lark, Discord or WhatsApp creation requires a stable canonical UUID v4 record_id for recoverable activation")));
     }
-    if state.records.channel_mutation_custody() && request.record_id.is_none() {
+    if (state.records.channel_mutation_custody() || state.records.channel_creates_fenced())
+        && request.record_id.is_none()
+    {
         request.record_id =
             Some(RecordId::new(Uuid::new_v4().to_string()).map_err(ManagementError::Invalid)?);
     }
     if let Some(record_id) = request.record_id.clone() {
-        return super::creation::create(state, creator, request, record_id).await;
+        return super::creation::create(state, creator, request, record_id, claim.as_ref()).await;
     }
     let provider = request.provider.slug.clone();
     let record_id = RecordId::new(Uuid::new_v4().to_string()).map_err(ManagementError::Invalid)?;
@@ -186,61 +191,6 @@ pub(super) fn custom_attachments_allowed(
     Ok(())
 }
 
-pub async fn load(
-    state: &ManagementState,
-    creator: &Creator,
-    channel_id: &ChannelId,
-) -> Result<LoadedChannel, ManagementError> {
-    let loaded = load_unowned(state, channel_id).await?;
-    if loaded.definition.owner.subject != creator.subject
-        || (loaded.definition.owner.kind == cmaeg_core::profile::NyxIdIdentityKind::Organization)
-            != creator.organization
-    {
-        return Err(ManagementError::NotFound);
-    }
-    Ok(loaded)
-}
-
-/// The channel `record_id` stores, read for `creator` only: the
-/// record-keyed counterpart of [`load`], with the same owner check, for the
-/// console's summaries. Another owner's record is `NotFound`. A definition
-/// that opens but fails validation is returned with `valid: false` so the
-/// console can name it; nothing may act on such a definition.
-pub async fn load_by_record(
-    state: &ManagementState,
-    creator: &Creator,
-    record_id: &RecordId,
-) -> Result<RecordedChannel, ManagementError> {
-    let pointer =
-        channel_pointer(&state.cma_base_url, record_id).map_err(ManagementError::Invalid)?;
-    let record = state
-        .records
-        .get(&pointer.record_url)
-        .await
-        .map_err(|error| match error {
-            RecordError::NotFound => ManagementError::NotFound,
-            other => ManagementError::Record(other),
-        })?;
-    let opened = open_blob(state.master_keys.as_ref(), &record.blob)
-        .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
-    let definition: ChannelDefinition = serde_json::from_slice(&opened.payload)
-        .map_err(|_| ManagementError::Internal("channel definition cannot be read".into()))?;
-    if definition.record_id != *record_id
-        || definition.owner.subject != creator.subject
-        || (definition.owner.kind == cmaeg_core::profile::NyxIdIdentityKind::Organization)
-            != creator.organization
-    {
-        return Err(ManagementError::NotFound);
-    }
-    let valid = definition.validate().is_ok();
-    Ok(RecordedChannel {
-        definition,
-        version: record.version,
-        record_bytes: record.blob.len(),
-        valid,
-    })
-}
-
 pub async fn update(
     state: &ManagementState,
     creator: &Creator,
@@ -254,17 +204,7 @@ pub async fn update(
         .await?;
     validate_update_request(&request).map_err(ManagementError::Invalid)?;
     custom_attachments_allowed(state, &request.sources)?;
-    if current
-        .definition
-        .creation
-        .as_ref()
-        .is_some_and(|value| !value.ready)
-    {
-        return Err(ManagementError::Conflict {
-            expected: request.expected_version,
-            actual: Some(current.record.version),
-        });
-    }
+    super::creation::require_ready(&current.definition)?;
     if super::mutation::original_version(&current.definition, current.record.version)
         != request.expected_version
     {
@@ -420,40 +360,6 @@ pub(super) fn open_pointer(
         return Err(ManagementError::NotFound);
     }
     Ok(pointer)
-}
-
-pub(super) async fn load_unowned(
-    state: &ManagementState,
-    channel_id: &ChannelId,
-) -> Result<LoadedChannel, ManagementError> {
-    let pointer = open_pointer(state, channel_id)?;
-    let record = state
-        .records
-        .get(&pointer.record_url)
-        .await
-        .map_err(|error| match error {
-            RecordError::NotFound => ManagementError::NotFound,
-            other => ManagementError::Record(other),
-        })?;
-    let opened = open_blob(state.master_keys.as_ref(), &record.blob).map_err(|error| {
-        ManagementError::Internal(format!("channel blob cannot be opened: {error}"))
-    })?;
-    let definition: ChannelDefinition =
-        serde_json::from_slice(&opened.payload).map_err(|error| {
-            ManagementError::Internal(format!("channel definition is malformed: {error}"))
-        })?;
-    if definition.record_id != pointer.record_id {
-        return Err(ManagementError::NotFound);
-    }
-    definition
-        .validate()
-        .map_err(|_| ManagementError::Internal("retained channel is invalid".into()))?;
-    Ok(LoadedChannel {
-        channel_id: channel_id.clone(),
-        pointer,
-        definition,
-        record,
-    })
 }
 
 pub(super) fn seal_definition(

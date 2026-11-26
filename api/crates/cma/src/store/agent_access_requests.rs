@@ -5,6 +5,7 @@ use super::sandbox_mongo::{
     commit_transaction, is_confirmed_body_retry, start_transaction, CommitOutcome,
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::agent_access::{validate_access_services, AgentAccessError};
 use layer2_core::sandbox::agent_access_tool::{AgentAccessProposal, AgentAccessRequester};
 use layer2_core::sandbox::agent_io::AgentAuthorizationRevision;
@@ -78,7 +79,7 @@ macro_rules! transaction {
             let value = match result {
                 Ok(value) => value,
                 Err(error) => {
-                    let _ = owned_session.abort_transaction().await;
+                    let _ = owned_session.abort_guarded().await;
                     match error {
                         Error::Driver(error) if is_confirmed_body_retry(&error) => continue,
                         Error::Driver(_) => {
@@ -115,6 +116,7 @@ pub(in crate::store) use records::{document, lease_filter, read};
 pub(crate) use records::{
     AgentAccessDecision, AgentAccessHotUpdate, AgentAccessLease, AgentAccessNotificationIntent,
     AgentAccessPhase, AgentAccessProgress, AgentAccessRecord, AgentAccessScopeMode,
+    ConnectionApprovalBinding,
 };
 mod lineage;
 pub(in crate::store) use lineage::validate_lineage_transaction;

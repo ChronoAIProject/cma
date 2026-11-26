@@ -87,3 +87,10 @@
   margin: 0;
   font: var(--dsw-font-xs-13);
 }
+
+.deletion-progress[data-navigation-footer] {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 60%;
+  overflow: auto;
+}

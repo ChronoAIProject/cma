@@ -37,6 +37,7 @@ pub(super) async fn telegram(State(peer): State<Arc<Peer>>) -> Response {
 pub(super) async fn creator(headers: HeaderMap) -> Response {
     let (subject, kind) = match headers.get("authorization").and_then(|v| v.to_str().ok()) {
         Some("Bearer fixture-person-bearer") => ("fixture-owner-private", "person"),
+        Some("Bearer fixture-alice-bearer") => ("alice", "person"),
         Some("Bearer fixture-organization-bearer") => ("fixture-owner-private", "org"),
         Some("Bearer fixture-foreign-bearer") => ("fixture-other-owner", "person"),
         _ => return StatusCode::UNAUTHORIZED.into_response(),

@@ -314,6 +314,7 @@ fn sandbox() -> layer2_core::sandbox::Sandbox {
 fn material(owner: SubjectId, provider_key_id: &str) -> CredentialMaterial {
     CredentialMaterial {
         source: Default::default(),
+        github_route: None,
         sandbox_id: SandboxId("sbx_credential_test".into()),
         owner,
         authority: SandboxCredentialAuthority {

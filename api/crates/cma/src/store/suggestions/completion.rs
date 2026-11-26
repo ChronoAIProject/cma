@@ -1,6 +1,7 @@
 //! Publish one retained model result across known-aborted metadata transactions.
 use super::*;
 use crate::store::sandbox_mongo::TRANSACTION_ATTEMPTS;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use context::ContextError;
 
 pub(super) async fn publish(
@@ -25,16 +26,16 @@ pub(super) async fn publish(
         }
         match apply(store, claim, completion, &mut session).await {
             Ok(false) => {
-                session.abort_transaction().await.map_err(unavailable)?;
+                session.abort_guarded().await.map_err(unavailable)?;
                 return Ok(());
             }
             Ok(true) => {}
             Err(ContextError::Driver(error)) if confirmed_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 continue;
             }
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error.into_read_error());
             }
         }
@@ -70,7 +71,10 @@ async fn apply(
     if work.status != SuggestionStatus::Running || work != *claim {
         return Ok(false);
     }
-    let current = context::current_transaction(store, &work, session, false).await?;
+    let parent = context::current_parent(store, &work, session, false).await?;
+    if let Some(parent) = &parent {
+        parent::fence(store, &work, parent, &mut *session).await?;
+    }
     store
         .agents
         .update_one(
@@ -81,7 +85,7 @@ async fn apply(
         .await
         .map_err(ContextError::Driver)?;
     work.complete(
-        current,
+        parent.is_some(),
         SuggestionCompletion {
             status: completion.status,
             set: completion.set.clone(),

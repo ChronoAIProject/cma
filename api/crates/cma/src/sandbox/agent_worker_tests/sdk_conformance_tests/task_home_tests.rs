@@ -11,6 +11,7 @@ use layer2_core::resource_access::{
 use tower::ServiceExt;
 
 mod authority;
+mod canary_desktop;
 mod desktop;
 mod desktop_native;
 mod environment;
@@ -127,6 +128,28 @@ async fn router_with_support(
     can_create: bool,
     support: desktop::CreationSupport,
 ) -> (Router, crate::agent_lifecycle::LifecycleDrain) {
+    let (router, lifecycle) = fixture_with_support(
+        store,
+        registry,
+        database,
+        database_client,
+        owner,
+        can_create,
+        support,
+    )
+    .await;
+    (router, lifecycle.drain_handle())
+}
+
+async fn fixture_with_support(
+    store: Arc<MongoSandboxStore>,
+    registry: Arc<LiveAgentRegistry>,
+    database: &mongodb::Database,
+    database_client: &mongodb::Client,
+    owner: &str,
+    can_create: bool,
+    support: desktop::CreationSupport,
+) -> (Router, Arc<InlineAgentLifecycle>) {
     let profiles = Arc::new(
         MongoProfileStore::open(database_client, database.name())
             .await
@@ -198,10 +221,9 @@ async fn router_with_support(
         Some(policy) => lifecycle.with_task_experience(policy),
         None => lifecycle,
     };
-    let drain = lifecycle.drain_handle();
     let mut routes = services
         .with_lifecycle(lifecycle.clone())
-        .with_lifecycle_operations(lifecycle)
+        .with_lifecycle_operations(lifecycle.clone())
         .router(Arc::new(UnusedCompatibilityLedger))
         .merge(layer1_public::rest::hierarchy_router(hierarchy));
     if let Some(adapter) = support.adapter {
@@ -220,7 +242,7 @@ async fn router_with_support(
             (SubjectId::new(owner), can_create),
             authenticate_task_owner,
         )),
-        drain,
+        lifecycle,
     )
 }
 

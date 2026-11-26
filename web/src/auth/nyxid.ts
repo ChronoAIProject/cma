@@ -17,6 +17,7 @@ import { canonicalReturnRoute, classifyReturnTarget } from './returnTarget';
 import { authHttpRetry, authTransportRetry } from './retryMetadata';
 import { MAX_LOGIN_URL_BYTES, retryAfterMilliseconds } from '@cma/client';
 import { retainFatherDraftForSignIn } from '../bots/fatherDraft';
+import { publishSignOutNotice } from './signOutNotice';
 
 /** Where the control plane answers questions about the current browser identity. */
 const IDENTITY_ENDPOINT = '/auth/session';
@@ -54,6 +55,7 @@ interface IdentityResponse {
   service_authorization?: unknown;
   privacy_export?: unknown;
   legal_terms?: unknown;
+  binding_diagnostics?: unknown;
 }
 
 /** Published terms, or none when the field is absent or not exactly usable. */
@@ -202,6 +204,7 @@ export function createNyxidAuthProvider(): AuthProvider {
       try {
         response = await fetch(IDENTITY_ENDPOINT, {
           credentials: 'include',
+          cache: 'no-store',
           signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
         });
       } catch (error) {
@@ -294,6 +297,7 @@ export function createNyxidAuthProvider(): AuthProvider {
           visitor: body.visitor === true,
           ...(body.service_authorization === true ? { serviceAuthorization: true } : {}),
           ...(body.privacy_export === true ? { privacyExport: true } : {}),
+          ...(body.binding_diagnostics === true ? { bindingDiagnostics: true } : {}),
           ...withLegalTerms(legalTermsFrom(body.legal_terms)),
         },
       };
@@ -308,14 +312,27 @@ export function createNyxidAuthProvider(): AuthProvider {
     },
 
     async signOut(): Promise<void> {
-      // Also a navigation. The control plane clears the cookie and redirects
-      // back, so the app reloads already signed out rather than holding stale
-      // state it would have to reconcile.
+      const request: RequestInit = {
+        credentials: 'same-origin',
+        mode: 'same-origin',
+        cache: 'no-store',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(IDENTITY_TIMEOUT_MS),
+      };
+      const failed = new Error('Sign-out did not complete. Please try again.');
+      const response = await fetch(LOGOUT_ENDPOINT, request);
+      if (response.type !== 'opaqueredirect') throw failed;
+      // Fetch hides the redirect status. Confirm the cleared session before requesting the landing page.
+      const identity = await fetch(IDENTITY_ENDPOINT, request);
+      if (identity.status !== 401) throw failed;
+      const body: IdentityResponse | null = await identity.json().catch(() => null);
+      if (body?.authenticated !== false || body.silent_sign_in === true) throw failed;
       remember(() => {
         sessionStorage.setItem(SILENT_ATTEMPT_KEY, '1');
         return true;
       });
-      window.location.assign(LOGOUT_ENDPOINT);
+      publishSignOutNotice();
+      window.location.assign('/');
     },
 
     signInSilently(): boolean {

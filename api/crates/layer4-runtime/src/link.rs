@@ -3,6 +3,7 @@ mod desktop;
 mod desktop_control;
 mod ownership;
 mod runtime_status;
+mod stale_turn;
 mod upload;
 use conversation::conversation;
 use upload::TemporaryUpload;
@@ -42,6 +43,14 @@ pub(crate) fn router(supervisor: Arc<Supervisor>) -> Router {
             post(control).layer(DefaultBodyLimit::max(CONTROL_BODY_BYTES)),
         )
         .route("/runtime/agents/{agent_id}/conversation", get(conversation))
+        .route(
+            "/runtime/agents/{agent_id}/stale-turn/stop",
+            post(stale_turn::stop).layer(DefaultBodyLimit::max(4096)),
+        )
+        .route(
+            "/runtime/agents/{agent_id}/stale-turn/observe",
+            post(stale_turn::observe).layer(DefaultBodyLimit::max(4096)),
+        )
         .route(
             "/runtime/agents/{agent_id}/manager-ownership/challenge",
             post(ownership::challenge),

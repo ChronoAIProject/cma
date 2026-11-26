@@ -1,22 +1,12 @@
 use tokio::sync::mpsc;
 
+use super::RuntimeRecoveryCommand;
 use crate::provider::ProviderSandboxRequest;
 use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame};
 use crate::{
     AgentHomePlan, AgentHomeRequest, AgentLaunch, AgentOpenRequest, ConversationChannel,
     ConversationUpdate, Result, RuntimeHandle, RuntimeObservation,
 };
-
-/// Trusted provider-rendered maintenance command; never user-supplied exec.
-/// The lifecycle adapter supplies authority for inspection or admitted recovery.
-/// Configuration belongs on stdin, not in Kubernetes command arguments.
-/// Fields are crate-private to keep command construction inside the adapter.
-#[doc(hidden)]
-pub struct RuntimeRecoveryCommand {
-    pub(crate) program: String,
-    pub(crate) args: Vec<String>,
-    pub(crate) input: Vec<u8>,
-}
 
 /// Kernel-specific settings used while opening its ACP conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +70,13 @@ pub trait HostedAgentRuntime: Send + Sync {
 /// Provider lifecycle and supervisor transport used by a hosted adapter.
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
+    fn stale_turn_producer(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
+        None
+    }
+
     /// Snapshot only: the caller must exclude all other binding-cache writers until done.
     fn startup_binding_headroom(&self, _handles: &[RuntimeHandle]) -> Option<usize> {
         None
@@ -146,6 +143,17 @@ pub trait HostedBackend: Send + Sync {
     ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
         Ok(None)
     }
+    async fn select_native_canary_pool(
+        &self,
+        _request: &ProviderSandboxRequest,
+        _image: &crate::RuntimeImage,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<crate::agent_sandbox::NativePoolBinding> {
+        Err(crate::AdapterError::Unsupported(
+            "native canary allocation requires a native backend".into(),
+        ))
+    }
+
     async fn validate_funding(
         &self,
         request: &ProviderSandboxRequest,
@@ -232,6 +240,9 @@ pub trait HostedBackend: Send + Sync {
         Err(crate::AdapterError::Unsupported(
             "provider suspension observation is unavailable".into(),
         ))
+    }
+    fn retained_startup_policy(&self) -> Option<&dyn super::HostedRetainedStartupPolicy> {
+        None
     }
     async fn resume(
         &self,

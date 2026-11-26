@@ -332,6 +332,10 @@ class InvokeTests(unittest.TestCase):
                  (digest + b" pod-restarts newer-controller-token\n", None, ("pod-restarts", "unrecognized")),
                  (b"0" * 64 + b" newer-controller-token\n", None, None),
                  (digest + b" newer-controller-token", None, None))
+        cases += tuple(
+            (digest + b" " + reason.encode() + b" unreported\n", None, (reason, "unreported"))
+            for reason in ("pod-restarts-membership", "pod-restarts-startup-gate", "pod-restarts-panic")
+        )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "packet"
             for value, refusal, verification in cases:

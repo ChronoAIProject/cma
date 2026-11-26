@@ -4,6 +4,7 @@ use super::{
     repository::*,
     Error, MongoHistory,
 };
+use crate::transaction_terminal::GuardedTerminal as _;
 use mongodb::{
     bson::doc,
     options::{ReadConcern, ReturnDocument},
@@ -36,7 +37,7 @@ impl MongoHistory {
                 }.await;
                 match result {
                     Ok(row) => {
-                        match session.commit_transaction().await {
+                        match session.commit_guarded().await {
                             Ok(()) => return decode(row.ok_or(Error::Unavailable)?),
                             Err(error) => {
                                 if let Some(committed) = self.get(&event.scope, &event.key.event_key, super::now_ms()).await? { return Ok(committed); }
@@ -48,7 +49,7 @@ impl MongoHistory {
                     Err(error) => {
                         let retry = error.contains_label("TransientTransactionError")
                             || matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(e)) if e.code == 11000);
-                        if session.abort_transaction().await.is_err() {
+                        if session.abort_guarded().await.is_err() {
                             tracing::warn!("activity history transaction abort acknowledgement unavailable");
                         }
                         if let Some(committed) = self.get(&event.scope, &event.key.event_key, super::now_ms()).await? { return Ok(committed); }

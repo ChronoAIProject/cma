@@ -15,6 +15,7 @@ mod counter_accounting;
 #[cfg(test)]
 mod counter_tests;
 mod counters;
+pub(crate) mod inventory;
 mod period;
 mod period_storage;
 mod requests;
@@ -31,7 +32,7 @@ pub(super) use period::{now_seconds, require_open};
 pub(super) use period::{period_key, require_open_with};
 pub(super) use source::PlatformStopCache;
 pub(super) use stop_authority::fence_stop;
-pub(super) use turns::settle_runtime_loss;
+pub(super) use turns::{settle_owner_stop, settle_runtime_loss};
 
 pub(super) const COLLECTION: &str = "model_budget_reservations";
 

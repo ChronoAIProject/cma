@@ -11,6 +11,7 @@ use mongodb::{
 
 mod legacy;
 mod point_reads;
+pub(in crate::store) mod preview_budget;
 mod segmented;
 mod snapshot;
 use super::transaction_scope::{TransactionIdentity, TransactionScope};
@@ -115,7 +116,16 @@ pub(in crate::store) async fn capture(
         if super::read_format(&row)?.is_none() {
             return Err(pending());
         }
-        return segmented::read(store, current, &row, session, context, true, true).await;
+        return segmented::read(
+            store,
+            current,
+            &row,
+            session,
+            context,
+            true,
+            segmented::ReadBudget::Export,
+        )
+        .await;
     }
     source(store, current, &row, session, context, true).await
 }
@@ -157,7 +167,16 @@ async fn source(
     snapshot: bool,
 ) -> Result<CapturedLog, TransactionLogError> {
     if super::read_format(row)?.is_some() {
-        segmented::read(store, current, row, session, context, snapshot, false).await
+        segmented::read(
+            store,
+            current,
+            row,
+            session,
+            context,
+            snapshot,
+            segmented::ReadBudget::Standard,
+        )
+        .await
     } else {
         legacy::read(store, current, row, session, context, snapshot).await
     }
@@ -287,4 +306,47 @@ impl CapturedLog {
         scope.require(identity)?;
         Ok(())
     }
+}
+
+pub(in crate::store) async fn preview(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    session: &mut ClientSession,
+    budget: &mut preview_budget::PreviewBudget,
+) -> Result<Option<CapturedLog>, TransactionLogError> {
+    let (row, at) = snapshot::agent_budgeted(store, current, session, Some(budget)).await?;
+    if crate::store::agents::read_agent(&row)? != *current {
+        return Err(SandboxStoreError::SequenceConflict.into());
+    }
+    if super::read_format(&row)?.is_none() {
+        return Ok(None);
+    }
+    let context = SourceContext::Snapshot {
+        session_id: session.id().clone(),
+        at,
+        database: store.agents.namespace().db,
+    };
+    segmented::read(
+        store,
+        current,
+        &row,
+        session,
+        context,
+        true,
+        segmented::ReadBudget::Preview(budget),
+    )
+    .await
+    .map(Some)
+}
+
+pub(in crate::store) async fn preview_points(
+    store: &MongoSandboxStore,
+    source: &CapturedLog,
+    sequences: &[u64],
+    session: &mut ClientSession,
+    budget: &mut preview_budget::PreviewBudget,
+) -> Result<Vec<AgentLogEntry>, TransactionLogError> {
+    source.validate_snapshot(store, session, CaptureMode::Snapshot)?;
+    validate_sequences(source, sequences)?;
+    point_reads::read_budgeted(store, source, sequences, session, true, Some(budget)).await
 }

@@ -42,8 +42,7 @@ async fn observed(database_variable: &str) -> (Arc<ReportingStore>, Arc<Mutex<Ve
     }));
     let client = Client::with_options(options).unwrap();
     let mut store = (*original).clone();
-    store.db = client.database(original.db.name());
-    store.client = client;
+    store.persistence = store.persistence.with_client(client);
     (Arc::new(store), commands)
 }
 

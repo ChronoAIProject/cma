@@ -408,6 +408,7 @@ async fn retirement_result_uses_atomic_admission_on_every_replica_after_retry_an
     first
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision: before.revision,
             sandbox: Box::new(retiring.clone()),
             event_at: MINUTE.into(),

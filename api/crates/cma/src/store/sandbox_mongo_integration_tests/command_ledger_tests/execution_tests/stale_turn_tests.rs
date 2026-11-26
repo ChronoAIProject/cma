@@ -6,7 +6,8 @@ use crate::{
     store::stale_turns::{Candidate, Observation, ProofBudget, StaleTurnStore},
 };
 
-mod settlement;
+mod native_stop_trace;
+pub(super) mod settlement;
 
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]

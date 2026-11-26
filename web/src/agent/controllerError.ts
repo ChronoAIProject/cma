@@ -2,15 +2,51 @@ import type { AgentResourceState } from './controllerTypes';
 import { transientReadFailure } from './loadAgent';
 import { ApiError } from '@cma/client';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
+import { approvalBaselineMessage } from './transport/approvalBaseline';
 import { readableError } from '../vocabulary/errors';
 import { currentAgentStatus } from './status';
-import { STOPPED_AGENT_MESSAGE, STOP_RESPONSE_GUIDANCE } from './stopAgentCopy';
+import {
+  RESTART_AVAILABLE_MESSAGE,
+  STOPPED_AGENT_MESSAGE,
+  STOP_RESPONSE_GUIDANCE,
+} from './stopAgentCopy';
 
 export function errorMessage(error: unknown): string {
+  const approval = approvalBaselineMessage(error);
+  if (approval !== undefined) return approval;
   if (isIdentityChanged(error)) return new IdentityChangedError().message;
   if (error instanceof ApiError && error.code === 'sandbox_checkpoint_in_progress')
     return 'Progress is being saved. Your input was not accepted. Try again after saving finishes.';
   return readableError(error, 'The Agent operation did not complete.');
+}
+
+export function isLegacySuggestionRefusal(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError &&
+    ((error.status === 422 &&
+      ['invalid_run_request', 'invalid_answer_context'].includes(error.code ?? '')) ||
+      (error.status === 409 && error.code === 'agent_not_ready'))
+  );
+}
+
+export function isV2InputRefusal(error: unknown, interrupting: boolean): boolean {
+  return (
+    error instanceof ApiError &&
+    ((error.status === 422 &&
+      ([
+        'invalid_response_input',
+        'invalid_answer_context',
+        'invalid_control_request',
+        'invalid_interrupt_request',
+      ].includes(error.code ?? '') ||
+        (interrupting && error.code === 'capability_unsupported'))) ||
+      (error.status === 409 &&
+        [
+          'response_control_not_admitted',
+          'response_interrupt_not_admitted',
+          'agent_command_not_admissible',
+        ].includes(error.code ?? '')))
+  );
 }
 
 export function stoppedInputMessage(
@@ -26,7 +62,9 @@ export function stoppedInputMessage(
     current.detail.id === agentId &&
     currentAgentStatus(current.detail, current.conversation) === 'stopped'
   )
-    return `${STOPPED_AGENT_MESSAGE} ${STOP_RESPONSE_GUIDANCE}`;
+    return current.detail.restartAvailable
+      ? RESTART_AVAILABLE_MESSAGE
+      : `${STOPPED_AGENT_MESSAGE} ${STOP_RESPONSE_GUIDANCE}`;
 }
 
 /** A transient projection failure must not cancel an already admitted send. */

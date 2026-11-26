@@ -43,6 +43,10 @@ impl StatusAttempt {
                 return;
             }
             e.failed = true;
+            // A failed attempt no longer serves, whatever it reached earlier.
+            if e.value.outcome == Outcome::Ok {
+                e.value.outcome = Outcome::Pending;
+            }
             e.value.last_failure_stage = Some(e.value.stage);
             e.value.last_failure_code = Some(code);
             e.value.last_failure_at = timestamp();

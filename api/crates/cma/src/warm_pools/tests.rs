@@ -3,6 +3,7 @@ use layer3_adapter::agent_sandbox::{
     NativePoolClaim, NativePoolClaimRequest, NativePoolCleanup, NativePoolControl,
     NativePoolPodPolicy,
 };
+use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex,
@@ -10,6 +11,7 @@ use std::sync::{
 
 pub(crate) fn target() -> PoolTarget {
     let spec = NativePoolSpec {
+        cold_canary: false,
         image: RuntimeImage {
             uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
             labels: BTreeMap::from([
@@ -84,7 +86,7 @@ impl PoolTargetStore for Memory {
         &self,
         _: &PoolTarget,
         _: &str,
-    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
         self.calls.lock().unwrap().push("drain-scan".into());
         Ok((!self
             .drain_block
@@ -92,7 +94,7 @@ impl PoolTargetStore for Memory {
             .unwrap()
             .pop_front()
             .unwrap_or(false))
-        .then_some(vec![]))
+        .then_some(NativePoolDrain::default()))
     }
     async fn retirement_homes(
         &self,
@@ -215,7 +217,7 @@ impl NativePoolControl for Provider {
     async fn drain_pool(
         &self,
         binding: &NativePoolBinding,
-        _: &[layer3_adapter::HomeVolumeAttachment],
+        _: &NativePoolDrain,
     ) -> layer3_adapter::Result<()> {
         self.calls.lock().unwrap().push("prove-drain".into());
         self.resize(binding, 0).await.map(|_| ())
@@ -491,4 +493,7 @@ mod resize;
 mod retirement_tests;
 
 #[path = "startup_tests.rs"]
-mod startup_tests;
+pub(crate) mod startup_tests;
+
+#[path = "runtime_pointer_tests.rs"]
+pub(crate) mod runtime_pointer;

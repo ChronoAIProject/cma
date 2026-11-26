@@ -1,4 +1,6 @@
 //! Public, principal-scoped measured usage reports; no source query passthrough.
+mod initial;
+mod initial_openapi;
 mod openapi;
 #[cfg(test)]
 mod options_tests;
@@ -32,6 +34,7 @@ struct Empty {}
 
 pub fn sandbox_metrics_router(service: Arc<MetricsService>) -> Router {
     let routes = Router::new()
+        .merge(initial::routes())
         .route("/view", get(view::latest))
         .route("/reports", post(create))
         .route("/reports/{report}", get(poll))
@@ -193,6 +196,10 @@ fn invalid() -> Response {
             .into(),
     ))
 }
+/// Identifies the typed disabled-view response inside the server middleware.
+#[derive(Clone, Copy)]
+pub struct UsageReportViewDisabled;
+
 fn problem(error: MetricsError) -> Response {
     let (status, code) = match &error {
         MetricsError::ViewDisabled => (StatusCode::NOT_IMPLEMENTED, "report_view_disabled"),
@@ -207,6 +214,9 @@ fn problem(error: MetricsError) -> Response {
         status,
         super::problem_document(status, code, &error.to_string(), code),
     );
+    if matches!(error, MetricsError::ViewDisabled) {
+        response.extensions_mut().insert(UsageReportViewDisabled);
+    }
     if matches!(
         status,
         StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE

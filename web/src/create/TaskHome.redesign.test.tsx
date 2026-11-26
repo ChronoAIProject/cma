@@ -1,3 +1,4 @@
+import { selectTaskTemplate } from '../test/taskTemplateSelection';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SandboxCapacity } from '@cma/client';
@@ -8,6 +9,8 @@ import { taskExperience } from '../test/taskExperience';
 import { TaskHome } from './TaskHome';
 import { TaskHomeLayout } from './TaskHomeLayout';
 import { TaskCreationStatus } from './TaskCreationStatus';
+import { taskTemplates } from './taskTemplateModel';
+import { taskDraftStorageKey } from './taskDraft';
 
 const capacity: SandboxCapacity = {
   resource: 'sandbox',
@@ -37,6 +40,82 @@ function client(overrides: Partial<CmaWebClient> = {}) {
 afterEach(() => {
   sessionStorage.clear();
   vi.restoreAllMocks();
+});
+
+it('uses the same catalog in the empty Home and the returning-owner menu without editing on open', async () => {
+  const onCreated = vi.fn();
+  const view = render(
+    <TaskHome
+      client={client()}
+      viewerId="owner"
+      canCreateSandbox
+      onCreated={onCreated}
+      home={{ navigation: { status: 'ready', items: [] } }}
+    />,
+  );
+  for (const template of taskTemplates)
+    expect(screen.getByRole('button', { name: template.name })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Templates' })).toBeNull();
+  fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Keep my draft' } });
+  const saved = sessionStorage.getItem(taskDraftStorageKey('owner'));
+  view.rerender(
+    <TaskHome
+      client={client()}
+      viewerId="owner"
+      canCreateSandbox
+      onCreated={onCreated}
+      home={{ navigation: { status: 'ready', items: navigationFixture() } }}
+    />,
+  );
+  const trigger = screen.getByRole('button', { name: 'Templates' });
+  fireEvent.click(trigger);
+  expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(
+    taskTemplates.map(({ name }) => name),
+  );
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+  await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'));
+  expect(sessionStorage.getItem(taskDraftStorageKey('owner'))).toBe(saved);
+  selectTaskTemplate('Research a topic');
+  expect(screen.getByLabelText('Topic')).toBeVisible();
+  expect(screen.queryByRole('group', { name: 'Task templates' })).toBeNull();
+  expect(onCreated).not.toHaveBeenCalled();
+});
+
+it('keeps a zero-limit empty account editable with one truthful capacity status and a real environment action', async () => {
+  const environments = vi.fn();
+  const create = vi.fn();
+  render(
+    <TaskHome
+      client={client({
+        readSandboxCapacity: async () => ({
+          ...capacity,
+          limit: 0,
+          live: 0,
+          available: 0,
+          counts_by_status: {},
+        }),
+        createAgentLifecycle: create,
+      })}
+      viewerId="owner"
+      canCreateSandbox
+      onCreated={vi.fn()}
+      home={{ navigation: { status: 'ready', items: [] }, onEnvironments: environments }}
+    />,
+  );
+  await screen.findByText('Environment limit reached');
+  expect(screen.getAllByRole('region', { name: 'Sandbox capacity' })).toHaveLength(1);
+  expect(screen.queryByText(/0\/0|slots are in use/)).toBeNull();
+  expect(screen.getByText('Default model').closest('button')).toBeNull();
+  expect(screen.queryByText('GPT-6 · High reasoning · Autonomous')).toBeNull();
+  selectTaskTemplate('Research a topic');
+  fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'Retain this research' } });
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  fireEvent.submit(screen.getByLabelText('Topic').closest('form')!);
+  expect(create).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Environments' }));
+  expect(environments).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('dialog', { name: 'Manage environments' })).toBeNull();
+  expect(screen.getByLabelText('Topic')).toHaveValue('Retain this research');
 });
 
 it('uses neutral empty-state copy only after an empty personal read succeeds, never across scopes', () => {
@@ -82,8 +161,8 @@ it('uses neutral empty-state copy only after an empty personal read succeeds, ne
 
 it.each([
   [3, undefined],
-  [1, '1 environment slot left'],
-  [0, 'All 5 Sandbox environment slots are in use'],
+  [1, '1 slot left'],
+  [0, 'Environment limit reached'],
 ] as const)(
   'presents %s free slots from capacity independently of the crew count',
   async (available, message) => {
@@ -131,13 +210,13 @@ it('replaces stale full capacity with unknown, coalesces a deliberate refresh an
       onCreated={vi.fn()}
     />,
   );
-  await screen.findByText('All 5 Sandbox environment slots are in use');
+  await screen.findByText('Environment limit reached');
   fireEvent.change(screen.getByLabelText('Your task'), {
     target: { value: 'Draft survives uncertainty' },
   });
   fireEvent.focus(window);
   await screen.findByText('Capacity could not be checked');
-  expect(screen.queryByText('All 5 Sandbox environment slots are in use')).not.toBeInTheDocument();
+  expect(screen.queryByText('Environment limit reached')).not.toBeInTheDocument();
   const retry = screen.getByRole('button', { name: 'Check again' });
   fireEvent.click(retry);
   expect(retry).toBeDisabled();
@@ -159,6 +238,7 @@ it('preserves template fields on a capability read failure without enabling subm
         readTaskTemplateSupport: async () => {
           throw new Error('Read failed');
         },
+        readTaskTemplateV2Support: async () => false,
         createAgentLifecycle: create,
       })}
       viewerId="owner"
@@ -166,7 +246,7 @@ it('preserves template fields on a capability read failure without enabling subm
       onCreated={vi.fn()}
     />,
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+  selectTaskTemplate('Research a topic');
   fireEvent.change(screen.getByLabelText('Topic'), { target: { value: '研究 сохраняется' } });
   await screen.findByText('Template availability could not be checked.');
   expect(screen.getByLabelText('Topic')).toHaveValue('研究 сохраняется');
@@ -187,7 +267,6 @@ it('shows an accepted request and stale preparation as separate facts with only 
     <TaskCreationStatus
       intent={intent}
       pending={false}
-      preparing={false}
       failure="Status unavailable"
       operation={{
         id: 'operation',
@@ -205,21 +284,16 @@ it('shows an accepted request and stale preparation as separate facts with only 
       }}
     />,
   );
-  expect(screen.getByRole('region', { name: 'Submitted task' })).toHaveTextContent(
+  expect(screen.getByRole('region', { name: 'Original request' })).toHaveTextContent(
     'Keep the original message',
   );
-  expect(screen.getByText(/Last confirmed: Preparing/)).toBeVisible();
+  expect(screen.getByText('Request accepted')).toBeVisible();
+  expect(screen.getAllByText('Setup updates interrupted')).toHaveLength(2);
   expect(screen.getByRole('alert')).toHaveTextContent('Status unavailable');
   expect(document.querySelector('time')).toHaveAttribute('datetime', '2026-11-22T06:00:00Z');
-  rerender(
-    <TaskCreationStatus
-      intent={intent}
-      pending={false}
-      preparing={false}
-      failure="Status unavailable"
-    />,
-  );
-  expect(screen.getByText(/Last confirmed: Request accepted/)).toBeVisible();
+  rerender(<TaskCreationStatus intent={intent} pending={false} failure="Status unavailable" />);
+  expect(screen.getByText('Request accepted')).toBeVisible();
+  expect(screen.getByText('Acceptance time unavailable')).toBeVisible();
   expect(document.querySelector('time')).toBeNull();
 });
 

@@ -6,6 +6,7 @@ use super::{
     sandboxes::read_sandbox,
 };
 use crate::retirement_archive::{Request, Result, REFUSED};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::{
     retirement_archive::{RetirementArchiveReceipt, RetirementArchiveRequirement},
     Sandbox, SandboxStatus,
@@ -78,7 +79,7 @@ impl ArchiveStore {
         start_transaction(&mut session).await.map_err(|_| REFUSED)?;
         let result = self.admit_in(&mut session, request, bytes).await;
         if result.is_err() {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return result;
         }
         self.commit_or_reconcile(session, request, bytes, None)

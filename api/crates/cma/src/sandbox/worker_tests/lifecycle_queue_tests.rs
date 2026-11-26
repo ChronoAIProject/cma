@@ -290,6 +290,7 @@ pub(super) fn ready_agent(sandbox: &Sandbox, now: SystemTime) -> Agent {
         capabilities: layer2_core::RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

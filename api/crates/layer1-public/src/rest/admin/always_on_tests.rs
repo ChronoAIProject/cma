@@ -29,6 +29,69 @@ async fn send(
 }
 
 #[tokio::test]
+async fn reviewed_retirement_requires_a_guard_and_hides_the_route_from_readers() {
+    let f = fixture(false);
+    let original = sandbox("sbx_reviewed", "owner-a", "v1");
+    f.sandboxes.create_sandbox(original.clone()).await.unwrap();
+    let path = "/api/v1/admin/sandboxes/sbx_reviewed/retire-reviewed";
+    let partial = json!({"revision": original.revision});
+    let denied = send(
+        &f.app,
+        Method::POST,
+        path,
+        Some(partial.clone()),
+        &[Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(denied.0, StatusCode::NOT_FOUND);
+    assert_eq!(denied.1["code"], "sandbox_not_found");
+    let rejected = send(
+        &f.app,
+        Method::POST,
+        path,
+        Some(partial),
+        &[Capability::ControlAnySandbox],
+    )
+    .await;
+    assert_eq!(rejected.0, StatusCode::BAD_REQUEST);
+    assert_eq!(rejected.1["code"], "invalid_admin_request");
+
+    let receipt_path = format!("{path}/{}/{}", "a".repeat(64), "b".repeat(64));
+    let denied_receipt = send(
+        &f.app,
+        Method::GET,
+        &receipt_path,
+        None,
+        &[Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(denied_receipt.0, StatusCode::NOT_FOUND);
+    assert_eq!(denied_receipt.1["code"], "sandbox_not_found");
+    assert_eq!(
+        send(
+            &f.app,
+            Method::GET,
+            &receipt_path,
+            None,
+            &[Capability::ControlAnySandbox],
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        f.sandboxes.get_sandbox(&original.id).await.unwrap(),
+        Some(original.clone())
+    );
+    assert!(f
+        .sandboxes
+        .sandbox_events(&original.id, 0, 10)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
 async fn administrator_approves_and_revokes_with_audit_and_filtered_inventory() {
     let f = fixture(false);
     let original = sandbox("sbx_exception", "owner-a", "v1");

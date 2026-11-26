@@ -1,4 +1,5 @@
 //! Read erasure fences before committing newly usable draft/default/fork pins.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::{
     bson::{doc, Document},
     error::{ErrorKind, WriteFailure, UNKNOWN_TRANSACTION_COMMIT_RESULT},
@@ -63,7 +64,7 @@ impl Mutation {
                 .projection(doc! {"_id":1_i32})
                 .session(&mut *session)
                 .await;
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
         }
     }
 
@@ -146,22 +147,22 @@ pub(super) async fn transact_in(
     match pins.admit(db, session).await {
         Ok(true) => {}
         Ok(false) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(Error::ReferenceUnavailable);
         }
         Err(error) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(Error::Driver(error));
         }
     }
     let result = match mutation.apply(session).await {
         Ok(Some(value)) => value,
         Ok(None) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Ok(None);
         }
         Err(error) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(Error::Driver(error));
         }
     };

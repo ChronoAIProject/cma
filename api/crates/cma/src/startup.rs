@@ -19,33 +19,84 @@ use crate::{
     image_manager_retirement, read_telemetry,
     shutdown::{self, signalled, ShutdownCoordinator},
     startup_timing::{observe, Phase},
-    telemetry, with_cors, with_request_context,
+    telemetry,
+    warm_pools::{startup::WarmPoolStartup, NativeWarmPools},
+    with_cors, with_request_context,
 };
 
 // Match the Gateway's longest accepted connection before draining workers.
 const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(660);
 
 pub(crate) async fn serve() -> Result<(), String> {
+    serve_inner(
+        #[cfg(feature = "qualification-hooks")]
+        None,
+    )
+    .await
+}
+
+#[cfg(feature = "qualification-hooks")]
+pub(crate) async fn serve_qualified(options: crate::qualification::Options) -> Result<(), String> {
+    serve_inner(Some(options)).await
+}
+
+async fn serve_inner(
+    #[cfg(feature = "qualification-hooks")] qualification: Option<crate::qualification::Options>,
+) -> Result<(), String> {
     let startup_started = Instant::now();
     let config = StartupConfig::from_env()
         .map_err(|error| format!("configuration is not usable: {error}"))?;
     let mut config = match config {
         StartupConfig::Execution(config) => *config,
         StartupConfig::BackendFree(config) => {
-            return composition::backend_free::serve(*config).await
+            #[cfg(feature = "qualification-hooks")]
+            if qualification.is_some() {
+                return Err("qualification requires an execution daemon".into());
+            }
+            return composition::backend_free::serve(*config).await;
         }
     };
     if std::env::args().nth(1).as_deref() == Some("--agent-manager-drain") {
         return agent_manager::relay::prestop(&config).await;
     }
     let recorder = telemetry::install()?;
-    let _metrics_server = telemetry::server::Server::start(config.metrics_bind, recorder).await?;
+    let task_cohorts = telemetry::task_cohort::Cache::default();
+    let _metrics_server =
+        telemetry::server::Server::start(config.metrics_bind, recorder, task_cohorts.clone())
+            .await?;
+    #[cfg(feature = "qualification-hooks")]
+    let qualification =
+        qualification.map(|options| (options, cma_qualification::Registry::default()));
     let mut composition = observe(
         "composition",
-        ControlPlaneComposition::build(&config),
+        ControlPlaneComposition::build(
+            &config,
+            #[cfg(feature = "qualification-hooks")]
+            qualification.as_ref().map(|(_, registry)| registry.clone()),
+        ),
         |_| None,
     )
     .await?;
+    composition.worker_observations = composition
+        .worker_observations
+        .with_task_audit(task_cohorts, config.task_audit.clone());
+    #[cfg(feature = "qualification-hooks")]
+    let _qualification_server = if let Some((options, registry)) = qualification {
+        Some(
+            options
+                .bind(
+                    registry,
+                    composition
+                        .agent_manager
+                        .as_ref()
+                        .map(|manager| manager.coordinator.clone()),
+                    &config,
+                )
+                .await?,
+        )
+    } else {
+        None
+    };
     let router = with_cors(
         std::mem::take(&mut composition.router),
         std::mem::take(&mut config.cors_origins),
@@ -66,29 +117,98 @@ pub(crate) async fn serve() -> Result<(), String> {
 async fn warm_pools(
     composition: &ControlPlaneComposition,
     admission: Option<&Admission>,
-) -> Result<(), String> {
-    // Do not admit allocations against a newly promoted runtime until its
-    // exact default pool has ready capacity (unless an operator disabled it).
-    // The shared desktop pool is seeded here but fills in the background.
+    shutdown: &mut ShutdownCoordinator,
+) -> Result<(watch::Sender<bool>, WarmPoolStartup), String> {
+    let (writer_ready, booting) = watch::channel(false);
+    if let Some(controller) = &composition.runtime_pointer {
+        controller.register_boot().await?;
+        shutdown.push(controller.spawn_heartbeat(booting, shutdown.subscribe()));
+        if !controller.following_configured() {
+            controller
+                .set_following(false)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    if admission.is_some_and(Admission::is_draining) {
+        crate::warm_pools::telemetry::startup("stopped");
+        return Ok((writer_ready, WarmPoolStartup::Stopping));
+    }
+    let result = match &composition.runtime_pointer {
+        Some(controller) => pointer_pool_startup(controller, admission).await,
+        None => fixed_pool_startup(&composition.native_warm_pools, admission).await,
+    };
+    result.map(|result| (writer_ready, result))
+}
+
+pub(crate) async fn pointer_pool_startup(
+    controller: &crate::runtime_pointer::RuntimePointerController,
+    admission: Option<&Admission>,
+) -> Result<WarmPoolStartup, String> {
     observe(
         "default_warm_pool_configuration",
-        composition.native_warm_pools.ensure_default(),
+        controller.bootstrap(),
+        |_| None,
+    )
+    .await?;
+    observe_pool_readiness(controller.await_active_ready(admission)).await
+}
+
+pub(crate) async fn fixed_pool_startup(
+    pools: &NativeWarmPools,
+    admission: Option<&Admission>,
+) -> Result<WarmPoolStartup, String> {
+    let held = observe(
+        "default_warm_pool_configuration",
+        pools.ensure_fixed_defaults(),
         |_| None,
     )
     .await
     .map_err(|error| format!("native warm pool default is not usable: {error:?}"))?;
-    if admission.is_some_and(Admission::is_draining) {
-        return Ok(());
-    }
-    observe(
-        "default_warm_pool_readiness",
-        composition
-            .native_warm_pools
-            .await_default_ready_until(admission),
-        |_| None,
-    )
+    observe_pool_readiness(async {
+        if admission.is_some_and(Admission::is_draining) {
+            return Ok(WarmPoolStartup::Stopping);
+        }
+        if pools.default_held(false) {
+            return Ok(WarmPoolStartup::ConfigurationDrift);
+        }
+        let readiness = pools
+            .await_fixed_default_ready(admission)
+            .await
+            .map_err(|error| format!("native warm pool startup readiness failed: {error:?}"))?;
+        // Capacity deferral carries proof needed by the caller. A held machine
+        // lane has already reported its drift during default configuration.
+        if held
+            && matches!(
+                readiness,
+                WarmPoolStartup::Ready | WarmPoolStartup::ZeroTarget
+            )
+        {
+            return Ok(WarmPoolStartup::ConfigurationDrift);
+        }
+        Ok(readiness)
+    })
     .await
-    .map_err(|error| format!("native warm pool startup readiness failed: {error:?}"))
+}
+
+async fn observe_pool_readiness(
+    readiness: impl Future<Output = Result<WarmPoolStartup, String>>,
+) -> Result<WarmPoolStartup, String> {
+    let phase = Phase::new("default_warm_pool_readiness");
+    let result = readiness.await;
+    let (outcome, desired) = match &result {
+        Ok(WarmPoolStartup::Ready) => ("ok", None),
+        Ok(WarmPoolStartup::ZeroTarget) => ("zero_target", None),
+        Ok(WarmPoolStartup::ConfigurationDrift) => ("configuration_drift", None),
+        Ok(WarmPoolStartup::CapacityDeferred(proof)) => {
+            ("capacity_deferred", Some(proof.desired() as usize))
+        }
+        Ok(WarmPoolStartup::Stopping) => ("stopped", None),
+        Err(_) => ("error", None),
+    };
+    crate::warm_pools::telemetry::startup(outcome);
+    phase.finish(outcome, desired);
+    result
 }
 
 async fn bind(address: SocketAddr) -> Result<TcpListener, String> {
@@ -132,6 +252,7 @@ async fn activate_and_start_workers(
     composition: ControlPlaneComposition,
     shutdown: &mut ShutdownCoordinator,
     admission: Option<&Admission>,
+    writer_ready: watch::Sender<bool>,
 ) -> Result<(), String> {
     let workers = Phase::new("worker_start");
     if let Some(manager) = &composition.agent_manager {
@@ -143,6 +264,10 @@ async fn activate_and_start_workers(
     if admission.is_some_and(Admission::is_draining) {
         workers.finish("stopped", None);
         return Ok(());
+    }
+    writer_ready.send_replace(true);
+    if let Some(controller) = composition.runtime_pointer.clone() {
+        shutdown.push(controller.spawn(shutdown.subscribe()));
     }
     start_workers(composition, shutdown);
     workers.finish("ok", None);
@@ -195,6 +320,9 @@ fn start_workers(composition: ControlPlaneComposition, shutdown: &mut ShutdownCo
         .sandbox_lifecycle
         .spawn(shutdown, &composition.workers);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
+    if let Some(outcomes) = composition.creation_outcomes {
+        shutdown.push(outcomes.spawn(shutdown.subscribe()));
+    }
     composition.usage.spawn(shutdown);
     composition.usage_metrics.spawn(shutdown);
 }
@@ -245,16 +373,33 @@ async fn serve_after_initialization(
     app: Router,
     startup_started: Instant,
 ) -> Result<(), String> {
-    warm_pools(&composition, None).await?;
+    let mut shutdown = ShutdownCoordinator::new();
+    let (writer_ready, _) = warm_pools(&composition, None, &mut shutdown).await?;
     let listener = bind(config.bind).await?;
     initialize_sandboxes(&composition, None).await?;
     listening(config);
     let manager = composition.agent_manager.clone();
-    let mut shutdown = ShutdownCoordinator::new();
-    activate_and_start_workers(composition, &mut shutdown, None).await?;
+    activate_and_start_workers(composition, &mut shutdown, None, writer_ready).await?;
     serving_entry(startup_started);
     let (http_stop, http_signal) = watch::channel(false);
     let mut server = http_server(listener, app, config.http_connection_max_age, http_signal);
+    if config.features.am_failure_containment_enabled {
+        let trigger = async {
+            use agent_manager::DrainCause;
+            match &manager {
+                Some(manager) => tokio::select! {
+                    _ = shutdown::shutdown_signal() => DrainCause::Shutdown,
+                    _ = manager.failed() => DrainCause::OwnershipFailure,
+                },
+                None => {
+                    shutdown::shutdown_signal().await;
+                    DrainCause::Shutdown
+                }
+            }
+        };
+        return shutdown::serve_contained(server, http_stop, trigger, manager.as_deref(), shutdown)
+            .await;
+    }
     let server_result = tokio::select! {
         result = &mut server => http_result(result),
         () = async {

@@ -124,13 +124,31 @@ impl AgentOperationService {
                         }
                     }
                 }
-                Err(capability) => SendClassification::PreWrite(format!(
-                    "runtime capability changed before dispatch: {capability:?}"
-                )),
+                Err(capability) => {
+                    self.classify_runtime_refusal(format!(
+                        "runtime capability changed before dispatch: {capability:?}"
+                    ))
+                    .await
+                }
             },
-            Err(error) => SendClassification::PreWrite(error.to_string()),
+            Err(error) => self.classify_runtime_refusal(error.to_string()).await,
         };
         self.settle_operation(prepared, classification).await
+    }
+
+    async fn classify_runtime_refusal(&self, detail: String) -> SendClassification {
+        if self.funded_message.is_none() {
+            return SendClassification::PreWrite(detail);
+        }
+        match self.resolve_failed_funded_send(detail).await {
+            ConversationSendOutcome::WriteConfirmed => SendClassification::Confirmed,
+            ConversationSendOutcome::PreWriteFailure(error) => {
+                SendClassification::PreWrite(error.to_string())
+            }
+            ConversationSendOutcome::Ambiguous(error) => {
+                SendClassification::Ambiguous(error.to_string())
+            }
+        }
     }
 
     async fn settle_operation(

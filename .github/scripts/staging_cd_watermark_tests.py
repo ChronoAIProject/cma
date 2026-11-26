@@ -37,12 +37,14 @@ class WatermarkTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0, "\n".join(lines), "")
             return runner
 
-        pending = [name + "/pending/v0.10.3" for name in DEPLOYABLES.values()]
+        pending = [name + "/pending/v0.10.4" for name in DEPLOYABLES.values()]
         require_current_versions(receipts, runner=advertise(*pending))
         for key, name in DEPLOYABLES.items():
-            with self.subTest(component=key), self.assertRaises(SupersededVersions) as error:
-                require_current_versions(receipts, runner=advertise(*pending, name + "/v0.10.2"))
-            self.assertEqual(error.exception.components, {key})
+            newer = name + ("/v0.10.3" if key == "runtime" else "/v0.10.2")
+            with self.subTest(component=key):
+                with self.assertRaises(SupersededVersions) as error:
+                    require_current_versions(receipts, runner=advertise(*pending, newer))
+                self.assertEqual(error.exception.components, {key})
 
     def test_incomplete_malformed_and_failed_reads_cannot_authorize_deployment(self):
         receipts = {"web": fixture_receipt()}

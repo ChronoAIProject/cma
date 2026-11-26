@@ -79,6 +79,7 @@ fn credential(operation_id: &str) -> RequestFrame {
         operation_id: operation_id.into(),
         value: RuntimeCredential::new("test-credential"),
         custody_generation: Some(1),
+        github_route: None,
     })
 }
 

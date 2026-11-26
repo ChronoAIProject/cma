@@ -107,6 +107,7 @@ pub(super) fn agent(id: &str, conversation_id: &str, seq: u64) -> Agent {
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

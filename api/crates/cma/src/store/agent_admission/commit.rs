@@ -1,5 +1,6 @@
 //! Catalogue and snapshot admissions share the current transaction and replay protocol.
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT;
 
 impl MongoSandboxStore {
@@ -138,12 +139,12 @@ impl MongoSandboxStore {
                 },
                 Ok(AdmissionReceipt::Created(receipt)) => receipt,
                 Err(ApplyError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(ApplyError::AgentDuplicate) => {
                     let replay_time = session.operation_time();
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     let replay_time = replay_time.ok_or_else(|| {
                         SandboxStoreError::Unavailable(
                             "agent admission duplicate replay has no Mongo operation time".into(),
@@ -164,18 +165,18 @@ impl MongoSandboxStore {
                 Err(ApplyError::Driver(error))
                     if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) =>
                 {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Unavailable(
                         "Agent admission transaction outcome is unavailable".into(),
                     ));
                 }
                 Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };

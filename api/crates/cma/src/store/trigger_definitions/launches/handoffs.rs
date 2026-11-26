@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::{ServiceHandoffId, SubjectId};
 use layer2_core::trigger_domain::{LaunchStoreError, ServiceConnectionHandoff};
 use mongodb::bson::doc;
@@ -36,28 +37,28 @@ pub(super) async fn create(
         };
         let receipt = match create_once(store, &handoff, &mut session).await {
             Ok(CreateAttempt::Existing(existing)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return replay(*existing, &handoff);
             }
             Ok(CreateAttempt::Created(receipt)) => *receipt,
             Err(AttemptError::Retry(reason)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(reason.into());
                 continue;
             }
             Err(AttemptError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(AttemptError::Driver(error))
                 if is_transient(&error) || is_duplicate_key(&error) =>
             {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(AttemptError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(unavailable(error));
             }
         };
@@ -119,21 +120,21 @@ pub(super) async fn save(
         let saved = match save_once(store, expected_revision, &handoff, &mut session).await {
             Ok(saved) => saved,
             Err(AttemptError::Retry(reason)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(reason.into());
                 continue;
             }
             Err(AttemptError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(AttemptError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(AttemptError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(unavailable(error));
             }
         };

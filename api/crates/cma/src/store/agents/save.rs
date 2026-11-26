@@ -5,6 +5,7 @@ use super::super::sandbox_mongo::{
 };
 use super::*;
 use crate::store::agent_ownership::FenceError;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::SandboxId;
 
 pub(super) async fn save(
@@ -59,6 +60,9 @@ pub(super) async fn save(
         .map_err(driver)?
         .ok_or(SandboxStoreError::Conflict)?;
     let current = read_agent(&current_row)?;
+    if current.conversation.turn_timeout != agent.conversation.turn_timeout {
+        return Err(SandboxStoreError::Conflict);
+    }
     let mut fields = agent_replacement_fields(&agent)?;
     super::super::agent_log_integrity::carry_integrity_for_revision(
         &current_row,
@@ -100,14 +104,14 @@ async fn update(
             Err(error) => return Err(driver(error)),
         };
         if let Err(error) = start_transaction(&mut session).await {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             if native_retirement_action::retryable_body_error(&error) {
                 continue;
             }
             return Err(driver(error));
         }
         if let Err(error) = store.fence_agent_effect_transaction(id, &mut session).await {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             match error {
                 FenceError::Driver(error)
                     if native_retirement_action::retryable_body_error(&error) =>
@@ -122,11 +126,11 @@ async fn update(
             match native_retirement_action::fence_obligation(store, sandbox, &mut session).await {
                 Ok(true) => {}
                 Ok(false) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Conflict);
                 }
                 Err(error) if native_retirement_action::retryable_body_error(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     continue;
                 }
                 Err(error) => return Err(driver(error)),
@@ -140,7 +144,7 @@ async fn update(
         {
             Ok(result) => result,
             Err(error) if native_retirement_action::retryable_body_error(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 continue;
             }
             Err(error) => return Err(driver(error)),

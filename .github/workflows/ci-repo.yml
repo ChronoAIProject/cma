@@ -30,6 +30,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/staging-cd-tests"
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'staging_cd_*_tests.py'
+          "$RUNNER_TEMP/staging-cd-tests/bin/python" -B .github/scripts/release_candidate_packet_tests.py
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'ci_retry_tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'ci_artifact_download_tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'runtime_image_*tests.py'
@@ -61,8 +62,17 @@ jobs:
         name: "Synthetic authority and observer regressions"
         run: "node --test .github/scripts/staging-authority.test.mjs .github/scripts/public-journey-evidence.test.mjs .github/scripts/connection-journey-evidence.test.mjs .github/scripts/connection-campaign.test.mjs .github/scripts/deployment-observer.test.mjs"
       -
+        name: "Agent-log activation evidence regressions"
+        run: "node --test .github/scripts/agent-log-activation-evidence.test.mjs"
+      -
+        name: "TC-117 evidence consistency regressions"
+        run: "node --test .github/scripts/visitor-abuse-campaign.test.mjs .github/scripts/visitor-abuse-authority.test.mjs .github/scripts/visitor-abuse-consistency.test.mjs"
+      -
         name: "Synthetic home restore evidence regressions"
         run: "node --test .github/scripts/home-backup/*.test.mjs"
+      -
+        name: "Desktop qualification runner regressions"
+        run: "node --test .github/scripts/desktop-replica-contract.test.mjs .github/scripts/desktop-replica-results.test.mjs"
       -
         name: "Audit exception policy regressions"
         run: "node --test .github/scripts/audit-policy.test.mjs"
@@ -81,7 +91,7 @@ jobs:
       -
         name: "Root contains only permitted entries"
         run: |
-          allowed=".git .github api web CLAUDE.md AGENTS.md CONTRIBUTING.md README.md .gitignore .dockerignore"
+          allowed=".git .github api web CLAUDE.md AGENTS.md CONTRIBUTING.md README.md LICENSE NOTICE .gitignore .dockerignore"
           fail=0
           shopt -s dotglob nullglob
           for entry in *; do

@@ -83,6 +83,7 @@ impl Fixture {
             record.input.captured_limits(),
             record.input.behavior,
             record.input.sandbox_availability,
+            "",
         )
         .await
         .unwrap();
@@ -195,6 +196,7 @@ impl Fixture {
 
 pub(super) fn work(record: &crate::store::LifecycleRecord) -> ProvisionInput {
     ProvisionInput {
+        creation_fence: None,
         behavior: record.input.behavior,
         first_message: validation::admitted_first_message(&record.input),
         request: guidance::provisioning_request(
@@ -211,5 +213,6 @@ pub(super) fn work(record: &crate::store::LifecycleRecord) -> ProvisionInput {
         existing_agent_id: record.agent_id.clone(),
         actor: record.input.actor.clone(),
         canary_profiles: None,
+        repository_access_pin: None,
     }
 }

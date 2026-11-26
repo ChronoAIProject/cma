@@ -5,6 +5,7 @@ use hyper_util::rt::TokioIo;
 
 use super::*;
 use crate::agent_sandbox::{RuntimeStream, RuntimeStreamKind};
+use crate::owner_protocol::ReceiverSettlementFailure as SettlementFailure;
 
 use super::native_pool::{AbortOnDrop, NativeConnection, NativeLease};
 
@@ -14,6 +15,7 @@ use super::native_pool::{AbortOnDrop, NativeConnection, NativeLease};
 pub(super) struct NativeHttpObservation {
     status: std::sync::atomic::AtomicU16,
     oversized: std::sync::atomic::AtomicBool,
+    settlement_origin: std::sync::Mutex<Option<SettlementFailure>>,
 }
 
 tokio::task_local! {
@@ -33,6 +35,7 @@ impl NativeHttpObservation {
 
     pub(super) fn clear(&self) {
         self.status.store(0, std::sync::atomic::Ordering::Release);
+        *self.settlement_origin.lock().unwrap() = None;
         self.oversized
             .store(false, std::sync::atomic::Ordering::Release);
     }
@@ -48,6 +51,26 @@ impl NativeHttpObservation {
         HTTP_OBSERVATION.scope(self.clone(), operation).await
     }
 
+    pub(super) fn settlement_origin(&self) -> Option<SettlementFailure> {
+        *self.settlement_origin.lock().unwrap()
+    }
+
+    fn record_origin(origin: SettlementFailure) {
+        let _ = HTTP_OBSERVATION.try_with(|observation| {
+            *observation.settlement_origin.lock().unwrap() = Some(origin);
+        });
+    }
+
+    fn record_http_failure(error: &hyper::Error) {
+        Self::record_origin(if error.is_parse() || error.is_user() {
+            SettlementFailure::Invalid
+        } else if error.is_closed() || error.is_incomplete_message() || error.is_timeout() {
+            SettlementFailure::Unavailable
+        } else {
+            SettlementFailure::Unclassified
+        });
+    }
+
     fn record_oversized() {
         let _ = HTTP_OBSERVATION.try_with(|observation| {
             observation
@@ -60,6 +83,7 @@ impl NativeHttpObservation {
 pub(super) struct NativeHttpResponse {
     pub status: http::StatusCode,
     pub bytes: Vec<u8>,
+    pub content_type: Option<http::HeaderValue>,
     lease: NativeLease,
 }
 
@@ -138,8 +162,21 @@ impl ProviderHostedControlTransport {
     ) -> crate::Result<NativeHttpResponse> {
         let (lane, class) = policy;
         let class = class.effective();
-        let request = self.runtime_capacity.acquire_request(class).await?;
-        let slot = self.native_slot_for_class(endpoint, lane, class).await?;
+        let request = self
+            .runtime_capacity
+            .acquire_request(class)
+            .await
+            .inspect_err(|_| {
+                NativeHttpObservation::record_origin(SettlementFailure::Unavailable);
+            })?;
+        let slot = self
+            .native_slot_for_class(endpoint, lane, class)
+            .await
+            .inspect_err(|error| {
+                if matches!(error, AdapterError::RuntimeCapacity(_)) {
+                    NativeHttpObservation::record_origin(SettlementFailure::Unavailable);
+                }
+            })?;
         let mut cancelled = slot.cancellation();
         let exchange = async {
             let mut lease = self.native_checkout(endpoint, slot.clone()).await?;
@@ -169,6 +206,7 @@ impl ProviderHostedControlTransport {
                     }
                 };
                 if current != *binding {
+                    NativeHttpObservation::record_origin(SettlementFailure::AuthorityLost);
                     self.discard_native_incarnation(endpoint, &slot).await;
                     return Err(AdapterError::Rejected(
                         "Sandbox Pod changed before HTTP reuse".into(),
@@ -194,7 +232,8 @@ impl ProviderHostedControlTransport {
                 let (sender, connection) =
                     hyper::client::conn::http1::handshake(TokioIo::new(stream))
                         .await
-                        .map_err(|_| {
+                        .map_err(|error| {
+                            NativeHttpObservation::record_http_failure(&error);
                             unavailable("runtime HTTP handshake over Kubernetes failed")
                         })?;
                 let mut retired = slot.cancellation();
@@ -223,7 +262,10 @@ impl ProviderHostedControlTransport {
                 .await
         };
         tokio::select! { biased;
-            _ = cancelled.wait_for(|cancelled| *cancelled) => Err(native_pool::retired()),
+            _ = cancelled.wait_for(|cancelled| *cancelled) => {
+                NativeHttpObservation::record_origin(SettlementFailure::Unclassified);
+                Err(native_pool::retired())
+            },
             result = exchange => result,
         }
     }
@@ -238,8 +280,10 @@ impl ProviderHostedControlTransport {
         mut lease: NativeLease,
     ) -> crate::Result<NativeHttpResponse> {
         let (name, token) = self.auth_header(endpoint);
-        let mut token = http::HeaderValue::from_str(token)
-            .map_err(|_| AdapterError::Rejected("runtime token is not a valid header".into()))?;
+        let mut token = http::HeaderValue::from_str(token).map_err(|_| {
+            NativeHttpObservation::record_origin(SettlementFailure::Invalid);
+            AdapterError::Rejected("runtime token is not a valid header".into())
+        })?;
         token.set_sensitive(true);
         let mut request = http::Request::builder()
             .method(method)
@@ -251,20 +295,29 @@ impl ProviderHostedControlTransport {
             .header(http::header::CONTENT_TYPE, "application/json")
             .header(
                 http::header::ACCEPT,
-                format!(
-                    "{}, {}, {}",
-                    crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
-                    crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
-                    crate::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
+                endpoint.accept().map_or_else(
+                    || {
+                        format!(
+                            "{}, {}, {}, {}, {}, {}",
+                            crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
+                            crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
+                            crate::wire::AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE,
+                            crate::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
+                            crate::wire::GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE,
+                            crate::wire::GITHUB_REPOSITORY_SCOPE_STATUS_MEDIA_TYPE,
+                        )
+                    },
+                    str::to_owned,
                 ),
             )
             .header(name, token);
         if let Some(owner) = crate::owner_protocol::current_header()? {
             request = request.header(crate::owner_protocol::OWNER_HEADER, owner);
         }
-        let request = request
-            .body(Full::new(Bytes::from(body)))
-            .map_err(|_| AdapterError::Rejected("runtime HTTP request is invalid".into()))?;
+        let request = request.body(Full::new(Bytes::from(body))).map_err(|_| {
+            NativeHttpObservation::record_origin(SettlementFailure::Invalid);
+            AdapterError::Rejected("runtime HTTP request is invalid".into())
+        })?;
         // One attempt to this fenced Pod. An ambiguous response must never cause
         // an implicit second mutation, or rediscovery/replay on a replacement Pod.
         let response = lease
@@ -274,7 +327,10 @@ impl ProviderHostedControlTransport {
             .sender
             .send_request(request)
             .await
-            .map_err(|_| unavailable("runtime HTTP exchange over Kubernetes failed"))?;
+            .map_err(|error| {
+                NativeHttpObservation::record_http_failure(&error);
+                unavailable("runtime HTTP exchange over Kubernetes failed")
+            })?;
         let status = response.status();
         let _ = HTTP_OBSERVATION.try_with(|observation| observation.record_status(status.as_u16()));
         if !status.is_success() {
@@ -283,6 +339,7 @@ impl ProviderHostedControlTransport {
             return Ok(NativeHttpResponse {
                 status,
                 bytes: Vec::new(),
+                content_type: None,
                 lease,
             });
         }
@@ -298,11 +355,16 @@ impl ProviderHostedControlTransport {
                 "runtime HTTP response exceeds the size limit".into(),
             ));
         }
+        let content_type = endpoint
+            .accept()
+            .and_then(|_| response.headers().get(http::header::CONTENT_TYPE).cloned());
         let mut body = response.into_body();
         let mut bytes = Vec::new();
         while let Some(frame) = body.frame().await {
-            let frame =
-                frame.map_err(|_| unavailable("runtime HTTP body over Kubernetes failed"))?;
+            let frame = frame.map_err(|error| {
+                NativeHttpObservation::record_http_failure(&error);
+                unavailable("runtime HTTP body over Kubernetes failed")
+            })?;
             if let Some(data) = frame.data_ref() {
                 if data.len() > limit.saturating_sub(bytes.len()) {
                     NativeHttpObservation::record_oversized();
@@ -316,6 +378,7 @@ impl ProviderHostedControlTransport {
         Ok(NativeHttpResponse {
             status,
             bytes,
+            content_type,
             lease,
         })
     }

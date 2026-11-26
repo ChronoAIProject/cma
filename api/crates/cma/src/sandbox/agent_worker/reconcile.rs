@@ -2,6 +2,7 @@ use std::time::{Duration, SystemTime};
 
 use tokio::time::Instant;
 
+use layer2_core::agent_ownership::ForeignReconciliationOwners;
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome, PageRequest,
@@ -127,11 +128,28 @@ impl AgentWorker {
             )
             .await?;
         sweep.pages += 1;
+        let mut owners = match &self.config.ownership {
+            Some(coordinator) if self.config.defer_foreign_reconciliation => {
+                let eligible: Vec<_> = page
+                    .items
+                    .iter()
+                    .filter_map(|candidate| {
+                        let target = Self::reconciliation_target(candidate);
+                        (!self.skip_reconciliation_ownership(candidate, &target))
+                            .then_some(&candidate.agent_id)
+                    })
+                    .collect();
+                coordinator
+                    .observe_foreign_reconciliation_owners(eligible)
+                    .await
+            }
+            _ => ForeignReconciliationOwners::default(),
+        };
         let mut candidates = page.items.into_iter().peekable();
         while let Some(candidate) = candidates.next() {
             sweep.candidates += 1;
             let cursor = budget.map(|_| candidate.agent_id.to_string());
-            self.reconcile_candidate_with_ownership(candidate, now, &mut sweep.counts)
+            self.reconcile_candidate_with_ownership(candidate, now, &mut sweep.counts, &mut owners)
                 .await?;
             // Resume from the last settled item, including after timeout or cancellation.
             if let Some(cursor) = cursor {
@@ -148,38 +166,55 @@ impl AgentWorker {
         Ok(sweep.cursor.is_none())
     }
 
+    fn reconciliation_target(candidate: &AgentConnectionRecoveryCandidate) -> LiveAgentTarget {
+        LiveAgentTarget {
+            agent_id: candidate.agent_id.clone(),
+            conversation_id: candidate.conversation_id.clone(),
+            runtime_generation: candidate.runtime_generation,
+        }
+    }
+
+    fn skip_reconciliation_ownership(
+        &self,
+        candidate: &AgentConnectionRecoveryCandidate,
+        target: &LiveAgentTarget,
+    ) -> bool {
+        // Discovery proves recovery ineligibility for this observation. Only a
+        // matching attachment can still need maintenance.
+        self.config.skip_ineligible_reconciliation
+            && !candidate.recovery_eligible
+            && !self.dependencies.registry.target_is_attached(target)
+    }
+
     async fn reconcile_candidate_with_ownership(
         &self,
         candidate: AgentConnectionRecoveryCandidate,
         now: SystemTime,
         counts: &mut ReconcileCounts,
+        owners: &mut ForeignReconciliationOwners,
     ) -> Result<(), SandboxStoreError> {
-        let target = LiveAgentTarget {
-            agent_id: candidate.agent_id.clone(),
-            conversation_id: candidate.conversation_id.clone(),
-            runtime_generation: candidate.runtime_generation,
-        };
+        let target = Self::reconciliation_target(&candidate);
         let Some(coordinator) = &self.config.ownership else {
             return self
                 .reconcile_candidate(candidate, &target, now, counts)
                 .await;
         };
-        // Discovery proves recovery ineligibility for this observation. Only a
-        // matching attachment can still need maintenance.
-        if self.config.skip_ineligible_reconciliation
-            && !candidate.recovery_eligible
-            && !self.dependencies.registry.target_is_attached(&target)
-        {
+        if self.skip_reconciliation_ownership(&candidate, &target) {
             counts.ownership_skipped += 1;
             counts.recovery_deferred += 1;
             return Ok(());
         }
-        if self.config.defer_foreign_reconciliation
-            && coordinator
-                .observe_foreign_reconciliation_owner(&candidate.agent_id)
-                .await
-        {
+        if coordinator.defer_reconciliation_for_foreign_owner(owners, &candidate.agent_id) {
             counts.foreign_ownership_deferred += 1;
+            return Ok(());
+        }
+        if self
+            .dependencies
+            .store
+            .agent_inspection_parked(&candidate.agent_id)
+            .await?
+        {
+            counts.ownership_skipped += 1;
             return Ok(());
         }
         counts.ownership_attempted += 1;

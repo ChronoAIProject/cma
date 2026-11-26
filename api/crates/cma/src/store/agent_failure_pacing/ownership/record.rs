@@ -1,5 +1,6 @@
 use super::*;
 use crate::store::agent_ownership::FenceError;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agent_capacity_recovery::source::envelope_filter,
     sandbox_mongo::{
@@ -207,7 +208,7 @@ impl Observation {
             match self.apply(hint, &mut session).await {
                 Ok(HintWriteResult::Recorded) => (),
                 result => {
-                    if session.abort_transaction().await.is_err() {
+                    if session.abort_guarded().await.is_err() {
                         emit("unavailable", None);
                     }
                     match result {

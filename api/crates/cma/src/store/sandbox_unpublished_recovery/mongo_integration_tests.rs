@@ -80,6 +80,7 @@ pub(in crate::store) async fn fixture(
         snapshot,
         proof,
         target_runtime_version: "image-latest".into(),
+        released_runtime: None,
         automatic: false,
         requested_at: NOW.into(),
     }
@@ -255,6 +256,7 @@ pub(in crate::store) fn home(id: &layer2_core::SandboxId) -> SandboxHome {
     let request = NativePoolClaimRequest {
         pool: NativePoolBinding {
             spec: NativePoolSpec {
+                cold_canary: false,
                 image: RuntimeImage {
                     uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
                     labels: std::collections::BTreeMap::from([
@@ -391,6 +393,7 @@ async fn mongo_no_agent_stalled_revival_keeps_retained_source_and_reserved_gener
             snapshot,
             proof,
             target_runtime_version: "released-image".into(),
+            released_runtime: None,
             automatic: false,
             requested_at: NOW.into(),
         })

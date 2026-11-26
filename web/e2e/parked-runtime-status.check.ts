@@ -104,6 +104,7 @@ for (const purpose of ['image_rotation', 'revive'] as const) {
     );
     allowDetails = true;
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+    await page.locator('.runtime-attention > summary').click();
     await resourceRow(page, 'agent', boundary.agent.id)
       .getByRole('button', { name: /^Options for/ })
       .click();

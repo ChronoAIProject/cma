@@ -7,7 +7,7 @@ use std::time::Instant;
 mod fences;
 
 const PATH: &str = "/api/v1/agents?organization=owner&limit=200";
-async fn owned(rows: usize, distinct: bool) -> fixture::Fixture {
+pub(super) async fn owned(rows: usize, distinct: bool) -> fixture::Fixture {
     owned_with_command_observer(rows, distinct, true).await
 }
 async fn owned_with_command_observer(
@@ -47,7 +47,7 @@ async fn owned_with_command_observer(
         .unwrap();
     f
 }
-fn app(f: &fixture::Fixture, batched: bool) -> axum::Router {
+pub(super) fn app(f: &fixture::Fixture, batched: bool) -> axum::Router {
     let store = if batched { &f.store } else { &f.legacy };
     f.app_with_authority(store.clone(), store.clone(), false, f.identity.auth(false))
 }

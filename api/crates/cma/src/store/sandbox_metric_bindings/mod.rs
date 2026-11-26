@@ -1,16 +1,17 @@
 //! Retained independent physical compute/home assignment intervals.
 use super::usage_reports::{decode, encode, expires, unavailable, ReportingStore, DB_DEADLINE};
 use crate::store::transaction_scope as tx;
+use cma_am_reporting::metric_bindings;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::{
     Binding, BindingKind, MetricsError, Range, Result, IDENTITY_RETENTION_SECONDS,
 };
+pub(crate) use metric_bindings::COLLECTION;
 use mongodb::{
     bson::{doc, Document},
     options::IndexOptions,
     IndexModel,
 };
-pub(crate) const COLLECTION: &str = "sandbox_metric_bindings";
 
 pub(crate) async fn initialize(store: &ReportingStore) -> Result<()> {
     store
@@ -50,31 +51,8 @@ impl ReportingStore {
         after: Option<&str>,
         range: Range,
     ) -> Result<Vec<String>> {
-        let mut filter = doc! {"valid_from":{"$lt":range.to as i64},"$or":[{"valid_until":null},{"valid_until":{"$gt":range.from as i64}}]};
-        if let Some(after) = after {
-            filter.insert("sandbox_id", doc! {"$gt":after});
-        }
-        let mut cursor = self
-            .collection(COLLECTION)
-            .find(filter)
-            .sort(doc! {"sandbox_id":1,"valid_from":1})
-            .projection(doc! {"sandbox_id":1})
-            .limit(200)
-            .batch_size(200)
-            .max_time(DB_DEADLINE)
+        metric_bindings::read_sandbox_page(self.collection(COLLECTION), after, range, DB_DEADLINE)
             .await
-            .map_err(unavailable)?;
-        let mut ids = Vec::new();
-        while let Some(d) = cursor.try_next().await.map_err(unavailable)? {
-            let id = d.get_str("sandbox_id").map_err(unavailable)?;
-            if ids.last().is_none_or(|last| last != id) {
-                ids.push(id.to_owned());
-            }
-            if ids.len() == 100 {
-                break;
-            }
-        }
-        Ok(ids)
     }
     pub(crate) async fn reconcile_bindings(
         &self,
@@ -174,48 +152,22 @@ impl ReportingStore {
         range: Range,
         session: &mut mongodb::ClientSession,
     ) -> Result<Vec<Binding>> {
-        if ids.len() > 200 {
-            return Err(MetricsError::Busy);
-        }
-        let mut cursor=self.collection(COLLECTION).find(doc!{"sandbox_id":{"$in":ids},"valid_from":{"$lt":range.to as i64},"$or":[{"valid_until":null},{"valid_until":{"$gt":range.from as i64}}]})
-            .sort(doc!{"sandbox_id":1,"valid_from":1}).max_time(DB_DEADLINE).session(&mut *session).await.map_err(unavailable)?;
-        let mut rows = Vec::new();
-        while let Some(doc) = cursor
-            .next(&mut *session)
-            .await
-            .transpose()
-            .map_err(unavailable)?
-        {
-            if rows.len() >= 20_000 {
-                return Err(MetricsError::Busy);
-            }
-            rows.push(decode(&doc)?);
-        }
-        Ok(rows)
+        metric_bindings::read_bindings(
+            self.collection(COLLECTION),
+            ids,
+            range,
+            session,
+            DB_DEADLINE,
+        )
+        .await
     }
     pub(crate) async fn tracking_started_at(
         &self,
         ids: &[String],
         session: &mut mongodb::ClientSession,
     ) -> Result<Option<u64>> {
-        let mut cursor = self
-            .collection(COLLECTION)
-            .aggregate([
-                doc! {"$match":{"sandbox_id":{"$in":ids}}},
-                doc! {"$group":{"_id":null,"from":{"$min":"$valid_from"}}},
-            ])
-            .max_time(DB_DEADLINE)
-            .session(&mut *session)
+        metric_bindings::read_tracking_start(self.collection(COLLECTION), ids, session, DB_DEADLINE)
             .await
-            .map_err(unavailable)?;
-        let document = cursor
-            .next(session)
-            .await
-            .transpose()
-            .map_err(unavailable)?;
-        document
-            .map(|d| d.get_i64("from").map(|v| v as u64).map_err(unavailable))
-            .transpose()
     }
     pub(crate) async fn mapping_revision(&self) -> Result<u64> {
         let mut session = self.snapshot().await?;

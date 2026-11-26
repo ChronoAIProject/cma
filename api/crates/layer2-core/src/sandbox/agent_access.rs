@@ -1,5 +1,5 @@
 //! Owner-approved access requests from a running Agent.
-use crate::{resource_access::CallerContext, AgentId, Caller};
+use crate::{resource_access::CallerContext, AgentId, Caller, SandboxId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +24,26 @@ pub struct AgentAccessRequest {
     pub retry_of: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_approval: Option<GithubApprovalContext>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GithubApprovalContext {
+    pub sandbox_id: SandboxId,
+    pub sandbox_name: String,
+    pub other_agents: Vec<AgentId>,
+    pub current_user_service_id: Option<String>,
+    pub scope_revision: u64,
+    pub credential_generation: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GithubConnectionApproval {
+    pub sandbox_id: SandboxId,
+    pub user_service_id: String,
+    pub scope_revision: u64,
+    pub credential_generation: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -42,6 +62,8 @@ pub enum AgentAccessError {
     Invalid,
     #[error("this access request has already changed")]
     Conflict,
+    #[error("GitHub access changed before approval. Review the current Sandbox and choose a connection again.")]
+    StaleGithubApproval,
     #[error("service access is temporarily unavailable")]
     Unavailable,
 }
@@ -64,6 +86,19 @@ pub trait AgentAccessRequests: Send + Sync {
         services: Vec<String>,
         key: &str,
     ) -> Result<AgentAccessRequest, AgentAccessError>;
+    #[allow(clippy::too_many_arguments)]
+    async fn approve_github_connection(
+        &self,
+        _context: &CallerContext,
+        _credential: &str,
+        _agent: &AgentId,
+        _request: &str,
+        _services: Vec<String>,
+        _choice: GithubConnectionApproval,
+        _key: &str,
+    ) -> Result<AgentAccessRequest, AgentAccessError> {
+        Err(AgentAccessError::Unavailable)
+    }
     async fn replace_services(
         &self,
         _context: &CallerContext,

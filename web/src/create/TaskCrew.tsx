@@ -1,47 +1,27 @@
 import type { NavigationState } from '../shell/navigation';
 import type { AppRoute } from '../routing/routes';
-import { taskPresentation } from '../shell/taskPresentation';
+import type { AssistantReplyPreview } from '../api/replyPreview';
 import { taskTitle } from '../shell/taskTitle';
-import { taskActivityOrder, taskColor } from '../shell/taskGroups';
+import { taskColor } from '../shell/taskGroups';
 import { activityLabel } from '../shell/treePresentation';
 import { CharacterAvatar, characterPhase } from '../character/CharacterAvatar';
 import { characterForStatus } from '../character/status';
 import { sandboxChildStatus } from '../sandbox/lifecycle';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-
-export function taskCrewCards(navigation?: NavigationState) {
-  if (navigation?.status !== 'ready') return [];
-  return navigation.items
-    .flatMap(({ sandbox, workspaces }) =>
-      workspaces
-        .filter((workspace) => workspace.status !== 'removed')
-        .flatMap((workspace) =>
-          workspace.agents.flatMap((agent) => {
-            const presentation = taskPresentation(
-              agent,
-              sandbox,
-              navigation.refreshError ? 'stale' : 'fresh',
-            );
-            return presentation ? [{ agent, sandbox, presentation }] : [];
-          }),
-        ),
-    )
-    .sort(
-      (a, b) =>
-        taskActivityOrder(b.agent) - taskActivityOrder(a.agent) ||
-        a.agent.id.localeCompare(b.agent.id),
-    );
-}
+import { selectTaskHomePresentation } from './taskHomePresentation';
+export { taskCrewCards } from './taskHomePresentation';
 
 export function TaskCrew({
   navigation,
   onNavigate,
   onRetry,
+  previews = {},
 }: {
   readonly navigation?: NavigationState;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onRetry?: () => void;
+  readonly previews?: Readonly<Record<string, AssistantReplyPreview>>;
 }) {
   if (!navigation) return null;
   if (navigation.status === 'loading') return <p role="status">Loading your crew…</p>;
@@ -52,17 +32,23 @@ export function TaskCrew({
         {onRetry ? <Button onClick={onRetry}>Try again</Button> : null}
       </div>
     );
-  const cards = taskCrewCards(navigation);
+  const { crew: cards, commonStatus } = selectTaskHomePresentation({ navigation });
   return (
     <section className="task-crew" aria-label="Your crew">
-      {cards.length ? <h2>Your crew</h2> : null}
+      {cards.length ? (
+        <div className="task-crew__heading">
+          <h2>Your crew</h2>
+          {commonStatus ? <span>{commonStatus}</span> : null}
+        </div>
+      ) : null}
       {navigation.refreshError ? <p role="status">{navigation.refreshError}</p> : null}
       <div className="task-crew__cards">
-        {cards.slice(0, 3).map(({ agent, sandbox, presentation }) => (
+        {cards.map(({ agent, sandbox, presentation }) => (
           <button
             type="button"
             key={agent.id}
             className="task-crew__card"
+            aria-label={`${taskTitle(agent)}, ${presentation.label}${presentation.parentNotice ? `, ${presentation.parentNotice}` : ''}`}
             onClick={() => onNavigate({ kind: 'agent', agentId: agent.id })}
           >
             <span className="task-crew__top">
@@ -73,43 +59,38 @@ export function TaskCrew({
                 size={56}
                 still={!characterForStatus(sandboxChildStatus(sandbox, agent.status)).animate}
               />
-              <Badge
-                tone={
-                  navigation.refreshError || presentation.parentNotice
-                    ? 'warning'
-                    : presentation.status === 'working'
-                      ? 'active'
-                      : 'neutral'
-                }
-                wrap
-              >
-                {presentation.label}
-              </Badge>
-            </span>
-            <strong>{taskTitle(agent)}</strong>
-            <span className="task-crew__description">
-              {presentation.parentNotice ??
-                (navigation.refreshError
-                  ? 'Open the Agent to check its current status.'
-                  : presentation.status === 'working'
-                    ? 'The Agent is working on your task.'
-                    : presentation.status === 'not_started'
-                      ? 'Ready for your next message.'
-                      : presentation.status === 'paused'
-                        ? 'Paused. Open the Agent to continue.'
-                        : 'Open the conversation for details.')}
-            </span>
-            <span className="task-crew__meta">
-              <span>{sandbox.name}</span>
-              {Number.isFinite(Date.parse(agent.updatedAt)) ? (
-                <time dateTime={agent.updatedAt}>
-                  Updated{' '}
-                  {activityLabel(agent.updatedAt) === 'Now'
-                    ? 'just now'
-                    : `${activityLabel(agent.updatedAt)} ago`}
-                </time>
+              {!commonStatus ? (
+                <Badge
+                  tone={
+                    navigation.refreshError || presentation.parentNotice
+                      ? 'warning'
+                      : presentation.status === 'working'
+                        ? 'active'
+                        : 'neutral'
+                  }
+                  wrap
+                >
+                  {presentation.label}
+                </Badge>
               ) : null}
             </span>
+            <strong>{taskTitle(agent)}</strong>
+            {presentation.parentNotice ? (
+              <span className="task-crew__notice">{presentation.parentNotice}</span>
+            ) : null}
+            {!navigation.refreshError && previews[agent.id] ? (
+              <>
+                <span className="task-crew__description">{previews[agent.id]!.text}</span>
+                <span className="task-crew__meta">
+                  <time dateTime={previews[agent.id]!.appendedAt}>
+                    Replied{' '}
+                    {activityLabel(previews[agent.id]!.appendedAt) === 'Now'
+                      ? 'just now'
+                      : `${activityLabel(previews[agent.id]!.appendedAt)} ago`}
+                  </time>
+                </span>
+              </>
+            ) : null}
           </button>
         ))}
       </div>

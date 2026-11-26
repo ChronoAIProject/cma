@@ -38,7 +38,7 @@ pub(in crate::store::sandbox_reconciliation) async fn publish_agent(
     if source.agent() != current {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
-    let filter = fence_filter_scoped(store, current, scope).await?;
+    let mut filter = fence_filter_scoped(store, current, scope).await?;
     let Some(change) = change else {
         let result = scope
             .update_one(
@@ -58,6 +58,8 @@ pub(in crate::store::sandbox_reconciliation) async fn publish_agent(
         });
     };
     let batch = materialize_logs(change, &request.observed_at)?;
+    let restart_fields =
+        super::restart::restrict_to_retired_runtime(current, request, &mut filter)?;
     let operation = PublicationIdentity {
         key: format!(
             "runtime-loss:{}:{}:{}",
@@ -98,6 +100,21 @@ pub(in crate::store::sandbox_reconciliation) async fn publish_agent(
         },
     )
     .await?;
+    if let Some(unset) = restart_fields {
+        let updated = scope
+            .update_one(
+                &store.agents,
+                doc! {"_id": current.id.as_str(), "revision": crate::store::sandbox_mongo::signed(
+                    change.agent.revision, "retired restart revision",
+                ).map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?},
+                doc! {"$unset": unset},
+            )
+            .await
+            .map_err(ApplyError::Driver)?;
+        if updated.matched_count != 1 {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+    }
     Ok(PublishedAgent {
         agent: change.agent.clone(),
         logs: batch,

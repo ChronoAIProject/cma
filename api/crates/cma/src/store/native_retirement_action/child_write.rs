@@ -25,11 +25,11 @@ pub(in crate::store) async fn insert_child(
         match inserted {
             Ok(true) => {}
             Ok(false) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Conflict);
             }
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if retryable_body_error(&error) {
                     continue;
                 }

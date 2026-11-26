@@ -193,6 +193,11 @@ for (const kind of ['Agent', 'Sandbox'] as const)
       await act(async () =>
         fireEvent.click(screen.getByRole('button', { name: 'Open pending request' })),
       );
+      const progress = screen.getByRole('dialog', { name: 'Deletion progress' });
+      expect(within(progress).getAllByRole('listitem')).toHaveLength(1);
+      const row = within(progress).getByRole('listitem');
+      expect(within(row).getByRole('code')).toHaveTextContent('second');
+      await act(async () => fireEvent.click(within(row).getByRole('button')));
       const status = await screen.findByRole('dialog', { name: `Deleting ${kind}` });
       expect(within(status).getByText(original)).toBeVisible();
       expect(command).toHaveBeenCalledTimes(1);

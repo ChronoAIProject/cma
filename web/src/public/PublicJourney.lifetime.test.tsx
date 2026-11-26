@@ -95,7 +95,7 @@ afterEach(() => {
 it('releases obsolete busy state when identity changes without a parent remount', async () => {
   const response = deferred<Launch>();
   const client = publicClient();
-  vi.mocked(client.requests.createOrResume).mockReturnValueOnce(response.promise);
+  vi.mocked(client.requests.createOrResumeBound).mockReturnValueOnce(response.promise);
   const test = setup(client, false);
   await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
   await test.changeOwner('another-owner');
@@ -104,13 +104,13 @@ it('releases obsolete busy state when identity changes without a parent remount'
   await test.user.click(screen.getByRole('button', { name: 'Open in CMA' }));
   await act(async () => response.resolve(PUBLIC_RECORD));
   await waitFor(() => expect(test.navigate).toHaveBeenCalledOnce());
-  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
 });
 
 it('shows a current accepted result even when reading storage for cleanup fails', async () => {
   const response = deferred<Launch>();
   const client = publicClient();
-  vi.mocked(client.requests.createOrResume).mockReturnValueOnce(response.promise);
+  vi.mocked(client.requests.createOrResumeBound).mockReturnValueOnce(response.promise);
   const test = setup(client);
   await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
   const retained = sessionStorage.getItem(key);
@@ -126,7 +126,7 @@ it('shows a current accepted result even when reading storage for cleanup fails'
 it('reports failed refusal persistence and keeps the original dispatched packet', async () => {
   const response = deferred<Launch>();
   const client = publicClient();
-  vi.mocked(client.requests.createOrResume).mockReturnValueOnce(response.promise);
+  vi.mocked(client.requests.createOrResumeBound).mockReturnValueOnce(response.promise);
   const test = setup(client);
   await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
   const retained = sessionStorage.getItem(key);
@@ -143,7 +143,7 @@ it('reports failed refusal persistence and keeps the original dispatched packet'
 
 async function recovery() {
   const client = publicClient();
-  vi.mocked(client.requests.createOrResume).mockRejectedValueOnce(
+  vi.mocked(client.requests.createOrResumeBound).mockRejectedValueOnce(
     new ApiError(409, 'Sign in again.', 'sandbox_credential_setup_required'),
   );
   const fetch = vi.fn().mockResolvedValueOnce(session());
@@ -163,7 +163,7 @@ async function recovery() {
   fetch.mockReturnValueOnce(check.promise);
   await test.user.click(screen.getByRole('button', { name: 'Open in CMA' }));
   expect(fetch).toHaveBeenCalledTimes(2);
-  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
   return { ...test, check, fetch };
 }
 
@@ -177,7 +177,7 @@ it.each(['resolve', 'reject'] as const)(
       if (outcome === 'resolve') test.check.resolve(session());
       else test.check.reject(new Error('late preflight failure'));
     });
-    expect(test.client.requests.createOrResume).toHaveBeenCalledOnce();
+    expect(test.client.requests.createOrResumeBound).toHaveBeenCalledOnce();
     expect(sessionStorage.getItem(key)).toBe(retained);
     expect(test.navigate).not.toHaveBeenCalled();
     expect(screen.getByText('Another route')).toBeInTheDocument();
@@ -190,7 +190,7 @@ it('aborts the account check and leaves recovery intact across A to B to A', asy
   await test.changeOwner('another-owner');
   await test.changeOwner(PUBLIC_USER.id);
   await act(async () => test.check.resolve(session()));
-  expect(test.client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(test.client.requests.createOrResumeBound).toHaveBeenCalledOnce();
   expect(test.fetch.mock.calls[1]?.[1].signal.aborted).toBe(true);
   expect(sessionStorage.getItem(key)).toBe(retained);
   expect(screen.getByRole('button', { name: 'Open in CMA' })).toBeDisabled();
@@ -202,7 +202,7 @@ it.each(['accepted', 'credential refusal', 'settled refusal', 'unknown'] as cons
   async (outcome) => {
     const response = deferred<Launch>();
     const client = publicClient();
-    vi.mocked(client.requests.createOrResume)
+    vi.mocked(client.requests.createOrResumeBound)
       .mockReturnValueOnce(response.promise)
       .mockRejectedValueOnce(new ApiError(503, 'Unknown', 'service_unavailable'))
       .mockResolvedValue(PUBLIC_RECORD);
@@ -233,14 +233,14 @@ it.each(['accepted', 'credential refusal', 'settled refusal', 'unknown'] as cons
     });
     expect(sessionStorage.getItem(key)).toBe(retained);
     expect(test.navigate).not.toHaveBeenCalled();
-    expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+    expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
     await test.changeOwner(PUBLIC_USER.id);
     if (outcome !== 'accepted') {
-      await waitFor(() => expect(client.requests.createOrResume).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(client.requests.createOrResumeBound).toHaveBeenCalledTimes(2));
       await test.user.click(await screen.findByRole('button', { name: 'Try again' }));
     }
     await waitFor(() => expect(test.navigate).toHaveBeenCalledOnce());
-    const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+    const calls = vi.mocked(client.requests.createOrResumeBound).mock.calls;
     expect(calls).toHaveLength(outcome === 'accepted' ? 1 : 3);
     for (const call of calls) expect(call).toEqual(calls[0]);
   },
@@ -253,7 +253,7 @@ it.each(
 )('recovers the same $timing command at expiry offset $offset', async ({ timing, offset }) => {
   const response = deferred<Launch>();
   const client = publicClient();
-  vi.mocked(client.requests.createOrResume).mockReturnValueOnce(response.promise);
+  vi.mocked(client.requests.createOrResumeBound).mockReturnValueOnce(response.promise);
   const test = setup(client);
   await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
   const retained = sessionStorage.getItem(key);
@@ -273,7 +273,7 @@ it.each(
     { kind: 'launch', launchId: PUBLIC_RECORD.id },
     { replace: true },
   );
-  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
   expect(readIntent(path)).toBeUndefined();
 });
 
@@ -287,7 +287,7 @@ it('keeps an expired submitted packet without dispatch or re-key when its result
   await test.user.click(screen.getByRole('button', { name: 'Open in CMA' }));
   const retry = screen.queryByRole('button', { name: 'Try again' });
   if (retry !== null) await test.user.click(retry);
-  expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
+  expect(test.client.requests.createOrResumeBound).not.toHaveBeenCalled();
   expect(test.navigate).not.toHaveBeenCalled();
   expect(sessionStorage.getItem(key)).toBe(retained);
   expect(readIntent(path)).toEqual(original);

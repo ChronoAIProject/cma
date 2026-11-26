@@ -1,11 +1,15 @@
 use super::super::authority::ReceiverCancellation;
 use super::*;
 
+#[path = "coordinator_late_renewal_tests.rs"]
+mod late_reply;
 #[path = "coordinator_renewal_test_support.rs"]
 mod support;
 use support::{Fixture, Reply};
 #[path = "coordinator_batch_renewal_tests.rs"]
 mod batch;
+#[path = "coordinator_heartbeat_containment_tests.rs"]
+mod containment;
 #[path = "coordinator_renewal_diagnostic_tests.rs"]
 mod diagnostics;
 #[path = "coordinator_heartbeat_tests.rs"]
@@ -85,8 +89,14 @@ async fn operation_timeout_contains_before_authority_deadline_but_not_at_or_afte
 #[tokio::test(start_paused = true)]
 async fn invalid_membership_and_non_transient_heartbeat_errors_remain_process_fatal() {
     // Protocol, drain, missing member, Stale, IncompatibleProtocol and Invalid.
-    for mode in [2, 3, 4, 8, 9, 10] {
-        let fixture = Fixture::new(2).await;
+    for (policy, mode) in [
+        MaintenancePolicy::Legacy,
+        MaintenancePolicy::ContainFailures,
+    ]
+    .into_iter()
+    .flat_map(|policy| [2, 3, 4, 8, 9, 10, 13, 14, 16].map(|mode| (policy, mode)))
+    {
+        let fixture = Fixture::with_policy(2, policy).await;
         fixture.store.heartbeat_mode.store(mode, Ordering::SeqCst);
         assert!(fixture.manager.maintain().await.is_err());
         fixture.assert_failed();
@@ -128,21 +138,26 @@ async fn membership_expiry_during_a_call_and_a_four_wide_batch_is_fatal() {
 
 #[tokio::test(start_paused = true)]
 async fn active_stale_protocol_invalid_token_and_deadline_errors_are_fatal() {
-    for reply in [
-        Reply::Error(OwnershipError::Stale),
-        Reply::Error(OwnershipError::IncompatibleProtocol),
-        Reply::Error(OwnershipError::Invalid("synthetic invalid detail".into())),
-        Reply::DifferentToken("agent"),
-        Reply::DifferentToken("instance"),
-        Reply::DifferentToken("epoch"),
-        Reply::DifferentToken("protocol"),
-        Reply::ExpiredDeadline,
+    for policy in [
+        MaintenancePolicy::Legacy,
+        MaintenancePolicy::ContainFailures,
     ] {
-        let fixture = Fixture::new(2).await;
-        *fixture.store.reply.lock().unwrap() = reply;
-        assert!(fixture.manager.maintain().await.is_err());
-        fixture.assert_failed();
-        assert!(!fixture.owners[0].receiver_cancelled());
+        for reply in [
+            Reply::Error(OwnershipError::Stale),
+            Reply::Error(OwnershipError::IncompatibleProtocol),
+            Reply::Error(OwnershipError::Invalid("synthetic invalid detail".into())),
+            Reply::DifferentToken("agent"),
+            Reply::DifferentToken("instance"),
+            Reply::DifferentToken("epoch"),
+            Reply::DifferentToken("protocol"),
+            Reply::ExpiredDeadline,
+        ] {
+            let fixture = Fixture::with_policy(2, policy).await;
+            *fixture.store.reply.lock().unwrap() = reply;
+            assert!(fixture.manager.maintain().await.is_err());
+            fixture.assert_failed();
+            assert!(!fixture.owners[0].receiver_cancelled());
+        }
     }
 }
 

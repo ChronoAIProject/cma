@@ -22,6 +22,8 @@ mod cases;
 mod idempotency;
 mod measurements;
 mod observations;
+#[cfg(feature = "qualification-hooks")]
+mod qualification;
 mod receiver_fixture;
 mod replay;
 mod routes;

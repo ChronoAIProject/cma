@@ -4,21 +4,28 @@ use std::time::Duration;
 use mongodb::{bson::doc, options::ClientOptions, Client};
 use serde_json::{json, Value};
 
+pub(in crate::store) mod activity_audit_index;
 mod activity_indexes;
 mod activity_page_index;
+pub(in crate::store) mod agent_log_active_proofs;
 mod agent_log_segments;
 pub(in crate::store) mod agent_log_source_keys;
 mod agent_owner_index;
 mod billing_authority;
 mod binding_indexes;
 mod collection_indexes;
+pub(in crate::store) mod command_cohort_index;
 pub(in crate::store) mod home_backup_catalog;
 mod index_inventory;
 mod index_plan;
 mod index_toolkit;
+pub(in crate::store) mod measured_batches;
+pub(in crate::store) mod measured_custody;
+pub(in crate::store) mod measured_index;
 pub(in crate::store) mod opening_index;
 mod sandbox_usage_capture;
 mod steps;
+mod turn_policy_index;
 use steps::Step;
 mod authority;
 mod ledger;
@@ -28,6 +35,54 @@ mod tests;
 type Result<T> = std::result::Result<T, &'static str>;
 const DEADLINE: Duration = Duration::from_secs(45);
 const IO: Duration = Duration::from_secs(5);
+
+/// Qualify the reviewed access path and identify the collection incarnation.
+/// A hinted query alone can return an empty result for a nonexistent collection.
+pub(in crate::store) async fn require_command_cohort_index(
+    database: &mongodb::Database,
+) -> Result<mongodb::bson::Binary> {
+    let response = database
+        .run_command(doc! {
+            "listCollections": 1,
+            "filter": {"name": "agent_commands"},
+            "cursor": {"batchSize": 2},
+            "maxTimeMS": 5000,
+        })
+        .await
+        .map_err(|_| "Command cohort collection unavailable")?;
+    crate::store::agent_log_segments::capture::preview_budget::catalog_response(&response)?;
+    let specifications = index_inventory::entries(&response)?;
+    let [specification] = specifications.as_slice() else {
+        return Err("Command cohort collection is missing");
+    };
+    if specification.get_str("name").ok() != Some("agent_commands")
+        || specification.get_str("type").ok() != Some("collection")
+    {
+        return Err("Command cohort collection is invalid");
+    }
+    let Some(mongodb::bson::Bson::Binary(uuid)) = specification
+        .get_document("info")
+        .ok()
+        .and_then(|info| info.get("uuid"))
+    else {
+        return Err("Command cohort collection identity unavailable");
+    };
+    if uuid.subtype != mongodb::bson::spec::BinarySubtype::Uuid || uuid.bytes.len() != 16 {
+        return Err("Command cohort collection identity invalid");
+    }
+    if !command_cohort_index::inspect(database).await?.is_empty() {
+        return Err("Command cohort index is missing");
+    }
+    Ok(uuid.clone())
+}
+
+pub(in crate::store) async fn measured_batches_ready(database: &mongodb::Database) -> Result<bool> {
+    Ok(measured_batches::inspect(database).await?.is_empty())
+}
+
+pub(in crate::store) async fn measured_custody_ready(database: &mongodb::Database) -> Result<bool> {
+    Ok(measured_custody::inspect(database).await?.is_empty())
+}
 
 pub(crate) fn is_command(arguments: &[String]) -> bool {
     if index_toolkit::is_command(arguments) {
@@ -154,7 +209,14 @@ async fn apply_indexes(
     super::sandbox_mongo::require_transaction_topology(database)
         .await
         .map_err(|_| "migration requires a supported replica set or mongos")?;
-    if step == Step::BindingIndexes {
+    if matches!(
+        step,
+        Step::BindingIndexes
+            | Step::MeasuredCustody
+            | Step::MeasuredBatches
+            | Step::MeasuredIndex
+            | Step::AgentLogActiveProofs
+    ) {
         step.inspect(database).await?;
     }
     ledger.initialize().await?;

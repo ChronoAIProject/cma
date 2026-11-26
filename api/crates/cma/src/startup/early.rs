@@ -41,32 +41,42 @@ pub(super) async fn serve(
     finish(shutdown, owner_result.and(server_result)).await
 }
 
+enum Initialization {
+    Initialized,
+    Stopping,
+}
+
 async fn initialize(
     config: &Config,
     composition: ControlPlaneComposition,
     admission: &Admission,
     shutdown: &mut ShutdownCoordinator,
-) -> Result<(), String> {
+) -> Result<Initialization, String> {
     if admission.is_draining() {
-        return Ok(());
+        return Ok(Initialization::Stopping);
     }
-    warm_pools(&composition, Some(admission)).await?;
-    if admission.is_draining() {
-        return Ok(());
+    let (writer_ready, outcome) = warm_pools(&composition, Some(admission), shutdown).await?;
+    if matches!(outcome, WarmPoolStartup::Stopping) || admission.is_draining() {
+        return Ok(Initialization::Stopping);
     }
     initialize_sandboxes(&composition, Some(admission)).await?;
     if admission.is_draining() {
-        return Ok(());
+        return Ok(Initialization::Stopping);
     }
     // The phase check admits activation. If draining wins afterward, the
     // owner joins activation and drains any membership it acquired.
     listening(config);
-    activate_and_start_workers(composition, shutdown, Some(admission)).await
+    activate_and_start_workers(composition, shutdown, Some(admission), writer_ready).await?;
+    Ok(if admission.is_draining() {
+        Initialization::Stopping
+    } else {
+        Initialization::Initialized
+    })
 }
 
 async fn until_stopping(
     admission: &Admission,
-    startup: impl Future<Output = Result<(), String>>,
+    startup: impl Future<Output = Result<Initialization, String>>,
     termination: impl Future<Output = Result<(), String>>,
     startup_started: Instant,
 ) -> Result<(), String> {
@@ -76,10 +86,11 @@ async fn until_stopping(
         reason = &mut termination => {
             admission.close();
             // Dropping startup here would cancel admitted provider and store work.
-            startup.await.and(reason)
+            startup.await.map(|_| ()).and(reason)
         }
         result = &mut startup => match result {
-            Ok(()) => tokio::select! {
+            Ok(Initialization::Stopping) => Ok(()),
+            Ok(Initialization::Initialized) => tokio::select! {
                 biased;
                 reason = &mut termination => reason,
                 () = std::future::ready(()) => {

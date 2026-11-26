@@ -1,43 +1,71 @@
-//! Attempt-scoped recognition of a transient runtime failure at startup binding.
+//! Attempt-scoped recognition of runtime failures at startup binding.
 //!
-//! Runtime and store failures share `SandboxStoreError::Unavailable`. Within one
-//! startup binding attempt, `provider_error` records the exact error it mapped
-//! from a transient `AdapterError::Unavailable`; the attempt is transient only
-//! when its returned error is that same value. Anything else, including a store
-//! failure, a non-transient runtime refusal, a failure mapped inside a spawned
-//! task or any call outside an attempt, stays fatal exactly as before.
+//! Runtime and store failures share `SandboxStoreError::Unavailable`. An
+//! attempt records the classified adapter failure and uses it only if the
+//! attempt returns that mapped store error.
 use std::{cell::RefCell, future::Future};
 
 use layer2_core::sandbox::SandboxStoreError;
 use layer3_adapter::AdapterError;
 
 tokio::task_local! {
-    static TRANSIENT: RefCell<Option<String>>;
+    static FAILURE: RefCell<Option<(String, StartupFailure)>>;
 }
 
-/// Record the mapped error of a transient runtime failure, if inside an attempt.
-pub(super) fn note(error: &AdapterError, mapped: &SandboxStoreError) {
-    if let (AdapterError::Unavailable(_), SandboxStoreError::Unavailable(message)) = (error, mapped)
-    {
-        let _ = TRANSIENT.try_with(|slot| *slot.borrow_mut() = Some(message.clone()));
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StartupFailure {
+    Unavailable,
+    NativeHomeIdentity,
+    AdmittedSandboxSpecDrift,
+    NativePoolConfigurationDrift,
+    NativePoolDefinitionAbsent,
+}
+
+pub(super) fn provider_error(error: AdapterError) -> SandboxStoreError {
+    let failure = match error {
+        AdapterError::Unavailable(_) => Some(StartupFailure::Unavailable),
+        AdapterError::AdmittedSandboxSpecDrift => Some(StartupFailure::AdmittedSandboxSpecDrift),
+        AdapterError::NativePoolConfigurationDrift => {
+            Some(StartupFailure::NativePoolConfigurationDrift)
+        }
+        AdapterError::NativePoolDefinitionAbsent { .. } => {
+            Some(StartupFailure::NativePoolDefinitionAbsent)
+        }
+        _ => None,
+    };
+    record(error, failure)
+}
+
+pub(super) fn native_home_identity(error: AdapterError) -> SandboxStoreError {
+    record(error, Some(StartupFailure::NativeHomeIdentity))
+}
+
+fn record(error: AdapterError, failure: Option<StartupFailure>) -> SandboxStoreError {
+    let mapped = SandboxStoreError::Unavailable(format!(
+        "sandbox runtime authority is unavailable: {error}"
+    ));
+    if let (Some(failure), SandboxStoreError::Unavailable(message)) = (failure, &mapped) {
+        let _ = FAILURE.try_with(|slot| *slot.borrow_mut() = Some((message.clone(), failure)));
     }
+    mapped
 }
 
-/// Run one attempt and report whether its error is exactly a recorded
-/// transient runtime failure from this attempt.
 pub(super) async fn classify<T>(
     attempt: impl Future<Output = Result<T, SandboxStoreError>>,
-) -> (Result<T, SandboxStoreError>, bool) {
-    TRANSIENT
+) -> (Result<T, SandboxStoreError>, Option<StartupFailure>) {
+    FAILURE
         .scope(RefCell::new(None), async {
             let result = attempt.await;
-            let transient = match &result {
-                Err(SandboxStoreError::Unavailable(message)) => {
-                    TRANSIENT.with(|slot| slot.borrow().as_deref() == Some(message.as_str()))
-                }
-                _ => false,
+            let failure = match &result {
+                Err(SandboxStoreError::Unavailable(message)) => FAILURE.with(|slot| {
+                    slot.borrow()
+                        .as_ref()
+                        .filter(|(recorded, _)| recorded == message)
+                        .map(|(_, failure)| *failure)
+                }),
+                _ => None,
             };
-            (result, transient)
+            (result, failure)
         })
         .await
 }

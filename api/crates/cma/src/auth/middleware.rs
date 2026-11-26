@@ -40,6 +40,12 @@ async fn attach_subject_inner(
     mut request: axum::extract::Request,
     next: Next,
 ) -> Response {
+    if request.uri().path() == layer1_public::rest::creation_outcomes::LOOKUP_PATH {
+        if !auth.creation_outcomes_enabled {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        return super::creation_outcomes::attach(&auth, request, next).await;
+    }
     if super::worker_credentials::matches_path(request.uri().path()) {
         return super::worker_credentials::attach(&auth, request, next).await;
     }
@@ -62,6 +68,7 @@ async fn attach_subject_inner(
             .scope(diagnostics::capture(super::identity_lifetime::scope(
                 &auth,
                 auth.resolve_request(request.headers()),
+                super::identity_retry::unavailable,
             ))),
     )
     .await;

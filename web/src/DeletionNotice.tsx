@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { deletionTarget, type DeletionRequest } from './deletion';
 import { Button } from './ui/Button';
 import { Modal } from './ui/Modal';
@@ -9,13 +8,13 @@ export function DeletionNotice({
   requests,
   disabled,
   onViewStatus,
+  onDismiss,
 }: {
   readonly requests: readonly DeletionRequest[];
   readonly disabled: boolean;
-  readonly onViewStatus: (request: DeletionRequest) => void;
+  readonly onViewStatus: () => void;
+  readonly onDismiss: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const unconfirmed = requests.filter((request) => !request.accepted).length;
   const kind = requests[0]?.action.kind;
   const resource = requests.every((request) => request.action.kind === kind)
@@ -26,7 +25,7 @@ export function DeletionNotice({
         : 'Workspace'
     : 'resource';
   const count = requests.length;
-  if (requests.every((request) => dismissedKeys.has(request.key))) return null;
+  if (count === 0) return null;
   return (
     <section className="deletion-summary" aria-label="Deletion request">
       <p role="status">
@@ -35,51 +34,56 @@ export function DeletionNotice({
           : `${count} deletion request${count === 1 ? '' : 's'} · ${unconfirmed} unconfirmed`}
       </p>
       <div className="deletion-summary__actions">
-        <Button size="sm" disabled={disabled} onClick={() => setOpen(true)}>
+        <Button size="sm" disabled={disabled} onClick={onViewStatus}>
           View status
         </Button>
         <Button
           size="sm"
           aria-label="Dismiss deletion notice"
           icon={<IconCloseOutline16 size={14} />}
-          onClick={() => setDismissedKeys(new Set(requests.map((request) => request.key)))}
+          onClick={onDismiss}
         />
       </div>
-      {open && !disabled ? (
-        <Modal open title="Deletion progress" onClose={() => setOpen(false)}>
-          <ul className="deletion-summary__requests">
-            {requests.map((request, index) => {
-              const action = request.action;
-              const id =
-                action.kind === 'delete_sandbox'
-                  ? action.sandboxId
-                  : action.kind === 'delete_agent'
-                    ? action.agentId
-                    : action.workspaceId;
-              return (
-                <li key={request.key}>
-                  <p>
-                    {deletionTarget(action)} delete request{' '}
-                    {request.accepted
-                      ? 'accepted. Cleanup continues in the background.'
-                      : 'is not confirmed.'}
-                  </p>
-                  <code>{id}</code>
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      setOpen(false);
-                      onViewStatus(request);
-                    }}
-                  >
-                    View {deletionTarget(action)} deletion status ({index + 1})
-                  </Button>
-                </li>
-              );
-            })}
-          </ul>
-        </Modal>
-      ) : null}
     </section>
+  );
+}
+
+export function DeletionProgress({
+  requests,
+  onClose,
+  onViewStatus,
+}: {
+  readonly requests: readonly DeletionRequest[];
+  readonly onClose: () => void;
+  readonly onViewStatus: (request: DeletionRequest) => void;
+}) {
+  return (
+    <Modal open title="Deletion progress" onClose={onClose}>
+      <ul className="deletion-summary__requests">
+        {requests.map((request, index) => {
+          const action = request.action;
+          const id =
+            action.kind === 'delete_sandbox'
+              ? action.sandboxId
+              : action.kind === 'delete_agent'
+                ? action.agentId
+                : action.workspaceId;
+          return (
+            <li key={request.key}>
+              <p>
+                {deletionTarget(action)} delete request{' '}
+                {request.accepted
+                  ? 'accepted. Cleanup continues in the background.'
+                  : 'is not confirmed.'}
+              </p>
+              <code>{id}</code>
+              <Button size="sm" onClick={() => onViewStatus(request)}>
+                View {deletionTarget(action)} deletion status ({index + 1})
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+    </Modal>
   );
 }

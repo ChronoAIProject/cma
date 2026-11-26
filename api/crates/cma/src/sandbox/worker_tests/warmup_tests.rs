@@ -329,6 +329,7 @@ async fn credentialed_warm_process_is_never_republished_as_available() {
                 operation_id: "fixture-contamination".into(),
                 value: layer3_adapter::RuntimeCredential::new("opaque-warm-fixture"),
                 custody_generation: Some(1),
+                github_route: None,
             },
         )
         .await

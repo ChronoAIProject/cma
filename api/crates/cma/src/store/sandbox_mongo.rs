@@ -7,6 +7,7 @@ use std::future::Future;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
+mod handles;
 mod records;
 pub(super) use records::{
     i64_field_matches, nullable, read_record, record_bson, require_version, signed,
@@ -69,8 +70,10 @@ use collections::SANDBOX_COLLECTIONS;
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) creation_writer_epoch: Option<String>,
     pub(super) usage_capture: Option<super::sandbox_usage_export::CaptureStore>,
     pub(super) initial_settings: super::settings_defaults::InitialSettings,
+    pub(super) agent_inspection_parking: bool,
     pub(super) ownership_retry_hints_enabled: bool,
     #[cfg(test)]
     pub(super) ownership_retry_hint_now: Option<mongodb::bson::DateTime>,
@@ -82,6 +85,11 @@ pub struct MongoSandboxStore {
     pub(super) public_owner_sandbox_limit: Option<std::num::NonZeroU16>,
     #[cfg(test)]
     pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    pub(super) runtime_migration_enabled: bool,
+    pub(super) runtime_migration_verifier:
+        Option<std::sync::Arc<layer2_core::sandbox::RuntimeActivityVerifier>>,
+    pub(super) runtime_migration_authority:
+        Option<std::sync::Arc<dyn layer2_core::sandbox::RuntimeMigrationAuthority>>,
     pub(super) renewable_work: bool,
     pub(super) segment_adoption_enabled: bool,
     pub(super) bounded_approval_reads: bool,
@@ -104,6 +112,7 @@ pub struct MongoSandboxStore {
     pub(super) sandbox_snapshot_reads: bool,
     pub(super) sandbox_batched_reads: bool,
     pub(super) bounded_response_reads: bool,
+    pub(super) active_log_proofs: bool,
     pub(crate) writer_policy:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub(super) bindings: super::bindings::BindingCollections,
@@ -158,10 +167,14 @@ pub struct MongoSandboxStore {
     pub(super) native_prepared: Collection<Document>,
     pub(super) warm_runtime_version: Option<String>,
     pub(super) managed_runtime_version: Option<String>,
+    pub(crate) default_pool_holds: std::sync::Arc<crate::warm_pools::DefaultPoolHolds>,
+    pub(crate) runtime_image_origin_enabled: bool,
+    pub(crate) desktop_verified_runtime_image: Option<String>,
     pub(super) managed_machine_runtime_version: Option<String>,
     /// The process's released-default authority. When set it supersedes the
     /// two fixed pins above, which remain only for store fixtures.
     pub(super) released: Option<std::sync::Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
+    pub(super) released_lanes: Option<super::released_runtimes::MongoReleasedRuntimes>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
     pub(crate) native_prepared_changed: std::sync::Arc<tokio::sync::Notify>,
@@ -201,24 +214,28 @@ impl MongoSandboxStore {
                 revision: 0,
                 agent: self.managed_runtime_version.clone().unwrap_or_default(),
                 machine: self.managed_machine_runtime_version.clone(),
+                lane_revisions: None,
             },
         }
     }
 
     /// The current agent-lane release for new managed work.
     pub(crate) fn managed_agent_release(&self) -> Option<String> {
-        match &self.released {
+        let release = match &self.released {
             Some(released) => Some(released.snapshot().agent),
             None => self.managed_runtime_version.clone(),
-        }
+        };
+        release.filter(|image| !self.default_pool_holds.image(image))
     }
 
-    /// The current machine-lane release, when the deployment has one.
-    pub(crate) fn managed_machine_release(&self) -> Option<String> {
-        match &self.released {
-            Some(released) => released.snapshot().machine,
-            None => self.managed_machine_runtime_version.clone(),
-        }
+    pub(super) fn managed_agent_release_for(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+    ) -> Option<String> {
+        self.managed_agent_release().filter(|target| {
+            layer2_core::sandbox::store::SandboxStore::managed_runtime_target(self, sandbox, target)
+                .is_some()
+        })
     }
 
     pub(crate) fn with_agent_control_write_coordination(mut self, enabled: bool) -> Self {
@@ -269,115 +286,8 @@ impl MongoSandboxStore {
         initialize_collections(&database, SANDBOX_COLLECTIONS).await?;
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
-        let store = Self {
-            usage_capture: None,
-            initial_settings,
-            empty_discovery: Default::default(),
-            agent_connection_observations: None,
-            segment_logs: super::agent_log_segments::SegmentCollections::new(&database),
-            global_sandbox_limit: 0,
-            public_owner_sandbox_limit: None,
-            #[cfg(test)]
-            request_budget_clock: None,
-            bounded_admission_agents: Default::default(),
-            renewable_work: false,
-            segment_adoption_enabled: false,
-            bounded_approval_reads: false,
-            runtime_loss_bounded_proof_enabled: false,
-            bounded_close_retries: false,
-            retry_single_marker_enabled: false,
-            retry_audits: Default::default(),
-            scan_cooperation: Default::default(),
-            fleet_log_activation: Default::default(),
-            platform_counter_shards: false,
-            bounded_title_reads: false,
-            title_effect_custody: false,
-            bounded_transcript_reads: false,
-            bounded_usage_reads: false,
-            access_snapshot_session: false,
-            resource_list_batch_reads: false,
-            sandbox_agent_projection: false,
-            sandbox_snapshot_reads: false,
-            sandbox_batched_reads: false,
-            bounded_response_reads: false,
-            writer_policy: Default::default(),
-            bindings: super::bindings::BindingCollections::open(&database, observer).await?,
-            client: client.clone(),
-            checkpoint_objects,
-            sandboxes: majority_collection(&database, SANDBOXES),
-            lifecycle_operations: majority_collection(
-                &database,
-                super::agent_lifecycle_operations::COLLECTION,
-            ),
-            sandbox_sessions: majority_collection(&database, SANDBOX_SESSIONS),
-            strict_inactivity_session_evidence: false,
-            workspaces: majority_collection(&database, WORKSPACES),
-            bounded_inactivity_legacy_log: false,
-            worktrees: majority_collection(&database, WORKTREES),
-            agents: majority_collection(&database, AGENTS),
-            agent_writes: Default::default(),
-            agent_control_write_coordination: false,
-            agent_ownership: None,
-            ownership_retry_hints_enabled: false,
-            #[cfg(test)]
-            ownership_retry_hint_now: None,
-            agent_manager_instance: None,
-            platform: Default::default(),
-            agent_access_tools: majority_collection(
-                &database,
-                super::agent_access_tools::COLLECTION,
-            ),
-            agent_access_requests: majority_collection(
-                &database,
-                super::agent_access_requests::COLLECTION,
-            ),
-            agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
-            agent_log: majority_collection(&database, AGENT_LOG),
-            suggestions: majority_collection(&database, "agent_suggestions"),
-            agent_creation_provenance: majority_collection(&database, "agent_creation_provenance"),
-            agent_channel_usage: majority_collection(&database, "agent_channel_usage"),
-            channel_usage_events: majority_collection(&database, "channel_usage_events"),
-            agent_commands: majority_collection(&database, AGENT_COMMANDS),
-            model_budget: majority_collection(&database, super::budget::COLLECTION),
-            budget_settings: majority_collection(&database, "platform_settings"),
-            agent_artifacts: majority_collection(&database, AGENT_ARTIFACTS),
-            media_uploads: majority_collection(&database, super::media_uploads::COLLECTION),
-            sandbox_controls: majority_collection(&database, SANDBOX_CONTROLS),
-            command_authorization_audits: majority_collection(
-                &database,
-                COMMAND_AUTHORIZATION_AUDITS,
-            ),
-            agent_command_orders: majority_collection(&database, AGENT_COMMAND_ORDERS),
-            resource_policies: majority_collection(&database, RESOURCE_POLICIES),
-            resource_share_commands: majority_collection(&database, RESOURCE_SHARE_COMMANDS),
-            resource_shares: majority_collection(&database, RESOURCE_SHARES),
-            sandbox_events: majority_collection(&database, SANDBOX_EVENTS),
-            sandbox_usage: majority_collection(&database, super::sandbox_usage::STATES),
-            sandbox_usage_events: majority_collection(&database, super::sandbox_usage::EVENTS),
-            sandbox_billing: majority_collection(&database, SANDBOX_BILLING),
-            sandbox_admissions: majority_collection(&database, SANDBOX_ADMISSIONS),
-            checkpoints: majority_collection(&database, CHECKPOINTS),
-            sandbox_profiles: majority_collection(&database, SANDBOX_PROFILES),
-            #[cfg(test)]
-            sandbox_profile_revisions: majority_collection(&database, SANDBOX_PROFILE_REVISIONS),
-            #[cfg(test)]
-            warm_workspace_revisions: majority_collection(&database, WORKSPACE_PROFILE_REVISIONS),
-            #[cfg(test)]
-            warm_agent_revisions: majority_collection(&database, AGENT_PROFILE_REVISIONS),
-            warm_sandboxes: majority_collection(&database, WARM_SANDBOXES),
-            native_prepared: majority_collection(&database, super::native_prepared::COLLECTION),
-            warm_runtime_version: None,
-            managed_runtime_version: None,
-            managed_machine_runtime_version: None,
-            released: None,
-            warm_home_policy: None,
-            warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
-            native_prepared_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
-            sandbox_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
-            access_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
-            agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
-            agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
-        };
+        let bindings = super::bindings::BindingCollections::open(&database, observer).await?;
+        let store = Self::handles(client, name, checkpoint_objects, bindings, initial_settings);
         super::budget::initialize_settings(&store, initial_settings).await?;
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;

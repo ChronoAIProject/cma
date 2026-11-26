@@ -8,6 +8,7 @@ use super::{
     records::{decode, encode, hash, number, Captured, Stream},
     *,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::{
     bson::{spec::BinarySubtype, Binary},
     ClientSession,
@@ -23,7 +24,7 @@ impl CaptureStore {
             let projected = match self.project_in(&mut session, id, now, &ids).await {
                 Ok(projected) => projected,
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     match error {
                         TransactionEventError::Driver(error)
                             if is_transient(&error) || is_duplicate_key(&error) =>

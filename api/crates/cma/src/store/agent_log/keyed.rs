@@ -57,7 +57,7 @@ pub(super) async fn append(
         let mut scope = match TransactionScope::start(&mut session).await {
             Ok(scope) => scope,
             Err(error) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 claim.release_known_abort(store).await?;
                 drop(session);
                 tokio::task::yield_now().await;
@@ -69,7 +69,7 @@ pub(super) async fn append(
                 // driver results still retain this exact durable claim.
                 if !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT) {
                     if let Some(refusal) = error.get_custom::<SandboxStoreError>().cloned() {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         claim.release_known_abort(store).await?;
                         return Err(refusal);
                     }
@@ -97,10 +97,10 @@ pub(super) async fn append(
                 if matches!(&error, TransactionLogError::Driver(error)
                     if error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT))
                 {
-                    let _ = scope.release().abort_transaction().await;
+                    let _ = scope.release().abort_guarded().await;
                     return Err(domain(error));
                 }
-                scope.release().abort_transaction().await.map_err(driver)?;
+                scope.release().abort_guarded().await.map_err(driver)?;
                 claim.release_known_abort(store).await?;
                 if let Some(entry) = writer_reconcile::replay(store, id, &operation, &kind).await? {
                     return Ok(entry);
@@ -128,7 +128,7 @@ pub(super) async fn append(
             )
             .await
             {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if matches!(&error, TransactionLogError::Driver(error)
                     if error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT))
                 {
@@ -157,7 +157,7 @@ pub(super) async fn append(
             CommitOutcome::Committed => return Ok(entry),
             CommitOutcome::Retry(_) => {
                 // TransientTransactionError positively establishes KnownAbort.
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 claim.release_known_abort(store).await?;
             }
             CommitOutcome::Unknown(_) => {

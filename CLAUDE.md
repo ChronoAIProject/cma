@@ -60,6 +60,8 @@ CLAUDE.md
 AGENTS.md
 CONTRIBUTING.md
 README.md
+LICENSE
+NOTICE
 .gitignore
 .dockerignore
 ```

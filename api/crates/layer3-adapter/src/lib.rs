@@ -18,6 +18,7 @@ pub mod binding_diagnostics;
 mod browser;
 mod browser_control;
 pub mod file_read_diagnostics;
+pub mod file_receiver_retry;
 pub mod permanent_custody;
 pub mod stale_turn;
 pub use browser::{
@@ -54,6 +55,7 @@ mod runtime_startup;
 pub use inspection_admission::{InspectionAdmission, InspectionRelease};
 mod inventory_cursor;
 pub use inventory_cursor::InventoryCursor;
+mod github_repository_scope;
 pub mod ingress_budget;
 mod prompt_identity;
 mod provider_finality;
@@ -72,6 +74,7 @@ mod runtime_output_update;
 mod runtime_recovery;
 mod runtime_startup_policy;
 mod runtime_status;
+pub use github_repository_scope::{GithubRepositoryScope, GithubRepositoryScopeNeed};
 pub mod runtime_versions;
 mod tool_proxy;
 mod workspace;
@@ -127,7 +130,7 @@ pub use checkpoint::{
     RestoreBootstrapRequest, RestoreRequest, WriterState,
 };
 pub use conversation::{
-    has_reported_file_changes, reported_tool_call_text, reported_tool_text, AvailableCommand,
+    has_reported_initial_output, reported_tool_call_text, reported_tool_text, AvailableCommand,
     AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel, ConversationId,
     ConversationInput, ConversationInputGuard, ConversationInputSender, ConversationSendOutcome,
     ConversationSettingsSupport, ConversationUpdate, MessageId, PermissionDecision,
@@ -169,14 +172,17 @@ pub use provider_finality::{
     RuntimeProvisionReceipt,
 };
 pub use released_runtime::{
-    PinnedReleasedRuntime, ReleasedRuntime, ReleasedRuntimeSource, StaleReleasedRuntime,
+    released_image, PinnedReleasedRuntime, ReleasedLaneRevisions, ReleasedRuntime,
+    ReleasedRuntimeSource, StaleReleasedRuntime,
 };
+pub use runtime::PlatformServiceRoute;
 pub use runtime::{
-    CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,
-    RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeInspection, RuntimeLifecycle,
-    RuntimeObservation, RuntimeProvisionRequest, RuntimeTermination, SandboxCapacity, SandboxSpec,
-    DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY,
-    DEFAULT_SUPERVISOR_PROGRAM, DEFAULT_TOTAL_TIMEOUT_SECONDS,
+    CommandReceipt, CredentialFrame, GithubCredentialRoute, InstallReceipt, InstallRequest,
+    RuntimeAdoptionRequest, RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeInspection,
+    RuntimeLifecycle, RuntimeObservation, RuntimeProvisionRequest, RuntimeTermination,
+    SandboxCapacity, SandboxSpec, DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
+    DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY, DEFAULT_SUPERVISOR_PROGRAM,
+    DEFAULT_TOTAL_TIMEOUT_SECONDS,
 };
 pub use runtime_ledger_status::{
     RuntimeLedgerCounters, RuntimeLedgerObservation, RuntimeLedgerStatus,
@@ -191,14 +197,18 @@ pub use runtime_recovery::{
 };
 pub use runtime_startup::{RuntimeStartupFailure, RuntimeStartupFailureClass, RuntimeStartupProbe};
 pub use runtime_startup_policy::{
-    RuntimeStartupPolicyObservation, RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE,
+    RetainedStartupPolicyControl, RetainedStartupPolicyPredecessor, RetainedStartupPolicyReadback,
+    RetainedStartupPolicyUpgrade, RuntimeStartupPolicyObservation,
+    RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE,
 };
-pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
+pub use runtime_status::{
+    valid_home_identity, AgentRestartRuntime, RuntimeStatus, RuntimeStatusRequest,
+};
 pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};
 pub use workspace::{
-    SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
-    WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef,
-    WorktreeRemoveReceipt, WorktreeRequest,
+    public_repository_archive_url, SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt,
+    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource,
+    WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt, WorktreeRequest,
 };
 pub use workspace_prepare_recovery::{
     WorkspacePrepareRecoveryFrame, WorkspacePrepareRecoveryReceipt, WorkspacePrepareRecoveryRequest,

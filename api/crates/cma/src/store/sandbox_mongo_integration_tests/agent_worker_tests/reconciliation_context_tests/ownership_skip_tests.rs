@@ -108,6 +108,11 @@ async fn foreign_ownership_deferral_saves_checkouts_and_rechecks_after_handoff()
     let mut agent = idle_connection_fixture(&fixture, "foreign", AgentStatus::Paused).await;
     let (left_store, left) = manager(&fixture, "left").await;
     let owner = left.acquire(&agent.id).await.unwrap().unwrap();
+    for index in 0..7 {
+        let name = format!("foreign_peer_{index}");
+        let peer = idle_connection_fixture(&fixture, &name, AgentStatus::Paused).await;
+        left.acquire(&peer.id).await.unwrap().unwrap();
+    }
     let build = |store: Arc<MongoSandboxStore>, coordinator: Arc<OwnershipCoordinator>, enabled| {
         configured_worker(
             store,

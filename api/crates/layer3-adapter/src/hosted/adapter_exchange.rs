@@ -1,6 +1,46 @@
 use super::*;
 
 impl HostedAdapter {
+    pub(crate) async fn prove_agent_process_closed(
+        &self,
+        handle: &RuntimeHandle,
+        proof: &crate::wire::AgentProcessCloseProof,
+    ) -> crate::Result<bool> {
+        self.known_state(handle).await?;
+        let request = RequestFrame::ProveAgentProcessClosed(proof.clone());
+        let operation = request.operation();
+        match self.backend.exchange(handle, request).await? {
+            ResponseFrame::ProveAgentProcessClosed(observed) if &observed == proof => Ok(true),
+            ResponseFrame::Failure(failure) if failure.operation == operation => {
+                if !failure.retryable && failure.code == "agent_process_close_unproved" {
+                    Ok(false)
+                } else {
+                    Err(failure_error(failure))
+                }
+            }
+            _ => Err(AdapterError::Rejected(
+                "runtime returned a mismatched Agent Close proof".into(),
+            )),
+        }
+    }
+
+    pub(crate) async fn fence_agent_restart(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::wire::AgentRestartFence,
+    ) -> crate::Result<()> {
+        self.known_state(handle).await?;
+        match self
+            .exchange(handle, RequestFrame::FenceAgentRestart(request.clone()))
+            .await?
+        {
+            ResponseFrame::FenceAgentRestart(receipt) if &receipt == request => Ok(()),
+            _ => Err(AdapterError::Rejected(
+                "runtime returned a mismatched Agent restart fence".into(),
+            )),
+        }
+    }
+
     pub(super) async fn exchange(
         &self,
         handle: &RuntimeHandle,

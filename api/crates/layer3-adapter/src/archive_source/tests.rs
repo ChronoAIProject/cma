@@ -1,5 +1,6 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
+mod publication;
 mod sockets;
 pub(super) struct Temp(pub(super) std::path::PathBuf);
 impl Temp {

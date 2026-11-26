@@ -1,6 +1,7 @@
 use super::*;
 use layer2_core::sandbox::store::AgentResponseLogStore;
 use segments::audit;
+mod active_tail;
 mod batching;
 mod compatibility;
 mod continuation;

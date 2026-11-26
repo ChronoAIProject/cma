@@ -55,6 +55,8 @@ fn budget(failure: Option<BudgetError>) -> Arc<Budget> {
     })
 }
 
+#[path = "model_request_budget_tests/durable_http.rs"]
+pub(crate) mod durable_http;
 #[path = "model_request_budget_tests/uncertain_http.rs"]
 mod uncertain_http;
 

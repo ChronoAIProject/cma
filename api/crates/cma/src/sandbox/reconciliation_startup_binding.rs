@@ -1,6 +1,5 @@
-//! Revision conflicts and transient runtime failures defer one binding, without
-//! weakening its authority fences.
-use super::super::{corrupt, SandboxReconciler};
+//! Retryable startup failures defer one binding while its authority stays fenced.
+use super::super::{corrupt, transient, SandboxReconciler};
 use layer2_core::sandbox::{Sandbox, SandboxStoreError};
 use layer3_adapter::RuntimeObservation;
 use sha2::{Digest, Sha256};
@@ -9,6 +8,11 @@ use std::time::SystemTime;
 const ATTEMPTS: usize = 3;
 
 impl SandboxReconciler {
+    pub(crate) fn with_startup_native_home_hold(mut self, enabled: bool) -> Self {
+        self.startup_native_home_hold_enabled = enabled;
+        self
+    }
+
     pub(super) async fn reconcile_startup_binding(
         &self,
         sandbox: &Sandbox,
@@ -19,7 +23,7 @@ impl SandboxReconciler {
             return Ok(false);
         };
         for attempt in 1..=ATTEMPTS {
-            let (result, transient) = super::super::transient::classify(async {
+            let (result, failure) = transient::classify(async {
                 let fresh;
                 let (current, now) = if attempt == 1 {
                     // Inventory and authority reads may outlive the startup
@@ -64,7 +68,9 @@ impl SandboxReconciler {
                         retry = attempt < ATTEMPTS,
                         "Sandbox revision conflict during startup binding reconciliation");
                 }
-                Err(SandboxStoreError::Unavailable(_)) if transient => {
+                Err(SandboxStoreError::Unavailable(_))
+                    if failure == Some(transient::StartupFailure::Unavailable) =>
+                {
                     // One unreachable runtime must not stop the process. The
                     // hold keeps its runtime, Claim and home protected, and a
                     // deferred binding already skips every startup cleanup.
@@ -75,6 +81,44 @@ impl SandboxReconciler {
                     tracing::warn!(target: "cma_startup", parent: None, attempt, sandbox_hash,
                         "Sandbox runtime unavailable during startup binding; deferred to background reconciliation");
                     hold.unavailable();
+                    return Ok(false);
+                }
+                Err(SandboxStoreError::Unavailable(_))
+                    if matches!(
+                        failure,
+                        Some(
+                            transient::StartupFailure::NativePoolConfigurationDrift
+                                | transient::StartupFailure::AdmittedSandboxSpecDrift
+                        )
+                    ) || (failure
+                        == Some(transient::StartupFailure::NativePoolDefinitionAbsent)
+                        && sandbox.runtime.is_some()
+                        && sandbox
+                            .lifecycle
+                            .home
+                            .as_ref()
+                            .and_then(|home| home.native_pool.as_ref())
+                            .is_some_and(|pool| pool.claim.is_some()))
+                        || (self.startup_native_home_hold_enabled
+                            && failure == Some(transient::StartupFailure::NativeHomeIdentity)) =>
+                {
+                    let sandbox_hash =
+                        format!("{:x}", Sha256::digest(sandbox.id.as_str().as_bytes()));
+                    let reason = match failure {
+                        Some(transient::StartupFailure::NativePoolConfigurationDrift) => {
+                            "native_pool_configuration_drift"
+                        }
+                        Some(transient::StartupFailure::AdmittedSandboxSpecDrift) => {
+                            "admitted_sandbox_spec_drift"
+                        }
+                        Some(transient::StartupFailure::NativePoolDefinitionAbsent) => {
+                            "native_pool_definition_absent"
+                        }
+                        _ => "native_home_identity_refused",
+                    };
+                    tracing::warn!(target: "cma_startup", parent: None, attempt, sandbox_hash, reason,
+                        "Sandbox native binding deferred to background reconciliation");
+                    hold.refused();
                     return Ok(false);
                 }
                 Err(error) => return Err(error),

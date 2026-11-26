@@ -4,6 +4,7 @@ use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, wait_for_reconciliation,
     CommitOutcome, MongoSandboxStore,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::{
     plan_agent_worktree_recovery, store::AgentControlStoreError as Domain, Agent,
     AgentWorktreeRecoveryContext, AgentWorktreeRecoveryMutation,
@@ -42,7 +43,7 @@ pub(super) async fn begin(
         let (agent, mutation) = match result {
             Ok(value) => value,
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 match error {
                     ApplyError::Driver(error) if is_transient(&error) => {
                         last_error = Some(error.to_string());

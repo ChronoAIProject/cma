@@ -40,7 +40,8 @@ pub(super) fn request_tier(
     {
         return RequestTier::Health;
     }
-    if request.method() != Method::POST
+    if path == layer1_public::rest::creation_outcomes::LOOKUP_PATH
+        || request.method() != Method::POST
         || matches!(
             path,
             "/api/v1/profile-authoring/repositories/resolve"

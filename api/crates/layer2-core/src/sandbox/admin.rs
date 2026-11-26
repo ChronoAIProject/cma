@@ -12,6 +12,7 @@ use crate::{
     Caller, Capability, DetailKey, SandboxId, SubjectId, WorkspaceId, WorktreeId,
 };
 
+use super::reviewed_retirement::ReviewedRetirementStore;
 use super::store::{
     Page, PageRequest, SandboxStore, SandboxStoreError, SandboxTransaction, SandboxTransactionStore,
 };
@@ -208,6 +209,7 @@ impl SandboxRetirement for StoredSandboxRetirement {
         self.store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision,
                 sandbox: Box::new(sandbox.clone()),
                 event_at: requested_at,
@@ -243,13 +245,20 @@ pub enum OperatorError {
 
 mod always_on;
 mod errors;
+mod reviewed_retirement;
 
 pub struct SandboxOperatorService {
     sandboxes: Arc<dyn SandboxAdminStore>,
     profiles: Arc<dyn ProfileAdminStore>,
     retirement: Arc<dyn SandboxRetirement>,
+    reviewed_retirement: Option<ReviewedRetirementAccess>,
     maintenance: Option<Arc<dyn super::SandboxMaintenanceStore>>,
     activity: Arc<ActivityService>,
+}
+
+struct ReviewedRetirementAccess {
+    store: Arc<dyn ReviewedRetirementStore>,
+    admit: bool,
 }
 
 impl SandboxOperatorService {
@@ -263,6 +272,7 @@ impl SandboxOperatorService {
             sandboxes,
             profiles,
             retirement,
+            reviewed_retirement: None,
             maintenance: None,
             activity,
         }

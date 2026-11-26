@@ -65,6 +65,9 @@ impl DurableAgentUpdateRecorder {
                 Some(guard) => guard
                     .project(&persisted)
                     .map_err(|_| AgentConversationError::StaleGeneration)?,
+                None if persisted.work.step.fences_conversation_output() => {
+                    return Err(AgentConversationError::StaleGeneration);
+                }
                 None => persisted.clone(),
             };
             if current.conversation.runtime_generation != Some(runtime_generation) {
@@ -233,6 +236,13 @@ impl DurableAgentUpdateRecorder {
                 return Err(AgentConversationError::InvalidState(
                     "conversation updates require a live agent",
                 ));
+            }
+            if guard.is_some_and(|guard| guard.owner_restart.is_some())
+                && update.is_some_and(|effect| {
+                    !matches!(effect, layer3_adapter::ConversationUpdate::Metadata(_))
+                })
+            {
+                return Err(AgentConversationError::ReopenOutputDiscontinuity);
             }
             let folded = match &update {
                 Some(update) => fold_update(

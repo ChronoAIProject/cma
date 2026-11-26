@@ -8,6 +8,7 @@ use axum::{
 };
 use layer2_core::agent_ownership::execution_owner;
 use std::sync::Mutex;
+use tokio::{io::AsyncReadExt, sync::watch};
 
 type Receiver = Arc<Mutex<Vec<Value>>>;
 
@@ -124,16 +125,29 @@ pub(super) async fn serve(mongo: &Client, name: &str) {
         "{READY}{}",
         json!({"pid": std::process::id(), "address": address, "instance": instance})
     );
-    tokio::select! {
-        result = axum::serve(listener, app) => result.expect("SW04 test listener failed"),
-        () = maintain(coordinator) => unreachable!("fixture renewal exited"),
-    }
+    let (stop, draining) = watch::channel(());
+    let stdin_closed = async move {
+        let mut stdin = tokio::io::stdin();
+        assert_eq!(stdin.read(&mut [0]).await.expect("read fixture stdin"), 0);
+        let _ = stop.send(());
+    };
+    let server = async {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(stdin_closed)
+            .await
+            .expect("SW04 test listener failed");
+    };
+    tokio::join!(server, maintain(coordinator, draining));
 }
 
-async fn maintain(coordinator: Arc<OwnershipCoordinator>) {
+async fn maintain(coordinator: Arc<OwnershipCoordinator>, mut draining: watch::Receiver<()>) {
     let mut ticks = tokio::time::interval(Duration::from_millis(HEARTBEAT_INTERVAL_MS));
     loop {
-        ticks.tick().await;
+        tokio::select! {
+            biased;
+            _ = draining.changed() => return,
+            _ = ticks.tick() => {}
+        }
         coordinator
             .maintain()
             .await

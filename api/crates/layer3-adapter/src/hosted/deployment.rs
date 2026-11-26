@@ -171,6 +171,7 @@ impl HostedDeployment {
         if spec.home_volume.is_some() {
             env.insert("TMPDIR".into(), super::home::TRANSFER_ROOT.into());
         }
+        super::deployment_request::apply_retained_journal_policy(spec, &mut env)?;
         if let Some(endpoint) = &spec.tool_proxy_url {
             env.insert("CHRONO_TOOL_PROXY_URL".into(), endpoint.clone());
         }

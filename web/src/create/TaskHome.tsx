@@ -1,10 +1,10 @@
 import { useSandboxCapacity } from '../sandbox/useSandboxCapacity';
 import { SandboxCapacityPanel } from '../sandbox/SandboxCapacityPanel';
 import { useEffect, useId, useRef, useState } from 'react';
-import type { CmaWebClient } from '../api/client';
-import type { AppRoute } from '../routing/routes';
+import type { TaskHomeProps } from './TaskHome.types';
+export type { TaskHomeProps } from './TaskHome.types';
 import { Button } from '../ui/Button';
-import { taskSubmission, submitTaskOnShortcut } from './taskSubmission';
+import { taskSubmission, submitTaskOnShortcut, taskTemplateForSubmission } from './taskSubmission';
 import { useTaskCreationSupport } from './useTaskCreationSupport';
 import { useTaskTemplateAvailability } from './TaskTemplateFields';
 import type { TemplateIssue } from './taskTemplateModel';
@@ -13,41 +13,32 @@ import { lifecycleFailureMessage } from './lifecycleFailure';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { TaskCreationStatus } from './TaskCreationStatus';
-import { DiscardWaitingCreation } from './DiscardWaitingCreation';
-import { TaskHomeLayout, type TaskHomeOverview } from './TaskHomeLayout';
+import { TaskHomeLayout } from './TaskHomeLayout';
 import { TaskTemplatePanel } from './TaskTemplatePanel';
 import { TaskComposer } from './TaskComposer';
 import { RunTargetMenu } from './RunTargetMenu';
 import { RepositoryChip } from './RepositoryChip';
 import { RepositoryPreparationHelp } from './RepositoryPreparationHelp';
 import { TaskTemplates } from './TaskTemplates';
+import { selectTaskHomePresentation } from './taskHomePresentation';
+import { useCrewReplyPreviews } from './useCrewReplyPreviews';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { useTaskExperience } from '../taskExperience';
 import { useTaskDraft } from './taskDraft';
 import { taskCreateRequest, useTaskTitleModeSupport } from './taskCreateRequest';
 import { useTaskTemplateDraftSwitch } from './TaskTemplateDraftSwitch';
 import { useConnectionGate } from '../connections/useConnectionGate';
+import { usePreparationDraft } from '../preparation/usePreparationDraft';
+import { PreparationDraft } from '../preparation/PreparationDraft';
 import { RepositoryConnectionRepair } from '../connections/ConnectionWizard';
 import '../ui/Input.css';
 import './AgentLifecycleCard.css';
 import './TaskHome.css';
 import './TaskStartLayout.css';
 import './TaskFeedback.css';
-
 const recoverTask = { label: 'Recover original task', kind: 'recover' } as const;
 const continueTask = { label: 'Continue original task', kind: 'recover' } as const;
 const retryTaskStatus = { label: 'Retry task status', kind: 'status' } as const;
-
-export interface TaskHomeProps {
-  readonly client: CmaWebClient;
-  readonly viewerId?: string;
-  readonly workspaceId?: string;
-  readonly sandboxId?: string;
-  readonly canCreateSandbox: boolean;
-  readonly onCreated: (route: AppRoute) => void;
-  readonly home?: TaskHomeOverview;
-}
-
 export function TaskHome(props: TaskHomeProps) {
   const { client, viewerId, workspaceId, sandboxId } = props;
   const [scope, setScope] = useState({ client, viewerId, workspaceId, sandboxId, generation: 0 });
@@ -89,7 +80,6 @@ function TaskHomeContent({
     };
   }, []);
   const [manual, setManual] = useState(false);
-  const [recovering, setRecovering] = useState(false);
   const titleId = useId();
   const errorId = useId();
   const templateV1Availability = useTaskTemplateAvailability(client);
@@ -97,10 +87,11 @@ function TaskHomeContent({
   const allowTemplateV2 =
     policy.confirmed && policy.task_home_admission && templateV2Availability === 'supported';
   const draft = useTaskDraft(viewerId, workspaceId, sandboxId, allowTemplateV2);
+  const template = taskTemplateForSubmission(draft.template, templateV2Availability);
   const input = useRef<HTMLTextAreaElement>(null);
   const [validation, setValidation] = useState<TemplateIssue>();
   const templateAvailability =
-    draft.template?.version === 2 ? templateV2Availability : templateV1Availability;
+    template?.version === 2 ? templateV2Availability : templateV1Availability;
   const templateSupported =
     templateAvailability === 'checking' ? undefined : templateAvailability === 'supported';
   const form = useRef<HTMLFormElement>(null);
@@ -124,12 +115,16 @@ function TaskHomeContent({
   const capacityUnavailable =
     !contextual && (!capacity.value || Boolean(capacity.error) || capacity.value.available === 0);
   const canCreate = Boolean(viewerId && (workspaceId || sandboxId || canCreateSandbox));
-  const machineIncludedAvailable = Boolean(
-    viewerId && !workspaceId && !sandboxId && canCreateSandbox,
-  );
+  const machineIncludedAvailable = Boolean(viewerId && !contextual && canCreateSandbox);
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
-  const connections = useConnectionGate(Boolean(viewerId), client);
   const { intent, operation } = lifecycle;
+  const connections = useConnectionGate(!!viewerId, client, undefined, !!intent?.body.repository);
+  const preparationDraft = usePreparationDraft(
+    client,
+    viewerId && intent
+      ? { owner: viewerId, intentKey: intent.key, workspaceId, sandboxId }
+      : undefined,
+  );
   const quotaFailed =
     operation?.status === 'failed' && operation.failure?.code === 'sandbox_limit_reached';
   const failure = lifecycleFailureMessage(
@@ -154,25 +149,29 @@ function TaskHomeContent({
   const opened = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!agent || !operation || opened.current === operation.id) return;
+    if (
+      !preparationDraft.bind({
+        operationId: operation.id,
+        agentId: agent.id,
+        sandboxId: agent.sandbox.id,
+        workspaceId: agent.workspace.id,
+        worktreeId: agent.worktree.id,
+      })
+    )
+      return;
     if (!lifecycle.bindAgent(agent.id)) return;
     opened.current = operation.id;
     handoff();
     onCreated({ kind: 'agent', agentId: agent.id });
-  }, [agent, handoff, lifecycle, onCreated, operation]);
-  const preparationStatus = operation?.status ?? intent?.receipt?.status;
-  const preparing =
-    (!recovering || Boolean(intent?.receipt)) &&
-    !failure &&
-    !lifecycle.connection &&
-    preparationStatus !== 'failed' &&
-    preparationStatus !== 'waiting_for_connection' &&
-    preparationStatus !== 'succeeded' &&
-    (lifecycle.pending || Boolean(intent?.receipt));
-  const submission = taskSubmission(draft, {
-    machine: machineIncludedAvailable,
-    repository: repositorySupported,
-    template: templateSupported,
-  });
+  }, [agent, handoff, lifecycle, onCreated, operation, preparationDraft]);
+  const submission = taskSubmission(
+    { ...draft, template },
+    {
+      machine: machineIncludedAvailable,
+      repository: repositorySupported,
+      template: templateSupported,
+    },
+  );
   const submissionDisabled =
     !policy.task_home_admission ||
     capacityUnavailable ||
@@ -183,6 +182,23 @@ function TaskHomeContent({
     !canCreate ||
     titleModeSupported === undefined ||
     supported !== true;
+  const presentation = selectTaskHomePresentation({
+    navigation: home?.navigation,
+    scope: home?.scope,
+    contextual,
+    templateSelected: Boolean(draft.template),
+    submitted: Boolean(intent),
+  });
+  const previews = useCrewReplyPreviews({
+    client,
+    viewerId,
+    authEpoch: home?.authEpoch,
+    scope: home?.scope,
+    navigation: home?.navigation,
+    visibleAgentIds: presentation.crew.map(({ agent }) => agent.id),
+    visible: home?.visible,
+    enabled: !contextual && !draft.template && !intent,
+  });
   return (
     <TaskHomeLayout
       titleId={titleId}
@@ -192,6 +208,7 @@ function TaskHomeContent({
       template={draft.template}
       submitted={Boolean(intent)}
       onNavigate={home?.onNavigate ?? onCreated}
+      previews={previews}
     >
       {policy.settled && !policy.task_home_admission && !intent ? (
         <>
@@ -225,119 +242,119 @@ function TaskHomeContent({
         </p>
       ) : null}
       {templateDraft.feedback}
-      <form
-        hidden={Boolean(home && intent?.receipt && operation?.status !== 'failed')}
-        ref={form}
-        noValidate
-        onKeyDown={submitTaskOnShortcut}
-        onSubmit={async (event) => {
-          event.preventDefault();
-          if (submissionDisabled) return;
-          setValidation(submission.issue);
-          if (submission.issue) {
-            const target = submission.issue.field
-              ? form.current?.querySelector<HTMLInputElement>(
-                  `[data-template-field="${submission.issue.field}"]`,
-                )
-              : input.current;
-            target?.focus();
-            return;
-          }
-          const draftRevision = draft.persist();
-          if (!draftRevision) return;
-          if (!contextual) {
-            setCheckingCapacity(true);
-            const current = await capacity.ensureFresh();
-            if (!mounted.current) return;
-            setCheckingCapacity(false);
-            if (!current || current.available === 0) return;
-          }
-          setRecovering(false);
-          void lifecycle.submit(
-            taskCreateRequest(
-              { ...draft, text: submission.text },
-              { workspaceId, sandboxId },
-              titleModeSupported,
-            ),
-            draftRevision,
-          );
-        }}
-      >
-        <TaskTemplatePanel
-          template={draft.template}
-          availability={templateAvailability}
-          allowV2={allowTemplateV2}
-          issue={validation}
-          errorId={errorId}
-          onChange={(template) => {
-            setValidation(undefined);
-            draft.changeTemplate(template);
+      {!intent ? (
+        <form
+          ref={form}
+          noValidate
+          onKeyDown={submitTaskOnShortcut}
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (submissionDisabled) return;
+            setValidation(submission.issue);
+            if (submission.issue) {
+              const target = submission.issue.field
+                ? form.current?.querySelector<HTMLInputElement>(
+                    `[data-template-field="${submission.issue.field}"]`,
+                  )
+                : input.current;
+              target?.focus();
+              return;
+            }
+            const draftRevision = draft.persist(template);
+            if (!draftRevision) return;
+            if (!contextual) {
+              setCheckingCapacity(true);
+              const current = await capacity.ensureFresh();
+              if (!mounted.current) return;
+              setCheckingCapacity(false);
+              if (!current || current.available === 0) return;
+            }
+            void lifecycle.submit(
+              taskCreateRequest(
+                { ...draft, template, text: submission.text },
+                { workspaceId, sandboxId },
+                titleModeSupported,
+              ),
+              draftRevision,
+            );
           }}
         >
-          <TaskComposer
-            text={submission.text}
-            template={Boolean(draft.template)}
-            invalid={Boolean(draft.template && submission.issue)}
-            input={input}
-            validation={validation?.message}
+          <TaskTemplatePanel
+            template={draft.template}
+            availability={templateAvailability}
+            allowV2={allowTemplateV2}
+            issue={validation}
             errorId={errorId}
-            disabled={submissionDisabled}
-            onClearTemplate={templateDraft.clear}
-            onChange={(text) => {
+            onChange={(template) => {
               setValidation(undefined);
-              draft.change(text);
+              draft.changeTemplate(template);
             }}
           >
-            <RunTargetMenu
-              workspaceId={workspaceId}
-              sandboxId={sandboxId}
-              recordedDesktop={intent?.body.desktop === true}
-              machineIncluded={
-                intent ? intent.body.machine_included === true : draft.machineIncluded
+            <TaskComposer
+              text={submission.text}
+              template={Boolean(draft.template)}
+              invalid={Boolean(draft.template && submission.issue)}
+              input={input}
+              validation={validation?.message}
+              errorId={errorId}
+              disabled={submissionDisabled}
+              capacity={
+                !contextual ? (
+                  <SandboxCapacityPanel
+                    client={client}
+                    capacity={capacity}
+                    presentation="home"
+                    onEnvironments={home?.onEnvironments}
+                  />
+                ) : null
               }
-              machineIncludedAvailable={machineIncludedAvailable}
-              frozen={Boolean(intent)}
-              onMachineChange={draft.changeMachineIncluded}
-            />
-            <span className="task-home__divider" aria-hidden="true" />
-            <div
-              className="task-home__repository-slot"
-              data-has-repository={Boolean(draft.repositoryUrl || draft.repositoryRef) || undefined}
+              onClearTemplate={templateDraft.clear}
+              onChange={(text) => {
+                setValidation(undefined);
+                draft.change(text);
+              }}
             >
-              <RepositoryChip
-                url={draft.repositoryUrl}
-                reference={draft.repositoryRef}
-                onChange={draft.changeRepository}
-                checking={!contextual && repositorySupported === undefined}
-                unavailableReason={
-                  workspaceId || sandboxId
-                    ? 'Repository context is inherited. Start from Home to choose another repository.'
-                    : repositorySupported === undefined
-                      ? 'Checking repository support…'
-                      : repositorySupported === false
-                        ? 'Repository tasks are unavailable on this service.'
-                        : undefined
-                }
+              {presentation.templates === 'menu' ? (
+                <TaskTemplates presentation="menu" onSelect={templateDraft.select} />
+              ) : null}
+              <RunTargetMenu
+                workspaceId={workspaceId}
+                sandboxId={sandboxId}
+                recordedDesktop={false}
+                machineIncluded={draft.machineIncluded}
+                machineIncludedAvailable={machineIncludedAvailable}
+                frozen={false}
+                onMachineChange={draft.changeMachineIncluded}
               />
-            </div>
-          </TaskComposer>
-        </TaskTemplatePanel>
-      </form>
-      {!contextual && (!home || !intent?.receipt || quotaFailed) ? (
-        <SandboxCapacityPanel client={client} capacity={capacity} presentation="home" />
+              <span className="task-home__divider" aria-hidden="true" />
+              <div
+                className="task-home__repository-slot"
+                data-has-repository={
+                  Boolean(draft.repositoryUrl || draft.repositoryRef) || undefined
+                }
+              >
+                <RepositoryChip
+                  url={draft.repositoryUrl}
+                  reference={draft.repositoryRef}
+                  onChange={draft.changeRepository}
+                  checking={!contextual && repositorySupported === undefined}
+                  unavailableReason={
+                    workspaceId || sandboxId
+                      ? 'Repository context is inherited. Start from Home to choose another repository.'
+                      : repositorySupported === undefined
+                        ? 'Checking repository support…'
+                        : repositorySupported === false
+                          ? 'Repository tasks are unavailable on this service.'
+                          : undefined
+                  }
+                />
+              </div>
+            </TaskComposer>
+          </TaskTemplatePanel>
+        </form>
       ) : null}
-      {preparing ? (
-        <p className="task-home__preparing" role="status">
-          <span className="task-home__dot" aria-hidden="true" />
-          {contextual ? 'Preparing your Agent…' : 'Preparing a cloud computer for your Agent…'}
-        </p>
-      ) : null}
-      {!home || !intent?.receipt ? <TaskTemplates onSelect={templateDraft.select} /> : null}
-      {!home || !intent?.receipt ? (
-        <p className="task-home__defaults">
-          <span className="task-home__dot" aria-hidden="true" />
-          GPT-6 · High reasoning · Autonomous
-        </p>
+      {presentation.templates === 'expanded' ? (
+        <TaskTemplates onSelect={templateDraft.select} />
       ) : null}
       {supported === undefined || titleModeSupported === undefined ? (
         <p className="sr-only" role="status">
@@ -360,11 +377,24 @@ function TaskHomeContent({
         </p>
       ) : null}
       <TaskCreationStatus
+        titleId={titleId}
+        draft={<PreparationDraft draft={preparationDraft} />}
         intent={intent}
         operation={operation}
         failure={failure}
         pending={lifecycle.pending}
-        preparing={preparing}
+        hasFollowUp={Boolean(preparationDraft.text || preparationDraft.error)}
+        onDiscardWaiting={
+          lifecycle.canDiscardWaiting
+            ? () => {
+                if (!lifecycle.discardWaiting()) return;
+                connections.cancel();
+                connections.clearError();
+                setValidation(undefined);
+                requestAnimationFrame(() => input.current?.focus());
+              }
+            : undefined
+        }
         resolvedCommit={agent?.workspace.resolvedCommit}
         recovery={
           <>
@@ -373,10 +403,7 @@ function TaskHomeContent({
                 variant="outline"
                 placement="task-home__action"
                 disabled={lifecycle.pending || lifecycle.blocked}
-                onClick={() => {
-                  setRecovering(true);
-                  void lifecycle.submit();
-                }}
+                onClick={() => void lifecycle.submit()}
               >
                 {recoverTask.label}
               </Button>
@@ -398,20 +425,6 @@ function TaskHomeContent({
                 {continueTask.label}
               </Button>
             ) : null}
-            {lifecycle.canDiscardWaiting ? (
-              <DiscardWaitingCreation
-                key={intent?.key}
-                label="task"
-                onDiscard={() => {
-                  if (!lifecycle.discardWaiting()) return;
-                  connections.cancel();
-                  connections.clearError();
-                  setRecovering(false);
-                  setValidation(undefined);
-                  requestAnimationFrame(() => input.current?.focus());
-                }}
-              />
-            ) : null}
             {failure && intent?.receipt ? (
               <Button
                 variant="outline"
@@ -428,7 +441,7 @@ function TaskHomeContent({
       {viewerId && lifecycle.connection?.repository_access ? (
         <RepositoryConnectionRepair
           owner={viewerId}
-          target={lifecycle.connection.target}
+          {...lifecycle.connection}
           pending={lifecycle.pending || lifecycle.blocked}
           onRecheck={() => void lifecycle.submit()}
         />
@@ -447,7 +460,10 @@ function TaskHomeContent({
       />
       {intent?.receipt && operation?.status === 'failed' ? (
         <Button
-          disabled={quotaFailed && capacityUnavailable}
+          disabled={
+            (quotaFailed && capacityUnavailable) ||
+            Boolean(preparationDraft.text || preparationDraft.error)
+          }
           variant="outline"
           placement="task-home__action"
           onClick={() => {
@@ -456,6 +472,12 @@ function TaskHomeContent({
         >
           Start another task
         </Button>
+      ) : null}
+      {intent?.receipt && operation?.status === 'failed' && preparationDraft.text ? (
+        <p role="status">
+          Keep or copy your follow-up draft before starting another task. Clear it here when you’re
+          ready.
+        </p>
       ) : null}
       {draft.error ? (
         <p className="task-home__alert" role="alert">

@@ -117,6 +117,15 @@ export async function newAgentRequestFixture(
     creates,
     complete: () => {
       complete = true;
+      if (initial)
+        fixture.agent = {
+          ...fixture.agent,
+          first_message: {
+            state: 'execution_observed',
+            purpose: 'task',
+            queued_at: '2026-11-22T05:58:00Z',
+          },
+        };
     },
     delay: () => {
       delay = true;

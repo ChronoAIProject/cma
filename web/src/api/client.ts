@@ -30,6 +30,10 @@ import type { ResourceViewsClient } from '../resources/client';
 import type { BotClient } from '../bots/model';
 import type { createAgentTransport } from '../agent/transport/client';
 import type { ConnectionTarget } from '../connections/client';
+import type {
+  RepositoryAccessRefusal,
+  RepositoryScopeRepair,
+} from '../api-client/agents/lifecycle';
 import type { AgentFilesClient } from './agentFiles';
 import type { AgentBrowserClient, AgentBrowserControlClient } from '@cma/client';
 import type { DocumentsClient } from './documents';
@@ -135,6 +139,7 @@ export interface AgentLifecycleOperationEvent {
 
 export interface AgentLifecycleOperationView {
   readonly id: string;
+  readonly accepted_at?: string;
   readonly status: string;
   readonly phase: string;
   readonly agent_id?: string;
@@ -144,7 +149,8 @@ export interface AgentLifecycleOperationView {
   readonly connection?: {
     readonly services: readonly string[];
     readonly target: ConnectionTarget;
-    readonly repository_access?: 'verification_unavailable';
+    readonly repository_access?: RepositoryAccessRefusal;
+    readonly repository_scope_repair?: RepositoryScopeRepair;
   };
 }
 
@@ -294,12 +300,20 @@ export interface CmaWebClient {
   readAgent(id: string, options?: ReadOptions): Promise<AgentDetail>;
   readAgentEvents(
     id: string,
-    options?: PageOptions<number>,
+    options?: PageOptions<number> & { readonly cache?: 'no-store' },
   ): Promise<ResourcePage<AgentEvent, number>>;
   readonly readRetainedOutput?: (
     id: string,
     options?: import('@cma/client').RetainedOutputOptions,
   ) => Promise<import('@cma/client').RetainedOutputPage>;
+  readonly readAgentReplyPreview?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<import('./replyPreview').ReplyPreview>;
+  readonly readAgentOriginalRequest?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<import('./originalRequest').OriginalRequestRead>;
   readAgentTranscript(
     id: string,
     options?: ReadOptions & {
@@ -352,6 +366,7 @@ export interface CmaWebClient {
   removeWorkspace(id: string, options: CommandOptions): Promise<void>;
   interruptAgent(id: string, options: CommandOptions): Promise<void>;
   stopAgent(id: string, options: CommandOptions): Promise<void>;
+  restartAgent?(id: string, options: CommandOptions): Promise<void>;
   deleteAgent(id: string, options: CommandOptions): Promise<void>;
 }
 

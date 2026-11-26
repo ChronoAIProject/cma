@@ -1,5 +1,5 @@
-import { Presence } from '../ui/Presence';
-import { useRef, useState } from 'react';
+import { Presence, usePresenceExiting } from '../ui/Presence';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { ApiError, type Launch, type TriggerPreview } from '@cma/client';
 import { Button } from '../ui/Button';
 import {
@@ -53,6 +53,14 @@ export function ReviewCard({
   readonly onChanged: (value: Launch) => void;
   readonly onClose: () => void;
 }) {
+  const exiting = usePresenceExiting();
+  const lifetime = useRef<AbortController | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (exiting) return;
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => controller.abort();
+  }, [exiting, expectedSubject, record.id]);
   const [saved, setSaved] = useState(() => loadRecovery(record.id));
   const { snapshot, blocked: storageBlocked } = saved;
   const recovery = snapshot?.recovery;
@@ -108,7 +116,11 @@ export function ReviewCard({
   };
 
   const start = async (explicit = false) => {
+    const controller = lifetime.current;
     if (
+      controller === undefined ||
+      controller.signal.aborted ||
+      exiting ||
       active.current ||
       storageBlocked ||
       needsSignIn ||
@@ -140,7 +152,8 @@ export function ReviewCard({
         command: command.current,
       });
       setSaved({ snapshot: attempt, blocked: false });
-      await checkCredentialRecoveryOwner(recovery?.owner);
+      await checkCredentialRecoveryOwner(recovery?.owner, controller.signal);
+      if (controller.signal.aborted) return;
       assertDraftRecovery(record.id, attempt);
       dispatched = true;
       const result = await client.requests.start(record.id, command.current.body, {
@@ -152,6 +165,7 @@ export function ReviewCard({
       setUncertain(false);
       onChanged(result);
     } catch (cause) {
+      if (!dispatched && controller.signal.aborted) return;
       if (cause instanceof DraftRecoveryChangedError) {
         setSaved((current) => ({ ...current, blocked: true }));
         explicitRetryRequired.current = true;

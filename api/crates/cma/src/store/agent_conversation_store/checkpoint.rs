@@ -1,5 +1,6 @@
 //! Private assistant assembly and exact update receipt on the Agent document.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::AgentMessageCheckpoint;
 use layer2_core::sandbox::AgentUpdateOutcome;
 use mongodb::bson::{Bson, Document, Timestamp};
@@ -91,6 +92,7 @@ pub(super) async fn carry(
 pub(in crate::store) enum Authority {
     Live,
     StaleTurn,
+    TurnPolicy,
     Reopen(Box<layer2_core::sandbox::store::AgentReopenGuard>),
     Capacity(Box<layer2_core::sandbox::store::AgentConversationCapacitySettlement>),
 }
@@ -174,16 +176,16 @@ async fn commit_inner(
         let (outcome, publication) = match applied {
             Ok(outcome) => outcome,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
@@ -194,7 +196,7 @@ async fn commit_inner(
             .fence_agent_effect_transaction(&current.id, &mut session)
             .await
         {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             match error {
                 crate::store::agent_ownership::FenceError::Domain(error) => return Err(error),
                 crate::store::agent_ownership::FenceError::Driver(error)

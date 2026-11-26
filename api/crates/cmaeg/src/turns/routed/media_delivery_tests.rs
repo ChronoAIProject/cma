@@ -325,7 +325,11 @@ async fn media_response_unknown_local_intent_is_retained_and_not_resent_after_re
             MediaContinuationKind::Original,
             "completed",
             "Processed the persisted attachment.",
-            Some(super::CustomCheckpoint::new(&event, &body, true)),
+            Some(super::CustomCheckpoint::new(
+                &event,
+                &body.delivery.policy.sinks,
+                true,
+            )),
         )
         .await
         .unwrap();

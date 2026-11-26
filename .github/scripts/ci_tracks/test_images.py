@@ -3,10 +3,12 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from docker_inputs import ignored, stage_sources
 from image_inputs import changed_images, image_inputs, recipes
 from policy import Workspace
+from rust_build_inputs import BuildReview
 from test_policy import metadata
 
 MANIFEST = Path(__file__).resolve().parents[1] / 'deployables.json'
@@ -72,6 +74,35 @@ class ImageTests(unittest.TestCase):
         self.write('api/crates/cmaeg/src/lib.rs', 'const DOC: &str = include_str!("../README.md");')
         self.assertEqual(self.selected('api/crates/cmaeg/README.md'), ['cma-event-gateway'])
 
+    def test_manifest_relative_include_binds_one_cross_package_input(self):
+        package = 'api/crates/cmaeg'
+        other = 'api/crates/layer4-runtime'
+        self.write(f'{other}/docs/recognized.txt', 'included bytes')
+        self.write(f'{other}/docs/unrelated.txt', 'unrelated bytes')
+        self.write(f'{package}/src/lib.rs', '''
+            fn doc() -> Vec<&'static str> {
+                vec![include_str! /* keep the macro token boundary */
+                    (concat!(env!("CARGO_MANIFEST_DIR"), "/../layer4-runtime/docs/recognized.txt",))]
+            }
+        ''')
+        self.assertEqual(self.selected(f'{other}/docs/recognized.txt'), ['cma-event-gateway'])
+        self.assertEqual(self.selected(f'{other}/docs/unrelated.txt'), [])
+        self.write(f'{package}/src/lib.rs', '''
+            const DOC: &str = include_str!(concat!(env!("CMA_DYNAMIC_DIRECTORY"), "/recognized.txt"));
+        ''')
+        self.assertEqual(self.selected(f'{other}/docs/unrelated.txt'), ['cma-event-gateway'])
+
+    def test_item_include_is_modeled_only_inside_the_scanned_sources(self):
+        package = 'api/crates/cmaeg'
+        self.write(f'{package}/README.md', 'included text')
+        self.write(f'{package}/src/lib.rs', 'include!("included.rs");')
+        self.write(f'{package}/src/included.rs', 'const DOC: &str = include_str!("../README.md");')
+        self.assertEqual(self.selected(f'{package}/README.md'), ['cma-event-gateway'])
+        self.assertEqual(self.selected('api/crates/cma/src/lib.rs'), ['cma-agent-manager'])
+        self.write(f'{package}/docs/external.rs', 'const DOC: &str = "external Rust";')
+        self.write(f'{package}/src/lib.rs', 'include!("../docs/external.rs");')
+        self.assertEqual(self.selected('api/crates/cma/src/lib.rs'), ['cma-agent-manager', 'cma-event-gateway'])
+
     def test_cfg_test_graph_excludes_only_proven_test_modules(self):
         self.write('api/crates/cmaeg/src/lib.rs', '#[cfg(test)]\nmod checks;\n')
         self.write('api/crates/cmaeg/src/checks.rs', 'mod nested;\n')
@@ -104,6 +135,49 @@ class ImageTests(unittest.TestCase):
         self.write('api/crates/cmaeg/build.rs', 'fn main() {}')
         self.write('api/crates/cmaeg/docs/generator.txt', 'generated')
         self.assertEqual(self.selected('api/crates/cmaeg/docs/generator.txt'), ['cma-event-gateway'])
+
+    def test_reviewed_generator_limits_inputs_to_its_dependency_closure(self):
+        package = 'api/crates/layer3-adapter'
+        foreign = 'api/crates/cmaeg/src/lib.rs'
+        data = 'docs/declaration.txt'
+        files = {
+            'build.rs': 'fn main() {}',
+            'build/helper.rs': 'fn encode() {}',
+            'src/lib.rs': 'include!(concat!(env!("OUT_DIR"), "/generated.rs"));',
+        }
+        for path, text in files.items():
+            self.write(f'{package}/{path}', text)
+        self.write(f'{package}/{data}', 'input')
+        model = metadata(self.root)
+        runtime = next(item for item in model['packages'] if item['name'] == 'layer4-runtime')
+        runtime['dependencies'].append({'path': str(self.root / package), 'kind': None})
+        self.workspace = Workspace(model, self.root)
+        reviewed = BuildReview('build.rs', {name: hashlib.sha256(text.encode()).hexdigest()
+                                           for name, text in files.items()},
+                               (data,), frozenset({'src/lib.rs'}))
+        affected = ['cma-agent-manager', 'cma-runtime', 'cma-runtime-omarchy']
+        with patch('rust_build_inputs.REVIEWED', {package: reviewed}):
+            self.assertEqual(self.selected(f'{package}/{data}'), affected)
+            self.assertEqual(self.selected(f'{package}/build/helper.rs'), affected)
+            self.assertEqual(self.selected(foreign), ['cma-event-gateway'])
+            for path, text in (
+                ('build/helper.rs', 'fn encode_changed() {}'),
+                ('src/lib.rs', 'include!(concat!(env!("OUT_DIR"), "/other.rs"));'),
+            ):
+                with self.subTest(path=path):
+                    self.write(f'{package}/{path}', text)
+                    self.assertEqual(self.selected(foreign), sorted(affected + ['cma-event-gateway']))
+                    self.write(f'{package}/{path}', files[path])
+
+    def test_custom_build_target_outside_the_conventional_path_stays_conservative(self):
+        package = 'api/crates/cmaeg'
+        self.write(f'{package}/scripts/build.rs', 'fn main() {}')
+        model = metadata(self.root)
+        gateway = next(item for item in model['packages'] if item['name'] == 'cmaeg')
+        gateway['targets'] = [{'kind': ['custom-build'], 'src_path': str(self.root / package / 'scripts/build.rs')}]
+        self.workspace = Workspace(model, self.root)
+        self.assertEqual(self.selected('api/crates/layer4-runtime/src/lib.rs'),
+                         ['cma-event-gateway', 'cma-runtime', 'cma-runtime-omarchy'])
 
     def test_metadata_inputs_select_rust_only(self):
         self.assertEqual(self.selected('api/Cargo.lock'), sorted(set(self.manifest) - {'cma-web'}))
@@ -143,6 +217,15 @@ class ImageTests(unittest.TestCase):
         for text in ['FROM base\nCOPY --unknown=x source /out', 'FROM base\nCOPY --from=external /out /out', 'FROM base\nRUN --mount=type=bind,source=$INPUT,target=/in true']:
             with self.assertRaises(ValueError):
                 stage_sources(text, '', {})
+
+    def test_ignore_decisions_use_the_exact_ordered_rule_text(self):
+        entry = 'api/crates/sample/src/generated.rs'
+        exclude = '**/generated.rs'
+        include = '!api/crates/sample/src/generated.rs'
+        self.assertTrue(ignored(entry, exclude))
+        self.assertFalse(ignored(entry, f'{exclude}\n{include}'))
+        self.assertTrue(ignored(entry, f'{include}\n{exclude}'))
+        self.assertTrue(ignored(entry, exclude))
 
 
 if __name__ == '__main__':

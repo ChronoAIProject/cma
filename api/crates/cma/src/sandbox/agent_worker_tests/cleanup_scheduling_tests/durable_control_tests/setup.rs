@@ -11,6 +11,34 @@ impl Fixture {
         effect_fence: bool,
         identity: Option<&str>,
     ) -> Self {
+        Self::with_test_modes(
+            deleting,
+            segmented,
+            effect_fence,
+            identity,
+            #[cfg(feature = "qualification-hooks")]
+            None,
+        )
+        .await
+    }
+
+    #[cfg(feature = "qualification-hooks")]
+    pub(super) async fn with_checkpoints(
+        deleting: bool,
+        checkpoints: [Arc<cma_qualification::Registry>; 2],
+    ) -> Self {
+        Self::with_test_modes(deleting, false, false, Some("owner"), Some(checkpoints)).await
+    }
+
+    async fn with_test_modes(
+        deleting: bool,
+        segmented: bool,
+        effect_fence: bool,
+        identity: Option<&str>,
+        #[cfg(feature = "qualification-hooks")] checkpoints: Option<
+            [Arc<cma_qualification::Registry>; 2],
+        >,
+    ) -> Self {
         let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
         let name = format!("cma_durable_control_{}", uuid::Uuid::new_v4().simple());
         let app_name = format!("control_{name}");
@@ -164,14 +192,20 @@ impl Fixture {
             );
             let reads = AgentReadService::new(store.clone(), Arc::new(Resources));
             let ops = AgentOperationService::new(store.clone(), registry);
-            let routes =
-                layer1_public::rest::agent_router(layer1_public::rest::AgentRoutesState::new(
-                    layer1_public::agent_page::AgentPageOrigin::new("http://localhost").unwrap(),
-                    agents,
-                    reads,
-                    ops.clone(),
-                    operations.clone(),
-                ));
+            let state = layer1_public::rest::AgentRoutesState::new(
+                layer1_public::agent_page::AgentPageOrigin::new("http://localhost").unwrap(),
+                agents,
+                reads,
+                ops.clone(),
+                operations.clone(),
+            );
+            #[cfg(feature = "qualification-hooks")]
+            let state = if let Some(checkpoints) = &checkpoints {
+                state.with_control_checkpoint(checkpoints[i].clone())
+            } else {
+                state
+            };
+            let routes = layer1_public::rest::agent_router(state);
             let entered = Arc::new(AtomicUsize::new(0));
             let counter = entered.clone();
             let routes = routes.layer(axum::middleware::from_fn(

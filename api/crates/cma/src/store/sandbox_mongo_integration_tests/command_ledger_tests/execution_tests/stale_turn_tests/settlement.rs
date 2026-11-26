@@ -15,13 +15,13 @@ use layer3_adapter::{
 };
 
 mod competing;
-use competing::{Competition, Race, SealProbe};
+use competing::{budget_turn, Competition, Race, SealProbe};
 
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
 async fn stale_turn_seal_settles_once_and_replays_after_checkpoint_advance() {
     for segmented in [false, true] {
-        Box::pin(exercise_settlement(segmented, None, None)).await;
+        Box::pin(exercise_settlement(segmented, None, None, false)).await;
     }
 }
 
@@ -29,24 +29,29 @@ async fn stale_turn_seal_settles_once_and_replays_after_checkpoint_advance() {
 #[ignore = "requires the failpoint URI of a disposable MongoDB replica set"]
 async fn stale_turn_seal_reconciles_an_unknown_commit() {
     let application = format!("stale-turn-commit-{}", uuid::Uuid::new_v4().simple());
-    Box::pin(exercise_settlement(false, Some(&application), None)).await;
+    Box::pin(exercise_settlement(false, Some(&application), None, true)).await;
 }
 
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
 async fn stale_turn_seal_loses_to_competing_writers() {
     for race in [Race::Canonical, Race::Interrupt, Race::Successor] {
-        Box::pin(exercise_settlement(true, None, Some(race))).await;
+        Box::pin(exercise_settlement(true, None, Some(race), false)).await;
     }
 }
 
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
 async fn stale_turn_seal_refuses_cumulative_evidence_over_budget() {
-    Box::pin(exercise_settlement(true, None, Some(Race::Oversize))).await;
+    Box::pin(exercise_settlement(true, None, Some(Race::Oversize), false)).await;
 }
 
-async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>, race: Option<Race>) {
+async fn exercise_settlement(
+    segmented: bool,
+    ambiguous: Option<&str>,
+    race: Option<Race>,
+    partial: bool,
+) {
     let (client, name) = database("stale_turn_terminal").await;
     let mut parent = active_sandbox("sbx_stale_turn");
     parent.lifecycle.home = Some(Box::new(
@@ -136,6 +141,15 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>, race: Opt
     let mut final_cursor = 2;
     owner
         .run(async {
+            let boundary_effect = if partial {
+                ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                    ContentBlock::from(""),
+                )))
+            } else {
+                ConversationUpdate::Said(SessionUpdate::AvailableCommandsUpdate(
+                    AvailableCommandsUpdate::new(vec![]),
+                ))
+            };
             recorder
                 .record_update(
                     &agent.id,
@@ -156,12 +170,7 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>, race: Opt
                     &agent.id,
                     1,
                     &mut assembly,
-                    output(
-                        2,
-                        ConversationUpdate::Said(SessionUpdate::AvailableCommandsUpdate(
-                            AvailableCommandsUpdate::new(vec![]),
-                        )),
-                    ),
+                    output(2, boundary_effect),
                     layer2_core::now_rfc3339(),
                 )
                 .await
@@ -234,13 +243,35 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>, race: Opt
         .unwrap();
     let future = DateTime::from_millis(DateTime::now().timestamp_millis() + 16 * 60 * 1000);
     let candidate = Candidate::from_row(&row, future).unwrap();
+    if partial && race == Some(Race::Canonical) {
+        crate::sandbox::assert_partial_does_not_request_stop(
+            store.clone(),
+            manager,
+            &owner,
+            &candidate,
+            future,
+        )
+        .await;
+    }
     let mut budget = ProofBudget::default();
-    let Observation::Quiet { evidence, .. } =
-        scan.observe(&candidate, future, &mut budget).await.unwrap()
+    let Observation::Quiet { evidence, .. } = scan
+        .observe_for_terminal(&candidate, future, &mut budget)
+        .await
+        .unwrap()
     else {
         panic!("expected a quiet turn with a durable checkpoint");
     };
-    let target = StaleTurnSettlement::target(
+    assert_eq!(
+        !evidence
+            .snapshot
+            .checkpoint
+            .as_ref()
+            .unwrap()
+            .assembly
+            .is_empty(),
+        partial
+    );
+    let target = StaleTurnSettlement::receipt_target(
         &evidence.snapshot,
         &evidence.parent,
         &evidence.command,
@@ -329,29 +360,7 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>, race: Opt
     owner
         .run(async {
             if let Some(application) = ambiguous {
-                let admin = client.database("admin");
-                let entries = |reply: mongodb::bson::Document| {
-                    reply
-                        .get_i64("count")
-                        .or_else(|_| reply.get_i32("count").map(i64::from))
-                        .unwrap()
-                };
-                let before = admin
-                    .run_command(doc! {
-                        "configureFailPoint":"failCommand", "mode":{"times":5_i32},
-                        "data":{"failCommands":["commitTransaction"],"appName":application,
-                        "writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired",
-                        "errmsg":"injected stale-turn commit ambiguity"}}
-                    })
-                    .await
-                    .unwrap();
-                let result = scan.settle(&proof, &mut ProofBudget::default()).await;
-                let after = admin
-                    .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
-                    .await
-                    .unwrap();
-                assert_eq!(entries(after) - entries(before), 5);
-                result.unwrap();
+                competing::settle_with_unknown_commit(&client, application, &scan, &proof).await;
             } else {
                 // Two clients contend for the same turn with the same qualified writer.
                 let mut local_budget = ProofBudget::default();
@@ -414,25 +423,12 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>, race: Opt
     }
     let logs = peer.agent_log(&agent.id, 0, 100).await.unwrap();
     assert_eq!(logs.iter().filter(|entry| matches!(&entry.kind, AgentLogKind::TurnFailed { failure, .. } if failure.class == "agent_turn_no_progress")).count(), 1);
-    assert!(logs.iter().any(|entry| matches!(&entry.kind, AgentLogKind::AgentMessage {content} if content == "retained prefix")));
+    assert_eq!(logs.iter().filter(|entry| matches!(&entry.kind, AgentLogKind::AgentMessage {content} if content == "retained prefix")).count(), 1);
     assert_eq!(sends.load(Ordering::SeqCst), 1);
     client.database(&name).drop().await.unwrap();
 }
 
-async fn budget_turn(store: &MongoSandboxStore, agent: &Agent) -> mongodb::bson::Document {
-    let key = crate::store::budget::turn_key(agent, agent.conversation.active_turn.unwrap());
-    store
-        .model_budget
-        .find_one(doc! {"_id": key})
-        .await
-        .unwrap()
-        .unwrap()
-        .get_document("record")
-        .unwrap()
-        .clone()
-}
-
-async fn replica(client: &Client, name: &str) -> Arc<MongoSandboxStore> {
+pub(super) async fn replica(client: &Client, name: &str) -> Arc<MongoSandboxStore> {
     Arc::new(
         MongoSandboxStore::open(client, name)
             .await
@@ -443,7 +439,12 @@ async fn replica(client: &Client, name: &str) -> Arc<MongoSandboxStore> {
     )
 }
 
-async fn adopt(client: &Client, name: &str, store: &MongoSandboxStore, agent: &Agent) {
+pub(in crate::store) async fn adopt(
+    client: &Client,
+    name: &str,
+    store: &MongoSandboxStore,
+    agent: &Agent,
+) {
     let db = client.database(name);
     segments::schema::migrate(&db).await.unwrap();
     crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;

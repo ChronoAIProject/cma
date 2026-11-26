@@ -83,10 +83,13 @@ returns 409, including changing an omitted default into an explicit reference.
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}` | - | - | 204 empty; 401/403/409/503 ProblemDocument |
 | `POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections` | InspectPreparationRequest | - | 200 PreparationInspectionView; 400/401/403/404/409/503 ProblemDocument |
 | `POST /api/v1/cmaeg/bindings/{binding_id}/preparations` | PrepareBindingRequest | Idempotency-Key | 200 PreparationReceiptView; 400/401/403/404/409/503 ProblemDocument |
+| `GET /api/v1/cmaeg/bindings/{binding_id}/conversations` | - | - | 200 BindingConversationCatalogView; 401/403/404/409/503 ProblemDocument |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | optional empty object | - | 200/201 BindingConversationView; 400/401/403/404/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 200 BindingConversationInspectionView; 400/401/403/404/409/503 ProblemDocument |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 204 empty; 400/401/403/404/409/503 ProblemDocument |
 | `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets` | ResetConversationRequest; Idempotency-Key | - | 200 ConversationResetView; 400/401/403/404/409/503 ProblemDocument |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-drift` | DesiredProfileRequest | - | 200 DesiredProfileDriftView or null; 401/403/404/409/503 ProblemDocument |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-transfers` | TransferConversationRequest | Idempotency-Key | 200 ProfileTransferView; 400/401/403/404/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}` | - | - | 200 EventContext; 401/403/404/503 Responses error |
 | `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment` | raw binary; upload query | Content-Type, Content-Length | 201 AgentAttachment; 400/403/409/413/429/503 media error |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment` | - | - | 200 AgentAttachment; 403/404/503 media error |
@@ -116,12 +119,18 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/admin/profiles` | - | kind, visibility, owner, cursor, limit | 200 ProfilePageView |
 | `POST /api/v1/admin/profiles/{kind}/{id}/retire` | - | - | 200 ProfileSummaryView |
 | `GET /api/v1/admin/runtime-inventory` | - | - | 200 RuntimeInventoryView |
+| `GET /api/v1/admin/runtime-binding-holds` | - | - | 200 BindingHoldOverviewView; 403/503 ProblemDocument; 404 when diagnostics are disabled |
+| `PUT /api/v1/admin/runtime-canary-policy` | CanaryPolicyRequest | - | 200 CanaryPolicyView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/runtime-canary-grants` | CanaryGrantRequest | - | 201 CanaryGrantView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/runtime-canary-grants/revoke` | CanaryRevokeRequest | - | 200 CanaryGrantView; 401/403/409/422/503 ProblemDocument |
 | `GET /api/v1/admin/sandboxes` | - | owner, status, runtime_version, cursor, limit | 200 SandboxPageView |
 | `GET /api/v1/admin/sandboxes/{id}` | - | - | 200 SandboxDetailView |
 | `POST /api/v1/admin/sandboxes/{id}/always-on` | AdminAlwaysOnRequest | - | 200 SandboxView |
 | `GET /api/v1/admin/sandboxes/{id}/events` | - | after, limit | 200 array<object> |
 | `POST /api/v1/admin/sandboxes/{id}/retire` | - | - | 200 object |
+| `POST /api/v1/admin/sandboxes/{id}/runtime-migration` | CustomRuntimeMigrationRequest | - | 202 SandboxView |
 | `POST /api/v1/admin/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest | - | 202 SandboxView |
+| `GET /api/v1/admin/sandboxes/{id}/runtime-update/activity` | - | - | 200 object |
 | `GET /api/v1/admin/admission` | - | - | 200 AdmissionReadView |
 | `POST /api/v1/admin/admission/stop` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `PUT /api/v1/admin/admission/ceilings` | ReplaceCeilingsRequest | - | 200 CeilingsStateView |
@@ -193,6 +202,8 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/desktop-capability` | - | workspace_id, sandbox_id | 200 DesktopCapabilityView |
 | `POST /api/v1/agents` | AgentLifecycleCreateRequest; key | - | 202 AgentLifecycleCreateReceipt |
 | `GET /api/v1/agent-lifecycle/{id}` | - | - | 200 AgentLifecycleOperationView |
+| `POST /api/v1/agent-lifecycle/{id}/cancel` | - | - | 200 AgentLifecycleOperationView |
+| `POST /api/v1/runtime-canary-redemptions` | CanaryRedeemRequest; Idempotency-Key | - | 202 AgentLifecycleCreateReceipt; 400/401/403/409/422/503 ProblemDocument |
 | `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `GET /api/v1/agents/{id}/capacity-recovery/dry-run` | - | - | 200 authorized recovery metadata |
@@ -221,6 +232,7 @@ pools and retained homes keep their admitted templates.
 | `POST /api/v1/agents/{id}/skills` | InstallAgentSkillRequest; key | - | 202 AgentSkillsView |
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
+| `POST /api/v1/agents/{id}/restart` | Required key | - | 202 AgentRestartReceipt |
 | `POST /api/v1/agents/{id}/recover-worktree` | -; required key | - | 202 AgentView |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
 | `GET /api/v1/agents/{id}/desktop` | - | - | 200 DesktopDescriptor; 404 ProblemDocument |
@@ -509,6 +521,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v1/launches/{id}/requirements` | - | - | 200 RequirementsSnapshotView |
 | `POST /api/v1/launches/{id}/start` | StartLaunchRequest; key | - | 202 LaunchView |
 | `POST /api/v1/triggers/public/{public_id}/launches` | CreateLaunchRequest; key | - | 201 LaunchView; 202 LaunchView |
+| `POST /api/v2/triggers/public/{public_id}/launches` | Require canonical `X-CMA-Expected-Subject` matching the authenticated caller before operation or quota access. Preserve v1 key/body/receipts and verify `X-CMA-Verified-Subject` before accepting terminal results. |
 | `POST /api/v1/triggers/public/{public_id}/entry-intent` | - | - | 200 TriggerEntryIntentView |
 
 ### Discovery
@@ -901,4 +914,18 @@ SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both exp
 | `PATCH /api/v1/agents/{id}/preferences` | UpdateAgentPreferencesRequest; key | - | 200 AgentPreferencesView |
 
 | `POST /api/v1/telemetry/browser` | Anonymous, bounded browser diagnostic category; no durable receipt. |
+| `POST /api/v1/usage/metrics/initial/reports` | UsageInitialCreate | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/usage/metrics/initial/view` | UsageInitialViewInput | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/usage/metrics/initial/reports/{report}` | UsageInitialProjection | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/admin/usage/metrics/initial/reports` | UsageInitialCreate | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/admin/usage/metrics/initial/view` | UsageInitialViewInput | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/admin/usage/metrics/initial/reports/{report}` | UsageInitialProjection | - | 200 complete initial data / 202 descriptor only |
+| `GET /api/v1/agents/{id}/original-request` | Read the current owner’s exact admitted Task request without scanning history. |
+| `GET /api/v1/agents/{id}/reply-preview` | Read a bounded certified preview of the latest persisted assistant message. |
+| `POST /api/v1/sandbox-creation-outcomes/lookup` | Read evidence for an exact owner Sandbox creation. |
+| `PUT /api/v1/admin/retained-runtime-policy` | CanaryPolicyRequest | - | 200 CanaryPolicyView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/retained-runtime-preview` | RetainedRuntimeProposal | - | 200 RetainedRuntimePreview; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/retained-runtime-grants` | RetainedRuntimeGrantRequest | - | 201 RetainedRuntimeGrantView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/retained-runtime-redemptions` | RetainedRuntimeRedemption | - | 202 RetainedRuntimeReceipt; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/retained-runtime-grants/abort` | RetainedRuntimeAbort | - | 200 RetainedRuntimeGrantView; 401/403/409/422/503 ProblemDocument |
 <!-- openapi-operations:end -->

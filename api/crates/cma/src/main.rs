@@ -1,4 +1,7 @@
 //! CMA control plane composition while replacement resource routes are rebuilt.
+// Tests drive raw driver sessions to construct the faults the guarded
+// terminal commands defend against (#3288).
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 // Avoid libc allocator retention and contention across async worker threads.
 #[global_allocator]
@@ -16,6 +19,7 @@ mod agent_manager;
 mod agent_models;
 mod auth;
 mod background;
+mod binding_diagnostics;
 mod bot_setups;
 mod commands;
 mod composition;
@@ -43,10 +47,13 @@ mod profile_policy;
 mod projections;
 mod provider_tool_relay;
 mod public_streams;
+#[cfg(feature = "qualification-hooks")]
+mod qualification;
 mod rate_limit;
 mod read_telemetry;
 mod readiness_diagnostics;
 mod retirement_archive;
+mod runtime_pointer;
 mod sandbox;
 mod sandbox_metrics;
 mod sandbox_usage_export;
@@ -109,6 +116,38 @@ fn main() {
 #[tokio::main]
 async fn run() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments.first().is_some_and(|value| {
+        matches!(
+            value.as_str(),
+            "--measured-capture"
+                | "--measured-preview"
+                | "--measured-freeze"
+                | "--measured-evidence-read"
+                | "--measured-period-read"
+                | "--measured-period-replay"
+                | "--measured-index-backfill"
+                | "--measured-index-certify"
+        )
+    }) {
+        match store::measured_capture::command::run(&arguments).await {
+            Ok(receipt) => println!("{receipt}"),
+            Err(reason) => {
+                eprintln!("{reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+    if store::turn_budget_inventory::is_command(&arguments) {
+        match store::turn_budget_inventory::command(&arguments).await {
+            Ok(receipt) => println!("{receipt}"),
+            Err(reason) => {
+                eprintln!("{reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if store::home_backups::evidence_export::cli::is_command(&arguments) {
         match store::home_backups::evidence_export::cli::command(&arguments).await {
             Ok(receipt) => println!("{receipt}"),
@@ -129,6 +168,16 @@ async fn run() {
         }
         return;
     }
+    if let Some(result) = store::agent_inspection_park::command(&arguments).await {
+        match result {
+            Ok(receipt) => println!("{receipt}"),
+            Err(reason) => {
+                eprintln!("{reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if arguments.len() == 3 && arguments[0] == "--ledger-collection-observation" {
         if let Err(error) = store::ledger_collection::command(
             std::path::Path::new(&arguments[1]),
@@ -137,6 +186,25 @@ async fn run() {
         .await
         {
             eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--task-audit")
+    {
+        if arguments.len() != 3 {
+            eprintln!("usage: cma --task-audit PRIVATE_SELECTION PRIVATE_NEW_FILE");
+            std::process::exit(2);
+        }
+        if let Err(error) = store::task_audit::command(
+            std::path::Path::new(&arguments[1]),
+            std::path::Path::new(&arguments[2]),
+        )
+        .await
+        {
+            eprintln!("task audit refused: {error}");
             std::process::exit(2);
         }
         return;
@@ -224,8 +292,30 @@ async fn run() {
         }
         return;
     }
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--runtime-pointer")
+    {
+        if let Err(error) = runtime_pointer::operator::command(&arguments).await {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    #[cfg(feature = "qualification-hooks")]
+    if let Some(options) = qualification::startup_options(&arguments) {
+        let options = options.unwrap_or_else(|message| {
+            eprintln!("{message}");
+            std::process::exit(2);
+        });
+        if let Err(error) = startup::serve_qualified(options).await {
+            tracing::error!(error = %error, "CMA stopped");
+            std::process::exit(1);
+        }
+        return;
+    }
     if !arguments.is_empty() && arguments != ["--agent-manager-drain"] {
-        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE | --home-backup-catalog-export PRIVATE_NEW_FILE | --allocator-self-test]");
+        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-capture SANDBOX FROM TO | --measured-preview SAMPLE FROM TO | --measured-freeze PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-evidence-read PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-period-read PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-period-replay PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-index-backfill | --measured-index-certify | --home-backup-catalog-export PRIVATE_NEW_FILE | --task-audit PRIVATE_SELECTION PRIVATE_NEW_FILE | --allocator-self-test]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {

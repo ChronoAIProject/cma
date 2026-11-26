@@ -43,6 +43,23 @@ impl<'session> TransactionScope<'session> {
         crate::store::work_publication::fence_transaction(store, self.session).await
     }
 
+    pub(in crate::store) async fn control_snapshot(
+        &mut self,
+        store: &crate::store::sandbox_mongo::MongoSandboxStore,
+        target: &layer2_core::sandbox::store::AgentControlTarget,
+    ) -> Result<
+        crate::store::agent_control_lineage::ControlSnapshot,
+        crate::store::agent_control_lineage::LineageError,
+    > {
+        crate::store::agent_control_lineage::load_control_snapshot(
+            store,
+            target,
+            self.session,
+            false,
+        )
+        .await
+    }
+
     pub(in crate::store) async fn live_agents(
         &mut self,
         store: &crate::store::MongoSandboxStore,
@@ -101,6 +118,21 @@ impl<'session> TransactionScope<'session> {
         at: &str,
     ) -> Result<(), TransactionLogError> {
         crate::store::budget::settle_runtime_loss(store, current, change, at, self.session).await
+    }
+
+    pub(in crate::store) async fn settle_owner_stop_budget(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        current: &layer2_core::sandbox::Agent,
+        at: &str,
+    ) -> Result<(), TransactionLogError> {
+        use crate::store::agent_conversation_store::ApplyError;
+        crate::store::budget::settle_owner_stop(store, current, at, self.session)
+            .await
+            .map_err(|error| match error {
+                ApplyError::Driver(error) => TransactionLogError::Driver(error),
+                ApplyError::Domain(error) => TransactionLogError::Domain(error),
+            })
     }
 
     /// Release consumes the scope. The caller may commit/abort and do normal

@@ -67,7 +67,16 @@ function MetricsDashboardContent({
     [measured, selection],
   );
   const visible = useUsageVisible(active);
-  const state = useUsageReport(api, effectiveSelection, admin, active, principal, forceOnMount);
+  const state = useUsageReport(
+    api,
+    effectiveSelection,
+    admin,
+    active,
+    principal,
+    forceOnMount,
+    measured,
+    true,
+  );
   useWarmUsageRanges(
     api,
     effectiveSelection,
@@ -82,6 +91,13 @@ function MetricsDashboardContent({
   const preview = state.report ? undefined : state.fallback;
   const displayedReport = state.report ?? preview?.report;
   const reportId = displayedReport?.report_id;
+  const initialMatchesSelection =
+    !preview &&
+    state.initial &&
+    state.initialProjection?.first_page?.sort === effectiveSelection.sort &&
+    state.initialProjection?.first_page?.order === effectiveSelection.order;
+  const initialPage = initialMatchesSelection ? state.initial?.rows : undefined;
+  const initialCharts = initialMatchesSelection ? state.initial?.charts : undefined;
   const onFailure = useCallback(
     (failure: MetricsFailure) => {
       if (reportId) setBlocked({ report: reportId, failure });
@@ -120,6 +136,7 @@ function MetricsDashboardContent({
           group={admin ? group : 'total'}
           metric={admin ? undefined : metric}
           active={visible}
+          initialCharts={initialCharts}
           onFailure={onFailure}
         />
       )}
@@ -223,6 +240,7 @@ function MetricsDashboardContent({
             key={report.report_id}
             api={api}
             reportId={report.report_id}
+            initialPage={initialPage}
             reportCoverage={report.summary?.allocated_period}
             sort={effectiveSelection.sort}
             order={effectiveSelection.order}

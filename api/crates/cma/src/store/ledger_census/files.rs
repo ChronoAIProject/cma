@@ -18,7 +18,7 @@ pub(in crate::store) fn require_parent(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn read(path: &Path) -> Result<Vec<u8>> {
+pub(in crate::store) fn read(path: &Path) -> Result<Vec<u8>> {
     require_parent(path)?;
     let before = fs::symlink_metadata(path).map_err(|_| OUTPUT)?;
     if !before.is_file()

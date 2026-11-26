@@ -218,7 +218,12 @@ export async function bootstrapProbe(onStage = () => {}) {
       const temporary = mkdtempSync('/tmp/cma-bootstrap-');
       temporaries.push(temporary);
       assert.deepEqual(readdirSync(temporary), []);
-      return waitingEnvironment(podUid, socket, temporary);
+      const environment = waitingEnvironment(podUid, socket, temporary);
+      // Probe the setting inherited by a real process in this image.
+      const restart = process.env.CHRONO_RUNTIME_AGENT_PROCESS_RESTART_ENABLED;
+      assert.equal(restart, 'true');
+      environment.CHRONO_RUNTIME_AGENT_PROCESS_RESTART_ENABLED = restart;
+      return environment;
     };
     const firstEnvironment = freshEnvironment(`ci-${randomUUID()}`);
     const initialize = spawnSync(executable, ['--initialize-home-tree', volume], {
@@ -266,14 +271,17 @@ export async function bootstrapProbe(onStage = () => {}) {
     onStage('bootstrap-agent-resource-capability');
     const extendedResponse = await fetch(`${base}/runtime/control`, {
       method: 'POST', headers: { 'content-type': 'application/json',
-        accept: 'application/vnd.chrono.cma.agent-resources-status+json',
+        accept: 'application/vnd.chrono.cma.agent-resources-status+json, ' +
+          'application/vnd.chrono.cma.agent-process-restart-status.v1+json',
         'x-cma-runtime-token': request.environment.CHRONO_RUNTIME_CONTROL_TOKEN },
       body: JSON.stringify(statusRequest(request)), signal: AbortSignal.timeout(15000), redirect: 'error',
     });
     assert.equal(extendedResponse.status, 200);
     const extended = await extendedResponse.json();
     assert.equal(extended.agent_resource_preparation, true);
+    assert.equal(extended.agent_process_restart, true);
     delete extended.agent_resource_preparation;
+    delete extended.agent_process_restart;
     assert.equal(assertRuntimeStatus(extended, request, false), firstBoot);
     // The opt-in does not change the response for subsequent old readers.
     assert.equal(await authenticatedStatus(running, base, request, false), firstBoot);

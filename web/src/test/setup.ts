@@ -1,9 +1,28 @@
-import { afterEach, vi } from 'vitest';
+import type {} from 'vitest/jsdom';
+import { afterAll, afterEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
 // Some utility suites deliberately run without jsdom.
 const hasDom = typeof globalThis.window !== 'undefined';
+
+if (hasDom) {
+  // Vitest replaces Storage with jsdom's constructor but preserves an existing
+  // Node sessionStorage global. Bind the actual jsdom store so prototype-based
+  // refusal tests reach the same implementation as browser code under test.
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+  Object.defineProperty(globalThis, 'sessionStorage', {
+    configurable: true,
+    value: jsdom.window.sessionStorage,
+    writable: true,
+  });
+  afterAll(() => {
+    // A reused worker can next run a node-environment suite.
+    if (original) Object.defineProperty(globalThis, 'sessionStorage', original);
+    else if (!Reflect.deleteProperty(globalThis, 'sessionStorage'))
+      throw new Error('Could not restore the sessionStorage test environment');
+  });
+}
 
 if (hasDom && !window.matchMedia) {
   Object.defineProperty(window, 'matchMedia', {

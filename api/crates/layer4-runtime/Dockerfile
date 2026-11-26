@@ -25,7 +25,7 @@ ARG OMARCHY_CMA_BASE=runtime-tools
 #     output moved, from the signed indexes.
 #  4. Land it only with an independent review of both catalogs, which sets
 #     APPROVED_PACKAGE_EVIDENCE and APPROVED_OMARCHY_PACKAGE_EVIDENCE.
-ARG DEBIAN_SNAPSHOT=20261123T154646Z
+ARG DEBIAN_SNAPSHOT=20261124T215723Z
 # The Omarchy stages install Arch packages exactly as the Arch Linux Archive
 # indexed core, extra and multilib on this one date, so the same source
 # installs the same packages and rebuilds the OpenSSL CLI, wlroots, Aquamarine
@@ -71,15 +71,37 @@ ARG OMARCHY_PACKAGES_IMAGE=ghcr.io/chronoaiproject/cma-omarchy-packages@sha256:7
 # 4 supervisor. The image supplies the one supported agent provider, the tools
 # needed to prepare git workspaces, and the NyxID CLI used through the local
 # credential proxy.
-FROM rust:1.96.1-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479 AS build
+# Cook the locked dependency graph in an exportable layer shared by both
+# runtime targets. Fresh CI builders do not inherit BuildKit cache mounts.
+FROM rust:1.96.1-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479 AS compiler-base
 RUN apk add --no-cache musl-dev
 WORKDIR /build
+
+FROM compiler-base AS chef
+COPY api/rust-toolchain.toml ./
+RUN CARGO_BUILD_JOBS=2 cargo install --locked --version 0.1.78 cargo-chef
+
+FROM chef AS planner
+COPY api/ ./
+RUN cargo chef prepare --recipe-path /recipe.json
+
+FROM chef AS dependencies
+COPY --from=planner /recipe.json /recipe.json
+RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,sharing=locked \
+    CARGO_BUILD_JOBS=2 cargo chef cook --release --locked --bin layer4-runtime --recipe-path /recipe.json
+
+FROM compiler-base AS build
 COPY api/ ./
 ARG TARGETARCH
+# Rebuild every workspace crate from actual source, even when source timestamps
+# predate the cooked placeholder artifacts. The dependency objects remain reusable.
 # Statically linked against musl, so it runs on any base the runtime stage uses.
 RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cma-runtime-target-${TARGETARCH},target=/build/target,sharing=locked \
-    cargo build --jobs 2 --release --locked --bin layer4-runtime \
+    --mount=type=bind,from=dependencies,source=/build/target,target=/dependency-target \
+    cp -a /dependency-target/. /build/target/ \
+    && cargo clean --release --workspace --locked \
+    && cargo build --jobs 2 --release --locked --bin layer4-runtime \
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
 # The base image carries only debian.sources; any other apt source is refused
@@ -245,7 +267,7 @@ ARG DESKTOP_CODEX_NATIVE_SHA256_ARM64=b32ece31af06440da980b733fb8fefdd1f19343959
 ARG DESKTOP_CODEX_LAUNCHER_SHA256=61b0194f3bb6534439c8d26a3ed57d0805f84b884588b761795323eeb92fcf70
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
-ARG CODEX_ACP_SHA256=ddb625f66a5a14d94df3512a525c4a674a359e564602c09085769c8b61e2bca1
+ARG CODEX_ACP_SHA256=11c84d6c37f3b2e15020405a2301df3ed8c16ed2d9b05c3a3a43620bba78a7d4
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.
 ARG NODE_VERSION=24.19.0
@@ -386,6 +408,7 @@ RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma
     && node /tmp/cma-codex-source/deferred_session_metadata.cjs \
     && node /tmp/cma-codex-source/session_open_overlap.cjs \
     && node /tmp/cma-codex-source/prompt_output_identity.cjs \
+    && node /tmp/cma-codex-source/native_bound_dispatch.cjs \
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
     && test -x /usr/local/bin/codex-acp
 
@@ -408,7 +431,7 @@ RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma
     && export CMA_CODEX_TEST_NATIVE_SHA256="${CODEX_NATIVE_SHA256_AMD64}" \
     && if [ "${RUNTIME_DESKTOP}" = "1" ]; then export CMA_CODEX_TEST_NATIVE_SHA256="${DESKTOP_CODEX_NATIVE_SHA256_AMD64}"; fi \
     && node --test /tmp/cma-codex-source/session_open_overlap.test.cjs /tmp/cma-codex-source/native_process_identity.test.cjs /tmp/cma-codex-source/deferred_metadata_runtime.test.cjs /tmp/cma-codex-source/deferred_session_metadata.test.cjs \
-    && node --test /tmp/cma-codex-source/prompt_output_buffer.test.cjs /tmp/cma-codex-source/prompt_output_identity.test.cjs \
+    && node --test /tmp/cma-codex-source/prompt_output_buffer.test.cjs /tmp/cma-codex-source/prompt_output_identity.test.cjs /tmp/cma-codex-source/native_bound_dispatch.test.cjs \
     && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs /tmp/cma-codex-source/endpoint_migration.test.cjs /tmp/cma-codex-source/turn_steering.test.cjs /tmp/cma-codex-source/open_completion.test.cjs /tmp/cma-codex-source/open_completion_native.test.cjs /tmp/cma-codex-source/recovery_rejoin_native.test.cjs \
     && python3 /tmp/cma-codex-source/recovery_test.py \
     && python3 /tmp/cma-codex-source/recovery_desktop_test.py \
@@ -489,6 +512,7 @@ ENV HOME=/home/cma \
     CHRONO_RUNTIME_HOME_IDENTITY="" \
     PATH=/home/cma/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED=false \
+    CHRONO_RUNTIME_AGENT_PROCESS_RESTART_ENABLED=true \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 \
     TERM=xterm-256color
 EXPOSE 9090
@@ -563,6 +587,7 @@ USER 10001:10001
 ENV HOME=/home/cma CHRONO_RUNTIME_GENERATION=1 CHRONO_RUNTIME_HOME_IDENTITY="" \
     PATH=/home/cma/.local/bin:/usr/local/bin:/usr/share/omarchy/bin:/usr/bin \
     CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED=false \
+    CHRONO_RUNTIME_AGENT_PROCESS_RESTART_ENABLED=true \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 TERM=xterm-256color \
     CODEX_PATH=/usr/local/bin/codex OMARCHY_PATH=/usr/share/omarchy
 EXPOSE 9090

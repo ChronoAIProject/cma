@@ -5,6 +5,7 @@ import { useDocumentTitle } from '../ui/useDocumentTitle';
 import type { Capability } from '../auth/types';
 import type { OperatorClient } from './client';
 import { Sandboxes } from './Sandboxes';
+import { BindingHolds } from './BindingHolds';
 import { PlatformSettings } from './PlatformSettings';
 import { WarmPools } from './WarmPools';
 import { Activity } from './Activity';
@@ -20,10 +21,12 @@ export function Operations({
   client,
   capabilities,
   principal = anonymousReportOwner,
+  bindingDiagnostics = false,
 }: {
   readonly client: OperatorClient;
   readonly capabilities: readonly Capability[];
   readonly principal?: UsageReportOwner;
+  readonly bindingDiagnostics?: boolean;
 }) {
   const available = operatorViews.filter((view) => capabilities.includes(view.capability));
   const [selected, setSelected] = useOperationsTab();
@@ -107,7 +110,12 @@ export function Operations({
         aria-labelledby={`${id}-${selectedView.id}`}
       >
         {selectedView.id === 'sandboxes' ? (
-          <Sandboxes client={client} canControl={canControl} principal={principal} />
+          <>
+            {bindingDiagnostics && principal.principal !== undefined && (
+              <BindingHolds key={principal.cacheKey} client={client} />
+            )}
+            <Sandboxes client={client} canControl={canControl} principal={principal} />
+          </>
         ) : null}
         {selectedView.id === 'settings' ? (
           <PlatformSettings

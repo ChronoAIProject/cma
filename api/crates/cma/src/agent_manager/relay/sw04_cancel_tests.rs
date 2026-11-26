@@ -14,7 +14,7 @@ use std::{io, net::SocketAddr, panic::AssertUnwindSafe, process::Stdio};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::{Child, Command},
-    time::timeout,
+    time::{sleep, timeout, timeout_at, Instant},
 };
 
 #[path = "sw04_cancel_tests/child.rs"]
@@ -69,6 +69,7 @@ async fn sw04_cancel_admitted_by_non_owner_executes_once() {
         timeout(Duration::from_secs(90), child::serve(&mongo, &name))
             .await
             .expect("fixture replica timed out");
+        mongo.shutdown().await;
         return;
     }
 
@@ -103,7 +104,7 @@ async fn sw04_cancel_admitted_by_non_owner_executes_once() {
             stopped = false;
         }
     }
-    let removed = stopped && matches!(timeout(LIMIT, database.drop()).await, Ok(Ok(())));
+    let removed = stopped && drop_owned_database(&mongo, &database).await;
     if !removed {
         eprintln!(
             "SW04 fixture cleanup failed: children_reaped={stopped} database_removed={removed}"
@@ -117,10 +118,42 @@ async fn sw04_cancel_admitted_by_non_owner_executes_once() {
     println!("SW04_CANCEL_OBSERVATION={observation}");
 }
 
+async fn drop_owned_database(mongo: &Client, database: &mongodb::Database) -> bool {
+    let deadline = Instant::now() + LIMIT;
+    // Reserve time inside the original cleanup bound for an exact readback.
+    // A lost or failed acknowledgement does not establish whether the drop ran.
+    match timeout_at(deadline - Duration::from_secs(1), database.drop()).await {
+        Ok(Ok(())) => return true,
+        Ok(Err(error)) => eprintln!("SW04 fixture database drop failed: {error}"),
+        Err(_) => eprintln!("SW04 fixture database drop timed out"),
+    }
+    let filter = doc! {"name": database.name()};
+    timeout_at(deadline, async {
+        loop {
+            if mongo
+                .list_database_names()
+                .filter(filter.clone())
+                .await
+                .is_ok_and(|names| names.is_empty())
+            {
+                return true;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap_or(false)
+}
+
 async fn reap(process: &mut Child) -> io::Result<()> {
-    if process.try_wait()?.is_none() {
-        process.start_kill()?;
-        process.wait().await?;
+    // Closing stdin lets the replica stop accepting requests and finish its
+    // current MongoDB work before the parent drops the fixture database.
+    drop(process.stdin.take());
+    let status = process.wait().await?;
+    if !status.success() {
+        return Err(io::Error::other(format!(
+            "fixture replica exited with {status}"
+        )));
     }
     Ok(())
 }
@@ -134,6 +167,7 @@ fn spawn(database: &str) -> Child {
         .env(DATABASE_ENV, database)
         .env(MONGO_ENV, std::env::var_os(MONGO_ENV).unwrap())
         .env("RUST_MIN_STACK", "33554432")
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
@@ -154,7 +188,7 @@ impl Listener {
 }
 
 async fn listener(process: &mut Child) -> Listener {
-    let mut output = BufReader::new(process.stdout.take().unwrap()).lines();
+    let mut output = BufReader::new(process.stdout.as_mut().unwrap()).lines();
     let ready: Listener = timeout(LIMIT, async {
         loop {
             let line = output

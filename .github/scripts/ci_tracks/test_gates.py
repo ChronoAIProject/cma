@@ -10,6 +10,7 @@ from version_label import deployables, selected_upgrade
 def needs(track, selected=True):
     tracks = dict(repo=True, am=selected, eg=selected, web=selected)
     outputs = {key: json.dumps(value) for key, value in tracks.items()}
+    outputs['approval_contract'] = json.dumps(selected)
     outputs.update(test_tracks=json.dumps(tracks), deployables='[]', am_packages='["cma"]' if selected else '[]', eg_packages='["cmaeg"]' if selected else '[]')
     result = {job: {'result': 'success' if selected or track == 'repo' else 'skipped'} for job in EXPECTED[track]}
     result['changes'] = {'result': 'success', 'outputs': outputs}
@@ -63,6 +64,26 @@ class GateTests(unittest.TestCase):
                 mutated[job]['result'] = status
                 with self.subTest(job=job, status=status), self.assertRaises(ValueError):
                     evaluate('am', mutated, split=True)
+
+    def test_approval_contract_requires_only_test_archive_for_web_only_changes(self):
+        data = needs('am', False)
+        outputs = data['changes']['outputs']
+        tracks = json.loads(outputs['test_tracks'])
+        tracks['web'] = True
+        outputs.update(web='true', approval_contract='true', test_tracks=json.dumps(tracks))
+        data['rust-test-build']['result'] = 'success'
+        data['approval-contract']['result'] = 'success'
+        for split in (False, True):
+            self.assertEqual(evaluate('am', data, split=split), 'passed')
+            for job in ('rust-test-build', 'approval-contract'):
+                for status in ('failure', 'cancelled', 'skipped'):
+                    mutated = copy.deepcopy(data)
+                    mutated[job]['result'] = status
+                    with self.subTest(split=split, job=job, status=status), self.assertRaises(ValueError):
+                        evaluate('am', mutated, split=split)
+        data['changes']['outputs'].pop('approval_contract')
+        with self.assertRaises(ValueError):
+            evaluate('am', data, split=True)
 
     def test_split_eg_expects_no_runtime_jobs(self):
         for selected in (True, False):

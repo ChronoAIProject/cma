@@ -164,6 +164,7 @@ pub(super) async fn serve_runtime(
                 }
             }
         } else {
+            let mut content_type = "application/json";
             let body = if request.starts_with("POST /runtime/control ") {
                 if matches!(mode, Mode::WireError) {
                     serde_json::to_string(&ResponseFrame::Failure(crate::wire::WireFailure {
@@ -174,7 +175,31 @@ pub(super) async fn serve_runtime(
                     }))
                     .unwrap()
                 } else if matches!(mode, Mode::Persistent) {
-                    persistent_response(&request)
+                    let response = persistent_response(&request);
+                    let policy = *state.startup_policy.lock().unwrap();
+                    let policy_accept = format!(
+                        "accept: {}",
+                        crate::RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE
+                    );
+                    if let Some(enabled) = policy.filter(|_| {
+                        request
+                            .lines()
+                            .any(|line| line.eq_ignore_ascii_case(&policy_accept))
+                    }) {
+                        let ResponseFrame::RuntimeStatus(runtime) =
+                            serde_json::from_str(&response).unwrap()
+                        else {
+                            panic!("expected runtime status")
+                        };
+                        content_type = crate::RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE;
+                        serde_json::to_string(&crate::RuntimeStartupPolicyObservation {
+                            runtime,
+                            legacy_journal_recovery_enabled: enabled,
+                        })
+                        .unwrap()
+                    } else {
+                        response
+                    }
                 } else {
                     serde_json::to_string(&ResponseFrame::Resources(ResourceReading::default()))
                         .unwrap()
@@ -247,7 +272,7 @@ pub(super) async fn serve_runtime(
             } else {
                 "close"
             };
-            if stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: {connection}\r\n\r\n{body}", body.len()).as_bytes()).await.is_err() { return; }
+            if stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: {connection}\r\n\r\n{body}", body.len()).as_bytes()).await.is_err() { return; }
             if matches!(mode, Mode::Persistent) {
                 continue;
             }

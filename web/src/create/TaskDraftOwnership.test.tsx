@@ -72,7 +72,7 @@ it.each(['pending', 'bound'] as const)(
     await waitFor(() => expect(sessionStorage.getItem(recoveryA)).toBeNull());
     expect(sessionStorage.getItem(slotB)).toBe(requestB);
     expect(sessionStorage.getItem(draftKey)).toBe(draftB);
-    expect(screen.getByLabelText('Your task')).toHaveValue('hello');
+    expect(screen.getByRole('region', { name: 'Original request' })).toHaveTextContent('hello');
     expect(creations).toBe(2);
   },
 );

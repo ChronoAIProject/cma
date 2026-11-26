@@ -47,6 +47,8 @@ struct CredentialDocument {
     issued_at: String,
     expires_at: String,
     grant_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    github_route: Option<layer3_adapter::GithubCredentialRoute>,
     value: CipherEnvelope,
 }
 
@@ -163,6 +165,7 @@ impl MongoSandboxCredentialStore {
             issued_at: authority.issued_at.clone(),
             expires_at: authority.expires_at.clone(),
             grant_fingerprint: authority.grant_fingerprint.clone(),
+            github_route: material.github_route.clone(),
             value: self.cipher.seal(
                 CREDENTIAL_KIND,
                 id.as_bytes(),
@@ -190,6 +193,7 @@ impl MongoSandboxCredentialStore {
         }
         let material = CredentialMaterial {
             source: document.source,
+            github_route: document.github_route,
             sandbox_id: SandboxId(document.sandbox_id),
             owner: SubjectId(document.owner),
             authority: layer2_core::sandbox::SandboxCredentialAuthority {

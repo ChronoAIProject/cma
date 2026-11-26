@@ -71,7 +71,7 @@ export function DesktopFeedback({
                 : phase === 'connecting'
                   ? 'Connecting to your machine'
                   : phase === 'recovering'
-                    ? 'Restoring your desktop'
+                    ? 'Reconnecting…'
                     : phase === 'loading'
                       ? 'Loading your desktop'
                       : error}

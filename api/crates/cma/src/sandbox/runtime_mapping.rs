@@ -93,6 +93,18 @@ pub(super) fn sandbox_spec(
         .as_ref()
         .and_then(|home| home.attachment())
         .map(Box::new);
+    if let Some(evidence) = &sandbox.lifecycle.retained_startup_policy {
+        if spec
+            .home_volume
+            .as_ref()
+            .and_then(|home| home.identity().ok())
+            .as_deref()
+            == Some(evidence.observation.runtime.home_identity.as_str())
+        {
+            spec.retained_journal_recovery =
+                Some(evidence.observation.legacy_journal_recovery_enabled);
+        }
+    }
     if spec.runtime_image.is_none() {
         spec.runtime_image = sandbox
             .lifecycle

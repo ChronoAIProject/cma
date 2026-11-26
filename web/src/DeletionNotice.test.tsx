@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import { DeletionNotice } from './DeletionNotice';
+import { useState } from 'react';
+import { DeletionNotice, DeletionProgress } from './DeletionNotice';
 import type { DeletionRequest } from './deletion';
 
 const requests: DeletionRequest[] = [
@@ -11,9 +12,30 @@ const requests: DeletionRequest[] = [
 
 it('keeps every mixed and unconfirmed request reachable with its original identity', () => {
   const select = vi.fn();
-  const view = render(
-    <DeletionNotice requests={requests} disabled={false} onViewStatus={select} />,
-  );
+  function Notices({ pending }: { readonly pending: readonly DeletionRequest[] }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <DeletionNotice
+          requests={pending}
+          disabled={false}
+          onViewStatus={() => setOpen(true)}
+          onDismiss={vi.fn()}
+        />
+        {open && pending.length > 0 ? (
+          <DeletionProgress
+            requests={pending}
+            onClose={() => setOpen(false)}
+            onViewStatus={(request) => {
+              select(request);
+              setOpen(false);
+            }}
+          />
+        ) : null}
+      </>
+    );
+  }
+  const view = render(<Notices pending={requests} />);
   expect(screen.getByRole('status')).toHaveTextContent('3 deletion requests · 1 unconfirmed');
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   for (const [index, request] of requests.entries()) {
@@ -29,21 +51,22 @@ it('keeps every mixed and unconfirmed request reachable with its original identi
     expect(select).toHaveBeenLastCalledWith(request);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   }
-  view.rerender(
-    <DeletionNotice requests={requests.slice(1)} disabled={false} onViewStatus={select} />,
-  );
+  view.rerender(<Notices pending={requests.slice(1)} />);
   expect(screen.getByRole('status')).toHaveTextContent('2 deletion requests · 1 unconfirmed');
   fireEvent.click(screen.getByRole('button', { name: 'View status' }));
-  view.rerender(<DeletionNotice requests={[]} disabled={false} onViewStatus={select} />);
+  view.rerender(<Notices pending={[]} />);
   expect(screen.queryByRole('region')).not.toBeInTheDocument();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(select).toHaveBeenCalledTimes(3);
 });
 
 it('keeps status unavailable while another action owns the dialog', () => {
-  render(<DeletionNotice requests={requests} disabled onViewStatus={vi.fn()} />);
+  const openStatus = vi.fn();
+  render(
+    <DeletionNotice requests={requests} disabled onViewStatus={openStatus} onDismiss={vi.fn()} />,
+  );
   const open = screen.getByRole('button', { name: 'View status' });
   expect(open).toBeDisabled();
   fireEvent.click(open);
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(openStatus).not.toHaveBeenCalled();
 });

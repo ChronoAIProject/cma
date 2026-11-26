@@ -26,6 +26,38 @@ const ALL_ACTIONS = {
   exportHistory: true,
 };
 
+it.each([false, true])(
+  'offers owner restart only when the server advertises it (%s)',
+  async (restartAvailable) => {
+    const restart = vi.fn(async () => undefined);
+    const actor = userEvent.setup();
+    render(
+      <AgentSurface
+        agentId="agt_1"
+        viewerId="owner"
+        controller={controller(
+          {
+            status: 'ready',
+            detail: { ...AGENT_DETAIL, status: 'stopped', restartAvailable },
+            workspace: workspaceFixture(),
+            conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+          },
+          undefined,
+          { restart },
+        )}
+        detailsOpen={false}
+        onDetailsOpenChange={vi.fn()}
+        onNavigate={vi.fn()}
+        permissions={ALL_ACTIONS}
+      />,
+    );
+    const action = screen.queryByRole('button', { name: 'Restart Agent' });
+    if (restartAvailable) await actor.click(action!);
+    else expect(action).toBeNull();
+    expect(restart).toHaveBeenCalledTimes(Number(restartAvailable));
+  },
+);
+
 it('offers Stop, Export and Delete for a running Agent owned by the viewer', async () => {
   const onAgentAction = vi.fn();
   const actor = userEvent.setup();

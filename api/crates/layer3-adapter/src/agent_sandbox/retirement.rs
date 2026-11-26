@@ -60,7 +60,11 @@ impl AgentSandboxClient {
         runtime: &RuntimeHandle,
         home: &HomeVolumeAttachment,
     ) -> Result<()> {
-        self.retirement_home(runtime, home, false).await?;
+        if home.request.policy.is_native_vct() {
+            self.native_runtime_home_origin(runtime, home)?;
+        } else {
+            self.retirement_home(runtime, home, false).await?;
+        }
         // get rejects a same-name replacement even when the old UID is absent.
         if self.get(runtime).await?.is_some() {
             return Err(unavailable("retiring runtime is still present"));
@@ -76,6 +80,10 @@ impl AgentSandboxClient {
             }
             self.pools.wait_claim_absent(&origin.claim).await?;
         }
+        let (_, member_uid) = parse_handle(runtime)?;
+        self.pools
+            .prove_retirement_volumes_absent(member_uid, home)
+            .await?;
         if self.get(runtime).await?.is_some() {
             return Err(unavailable("runtime appeared during finality observation"));
         }

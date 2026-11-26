@@ -12,6 +12,7 @@ async fn default_policy_retries_refused_h2_stream_with_frozen_body_and_credentia
             operation_id: "h2-contract-rotate".into(),
             value: RuntimeCredential::new("h2-rotated-fixture"),
             custody_generation: Some(2),
+            github_route: None,
         })
         .await
         .unwrap();

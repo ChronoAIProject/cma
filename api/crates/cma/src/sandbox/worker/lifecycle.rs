@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::time::SystemTime;
 
 use layer2_core::sandbox::store::SandboxStoreError;
@@ -13,8 +15,9 @@ mod checkpoint_retry;
 mod conversations;
 mod home_recovery;
 mod pause;
+mod publish_active;
 mod queue;
-mod reopen_output;
+pub(in crate::sandbox) mod reopen_output;
 mod reopen_owned;
 mod reopen_refusal;
 pub(super) use reopen_owned::{PendingReopen, ReopenGates};
@@ -72,80 +75,94 @@ impl SandboxWorker {
             sandbox.lifecycle.operation.clone().ok_or_else(|| {
                 SandboxStoreError::Corrupt("lifecycle operation is absent".into())
             })?;
+        self.execute_lifecycle_phase(sandbox, operation, now).await
+    }
+
+    // Construct only the selected phase future outside the polling frame.
+    fn execute_lifecycle_phase(
+        &self,
+        sandbox: Sandbox,
+        operation: SandboxLifecycleOperation,
+        now: SystemTime,
+    ) -> Pin<Box<dyn Future<Output = Result<(), SandboxStoreError>> + Send + '_>> {
         match operation {
             SandboxLifecycleOperation::Pause { phase, .. } => match phase {
                 SandboxPausePhase::CaptureAndPublishCheckpoint => {
-                    self.capture_and_publish(sandbox, now).await
+                    Box::pin(self.capture_and_publish(sandbox, now))
                 }
-                SandboxPausePhase::PauseAgents => self.pause_lifecycle_agents(sandbox, now).await,
+                SandboxPausePhase::PauseAgents => {
+                    Box::pin(self.pause_lifecycle_agents(sandbox, now))
+                }
                 SandboxPausePhase::TeardownRuntime => {
-                    self.teardown_lifecycle_runtime(sandbox, now).await
+                    Box::pin(self.teardown_lifecycle_runtime(sandbox, now))
                 }
-                SandboxPausePhase::PublishPaused => self.publish_paused(sandbox, now).await,
-                SandboxPausePhase::ResumeWriters => self.cancel_pause(sandbox, now).await,
+                SandboxPausePhase::PublishPaused => Box::pin(self.publish_paused(sandbox, now)),
+                SandboxPausePhase::ResumeWriters => Box::pin(self.cancel_pause(sandbox, now)),
             },
             SandboxLifecycleOperation::Revive { phase, .. } => {
-                self.run_restore_phase(sandbox, phase, now).await
+                self.run_restore_phase(sandbox, phase, now)
             }
             SandboxLifecycleOperation::ImageRotation { phase, .. } => match phase {
                 SandboxImageRotationPhase::CaptureAndPublishCheckpoint => {
-                    self.capture_and_publish(sandbox, now).await
+                    Box::pin(self.capture_and_publish(sandbox, now))
                 }
                 SandboxImageRotationPhase::PauseAgents => {
-                    self.pause_lifecycle_agents(sandbox, now).await
+                    Box::pin(self.pause_lifecycle_agents(sandbox, now))
                 }
                 SandboxImageRotationPhase::TeardownRuntime => {
-                    self.teardown_lifecycle_runtime(sandbox, now).await
+                    Box::pin(self.teardown_lifecycle_runtime(sandbox, now))
                 }
                 SandboxImageRotationPhase::CheckpointVerification => {
-                    self.verify_lifecycle_checkpoint(sandbox, now).await
+                    Box::pin(self.verify_lifecycle_checkpoint(sandbox, now))
                 }
                 SandboxImageRotationPhase::RuntimeProvisioning => {
-                    self.provision_lifecycle_runtime(sandbox, now).await
+                    Box::pin(self.provision_lifecycle_runtime(sandbox, now))
                 }
                 SandboxImageRotationPhase::CredentialDelivery => {
-                    self.deliver_lifecycle_credential(sandbox, now).await
+                    Box::pin(self.deliver_lifecycle_credential(sandbox, now))
                 }
                 SandboxImageRotationPhase::HomeRestore => {
-                    self.restore_lifecycle_home(sandbox, now).await
+                    Box::pin(self.restore_lifecycle_home(sandbox, now))
                 }
                 SandboxImageRotationPhase::ConversationReopen => {
-                    self.reopen_lifecycle_conversations(sandbox, now).await
+                    Box::pin(self.reopen_lifecycle_conversations(sandbox, now))
                 }
                 SandboxImageRotationPhase::QueuedMessageDelivery => {
-                    self.deliver_lifecycle_queue(sandbox, now).await
+                    Box::pin(self.deliver_lifecycle_queue(sandbox, now))
                 }
                 SandboxImageRotationPhase::PublishActive => {
-                    self.publish_restored_active(sandbox, now).await
+                    Box::pin(self.publish_restored_active(sandbox, now))
                 }
             },
         }
     }
 
-    async fn run_restore_phase(
+    fn run_restore_phase(
         &self,
         sandbox: Sandbox,
         phase: SandboxRevivePhase,
         now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), SandboxStoreError>> + Send + '_>> {
         match phase {
             SandboxRevivePhase::CheckpointVerification => {
-                self.verify_lifecycle_checkpoint(sandbox, now).await
+                Box::pin(self.verify_lifecycle_checkpoint(sandbox, now))
             }
             SandboxRevivePhase::RuntimeProvisioning => {
-                self.provision_lifecycle_runtime(sandbox, now).await
+                Box::pin(self.provision_lifecycle_runtime(sandbox, now))
             }
             SandboxRevivePhase::CredentialDelivery => {
-                self.deliver_lifecycle_credential(sandbox, now).await
+                Box::pin(self.deliver_lifecycle_credential(sandbox, now))
             }
-            SandboxRevivePhase::HomeRestore => self.restore_lifecycle_home(sandbox, now).await,
+            SandboxRevivePhase::HomeRestore => Box::pin(self.restore_lifecycle_home(sandbox, now)),
             SandboxRevivePhase::ConversationReopen => {
-                self.reopen_lifecycle_conversations(sandbox, now).await
+                Box::pin(self.reopen_lifecycle_conversations(sandbox, now))
             }
             SandboxRevivePhase::QueuedMessageDelivery => {
-                self.deliver_lifecycle_queue(sandbox, now).await
+                Box::pin(self.deliver_lifecycle_queue(sandbox, now))
             }
-            SandboxRevivePhase::PublishActive => self.publish_restored_active(sandbox, now).await,
+            SandboxRevivePhase::PublishActive => {
+                Box::pin(self.publish_restored_active(sandbox, now))
+            }
         }
     }
 }

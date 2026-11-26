@@ -199,6 +199,7 @@ impl ChannelReader for FakeReader {
                 return Err(ManagementError::NotFound);
             }
             Ok(RecordedChannel {
+                retirement_expected_version: None,
                 definition: definition.clone(),
                 version: *version,
                 record_bytes: 12_288,

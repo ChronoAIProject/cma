@@ -1035,3 +1035,107 @@ async fn durable_slot_change_rejects_an_obsolete_existing_replay() {
         vec![first]
     );
 }
+
+#[tokio::test]
+async fn qualified_public_source_profile_is_bound_to_its_original_lifecycle() {
+    use crate::sandbox::store::{SandboxAdmission, SandboxAdmissionName, SandboxAdmissionStore};
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let store = Arc::new(InMemorySandboxStore::default());
+    let mut public = profile(
+        "wkp_public_source",
+        "consumer",
+        "workspace",
+        ProfileVisibility::Private,
+        Vec::new(),
+    );
+    public.draft.location = WorkspaceLocation::PublicRepositorySnapshot {
+        url: "https://github.com/example/project".into(),
+        commit: "a".repeat(40),
+        operation_id: "original-operation".into(),
+    };
+    let reference = publish(&profiles, public).await;
+    let mut original = sandbox(
+        "sbx_public_source",
+        SandboxStatus::Provisioning,
+        vec![reference.clone()],
+        4,
+    );
+    original.origin = SandboxOrigin::Lifecycle {
+        operation_id: "original-operation".into(),
+    };
+    original.profile.content.runtime_image = Some(format!(
+        "registry.example/runtime@sha256:{}",
+        "a".repeat(64)
+    ));
+    let mut other = sandbox(
+        "sbx_other_source",
+        SandboxStatus::Active,
+        vec![reference.clone()],
+        4,
+    );
+    other.origin = SandboxOrigin::Lifecycle {
+        operation_id: "different-operation".into(),
+    };
+    other.profile.content.runtime_image = Some(format!(
+        "registry.example/runtime@sha256:{}",
+        "b".repeat(64)
+    ));
+    original.profile.digest = content_digest(&original.profile.content).unwrap();
+    other.profile.digest = content_digest(&other.profile.content).unwrap();
+    other.status = SandboxStatus::Provisioning;
+    for parent in [&original, &other] {
+        store
+            .admit_sandbox(
+                SandboxAdmission::new(
+                    parent.clone(),
+                    SandboxAdmissionName::Exact(parent.name.clone()),
+                    8,
+                    NOW.into(),
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    original.revision += 1;
+    original.status = SandboxStatus::Installing;
+    original.work.step = SandboxWorkStep::RunInstall;
+    store.save_sandbox(1, original.clone()).await.unwrap();
+    other.revision += 1;
+    other.status = SandboxStatus::Active;
+    other.work.step = SandboxWorkStep::None;
+    store.save_sandbox(1, other.clone()).await.unwrap();
+    let service = WorkspaceService::new(store.clone(), profiles);
+    let accepted = service
+        .create_profile_workspace(&original, &reference, 0)
+        .await
+        .unwrap();
+    let replay = service
+        .create_profile_workspace(&original, &reference, 0)
+        .await
+        .unwrap();
+    assert_eq!(accepted.id, replay.id);
+    assert!(matches!(
+        accepted.source,
+        WorkspaceSource::PublicRepositorySnapshot { .. }
+    ));
+    assert!(matches!(
+        service
+            .create_profile_workspace(&other, &reference, 0)
+            .await,
+        Err(WorkspaceServiceError::InvalidProfile(_))
+    ));
+    assert!(matches!(
+        service
+            .create(
+                &caller("consumer"),
+                &other.id,
+                CreateWorkspace {
+                    profile: reference,
+                    confirmed_digest: None
+                }
+            )
+            .await,
+        Err(WorkspaceServiceError::InvalidProfile(_))
+    ));
+}

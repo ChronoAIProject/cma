@@ -44,7 +44,11 @@ pub fn migration_role(database: &str) -> Document {
         "resource":{"db":database,"collection":*name},
         "actions":["find","insert","update","createCollection","createIndex","listIndexes","collMod"]
     }).collect();
-    doc! {"createRole":"cma_im_migrator","privileges":grants,"roles":[]}
+    cma_service_migrations::migration_role(
+        doc! {"createRole":"cma_im_migrator","privileges":grants,"roles":[]},
+        database,
+        crate::migrations::LEDGER,
+    )
 }
 pub fn validate_runtime_privileges(reply: &Document, database: &str) -> Result<(), SchemaError> {
     let info = reply
@@ -205,6 +209,15 @@ pub fn validator(build: bool) -> Document {
 }
 
 pub async fn migrate(db: &Database) -> Result<(), SchemaError> {
+    cma_service_migrations::marker_int32(
+        db,
+        MIGRATIONS,
+        "schema",
+        "version",
+        &[1, 2],
+        SCHEMA_VERSION,
+    )
+    .await?;
     cma_service_auth::browser::migrate(db, SESSIONS).await?;
     for name in [IMAGES, BUILDS, MIGRATIONS].iter() {
         let validation = if *name == MIGRATIONS {
@@ -212,56 +225,86 @@ pub async fn migrate(db: &Database) -> Result<(), SchemaError> {
         } else {
             validator(*name == BUILDS)
         };
-        match db.run_command(doc!{"create":*name,"validator":validation.clone(),"validationLevel":"strict","validationAction":"error"}).await {
-            Ok(_) => {},
-            Err(error) if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(c) if c.code==48) => {
-                db.run_command(doc!{"collMod":*name,"validator":validation,"validationLevel":"strict","validationAction":"error"}).await?;
-            },
-            Err(error) => return Err(error.into()),
-        }
+        let predecessors = if *name == MIGRATIONS {
+            vec![
+                doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","version"],"properties":{"_id":{"enum":["schema"]},"version":{"enum":[1]}}}},
+            ]
+        } else {
+            let mut prior = validation.clone();
+            let properties = prior
+                .get_document_mut("$jsonSchema")
+                .unwrap()
+                .get_document_mut("properties")
+                .unwrap();
+            if *name == IMAGES {
+                properties.remove("visibility");
+            } else {
+                properties
+                    .get_document_mut("source")
+                    .unwrap()
+                    .get_document_mut("properties")
+                    .unwrap()
+                    .remove("dockerfile_content");
+            }
+            vec![prior]
+        };
+        cma_service_migrations::collection_with_predecessors(
+            db,
+            name,
+            validation,
+            true,
+            predecessors,
+        )
+        .await?;
     }
     for name in [IMAGES, BUILDS] {
-        let collection = db.collection::<Document>(name);
-        collection
-            .create_index(
+        cma_service_migrations::indexes(
+            db,
+            name,
+            vec![
                 IndexModel::builder()
                     .keys(doc! {"owner":1,"request_key_hash":1})
                     .options(IndexOptions::builder().unique(true).build())
                     .build(),
-            )
-            .await?;
-        collection
-            .create_index(IndexModel::builder().keys(doc! {"owner":1,"_id":1}).build())
-            .await?;
+                IndexModel::builder().keys(doc! {"owner":1,"_id":1}).build(),
+            ],
+        )
+        .await?;
     }
-    db.collection::<Document>(BUILDS)
-        .create_index(
+    cma_service_migrations::indexes(
+        db,
+        BUILDS,
+        vec![
             IndexModel::builder()
                 .keys(doc! {"phase":1,"updated_at_ms":1})
                 .build(),
-        )
-        .await?;
-    for keys in [
-        doc! {"visibility":1,"retired":1,"_id":1},
-        doc! {"shares":1,"_id":1},
-    ] {
-        db.collection::<Document>(IMAGES)
-            .create_index(IndexModel::builder().keys(keys).build())
-            .await?;
-    }
-    db.collection::<Document>(BUILDS)
-        .create_index(
             IndexModel::builder()
                 .keys(doc! {"image_id":1,"_id":1})
                 .build(),
-        )
-        .await?;
-    db.collection::<Document>(MIGRATIONS)
-        .update_one(
-            doc! {"_id":"schema"},
-            doc! {"$set":{"version":SCHEMA_VERSION}},
-        )
-        .upsert(true)
-        .await?;
+        ],
+    )
+    .await?;
+    cma_service_migrations::indexes(
+        db,
+        IMAGES,
+        vec![
+            IndexModel::builder()
+                .keys(doc! {"visibility":1,"retired":1,"_id":1})
+                .build(),
+            IndexModel::builder()
+                .keys(doc! {"shares":1,"_id":1})
+                .build(),
+        ],
+    )
+    .await?;
+    cma_service_migrations::update(
+        db,
+        MIGRATIONS,
+        doc! {"_id":"schema"},
+        doc! {"$set":{"version":SCHEMA_VERSION}},
+        true,
+        false,
+    )
+    .await?;
     Ok(())
 }

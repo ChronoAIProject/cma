@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent_models::test_runtime::Probe;
 use crate::{projections::UnavailableSandboxResources, store::agent_access_fixtures};
 use axum::{
     body::{to_bytes, Body},
@@ -21,9 +22,6 @@ use layer3_adapter::{
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tower::ServiceExt;
-#[path = "test_runtime.rs"]
-mod test_runtime;
-use test_runtime::Probe;
 
 fn fixture() -> (Sandbox, RuntimeStatus, Arc<Probe>) {
     let mut root = agent_access_fixtures::sandbox("support-cache");

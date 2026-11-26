@@ -4,6 +4,7 @@ import { agentClient, AGENT_DETAIL } from '../test/agent';
 import { sandboxFixture } from '../test/hierarchy';
 import { taskExperience } from '../test/taskExperience';
 import { TaskHome } from './TaskHome';
+import { taskDraftStorageKey } from './taskDraft';
 import { lifecycleStorageKey } from './lifecycleIntent';
 import { lifecycleRecoveryKey } from './lifecycleIntentStorage';
 import { AgentLifecycleFollowup } from './AgentLifecycleFollowup';
@@ -161,6 +162,7 @@ it.each(['succeeded', 'failed', 'waiting_for_connection'] as const)(
     fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
     await waitFor(() => expect(task.create).toHaveBeenCalledOnce());
     const pending = sessionStorage.getItem(task.key);
+    const savedDraft = sessionStorage.getItem(taskDraftStorageKey('owner'));
     await act(async () =>
       resolve({
         id: 'old-operation',
@@ -174,7 +176,8 @@ it.each(['succeeded', 'failed', 'waiting_for_connection'] as const)(
         ...(status === 'failed' ? { error: 'Original setup failed' } : {}),
       }),
     );
-    expect(screen.getByLabelText('Your task')).toHaveValue('hello');
+    expect(screen.getByRole('region', { name: 'Original request' })).toHaveTextContent('hello');
+    expect(sessionStorage.getItem(taskDraftStorageKey('owner'))).toBe(savedDraft);
     expect(sessionStorage.getItem(task.key)).toBe(pending);
     expect(task.opened).not.toHaveBeenCalled();
     expect(task.create).toHaveBeenCalledOnce();
@@ -245,6 +248,7 @@ it('keeps B’s identical submitted draft when the older Agent completes', async
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await waitFor(() => expect(task.create).toHaveBeenCalledOnce());
   const pending = sessionStorage.getItem(task.key);
+  const savedDraft = sessionStorage.getItem(taskDraftStorageKey('owner'));
   const client = {
     ...task.props.client,
     readAgentLifecycle: async () => ({
@@ -266,7 +270,8 @@ it('keeps B’s identical submitted draft when the older Agent completes', async
     { agentId: 'agt_1', operationId: 'old-operation' },
   );
   await waitFor(() => expect(sessionStorage.getItem(journal)).toBeNull());
-  expect(screen.getByLabelText('Your task')).toHaveValue('hello');
+  expect(screen.getByRole('region', { name: 'Original request' })).toHaveTextContent('hello');
+  expect(sessionStorage.getItem(taskDraftStorageKey('owner'))).toBe(savedDraft);
   expect(sessionStorage.getItem(task.key)).toBe(pending);
   expect(task.opened).not.toHaveBeenCalled();
 });

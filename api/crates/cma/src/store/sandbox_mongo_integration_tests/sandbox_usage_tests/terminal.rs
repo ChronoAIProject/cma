@@ -97,6 +97,7 @@ async fn terminal_failure_stops_compute_retains_disk_and_does_not_release_quota(
                 failure: parent.failure.clone().unwrap(),
             },
             command_revival: None,
+            released_runtime: None,
         })
         .await
         .unwrap();

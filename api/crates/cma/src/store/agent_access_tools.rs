@@ -1,4 +1,5 @@
 //! Limited consent-request capabilities, separate from all NyxID credentials.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::sync::Arc;
 
 use layer2_core::sandbox::{AgentCreationProvenance, RuntimeBinding};
@@ -169,7 +170,7 @@ impl MongoAgentAccessToolSource {
             let result = match result {
                 Ok(value) => value,
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     match error {
                         Error::Driver(error) => {
                             operation.diagnostic("read_write", driver_category(&error), attempt);

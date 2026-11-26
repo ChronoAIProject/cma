@@ -1,3 +1,4 @@
+import { selectHomeTemplate } from './home-simplification.fixture';
 import { test, expect, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { registerRedesignTemplateCases } from './redesign-home.cases';
@@ -95,7 +96,7 @@ for (const theme of ['light', 'dark']) {
       await page.addInitScript((theme) => localStorage.setItem('cma:appearance', theme), theme);
       await page.goto('/');
       await settle(page);
-      await page.getByRole('button', { name: item.name, exact: true }).click();
+      await selectHomeTemplate(page, item.name);
       const first = page.getByLabel(item.fields[0][0], { exact: true });
       await expect(first).toBeFocused();
       const start = page.getByRole('button', { name: 'Start task', exact: true });
@@ -187,13 +188,14 @@ for (const theme of ['light', 'dark']) {
           fields: Object.fromEntries(item.fields.map(([, value, key]) => [key, value])),
         },
       });
-      await first.fill('Later draft');
+      const followup = page.getByRole('textbox', { name: 'Follow-up draft', exact: true });
+      await followup.fill('Later draft');
       await page.reload();
       await settle(page);
       await page.getByRole('button', { name: 'Recover original task' }).click();
       await expect.poll(() => writes.length).toBe(2);
       expect(writes[1]).toEqual(writes[0]);
-      await expect(first).toHaveValue('Later draft');
+      await expect(followup).toHaveValue('Later draft');
       expect(boundary.writes).toEqual([]);
       expect(boundary.unexpected).toEqual([]);
       expect(boundary.errors).toEqual([]);
@@ -208,7 +210,7 @@ test('LOCAL unsupported template support preserves input and ordinary bracket te
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   await settle(page);
-  await page.getByRole('button', { name: 'Research a topic', exact: true }).click();
+  await selectHomeTemplate(page, 'Research a topic');
   await page.getByLabel('Topic', { exact: true }).fill('Synthetic');
   await expect(page.getByRole('heading', { name: 'Task preview · read-only' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Task preview · read-only' })).toHaveText(
@@ -243,7 +245,7 @@ for (const width of [1440, 390]) {
     await page.goto('/');
     await settle(page);
     await page.getByLabel('Your task').fill('My separate free-text draft');
-    await page.getByRole('button', { name: 'Write a document', exact: true }).click();
+    await selectHomeTemplate(page, 'Write a document');
     await page.getByLabel('Document type', { exact: true }).fill(' report ');
     await page.getByLabel('Subject', { exact: true }).fill('草稿 [subject]');
     const switchMode = page.getByRole('button', { name: 'Write a task without a template' });
@@ -274,11 +276,11 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole('button', { name: 'Start task' })).toBeDisabled();
     await page.getByLabel('Subject', { exact: true }).press('Control+Enter');
     await expect(page.getByLabel('Audience', { exact: true })).toBeFocused();
-    await page.getByRole('button', { name: 'Write code', exact: true }).click();
+    await selectHomeTemplate(page, 'Write code');
     await page.getByLabel('Language', { exact: true }).fill('Python');
-    await page.getByRole('button', { name: 'Write a document', exact: true }).click();
+    await selectHomeTemplate(page, 'Write a document');
     await expect(page.getByLabel('Subject', { exact: true })).toHaveValue('草稿 [subject]');
-    await page.getByRole('button', { name: 'Write code', exact: true }).click();
+    await selectHomeTemplate(page, 'Write code');
     await expect(page.getByLabel('Language', { exact: true })).toHaveValue('Python');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
       true,
@@ -298,7 +300,7 @@ test('LOCAL complete conversion confirms replacement and keeps the template fiel
   await page.goto('/');
   await settle(page);
   await page.getByLabel('Your task').fill('Keep the existing draft until confirmation');
-  await page.getByRole('button', { name: 'Research a topic', exact: true }).click();
+  await selectHomeTemplate(page, 'Research a topic');
   await page.getByLabel('Topic', { exact: true }).fill('  Synthetic topic  ');
   const preview =
     'Research the following topic:\n\nSynthetic topic\n\nSummarize the key findings, with links to sources.';
@@ -325,7 +327,7 @@ test('LOCAL a storage refusal keeps the partial template and the prior saved dra
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   await settle(page);
-  await page.getByRole('button', { name: 'Write a document', exact: true }).click();
+  await selectHomeTemplate(page, 'Write a document');
   await page.getByLabel('Subject', { exact: true }).fill('Saved subject');
   const stored = await page.evaluate(() =>
     Object.entries(sessionStorage).filter(([key]) => key.startsWith('cma:task-draft:')),
@@ -366,7 +368,7 @@ for (const width of [1440, 390]) {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.goto('/');
     await settle(page);
-    await page.getByRole('button', { name: 'Write a document', exact: true }).click();
+    await selectHomeTemplate(page, 'Write a document');
     await page.getByLabel('Document type', { exact: true }).fill(' report ');
     await page.getByLabel('Subject', { exact: true }).fill('  草稿 [subject]  ');
     await page.evaluate(() => {

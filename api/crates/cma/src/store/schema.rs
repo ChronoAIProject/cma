@@ -30,6 +30,7 @@ pub(super) async fn verify_existing_collections(
     }
     if collections.contains(&"agents") {
         super::agent_log_segments::schema::verify(database).await?;
+        super::turn_timeouts::floor::verify(database).await?;
     }
     Ok(())
 }
@@ -124,12 +125,18 @@ pub(super) fn require_current(version: i64) -> Result<(), StoreError> {
 }
 
 fn unknown_version_filter(collection: &str) -> Document {
-    let versions = if matches!(collection, "agents" | "agent_reuse_bindings" | "bots") {
+    let versions = if collection == "sandboxes" {
+        super::work_schema::SANDBOX_VERSIONS.to_vec()
+    } else if matches!(collection, "agents" | "agent_reuse_bindings" | "bots") {
         vec![1_i64, 2]
-    } else if matches!(
-        collection,
-        "sandboxes" | "workspaces" | "sandbox_credentials"
-    ) {
+    } else if collection == "sandbox_credentials" {
+        vec![
+            1_i64,
+            super::work_schema::RENEWED_VERSION,
+            super::work_schema::PREPARED_VERSION,
+            super::turn_timeouts::floor::VERSION,
+        ]
+    } else if collection == "workspaces" {
         vec![
             1_i64,
             super::work_schema::RENEWED_VERSION,
@@ -315,7 +322,7 @@ mod tests {
         assert_eq!(versions("agent_log"), mongodb::bson::bson!([1_i64]));
         assert_eq!(
             versions("sandboxes"),
-            mongodb::bson::bson!([1_i64, 3_i64, 4_i64])
+            mongodb::bson::bson!([1_i64, 3_i64, 4_i64, 5_i64, 6_i64])
         );
         assert_eq!(
             versions("workspaces"),

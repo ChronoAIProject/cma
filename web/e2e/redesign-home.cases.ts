@@ -1,3 +1,4 @@
+import { selectHomeTemplate } from './home-simplification.fixture';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { redesignHomeFixture, type HomeState } from './redesign-home.fixture';
 
@@ -65,18 +66,20 @@ export function registerRedesignHomeCases() {
         if (state === 'crew' || state === 'empty')
           await expect(page.getByRole('region', { name: 'Sandbox capacity' })).toHaveCount(0);
         if (state === 'near')
-          await expect(page.getByText('1 environment slot left', { exact: true })).toBeVisible();
+          await expect(page.getByText('1 slot left', { exact: true })).toBeVisible();
         if (state === 'full') {
           await input.fill('Draft a weekly summary of the sample project.');
-          await expect(page.getByText('All 5 Sandbox environment slots are in use')).toBeVisible();
-          await expect(page.getByText(/2 environments are being deleted/)).toBeVisible();
+          await expect(page.getByText('Environment limit reached')).toBeVisible();
+          await expect(page.getByRole('region', { name: 'Sandbox capacity' })).toHaveCount(1);
           await expect(page.getByText('5/5 Sandbox environments used')).toHaveCount(0);
           const manage = await page
             .getByRole('region', { name: 'Sandbox capacity' })
-            .getByRole('button', { name: 'Manage environments' })
+            .getByRole('button', { name: 'Environments' })
             .boundingBox();
           expect(manage!.y + manage!.height).toBeLessThan(900);
-          const templates = await page.locator('.task-home__templates').boundingBox();
+          const templates = await page
+            .getByRole('button', { name: 'Templates', exact: true })
+            .boundingBox();
           expect(templates!.y).toBeLessThan(900);
           await expect(
             page.getByRole('button', { name: 'Start task', exact: true }),
@@ -135,9 +138,9 @@ export function registerRedesignHomeCases() {
         .fill('Draft a weekly summary of the sample project.');
       await page.getByRole('button', { name: 'Start task', exact: true }).click();
       await expect(page.getByRole('region', { name: 'Task preparation' })).toContainText(
-        'Preparation is still in progress.',
+        'Getting its cloud computer ready',
       );
-      await expect(page.getByRole('region', { name: 'Submitted task' })).toContainText(
+      await expect(page.getByRole('region', { name: 'Original request' })).toContainText(
         'Draft a weekly summary',
       );
       const original = structuredClone(fixture.writes);
@@ -150,8 +153,8 @@ export function registerRedesignHomeCases() {
       await capture(page, info, theme, '06-accepted');
       fixture.failStatus();
       await page.clock.runFor(1500);
-      await expect(page.getByText('The latest setup status is unconfirmed')).toBeVisible();
-      await expect(page.getByText(/Last confirmed: Preparing/)).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Setup updates interrupted' })).toBeVisible();
+      await expect(page.getByText('Request accepted', { exact: true })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Start another task' })).toHaveCount(0);
       await capture(page, info, theme, '07-stuck');
       const recovery = page.getByRole('region', { name: 'Task preparation' });
@@ -245,10 +248,11 @@ export function registerRedesignHomeCases() {
       const input = page.getByLabel('Your task', { exact: true });
       await input.fill('Original retained task');
       await page.getByRole('button', { name: 'Start task', exact: true }).click();
-      const recovery = page.getByRole('region', { name: 'Task request recovery' });
+      const recovery = page.getByRole('region', { name: 'Task preparation', exact: true });
       await expect(recovery.getByRole('alert')).toContainText('resend the same request');
       await expect(recovery.getByRole('alert')).toHaveCount(1);
-      await input.fill('Separate newer draft');
+      const followup = page.getByRole('textbox', { name: 'Follow-up draft', exact: true });
+      await followup.fill('Separate newer draft');
       await capture(page, info, theme, 'receipt-unconfirmed');
       for (const width of [320, 360, 390, 720]) {
         await page.setViewportSize({ width, height: 900 });
@@ -260,7 +264,7 @@ export function registerRedesignHomeCases() {
       await expect.poll(() => writes.length).toBe(2);
       expect(writes[1]).toEqual(writes[0]);
       expect(writes[0]!.key).toBeTruthy();
-      await expect(input).toHaveValue('Separate newer draft');
+      await expect(followup).toHaveValue('Separate newer draft');
       await expect(page).toHaveURL(/\/agent-manager$/);
       expect(fixture.writes).toEqual([]);
     });
@@ -279,13 +283,16 @@ export function registerRedesignHomeCases() {
           );
         const manage = page
           .getByRole('region', { name: 'Sandbox capacity' })
-          .getByRole('button', { name: 'Manage environments' });
+          .getByRole('button', { name: 'Environments' });
         await manage.focus();
         await expect(manage).toBeFocused();
         await capture(page, info, theme, `viewport-${width}`);
         await manage.press('Enter');
-        await expect(page.getByRole('dialog', { name: 'Manage environments' })).toBeVisible();
-        await page.keyboard.press('Escape');
+        const sidebar = page.getByRole('complementary', { name: 'Application navigation' });
+        await expect(
+          sidebar.getByRole('button', { name: 'Environments', exact: true }),
+        ).toHaveAttribute('aria-pressed', 'true');
+        await sidebar.getByRole('button', { name: 'Tasks', exact: true }).click();
         expect(fixture.writes).toEqual([]);
       });
     }
@@ -313,7 +320,7 @@ export function registerRedesignTemplateCases() {
         const fixture = await redesignHomeFixture(page, baseURL!, 'crew', supported);
         await page.goto('/agent-manager');
         await page.getByLabel('Your task', { exact: true }).fill('Independent free-text draft');
-        await page.getByRole('button', { name: 'Write a document', exact: true }).click();
+        await selectHomeTemplate(page, 'Write a document');
         await expect(page.getByLabel('Document type', { exact: true })).toBeFocused();
         await expect(page.getByRole('button', { name: 'Start task', exact: true })).toBeDisabled();
         if (supported) await capture(page, info, theme, '13-template-empty');

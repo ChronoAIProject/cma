@@ -1,0 +1,156 @@
+[
+  {
+    "name": "babel-parser",
+    "version": "7.29.3",
+    "license": "MIT",
+    "prefixes": [
+      ".github/scripts/image-content-vendor"
+    ],
+    "evidence": [
+      ".github/scripts/image-content-vendor/BABEL-LICENSE",
+      ".github/scripts/image-content-vendor/PROVENANCE.json"
+    ]
+  },
+  {
+    "name": "moby-profiles",
+    "version": "4b8214fc4971e06172938a1f1554ccff6647ee80",
+    "license": "Apache-2.0",
+    "prefixes": [
+      ".github/scripts/seccomp-vendor"
+    ],
+    "evidence": [
+      ".github/scripts/seccomp-vendor/MOBY-PROFILES-LICENSE",
+      ".github/scripts/desktop-seccomp.mjs"
+    ]
+  },
+  {
+    "name": "agent-sandbox-assets",
+    "version": "UNRESOLVED",
+    "license": "Apache-2.0",
+    "prefixes": [
+      ".github/scripts/migration-native-assets"
+    ],
+    "evidence": [
+      ".github/scripts/migration-native-assets/LICENSE.agent-sandbox.txt",
+      ".github/scripts/migration-native-assets/manifest.json"
+    ],
+    "review": [
+      "mixed-origin-assets-review"
+    ]
+  },
+  {
+    "name": "actions-download-artifact-fixture",
+    "version": "9000827ccba6bdab643e8b6fd33ac0654aef8333",
+    "license": "MIT",
+    "prefixes": [
+      ".github/scripts/fixtures/download-artifact"
+    ],
+    "evidence": [
+      ".github/scripts/fixtures/download-artifact/download-artifact.js",
+      ".github/scripts/fixtures/download-artifact/PROVENANCE.json"
+    ]
+  },
+  {
+    "name": "deepseek-harness-icons",
+    "version": "UNRESOLVED",
+    "license": "MIT",
+    "prefixes": [
+      "web/src/ui/icons"
+    ],
+    "evidence": [
+      "web/src/ui/icons/IconListPenOutline16.tsx",
+      "web/src/styles/vendor/LICENSE-deepseek-harness.txt"
+    ],
+    "review": [
+      "upstream-revision-review",
+      "scope-review"
+    ]
+  },
+  {
+    "name": "Archivo-font",
+    "version": "UNRESOLVED",
+    "license": "OFL-1.1",
+    "files": [
+      "web/src/assets/fonts/Archivo-Variable.woff2"
+    ],
+    "evidence": [
+      "web/src/assets/fonts/OFL-Archivo.txt"
+    ],
+    "review": [
+      "upstream-revision-review"
+    ]
+  },
+  {
+    "name": "FamiljenGrotesk-font",
+    "version": "UNRESOLVED",
+    "license": "OFL-1.1",
+    "files": [
+      "web/src/assets/fonts/FamiljenGrotesk-Variable.woff2"
+    ],
+    "evidence": [
+      "web/src/assets/fonts/OFL-FamiljenGrotesk.txt"
+    ],
+    "review": [
+      "upstream-revision-review"
+    ]
+  },
+  {
+    "name": "Geist-fonts",
+    "version": "UNRESOLVED",
+    "license": "OFL-1.1",
+    "files": [
+      "web/src/assets/fonts/Geist-Variable.woff2",
+      "web/src/assets/fonts/GeistMono-Variable.woff2"
+    ],
+    "evidence": [
+      "web/src/assets/fonts/OFL-Geist.txt"
+    ],
+    "review": [
+      "upstream-revision-review"
+    ]
+  },
+  {
+    "name": "IBMPlexMono-fonts",
+    "version": "UNRESOLVED",
+    "license": "OFL-1.1",
+    "files": [
+      "web/src/assets/fonts/IBMPlexMono-Regular.woff2",
+      "web/src/assets/fonts/IBMPlexMono-Medium.woff2",
+      "web/src/assets/fonts/IBMPlexMono-SemiBold.woff2"
+    ],
+    "evidence": [
+      "web/src/assets/fonts/OFL-IBMPlexMono.txt"
+    ],
+    "review": [
+      "upstream-revision-review"
+    ]
+  },
+  {
+    "name": "JetBrainsMono-font",
+    "version": "UNRESOLVED",
+    "license": "OFL-1.1",
+    "files": [
+      "web/src/assets/fonts/JetBrainsMono-Variable.woff2"
+    ],
+    "evidence": [
+      "web/src/assets/fonts/OFL-JetBrainsMono.txt"
+    ],
+    "review": [
+      "upstream-revision-review"
+    ]
+  },
+  {
+    "name": "Shrikhand-font",
+    "version": "UNRESOLVED",
+    "license": "OFL-1.1",
+    "files": [
+      "web/src/assets/fonts/Shrikhand-Regular.woff2"
+    ],
+    "evidence": [
+      "web/src/assets/fonts/OFL-Shrikhand.txt"
+    ],
+    "review": [
+      "upstream-revision-review"
+    ]
+  }
+]

@@ -289,14 +289,20 @@ impl Store {
             .ok_or(Error::NotFound)
     }
     pub async fn claim_build(&self) -> Result<Option<Build>> {
-        Ok(self.builds.find_one_and_update(doc!{"phase":"queued"},
+        self.claim_build_excluding(&[]).await
+    }
+    pub(crate) async fn claim_build_excluding(&self, excluded: &[String]) -> Result<Option<Build>> {
+        Ok(self.builds.find_one_and_update(doc!{"phase":"queued","_id":{"$nin":excluded}},
             doc!{"$set":{"phase":"dispatching","error":"submission_outcome_unconfirmed","updated_at_ms":now_ms()},"$inc":{"revision":1_i64}})
             .sort(doc!{"created_at_ms":1}).return_document(ReturnDocument::After).await?)
     }
     pub async fn pending(&self) -> Result<Vec<Build>> {
+        self.pending_excluding(&[]).await
+    }
+    pub(crate) async fn pending_excluding(&self, excluded: &[String]) -> Result<Vec<Build>> {
         Ok(self
             .builds
-            .find(doc! {"phase":{"$in":["dispatching","running"]}})
+            .find(doc! {"phase":{"$in":["dispatching","running"]},"_id":{"$nin":excluded}})
             .sort(doc! {"updated_at_ms":1})
             .limit(100)
             .await?
@@ -304,8 +310,22 @@ impl Store {
             .await?)
     }
     pub async fn reject_dispatch(&self, current: &Build) -> Result<bool> {
+        if current.phase != BuildPhase::Dispatching || current.cloud_id.is_some() {
+            return Err(Error::Conflict);
+        }
+        let source = &current.source;
+        let dockerfile_content = source.dockerfile_content.as_ref().map_or_else(
+            || mongodb::bson::Bson::Document(doc! {"$exists": false}),
+            |content| mongodb::bson::Bson::String(content.clone()),
+        );
         let result = self.builds.update_one(
-            doc! {"_id":&current.id,"revision":current.revision,"phase":"dispatching","cloud_id":mongodb::bson::Bson::Null},
+            doc! {"_id":&current.id,"revision":current.revision,"owner":&current.owner,
+                "image_id":&current.image_id,"request_key_hash":&current.request_key_hash,
+                "request_sha256":&current.request_sha256,"schema_version":current.schema_version,
+                "source.repository":&source.repository,"source.commit":&source.commit,
+                "source.dockerfile":&source.dockerfile,"source.context":&source.context,
+                "source.dockerfile_content":dockerfile_content,"created_at_ms":current.created_at_ms,
+                "phase":"dispatching","cloud_id":mongodb::bson::Bson::Null},
             doc! {"$set":{"phase":"failed","error":"submission_rejected","updated_at_ms":now_ms()},"$inc":{"revision":1_i64}},
         ).await?;
         Ok(result.modified_count == 1)
