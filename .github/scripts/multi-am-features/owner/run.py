@@ -321,7 +321,8 @@ class Fixture:
 
     def prepareTurn(self, caseId=None, marker=None, **extra):
         self.provider_observation('prepare_turn',input={'case_id':caseId,'marker':marker,**extra})
-        value=self.provider('POST','/__ws4/arm',{'case_id':caseId,'marker':marker})
+        value=self.provider('POST','/__ws4/arm',{'case_id':caseId,'marker':marker,
+            **({'access_request': extra['accessRequest']} if 'accessRequest' in extra else {})})
         self.provider_observation('prepare_turn_result',snapshot=value)
         return value
 

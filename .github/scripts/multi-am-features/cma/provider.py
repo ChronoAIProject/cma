@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import select
 import ssl
 import threading
@@ -28,16 +29,21 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def arm(case_id, marker):
+def arm(case_id, marker, access_request=None):
     global ACTIVE
     if not isinstance(case_id, str) or not 1 <= len(case_id) <= 128:
         raise ValueError('case_id_invalid')
     if not isinstance(marker, str) or not 8 <= len(marker) <= 256:
         raise ValueError('marker_invalid')
+    if access_request is not None and (not isinstance(access_request, str)
+                                       or not re.fullmatch(r'[a-f0-9-]{36}', access_request)):
+        raise ValueError('fixture_access_request_key_invalid')
     with LOCK:
         if case_id in CASES:
             raise ValueError('case_already_exists')
-        CASES[case_id] = {'marker': marker, 'release': threading.Event(),
+        CASES[case_id] = {'marker': marker, 'release': threading.Event(), 'access_request': access_request,
+                         'access_call_id': 'call_' + digest(case_id)[:24], 'access_tool_calls': 0,
+                         'access_receipt': None,
                          'request_count': 0, 'completed_effect_count': 0,
                          'disconnect_count': 0, 'active_streams': 0,
                          'request_hashes': [], 'response_hashes': [], 'events': []}
@@ -50,7 +56,9 @@ def snapshot(case_id):
         return {'case_id': case_id,
                 **{key: case[key] for key in ('request_count', 'completed_effect_count',
                     'disconnect_count', 'active_streams', 'request_hashes', 'response_hashes', 'events')},
-                'released': case['release'].is_set(), 'synthetic_effect': 'one_text_completion'}
+                'access_tool_calls': case['access_tool_calls'], 'access_receipt': case['access_receipt'],
+                'released': case['release'].is_set(),
+                'synthetic_effect': 'one_consent_proposal' if case['access_request'] else 'one_text_completion'}
 
 
 def response_events(response_id, model, marker):
@@ -78,6 +86,44 @@ def response_events(response_id, model, marker):
          'output': [item], 'usage': {'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}}},
     ]
     return [{**frame, 'sequence_number': i} for i, frame in enumerate(frames)]
+
+
+def access_tool_events(response_id, request, request_key, call_id):
+    name = 'mcp__cma_access__agent_key_scope_revision'
+    tools = request.get('tools') or [tool for item in request.get('input', [])
+                                    if item.get('type') == 'additional_tools' for tool in item.get('tools', [])]
+    arguments = {'request_key': request_key, 'services': ['fixture-access-service'],
+                 'reason': 'Synthetic consent check ' + request_key}
+    item = {'id': 'fc_' + digest(response_id)[:24], 'call_id': call_id, 'status': 'completed'}
+    if any(tool.get('name') == name for tool in tools):
+        item.update(type='function_call', name=name, arguments=json.dumps(arguments))
+    elif any(tool.get('name') == 'functions' and any(child.get('name') == 'exec' for child in tool.get('tools', []))
+             for tool in tools):
+        invocation = 'const entry = ALL_TOOLS.find(tool => tool.name === ' + json.dumps(name) + ');'
+        invocation += 'text(await tools[entry.name](' + json.dumps(arguments) + '));'
+        item.update(type='custom_tool_call', name='exec', namespace='functions', input=invocation)
+    else:
+        raise ValueError('fixture_access_tool_undeclared')
+    response = {'id': response_id, 'object': 'response', 'created_at': int(time.time()), 'status': 'in_progress',
+                'model': request.get('model', 'ws4-local'), 'output': []}
+    frames = [{'type': 'response.created', 'response': response},
+              {'type': 'response.in_progress', 'response': response},
+              {'type': 'response.output_item.added', 'output_index': 0, 'item': {**item, 'status': 'in_progress'}},
+              {'type': 'response.output_item.done', 'output_index': 0, 'item': item},
+              {'type': 'response.completed', 'response': {**response, 'status': 'completed', 'output': [item],
+                   'usage': {'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}}}]
+    return [{**frame, 'sequence_number': index} for index, frame in enumerate(frames)]
+
+
+def access_receipt(output):
+    # Codex tool transports can wrap structuredContent in one or more JSON
+    # strings. Keep only the request digest and supported consent state.
+    value = json.dumps(output).replace('\\', '')
+    identifiers = set(re.findall(r'"request_id"\s*:\s*"(aar_[a-f0-9]{64})"', value))
+    states = set(re.findall(r'"status"\s*:\s*"(pending|denied)"', value))
+    if len(identifiers) != 1 or len(states) != 1:
+        return None
+    return {'request_sha256': digest(identifiers.pop()), 'status': states.pop()}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -159,7 +205,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 case_id = body['case_id']
                 if path == '/__ws4/arm':
-                    arm(case_id, body['marker'])
+                    arm(case_id, body['marker'], body.get('access_request'))
                 elif path == '/__ws4/release':
                     with LOCK:
                         CASES[case_id]['release'].set()
@@ -175,10 +221,27 @@ class Handler(BaseHTTPRequestHandler):
         if body.get('stream') is not True:
             return self.reply(400, {'error': 'stream_required'})
         encoded = json.dumps(body.get('input'), sort_keys=True)
+        frames = None
         with LOCK:
             case_id = ACTIVE
             case = CASES.get(case_id)
-            if case is None or case['marker'] not in encoded:
+            tool_result = None
+            if case and case['access_request'] and case['request_count'] == 1 and isinstance(body.get('input'), list):
+                tool_result = next((item for item in body['input'] if isinstance(item, dict)
+                                    and item.get('type') in ('function_call_output', 'custom_tool_call_output')
+                                    and item.get('call_id') == case['access_call_id']), None)
+            if case and case['access_request'] and case['marker'] in encoded and case['request_count'] == 0:
+                try:
+                    frames = access_tool_events('resp_ws4_' + digest(case_id + ':1')[:24], body,
+                                                case['access_request'], case['access_call_id'])
+                except (ValueError, TypeError, AttributeError):
+                    return self.reply(409, {'error': 'fixture_access_tool_undeclared'})
+                case['access_tool_calls'] += 1
+            elif tool_result:
+                case['access_receipt'] = access_receipt(tool_result.get('output'))
+            elif case and case['access_request'] and case['marker'] in encoded:
+                return self.reply(409, {'error': 'fixture_access_tool_output_missing'})
+            elif case is None or case['marker'] not in encoded:
                 # Real Agent creation can issue its readiness prompt before an
                 # explicit journey turn exists. Keep those requests separate.
                 case = BOOTSTRAP if os.environ.get('WS4_PROVIDER_ALLOW_BOOTSTRAP') == 'true' else None
@@ -193,7 +256,7 @@ class Handler(BaseHTTPRequestHandler):
                 case['events'].append({'event': 'request_admitted', 'ordinal': ordinal, 'at_ns': time.time_ns()})
         if case is None:
             return self.reply(409, {'error': 'no_matching_armed_case'})
-        frames = response_events(response_id, body.get('model', 'ws4-local'), case['marker'])
+        frames = frames or response_events(response_id, body.get('model', 'ws4-local'), case['marker'])
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
         self.send_header('Cache-Control', 'no-cache')

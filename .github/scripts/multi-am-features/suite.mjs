@@ -19,6 +19,7 @@ import {configurationDenials} from './features/configuration_denials.mjs';
 import {installSkillCase} from './features/skills.mjs';
 import {shareAgentArtifact} from './features/sharing.mjs';
 import {organizationShare} from './features/organization_share.mjs';
+import {accessRequest} from './features/access_request.mjs';
 import {triggerAlwaysOn} from './features/trigger_always_on.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -210,6 +211,8 @@ try {
             () => shareAgentArtifact({...caseContext, user, outsider}));
           await caseContext.runCase('writer.organization_share_membership',
             () => organizationShare({...caseContext, user, outsider}));
+          await caseContext.runCase('writer.agent_access_request_denial',
+            () => accessRequest({...caseContext, user, outsider}));
         }
         await userCases(caseContext);
         await configurationDenials({...caseContext, outsider});
