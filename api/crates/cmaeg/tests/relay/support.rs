@@ -139,11 +139,11 @@ impl Fixture {
     }
     /// A Telegram relay channel served with `CMAEG_MEDIA_ENABLED=true`.
     pub async fn with_media(edit: impl FnOnce(&mut Value), config: IngressConfig) -> Self {
-        Self::build("telegram", edit, config, true).await
+        Self::build("telegram", edit, config, true, |state| state).await
     }
     /// A channel whose single relay source serves `platform` (a protocol value).
     pub async fn on(platform: &str, edit: impl FnOnce(&mut Value), config: IngressConfig) -> Self {
-        Self::build(platform, edit, config, false).await
+        Self::build(platform, edit, config, false, |state| state).await
     }
     /// [`Fixture::on`] served with `CMAEG_MEDIA_ENABLED=true`.
     pub async fn on_with_media(
@@ -151,13 +151,21 @@ impl Fixture {
         edit: impl FnOnce(&mut Value),
         config: IngressConfig,
     ) -> Self {
-        Self::build(platform, edit, config, true).await
+        Self::build(platform, edit, config, true, |state| state).await
+    }
+
+    pub async fn with_ingress(
+        edit: impl FnOnce(&mut Value),
+        configure: impl FnOnce(IngressState) -> IngressState,
+    ) -> Self {
+        Self::build("telegram", edit, IngressConfig::default(), false, configure).await
     }
     async fn build(
         platform: &str,
         edit: impl FnOnce(&mut Value),
         config: IngressConfig,
         media_enabled: bool,
+        configure: impl FnOnce(IngressState) -> IngressState,
     ) -> Self {
         let signer = Signer::shared();
         let backend = Backend {
@@ -213,9 +221,11 @@ impl Fixture {
             seal_blob(&keys, definition.to_blob_json().to_string().as_bytes()).unwrap();
         let resolver = ChannelResolver::new(records, keys.clone(), ChannelCacheConfig::default());
         let recorder = Arc::new(Recorder::default());
-        let state = IngressState::new(resolver, keys, config, recorder.clone())
-            .unwrap()
-            .with_media_enabled(media_enabled);
+        let state = configure(
+            IngressState::new(resolver, keys, config, recorder.clone())
+                .unwrap()
+                .with_media_enabled(media_enabled),
+        );
         let (gateway, app) = serve(callbacks::router(state.clone())).await;
         Self {
             platform: platform.to_owned(),
