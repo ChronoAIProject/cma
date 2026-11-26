@@ -162,36 +162,9 @@ impl ActivityStore {
         activity: &cmaeg_core::activity::Activity,
         received: time::OffsetDateTime,
     ) -> Result<(), RecordError> {
-        let _guard = self.writes[stripe(record)].lock().await;
-        let mut day = received.unix_timestamp().div_euclid(86400);
-        if day < today() - RETENTION_DAYS + 1 {
-            return Err(malformed());
-        }
         let received_at = received
             .format(&time::format_description::well_known::Rfc3339)
             .map_err(invalid)?;
-        // Source retries may cross midnight. Find the retained first receipt
-        // before choosing a daily bucket, so replay never looks newly received.
-        let retained = try_join_all(
-            (0..RETENTION_DAYS).map(|offset| self.read(owner, record, today() - offset)),
-        )
-        .await?;
-        let legacy = retained
-            .into_iter()
-            .flatten()
-            .find(|(bucket, _)| {
-                bucket
-                    .items
-                    .iter()
-                    .any(|row| row.event_id == activity.event_id.as_str())
-            })
-            .and_then(|(bucket, _)| {
-                day = bucket.day;
-                bucket
-                    .items
-                    .into_iter()
-                    .find(|row| row.event_id == activity.event_id.as_str())
-            });
         let mut actor = activity.actor.clone();
         actor.id = bounded(&actor.id, 512);
         actor.display_name = actor.display_name.map(|v| bounded(&v, 256));
@@ -211,6 +184,7 @@ impl ActivityStore {
         let row = ChannelActivity {
             quoted_context: super::model::QuotedContextSummary::from_activity(activity),
             event_id: activity.event_id.to_string(),
+            source_refusal: None,
             kind: Some(kind.into()),
             event_type,
             source_occurred_at,
@@ -221,6 +195,43 @@ impl ActivityStore {
             received_at,
             consumers: Vec::new(),
         };
+        self.persist_receipt(owner, record, row, received).await
+    }
+
+    pub(super) async fn persist_receipt(
+        &self,
+        owner: &str,
+        record: &str,
+        row: ChannelActivity,
+        received: time::OffsetDateTime,
+    ) -> Result<(), RecordError> {
+        let _guard = self.writes[stripe(record)].lock().await;
+        let mut day = received.unix_timestamp().div_euclid(86400);
+        if day < today() - RETENTION_DAYS + 1 {
+            return Err(malformed());
+        }
+        // Source retries may cross midnight. Find the retained first receipt
+        // before choosing a daily bucket, so replay never looks newly received.
+        let retained = try_join_all(
+            (0..RETENTION_DAYS).map(|offset| self.read(owner, record, today() - offset)),
+        )
+        .await?;
+        let legacy = retained
+            .into_iter()
+            .flatten()
+            .find(|(bucket, _)| {
+                bucket
+                    .items
+                    .iter()
+                    .any(|existing| existing.event_id == row.event_id)
+            })
+            .and_then(|(bucket, _)| {
+                day = bucket.day;
+                bucket
+                    .items
+                    .into_iter()
+                    .find(|existing| existing.event_id == row.event_id)
+            });
         if self.history.capturing() {
             if let Some(original) = legacy {
                 self.history
@@ -234,6 +245,7 @@ impl ActivityStore {
                     .map_err(history_error)?;
             }
         }
+        let event_id = row.event_id.clone();
         self.modify_inner(owner, record, day, move |bucket| {
             if let Some(existing) = bucket.items.iter_mut().find(|r| r.event_id == row.event_id) {
                 for consumer in &row.consumers {
@@ -254,10 +266,7 @@ impl ActivityStore {
         if contexts.len() >= 4096 {
             contexts.pop_first();
         }
-        contexts.insert(
-            (record.into(), activity.event_id.to_string()),
-            (owner.into(), day),
-        );
+        contexts.insert((record.into(), event_id), (owner.into(), day));
         Ok(())
     }
 

@@ -182,6 +182,65 @@ async fn captioned_relay_photo_is_correlated_on_refusal_and_delivered_when_enabl
 }
 
 #[tokio::test]
+async fn authenticated_media_refusal_persists_once_without_consumers() {
+    use cmaeg::{
+        activity::{ActivityStore, ObservedActivity},
+        http::callbacks,
+        turns::observer::NoopObserver,
+    };
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    let fixture = Fixture::new(|_| {}, Default::default()).await;
+    let channel = fixture
+        .state
+        .resolver
+        .resolve(fixture.id.as_str())
+        .await
+        .unwrap();
+    let owner = &channel.definition.owner.subject;
+    let record = channel.definition.record_id.as_str();
+    let store = Arc::new(ActivityStore::new(
+        (*fixture.records).clone(),
+        fixture.state.master_keys.clone(),
+    ));
+    let mut updates = store.subscribe();
+    let observer = Arc::new(ObservedActivity::new(store.clone(), Arc::new(NoopObserver)));
+    let app = callbacks::router(fixture.state.clone().with_activity_observer(observer));
+    let mut photo = telegram_photo();
+    caption(&mut photo, "fixture caption to omit");
+
+    for _ in 0..2 {
+        let (body, token) = photo.signed();
+        let response = app
+            .clone()
+            .oneshot(fixture.local_request(body.into(), &token))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 202);
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap(),
+            json!({"status":"refused","reason":"attachment_unsupported"})
+        );
+    }
+    assert_eq!(updates.try_recv().unwrap(), record);
+    let items = store.latest(owner, record).await.unwrap().items;
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].source_refusal.as_deref(),
+        Some("attachment_unsupported")
+    );
+    assert!(items[0].consumers.is_empty());
+    assert!(!serde_json::to_string(&items)
+        .unwrap()
+        .contains("fixture caption to omit"));
+    assert!(fixture.recorder.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn a_captioned_group_photo_mentioning_the_bot_carries_its_photo() {
     let fixture = Fixture::with_media(mention_policy, Default::default()).await;
     let mut envelope = telegram_photo();

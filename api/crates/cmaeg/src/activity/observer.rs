@@ -132,6 +132,25 @@ impl ActivityObserver for ObservedActivity {
     ) {
         self.console.refused(record, source, event, reason);
     }
+    fn source_refused<'a>(
+        &'a self,
+        owner: &'a str,
+        record: &'a RecordId,
+        receipt: super::ChannelActivity,
+        received: time::OffsetDateTime,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let write = self
+                .store
+                .persist_receipt(owner, record.as_str(), receipt, received);
+            if !matches!(
+                tokio::time::timeout(std::time::Duration::from_secs(3), write).await,
+                Ok(Ok(()))
+            ) {
+                tracing::warn!("channel source refusal persistence unavailable");
+            }
+        })
+    }
     fn launched(
         &self,
         record: &RecordId,

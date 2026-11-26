@@ -119,6 +119,7 @@ async fn record(State(state): State<Backend>) -> Response {
 pub struct Fixture {
     pub platform: String,
     pub state: IngressState,
+    pub records: Arc<RecordClient>,
     pub backend: Backend,
     pub recorder: Arc<Recorder>,
     pub id: ChannelId,
@@ -219,7 +220,8 @@ impl Fixture {
         let id = pointer.seal_id(&keys).unwrap();
         *backend.blob.lock().unwrap() =
             seal_blob(&keys, definition.to_blob_json().to_string().as_bytes()).unwrap();
-        let resolver = ChannelResolver::new(records, keys.clone(), ChannelCacheConfig::default());
+        let resolver =
+            ChannelResolver::new(records.clone(), keys.clone(), ChannelCacheConfig::default());
         let recorder = Arc::new(Recorder::default());
         let state = configure(
             IngressState::new(resolver, keys, config, recorder.clone())
@@ -231,6 +233,7 @@ impl Fixture {
             platform: platform.to_owned(),
             url: format!("{gateway}/v1/callbacks/{id}"),
             state,
+            records,
             backend,
             recorder,
             id,

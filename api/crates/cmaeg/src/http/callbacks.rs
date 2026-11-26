@@ -29,11 +29,13 @@ use axum::{
     Json, Router,
 };
 use cmaeg_core::{
-    channel::{PartitionKey, Source},
+    activity::{ActivityConversation, Actor, ActorKind, ConversationKind, SourceKind},
+    channel::{PartitionKey, Platform, Source},
     ids::{EventId, RecordId},
     problem::ProblemCode,
 };
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tracing::Instrument;
 use utoipa::ToSchema;
@@ -216,7 +218,79 @@ async fn admit_callback(
     let media_event_id = (platform == cmaeg_core::channel::Platform::Telegram)
         .then(|| EventId::new(verified.payload.message_id.clone()).ok())
         .flatten();
-    let refuse = |reason| {
+    let source_receipt = media_event_id.as_ref().and_then(|event| {
+        let message = verified
+            .payload
+            .raw_platform_data
+            .as_ref()?
+            .get("message")?;
+        let conversation_kind = match message.pointer("/chat/type")?.as_str()? {
+            "private" => ConversationKind::Private,
+            "group" | "supergroup" => ConversationKind::Group,
+            _ => return None,
+        };
+        let media = verified.payload.received_attachments() > 0
+            || crate::ingress::relay::telegram_media::MEDIA_FIELDS
+                .iter()
+                .any(|field| message.get(*field).is_some());
+        let owner = channel.definition.owner.subject.clone();
+        let route_id = verified.payload.conversation.id.clone();
+        let occurred_at = verified.payload.timestamp.clone();
+        Some((
+            owner,
+            route_id,
+            occurred_at,
+            conversation_kind,
+            media,
+            event,
+        ))
+    });
+    let refuse = async |reason| {
+        if let Some((owner, route_id, occurred_at, kind, media, event)) = &source_receipt {
+            let label = match reason {
+                Refusal::AttachmentUnsupported => Some("attachment_unsupported"),
+                Refusal::ContentUnsupported if *media => Some("content_unsupported"),
+                _ => None,
+            };
+            if let Some(label) = label {
+                let received = time::OffsetDateTime::now_utc();
+                if let Ok(received_at) =
+                    received.format(&time::format_description::well_known::Rfc3339)
+                {
+                    // A later admitted replay has its own receipt under the original event key.
+                    let digest = Sha256::digest(event.as_str().as_bytes());
+                    let row = crate::activity::ChannelActivity {
+                        event_id: format!("telegram:relay-refusal:{digest:x}"),
+                        source_refusal: Some(label.into()),
+                        quoted_context: None,
+                        kind: Some("message".into()),
+                        event_type: None,
+                        source_occurred_at: None,
+                        source: SourceKind::NyxidRelay {
+                            platform: Platform::Telegram,
+                            route_id: route_id.clone(),
+                        },
+                        actor: Actor {
+                            id: "redacted".into(),
+                            display_name: None,
+                            kind: ActorKind::Unknown,
+                        },
+                        conversation: ActivityConversation {
+                            id: "redacted".into(),
+                            kind: *kind,
+                            thread_id: None,
+                        },
+                        occurred_at: occurred_at.clone(),
+                        received_at,
+                        consumers: Vec::new(),
+                    };
+                    state
+                        .activity
+                        .source_refused(owner, &record, row, received)
+                        .await;
+                }
+            }
+        }
         if let (Refusal::AttachmentUnsupported, Some(event_id)) = (reason, &media_event_id) {
             state
                 .activity
@@ -240,13 +314,13 @@ async fn admit_callback(
     .unwrap_or_else(|| observe(source, &verified.payload, state.media_enabled));
     let mut facts = match observation {
         Ok(Observation::Message(facts)) => facts,
-        Ok(Observation::Refused(reason)) => return Err(refuse(reason)),
+        Ok(Observation::Refused(reason)) => return Err(refuse(reason).await),
         Err(error) => return Err(reject(error)),
     };
     if crate::interactions::lark::supported(platform) {
         if let Some(callback) = &facts.callback {
             let Some(store) = &state.interactions else {
-                return Err(refuse(Refusal::InteractiveActionUnsupported));
+                return Err(refuse(Refusal::InteractiveActionUnsupported).await);
             };
             let kind = match store
                 .lark_context(
@@ -262,7 +336,7 @@ async fn admit_callback(
             {
                 Ok(kind) => kind,
                 Err(crate::interactions::Error::Denied) => {
-                    return Err(refuse(Refusal::InteractionExpiredOrInvalid))
+                    return Err(refuse(Refusal::InteractionExpiredOrInvalid).await)
                 }
                 Err(crate::interactions::Error::Unavailable) => {
                     return Err(problem(
@@ -338,10 +412,10 @@ async fn admit_callback(
             addressed: facts.addressed(admission),
         },
     ) {
-        return Err(refuse(reason));
+        return Err(refuse(reason).await);
     }
     if channel.definition.partition.key == PartitionKey::Thread && facts.thread_id.is_none() {
-        return Err(refuse(Refusal::ThreadEvidenceUnavailable));
+        return Err(refuse(Refusal::ThreadEvidenceUnavailable).await);
     }
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     if verified.reply_expires_at <= now || verified.callback_deadline <= now {
@@ -360,7 +434,7 @@ async fn admit_callback(
     ) {
         Ok(Built::Launch(request)) => *request,
         // A 202 refusal, because NyxID never retries a rejected callback.
-        Ok(Built::Refused(reason)) => return Err(refuse(reason)),
+        Ok(Built::Refused(reason)) => return Err(refuse(reason).await),
         Err(reason) => {
             state.activity.refused(&record, SOURCE, None, reason);
             return Err(problem(
