@@ -192,6 +192,7 @@ jobs:
     name: "Two Agent Managers"
     needs:
       - "changes"
+      - "rust-test-build"
       - "am-images"
       - "runtime-images"
       - "omarchy"

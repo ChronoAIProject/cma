@@ -18,6 +18,24 @@ permissions:
   actions: read
 
 jobs:
+  startup-controls:
+    name: "Prepared startup source controls"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    env:
+      CMA_NEXTEST_REUSE: '1'
+      RUST_MIN_STACK: '33554432'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-archive
+      - name: Verify prepared startup abort, refusal and parent schemas
+        timeout-minutes: 8
+        run: bash .github/scripts/mongo-contract-tests.sh --prepared-startup
   features:
     name: "Feature regression and owner recovery (${{ matrix.fixture }})"
     runs-on: ubuntu-24.04

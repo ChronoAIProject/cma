@@ -76,6 +76,10 @@ nextest_contracts() {
     observation-budget) selection_filter="package(=cma) and test(=$observation_budget_test)" ;;
     ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test) or test(=$bson_ceiling_test) or test(=$first_response_test) or test(=$history_test)) & not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets) or test(=$observation_budget_test))" ;;
   esac
+  # The two-Manager job repeats these tests without removing them from the ordinary corpus.
+  if [[ "$selection" == prepared-startup ]]; then
+    selection_filter=$prepared_startup_filter
+  fi
   [[ "$selection" != ordinary ]] || set -- "$@" --profile "$ordinary_profile"
   # One retry, for ordinary partitions only and never for a dedicated mode.
   # The partition's JUnit report records each pass on retry as flakyFailure,
@@ -134,6 +138,8 @@ elif [[ $# == 1 && "$1" == '--cpu-profile' ]]; then
   selection='cpu-profile'
 elif [[ $# == 1 && "$1" == '--observation-budget' ]]; then
   selection='observation-budget'
+elif [[ $# == 1 && "$1" == '--prepared-startup' ]]; then
+  selection='prepared-startup'
 else
   [[ $# == 1 && "$1" =~ ^count:([1-9][0-9]{0,5})/([1-9][0-9]{0,5})$ ]] || exit 2
   [[ ${BASH_REMATCH[1]} -le ${BASH_REMATCH[2]} ]] || exit 2
@@ -141,8 +147,13 @@ else
   partition=$1
 fi
 
-if [[ "${CMA_NEXTEST_REUSE:-}" != 1 && ( "$selection" == organization-inventory || "$selection" == agent-list-contracts || "$selection" == availability || "$selection" == agent-lists || "$selection" == agent-list-profile ) ]]; then
+if [[ "${CMA_NEXTEST_REUSE:-}" != 1 && ( "$selection" == organization-inventory || "$selection" == agent-list-contracts || "$selection" == availability || "$selection" == agent-lists || "$selection" == agent-list-profile || "$selection" == prepared-startup ) ]]; then
   nextest_build_args=(--locked -p cma)
+fi
+if [[ "$selection" == 'prepared-startup' ]]; then
+  prepared_startup_filter=$(python3 "$script_directory/multi-am-features/startup_controls.py" --filter)
+  nextest_contracts list --message-format json |
+    python3 "$script_directory/multi-am-features/startup_controls.py" --check-listing
 fi
 
 # This entry point always creates its own disposable replica set. It does not
@@ -274,7 +285,7 @@ test_status=0
 cd "$repo_root/api"
 if [[ "$selection" == 'availability' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --no-capture || test_status=$?
-elif [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'organization-inventory' || "$selection" == 'agent-list-contracts' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'request-limits' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' || "$selection" == 'bson-ceiling' || "$selection" == 'first-response' || "$selection" == 'history' || "$selection" == 'observation-budget' ]]; then
+elif [[ "$selection" != ordinary ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --success-output final || test_status=$?
 else
   nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition" || test_status=$?

@@ -31,6 +31,13 @@ function fixture(scenario, reuse = false) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
   cpSync(new URL('mongo-contract-suites', import.meta.url), join(scripts, 'mongo-contract-suites'), {recursive: true});
+  if (scenario.startsWith('prepared-startup')) {
+    const controlsDir = join(scripts, 'multi-am-features');
+    mkdirSync(controlsDir);
+    for (const name of ['startup-controls.txt', 'startup_controls.py']) {
+      copyFileSync(new URL(`multi-am-features/${name}`, import.meta.url), join(controlsDir, name));
+    }
+  }
   const metadata = join(root, 'api/target/nextest');
   writeFileSync(join(metadata, 'cargo-metadata.json'), JSON.stringify({workspace_root: join(root, 'api'), target_directory: join(root, 'api/target')}));
   writeFileSync(join(metadata, 'binaries-metadata.json'), JSON.stringify({'rust-build-meta': {'target-directory': join(root, 'api/target')}}));
@@ -52,6 +59,16 @@ if (command === 'openssl') {
 fs.appendFileSync(log, JSON.stringify({command,args,uri:process.env.CHRONO_TEST_MONGODB_URI,authenticatedUri:process.env.CMA_AUTHENTICATED_TEST_MONGODB_URI,retriesEnv:process.env.NEXTEST_RETRIES,flakyResultEnv:process.env.NEXTEST_FLAKY_RESULT})+'\\n');
 if (command === 'cargo') {
   if (args[1] === 'run' && args.filter(value => value === '--no-tests').length !== 1) process.exit(24);
+  if (scenario.startsWith('prepared-startup')) {
+    const inventory = fs.readFileSync('../.github/scripts/multi-am-features/startup-controls.txt', 'utf8').trim().split('\\n');
+    if (args[1] === 'list') {
+      const selected = scenario === 'prepared-startup-missing' ? inventory.slice(1) : inventory;
+      const testcases = Object.fromEntries(selected.map(name => [name, {'filter-match': {status: 'matches'}}]));
+      console.log(JSON.stringify({'rust-suites': {cma: {testcases}}}));
+      process.exit(0);
+    }
+    process.exit(scenario === 'prepared-startup-error' ? 7 : 0);
+  }
   if (args[1] === 'list') {
     if (scenario === 'list-error') process.exit(7);
     if (scenario === 'list-malformed') { console.log('invalid-json'); process.exit(0); }

@@ -294,15 +294,23 @@ def validate(documents, actions)
   two_am_permissions = {'contents' => 'read', 'actions' => 'read'}
   require_check(two_am['permissions'] == two_am_permissions &&
     two_am.fetch('on', two_am[true]).keys == ['workflow_call'], 'two-AM fixture must remain a read-only reusable workflow')
+  startup = two_am.fetch('jobs').fetch('startup-controls')
+  startup_steps = startup.fetch('steps')
+  require_check(!startup.key?('if') && !startup.key?('continue-on-error') &&
+    startup.dig('env', 'CMA_NEXTEST_REUSE') == '1' &&
+    startup_steps[1]['uses'] == './.github/actions/rust-archive' &&
+    startup_steps[2]['run'] == 'bash .github/scripts/mongo-contract-tests.sh --prepared-startup' &&
+    !startup_steps[2].key?('if') && !startup_steps[2].key?('continue-on-error'),
+    'two-AM startup controls must run from the shared Rust archive')
   [jobs, documents.fetch('ci-pr-am').fetch('jobs')].each do |caller|
     suite = caller.fetch('two-am-features')
     require_check(suite['uses'] == './.github/workflows/ci-two-am.yml' &&
-      suite['permissions'] == two_am_permissions && suite['needs'] == %w[changes am-images runtime-images omarchy] &&
+      suite['permissions'] == two_am_permissions && suite['needs'] == %w[changes rust-test-build am-images runtime-images omarchy] &&
       suite['if'] == "!cancelled() && needs.changes.outputs.two_am_features == 'true'" && !suite.key?('continue-on-error') &&
       suite['with'] == {'am_image_result' => '${{ needs.am-images.result }}',
                         'runtime_image_result' => '${{ needs.runtime-images.result }}',
                         'omarchy_image_result' => '${{ needs.omarchy.result }}'},
-                  'two-AM verification must use its own three image jobs and trusted CI events')
+                  'two-AM verification must use its own archive, three images and trusted CI events')
   end
   check_version_label(ci, "!cancelled() && (#{verification_ref})")
   check_version_label(documents.fetch('ci-pr-repo'))

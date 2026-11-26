@@ -17,6 +17,32 @@ registerRegistryRunnerTests({fixture, requiredPrefixes});
 
 for (const reuse of [false, true]) {
   const mode = reuse ? 'archive' : 'source';
+  test(`${mode}: prepared startup requires a complete listing before making a fixture`, () => {
+    for (const scenario of ['prepared-startup-success', 'prepared-startup-missing', 'prepared-startup-error']) {
+      const f = fixture(scenario, reuse);
+      try {
+        const run = () => execFileSync('bash', [...f.args, '--prepared-startup'], {env: f.env, timeout: 15000, stdio: 'pipe'});
+        const missing = scenario === 'prepared-startup-missing';
+        if (scenario === 'prepared-startup-success') {
+          assert.match(run().toString(), /selected 5\/5 exact tests/);
+        } else {
+          assert.throws(run, error => missing ? /inventory differs/.test(error.stderr) : error.status === 7);
+        }
+        const calls = f.calls();
+        const cargo = calls.filter(row => row.command === 'cargo');
+        assert.deepEqual(cargo.map(row => row.args[1]), missing ? ['list'] : ['list', 'run']);
+        assert.equal(cargo[0].uri, undefined);
+        assert.equal(calls.some(row => row.command === 'docker'), !missing);
+        if (!missing) {
+          assert.equal(cargo[0].args.at(-1), cargo[1].args.at(-1));
+          assert.match(cargo[1].uri, /^mongodb:\/\/127\.0\.0\.1:[0-9]+\//);
+        }
+        assert.equal(f.containers().length, 0);
+        assert.equal(f.volumes().length, 0);
+      } finally { f.close(); }
+    }
+  });
+
   test(`${mode}: CPU profiles retain the shared runner, selection and failure policy`, () => {
     for (const scenario of ['success', 'cpu-error', 'cpu-empty']) {
       const f = fixture(scenario, reuse);

@@ -218,6 +218,9 @@ report_steps.call(copy) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n eviden
 check_artifact_downloads(copy, actions)
 before_queue = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
 mutations = [
+ ->(d) { d['ci-two-am']['jobs']['startup-controls']['steps'][2]['continue-on-error'] = true },
+ ->(d) { d['ci-two-am']['jobs']['startup-controls']['steps'][2]['run'] = 'true' },
+ ->(d) { d['ci-pr-am']['jobs']['two-am-features']['needs'].delete('rust-test-build') },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['if'] = 'true' },
   ->(d) { d['ci-images']['jobs']['images']['steps'].reject! { |s| s['name'] == 'Runtime vulnerability gate' } },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Runtime vulnerability gate' }['continue-on-error'] = true },
