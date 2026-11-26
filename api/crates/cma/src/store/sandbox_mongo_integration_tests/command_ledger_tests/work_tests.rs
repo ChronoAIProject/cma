@@ -364,4 +364,5 @@ async fn identical_control_logs_do_not_prove_a_different_command_committed() {
     client.database(&name).drop().await.unwrap();
 }
 
+mod maintenance_reconcile_tests;
 mod settlement;

@@ -5,6 +5,14 @@
 pub(super) const MAX_LOGIN_URL_BYTES: usize = 4096;
 
 pub(in crate::auth) fn app_return_target(value: &str) -> Result<String, ()> {
+    return_target(value, false)
+}
+
+pub(super) fn interactive_return_target(value: &str) -> Result<String, ()> {
+    return_target(value, true)
+}
+
+fn return_target(value: &str, allow_agent_share: bool) -> Result<String, ()> {
     let (path, query) = value
         .split_once('?')
         .map_or((value, None), |(path, query)| (path, Some(query)));
@@ -42,6 +50,7 @@ pub(in crate::auth) fn app_return_target(value: &str) -> Result<String, ()> {
     }
     match segments.as_slice() {
         ["agent-manager" | "event-gateway" | "image-manager" | "docs" | "usage"] => {}
+        ["agent-manager", "share", _] if allow_agent_share && query.is_none() => {}
         ["docs", "event-gateway"] => {}
         ["t", public_id] if opaque_path_segment(public_id) => {}
         ["t", public_id, placement_id]
@@ -90,20 +99,27 @@ mod tests {
         .unwrap();
         for case in cases {
             assert_eq!(
-                app_return_target(&case.target).is_ok(),
+                interactive_return_target(&case.target).is_ok(),
                 case.backend,
                 "raw target: {}",
                 case.target
             );
             if let Some(emitted) = case.explicit {
                 assert_eq!(
-                    app_return_target(&emitted),
+                    interactive_return_target(&emitted),
                     Ok(emitted.clone()),
                     "browser destination from {}",
                     case.target
                 );
             }
         }
+    }
+
+    #[test]
+    fn agent_share_requires_interactive_sign_in() {
+        let share = "/agent-manager/share/shr_fixture";
+        assert_eq!(interactive_return_target(share).as_deref(), Ok(share));
+        assert!(app_return_target(share).is_err());
     }
 
     #[test]

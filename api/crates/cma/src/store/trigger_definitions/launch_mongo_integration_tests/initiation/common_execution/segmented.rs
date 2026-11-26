@@ -220,6 +220,40 @@ async fn segmented_trigger_refusal_aborts_command_on_missing_source_evidence() {
 #[ignore = "requires an owned disposable Mongo replica set"]
 async fn segmented_trigger_exact_refusal_receipt_survives_later_append() {
     let a = accepted().await;
+    let parent = doc! { "_id": a.agent.sandbox_id.as_str() };
+    a.f.resources
+        .sandboxes
+        .update_one(
+            parent.clone(),
+            doc! { "$set": { "ledger_maintenance": { "phase": "requested" } } },
+        )
+        .await
+        .unwrap();
+    let before = a.current_agent().await;
+    assert_eq!(
+        a.f.resources
+            .reject_unclaimed_command(
+                &a.command.receipt.envelope.command_id,
+                a.command.revision,
+                CommandFailureCode::QueueTimeout,
+                a.command.queue_deadline.clone(),
+            )
+            .await,
+        Err(CommandLedgerError::StaleClaim)
+    );
+    assert_eq!(a.current_agent().await, before);
+    assert_eq!(
+        a.f.resources
+            .get_command(&a.command.receipt.envelope.command_id)
+            .await
+            .unwrap(),
+        Some(a.command.clone())
+    );
+    a.f.resources
+        .sandboxes
+        .update_one(parent, doc! { "$unset": { "ledger_maintenance": "" } })
+        .await
+        .unwrap();
     let mut session = a.f.seed.client.start_session().await.unwrap();
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
     let receipt = command_worker::refuse(
