@@ -38,6 +38,7 @@ export function useLifecycleIntent(
   const observedWait = useRef<AgentLifecycleOperationView | undefined>(undefined);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<LifecycleFailure>();
+  const [cancelError, setCancelError] = useState<string>();
   const [operation, setOperation] = useState<AgentLifecycleOperationView>();
   const [connection, setConnection] = useState<AgentLifecycleOperationView['connection']>();
   const [pollVersion, setPollVersion] = useState(0);
@@ -49,6 +50,7 @@ export function useLifecycleIntent(
     setSaved(loadLifecycleIntent(storageScope, binding));
     setPending(false);
     setFailure(undefined);
+    setCancelError(undefined);
     setOperation(undefined);
     setConnection(undefined);
   }
@@ -180,6 +182,7 @@ export function useLifecycleIntent(
     observedWait.current = undefined;
     setPending(true);
     setFailure(undefined);
+    setCancelError(undefined);
     try {
       const result = await client.createAgentLifecycle(intent.body, {
         idempotencyKey: intent.key,
@@ -229,11 +232,61 @@ export function useLifecycleIntent(
     operation.connection?.target.type === 'sandbox_profile'
       ? saved.intent
       : undefined;
+  const canActOnWait = () =>
+    live.current === generation &&
+    waitingIntent !== undefined &&
+    current.current === waitingIntent &&
+    observedWait.current === operation &&
+    !active.current;
+  const clearWaiting = () => {
+    if (
+      !owner ||
+      !waitingIntent ||
+      !retain(waitingIntent, undefined, () =>
+        discardSubmittedTaskDraft(
+          owner,
+          waitingIntent.body,
+          waitingIntent.draftRevision,
+          'discarded',
+        ),
+      )
+    )
+      return false;
+    observedWait.current = undefined;
+    setOperation(undefined);
+    setConnection(undefined);
+    return true;
+  };
+  const discardWaiting = () => !operation?.can_cancel && canActOnWait() && clearWaiting();
+  const cancelWaiting = async () => {
+    const id = waitingIntent?.receipt?.id;
+    if (!id || !operation?.can_cancel || !client.cancelAgentLifecycle || !canActOnWait())
+      return false;
+    const abort = new AbortController();
+    active.current = abort;
+    setPending(true);
+    setCancelError(undefined);
+    try {
+      const result = await client.cancelAgentLifecycle(id, { signal: abort.signal });
+      if (abort.signal.aborted || live.current !== generation || current.current !== waitingIntent)
+        return false;
+      if (result.id !== id || result.status !== 'failed' || result.agent_id || result.connection)
+        throw new ProtocolError('Agent setup cancellation could not be verified.');
+      return clearWaiting();
+    } catch {
+      if (!abort.signal.aborted && live.current === generation)
+        setCancelError('Cancellation could not be confirmed. Your original Agent setup was kept.');
+      return false;
+    } finally {
+      if (active.current === abort) active.current = undefined;
+      if (!abort.signal.aborted) setPending(false);
+    }
+  };
+  const requestError = saved.error ?? cancelError;
   return {
     intent: saved.intent,
     pending,
-    failure:
-      saved.error === undefined ? failure : { kind: 'message' as const, message: saved.error },
+    failure: requestError ? { kind: 'message' as const, message: requestError } : failure,
     operation,
     connection,
     setConnection: (value: AgentLifecycleOperationView['connection']) => {
@@ -243,31 +296,15 @@ export function useLifecycleIntent(
     submit,
     retryStatus: () => {
       observedWait.current = undefined;
+      setCancelError(undefined);
       setPollVersion((value) => value + 1);
     },
-    canDiscardWaiting: waitingIntent !== undefined,
-    discardWaiting: () => {
-      if (
-        !owner ||
-        !waitingIntent ||
-        current.current !== waitingIntent ||
-        active.current ||
-        observedWait.current !== operation ||
-        !retain(waitingIntent, undefined, () =>
-          discardSubmittedTaskDraft(
-            owner,
-            waitingIntent.body,
-            waitingIntent.draftRevision,
-            'discarded',
-          ),
-        )
-      )
-        return false;
-      observedWait.current = undefined;
-      setOperation(undefined);
-      setConnection(undefined);
-      return true;
-    },
+    canDiscardWaiting: waitingIntent !== undefined && !operation?.can_cancel,
+    discardWaiting,
+    canCancelWaiting:
+      waitingIntent !== undefined && !!operation?.can_cancel && !!client.cancelAgentLifecycle,
+    cancelWaiting,
+    finishWaiting: () => (operation?.can_cancel ? cancelWaiting() : discardWaiting()),
     clear: () => {
       const intent = saved.intent;
       if (!intent || !retain(intent)) return false;

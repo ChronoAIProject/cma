@@ -4,6 +4,21 @@ import { createRestWebClient } from './rest';
 
 afterEach(() => vi.unstubAllGlobals());
 
+it('sends owner cancellation through the public lifecycle endpoint', async () => {
+  const fetch = vi.fn(async () =>
+    Response.json({ id: 'operation-one', status: 'failed', phase: 'failed', events: [] }),
+  );
+  const client = createRestWebClient(createClient({ baseUrl: 'https://cma.test', fetch }));
+  await expect(client.cancelAgentLifecycle!('operation-one')).resolves.toMatchObject({
+    id: 'operation-one',
+    status: 'failed',
+  });
+  expect(fetch).toHaveBeenCalledExactlyOnceWith(
+    'https://cma.test/api/v1/agent-lifecycle/operation-one/cancel',
+    expect.objectContaining({ method: 'POST' }),
+  );
+});
+
 it.each([401, 403, 404, 429, 503])(
   'preserves HTTP %i for lifecycle retry decisions',
   async (status) => {

@@ -121,6 +121,7 @@ async fn lifecycle_callback_distinguishes_unknown_retained_deleted_and_missing_a
             id: "operation".into(),
             status: "running".into(),
             phase: "agent_startup".into(),
+            can_cancel: None,
             agent_id: id.map(Into::into),
             error: None,
             events: vec![],

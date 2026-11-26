@@ -119,6 +119,7 @@ export const agentLifecycleOperation = object({
   }),
   status: enumeration('queued', 'running', 'waiting_for_connection', 'succeeded', 'failed'),
   phase: text,
+  can_cancel: optional(boolean),
   agent_id: optional(text),
   error: optional(text),
   failure: optional(agentLifecycleFailure),

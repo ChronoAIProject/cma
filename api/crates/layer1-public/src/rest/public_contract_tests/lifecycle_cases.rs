@@ -91,6 +91,7 @@ impl AgentLifecycleOperationReader for Lifecycle {
         let mut view = self.read(caller, id).await?;
         view.status = "failed".into();
         view.phase = "failed".into();
+        view.can_cancel = None;
         view.error = Some("Creation cancelled before Sandbox allocation".into());
         view.connection = None;
         Ok(view)
@@ -112,6 +113,7 @@ impl AgentLifecycleOperationReader for Lifecycle {
             id: "operation-contract".into(),
             status: "waiting_for_connection".into(),
             phase: "sandbox_ready".into(),
+            can_cancel: (self.0 == "cancellable").then_some(true),
             agent_id: None,
             error: None,
             events: vec![AgentLifecycleEventView {
@@ -173,4 +175,26 @@ async fn acceptance_time_is_optional_and_serializes_the_supplied_admission_time(
         serde_json::to_value(&view).unwrap()["accepted_at"],
         "2026-10-12T23:59:00Z"
     );
+}
+
+#[tokio::test]
+async fn lifecycle_cancellation_availability_is_optional_and_cleared_at_settlement() {
+    let caller = Caller::new(
+        layer2_core::SubjectId::new("owner-a"),
+        Authorization::none(),
+    );
+    let id = "operation-contract";
+    let old = Lifecycle("ready".into()).read(&caller, id).await.unwrap();
+    assert!(serde_json::to_value(old)
+        .unwrap()
+        .get("can_cancel")
+        .is_none());
+    let lifecycle = Lifecycle("cancellable".into());
+    let waiting = lifecycle.read(&caller, id).await.unwrap();
+    assert_eq!(serde_json::to_value(waiting).unwrap()["can_cancel"], true);
+    let settled = lifecycle.cancel_unallocated(&caller, id).await.unwrap();
+    let settled = serde_json::to_value(settled).unwrap();
+    assert_eq!(settled["id"], id);
+    assert_eq!(settled["status"], "failed");
+    assert!(settled.get("can_cancel").is_none());
 }

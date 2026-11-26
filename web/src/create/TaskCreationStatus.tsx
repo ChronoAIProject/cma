@@ -17,6 +17,7 @@ export function TaskCreationStatus({
   draft,
   titleId,
   hasFollowUp,
+  cancelWaiting,
   onDiscardWaiting,
 }: {
   readonly intent?: Intent;
@@ -24,6 +25,7 @@ export function TaskCreationStatus({
   readonly failure?: string;
   readonly pending: boolean;
   readonly hasFollowUp?: boolean;
+  readonly cancelWaiting?: boolean;
   readonly onDiscardWaiting?: () => void;
   readonly resolvedCommit?: string;
   readonly recovery?: ReactNode;
@@ -47,10 +49,17 @@ export function TaskCreationStatus({
           {onDiscardWaiting ? (
             hasFollowUp ? (
               <p role="status">
-                Keep or copy your follow-up draft, then clear it to discard this task.
+                {cancelWaiting
+                  ? 'Keep or copy your follow-up draft, then clear it to cancel setup.'
+                  : 'Keep or copy your follow-up draft, then clear it to discard this task.'}
               </p>
             ) : (
-              <DiscardWaitingCreation key={intent.key} label="task" onDiscard={onDiscardWaiting} />
+              <DiscardWaitingCreation
+                key={intent.key}
+                label="task"
+                remote={cancelWaiting}
+                onDiscard={onDiscardWaiting}
+              />
             )
           ) : null}
           {!intent.receipt && !pending ? (
