@@ -4,6 +4,72 @@ use mongodb::bson::Bson;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
+async fn one_settled_retirement_slot_is_reused_once_across_managers() {
+    use layer2_core::sandbox::{SandboxHome, SandboxStatus, SandboxWorkStep};
+
+    let (client, name) = database("owner_retirement_slot").await;
+    let left = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let right = MongoSandboxStore::open(&client, &name).await.unwrap();
+    for i in 0..2 {
+        let id = format!("sbx_outgoing_{i}");
+        let SandboxAdmissionResult::Created(mut parent) = left
+            .admit_sandbox(admission(&id, &format!("launch-outgoing-{i}"), 2))
+            .await
+            .unwrap()
+        else {
+            panic!("expected new Sandbox");
+        };
+        let previous = parent.revision;
+        parent.begin_retirement(NOW.into()).unwrap();
+        if i == 0 {
+            let mut home = SandboxHome::reserve(
+                &parent.id,
+                layer3_adapter::HomeVolumePolicy {
+                    mode: Default::default(),
+                    storage_class: "storage".into(),
+                    capacity_gib: 64,
+                    template_name: "empty".into(),
+                    template_generation: "seed-generation".into(),
+                },
+            )
+            .unwrap();
+            home.released = true;
+            parent.lifecycle.home = Some(Box::new(home));
+            parent
+                .work
+                .schedule(SandboxWorkStep::MarkRetired, NOW.into());
+            assert!(parent.retirement_released_owner_slot());
+        } else {
+            assert!(!parent.retirement_released_owner_slot());
+        }
+        left.save_sandbox(previous, parent).await.unwrap();
+    }
+    let owner = SubjectId::new("owner");
+    let snapshot = right.owner_capacity(&owner).await.unwrap();
+    assert_eq!(snapshot.counts, [(SandboxStatus::Retiring, 1)]);
+    assert_eq!(snapshot.retiring_released, 1);
+    let (a, b) = tokio::join!(
+        left.admit_sandbox(admission("sbx_replacement_a", "launch-replacement-a", 2)),
+        right.admit_sandbox(admission("sbx_replacement_b", "launch-replacement-b", 2)),
+    );
+    let results = [a, b];
+    assert_eq!(
+        results
+            .iter()
+            .filter(|value| matches!(value, Ok(SandboxAdmissionResult::Created(_))))
+            .count(),
+        1
+    );
+    assert!(results.iter().any(|value| matches!(
+        value,
+        Err(SandboxStoreError::LimitReached { limit: 2, live: 2, usage })
+            if usage.retiring_charged == 1 && usage.retiring_released == 1
+    )));
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
 async fn two_clients_enforce_three_sandboxes_per_owner_without_splitting_capacity() {
     let (client, name) = database("owner_three_replicas").await;
     let peer = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
@@ -35,7 +101,9 @@ async fn two_clients_enforce_three_sandboxes_per_owner_without_splitting_capacit
     for (request, result) in results {
         match result {
             Ok(SandboxAdmissionResult::Created(value)) => accepted.push((request, value)),
-            Err(SandboxStoreError::LimitReached { limit: 3, live: 3 }) => refused += 1,
+            Err(SandboxStoreError::LimitReached {
+                limit: 3, live: 3, ..
+            }) => refused += 1,
             other => panic!("unexpected shared owner admission: {other:?}"),
         }
     }
@@ -73,7 +141,11 @@ async fn two_clients_enforce_three_sandboxes_per_owner_without_splitting_capacit
         restarted
             .admit_sandbox(admission("sbx_fourth", "launch-fourth", 3))
             .await,
-        Err(SandboxStoreError::LimitReached { limit: 3, live: 3 })
+        Err(SandboxStoreError::LimitReached {
+            limit: 3,
+            live: 3,
+            ..
+        })
     ));
     // Another owner's allowance remains independently available on either pod.
     let mut other = sandbox("sbx_other_owner", "launch-other-owner");

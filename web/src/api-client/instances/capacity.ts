@@ -1,5 +1,13 @@
 import { ProtocolError } from '../errors.js';
-import { dictionary, enumeration, integer, object, text, type Output } from '../schema.js';
+import {
+  dictionary,
+  enumeration,
+  integer,
+  object,
+  optional,
+  text,
+  type Output,
+} from '../schema.js';
 import { sandboxStatus } from './types.js';
 
 const capacity = object({
@@ -8,7 +16,14 @@ const capacity = object({
   live: integer,
   available: integer,
   counts_by_status: dictionary(integer),
+  retiring_released: optional(integer),
   observed_at: text,
+});
+
+export const sandboxQuotaUsage = object({
+  active: integer,
+  retiring_charged: integer,
+  retiring_released: integer,
 });
 
 /** Quota observation only; other admission checks and concurrent allocation still apply. */

@@ -203,7 +203,11 @@ async fn owner_limit_and_failed_insert_do_not_spend_global_capacity() {
     denied.live_limit = 0;
     assert_eq!(
         store.admit_sandbox(denied).await.unwrap_err(),
-        SandboxStoreError::LimitReached { limit: 0, live: 0 }
+        SandboxStoreError::LimitReached {
+            limit: 0,
+            live: 0,
+            usage: Default::default()
+        }
     );
     let first = owned(0);
     store.admit_sandbox(first.clone()).await.unwrap();
