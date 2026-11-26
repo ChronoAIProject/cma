@@ -74,6 +74,50 @@ async fn crash_loop_is_read_only_and_retains_the_assigned_claim_and_home() {
 }
 
 #[tokio::test]
+async fn native_claim_placement_deferral_recovers_on_the_same_claim_and_home() {
+    use super::super::NativeClaimGuardReason;
+
+    let (fixture, claim) = fixture(true).await;
+    let ready_pod = {
+        let mut state = fixture.state.lock().unwrap();
+        let pod = state.rows.get_mut(POD).unwrap();
+        let ready_pod = pod.clone();
+        pod["spec"] = json!({"containers":[{"name":"runtime","image":"image"}]});
+        pod["status"] = json!({
+            "phase":"Pending",
+            "conditions":[{"type":"PodScheduled","status":"False","reason":"Unschedulable",
+                "message":"private scheduler diagnostics"}]
+        });
+        state.calls.clear();
+        ready_pod
+    };
+    let error = fixture.client.adopt_home(&claim).await.unwrap_err();
+    assert_eq!(
+        error,
+        AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Unschedulable)
+    );
+    assert!(!error.to_string().contains("private scheduler diagnostics"));
+    {
+        let mut state = fixture.state.lock().unwrap();
+        assert!(state.calls.iter().all(|(call, _)| call.starts_with("GET ")));
+        state.rows.insert(POD.into(), ready_pod);
+        state.calls.clear();
+    }
+    let home = fixture.client.adopt_home(&claim).await.unwrap();
+    let origin = home.receipt.native_authority.unwrap();
+    assert_eq!(origin.claim, claim);
+    assert_eq!(origin.sandbox_uid, "member-uid");
+    assert_eq!(origin.pvc_uid, "pvc-uid");
+    assert!(fixture
+        .state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .all(|(call, _)| { !call.starts_with("POST ") && !call.starts_with("DELETE ") }));
+}
+
+#[tokio::test]
 async fn healthy_guard_adopts_once_and_recovery_preserves_the_home() {
     let (fixture, claim) = fixture(true).await;
     let home = fixture.client.adopt_home(&claim).await.unwrap();
