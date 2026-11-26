@@ -38,6 +38,7 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
     },
     ownerOf: async () => ({agent_id: 'fixture-agent', am: 'b', epoch: ++ownerReads > 1 && changedOwner ? 2 : 1,
       instance_id: 'fixture-manager', pod_uid: 'fixture-pod'}),
+    publicationEvidence: async () => ({a: {}, b: {known_aborted_cas: {publish_connection: 1}}}),
   };
   const results = [];
   const step = async (name, operation) => { results.push({name, ...await operation()}); };
@@ -82,6 +83,7 @@ test('cold comparison and two ingress checks join the exact prepared reservation
   assert.equal(context.results[1].request_sha256.browser_ready, 'c'.repeat(64));
   assert.equal(context.results[1].request_sha256.browser_send, 'd'.repeat(64));
   assert.match(context.results[1].request_sha256.admission, /^[a-f0-9]{64}$/);
+  assert.deepEqual(context.results[1].publication_diagnostics.b, {known_aborted_cas: {publish_connection: 1}});
   assert.deepEqual(context.results[1].parent_schema_versions, [4, 3, 1]);
 });
 

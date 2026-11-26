@@ -154,6 +154,35 @@ class OwnershipTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'configuration_dispatch_lineage_required'):
             fixture.configurationDispatch('owned-agent', True)
 
+    def test_publication_diagnostics_are_scoped_to_the_agent_and_startup_phase(self):
+        wanted = hashlib.sha256(b'fixture-agent').hexdigest()
+
+        def entry(failure, step='open_conversation', digest=wanted, target='agent_scheduler_failure'):
+            return (f'INFO {target}: Agent publication boundary phase="publication" '
+                    f'failure="{failure}" next_step="{step}" agent_sha256={digest}')
+
+        known = entry('known_aborted_cas')
+        logs = {'am-a-0': [known, known, entry('owner_authority_refused', digest='a' * 64)],
+                'am-b-0': [entry('unknown_commit', 'publish_connection'),
+                           entry('work_lease_changed', 'publish_deleted'), entry('unknown_commit', target='unrelated')]}
+        fixture = Fixture.__new__(Fixture)
+
+        def read(args, *, timeout):
+            self.assertEqual(args[0], 'logs')
+            self.assertEqual(args[2:], ['--since=12m', '--limit-bytes=2097152'])
+            self.assertEqual(timeout, 8)
+            return '\n'.join(logs[args[1]])
+
+        fixture.client = SimpleNamespace(k=read)
+        self.assertEqual(fixture.publicationEvidence('fixture-agent'), {
+            'a': {'known_aborted_cas': {'open_conversation': 2}},
+            'b': {'unknown_commit': {'publish_connection': 1}}})
+        with self.assertRaisesRegex(ValueError, 'publication_evidence_lineage_required'):
+            fixture.publicationEvidence('../foreign-agent')
+        logs['am-b-0'].append(entry('unexpected_classification'))
+        with self.assertRaisesRegex(RuntimeError, 'publication_evidence_invalid_diagnostic'):
+            fixture.publicationEvidence('fixture-agent')
+
     def test_retirement_purge_writes_are_scoped_to_the_local_feature_fixture(self):
         run_id = 'cma-ci-' + 'a' * 12
         fixture = Fixture.__new__(Fixture)

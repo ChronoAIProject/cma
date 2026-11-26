@@ -13,7 +13,7 @@ export function createAdapter(config) {
     'releaseTurn','oracle','restoreAm','captureFailure','titleEffects','titleIntent','skillEffects',
     'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence','observeScale',
     'observeNeverReady','liveOwnerLease','lifecycleSnapshot','organizationMembership',
-    'configurationLog','configurationDispatch','retirementPurge','removeRuntimePod']
+    'configurationLog','configurationDispatch','publicationEvidence','retirementPurge','removeRuntimePod']
     .map(name=>[name,(body)=>call(name,body)]));
 }
 export default createAdapter;

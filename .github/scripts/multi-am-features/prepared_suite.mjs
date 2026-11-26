@@ -77,10 +77,11 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       const finalIngress = await servingMember(adapter, ingress);
       check(finalIngress.instance_id === ingressMember.instance_id && finalIngress.pod_uid === ingressMember.pod_uid,
         'prepared_browser_ingress_changed');
+      const publicationDiagnostics = await adapter.publicationEvidence({agentId: record.agentId});
       await cleanup(record);
       return {ingress, owner: owner.am, owner_epoch: owner.epoch, parent_schema_versions: durable.schemas,
         ingress_instance_sha256: hash(ingressMember.instance_id), owner_instance_sha256: hash(owner.instance_id),
-        request_sha256: requests,
+        request_sha256: requests, publication_diagnostics: publicationDiagnostics,
         atomic_publication_fence_count: durable.ready_fences.filter(count => count === 1).length,
         startup_receipt_count: durable.startup_receipts.length,
         browser_starting_read: true, browser_ready_read: true, browser_reply_sha256: browserReply.answer_sha256,
@@ -110,11 +111,11 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
     schema: 'multi-am-prepared-coverage-v1', suite_verdict: verdict, source: config.expected_api_source,
     writer_coverage: coverage,
     steps: journey.steps.map(({name, verdict, elapsed_ms, parent_schema_versions, owner_epoch, ingress, owner,
-      ingress_instance_sha256, owner_instance_sha256, request_sha256,
+      ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics,
       atomic_publication_fence_count, startup_receipt_count, browser_starting_read, browser_ready_read, browser_reply_sha256,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256}) => ({
       name, verdict, elapsed_ms, parent_schema_versions, owner_epoch, ingress, owner,
-      ingress_instance_sha256, owner_instance_sha256, request_sha256,
+      ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics,
       atomic_publication_fence_count, startup_receipt_count, browser_starting_read, browser_ready_read, browser_reply_sha256,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256,
     })),

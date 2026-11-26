@@ -25,6 +25,7 @@ from configuration_log import configuration_dispatch, configuration_log
 import manifests
 import legacy_manifests as old
 from login import login
+from publication_evidence import publication_evidence
 from readiness_scaling import observe_never_ready, observe_scale
 from retirement_purge import retirement_purge
 from runtime_loss import remove_runtime_pod
@@ -45,6 +46,7 @@ def validate_runtime_sources(ready):
 class Fixture:
     configurationLog = configuration_log
     configurationDispatch = configuration_dispatch
+    publicationEvidence = publication_evidence
     retirementPurge = retirement_purge
     removeRuntimePod = remove_runtime_pod
     titleEffects = title_effects
@@ -407,7 +409,7 @@ class Fixture:
                              'releaseTurn','oracle','captureFailure','titleEffects','titleIntent','skillEffects',
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
                              'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
-                             'organizationMembership','configurationLog','configurationDispatch',
+                             'organizationMembership','configurationLog','configurationDispatch','publicationEvidence',
                              'retirementPurge','removeRuntimePod']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
