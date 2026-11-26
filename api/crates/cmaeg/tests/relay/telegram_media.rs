@@ -90,8 +90,14 @@ fn rendered(fixture: &Fixture) -> String {
     input[0]["content"][0]["text"].as_str().unwrap().to_owned()
 }
 
+#[test]
+fn nyxid_media_shapes_are_refused_off_and_admitted_on() {
+    run_isolated("telegram_media::nyxid_media_shapes_are_refused_off_and_admitted_on_child");
+}
+
 #[tokio::test]
-async fn nyxid_media_shapes_are_refused_off_and_admitted_on() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn nyxid_media_shapes_are_refused_off_and_admitted_on_child() {
     let off = Fixture::new(|_| {}, Default::default()).await;
     let on = Fixture::with_media(|_| {}, Default::default()).await;
     for (shape, envelope) in telegram_shapes() {
@@ -107,8 +113,14 @@ async fn nyxid_media_shapes_are_refused_off_and_admitted_on() {
     }
 }
 
+#[test]
+fn captioned_relay_photo_is_correlated_on_refusal_and_delivered_when_enabled() {
+    run_isolated("telegram_media::captioned_relay_photo_is_correlated_on_refusal_and_delivered_when_enabled_child");
+}
+
 #[tokio::test]
-async fn captioned_relay_photo_is_correlated_on_refusal_and_delivered_when_enabled() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn captioned_relay_photo_is_correlated_on_refusal_and_delivered_when_enabled_child() {
     use axum::body::Body;
     use cmaeg::{http::callbacks, turns::observer::ActivityObserver};
     use cmaeg_core::ids::{EventId, RecordId};
@@ -246,8 +258,16 @@ async fn animations_albums_and_animated_stickers_keep_their_platform_facts() {
     assert_eq!(last(&fixture).1[0].kind, AttachmentKind::Other);
 }
 
+#[test]
+fn an_envelope_item_matching_no_file_leaves_the_attachment_unlocated() {
+    run_isolated(
+        "telegram_media::an_envelope_item_matching_no_file_leaves_the_attachment_unlocated_child",
+    );
+}
+
 #[tokio::test]
-async fn an_envelope_item_matching_no_file_leaves_the_attachment_unlocated() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn an_envelope_item_matching_no_file_leaves_the_attachment_unlocated_child() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let series =
         |outcome: &str| format!("cmaeg_media_relay_correlation_total{{outcome=\"{outcome}\"}}");
@@ -417,8 +437,16 @@ fn normalization_cases() -> Vec<Case> {
     ]
 }
 
+#[test]
+fn sender_declared_facts_are_normalized_and_never_reject_the_callback() {
+    run_isolated(
+        "telegram_media::sender_declared_facts_are_normalized_and_never_reject_the_callback_child",
+    );
+}
+
 #[tokio::test]
-async fn sender_declared_facts_are_normalized_and_never_reject_the_callback() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn sender_declared_facts_are_normalized_and_never_reject_the_callback_child() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let repaired = |field: &str| {
         format!("cmaeg_media_facts_repaired_total{{source=\"nyxid_relay\",field=\"{field}\"}}")

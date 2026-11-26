@@ -1,13 +1,6 @@
-//! Callback envelopes exactly as NyxID `f3dc2be` serializes them, so ingress is
-//! proven against the shapes production actually receives:
-//! - `backend/src/services/channel_relay_service.rs:105-122`: every attachment
-//!   carries `download_url`, `content_type` and `url`; `None` facts are omitted.
-//! - `channel_relay_service.rs:686-701`: `download_url` names the attachment's
-//!   original list position.
-//! - `channel_adapters/telegram.rs:78-252`: `content.type` precedence, the caption
-//!   as text, and a bare Telegram `file_id` as `url`.
-//! - `channel_adapters/lark.rs:401-470` and `:561-569`: Lark resource URLs with
-//!   `platform_message_id` and an image or file key, and the Lark content types.
+//! Callback envelopes as serialized by NyxID `f3dc2be`.
+//! The relay supplies attachment ordinals and Telegram captions and file IDs.
+//! Lark resources carry their message and file keys in provider URLs.
 use super::support::*;
 use cmaeg_core::activity::ActivityKind;
 use serde_json::{json, Value};
@@ -279,8 +272,14 @@ fn on_text(shape: &Envelope) -> Envelope {
     envelope
 }
 
+#[test]
+fn nyxid_telegram_media_is_refused_as_unsupported_not_rejected() {
+    run_isolated("nyxid_shapes::nyxid_telegram_media_is_refused_as_unsupported_not_rejected_child");
+}
+
 #[tokio::test]
-async fn nyxid_telegram_media_is_refused_as_unsupported_not_rejected() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn nyxid_telegram_media_is_refused_as_unsupported_not_rejected_child() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let fixture = Fixture::new(|_| {}, Default::default()).await;
     for (shape, envelope) in telegram_shapes() {
@@ -295,16 +294,30 @@ async fn nyxid_telegram_media_is_refused_as_unsupported_not_rejected() {
     }
 }
 
+#[test]
+fn nyxid_lark_media_is_refused_as_unsupported_not_rejected() {
+    run_isolated("nyxid_shapes::nyxid_lark_media_is_refused_as_unsupported_not_rejected_child");
+}
+
 #[tokio::test]
-async fn nyxid_lark_media_is_refused_as_unsupported_not_rejected() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn nyxid_lark_media_is_refused_as_unsupported_not_rejected_child() {
     let fixture = Fixture::on("lark", |_| {}, Default::default()).await;
     for (shape, envelope) in lark_shapes() {
         refused_media(&fixture, &envelope, shape).await;
     }
 }
 
+#[test]
+fn sender_controlled_attachment_facts_never_reject_the_callback() {
+    run_isolated(
+        "nyxid_shapes::sender_controlled_attachment_facts_never_reject_the_callback_child",
+    );
+}
+
 #[tokio::test]
-async fn sender_controlled_attachment_facts_never_reject_the_callback() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn sender_controlled_attachment_facts_never_reject_the_callback_child() {
     let fixture = Fixture::new(|_| {}, Default::default()).await;
     let edit = |change: &dyn Fn(&mut Value)| {
         let mut envelope = telegram_document();
@@ -377,8 +390,14 @@ async fn a_null_attachment_list_is_a_text_message() {
     );
 }
 
+#[test]
+fn repaired_attachment_facts_are_counted_by_field() {
+    run_isolated("nyxid_shapes::repaired_attachment_facts_are_counted_by_field_child");
+}
+
 #[tokio::test]
-async fn repaired_attachment_facts_are_counted_by_field() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn repaired_attachment_facts_are_counted_by_field_child() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let fixture = Fixture::new(|_| {}, Default::default()).await;
     let mut envelope = telegram_document();
@@ -440,8 +459,16 @@ fn named(first: &str, last: Option<&str>) -> Envelope {
     envelope
 }
 
+#[test]
+fn oversized_and_control_only_display_names_are_repaired_not_rejected() {
+    run_isolated(
+        "nyxid_shapes::oversized_and_control_only_display_names_are_repaired_not_rejected_child",
+    );
+}
+
 #[tokio::test]
-async fn oversized_and_control_only_display_names_are_repaired_not_rejected() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn oversized_and_control_only_display_names_are_repaired_not_rejected_child() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let fixture = Fixture::new(|_| {}, Default::default()).await;
     let cjk = named(&"名".repeat(64), Some(&"姓".repeat(64)));
