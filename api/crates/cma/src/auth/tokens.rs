@@ -3,6 +3,7 @@
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct ProviderMetadata {
     pub authorization_endpoint: String,
     pub token_endpoint: String,

@@ -6,6 +6,8 @@ use std::{
 };
 use tokio::time::{timeout, Instant};
 
+#[cfg(test)]
+use super::permissions::PermissionEvidence;
 use super::{
     identity::{self, VerifiedSubject},
     verification_error::{
@@ -43,6 +45,19 @@ pub(super) async fn verify_detailed(
     // No queue of distinct-token verifications accumulates during an outage.
     // Local overload is not evidence of provider unavailability and cannot fall back.
     use super::verification_diagnostics::{record, Endpoint, Reason, Stage};
+    #[cfg(test)]
+    let cache = auth.identity_store.positive_cache();
+    #[cfg(test)]
+    if let Some(cache) = cache {
+        let live_key = auth.identity_store.key(token);
+        let discovered = auth.metadata.try_read().ok();
+        let metadata = metadata.or_else(|| discovered.as_deref()?.as_ref());
+        if let Some(evidence) = metadata.and_then(|metadata| {
+            cache.cached_positive(&live_key, metadata, expiry, expected_subject)
+        }) {
+            return Ok(evidence);
+        }
+    }
     let _slot = auth
         .verification_slots
         .try_acquire()
@@ -151,6 +166,15 @@ pub(super) async fn verify_detailed(
                 token_epoch.clone(),
                 expiry,
             )?;
+            #[cfg(test)]
+            let mut lifetime = lifetime;
+            #[cfg(test)]
+            let cache =
+                cache.filter(|_| matches!(&evidence.permissions, PermissionEvidence::Active(_)));
+            #[cfg(test)]
+            if cache.is_some() {
+                lifetime.cap_for_cache();
+            }
             let stamp = auth.identity_store.evidence_stamp(
                 &live_key,
                 super::identity_evidence::EvidenceScope::new(auth, &metadata, token),
@@ -167,8 +191,15 @@ pub(super) async fn verify_detailed(
                         VerificationCause::PublicationEpochChanged,
                     )
                 })?;
+            #[cfg(test)]
+            let cache_epoch = completed.clone();
             evidence.verification = Some(lifetime.published(completed));
-            Ok(Arc::new(evidence))
+            let evidence = Arc::new(evidence);
+            #[cfg(test)]
+            if let Some(cache) = cache {
+                cache.remember_positive(&live_key, &cache_epoch, metadata, evidence.clone());
+            }
+            Ok(evidence)
         }
         Err(error) => Err(error),
     };

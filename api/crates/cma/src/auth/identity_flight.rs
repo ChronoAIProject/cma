@@ -1,4 +1,4 @@
-//! Process-local invalidation fences; no verification result is retained here.
+//! Process-local invalidation fences. Only test builds can retain completed results.
 use ring::{hmac, rand::SystemRandom};
 use std::{
     collections::HashMap,
@@ -11,7 +11,12 @@ use super::{
     verification_error::ProviderVerificationError,
 };
 
+#[cfg(test)]
+use super::ProviderMetadata;
+
 const CAPACITY: usize = 1024;
+#[cfg(test)]
+const POSITIVE_CAPACITY: usize = 128;
 pub(super) type TokenHash = [u8; 32];
 pub(super) type Epoch = Arc<()>;
 
@@ -31,6 +36,10 @@ pub(super) trait IdentityStore: Send + Sync {
         epoch: &Epoch,
         stamp: &EvidenceStamp,
     ) -> Option<Epoch>;
+    #[cfg(test)]
+    fn positive_cache(&self) -> Option<&MemoryIdentityStore> {
+        None
+    }
     fn invalidate_token(&self, token: &str);
     fn clear(&self);
     #[cfg(test)]
@@ -40,11 +49,15 @@ pub(super) trait IdentityStore: Send + Sync {
 struct Entry {
     epoch: Weak<()>,
     stamp: Option<EvidenceStamp>,
+    #[cfg(test)]
+    positive: Option<(ProviderMetadata, Arc<VerifiedSubject>)>,
 }
 
 pub(super) struct MemoryIdentityStore {
     key: hmac::Key,
     capacity: usize,
+    #[cfg(test)]
+    positive_cache_enabled: bool,
     epochs: Mutex<HashMap<TokenHash, Entry>>,
 }
 
@@ -60,7 +73,58 @@ impl MemoryIdentityStore {
             key: hmac::Key::generate(hmac::HMAC_SHA256, &SystemRandom::new())
                 .expect("operating system randomness is required for identity hashing"),
             capacity,
+            #[cfg(test)]
+            positive_cache_enabled: false,
             epochs: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn positive_cache_prototype() -> Self {
+        Self {
+            positive_cache_enabled: true,
+            ..Self::default()
+        }
+    }
+}
+
+#[cfg(test)]
+impl MemoryIdentityStore {
+    pub(super) fn cached_positive(
+        &self,
+        key: &TokenHash,
+        metadata: &ProviderMetadata,
+        expiry: Option<std::time::SystemTime>,
+        owner: Option<&str>,
+    ) -> Option<Arc<VerifiedSubject>> {
+        let epochs = self.epochs.lock().expect("identity fence lock");
+        let (scope, evidence) = epochs.get(key)?.positive.as_ref()?;
+        (scope == metadata
+            && owner.is_none_or(|owner| evidence.subject.as_str() == owner)
+            && super::identity_lifetime::cache_fresh(evidence, expiry))
+        .then(|| evidence.clone())
+    }
+
+    pub(super) fn remember_positive(
+        &self,
+        key: &TokenHash,
+        epoch: &Epoch,
+        metadata: ProviderMetadata,
+        evidence: Arc<VerifiedSubject>,
+    ) {
+        let mut epochs = self.epochs.lock().expect("identity fence lock");
+        let occupied = epochs
+            .values()
+            .filter(|entry| entry.positive.is_some())
+            .count();
+        let Some(entry) = epochs.get_mut(key) else {
+            return;
+        };
+        if entry.epoch.ptr_eq(&Arc::downgrade(epoch))
+            && super::identity_lifetime::cache_fresh(&evidence, None)
+            && (occupied < POSITIVE_CAPACITY || entry.positive.is_some())
+        {
+            entry.positive = Some((metadata, evidence));
         }
     }
 }
@@ -75,7 +139,13 @@ impl IdentityStore for MemoryIdentityStore {
 
     fn token_epoch(&self, key: &TokenHash) -> Option<Epoch> {
         let mut epochs = self.epochs.lock().expect("identity fence lock");
-        epochs.retain(|_, entry| entry.epoch.strong_count() > 0);
+        epochs.retain(|_, entry| {
+            #[cfg(test)]
+            entry
+                .positive
+                .take_if(|(_, evidence)| !super::identity_lifetime::cache_fresh(evidence, None));
+            entry.epoch.strong_count() > 0
+        });
         if let Some(epoch) = epochs.get(key).and_then(|entry| entry.epoch.upgrade()) {
             return Some(epoch);
         }
@@ -88,6 +158,8 @@ impl IdentityStore for MemoryIdentityStore {
             Entry {
                 epoch: Arc::downgrade(&epoch),
                 stamp: None,
+                #[cfg(test)]
+                positive: None,
             },
         );
         Some(epoch)
@@ -135,8 +207,15 @@ impl IdentityStore for MemoryIdentityStore {
         *current = Entry {
             epoch: Arc::downgrade(&completed),
             stamp: Some(stamp.clone()),
+            #[cfg(test)]
+            positive: None,
         };
         Some(completed)
+    }
+
+    #[cfg(test)]
+    fn positive_cache(&self) -> Option<&MemoryIdentityStore> {
+        self.positive_cache_enabled.then_some(self)
     }
 
     fn invalidate_token(&self, token: &str) {
