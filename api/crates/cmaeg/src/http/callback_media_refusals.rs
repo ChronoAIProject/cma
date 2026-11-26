@@ -1,4 +1,11 @@
 use super::*;
+use crate::{channels::resolver::ResolvedChannel, ingress::relay::payload::CallbackPayload};
+use cmaeg_core::{
+    activity::{ActivityConversation, Actor, ActorKind, ConversationKind, SourceKind},
+    channel::Platform,
+};
+use sha2::{Digest, Sha256};
+use time::format_description::well_known::Rfc3339;
 
 pub(super) fn refuse(
     state: &IngressState,
@@ -21,13 +28,6 @@ pub(super) fn refuse(
     }
     authenticated_refusal(state, record, SOURCE, reason)
 }
-
-use crate::{channels::resolver::ResolvedChannel, ingress::relay::payload::CallbackPayload};
-use cmaeg_core::{
-    activity::{ActivityConversation, Actor, ActorKind, ConversationKind, SourceKind},
-    channel::Platform,
-};
-use sha2::{Digest, Sha256};
 
 pub(super) struct Receipt {
     owner: String,
@@ -54,11 +54,9 @@ pub(super) fn receipt(
         return None;
     }
     let received = time::OffsetDateTime::now_utc();
+    let digest = Sha256::digest(event.as_str().as_bytes());
     let mut row = crate::activity::ChannelActivity::metadata(
-        format!(
-            "telegram:relay-refusal:{:x}",
-            Sha256::digest(event.as_str().as_bytes())
-        ),
+        format!("telegram:relay-refusal:{digest:x}"),
         SourceKind::NyxidRelay {
             platform: Platform::Telegram,
             route_id: payload.conversation.id.clone(),
@@ -74,9 +72,7 @@ pub(super) fn receipt(
             thread_id: None,
         },
         payload.timestamp.clone(),
-        received
-            .format(&time::format_description::well_known::Rfc3339)
-            .ok()?,
+        received.format(&Rfc3339).ok()?,
     );
     row.kind = Some("message".into());
     Some(Receipt {
