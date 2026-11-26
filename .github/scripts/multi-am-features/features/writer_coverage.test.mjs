@@ -19,7 +19,7 @@ test('all thirteen writer groups remain required independently of C275', async (
   assert.equal(features.total + prepared.total, 13);
   assert.equal(new Set(groups.map(row => row.id)).size, 13);
   assert.equal(features.groups.at(-1).id, 'SW12');
-  assert.equal(prepared.groups[0].id, 'SW13');
+  assert.deepEqual(prepared.groups.map(row => row.id), ['SW05', 'SW13']);
   assert.ok(groups.every(row => row.verdict === 'BLOCKED'));
   for (const fixture of ['features', 'prepared']) {
     for (const malformed of [actual.cases.slice(0, 12), [...actual.cases.slice(0, 12), actual.cases[0]]]) {
@@ -34,7 +34,7 @@ test('complete mapping needs all distinct repetitions and both restart phases', 
   const evaluate = selected => writerCoverage(registry, selected, undefined, 'features');
   assert.equal(evaluate(rows).verdict, 'PASS');
   assert.equal(evaluate(rows.filter(row => row.phase === 'before_restart')).verdict, 'FAIL');
-  assert.equal(evaluate(rows.filter(row => row.case !== 'case_11')).groups[11].verdict, 'NOT_RUN');
+  assert.equal(evaluate(rows.filter(row => row.case !== 'case_11')).groups.at(-1).verdict, 'NOT_RUN');
   rows[0].non_owner = false;
   assert.equal(evaluate(rows).groups[0].verdict, 'FAIL');
 });
@@ -55,18 +55,21 @@ test('partial assertions and journey-only evidence never complete missing barrie
   assert.equal(evaluate(journey).verdict, 'FAIL');
 });
 
-test('prepared coverage requires both ingress steps and a completed prepared journey', async () => {
+test('prepared coverage requires the scoped abort, both ingress steps and a completed journey', async () => {
   const registry = JSON.parse(await readFile(new URL('../writer-regressions.json', import.meta.url)));
   const group = registry.cases.find(row => row.id === 'SW13');
+  const abort = registry.cases.find(row => row.id === 'SW05');
   const journey = {verdict: 'LOCAL_PREPARED_TWO_AM_PASS',
     steps: group.required_assertions.map(row => ({name: row.case, verdict: 'PASS'}))};
   const evaluate = () => writerCoverage(registry, [], journey, 'prepared');
-  assert.equal(evaluate().groups[0].verdict, 'BLOCKED');
+  assert.equal(evaluate().groups[1].verdict, 'BLOCKED');
   group.status = 'COMPLETE';
+  assert.equal(evaluate().verdict, 'FAIL');
+  abort.status = 'COMPLETE';
   assert.equal(evaluate().verdict, 'PASS');
   journey.verdict = 'LOCAL_TWO_AM_JOURNEY_PASS';
   assert.equal(evaluate().verdict, 'FAIL');
   journey.verdict = 'LOCAL_PREPARED_TWO_AM_PASS';
   journey.steps.pop();
-  assert.equal(evaluate().groups[0].verdict, 'NOT_RUN');
+  assert.deepEqual(evaluate().groups.map(row => row.verdict), ['NOT_RUN', 'NOT_RUN']);
 });
