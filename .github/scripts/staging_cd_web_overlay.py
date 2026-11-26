@@ -194,6 +194,9 @@ def copy_base_layer(source, output, reference):
 def pack_overlay(base, image, reader, layer, diff_id, inventory, destination):
     config = copy.deepcopy(image["config"])
     config["rootfs"]["diff_ids"].append(diff_id)
+    # OCI history is optional. When the base records it, account for the new filesystem layer.
+    if config.get("history"):
+        config["history"].append({"created_by": "Assemble CMA Web fallback assets"})
     config["config"]["Labels"].update({
         MANIFEST_LABEL: inventory, BASE_LABEL: REPOSITORY + "@" + image["manifest"],
     })
