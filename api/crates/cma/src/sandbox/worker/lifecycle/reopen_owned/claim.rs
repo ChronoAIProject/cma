@@ -54,7 +54,7 @@ impl<'a> Claim<'a> {
             tokio::select! {
                 biased;
                 _ = sleep_until(expires) => return Err(refused()),
-                _ = sleep_until(Instant::now() + READ_INTERVAL) => {
+                _ = sleep_until(self.next_read_at(READ_INTERVAL)) => {
                     let parent = self.read().await?;
                     self.observe(&parent)?;
                 }
@@ -149,6 +149,14 @@ impl<'a> Claim<'a> {
 
     pub(super) fn expires(&self) -> Instant {
         self.expires
+    }
+
+    pub(super) fn next_read_at(&self, interval: Duration) -> Instant {
+        let now = Instant::now();
+        let remaining = self.expires.saturating_duration_since(now);
+        // Leave time to observe an in-place renewal before the last proven
+        // lease expires. Bound the polling rate as that deadline approaches.
+        now + interval.min((remaining / 2).max(Duration::from_millis(100)))
     }
 }
 
