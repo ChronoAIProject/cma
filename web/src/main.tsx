@@ -69,7 +69,7 @@ if (prepareHistoryDocument()) {
           publisher={publisher}
           publicClient={publicClient}
         >
-            <App />
+          <App />
         </CmaClientProvider>
       </AuthContextProvider>
     </StrictMode>,

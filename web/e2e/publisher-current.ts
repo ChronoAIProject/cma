@@ -11,11 +11,7 @@ import {
   assertPublisherIdentity,
 } from './public-journey-contracts';
 
-export async function publishCurrentTrigger(
-  h: Harness,
-  page: Page,
-  role: PublisherRole,
-) {
+export async function publishCurrentTrigger(h: Harness, page: Page, role: PublisherRole) {
   const subject = h.fixture.accounts[role].subject;
   const identity = await h.get<{ subject: string }>(page, '/auth/session');
   assertPublisherIdentity(identity, subject);

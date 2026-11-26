@@ -37,7 +37,9 @@ export function InlineTargetStep({
   return (
     <>
       {errors['target.inline.image'] === undefined ? null : (
-        <p className="trigger-error" role="alert">{errors['target.inline.image']}</p>
+        <p className="trigger-error" role="alert">
+          {errors['target.inline.image']}
+        </p>
       )}
       <div className="trigger-field">
         <label htmlFor="trigger-inline-model">Model</label>

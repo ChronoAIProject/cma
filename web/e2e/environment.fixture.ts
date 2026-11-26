@@ -23,7 +23,7 @@ export function fixtureDocument() {
         ['owner', 'secondOwner'].map((role) => [
           role,
           {
-              model: 'fixture-model',
+            model: 'fixture-model',
             embedUrl: `https://embed.example.test/j5/${role}`,
           },
         ]),

@@ -33,12 +33,7 @@ export function TargetStep({
 }) {
   if (value.target.inline !== undefined) {
     return (
-      <InlineTargetStep
-        value={value}
-        errors={errors}
-        disabled={disabled}
-        onChange={onChange}
-      />
+      <InlineTargetStep value={value} errors={errors} disabled={disabled} onChange={onChange} />
     );
   }
   const sandbox = profiles.sandbox;

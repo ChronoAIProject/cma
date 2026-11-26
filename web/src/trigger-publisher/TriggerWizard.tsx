@@ -404,10 +404,7 @@ export function TriggerWizard({
         >
           Back
         </Button>
-        <Button
-          disabled={locked || unavailable || conflict}
-          onClick={() => save(false)}
-        >
+        <Button disabled={locked || unavailable || conflict} onClick={() => save(false)}>
           Save draft
         </Button>
         {step < 4 ? (

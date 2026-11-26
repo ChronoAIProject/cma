@@ -3,11 +3,7 @@ import { isBotRoute } from '../BotManagement';
 import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
 import { Menu, type MenuEntry } from '../ui/Menu';
-import {
-  IconAgentPresetOutline16,
-  IconChevronDownOutline14,
-  IconCodeOutline16,
-} from '../ui/icons';
+import { IconAgentPresetOutline16, IconChevronDownOutline14, IconCodeOutline16 } from '../ui/icons';
 import './Services.css';
 
 type Service = 'agent_manager' | 'event_gateway';

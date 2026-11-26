@@ -58,11 +58,7 @@ export async function publisherFixture(page: Page, baseURL: string, role: Publis
         contentType: 'image/svg+xml',
         body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>',
       });
-    if (
-      path !== '/auth/session' &&
-      !path.startsWith('/api/v1/triggers')
-    )
-      return route.fallback();
+    if (path !== '/auth/session' && !path.startsWith('/api/v1/triggers')) return route.fallback();
     if (request.method() === 'GET') return route.fulfill({ json: read(path) });
     const body = request.postDataJSON();
     commands.push({
