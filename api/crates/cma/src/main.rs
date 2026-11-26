@@ -138,6 +138,16 @@ async fn run() {
         }
         return;
     }
+    if store::turn_budget_inventory::is_command(&arguments) {
+        match store::turn_budget_inventory::command(&arguments).await {
+            Ok(receipt) => println!("{receipt}"),
+            Err(reason) => {
+                eprintln!("{reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if store::home_backups::evidence_export::cli::is_command(&arguments) {
         match store::home_backups::evidence_export::cli::command(&arguments).await {
             Ok(receipt) => println!("{receipt}"),

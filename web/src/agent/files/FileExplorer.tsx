@@ -1,9 +1,10 @@
-import { useFileNavigation } from './useFileNavigation';
+import { useFileNavigation, type FileNavigationMemory } from './useFileNavigation';
 import { FileRoots } from './FilePaths';
 import { absoluteFilePath } from './filePath';
 import { homeFilePath } from '../fileChanges';
 import { ChangedFiles } from './ChangedFiles';
 import type { FileChange } from '../fileChanges';
+import { saveAgentDownload } from '../saveDelivery';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AgentFileError,
@@ -33,9 +34,11 @@ export function FileExplorer({
   embedded = false,
   active = true,
   initialDirectory: suppliedDirectory,
+  navigationMemory,
   changes,
 }: {
   readonly initialDirectory?: string;
+  readonly navigationMemory?: FileNavigationMemory;
   readonly changes?: ReadonlyMap<string, FileChange>;
   readonly panel?: boolean;
   readonly embedded?: boolean;
@@ -44,7 +47,7 @@ export function FileExplorer({
   readonly agentId: string;
   readonly readOnly: boolean;
   readonly onClose: () => void;
-  readonly onAccessChanged?: () => void;
+  readonly onAccessChanged?: (downloadMessage?: string) => void;
 }) {
   const knownDirectory =
     suppliedDirectory === undefined
@@ -54,16 +57,18 @@ export function FileExplorer({
   const [directories, setDirectories] = useState<ReadonlyMap<string, readonly AgentFileEntry[]>>(
     new Map(),
   );
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const [loading, setLoading] = useState<ReadonlySet<string>>(new Set([initialDirectory]));
+  const [loading, setLoading] = useState<ReadonlySet<string>>(
+    new Set([navigationMemory?.read() ?? initialDirectory]),
+  );
   const [hidden, setHidden] = useState(false);
-  const { initialRoot, rootPath, directory, setRootPath, setDirectory, touch } =
-    useFileNavigation(initialDirectory);
+  const { initialRoot, rootPath, directory, expanded, navigate, setDirectory, touch } =
+    useFileNavigation(initialDirectory, navigationMemory);
   const [selected, setSelected] = useState<AgentFileEntry>();
   const [content, setContent] = useState<AgentFileContent>();
   const [draft, setDraft] = useState<string>();
   const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [denied, setDenied] = useState(false);
   const [error, setErrorState] = useState<string>();
   // A later successful listing of the failed folder clears its alert (#2268).
@@ -86,7 +91,7 @@ export function FileExplorer({
   const blocked = readOnly || denied;
 
   const failure = useCallback(
-    (cause: unknown) => {
+    (cause: unknown, download = false) => {
       if (lifetime.current?.signal.aborted) return;
       setError(
         cause instanceof AgentFileError && cause.code === 'file_runtime_unsupported'
@@ -109,14 +114,15 @@ export function FileExplorer({
         setContent(undefined);
         setDraft(undefined);
         setSelected(undefined);
-        onAccessChanged?.();
+        if (download) onAccessChanged?.(cause.message);
+        else onAccessChanged?.();
       }
     },
     [onAccessChanged, setError],
   );
   const load = useCallback(
     async (path: string, signal: AbortSignal) => {
-      if (signal.aborted) return;
+      if (signal.aborted) return false;
       setLoading((value) => new Set([...value, path]));
       try {
         const entries = await client.list(agentId, path, { signal });
@@ -124,11 +130,13 @@ export function FileExplorer({
           setDirectories((value) => new Map(value).set(path, entries));
           if (listingFailure.current === path) setError(undefined);
         }
+        return !signal.aborted;
       } catch (cause) {
         if (!signal.aborted) {
           failure(cause);
           listingFailure.current = path;
         }
+        return false;
       } finally {
         if (!signal.aborted)
           setLoading((value) => {
@@ -145,19 +153,26 @@ export function FileExplorer({
     const request = new AbortController();
     lifetime.current = request;
     queueMicrotask(() => {
-      if (!request.signal.aborted) void load(initialRoot, request.signal);
+      if (!request.signal.aborted) {
+        void load(initialRoot, request.signal);
+        const remembered = navigationMemory?.read();
+        if (remembered !== undefined && remembered !== initialRoot)
+          void load(remembered, request.signal);
+      }
     });
     return () => {
       request.abort();
       readRequest.current?.abort();
     };
-  }, [load, active, initialRoot]);
+  }, [load, active, initialRoot, navigationMemory]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(undefined), 4000);
     return () => clearTimeout(timer);
   }, [notice]);
 
+  const navigateDirectory = (path: string, root = false) =>
+    navigate(path, root, lifetime.current?.signal, directories.has(path), load);
   const guardDraft = (action: () => void) => {
     if (mutation.current) return;
     touch();
@@ -190,7 +205,7 @@ export function FileExplorer({
       if (!request.signal.aborted) setReading(false);
     }
   };
-  const run = async (action: (signal: AbortSignal) => Promise<void>) => {
+  const run = async (action: (signal: AbortSignal) => Promise<void>, download = false) => {
     const signal = lifetime.current?.signal;
     if (!active || mutation.current || !signal || signal.aborted || denied) return;
     mutation.current = true;
@@ -199,7 +214,7 @@ export function FileExplorer({
     try {
       await action(signal);
     } catch (cause) {
-      if (!signal.aborted) failure(cause);
+      if (!signal.aborted) failure(cause, download);
     } finally {
       mutation.current = false;
       setBusy(false);
@@ -237,17 +252,17 @@ export function FileExplorer({
     if (!selected) return;
     const file = selected;
     void run(async (signal) => {
-      const blob = await client.download(agentId, file.path, { signal });
-      if (signal.aborted) return;
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = file.name;
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    });
+      setDownloading(true);
+      setNotice(undefined);
+      try {
+        const blob = await client.download(agentId, file.path, { signal });
+        signal.throwIfAborted();
+        saveAgentDownload(blob, file.name);
+      } finally {
+        setDownloading(false);
+        if (signal.aborted) setError('Download was interrupted. Try downloading the file again.');
+      }
+    }, true);
   };
   const remove = (path: string, folder: boolean) => {
     if (blocked) return;
@@ -392,6 +407,7 @@ export function FileExplorer({
           {notice}
         </Alert>
       ) : null}
+      {downloading ? <p role="status">Downloading file…</p> : null}
       {confirm ? (
         <Alert
           tone="warning"
@@ -448,22 +464,9 @@ export function FileExplorer({
           hidden={hidden}
           selected={selected?.path}
           disabled={busy || denied}
-          onRoot={() => {
-            setRootPath('');
-            if (lifetime.current && !directories.has('')) void load('', lifetime.current.signal);
-          }}
+          onRoot={() => void navigateDirectory('', true)}
           onFile={(file) => guardDraft(() => void openFile(file))}
-          onDirectory={(path) => {
-            setDirectory(path);
-            setExpanded((value) => {
-              const next = new Set(value);
-              if (next.has(path)) next.delete(path);
-              else next.add(path);
-              return next;
-            });
-            const signal = lifetime.current?.signal;
-            if (!directories.has(path) && signal) void load(path, signal);
-          }}
+          onDirectory={(path) => void navigateDirectory(path)}
         />
         <FilePreview
           file={selected}

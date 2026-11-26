@@ -2,6 +2,13 @@ use super::*;
 mod machine;
 use crate::store::sandbox_maintenance::mongo_integration_tests::active_sandbox;
 
+fn drain_homes_only(homes: Vec<HomeVolumeAttachment>) -> Option<NativePoolDrain> {
+    Some(NativePoolDrain {
+        homes,
+        claims: vec![],
+    })
+}
+
 async fn fixture() -> (Database, MongoNativeWarmPools, PoolTarget, String) {
     fixture_with_old(crate::warm_pools::tests::target()).await
 }
@@ -47,7 +54,7 @@ async fn activation_is_immutable_and_old_process_cannot_retire_new_release() {
     );
     assert_eq!(
         store.retirement_drain_homes(&old, &image).await.unwrap(),
-        Some(vec![])
+        drain_homes_only(vec![])
     );
     let current = store.find("current").await.unwrap().unwrap();
     assert!(store
@@ -283,7 +290,7 @@ async fn drain_preserves_failed_history_and_rechecks_late_allocations_and_corrup
         .is_none());
     assert_eq!(
         store.retirement_drain_homes(&old, &image).await.unwrap(),
-        Some(vec![original_home.clone()])
+        drain_homes_only(vec![original_home.clone()])
     );
     let retiring = store.begin_retirement(&old).await.unwrap();
     assert_eq!(
@@ -291,7 +298,7 @@ async fn drain_preserves_failed_history_and_rechecks_late_allocations_and_corrup
             .retirement_drain_homes(&retiring, &image)
             .await
             .unwrap(),
-        Some(vec![original_home])
+        drain_homes_only(vec![original_home])
     );
     let mut pending = active_sandbox("late-allocation");
     pending.status = SandboxStatus::Provisioning;
@@ -315,6 +322,35 @@ async fn drain_preserves_failed_history_and_rechecks_late_allocations_and_corrup
             .await
             .unwrap(),
         Some(original_document)
+    );
+    sandbox.status = SandboxStatus::Provisioning;
+    sandbox.failure = None;
+    let home = sandbox.lifecycle.home.as_mut().unwrap();
+    home.receipt = None;
+    let claim = home.native_pool.as_ref().unwrap().claim.clone().unwrap();
+    sandboxes
+        .replace_one(
+            doc! {"_id": sandbox.id.as_str()},
+            crate::store::sandboxes::sandbox_document(&sandbox, 0).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(store
+        .retirement_homes(&retiring, &image)
+        .await
+        .unwrap()
+        .is_none());
+    let drain = store
+        .retirement_drain_homes(&retiring, &image)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        drain,
+        NativePoolDrain {
+            homes: vec![],
+            claims: vec![claim]
+        }
     );
     for collection in ["native_prepared_sandboxes", "warm_sandboxes"] {
         let rows = db.collection::<Document>(collection);
@@ -363,7 +399,7 @@ async fn drain_blocks_unowned_prepared_and_legacy_warm_allocations_before_their_
     prepared.delete_many(doc! {}).await.unwrap();
     assert_eq!(
         store.retirement_drain_homes(&old, &image).await.unwrap(),
-        Some(vec![])
+        drain_homes_only(vec![])
     );
     let legacy = db.collection::<Document>("warm_sandboxes");
     let mut warm =
@@ -387,7 +423,7 @@ async fn drain_blocks_unowned_prepared_and_legacy_warm_allocations_before_their_
         .unwrap();
     assert_eq!(
         store.retirement_drain_homes(&old, &image).await.unwrap(),
-        Some(vec![])
+        drain_homes_only(vec![])
     );
     db.drop().await.unwrap();
 }
@@ -495,7 +531,7 @@ async fn same_image_cold_canary_does_not_block_ordinary_pool_retirement_or_drain
     assert_eq!(store.retirement_homes(&old, &image).await.unwrap(), None);
     assert_eq!(
         store.retirement_drain_homes(&old, &image).await.unwrap(),
-        Some(vec![sandbox
+        drain_homes_only(vec![sandbox
             .lifecycle
             .home
             .as_ref()
@@ -528,7 +564,7 @@ async fn same_image_cold_canary_does_not_block_ordinary_pool_retirement_or_drain
     );
     assert_eq!(
         store.retirement_drain_homes(&old, &image).await.unwrap(),
-        Some(vec![])
+        drain_homes_only(vec![])
     );
 
     // Without a matching profile pin the cold-pool evidence cannot exclude it.

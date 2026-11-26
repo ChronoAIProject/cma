@@ -17,6 +17,7 @@ members = [
     "crates/cmaeg",
     "crates/cma-image-manager",
     "crates/cma-service-auth",
+    "crates/cma-service-migrations",
     "crates/cma-allocator-qualification",
     "crates/cma-journey-probe",
 ]
@@ -74,7 +75,7 @@ ipnet = "2.12"
 # bound fixtures.
 jpeg-encoder = "0.6"
 k8s-openapi = { version = "0.28", features = ["earliest"] }
-kube = { version = "4.2", default-features = false, features = [
+kube = { version = "4.2.1", default-features = false, features = [
     "client",
     "ring",
     "rustls-tls",

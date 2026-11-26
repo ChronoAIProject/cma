@@ -193,7 +193,7 @@ it.each([401, 403, 404, 503, 'unavailable_setup'] as const)(
     await waitFor(() => expect(test.completed).toHaveBeenCalledOnce());
     expect(test.sent[3]?.id).toBe(test.sent[1]?.id);
     expect(test.sent[3]?.body).toEqual(test.sent[1]?.body);
-    expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(test.client.requests.createOrResumeBound).not.toHaveBeenCalled();
     expect(test.sent[3]?.key).toBe(test.sent[1]?.key);
   },
 );
@@ -281,7 +281,7 @@ it('retains an unwritten Start receipt through pending recovery and a Resolving 
   expect(readDraftRecovery(PUBLIC_TRUST.id)).toEqual(retained);
   expect(screen.getByRole('checkbox')).toBeChecked();
   expect(screen.getByRole('checkbox')).toBeDisabled();
-  expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
+  expect(test.client.requests.createOrResumeBound).not.toHaveBeenCalled();
 });
 
 it('replays the original Start after a receipt acknowledgement error without replacing its key', async () => {
@@ -297,7 +297,7 @@ it('replays the original Start after a receipt acknowledgement error without rep
   expect(test.sent).toHaveLength(2);
   expect(test.sent[1]).toEqual(test.sent[0]);
   expect(readDraftRecovery(PUBLIC_TRUST.id)).toBeUndefined();
-  expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
+  expect(test.client.requests.createOrResumeBound).not.toHaveBeenCalled();
 });
 
 it.each([false, true])(
@@ -344,7 +344,7 @@ it.each([false, true])(
     expect(test.sent).toHaveLength(prefix.length + 2);
     for (const command of test.sent) expect(command).toEqual(test.sent[0]);
     expect(readDraftRecovery(PUBLIC_TRUST.id)).toBeUndefined();
-    expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(test.client.requests.createOrResumeBound).not.toHaveBeenCalled();
     expect(test.client.requests.cancel).not.toHaveBeenCalled();
   },
 );

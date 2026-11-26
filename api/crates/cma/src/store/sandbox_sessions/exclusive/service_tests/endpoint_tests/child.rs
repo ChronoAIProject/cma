@@ -23,7 +23,20 @@ impl ReceiverRoot {
         let mut bytes = [0_u8; 32];
         ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).unwrap();
         let token = bytes.iter().map(|value| format!("{value:02x}")).collect();
-        Self { path, token }
+        let root = Self { path, token };
+        root.record("created");
+        root
+    }
+
+    pub(super) fn identity(&self) -> &str {
+        self.path.file_name().unwrap().to_str().unwrap()
+    }
+
+    fn record(&self, event: &str) {
+        println!(
+            "DESKTOP_FIXTURE_ROOT={}",
+            serde_json::json!({"schema": 1, "event": event, "id": self.identity()})
+        );
     }
 
     pub(super) fn token(&self) -> &str {
@@ -40,7 +53,8 @@ impl ReceiverRoot {
     // Explicit cleanup follows confirmed child exit. Keep failed fixture roots
     // for the runner's exact-PID cleanup instead of removing an active floor.
     pub(super) fn cleanup(self) {
-        std::fs::remove_dir_all(self.path).unwrap();
+        std::fs::remove_dir_all(&self.path).unwrap();
+        self.record("removed");
     }
 }
 
@@ -58,6 +72,7 @@ struct Ready {
 }
 
 pub(super) struct ReceiverChild {
+    pid: u32,
     process: tokio::process::Child,
     output: BufReader<tokio::process::ChildStdout>,
     pub(super) address: std::net::SocketAddr,
@@ -83,6 +98,11 @@ impl ReceiverChild {
             .kill_on_drop(true)
             .spawn()
             .unwrap();
+        let pid = process.id().unwrap();
+        println!(
+            "DESKTOP_FIXTURE_CHILD={}",
+            serde_json::json!({"schema": 1, "event": "started", "id": root.identity(), "pid": pid})
+        );
         let input = serde_json::json!({
             "root": root.path, "sandbox_id": sandbox_id, "control_token": root.token,
         });
@@ -118,6 +138,7 @@ impl ReceiverChild {
         assert_eq!(ready.floor_path, "state/desktop-owner/floor.json");
         assert_eq!(ready.activation_path, "state/desktop-owner.activated");
         Self {
+            pid,
             process,
             output,
             address: ready.address,
@@ -130,14 +151,25 @@ impl ReceiverChild {
             .await
             .expect("receiver must drain after EOF")
             .unwrap();
+        self.record_exit(root, "success", status);
         assert!(status.success());
         self.check_output(root).await;
     }
 
     pub(super) async fn kill(mut self, root: &ReceiverRoot) {
         self.process.kill().await.unwrap();
-        assert!(!self.process.wait().await.unwrap().success());
+        let status = self.process.wait().await.unwrap();
+        self.record_exit(root, "forced", status);
+        assert!(!status.success());
         self.check_output(root).await;
+    }
+
+    fn record_exit(&self, root: &ReceiverRoot, expected: &str, status: std::process::ExitStatus) {
+        println!(
+            "DESKTOP_FIXTURE_CHILD={}",
+            serde_json::json!({"schema": 1, "event": "exited", "id": root.identity(),
+                "pid": self.pid, "expected": expected, "success": status.success(), "code": status.code()})
+        );
     }
 
     async fn check_output(&mut self, root: &ReceiverRoot) {

@@ -24,8 +24,9 @@ impl ProviderClient {
         idempotency: &IdempotencyKey,
         metadata: &BTreeMap<String, String>,
         credential: &Secret,
-        nyxid_trace: bool,
+        telemetry: (bool, Option<crate::telemetry::timing::IngressTiming>),
     ) -> FrozenSubmission {
+        let (nyxid_trace, timing) = telemetry;
         if self.record_worker_key(credential).await.is_err() {
             return FrozenSubmission::NotAccepted;
         }
@@ -63,7 +64,7 @@ impl ProviderClient {
                     credential.as_str(),
                     idempotency.as_str(),
                     bytes,
-                    None,
+                    timing,
                     self.turn_trace_enabled && provider.as_str() == "nyxbot" && nyxid_trace,
                 )
                 .await

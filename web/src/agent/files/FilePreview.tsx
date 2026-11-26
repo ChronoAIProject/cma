@@ -75,7 +75,12 @@ export function FilePreview({
   const original = content ? textContent(content) : undefined;
   const dirty = draft !== undefined && draft !== original;
   return (
-    <section className="agent-files__preview" aria-label="File preview" aria-busy={loading}>
+    <section
+      className="agent-files__preview"
+      data-file-selected={file !== undefined}
+      aria-label="File preview"
+      aria-busy={loading}
+    >
       {!file ? (
         <p className="agent-files__empty">Select a file to preview it.</p>
       ) : (
@@ -146,7 +151,9 @@ export function FilePreview({
               </Button>
             </div>
           ) : (
-            <p className="agent-files__empty">Download this file to view its contents.</p>
+            <p className="agent-files__empty" role="status">
+              Preview unavailable. Download this file to view its contents.
+            </p>
           )}
         </>
       )}

@@ -63,7 +63,7 @@ export function AgentSidePanel({
   readonly detail?: AgentDetail;
   readonly panel: AgentPanel;
   readonly onClose: () => void;
-  readonly onAccessChanged: () => void;
+  readonly onAccessChanged: (downloadMessage?: string) => void;
   readonly onOpenSandbox?: () => void;
   readonly pending?: AgentCommand;
   readonly historyLoading?: boolean;
@@ -166,10 +166,13 @@ export function AgentSidePanel({
   );
   const authorized = access.state.status === 'ready' ? access.state.value.access : undefined;
   const reloadAccess = access.reload;
-  const accessChanged = useCallback(() => {
-    reloadAccess();
-    onAccessChanged();
-  }, [reloadAccess, onAccessChanged]);
+  const accessChanged = useCallback(
+    (downloadMessage?: string) => {
+      reloadAccess();
+      onAccessChanged(downloadMessage);
+    },
+    [reloadAccess, onAccessChanged],
+  );
   const mayRead =
     computerOpen &&
     !lifecycleHeld &&
@@ -349,8 +352,9 @@ export function AgentSidePanel({
           {visited && mayRetain && client.files ? (
             <FileExplorer
               initialDirectory={homeFilePath(workingDirectory ?? '')}
+              navigationMemory={currentObservation?.fileNavigation}
               changes={changedFiles(operations?.toolCalls, workingDirectory)}
-              key={`${agentId}:${shared}:${subject}:${visitedScope?.generation}`}
+              key={`${agentId}:${shared}:${subject}:${currentObservation?.scope.authEpoch}:${visitedScope?.generation}`}
               panel
               embedded
               active={mayRead}

@@ -15,6 +15,7 @@ pub(super) struct RepositoryRefusal {
     pub code: &'static str,
     pub sibling: bool,
     pub before_marker: bool,
+    pub delay_initial_renewal: bool,
 }
 
 #[tokio::test]
@@ -46,6 +47,7 @@ async fn repository_task_public_source_failure_preserves_identity_without_dispat
                 code: failure,
                 sibling: false,
                 before_marker: false,
+                delay_initial_renewal: false,
             }),
             false,
         )
@@ -62,6 +64,7 @@ async fn repository_task_public_failure_preserves_a_sandbox_with_another_workspa
             code: "repository_archive_unavailable",
             sibling: true,
             before_marker: false,
+            delay_initial_renewal: false,
         }),
         false,
     )
@@ -154,7 +157,10 @@ impl RepositoryConnection {
             *self.state.lock().unwrap() = state;
             let (_, replay) = create(service, input, "default-environment-task").await;
             assert_eq!(replay["id"], receipt["id"]);
-            tokio::time::timeout(Duration::from_secs(15), async {
+            let mut last_operation = Value::Null;
+            // A timed-out renewal leaves its 90-second claim intact. Allow the
+            // real discovery loop to reclaim it before asserting publication.
+            let waited = tokio::time::timeout(Duration::from_secs(120), async {
                 loop {
                     let operation: Value = serde_json::from_str(
                         &cross_interface_tests::read(service, operation_path).await,
@@ -168,11 +174,16 @@ impl RepositoryConnection {
                         break;
                     }
                     assert_ne!(operation["status"], "failed", "{operation}");
+                    last_operation = operation;
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
             })
-            .await
-            .unwrap();
+            .await;
+            assert!(
+                waited.is_ok(),
+                "connection state {state:?} was not published: {last_operation}; observed {:?}",
+                self.observed.lock().unwrap()
+            );
             let sandboxes = harness
                 .store
                 .list_sandboxes(&SubjectId::new("owner"), &PageRequest::default())

@@ -1,3 +1,4 @@
+import { createBoundLaunch, type BoundCreateLaunchOptions } from './subject-binding.js';
 import type { ResolvedConfig } from '../config.js';
 import { ApiError, ProtocolError } from '../errors.js';
 import { readTriggerPreview } from '../triggers.js';
@@ -33,6 +34,7 @@ import {
 } from './types.js';
 
 export type * from './types.js';
+export { LaunchSubjectUnverifiedError, type BoundCreateLaunchOptions } from './subject-binding.js';
 export type * from './events.js';
 export type { LaunchStreamOptions } from './stream.js';
 
@@ -69,6 +71,13 @@ export class Launches {
       body: input(createLaunchRequest, body),
       expectedStatus: [201, 202],
     });
+  }
+  createOrResumeBound(
+    publicId: string,
+    body: CreateLaunchRequest,
+    options: BoundCreateLaunchOptions,
+  ) {
+    return createBoundLaunch(this.config, publicId, body, options);
   }
   read(id: string, options: OperationOptions = {}) {
     return read(this.config, `/api/v1/launches/${segment(id)}`, identity(launch, id), options);

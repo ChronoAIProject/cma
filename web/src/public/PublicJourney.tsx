@@ -1,3 +1,4 @@
+import { LaunchSubjectUnverifiedError } from '@cma/client';
 import { Presence } from '../ui/Presence';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
@@ -126,7 +127,7 @@ function Entry({
   const [revision, setRevision] = useState(0);
   const owner = state.status === 'authenticated' ? state.user.id : undefined;
   const recoveryBlocked = conflict !== undefined || (owner !== undefined && blockedOwner === owner);
-  const credentialReturnTo = routePath({ kind: 'public_trigger', publicId: route.publicId });
+  const credentialReturnTo = routePath(route);
   const allowed =
     state.status === 'authenticated' && state.user.capabilities.includes('launch_triggers');
   const attempted = useRef(new Set<string>());
@@ -187,6 +188,18 @@ function Entry({
           } catch {
             setError(publicCopy.storageUnavailable);
           }
+          return;
+        }
+        if (cause instanceof ApiError && cause.code === 'command_subject_mismatch') {
+          setIntent(readIntent(selected.path) ?? selected);
+          setNeedsSignIn(true);
+          setError(
+            'Sign in with the same CMA account that made this request. Your original request is saved.',
+          );
+          return;
+        }
+        if (cause instanceof LaunchSubjectUnverifiedError) {
+          setError(cause.message);
           return;
         }
         let repeat: ExistingLaunchAgent | undefined;

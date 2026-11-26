@@ -4,6 +4,7 @@ pub mod http;
 pub(crate) mod http_failure;
 pub mod names;
 pub mod operations;
+pub mod provider_start;
 pub mod timing;
 pub(crate) mod turn_trace;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};

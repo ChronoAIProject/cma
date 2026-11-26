@@ -65,6 +65,9 @@ test('LOCAL compiled pending intent survives ready services, reload and re-entry
       if (transition === 'reload') await page.reload();
       if (transition === 're-entry') {
         await page.goto(h.config.baseURL);
+        // Let the browser audit finish reading Home's API responses before the next navigation.
+        await page.waitForLoadState('networkidle');
+        await h.flush();
         await page.goto(`${h.config.baseURL}/launches/${launch.id}`);
       }
       const response = await pending;
