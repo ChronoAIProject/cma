@@ -2,6 +2,34 @@ use super::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing to a disposable replica set"]
+async fn workspace_becoming_ready_during_defer_does_not_strand_agent_startup() {
+    let fixture = Fixture::new().await;
+    let h = &fixture.bootstrap.harness;
+    let waiting = fixture.bootstrap.admit(None).await;
+    fixture.bootstrap.activate_sandbox().await;
+    let (claimed, now) = fixture.claim(&waiting.id).await;
+    let requests_before = h.backend.requests().await.len();
+    *fixture.trace.publish_ready_workspace.lock().unwrap() =
+        Some(fixture.bootstrap.ready_workspace.clone());
+
+    let result = h
+        .worker
+        .execute_claimed_for_test(claimed.clone(), now)
+        .await;
+    let workspace = h
+        .store
+        .get_workspace(&claimed.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(workspace.status, WorkspaceStatus::Ready);
+    result.unwrap();
+    assert_bound(&fixture, &claimed, &workspace, requests_before).await;
+    fixture.cleanup().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing to a disposable replica set"]
 async fn workspace_wait_requeue_rebuilds_after_a_concurrent_workspace_revision() {
     let fixture = Fixture::new().await;
     let h = &fixture.bootstrap.harness;

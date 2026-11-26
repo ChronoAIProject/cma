@@ -29,6 +29,7 @@ struct WorkspaceAdvance {
 #[derive(Default)]
 struct Trace {
     workspace_advance: Mutex<Option<WorkspaceAdvance>>,
+    publish_ready_workspace: Mutex<Option<Workspace>>,
     repair_after_abort: Mutex<Option<AgentId>>,
     intervention: Mutex<Option<Intervention>>,
     replace_before_failure: Mutex<Option<(AgentId, layer3_adapter::hosted::InMemoryHostedBackend)>>,
@@ -97,6 +98,21 @@ impl Fixture {
                 }
                 if event.command.get_bool("startTransaction").ok() == Some(true) {
                     let transaction = callback.bodies.fetch_add(1, Ordering::SeqCst) + 1;
+                    let ready = callback.publish_ready_workspace.lock().unwrap().take();
+                    if let Some(mut ready) = ready {
+                        tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(async {
+                                let current =
+                                    observer.get_workspace(&ready.id).await.unwrap().unwrap();
+                                ready.revision = current.revision + 1;
+                                ready.next_worktree_number = current.next_worktree_number;
+                                observer
+                                    .save_workspace(current.revision, ready)
+                                    .await
+                                    .unwrap();
+                            });
+                        });
+                    }
                     let advance = {
                         let mut pending = callback.workspace_advance.lock().unwrap();
                         pending.take_if(|advance| advance.transaction == transaction)

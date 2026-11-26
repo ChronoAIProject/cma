@@ -33,6 +33,25 @@ impl PublicationParents {
         }
     }
 
+    pub(in crate::sandbox::agent_worker) fn workspace_became_ready(
+        &self,
+        current: &Self,
+        agent: &Agent,
+    ) -> bool {
+        if self.workspace.status != WorkspaceStatus::Preparing
+            || current.workspace.status != WorkspaceStatus::Ready
+            || current.workspace.revision <= self.workspace.revision
+        {
+            return false;
+        }
+        let mut normalized = current.clone();
+        normalized.workspace.status = self.workspace.status;
+        normalized.workspace.work = self.workspace.work.clone();
+        normalized.workspace.resolved_commit = self.workspace.resolved_commit.clone();
+        normalized.workspace.ready_at = self.workspace.ready_at.clone();
+        self.compatible(&normalized, agent)
+    }
+
     fn compatible(&self, current: &Self, agent: &Agent) -> bool {
         if validate_lineage(
             agent,
