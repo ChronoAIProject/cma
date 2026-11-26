@@ -56,6 +56,13 @@ impl AgentCommandStore for RecordedReservations {
     ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
         self.inner.get_response_command(id).await
     }
+    async fn get_admitted_command(
+        &self,
+        scope: &str,
+        key_sha256: &str,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.inner.get_admitted_command(scope, key_sha256).await
+    }
 }
 
 #[tokio::test]
