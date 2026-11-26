@@ -21,10 +21,10 @@ impl HostedAdapter {
         Ok(receipt)
     }
 
-    pub(super) async fn retire_unreachable_exact(
+    async fn retire_exact(
         &self,
         request: &crate::RuntimeAdoptionRequest,
-        receiver: &crate::RetirementPod,
+        receiver: Option<&crate::RetirementPod>,
     ) -> crate::Result<()> {
         let rendered = self.retained_request(request, request.generation)?;
         self.verify_adoption_home_route(request)?;
@@ -33,7 +33,7 @@ impl HostedAdapter {
         })?;
         home.validate_for(&request.spec.sandbox_id)?;
         self.backend
-            .retire_unreachable(&request.handle, &rendered, home, receiver)
+            .retire_verified(&request.handle, &rendered, home, receiver)
             .await?;
         self.states.lock().await.remove(&request.handle);
         Ok(())
@@ -88,7 +88,20 @@ impl crate::RuntimeRetirement for HostedAdapter {
         request: &crate::RuntimeAdoptionRequest,
         receiver: &crate::RetirementPod,
     ) -> crate::Result<()> {
-        self.retire_unreachable_exact(request, receiver).await
+        self.retire_exact(request, Some(receiver)).await
+    }
+    async fn suspend_for_retirement(
+        &self,
+        request: &crate::RuntimeAdoptionRequest,
+    ) -> crate::Result<()> {
+        self.suspend_exact(request, false).await?;
+        let rendered = self.retained_request(request, request.generation)?;
+        self.backend
+            .verify_suspended(&request.handle, &rendered, true)
+            .await
+    }
+    async fn retire_suspended(&self, request: &crate::RuntimeAdoptionRequest) -> crate::Result<()> {
+        self.retire_exact(request, None).await
     }
     async fn verify_retired(&self, request: &crate::RuntimeAdoptionRequest) -> crate::Result<()> {
         self.verify_retired_exact(request).await

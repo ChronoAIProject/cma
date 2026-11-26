@@ -1,6 +1,8 @@
 use super::*;
 use layer2_core::sandbox::store::AgentWorkerStore;
 
+mod credential_hold;
+
 async fn failed_close() -> (Fixture, Sandbox, Vec<Agent>, SystemTime, Owners, Receiver) {
     let (f, active, children, mut now) = active_siblings().await;
     let owners = Owners::new().await;
@@ -348,13 +350,10 @@ pub(super) async fn disabled_admission_preserves_legacy_absent_runtime_retiremen
         .is_none());
 }
 
-pub(super) async fn recovered_dispatch_resumes_graceful_stop() {
-    for capture_enabled in [false, true] {
-        resume_graceful_stop(capture_enabled).await;
-    }
-}
-
-async fn resume_graceful_stop(capture_enabled: bool) {
+pub(super) async fn recovered_dispatch_resumes_graceful_stop(
+    capture_enabled: bool,
+    credential_hold: bool,
+) {
     use crate::store::native_retirement_action::{RetirementPhase, RetirementRecords};
     let (f, active, children, mut now, owners, receiver) = failed_close().await;
     let clock = Arc::new(Mutex::new(now + Duration::from_secs(7)));
@@ -411,7 +410,7 @@ async fn resume_graceful_stop(capture_enabled: bool) {
             .action(&active.id)
             .await
             .unwrap(),
-        Some(action)
+        Some(action.clone())
     );
 
     for _ in 0..6 {
@@ -434,6 +433,9 @@ async fn resume_graceful_stop(capture_enabled: bool) {
         .calls
         .snapshot()
         .contains(&"retire-alternative".into()));
+    if credential_hold {
+        now = credential_hold::resume(&f, &active, now, &clock, &successor, action).await;
+    }
     for _ in 0..10 {
         now += Duration::from_secs(6);
         *clock.lock().unwrap() = now + Duration::from_secs(1);
@@ -445,6 +447,8 @@ async fn resume_graceful_stop(capture_enabled: bool) {
     let retired = f.harness.stored(&active.id).await;
     assert_eq!(retired.status, SandboxStatus::Retired);
     assert!(retired.runtime.is_none());
+    assert!(retired.credential.current.is_none());
+    assert!(retired.lifecycle.home.as_ref().unwrap().released);
     assert!(f
         .backend
         .retirement_records
@@ -461,6 +465,13 @@ async fn resume_graceful_stop(capture_enabled: bool) {
         1
     );
     assert_eq!(capture.0.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.as_str() == "retire-suspended")
+            .count(),
+        usize::from(credential_hold)
+    );
     receiver.server.abort();
     owners.cleanup().await;
 }

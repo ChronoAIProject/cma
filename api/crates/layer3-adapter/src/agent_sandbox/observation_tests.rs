@@ -135,7 +135,10 @@ async fn suspension_retry_revalidates_spec_before_observing_original_pod_absence
         );
         let result = reads.client.wait_suspended(&handle, &desired).await;
         if changed {
-            assert!(matches!(result, Err(AdapterError::Rejected(_))));
+            assert!(matches!(
+                result,
+                Err(AdapterError::AdmittedSandboxSpecDrift)
+            ));
             assert_eq!(reads.order(), ["sandbox", "pods", "sandbox"]);
         } else {
             result.unwrap();

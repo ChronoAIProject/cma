@@ -28,6 +28,7 @@ pub(super) fn role_for(database: &str, apply: bool, step: Step) -> Document {
             Step::Activity
                 | Step::AgentLogSegments
                 | Step::MeasuredCustody
+                | Step::UsageProjections
                 | Step::MeasuredBatches
                 | Step::MeasuredIndex
                 | Step::AgentLogActiveProofs
@@ -44,6 +45,7 @@ pub(super) fn role_for(database: &str, apply: bool, step: Step) -> Document {
             | Step::BindingIndexes
             | Step::SandboxUsageCapture
             | Step::MeasuredCustody
+            | Step::UsageProjections
             | Step::MeasuredBatches
             | Step::MeasuredIndex
             | Step::AgentLogActiveProofs

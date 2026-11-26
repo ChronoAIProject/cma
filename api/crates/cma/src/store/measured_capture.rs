@@ -22,6 +22,7 @@ pub(crate) mod ledger;
 mod preview;
 const SCHEMA_VERSION: i64 = 1;
 const ATTEMPTS: usize = 3;
+const INDEXED_ATTEMPTS: usize = 32;
 const DEADLINE: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,7 +98,17 @@ impl MeasuredCapture {
         payload: &str,
     ) -> Result<Capture, CaptureError> {
         let physical = observation.physical_sample_id();
-        for _ in 0..ATTEMPTS {
+        // Indexed writers may compete on a shard or capacity record. Retry
+        // confirmed aborted transactions only, within the capture deadline.
+        let attempts = if self.indexed.is_some() {
+            INDEXED_ATTEMPTS
+        } else {
+            ATTEMPTS
+        };
+        for attempt in 0..attempts {
+            if self.indexed.is_some() {
+                super::contention::backoff(attempt).await;
+            }
             let mut session = self
                 .client
                 .start_session()

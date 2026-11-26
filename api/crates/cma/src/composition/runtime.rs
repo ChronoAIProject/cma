@@ -1,7 +1,9 @@
 //! Shared deployment runtime authority for pool admission and owner updates.
 use std::sync::Arc;
 
-use crate::{config::Config, store::MongoStores, warm_pools::NativeWarmPools};
+use crate::{
+    agent_lifecycle::guidance, config::Config, store::MongoStores, warm_pools::NativeWarmPools,
+};
 
 pub(super) fn image_manager_resolver(
     config: &Config,
@@ -21,10 +23,9 @@ pub(super) fn configure_inline_lifecycle(
     lifecycle
         .with_released_runtime(stores.released_runtime.clone())
         .with_task_experience(config.task_experience.clone())
-        .with_session_guidance(
-            config.features.session_guidance_v4,
-            config.features.session_guidance_v5,
-        )
+        .with_admission_guidance(guidance::configured_admission_instructions(
+            &config.features,
+        ))
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
         .with_repository_preflight_config(config, broker)
         .with_public_repository_images(

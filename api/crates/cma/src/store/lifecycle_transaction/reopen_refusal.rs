@@ -1,4 +1,3 @@
-use layer2_core::released_runtime::ReleasedLane;
 use layer2_core::sandbox::store::{ReopenRefusalFence, SandboxStoreError};
 use layer2_core::sandbox::Sandbox;
 use mongodb::{bson::doc, ClientSession};
@@ -15,12 +14,14 @@ pub(super) async fn fence(
     let stale = || ApplyError::Domain(SandboxStoreError::Conflict);
     if let Some(lanes) = &store.released_lanes {
         let released = refusal.released.as_ref().ok_or_else(stale)?;
-        if sandbox.admitted_runtime_update_target() != Some(released.agent.as_str()) {
+        let lane = sandbox.managed_runtime_lane().ok_or_else(stale)?;
+        let active = lane.version_in(released).ok_or_else(stale)?;
+        if sandbox.admitted_runtime_update_target() != Some(active) {
             return Err(stale());
         }
         // The terminal refusal is valid only while the captured image is active.
         lanes
-            .fence_snapshot(released, ReleasedLane::Agent, session)
+            .fence_snapshot(released, lane, session)
             .await
             .map_err(ApplyError::Domain)?;
     }

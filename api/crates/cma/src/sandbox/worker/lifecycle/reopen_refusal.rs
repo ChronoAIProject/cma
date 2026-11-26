@@ -41,7 +41,13 @@ impl SandboxWorker {
                     && request.completed_at.is_none()
                     && request.target_version == *target_runtime_version
             })
-            && self.config.default_version(release) == *target_runtime_version
+            && match sandbox.managed_runtime_lane() {
+                Some(layer2_core::released_runtime::ReleasedLane::Machine) => {
+                    release.and_then(|value| value.machine.as_deref())
+                        == Some(target_runtime_version.as_str())
+                }
+                _ => self.config.default_version(release) == *target_runtime_version,
+            }
     }
 
     pub(super) async fn reopen_refusal_fence(

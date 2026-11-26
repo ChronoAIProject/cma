@@ -66,7 +66,8 @@ fn normalized(path: &str) -> Document {
 
 fn parent_schema() -> Document {
     use crate::store::work_schema::{
-        PREPARED_VERSION, RENEWED_VERSION, RUNTIME_IMAGE_ORIGIN_VERSION,
+        MANAGED_MACHINE_ORIGIN_VERSION, PREPARED_VERSION, RENEWED_VERSION,
+        RUNTIME_IMAGE_ORIGIN_VERSION,
     };
     let schema = "$_ownership_retry_parent.document_schema_version";
     let work = "$_ownership_retry_parent.record.work";
@@ -83,8 +84,13 @@ fn parent_schema() -> Document {
         is_type(schema, &["int", "long"]), is_type(work, &["object"]),
         {"$or": [is_type(&protocol, &["missing"]), {"$eq": [&protocol, "renewed_v1"]}]},
         {"$or": [
-            {"$and": [{"$eq": [schema, RUNTIME_IMAGE_ORIGIN_VERSION]},
-                {"$in": [{"$ifNull": [&origin, Bson::Null]}, ["managed_desktop", "user_selected"]]},
+            {"$and": [
+                {"$or": [
+                    {"$and": [{"$eq": [schema, RUNTIME_IMAGE_ORIGIN_VERSION]},
+                        {"$in": [{"$ifNull": [&origin, Bson::Null]}, ["managed_desktop", "user_selected"]]}]},
+                    {"$and": [{"$eq": [schema, MANAGED_MACHINE_ORIGIN_VERSION]},
+                        {"$eq": [&origin, "managed_machine"]}]},
+                ]},
                 {"$or": [absent_proof.clone(), prepared_proof.clone()]},
                 is_type(&format!("{lifecycle}.custom_runtime"), &["missing"]),
                 is_type(&format!("{lifecycle}.runtime_migration_admission"), &["missing"])]},

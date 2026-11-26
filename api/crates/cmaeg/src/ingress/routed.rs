@@ -39,6 +39,9 @@ use cmaeg_core::{
 };
 use std::{collections::BTreeSet, sync::Arc};
 use tokio::sync::OwnedSemaphorePermit;
+
+pub(crate) const TARGET_UNKNOWN: &str = "target_unknown";
+
 #[derive(Clone)]
 pub struct VerifiedIngress {
     quote: super::quoted_context::Intake,

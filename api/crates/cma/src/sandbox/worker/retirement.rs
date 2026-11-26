@@ -86,6 +86,8 @@ impl SandboxWorker {
             }
             let mut cleaned = sandbox.clone();
             if let Some(failure) = self.prepare_retirement_cleanup(&mut cleaned, now).await? {
+                // Dispatch custody continues to own the original runtime binding.
+                self.suspend_retiring_compute(&sandbox, &failure).await?;
                 return self.retry_failure(sandbox, failure, now).await;
             }
             sandbox = cleaned;
@@ -126,6 +128,8 @@ impl SandboxWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         if let Err(failure) = self.settle_retirement_credentials(&mut sandbox, now).await {
+            self.suspend_credential_blocked_retirement(&mut sandbox, &failure)
+                .await?;
             return self.retry_failure(sandbox, failure, now).await;
         }
         self.advance(

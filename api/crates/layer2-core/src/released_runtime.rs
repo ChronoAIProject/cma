@@ -15,6 +15,17 @@ pub enum ReleasedLane {
     Machine,
 }
 
+impl ReleasedLane {
+    /// Select from the caller's captured release without falling back across lanes.
+    pub fn version_in(self, release: &layer3_adapter::ReleasedRuntime) -> Option<&str> {
+        match self {
+            Self::Agent => Some(release.agent.as_str()),
+            Self::Machine => release.machine.as_deref(),
+        }
+        .filter(|version| !version.is_empty())
+    }
+}
+
 /// The image new work in a lane is admitted against.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

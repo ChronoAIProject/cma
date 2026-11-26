@@ -50,6 +50,15 @@ impl NativeBackend {
         receiver: &layer3_adapter::receiver_failure::RetirementReceiver,
     ) -> layer3_adapter::Result<bool> {
         self.check_retirement_fixture_pod(&receiver.pod)?;
+        if self
+            .row
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|row| row.observation.lifecycle.state == "suspended")
+        {
+            return Err(absent());
+        }
         if &receiver.runtime != handle || self.request().await.metadata != request.metadata {
             return Err(layer3_adapter::AdapterError::Rejected(
                 "runtime changed".into(),
@@ -90,7 +99,22 @@ impl NativeBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
         home: &layer3_adapter::HomeVolumeAttachment,
+        pod: Option<&layer3_adapter::RetirementPod>,
     ) -> layer3_adapter::Result<()> {
+        if let Some(pod) = pod {
+            self.check_retirement_fixture_pod(pod)?;
+        } else {
+            if !self
+                .row
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|row| row.observation.lifecycle.state == "suspended")
+            {
+                return Err(absent());
+            }
+            self.calls.push("retire-suspended");
+        }
         self.calls.push("retire-alternative");
         let homes = self
             .retirement_home

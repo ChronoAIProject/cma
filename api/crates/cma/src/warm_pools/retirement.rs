@@ -82,8 +82,10 @@ pub(super) async fn retire_claimed(
         // Settled retained homes can prevent definition deletion without
         // keeping spare capacity alive. Admission is fenced and all durable
         // allocation sources have been rechecked after the provider marker.
+        // Both lanes use the UID-bound request. A provider that does not
+        // implement guarded member deletion leaves the drain pending.
         provider
-            .drain_pool(binding, &drain)
+            .request_spare_drain(binding, &drain)
             .await
             .map_err(|_| WarmPoolError::Unavailable)?;
         Ok::<bool, WarmPoolError>(false)
