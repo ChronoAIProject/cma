@@ -96,8 +96,16 @@ pub(super) async fn commit(
                 return Err(driver(error));
             }
         }
+        #[cfg(test)]
+        store.pause_at(super::commit_pause::Point::AfterGuard).await;
         match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => return Ok(()),
+            CommitOutcome::Committed => {
+                #[cfg(test)]
+                store
+                    .pause_at(super::commit_pause::Point::AfterCommit)
+                    .await;
+                return Ok(());
+            }
             CommitOutcome::Retry(_) => continue,
             CommitOutcome::Unknown(_) => return Err(AccountDeletionError::RecoveryRequired),
             CommitOutcome::Failed(error) => return Err(driver(error)),
@@ -122,6 +130,15 @@ async fn once(
         .map_err(AttemptError::Driver)?
         .ok_or(AttemptError::Domain(AccountDeletionError::NotFound))?;
     let old = read_record(row.clone()).map_err(AttemptError::Domain)?;
+    if store
+        .journal
+        .enrolled(&deletion.id, session)
+        .await
+        .map_err(AttemptError::Driver)?
+    {
+        return Err(AttemptError::Domain(AccountDeletionError::StaleFence));
+    }
+
     super::completion_guard::preserve_acceptance(&old, deletion).map_err(AttemptError::Domain)?;
     let claimed = claim_at.is_some();
     let expected_next = old
@@ -171,18 +188,8 @@ async fn once(
     } else {
         filter.insert("work.lease", mongodb::bson::Bson::Null);
     }
-    let result = store
-        .records
-        .replace_one(
-            filter,
-            record_document(deletion, &keys).map_err(AttemptError::Domain)?,
-        )
-        .session(&mut *session)
-        .await
-        .map_err(AttemptError::Driver)?;
-    if result.matched_count != 1 {
-        return Err(AttemptError::Domain(AccountDeletionError::Conflict));
-    }
+    super::lease_admission::guard(&mut filter, &old, deletion, claim_at)
+        .map_err(AttemptError::Domain)?;
     if !events.is_empty() {
         let rows = events
             .iter()
@@ -203,9 +210,27 @@ async fn once(
                 doc! {"deletion_id":deletion.id.as_str()},
                 doc! {"$set":{"expire_at":records::date(expiry).map_err(AttemptError::Domain)?}},
             )
-            .session(session)
+            .session(&mut *session)
             .await
             .map_err(AttemptError::Driver)?;
+    }
+    #[cfg(test)]
+    store
+        .pause_at(super::commit_pause::Point::BeforeGuard)
+        .await;
+    // Final database operation: the original lease and server time admit the
+    // entire transaction. Takeover writes this same row and must serialize here.
+    let result = store
+        .records
+        .replace_one(
+            filter,
+            record_document(deletion, &keys).map_err(AttemptError::Domain)?,
+        )
+        .session(session)
+        .await
+        .map_err(AttemptError::Driver)?;
+    if result.matched_count != 1 {
+        return Err(AttemptError::Domain(AccountDeletionError::StaleFence));
     }
     Ok(())
 }

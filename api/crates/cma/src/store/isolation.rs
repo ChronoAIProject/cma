@@ -191,8 +191,12 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     super::released_runtimes::COLLECTION,
     super::released_runtimes::TRANSITIONS_COLLECTION,
 ];
+pub(crate) const JOURNAL_COLLECTIONS: &[&str] =
+    super::account_deletions::worker_schema::COLLECTIONS;
 // These stores activate separately. Existing credentials still start while disabled.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
+    super::account_deletions::worker_schema::WORK,
+    super::account_deletions::worker_schema::EFFECTS,
     super::migrations::usage_projections::COLLECTION,
     retained_consents::COLLECTION,
     super::migrations::measured_custody::COLLECTION,
@@ -260,7 +264,7 @@ pub(crate) fn activity_index_job_role(database: &str) -> Document {
 }
 
 mod runtime_role;
-use runtime_role::role_with_index_operation;
+use runtime_role::{role_with_index_operation, validate_index_role};
 
 pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreError> {
     validate_index_role(status, database, &[], false)
@@ -282,135 +286,6 @@ pub(crate) fn validate_activity_index_job(
     validate_index_role(status, database, &["activity"], true)
 }
 
-fn validate_index_role(
-    status: &Document,
-    database: &str,
-    metadata_collections: &[&str],
-    migration_ledger: bool,
-) -> Result<(), StoreError> {
-    let denied = || {
-        StoreError::Unavailable(
-            "Agent Manager database credential is not isolated to its schema".into(),
-        )
-    };
-    let info = status.get_document("authInfo").map_err(|_| denied())?;
-    if info
-        .get_array("authenticatedUsers")
-        .map_err(|_| denied())?
-        .len()
-        != 1
-    {
-        return Err(denied());
-    }
-    let mut grants = BTreeMap::<String, BTreeSet<String>>::new();
-    for grant in info
-        .get_array("authenticatedUserPrivileges")
-        .map_err(|_| denied())?
-    {
-        let grant = grant.as_document().ok_or_else(&denied)?;
-        let resource = grant.get_document("resource").map_err(|_| denied())?;
-        let collection = resource.get_str("collection").map_err(|_| denied())?;
-        if resource.len() != 2
-            || resource.get_str("db").ok() != Some(database)
-            || (!collection.is_empty()
-                && !COLLECTIONS.contains(&collection)
-                && !replicas::COLLECTIONS.contains(&collection)
-                && (!migration_ledger || collection != MIGRATION_COLLECTION)
-                && collection != super::provenance_progress::COLLECTION)
-        {
-            return Err(denied());
-        }
-        for action in grant.get_array("actions").map_err(|_| denied())? {
-            let action = action.as_str().ok_or_else(&denied)?;
-            if !(if collection.is_empty() {
-                action == "listCollections"
-            } else if collection == super::provenance_progress::COLLECTION {
-                super::provenance_progress::ACTIONS.contains(&action)
-            } else if collection == USAGE_PROJECTIONS {
-                USAGE_PROJECTION_ACTIONS.contains(&action)
-            } else if MEASURED_APPEND_ONLY.contains(&collection) {
-                MEASURED_CUSTODY_ACTIONS.contains(&action)
-            } else if collection == MEASURED_MANIFESTS {
-                MEASURED_MANIFEST_ACTIONS.contains(&action)
-            } else if collection == retained_consents::COLLECTION {
-                retained_consents::ACTIONS.contains(&action)
-            } else if migration_ledger && collection == MIGRATION_COLLECTION {
-                MIGRATION_ACTIONS.contains(&action)
-            } else if metadata_collections.contains(&collection)
-                && (ACTIONS.contains(&action) || ACTIVITY_INSPECTION_ACTIONS.contains(&action))
-            {
-                true
-            } else {
-                ACTIONS.contains(&action)
-                    || (collection == "binding_conversations" && action == "dropIndex")
-            }) {
-                return Err(denied());
-            }
-            grants
-                .entry(collection.into())
-                .or_default()
-                .insert(action.into());
-        }
-    }
-    if grants
-        .get(super::provenance_progress::COLLECTION)
-        .is_some_and(|actions| {
-            !super::provenance_progress::ACTIONS
-                .iter()
-                .all(|action| actions.contains(*action))
-        })
-    {
-        return Err(denied());
-    }
-    if grants
-        .get(retained_consents::COLLECTION)
-        .is_some_and(|actions| {
-            !retained_consents::ACTIONS
-                .iter()
-                .all(|action| actions.contains(*action))
-        })
-    {
-        return Err(denied());
-    }
-    if grants.get(USAGE_PROJECTIONS).is_some_and(|actions| {
-        !USAGE_PROJECTION_ACTIONS
-            .iter()
-            .all(|action| actions.contains(*action))
-    }) {
-        return Err(denied());
-    }
-    if !measured::complete(&grants)
-        || !COLLECTIONS.iter().all(|name| {
-            *name == retained_consents::COLLECTION
-                || *name == MEASURED_MANIFESTS
-                || *name == USAGE_PROJECTIONS
-                || MEASURED_APPEND_ONLY.contains(name)
-                || (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
-                || ACTIONS
-                    .iter()
-                    .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
-        })
-        || !metadata_collections.iter().all(|collection| {
-            grants.get(*collection).is_some_and(|actions| {
-                ACTIVITY_INSPECTION_ACTIONS
-                    .iter()
-                    .all(|action| actions.contains(*action))
-            })
-        })
-        || (migration_ledger
-            && !grants.get(MIGRATION_COLLECTION).is_some_and(|actions| {
-                MIGRATION_ACTIONS
-                    .iter()
-                    .all(|action| actions.contains(*action))
-            }))
-        || !grants
-            .get("binding_conversations")
-            .is_some_and(|actions| actions.contains("dropIndex"))
-    {
-        return Err(denied());
-    }
-    Ok(())
-}
 fn required_role(database: &str) -> Document {
     role_with_index_operation(database, &[], false, false)
 }

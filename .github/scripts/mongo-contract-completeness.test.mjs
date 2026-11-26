@@ -329,3 +329,27 @@ test('resource execution selection includes root and nested contracts without om
     for (const name of omitted) cases[name] = caseMetadata(true);
   }
 });
+
+test('journal permission denial is authenticated and ordinary journal contracts remain selected', () => {
+  const permission = "store::account_deletions::tests::worker_authority::legacy_role_keeps_non_enrolled_writes_and_journal_role_cannot_index_or_delete";
+  const ordinary = 'store::account_deletions::tests::worker_journal::ordinary_journal_contract';
+  const declared = JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8'));
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const authenticated = readFileSync(new URL('image-manager-mongo-contract.sh', import.meta.url), 'utf8');
+  assert.equal(declared[permission]?.kind, 'fixture');
+  assert.ok(source.includes(`not test(=${permission})`));
+  assert.ok(!source.includes('not test(store::account_deletions::tests::)'));
+  assert.ok(authenticated.includes(`package(=cma) and test(=${permission})`));
+  assert.equal(declared[ordinary], undefined);
+  const metadata = inventory();
+  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  cases[permission] = caseMetadata(false);
+  cases[ordinary] = caseMetadata(true);
+  const exclusions = {...exceptions, [permission]: declared[permission]};
+  assert.equal(check(metadata, exclusions).status, 0);
+  cases[permission] = caseMetadata(true);
+  assert.match(check(metadata, exclusions).stderr, /Selected non-ordinary contracts/);
+  cases[permission] = caseMetadata(false);
+  cases[ordinary] = caseMetadata(false);
+  assert.match(check(metadata, exclusions).stderr, /Omitted eligible Mongo contracts/);
+});

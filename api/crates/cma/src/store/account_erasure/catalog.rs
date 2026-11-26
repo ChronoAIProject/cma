@@ -79,6 +79,7 @@ pub(crate) fn validate_catalog() -> Result<(), &'static str> {
     let expected: BTreeSet<_> = super::super::isolation::COLLECTIONS
         .iter()
         .chain(super::super::isolation::replicas::COLLECTIONS)
+        .chain(super::super::isolation::JOURNAL_COLLECTIONS)
         .copied()
         .collect();
     let actual: BTreeSet<_> = ERASURE.iter().map(|entry| entry.collection).collect();

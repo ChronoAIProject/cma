@@ -1,14 +1,16 @@
 //! The explicit manifest registry is also the migrator's reader floor.
 use super::{
-    activity_audit_index, activity_indexes, activity_page_index, agent_log_active_proofs,
-    agent_log_segments, agent_log_source_keys, agent_owner_index, binding_indexes,
-    collection_indexes, command_cohort_index, measured_batches, measured_custody, measured_index,
-    opening_index, sandbox_usage_capture, turn_policy_index, usage_projections, Result,
+    account_erasure_work, activity_audit_index, activity_indexes, activity_page_index,
+    agent_log_active_proofs, agent_log_segments, agent_log_source_keys, agent_owner_index,
+    binding_indexes, collection_indexes, command_cohort_index, measured_batches, measured_custody,
+    measured_index, opening_index, sandbox_usage_capture, turn_policy_index, usage_projections,
+    Result,
 };
 use mongodb::bson::{doc, Document};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Step {
+    AccountErasureWork,
     Activity,
     ActivityPage,
     ActivityAudit,
@@ -29,7 +31,8 @@ pub(super) enum Step {
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 17] = [
+    pub(super) const ALL: [Self; 18] = [
+        Self::AccountErasureWork,
         Self::AgentLogActiveProofs,
         Self::MeasuredIndex,
         Self::MeasuredBatches,
@@ -56,6 +59,7 @@ impl Step {
     }
     pub(super) fn id(self) -> &'static str {
         match self {
+            Self::AccountErasureWork => account_erasure_work::ID,
             Self::CommandCohort => command_cohort_index::ID,
             Self::MeasuredCustody => measured_custody::ID,
             Self::UsageProjections => usage_projections::ID,
@@ -77,6 +81,7 @@ impl Step {
     }
     pub(super) fn checksum(self) -> String {
         match self {
+            Self::AccountErasureWork => account_erasure_work::checksum(),
             Self::CommandCohort => command_cohort_index::checksum(),
             Self::MeasuredCustody => measured_custody::checksum(),
             Self::UsageProjections => usage_projections::checksum(),
@@ -101,6 +106,7 @@ impl Step {
     }
     pub(super) fn max_changes(self) -> i64 {
         match self {
+            Self::AccountErasureWork => 4,
             Self::CommandCohort => 1,
             Self::MeasuredCustody | Self::MeasuredBatches | Self::AgentLogActiveProofs => 1,
             Self::MeasuredIndex => 5,
@@ -119,6 +125,7 @@ impl Step {
     }
     pub(super) fn collections(self) -> &'static [&'static str] {
         match self {
+            Self::AccountErasureWork => crate::store::account_deletions::worker_schema::COLLECTIONS,
             Self::MeasuredCustody => &[measured_custody::COLLECTION],
             Self::UsageProjections => &[usage_projections::COLLECTION],
             Self::MeasuredBatches => &[measured_batches::COLLECTION],
@@ -141,7 +148,9 @@ impl Step {
     }
     pub(super) fn effect_field(self) -> &'static str {
         match self {
-            Self::AgentLogSegments | Self::SandboxUsageCapture => "applied_schema_steps",
+            Self::AgentLogSegments | Self::SandboxUsageCapture | Self::AccountErasureWork => {
+                "applied_schema_steps"
+            }
             Self::Activity
             | Self::ActivityPage
             | Self::ActivityAudit
@@ -164,6 +173,7 @@ impl Step {
         database: &mongodb::Database,
     ) -> Result<Vec<(&'static str, Document)>> {
         match self {
+            Self::AccountErasureWork => account_erasure_work::inspect(database).await,
             Self::CommandCohort => Ok(command_cohort_index::inspect(database)
                 .await?
                 .into_iter()
@@ -218,6 +228,9 @@ impl Step {
         index: Document,
     ) -> Result<bool> {
         match self {
+            Self::AccountErasureWork => {
+                account_erasure_work::create(database, collection, index).await
+            }
             Self::CommandCohort if collection == "agent_commands" => {
                 command_cohort_index::create(database, index).await
             }

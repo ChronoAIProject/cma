@@ -87,14 +87,14 @@ async fn claim_due_skips_a_malformed_oldest_row_and_claims_the_next_valid_record
         .await
         .unwrap();
     let claimed = store
-        .claim_due("worker", LATER, Duration::from_secs(90))
+        .claim_due("worker", &database_now(&db).await, Duration::from_secs(90))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(claimed.id, good.id);
     assert!(store.get(&bad.id).await.is_err());
     assert!(store
-        .claim_due("other", LATER, Duration::from_secs(90))
+        .claim_due("other", &database_now(&db).await, Duration::from_secs(90))
         .await
         .unwrap()
         .is_none());
@@ -128,7 +128,7 @@ async fn claim_due_skips_corrupt_replay_keys_without_releasing_the_subject_gate(
             .contains(&subject_hash(&owner)));
         assert_eq!(
             store
-                .claim_due("worker", LATER, Duration::from_secs(90))
+                .claim_due("worker", &database_now(&db).await, Duration::from_secs(90))
                 .await
                 .unwrap()
                 .unwrap()
@@ -136,7 +136,7 @@ async fn claim_due_skips_corrupt_replay_keys_without_releasing_the_subject_gate(
             good.id
         );
         assert!(store
-            .claim_due("other", LATER, Duration::from_secs(90))
+            .claim_due("other", &database_now(&db).await, Duration::from_secs(90))
             .await
             .unwrap()
             .is_none());
@@ -170,7 +170,7 @@ async fn unknown_fields_are_quarantined_while_the_subject_remains_gated() {
         .contains(&subject_hash(&owner)));
     assert_eq!(
         store
-            .claim_due("worker", LATER, Duration::from_secs(90))
+            .claim_due("worker", &database_now(&db).await, Duration::from_secs(90))
             .await
             .unwrap()
             .unwrap()

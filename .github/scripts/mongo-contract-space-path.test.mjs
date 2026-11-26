@@ -17,6 +17,7 @@ function copyCallers(root) {
     ...callers.flat(), 'mongo-contract-test-fixture.mjs', 'mongo-contract-tests.sh',
     'mongo-contract-registry.py', 'mongo-contract-test-prefixes.mjs',
     'mongo-contract-exceptions.json', 'mongo-contract-timings.json', 'desktop-replica-contract.py',
+    'image-manager-mongo-contract.sh',
   ]) cpSync(new URL(name, import.meta.url), join(scripts, name));
   cpSync(new URL('mongo-contract-suites', import.meta.url), join(scripts, 'mongo-contract-suites'), { recursive: true });
   mkdirSync(join(root, 'api/.config'), { recursive: true });

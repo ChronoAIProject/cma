@@ -75,6 +75,10 @@
     "kind": "helper",
     "reason": "Invoked only by initial_task_public_service_process_exit_preserves_admission."
   },
+  "store::account_deletions::tests::worker_authority::legacy_role_keeps_non_enrolled_writes_and_journal_role_cannot_index_or_delete": {
+    "kind": "fixture",
+    "reason": "Requires enforced Mongo authorization; selected exactly by image-manager-mongo-contract.sh am with the owned authenticated fixture URI."
+  },
   "store::agent_log_segments::active_proof::prepare::tests::active_proof_operator_cli_uses_generated_isolated_role": {
     "kind": "fixture",
     "reason": "Requires the built CMA binary and authenticated Mongo fixture; selected exactly by image-manager-mongo-contract.sh am."

@@ -187,3 +187,7 @@ CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
   CMA_TEST_CMA_EXECUTABLE="${CARGO_TARGET_DIR:-$PWD/target}/debug/cma" \
   contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and test(=store::agent_log_segments::active_proof::prepare::tests::active_proof_operator_cli_uses_generated_isolated_role)'
+
+CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
+  contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma) and test(=store::account_deletions::tests::worker_authority::legacy_role_keeps_non_enrolled_writes_and_journal_role_cannot_index_or_delete)'
