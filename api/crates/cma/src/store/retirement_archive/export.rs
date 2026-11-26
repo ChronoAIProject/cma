@@ -148,6 +148,14 @@ async fn document_objects(
     blobs: Option<&dyn DocumentBlobStore>,
     request: &Request,
 ) -> Result<Vec<ExternalRecord>> {
+    // A deleted Document retains immutable revision metadata, but its source
+    // bytes have no archive publication right. They may already be reclaimed.
+    if crate::document_artifacts::deletion::decode_audit(document)
+        .map_err(|_| REFUSED)?
+        .is_some()
+    {
+        return Ok(Vec::new());
+    }
     if document.get_i64("document_schema_version").ok() != Some(1) {
         return Err(REFUSED);
     }

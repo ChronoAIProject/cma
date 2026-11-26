@@ -41,6 +41,22 @@ pub(crate) async fn update(
         StatusCode::OK,
     )
 }
+#[utoipa::path(delete,path="/api/v1/documents/{id}",tag="documents",params(("id"=String,Path),("Idempotency-Key"=String,Header)),request_body=DocumentRevisionRequest,responses((status=200,body=DocumentDeletionReceipt),(status=400,description="Invalid document request, JSON or idempotency key",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=401,description="Authenticated subject required",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=403,description="Account deletion in progress",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=404,description="Document unavailable to this caller",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=409,description="Revision or idempotency conflict",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=429,description="Bounded document capacity reached",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=503,description="Document storage unavailable",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=413,description="JSON body exceeds byte budget",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=415,description="JSON content type required",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=422,description="JSON does not match the command",body=super::super::ProblemDocument,content_type="application/problem+json")))]
+pub(crate) async fn delete(
+    State(service): State<Arc<DocumentService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    key: IdempotencyKey,
+    body: Result<RequestBody<DocumentRevisionRequest>, super::super::BodyProblem>,
+) -> Response {
+    request_parts!(key, body);
+    result(
+        service
+            .delete(&caller, &id, &key, body.expected_revision)
+            .await,
+        StatusCode::OK,
+    )
+}
 #[utoipa::path(put,path="/api/v1/documents/{id}/shares/{subject}",tag="documents",params(("id"=String,Path),("subject"=String,Path),("Idempotency-Key"=String,Header)),request_body=GrantDocumentRequest,responses((status=200,body=DocumentView),(status=400,description="Invalid document request, JSON or idempotency key",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=401,description="Authenticated subject required",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=404,description="Document unavailable to this caller",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=409,description="Revision or idempotency conflict",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=429,description="Bounded document capacity reached",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=503,description="Document storage unavailable",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=413,description="JSON body exceeds byte budget",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=415,description="JSON content type required",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=422,description="JSON does not match the command",body=super::super::ProblemDocument,content_type="application/problem+json")))]
 pub(crate) async fn grant(
     State(service): State<Arc<DocumentService>>,
