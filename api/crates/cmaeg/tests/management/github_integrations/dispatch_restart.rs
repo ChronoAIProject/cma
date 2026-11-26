@@ -58,29 +58,46 @@ async fn restart_after_pending_receipt_dispatches_once_from_new_gateway_instance
         .await
         .unwrap()
         .unwrap();
-    let lease_until = row.get_i64("lease_until").unwrap();
+    let lease_until: u64 = row.get_i64("lease_until").unwrap().try_into().unwrap();
+    let lease_until = UNIX_EPOCH + Duration::from_secs(lease_until);
+    assert!(
+        SystemTime::now() < lease_until,
+        "original receipt must have a live lease"
+    );
 
     f.children.last_mut().unwrap().kill().await.unwrap();
-    assert!(webhook.await.unwrap().is_err());
+    // The webhook can already have returned Pending if the background worker
+    // acquired the lease. The durable state above proves either claimant stopped.
+    let _ = webhook.await.expect("original webhook task completes");
     f.database.uri = previous_uri;
     f.base = f.replica().await;
 
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    assert!(lease_until > i64::try_from(now.as_secs()).unwrap());
-    assert_eq!(read_receipt(&f, &path).await, pending);
-    assert!(response_posts(&f).is_empty());
-
     let mut receipt = pending.clone();
+    let mut observed_live_lease = false;
     let recovered = timeout(Duration::from_secs(45), async {
         loop {
             receipt = read_receipt(&f, &path).await;
-            if receipt["dispatch"][0]["status"] == "dispatched" {
+            let posts = response_posts(&f).len();
+            if SystemTime::now() < lease_until {
+                observed_live_lease = true;
+                assert_eq!(receipt["receipt_id"], receipt_id);
+                assert_eq!(receipt["dispatch"][0]["status"], "pending");
+                assert_eq!(receipt["task_ids"], json!([]));
+                assert_eq!(
+                    posts, 0,
+                    "replacement ran before the original lease expired"
+                );
+            } else if receipt["dispatch"][0]["status"] == "dispatched" {
                 break;
             }
             sleep(Duration::from_millis(150)).await;
         }
     })
     .await;
+    assert!(
+        observed_live_lease,
+        "replacement must observe the original live lease"
+    );
     assert!(
         recovered.is_ok(),
         "replacement did not settle the receipt after lease expiry (status={}, reason={})",
