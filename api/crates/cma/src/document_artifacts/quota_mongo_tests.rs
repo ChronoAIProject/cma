@@ -2,6 +2,8 @@ use super::*;
 use crate::document_artifacts::quota_baseline::Inventory;
 use std::sync::Arc;
 
+#[path = "reclamation_mongo_tests.rs"]
+mod reclamation;
 #[path = "source_commit_mongo_tests.rs"]
 mod source_commit;
 

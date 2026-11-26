@@ -325,6 +325,9 @@ fn start_workers(composition: ControlPlaneComposition, shutdown: &mut ShutdownCo
     }
     composition.usage.spawn(shutdown);
     composition.usage_metrics.spawn(shutdown);
+    if let Some(worker) = composition.document_reclaimer {
+        shutdown.push(worker.spawn(shutdown.subscribe()));
+    }
 }
 
 type HttpServer = Pin<Box<dyn Future<Output = std::io::Result<()>> + Send>>;
