@@ -198,12 +198,6 @@ async fn execute(arguments: &[String]) -> Result<Value> {
             ),
         };
     }
-    if step == Step::SandboxUsageCapture {
-        return match identity {
-            Some(identity) => sandbox_usage_capture::apply(&ledger, &database, &identity).await,
-            None => sandbox_usage_capture::inspect(&database).await,
-        };
-    }
     let indexes = step.inspect(&database).await?;
     if let Some(identity) = identity {
         apply_indexes(&ledger, &database, &identity).await
