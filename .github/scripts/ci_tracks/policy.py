@@ -3,8 +3,8 @@
 from pathlib import Path, PurePosixPath
 import re
 
-# cma-journey-probe is a standalone public-journey runner. It is in no image, and
-# its tests reuse Agent Manager wire fixtures, so the AM track owns it.
+# The standalone public-journey runner uses Agent Manager wire fixtures in tests,
+# so the AM test track owns it.
 AM = frozenset({"cma", "cma-image-manager", "cma-allocator-qualification"})
 AM_OPTIONAL = frozenset({"cma-journey-probe"})
 EG = frozenset({"cmaeg"})

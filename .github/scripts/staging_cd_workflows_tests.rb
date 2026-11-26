@@ -612,6 +612,37 @@ class StagingWorkflowTest < Minitest::Test
     end
   end
 
+  def test_journey_publication_is_independent_of_cma_promotion
+    jobs = workflow('staging-cd').fetch('jobs')
+    job = jobs.fetch('release_journey_probe')
+    refute job.key?('needs')
+    refute job.key?('environment')
+    jobs.each_value { |row| refute_includes Array(row['needs']), 'release_journey_probe' }
+    steps = job.fetch('steps')
+    select = steps.find { |row| row['id'] == 'select' }
+    assert_includes select.fetch('run'), 'api/crates/cma-journey-probe'
+    build = steps.find { |row| row['run'].to_s.end_with?('staging_cd_journey_probe.py build') }
+    publish = steps.find { |row| row['id'] == 'publish' }
+    assert_operator steps.index(build), :<, steps.index(publish)
+    refute build.key?('env')
+    assert_equal "steps.select.outputs.changed == 'true'", build['if']
+    receipt = steps.find { |row| row['name'] == 'Retain journey publication evidence' }
+    assert_includes receipt.dig('with', 'path'), '/journey-image/publication.json'
+  end
+
+  def test_journey_publication_authority_stays_with_the_scanned_publisher
+    require_relative 'ci-contract'
+    inputs = CIContract.load_inputs
+    job = inputs['staging-cd']['jobs']['release_journey_probe']
+    publish = job['steps'].find { |row| row['id'] == 'publish' }
+    run = publish['run']
+    publish['run'] = 'docker push image'
+    assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
+    publish['run'] = run
+    job['permissions']['id-token'] = 'write'
+    assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
+  end
+
   def test_package_bundle_writes_only_on_a_develop_dispatch_with_pinned_actions
     require_relative 'ci-contract'
     inputs = CIContract.load_inputs
