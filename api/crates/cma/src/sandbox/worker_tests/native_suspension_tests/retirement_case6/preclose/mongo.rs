@@ -388,10 +388,19 @@ async fn receive(
     authority: Arc<Authority>,
     response: &'static str,
 ) -> receiver_failure::ReceiverFailureCapture {
+    receive_for(&f.parent, bound, authority, response).await
+}
+
+async fn receive_for(
+    parent: &Sandbox,
+    bound: &BoundCapture,
+    authority: Arc<Authority>,
+    response: &'static str,
+) -> receiver_failure::ReceiverFailureCapture {
     let (transport, exchanges, server) = receiver_with_status(response).await;
-    let runtime = RuntimeHandle::new(&f.parent.runtime.as_ref().unwrap().runtime_id);
+    let runtime = RuntimeHandle::new(&parent.runtime.as_ref().unwrap().runtime_id);
     let request = RequestFrame::RuntimeStatus(layer3_adapter::RuntimeStatusRequest {
-        sandbox_id: f.parent.id.to_string(),
+        sandbox_id: parent.id.to_string(),
         generation: 1,
         home_identity: "fixture".into(),
     });
@@ -444,5 +453,8 @@ mod consumption;
 mod delivery;
 
 mod composed;
+
+#[cfg(unix)]
+mod process_crash;
 
 mod controls;
