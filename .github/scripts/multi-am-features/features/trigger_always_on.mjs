@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {isDeepStrictEqual as equal} from 'node:util';
 import {assertOwner, check, hash, id, other, poll} from '../cma/core.mjs';
 import {retainFailure, withRestoration} from '../failure.mjs';
 
@@ -45,7 +46,7 @@ async function exerciseTrigger({adapter, user, admin, outsider, config}) {
   });
   check(id(trigger.id) && Number.isSafeInteger(trigger.draft_version), 'trigger_draft_identity_missing');
   const triggerPath = '/api/v1/triggers/' + encodeURIComponent(trigger.id);
-  let launchPath, observed, resources;
+  let launchPath, observed, resources, relinquishment;
   const recordFailure = (stage, error) => retainFailure(config.output_dir, stage, error,
     {case: 'trigger_origin_always_on_and_replay'});
 
@@ -88,7 +89,7 @@ async function exerciseTrigger({adapter, user, admin, outsider, config}) {
     const verify = async desired => {
       for (const am of [owner.am, peer]) {
         const {body: view} = await user.request(am, 'GET', agentPath);
-        check(view.id === agent.id && view.sandbox?.id === sandbox.id && ['ready', 'busy'].includes(view.status),
+        check(view.id === agent.id && view.sandbox?.id === sandbox.id && ['ready', 'working'].includes(view.status),
           'trigger_agent_read_failed_after_always_on');
         const current = await readSandbox(am);
         check(current.id === sandbox.id && current.profile.always_on === desired, 'trigger_sandbox_always_on_not_visible');
@@ -119,6 +120,36 @@ async function exerciseTrigger({adapter, user, admin, outsider, config}) {
       await set(peer, true, original.revision);
       await verify(true);
       await set(owner.am, false, original.revision, [409]);
+      const currentOwner = assertOwner(await adapter.ownerOf({agentId: agent.id}), agent.id);
+      const ingress = other(currentOwner.am);
+      const enabled = await readSandbox(ingress);
+      check(enabled.profile.always_on === true && enabled.revision === original.revision + 1,
+        'trigger_always_on_approval_revision_unbound');
+      const ownerPath = '/api/v1/sandboxes/' + sandbox.id + '/always-on';
+      const write = (client, am, value, expected_revision, allowed) => client.request(am, 'POST', ownerPath, {
+        body: {always_on: value, expected_revision}, key: randomUUID(), allowed,
+      });
+      const selfApproval = await write(user, ingress, true, enabled.revision, [403]);
+      check(selfApproval.body?.code === 'always_on_approval_required', 'trigger_owner_self_approval_refusal_untyped');
+      const stale = await write(user, ingress, false, original.revision, [409]);
+      check(stale.body?.code === 'sandbox_invalid_state', 'trigger_stale_relinquishment_refusal_untyped');
+      await write(outsider, currentOwner.am, false, enabled.revision, [404]);
+      const stillEnabled = await readSandbox(currentOwner.am);
+      check(stillEnabled.profile.always_on === true && stillEnabled.revision === enabled.revision,
+        'trigger_refused_relinquishment_mutated_approval');
+      const intent = {body: {always_on: false, expected_revision: enabled.revision}, key: randomUUID()};
+      const {body: released} = await user.request(ingress, 'POST', ownerPath, intent);
+      check(released?.id === sandbox.id && released.always_on === false && released.revision === enabled.revision + 1,
+        'trigger_owner_relinquishment_unconfirmed');
+      const {body: replayed} = await user.request(currentOwner.am, 'POST', ownerPath, intent);
+      check(equal(replayed, released), 'trigger_owner_relinquishment_replay_changed');
+      for (const am of [ingress, currentOwner.am]) {
+        const current = await readSandbox(am);
+        check(current.profile.always_on === false && current.revision === released.revision,
+          'trigger_owner_relinquishment_peer_state_changed');
+      }
+      relinquishment = {ingress, owner: currentOwner.am, epoch: currentOwner.epoch,
+        receipt_sha256: hash(JSON.stringify(released)), revisions_advanced: released.revision - enabled.revision};
     }, async () => {
       const current = await readSandbox(owner.am);
       if (current.profile.always_on === true) await set(peer, false, current.revision);
@@ -141,7 +172,8 @@ async function exerciseTrigger({adapter, user, admin, outsider, config}) {
       check(retired.id === trigger.id && typeof retired.retired_at === 'string', 'trigger_retirement_unobserved');
     },
     recordFailure), recordFailure);
-  return {launch_sha256: hash(observed.id), sandbox_sha256: hash(resources.sandbox)};
+  return {launch_sha256: hash(observed.id), sandbox_sha256: hash(resources.sandbox),
+    owner_relinquishment: relinquishment};
 }
 
 async function retireLaunchedResources(client, resources, owner) {
@@ -151,7 +183,7 @@ async function retireLaunchedResources(client, resources, owner) {
   check(inspected.id === resources.sandbox && inspected.owner === owner, 'trigger_cleanup_public_owner_mismatch');
   const {body: detail} = await client.request('b', 'GET', agent);
   check(detail.id === resources.agent && detail.sandbox?.id === resources.sandbox, 'trigger_cleanup_lineage_mismatch');
-  if (['ready', 'busy'].includes(detail.status)) {
+  if (['ready', 'working'].includes(detail.status)) {
     await client.request('b', 'POST', agent + '/stop', {body: {}, key: randomUUID(), allowed: [200, 202, 204]});
     await poll(() => client.request('a', 'GET', agent), value => value.body.status === 'stopped',
       {timeout: 180000, code: 'trigger_agent_stop_timeout'});

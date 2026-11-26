@@ -12,7 +12,7 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
   }};
   let alwaysOn = false, revision = 1, agentState = 'ready', sandboxState = 'active';
   let triggers = {enabled: false, orchestration_paused: false};
-  let createKey, startKey;
+  let createKey, startKey, ownerReceipt, ownerKey;
   const adapter = {ownerOf: async input => {
     assert.equal(input.agentId, agent);
     return {am: 'a', agent_id: agent, epoch: 3, pod_uid: 'manager-a'};
@@ -46,6 +46,36 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
     return {body: {id: sandbox, always_on: alwaysOn}};
   }};
   const user = {request: async (am, method, path, options) => {
+    if (path === '/api/v1/sandboxes/' + sandbox + '/always-on') {
+      assert.equal(method, 'POST');
+      if (options.body.always_on) {
+        assert.deepEqual(options.allowed, [403]);
+        assert.equal(options.body.expected_revision, revision);
+        calls.push('owner-self-approval-refused');
+        return {status: 403, body: {code: 'always_on_approval_required'}};
+      }
+      if (options.allowed?.includes(409)) {
+        assert.equal(options.body.expected_revision, 1);
+        assert(alwaysOn);
+        calls.push('stale-owner-relinquishment-refused');
+        return {status: 409, body: {code: 'sandbox_invalid_state'}};
+      }
+      if (ownerReceipt) {
+        assert.equal(am, 'a');
+        assert.equal(options.key, ownerKey);
+        assert.equal(options.body.expected_revision, revision - 1);
+        calls.push('owner-relinquishment-replay');
+        return {status: 200, body: ownerReceipt};
+      }
+      assert.equal(am, 'b');
+      assert.equal(options.body.expected_revision, revision);
+      assert(alwaysOn);
+      alwaysOn = false;
+      ownerKey = options.key;
+      ownerReceipt = {id: sandbox, always_on: alwaysOn, revision: ++revision};
+      calls.push('owner-relinquishment');
+      return {status: 200, body: ownerReceipt};
+    }
     if (path.endsWith('/launches')) {
       if (!createKey) {
         assert.equal(am, 'a');
@@ -85,12 +115,17 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
   }};
   const outsider = {request: async (_, method, path, options) => {
     assert.equal(method, 'POST');
-    assert.deepEqual(options.allowed, path.endsWith('/start') ? [404] : [403]);
+    assert.deepEqual(options.allowed, path.startsWith('/api/v1/admin/') ? [403] : [404]);
+    if (path.startsWith('/api/v1/sandboxes/')) calls.push('foreign-relinquishment-refused');
     return {status: options.allowed[0]};
   }};
-  await triggerAlwaysOn({adapter, user, admin, outsider,
+  const result = await triggerAlwaysOn({adapter, user, admin, outsider,
     config: {owner_id: subject, public_origin: 'https://fixture.example'}});
   assert.deepEqual(calls, ['enable-triggers', 'create', 'start', 'enable', 'replay-create', 'replay-start',
-    'revoke', 'replay-create', 'replay-start', 'stop-agent', 'delete-agent', 'retire-sandbox', 'retire-trigger',
+    'owner-self-approval-refused', 'stale-owner-relinquishment-refused', 'foreign-relinquishment-refused',
+    'owner-relinquishment', 'owner-relinquishment-replay', 'replay-create', 'replay-start',
+    'stop-agent', 'delete-agent', 'retire-sandbox', 'retire-trigger',
     'restore-triggers']);
+  assert.equal(result.owner_relinquishment.ingress, 'b');
+  assert.equal(result.owner_relinquishment.revisions_advanced, 1);
 });
