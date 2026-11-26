@@ -10,7 +10,7 @@ use mongodb::{
 
 #[derive(Default)]
 struct Counts {
-    commands: u64,
+    checkouts: u64,
     holds: u64,
     hold_us: u64,
     open: HashMap<u64, Instant>,
@@ -24,6 +24,13 @@ async fn client(uri: &str, enabled: bool) -> (Client, Arc<Mutex<Counts>>) {
         drop(super::periodic::start(&commands));
         super::metadata_hook::install(&mut options, Some(commands));
     }
+    observe_checkouts(options, diagnostics)
+}
+
+fn observe_checkouts(
+    mut options: ClientOptions,
+    diagnostics: Option<Diagnostics>,
+) -> (Client, Arc<Mutex<Counts>>) {
     let counts = Arc::new(Mutex::new(Counts::default()));
     let observed = counts.clone();
     options.cmap_event_handler = Some(EventHandler::callback(move |event| {
@@ -33,7 +40,7 @@ async fn client(uri: &str, enabled: bool) -> (Client, Arc<Mutex<Counts>>) {
         let mut counts = observed.lock().unwrap();
         match event {
             CmapEvent::ConnectionCheckedOut(e) => {
-                counts.commands += 1;
+                counts.checkouts += 1;
                 counts
                     .open
                     .insert(connection_key(&e.address, e.connection_id), Instant::now());
@@ -132,7 +139,7 @@ async fn real_mongo_monitoring_privacy_and_overhead() {
             drain(counts).await;
             let counts = counts.lock().unwrap();
             holds[mode] += counts.hold_us;
-            checkouts[mode] += counts.commands;
+            checkouts[mode] += counts.checkouts;
         }
         for values in &mut elapsed {
             values.sort_unstable();
@@ -219,4 +226,87 @@ async fn real_mongo_monitoring_privacy_and_overhead() {
     );
     assert!(joined > 0, "a sampled command and physical hold must join");
     database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
+async fn application_modes_count_command_attempts_independently_of_checkouts() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let (unmonitored, _) = client(&uri, false).await;
+    let name = format!("diagnostic_counts_{}", uuid::Uuid::new_v4().simple());
+    let fixture = unmonitored.database(&name);
+    fixture
+        .collection::<Document>("agents")
+        .insert_many((0..5).map(|id| doc! {"_id": id}))
+        .await
+        .unwrap();
+
+    let mut physical = Vec::new();
+    for (mode, configured, expected_observed) in [
+        ("driver_off", None, 0),
+        ("application_off", Some("false"), 7),
+        ("application_on", Some("true"), 7),
+    ] {
+        let mut options = ClientOptions::parse(&uri).await.unwrap();
+        options.max_pool_size = Some(30);
+        let diagnostics = if let Some(value) = configured {
+            let diagnostics = install_configured(&mut options, "general", Some(value));
+            assert_eq!(diagnostics.is_some(), value == "true");
+            diagnostics
+        } else {
+            options.tracing = Some(super::metadata_hook::disabled());
+            None
+        };
+        assert!(options.command_event_handler.is_none());
+        let (client, counts) = observe_checkouts(options, diagnostics);
+        let db = client.database(&name);
+        db.run_command(doc! {"ping": 1}).await.unwrap();
+        drain(&counts).await;
+        *counts.lock().unwrap() = Counts::default();
+
+        let (_, attempts) = crate::telemetry::agent_output::count_commands(async {
+            let agents = db.collection::<Document>("agents");
+            let rows: Vec<Document> = agents
+                .find(doc! {})
+                .sort(doc! {"_id": 1})
+                .batch_size(2)
+                .await
+                .unwrap()
+                .try_collect()
+                .await
+                .unwrap();
+            let ids: Vec<_> = rows.iter().map(|row| row.get_i32("_id").unwrap()).collect();
+            assert_eq!(ids, [0, 1, 2, 3, 4]);
+
+            let mut session = client.start_session().await.unwrap();
+            session.start_transaction().await.unwrap();
+            for id in [0, 4] {
+                let row = agents
+                    .find_one(doc! {"_id": id})
+                    .session(&mut session)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(row.get_i32("_id").unwrap(), id);
+            }
+            session.abort_transaction().await.unwrap();
+            assert!(db
+                .run_command(doc! {"unknown_private_command": 1})
+                .await
+                .is_err());
+        })
+        .await;
+        drain(&counts).await;
+        let counts = counts.lock().unwrap();
+        assert_eq!(attempts, expected_observed, "{mode}");
+        assert!(counts.checkouts > 0);
+        assert_eq!(counts.checkouts, counts.holds);
+        physical.push(counts.holds);
+        eprintln!(
+            "MONITOR_WORK mode={mode} observed_attempts={attempts} checkouts={} physical_hold_us={}",
+            counts.checkouts, counts.hold_us
+        );
+    }
+    assert!(physical.windows(2).all(|pair| pair[0] == pair[1]));
+    fixture.drop().await.unwrap();
 }
