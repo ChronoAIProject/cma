@@ -12,6 +12,7 @@ async fn commonmark_relay_for_lark_feishu_and_discord_is_independent_of_telegram
     for (platform, thread_reply) in [
         (Platform::Lark, false),
         (Platform::Lark, true),
+        (Platform::Feishu, false),
         (Platform::Feishu, true),
         (Platform::Discord, false),
     ] {
@@ -42,13 +43,23 @@ async fn commonmark_relay_for_lark_feishu_and_discord_is_independent_of_telegram
             gate: &gate,
         };
         let source = "[booking](https://example.test/link#share=_original) \\*literal\\*";
-        let (receipt, _) = sender.reply(&ctx, &event, &message(source.into())).await;
+        let mut outbound = message(source.into());
+        outbound.thread_reply = thread_reply;
+        let (receipt, _) = sender.reply(&ctx, &event, &outbound).await;
         assert!(matches!(
             receipt.delivery,
             DeliveryOutcome::Confirmed { .. }
         ));
         let sent = transport.1.lock().unwrap();
         assert_eq!(sent.len(), 1);
+        assert_eq!(
+            sent[0].0.path(),
+            if thread_reply {
+                "/api/v1/channel-relay/thread-reply/commonmark"
+            } else {
+                "/api/v1/channel-relay/reply/commonmark"
+            }
+        );
         assert_eq!(sent[0].1["reply"]["text"], source);
     }
 }
@@ -109,6 +120,43 @@ async fn commonmark_validates_bytes_and_obeys_durable_barrier_before_token_claim
             assert_eq!(gate.calls(), ["enter_route", "attempt", "commit"]);
             assert!(sender.consumed.lock().unwrap().is_empty());
             assert!(transport.0.lock().unwrap().is_empty());
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn legacy_relay_preserves_booking_link_on_literal_platforms() {
+    for platform in [Platform::Lark, Platform::Feishu, Platform::Discord] {
+        for complete in [false, true] {
+            let (mut sender, transport, channel, mut event) = setup();
+            let ReplyAddress::NyxidRelay {
+                platform: target, ..
+            } = &mut event.reply
+            else {
+                panic!("relay fixture required")
+            };
+            *target = platform;
+            sender.relay = sender.relay.with_complete_replies(complete);
+            assert!(!sender.relay.commonmark_for(&event.reply));
+            let trace = tracing::Span::none();
+            let gate = RecordingGate::new(true);
+            let ctx = SendContext {
+                trace: &trace,
+                channel: &channel,
+                first_send_done: false,
+                gate: &gate,
+            };
+            let source =
+                r"[booking](https://booking.example/test-link?a=b#share=_yNR5) C:\qa\menu_01.txt";
+            let (receipt, _) = sender.reply(&ctx, &event, &message(source.into())).await;
+            assert!(matches!(
+                receipt.delivery,
+                DeliveryOutcome::Confirmed { .. }
+            ));
+            let sent = transport.1.lock().unwrap();
+            assert_eq!(sent.len(), 1, "{platform:?} complete={complete}");
+            assert_eq!(sent[0].0.path(), "/api/v1/channel-relay/reply");
+            assert_eq!(sent[0].1["reply"]["text"], source);
         }
     }
 }
