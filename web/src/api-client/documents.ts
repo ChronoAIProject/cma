@@ -1,7 +1,15 @@
 import type { ResolvedConfig } from './config.js';
 import { ProtocolError } from './errors.js';
 import type { OperationOptions, RequestOptions } from './http.js';
-import { command, input, query, read, segment, type CommandOptions } from './resources.js';
+import {
+  command,
+  identity,
+  input,
+  query,
+  read,
+  segment,
+  type CommandOptions,
+} from './resources.js';
 import {
   array,
   enumeration,
@@ -36,6 +44,7 @@ const revision = object({
   created_at: text,
   author_subject: text,
 });
+const deletionReceipt = object({ id: text, revision: positiveInteger, deleted_at: text });
 const source = object({ id: text, revision: positiveInteger, markdown: text });
 const comment = object({
   id: text,
@@ -80,6 +89,8 @@ const page = <T>(parse: Parser<T>) => object({ items: array(parse), next: nullab
 export type Document = Output<typeof metadata>;
 /** One immutable Markdown source revision. */
 export type DocumentRevision = Output<typeof revision>;
+/** The recorded outcome of deleting an owned document. */
+export type DocumentDeletionReceipt = Output<typeof deletionReceipt>;
 /** Full, authorized Markdown source. */
 export type DocumentSource = Output<typeof source>;
 /** A comment anchored to one source revision. */
@@ -168,6 +179,16 @@ export class Documents {
   }
   update(id: string, body: UpdateDocument, options: CommandOptions) {
     return this.write(id, '', 'PATCH', input(update, body), metadata, options);
+  }
+  delete(id: string, body: DocumentRevisionRequest, options: CommandOptions) {
+    return this.write(
+      id,
+      '',
+      'DELETE',
+      input(expected, body),
+      identity(deletionReceipt, id),
+      options,
+    );
   }
   grant(id: string, subject: string, body: GrantDocument, options: CommandOptions) {
     return this.write(
