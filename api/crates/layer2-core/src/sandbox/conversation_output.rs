@@ -5,7 +5,43 @@ use crate::sandbox::store::{
     AgentReopenGuard, SandboxStoreError,
 };
 use crate::sandbox::{Agent, AgentConversationError, AgentUpdateOutcome};
+use layer3_adapter::{ConversationUpdate, SessionUpdate};
 use sha2::{Digest, Sha256};
+
+/// A fresh process loads the retained conversation before the owner can send
+/// another turn. Commit those transport receipts without replaying the history
+/// into the Agent log. Live turn evidence still requires a published attachment.
+pub(super) fn owner_restart_effect(
+    update: Option<&ConversationUpdate>,
+) -> Result<Option<&ConversationUpdate>, AgentConversationError> {
+    match update {
+        None | Some(ConversationUpdate::Metadata(_)) => Ok(update),
+        Some(ConversationUpdate::Said(
+            SessionUpdate::UserMessageChunk(_)
+            | SessionUpdate::AgentThoughtChunk(_)
+            | SessionUpdate::Plan(_)
+            | SessionUpdate::UsageUpdate(_)
+            | SessionUpdate::SessionInfoUpdate(_)
+            | SessionUpdate::AvailableCommandsUpdate(_)
+            | SessionUpdate::ConfigOptionUpdate(_)
+            | SessionUpdate::CurrentModeUpdate(_),
+        ))
+        | Some(ConversationUpdate::Usage(_)) => Ok(None),
+        Some(ConversationUpdate::WithoutPromptEvidence(update))
+            if matches!(
+                update.effect(),
+                ConversationUpdate::Said(
+                    SessionUpdate::AgentMessageChunk(_)
+                        | SessionUpdate::ToolCall(_)
+                        | SessionUpdate::ToolCallUpdate(_)
+                )
+            ) =>
+        {
+            Ok(None)
+        }
+        _ => Err(AgentConversationError::ReopenOutputDiscontinuity),
+    }
+}
 
 pub(super) fn update_parts(
     update: &layer3_adapter::ConversationUpdate,
