@@ -318,6 +318,12 @@ impl ProviderClient {
         Ok(TurnStream {
             trace: association,
             accepted,
+            recovery: handle
+                .entry
+                .paths
+                .recovery
+                .as_ref()
+                .map(|_| super::recovery::AcceptedRecovery::new(request.metadata)),
             events: TurnEvents(events),
             request_started,
         })

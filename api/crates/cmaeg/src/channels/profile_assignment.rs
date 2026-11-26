@@ -75,6 +75,9 @@ async fn prepare(
     if !consumer.is_default() {
         return Ok(None);
     }
+    let active = channel
+        .profile_revision(history.current_revision)
+        .ok_or(Error::Corrupt)?;
     let id = index_id(
         KIND,
         &[
@@ -82,13 +85,10 @@ async fn prepare(
             current.id.as_str(),
             channel.record_id.as_str(),
             consumer.as_str(),
-            channel.provider.slug.as_str(),
+            active.provider.slug.as_str(),
             conversation.as_str(),
         ],
     );
-    let active = channel
-        .profile_revision(history.current_revision)
-        .ok_or(Error::Corrupt)?;
     let candidate = Assignment {
         kind: KIND.into(),
         id: id.clone(),
@@ -169,11 +169,8 @@ fn project_view(
     view: ProfileRevisionView<'_>,
 ) -> Result<std::sync::Arc<ResolvedChannel>, Error> {
     let mut execution = current.clone();
-    execution.definition.provider = view.provider.clone();
-    execution.definition.profile_digest = view.profile_digest.to_owned();
-    execution.definition.profile = view.profile;
-    execution.definition.secrets.provider_credential = Some(view.credential.clone());
     let fingerprint = hash_secret(view.credential.as_str());
+    super::definition::project_default_profile(&mut execution.definition, view);
     let key_hash = super::resolver::decode_key_hash(&fingerprint).map_err(|_| Error::Corrupt)?;
     execution.definition.secrets.agent_key_hash = fingerprint;
     execution.agent_key_hash = key_hash;
@@ -232,7 +229,10 @@ pub(crate) async fn event_channel(
         if conversation.is_some_and(|id| *id != target.launch.event.conversation_id) {
             return Err(ResolveError::InvalidDefinition);
         }
-        if target.launch.provider == current.definition.provider {
+        let consumer = current
+            .consumer(Some(&target.launch.consumer))
+            .ok_or(ResolveError::InvalidDefinition)?;
+        if &target.launch.provider == consumer.provider {
             history.current_revision
         } else {
             history
