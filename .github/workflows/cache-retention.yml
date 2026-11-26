@@ -12,8 +12,39 @@ on:
         default: false
 permissions: {}
 jobs:
-  sweep:
+  staging_activity:
+    name: Check the completed staging attempt for component work
     if: >-
+      github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
+      github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'develop' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.path == '.github/workflows/staging-cd.yml' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: read
+    outputs:
+      needed: ${{ steps.activity.outputs.needed }}
+    steps:
+      - name: Read the public workflow revision
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          git init --quiet
+          git -c credential.helper= fetch --quiet --no-tags --depth=1 https://github.com/ChronoAIProject/cma.git "$GITHUB_SHA"
+          git checkout --quiet --detach "$GITHUB_SHA"
+      - name: Check exact staging attempt jobs
+        id: activity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/actions_cache_workload.py
+  sweep:
+    needs: staging_activity
+    if: >-
+      always() && !cancelled() &&
+      (needs.staging_activity.result != 'success' || needs.staging_activity.outputs.needed != 'false') &&
       github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'develop' &&
@@ -79,12 +110,15 @@ jobs:
           if-no-files-found: error
           retention-days: 3
   recover:
+    needs: staging_activity
     outputs:
       status: ${{ steps.recovery.outputs.status }}
       before_bytes: ${{ steps.recovery.outputs.before_bytes }}
       after_bytes: ${{ steps.recovery.outputs.after_bytes }}
       observed_bytes_to_admit: ${{ steps.recovery.outputs.observed_bytes_to_admit }}
     if: >-
+      always() && !cancelled() &&
+      (needs.staging_activity.result != 'success' || needs.staging_activity.outputs.needed != 'false') &&
       github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
       github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'develop' &&
