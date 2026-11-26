@@ -112,6 +112,11 @@ impl Handler {
             .await;
         let current = match current {
             Ok(current) => current,
+            Err(ExecutionError::Expired) if root.answer.is_some() => {
+                return self
+                    .expire_accepted_answer(&store, &mut root, plan, target, token)
+                    .await;
+            }
             Err(
                 ExecutionError::Expired
                 | ExecutionError::AuthorityChanged
@@ -256,6 +261,48 @@ impl Handler {
         })
         .await
     }
+    async fn expire_accepted_answer(
+        &self,
+        store: &Store,
+        root: &mut Root,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        token: &PartitionLease,
+    ) -> Result<EffectDisposition, ExecutionError> {
+        use super::super::answer_dispatch::AnswerDispatch;
+        let answer = root.answer.as_ref().ok_or(ExecutionError::Corrupt)?;
+        let replies = ReplyStore(self.0.journal.clone(), Some(token.clone()));
+        let admission = replies
+            .admit_delayed_answer(
+                plan,
+                target,
+                root.operation.clone(),
+                root.content_hash.clone(),
+                answer,
+            )
+            .await?;
+        let receipt = match admission {
+            Admission::Claimed(claim) => {
+                let receipt = receipt_for(DeliveryOutcome::Rejected {
+                    reason: "accepted_answer_target_expired".into(),
+                });
+                replies
+                    .finish_observed(&claim, &receipt, AnswerDispatch::NotDispatched)
+                    .await?;
+                receipt
+            }
+            Admission::Replay(receipt) => receipt,
+            Admission::Pending => return Ok(EffectDisposition::Retry),
+            Admission::Unknown => {
+                replies
+                    .recover_delayed(plan, target, &root.operation, &root.content_hash, None)
+                    .await?
+            }
+            _ => return Err(ExecutionError::Corrupt),
+        };
+        self.settle(store, root, token, receipt).await
+    }
+
     async fn settle(
         &self,
         store: &Store,
