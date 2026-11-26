@@ -121,7 +121,7 @@ async fn independent_bearer_admission_restart_and_revival_preserve_existing_logi
         fixture.identity.assert_unchanged(&login).await;
         // A restarted auth adapter recovers only the exact saved API credential.
         let restarted = AuthState::with_store(
-            fixture.identity.auth.mode.clone(),
+            fixture.identity.auth.fixture_mode().clone(),
             None,
             fixture.identity.store.clone(),
         );
@@ -344,7 +344,7 @@ async fn third_party_cma_scoped_oauth_admits_followups_and_live_revocation_stops
     const RESOURCE: &str = "https://issuer.example/api/v1/proxy/s/cma";
     let mut fixture = ResourceFixture::with_owner("owner").await;
     fixture.identity.auth = AuthState::with_store(
-        fixture.identity.auth.mode.clone(),
+        fixture.identity.auth.fixture_mode().clone(),
         None,
         fixture.identity.store.clone(),
     )
@@ -386,7 +386,7 @@ async fn scoped_oauth_cannot_substitute_identity_or_wrong_resource_evidence() {
     for observed in [json!([]), json!(["other-resource"])] {
         let mut fixture = ResourceFixture::with_owner("owner").await;
         fixture.identity.auth = AuthState::with_store(
-            fixture.identity.auth.mode.clone(),
+            fixture.identity.auth.fixture_mode().clone(),
             None,
             fixture.identity.store.clone(),
         )

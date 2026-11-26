@@ -1,5 +1,7 @@
 //! Persist exact delivery receipts before acknowledging a provider cursor.
 use super::{
+    answer_dispatch::AnswerDispatch,
+    answer_identity::FrameOperation,
     delivery_state::DeliveryStatus,
     dispatcher::{admission_error, current_target},
     storage,
@@ -8,7 +10,7 @@ use super::{
 };
 use crate::delivery::{
     intents::{DeliveryOutcome, IntentReceipt},
-    retained_receipt::INLINE_LIMIT,
+    retained_receipt::{StoredReceipt, INLINE_LIMIT},
 };
 
 use crate::{
@@ -40,6 +42,43 @@ pub(super) fn answer_response_id<'a>(
 }
 
 impl RoutedDelivery {
+    pub(super) async fn recover_automatic_receipt(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        lease: &mut Lease,
+        operation: &FrameOperation,
+    ) -> Result<Option<DeliveryStatus>, ExecutionError> {
+        let store = ReplyStore(self.journal.clone(), lease.partition.clone());
+        let Some(stored) = operation.recover(&store, plan, target).await? else {
+            return Ok(None);
+        };
+        let receipts = self.journal.receipts(
+            &operation.id,
+            &lease.state.owner,
+            lease.state.retained_until,
+        );
+        let mut receipt = receipts
+            .load(&stored)
+            .await
+            .map_err(|_| ExecutionError::Unavailable)?;
+        let stored = match normalize_partial_refusal(&receipt) {
+            Some(normalized) => {
+                receipt = normalized;
+                receipts
+                    .retain(&receipt)
+                    .await
+                    .map_err(|_| ExecutionError::Unavailable)?
+            }
+            None => stored,
+        };
+        // The reply guard can settle before the cursor checkpoint is written.
+        // The operation already binds the target, response and exact effect.
+        let status = receipt_status(Some(stored), Some(&receipt));
+        self.record(lease, status.clone()).await?;
+        Ok(Some(status))
+    }
+
     pub(super) async fn observe_replayed_answer(
         &self,
         plan: &AdmittedPlan,
@@ -131,11 +170,14 @@ impl RoutedDelivery {
         operation: &str,
         automatic: Option<&ReplyClaim>,
         receipt: Option<&IntentReceipt>,
+        dispatch: AnswerDispatch,
     ) -> Result<bool, ExecutionError> {
+        let normalized = receipt.and_then(normalize_partial_refusal);
+        let receipt = normalized.as_ref().or(receipt);
         let stored = match (automatic, receipt) {
             (Some(claim), Some(receipt)) => Some(
                 ReplyStore(self.journal.clone(), lease.partition.clone())
-                    .finish(claim, receipt)
+                    .finish_observed(claim, receipt, dispatch)
                     .await?,
             ),
             (None, Some(receipt)) => Some(
@@ -147,20 +189,46 @@ impl RoutedDelivery {
             ),
             (_, None) => None,
         };
-        let unresolved = receipt.is_some_and(|value| {
-            matches!(value.delivery, DeliveryOutcome::Unknown { .. })
-                || (value.message_parts.is_empty()
-                    && storage::bytes(value).map_or(true, |bytes| bytes.len() > INLINE_LIMIT))
-        });
-        let status = if unresolved {
-            match stored.filter(|value| value.has_parts()) {
-                Some(receipt) => DeliveryStatus::Partial { receipt },
-                None => DeliveryStatus::Unknown,
-            }
-        } else {
-            DeliveryStatus::Settled { receipt: stored }
-        };
+        let status = receipt_status(stored, receipt);
+        let settled = status.settled();
         self.record(lease, status).await?;
-        Ok(!unresolved)
+        Ok(settled)
+    }
+}
+
+fn normalize_partial_refusal(receipt: &IntentReceipt) -> Option<IntentReceipt> {
+    if receipt.message_parts.is_empty()
+        || matches!(
+            receipt.delivery,
+            DeliveryOutcome::Confirmed { .. } | DeliveryOutcome::Unknown { .. }
+        )
+    {
+        return None;
+    }
+    // Older checkpoint readers accept Unknown for an incomplete multipart send.
+    let mut normalized = receipt.clone();
+    normalized.delivery = DeliveryOutcome::Unknown {
+        reason: "partial_delivery".into(),
+    };
+    Some(normalized)
+}
+
+fn receipt_status(
+    stored: Option<StoredReceipt>,
+    receipt: Option<&IntentReceipt>,
+) -> DeliveryStatus {
+    let unresolved = stored
+        .as_ref()
+        .is_some_and(StoredReceipt::requires_reconciliation)
+        || receipt.is_some_and(|value| {
+            value.message_parts.is_empty()
+                && storage::bytes(value).map_or(true, |bytes| bytes.len() > INLINE_LIMIT)
+        });
+    if !unresolved {
+        return DeliveryStatus::Settled { receipt: stored };
+    }
+    match stored.filter(StoredReceipt::has_parts) {
+        Some(receipt) => DeliveryStatus::Partial { receipt },
+        None => DeliveryStatus::Unknown,
     }
 }

@@ -18,10 +18,7 @@ use crate::{
     turns::routed::{dispatcher::admission_error, ExecutionError, RoutedToolReplies},
 };
 use futures_util::future::BoxFuture;
-use std::{
-    sync::{atomic::AtomicBool, Arc},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 fn is_no_send(outcome: &DeliveryOutcome) -> bool {
     matches!(
@@ -110,10 +107,25 @@ impl Handler {
                 &payload.capability,
                 plan,
                 target,
+                root.answer.as_ref(),
             )
             .await;
         let current = match current {
             Ok(current) => current,
+            Err(
+                error @ (ExecutionError::Expired
+                | ExecutionError::AuthorityChanged
+                | ExecutionError::Abandoned),
+            ) if root.answer.is_some() => {
+                let reason = match error {
+                    ExecutionError::Expired => "accepted_answer_target_expired",
+                    ExecutionError::AuthorityChanged => "delayed_reply_authority_refused",
+                    _ => "unknown_abandoned",
+                };
+                return self
+                    .refuse_accepted_answer(&store, &mut root, (plan, target), token, reason)
+                    .await;
+            }
             Err(
                 ExecutionError::Expired
                 | ExecutionError::AuthorityChanged
@@ -132,14 +144,29 @@ impl Handler {
             Err(error) => return Err(error),
         };
         let replies = ReplyStore(self.0.journal.clone(), Some(token.clone()));
-        let admission = replies
-            .admit_delayed(
-                plan,
-                target,
-                root.operation.clone(),
-                root.content_hash.clone(),
-            )
-            .await;
+        let admission = match &root.answer {
+            Some(answer) => {
+                replies
+                    .admit_delayed_answer(
+                        plan,
+                        target,
+                        root.operation.clone(),
+                        root.content_hash.clone(),
+                        answer,
+                    )
+                    .await
+            }
+            None => {
+                replies
+                    .admit_delayed(
+                        plan,
+                        target,
+                        root.operation.clone(),
+                        root.content_hash.clone(),
+                    )
+                    .await
+            }
+        };
         let claim = match admission {
             Ok(Admission::Claimed(claim)) => claim,
             Ok(Admission::Pending) => {
@@ -152,6 +179,17 @@ impl Handler {
                     .delayed_pending_expired(token, root.retained_until)
                     .await?
                 {
+                    if root.answer.is_some() {
+                        return self
+                            .refuse_accepted_answer(
+                                &store,
+                                &mut root,
+                                (plan, target),
+                                token,
+                                "delayed_reply_guard_wait_expired",
+                            )
+                            .await;
+                    }
                     return self
                         .settle(
                             &store,
@@ -170,6 +208,17 @@ impl Handler {
                 return self.settle(&store, &mut root, token, receipt).await
             }
             Ok(Admission::Unknown) => {
+                if root.answer.is_some() {
+                    return self
+                        .refuse_accepted_answer(
+                            &store,
+                            &mut root,
+                            (plan, target),
+                            token,
+                            "delayed_reply_guard_uncertain",
+                        )
+                        .await;
+                }
                 return self
                     .settle(
                         &store,
@@ -179,9 +228,20 @@ impl Handler {
                             reason: "delayed_reply_guard_uncertain".into(),
                         }),
                     )
-                    .await
+                    .await;
             }
             Err(ExecutionError::OperationLimit) => {
+                if root.answer.is_some() {
+                    return self
+                        .refuse_accepted_answer(
+                            &store,
+                            &mut root,
+                            (plan, target),
+                            token,
+                            "reply_operation_limit",
+                        )
+                        .await;
+                }
                 return self
                     .settle(
                         &store,
@@ -191,7 +251,7 @@ impl Handler {
                             reason: "reply_operation_limit".into(),
                         }),
                     )
-                    .await
+                    .await;
             }
             Err(error) => return Err(error),
             Ok(_) => return Err(ExecutionError::Corrupt),
@@ -210,7 +270,7 @@ impl Handler {
             scope: scope.clone(),
             channel_version: current.version,
             deadline: tokio::time::Instant::now() + Duration::from_secs(20),
-            cancelled: AtomicBool::new(false),
+            boundary: Default::default(),
         });
         let cancel = Cancel(gate.clone());
         let receipt = scope
@@ -222,7 +282,7 @@ impl Handler {
                         current,
                         payload.capability.event,
                         payload.message,
-                        gate,
+                        gate.clone(),
                         ReplySource::Tool,
                     ),
                 ),
@@ -235,13 +295,42 @@ impl Handler {
                 reason: "delayed_reply_deadline".into(),
             })
         });
+        let dispatch = gate.boundary.close();
         drop(cancel);
         super::super::live_scope::receipt(async {
-            replies.finish(&claim, &receipt).await?;
+            replies.finish_observed(&claim, &receipt, dispatch).await?;
             self.settle(&store, &mut root, token, receipt).await
         })
         .await
     }
+    async fn refuse_accepted_answer(
+        &self,
+        store: &Store,
+        root: &mut Root,
+        (plan, target): (&AdmittedPlan, &StoredTarget),
+        token: &PartitionLease,
+        reason: &str,
+    ) -> Result<EffectDisposition, ExecutionError> {
+        let answer = root.answer.as_ref().ok_or(ExecutionError::Corrupt)?;
+        let replies = ReplyStore(self.0.journal.clone(), Some(token.clone()));
+        let receipt = match replies
+            .refuse_answer(
+                plan,
+                target,
+                &root.operation,
+                &root.content_hash,
+                answer,
+                reason,
+            )
+            .await
+        {
+            Ok(receipt) => receipt,
+            Err(ExecutionError::Busy) => return Ok(EffectDisposition::Retry),
+            Err(error) => return Err(error),
+        };
+        self.settle(store, root, token, receipt).await
+    }
+
     async fn settle(
         &self,
         store: &Store,
@@ -258,7 +347,7 @@ impl Handler {
             .await
             .map_err(|_| ExecutionError::Unavailable)?;
         let no_send = is_no_send(&stored.delivery);
-        let unknown = super::model::unresolved(&stored);
+        let unknown = stored.requires_reconciliation();
         let next = if unknown {
             State::Unknown {
                 receipt: Some(stored),

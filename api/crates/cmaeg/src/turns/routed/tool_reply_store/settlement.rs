@@ -1,5 +1,6 @@
 //! Persist the reply outcome before releasing its admission barrier.
 use super::*;
+use crate::turns::routed::answer_dispatch::AnswerDispatch;
 
 impl ReplyStore {
     pub async fn renew(&self, claim: &mut ReplyClaim) -> Result<(), ExecutionError> {
@@ -47,6 +48,16 @@ impl ReplyStore {
         claim: &ReplyClaim,
         receipt: &IntentReceipt,
     ) -> Result<StoredReceipt, ExecutionError> {
+        self.finish_observed(claim, receipt, AnswerDispatch::Indeterminate)
+            .await
+    }
+
+    pub async fn finish_observed(
+        &self,
+        claim: &ReplyClaim,
+        receipt: &IntentReceipt,
+        dispatch: AnswerDispatch,
+    ) -> Result<StoredReceipt, ExecutionError> {
         self.guard(claim).await?;
         let mut next = claim.record.clone();
         let receipt =
@@ -70,7 +81,13 @@ impl ReplyStore {
         self.guard(claim).await?;
         if claim.attempt().content_hash.is_some() {
             OperationStore(self.0.clone())
-                .finish(&claim.partition, &claim.record, claim.attempt(), &receipt)
+                .finish(
+                    &claim.partition,
+                    &claim.record,
+                    claim.attempt(),
+                    &receipt,
+                    dispatch,
+                )
                 .await?;
         }
         if matches!(claim.kind, Kind::Tool)

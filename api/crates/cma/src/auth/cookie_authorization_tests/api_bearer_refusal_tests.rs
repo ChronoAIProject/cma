@@ -9,7 +9,11 @@ async fn independent_api_admission_needs_no_browser_login_and_never_creates_one(
     let credential = ordinary_token();
     provider_expiry(&fixture, future_expiry()).await;
     let isolated = Arc::new(MemoryAuthStore::default());
-    let auth = AuthState::with_store(fixture.identity.auth.mode.clone(), None, isolated.clone());
+    let auth = AuthState::with_store(
+        fixture.identity.auth.fixture_mode().clone(),
+        None,
+        isolated.clone(),
+    );
     let context = external_context(&fixture, &credential).await;
     let view = service(&fixture, auth.clone())
         .admit(
@@ -223,7 +227,7 @@ async fn api_authority_cannot_cross_principal_issuer_expiry_or_actor_kind() {
             "{change}"
         );
     }
-    let mut mode = fixture.identity.auth.mode.clone();
+    let mut mode = fixture.identity.auth.fixture_mode().clone();
     if let AuthMode::Provider { base_url, .. } = &mut mode {
         *base_url = "https://another-issuer.invalid".into();
     }

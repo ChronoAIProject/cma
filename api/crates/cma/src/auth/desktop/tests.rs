@@ -1,7 +1,9 @@
 //! Two independent AuthState/client instances prove shared revocation.
 use super::*;
 use crate::auth::{
-    desktop_test_support::DesktopAuthFixture as Fixture, persistence::AuthStore, profile::Profile,
+    desktop_test_support::DesktopAuthFixture as Fixture,
+    persistence::{AuthStore, SecretValue},
+    profile::Profile,
 };
 use axum::http::header;
 use layer2_core::Authorization;
@@ -32,7 +34,7 @@ async fn browser_stream_authority_revokes_across_instances_and_restart() {
         right.current(&f.caller).await,
         Err(DesktopError::Unavailable)
     ));
-    let restarted = AuthState::with_store(f.left.mode.clone(), None, f.stores[0].clone());
+    let restarted = AuthState::with_store(f.left.fixture_mode().clone(), None, f.stores[0].clone());
     assert!(restarted
         .resolve_request(&f.headers)
         .await
