@@ -361,7 +361,8 @@ impl ToolsState {
                 message_ref,
                 ..
             } => (channel.id.as_str(), message_ref.event_id.as_str()),
-            DeliveryCommand::StreamOutcome { turn, .. } => {
+            DeliveryCommand::StreamOutcome { turn, .. }
+            | DeliveryCommand::RetireStream { turn } => {
                 (turn.channel.id.as_str(), turn.activity.event_id.as_str())
             }
         };

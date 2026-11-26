@@ -47,6 +47,69 @@ async fn accepted_turn_has_bounded_metadata_and_completes() {
     assert!(!requests[0].body.contains("runtime-test-provider-bearer"));
     fixture.fake.close().await;
 }
+
+#[tokio::test]
+async fn interrupted_accepted_turn_reads_once_or_reattaches_to_its_existing_response() {
+    for (status, mismatch) in [
+        ("completed", false),
+        ("in_progress", false),
+        ("completed", true),
+    ] {
+        let mut fixture = Fixture::new(
+            FakeProviderConfig {
+                disconnect_after: Some(2),
+                recovery_status: Some(status),
+                recovery_wrong_metadata: mismatch,
+                ..Default::default()
+            },
+            Default::default(),
+            4,
+        )
+        .await;
+        assert!(matches!(
+            fixture.runner.launch(fixture.custom_recovery_request("interrupted")).await,
+            LaunchOutcome::Accepted { response_id } if response_id == "resp_fake"
+        ));
+        let outcomes = fixture.terminal().await;
+        if mismatch {
+            assert!(matches!(
+                outcomes.last(),
+                Some(TurnOutcome::Failed { code, .. }) if code == "stream_lost"
+            ));
+        } else {
+            assert!(matches!(
+                outcomes.last(),
+                Some(TurnOutcome::Completed { final_text: Some(text) }) if text == "recovered answer"
+            ));
+        }
+        assert!(matches!(
+            outcomes.as_slice(),
+            [
+                TurnOutcome::Accepted { .. },
+                TurnOutcome::TextDelta { .. },
+                _
+            ]
+        ));
+        assert_eq!(fixture.fake.requests().len(), 1);
+        let all_calls = fixture.fake.log();
+        let paths: Vec<_> = all_calls
+            .iter()
+            .filter(|request| request.method == "GET")
+            .map(|request| request.path.as_str())
+            .collect();
+        let expected = if status == "in_progress" {
+            &[
+                "/api/v2/responses/resp_fake",
+                "/api/v2/responses/resp_fake/events",
+            ][..]
+        } else {
+            &["/api/v2/responses/resp_fake"][..]
+        };
+        assert_eq!(paths, expected);
+        fixture.fake.close().await;
+    }
+}
+
 #[tokio::test]
 async fn delayed_acceptance_defers_but_keeps_consuming() {
     let mut fixture = Fixture::new(
