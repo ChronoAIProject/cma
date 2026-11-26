@@ -446,7 +446,12 @@ async fn personal_usage_matches_displayed_sandbox_prefixes() {
     for (search, expected) in [
         ("  ReSEARch ", true),
         ("sbx_ffff", true),
+        ("fffffff", true),
         ("Research Workshop", true),
+        ("sbx_ffffffffffffffffffffffffffffffff", true),
+        ("ffffffffffffffffffffffffffffffff", true),
+        ("sbx_ffffffffff…ffffffff", true),
+        ("sbx_ffffffffff…fffffffe", false),
         ("Workshop", false),
     ] {
         let (status, pending) = request(
