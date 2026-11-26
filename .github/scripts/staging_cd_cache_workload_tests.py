@@ -67,6 +67,8 @@ class CacheWorkloadTests(unittest.TestCase):
 
         for name, job_changes in (
             ("infrastructure", {"conclusion": "success"}),
+            ("Publish protected Web", {"conclusion": "success"}),
+            ("Publish protected Web", {"name": "Publish protected Web / Protect Web rollout / Publish", "conclusion": "success"}),
             ("Release am", {"name": "Release am / Publish", "conclusion": "success"}),
             ("Release eg", {"run_attempt": 1}),
             ("Promote web", {"run_id": True}),

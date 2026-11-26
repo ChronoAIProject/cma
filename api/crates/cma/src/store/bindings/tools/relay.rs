@@ -92,7 +92,7 @@ impl MongoProviderToolSource {
             || record.origin != authority.origin
             || record.fence == 0
             || !record.request.has_valid_sha256()
-            || record.request.request_sha256 != record.scope.request_sha256
+            || !record.scope.matches_open(&record.request)
             || record.request.options.slot.0 != record.scope.agent_id.as_str()
             || record.confirmed && (record.conversation.is_none() || record.boot_id.is_none())
             || record.conversation.as_ref().is_some_and(|id| {
@@ -137,13 +137,19 @@ impl MongoProviderToolSource {
             return Ok(attachment);
         };
         let existing = self.relay_record(scope, session).await?;
-        // An existing local connection changes only through idle maintenance.
-        // Fresh opens may enroll setup; Existing greetings still need an exact
-        // native open-completion receipt for this new descriptor before reuse.
-        if existing.is_none() && previously_opened {
+        let (_, request, fence, _) = attachment.scope();
+        let retain_relay = if !existing.as_ref().is_some_and(|record| record.confirmed)
+            && request.restart_runtime.is_some()
+        {
+            self.predecessor_used_relay(scope, request, session).await?
+        } else {
+            false
+        };
+        // Existing connections change transport only through idle maintenance.
+        // A successor may enroll setup for the predecessor's confirmed relay.
+        if existing.is_none() && previously_opened && !retain_relay {
             return Ok(attachment);
         }
-        let (_, request, fence, _) = attachment.scope();
         let mut record = existing.unwrap_or_else(|| Record {
             scope: scope.clone(),
             request: request.clone(),
@@ -157,11 +163,51 @@ impl MongoProviderToolSource {
         record.request = request.clone();
         record.fence = fence;
         self.save_relay(&record, session).await?;
-        if record.confirmed || !previously_opened {
+        if record.confirmed || !previously_opened || retain_relay {
             Ok(self.relay_binding(attachment, scope)?)
         } else {
             Ok(attachment)
         }
+    }
+
+    async fn predecessor_used_relay(
+        &self,
+        scope: &Scope,
+        request: &AgentOpenRequest,
+        session: &mut ClientSession,
+    ) -> transaction::Result<bool> {
+        use crate::store::agent_control_transaction::restart_dispatch::read_work;
+        use layer2_core::sandbox::AgentWorkStep;
+
+        let row = self
+            .store
+            .agents
+            .find_one(doc! {"_id": scope.agent_id.as_str()})
+            .session(&mut *session)
+            .await?
+            .ok_or_else(refused)?;
+        let agent = crate::store::agents::read_agent(&row).map_err(unavailable)?;
+        if agent.work.step != AgentWorkStep::RestartConversation {
+            return Ok(false);
+        }
+        let work = read_work(&row, &agent).map_err(unavailable)?;
+        if work.dispatched_open.as_ref() != Some(request) {
+            return Err(refused().into());
+        }
+        let mut predecessor = scope.clone();
+        let open = work.acceptance.source.predecessor_open;
+        predecessor.request_sha256 = open.request_sha256;
+        predecessor.numbered_open = layer3_adapter::AgentProcessAction::Open
+            .incarnation(scope.agent_id.as_str(), &open.operation_id)
+            .filter(|number| *number > 1)
+            .map(|_| open.operation_id.clone());
+        let previous = self.relay_record(&predecessor, session).await?;
+        Ok(previous.is_some_and(|record| {
+            record.confirmed
+                && record.request.operation_id == open.operation_id
+                && record.conversation.as_ref() == request.resume_conversation.as_ref()
+                && record.boot_id == scope.runtime.boot_id
+        }))
     }
 
     pub(super) async fn confirm_relay_open(
