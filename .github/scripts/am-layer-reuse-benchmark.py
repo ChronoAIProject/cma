@@ -200,17 +200,74 @@ def benchmark(root, work, evidence):
             run(["docker", "image", "rm", name])
 
 
+def diagnose(root, work, evidence):
+    sys.path.insert(0, str(root / ".github/scripts"))
+    from staging_cd_build import identity, snapshot
+    from staging_cd_reservations import next_reservation
+    revision = run(["git", "rev-parse", "HEAD"], cwd=root).decode().strip()
+    if revision != CANDIDATE_SHA:
+        raise ValueError("unexpected profile candidate source")
+    tree = run(["git", "rev-parse", revision + "^{tree}"], cwd=root).decode().strip()
+    reservation = next_reservation("am", revision, tree, 1, "patch", int(os.environ["GITHUB_RUN_ID"]),
+                                   int(os.environ["GITHUB_RUN_ATTEMPT"]), [], [])
+    source = work / "source"
+    snapshot(root, revision, source)
+    _, recipe, arguments = identity(reservation, source, staging_am_opt_level="0")
+    layers = work / "layers"
+    with builder(layers, seed=True) as (cache, namespace, name):
+        args = ["docker", "buildx", "build", "--progress=rawjson", "--platform", "linux/amd64", "--builder", name,
+                "--file", str(source / recipe["dockerfile"]), "--target", "dependencies", "--output", "type=cacheonly",
+                "--cache-to", f"type=local,mode=min,image-manifest=true,oci-mediatypes=true,dest={layers}",
+                "--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + namespace]
+        for key, value in sorted(arguments.items()):
+            args += ["--build-arg", key + "=" + value]
+        cache.run([*args, str(source)], timeout=1800)
+        evidence["dependency_reconstruction"] = cache.timing
+    members = [p for p in layers.rglob("*") if p.is_file() and not p.is_symlink()]
+    evidence["layer_bytes"] = sum(p.stat().st_size for p in members)
+    evidence["layer_members"] = len(members)
+    # The validator is unmodified. Report only its fixed literal refusal,
+    # never names, arbitrary exception messages, or OCI metadata payloads.
+    classify = '''import ast, json, sys
+from pathlib import Path
+from buildkit_cache_archive import seal
+known = set()
+for path in ("buildkit_cache_archive.py", "actions_cache_buildkit_inventory.py"):
+    for node in ast.walk(ast.parse(Path(path).read_text())):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == "require" and len(node.args) == 2:
+                value = node.args[1]
+            elif node.func.id == "ValueError" and node.args:
+                value = node.args[0]
+            else:
+                continue
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                known.add(value.value)
+try:
+    seal(Path(sys.argv[1]), Path(sys.argv[2]))
+    result = {"status": "sealed"}
+except Exception as error:
+    result = {"status": "withheld", "type": type(error).__name__,
+              "reason": str(error) if str(error) in known else "unclassified"}
+print(json.dumps(result))
+'''
+    evidence["seal"] = json.loads(run([sys.executable, "-B", "-c", classify, str(layers), str(work / "layers.tar")],
+                                     cwd=CONTROL / ".github/scripts", timeout=360))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--diagnose", action="store_true")
     args = parser.parse_args()
     evidence = {"source": CANDIDATE_SHA, "opt_level": "0", "status": "incomplete",
                 "runner_cpu_count": os.cpu_count(),
                 "runner_cpu_model": next((line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text().splitlines() if line.startswith("model name")), "unknown")}
     try:
         with tempfile.TemporaryDirectory(prefix="am-layer-reuse-", dir=os.environ["RUNNER_TEMP"]) as temporary:
-            benchmark(args.candidate.resolve(), Path(temporary), evidence)
+            operation = diagnose if args.diagnose else benchmark
+            operation(args.candidate.resolve(), Path(temporary), evidence)
         evidence["status"] = "measured"
     finally:
         args.output.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
