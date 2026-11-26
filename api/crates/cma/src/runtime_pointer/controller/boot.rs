@@ -1,5 +1,6 @@
 //! Publish the early writer before configuring or draining any native pool.
 use super::*;
+use crate::warm_pools::WarmPoolError;
 use crate::warm_pools::{deployment_image, startup::WarmPoolStartup};
 
 impl RuntimePointerController {
@@ -51,66 +52,17 @@ impl RuntimePointerController {
     }
 
     pub(crate) async fn bootstrap(&self) -> Result<(), String> {
-        self.release
+        let captured = self
+            .release
             .refresh()
             .await
             .map_err(|error| error.to_string())?;
-        let captured = self.release.snapshot();
-        for (lane, image) in [
+        for (lane, pin) in [
             (ReleasedLane::Agent, Some(captured.agent.as_str())),
             (ReleasedLane::Machine, captured.machine.as_deref()),
         ] {
-            if let Some(image) = image {
-                self.verify_bootstrap_default(lane, image).await?;
-            }
-        }
-        crate::warm_pools::startup::boot_effect(
-            Some((&self.release.lanes, &self.writer)),
-            self.pools.ensure_default(),
-        )
-        .await
-        .map_err(|error| format!("ensure active native warm pool: {error:?}"))?;
-        for (lane, image) in [
-            (ReleasedLane::Agent, Some(captured.agent)),
-            (ReleasedLane::Machine, captured.machine),
-        ] {
-            if let Some(image) = image {
-                let machine = lane == ReleasedLane::Machine;
-                // A machine pointer requires a bootstrapped Agent lane. Its
-                // pool can initialize independently while Agent is held.
-                if self.pools.default_held(machine) || (machine && self.pools.default_held(false)) {
-                    continue;
-                }
-                if self
-                    .release
-                    .lanes
-                    .load(lane)
-                    .await
-                    .map_err(|error| error.to_string())?
-                    .is_none()
-                {
-                    self.verify_bootstrap_default(lane, &image).await?;
-                    if self.pools.default_held(machine) {
-                        continue;
-                    }
-                    let record =
-                        ReleasedLaneRecord::bootstrap(lane, image, &layer2_core::now_rfc3339())
-                            .map_err(|error| error.to_string())?;
-                    let target = self
-                        .pools
-                        .active_default_target(&record.active.image, lane == ReleasedLane::Machine)
-                        .await
-                        .map_err(|error| format!("locate bootstrap pool: {error:?}"))?;
-                    self.targets
-                        .retain_release_authority(&target)
-                        .await
-                        .map_err(|error| format!("retain bootstrap authority: {error:?}"))?;
-                    self.release
-                        .lanes
-                        .bootstrap(record)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                }
+            if let Some(pin) = pin {
+                self.bootstrap_lane(lane, pin).await?;
             }
         }
         self.release
@@ -120,30 +72,153 @@ impl RuntimePointerController {
         Ok(())
     }
 
-    async fn verify_bootstrap_default(
+    async fn bootstrap_lane(&self, lane: ReleasedLane, pin: &str) -> Result<(), String> {
+        let machine = lane == ReleasedLane::Machine;
+        let writer = Some((&self.release.lanes, &self.writer));
+        for _ in 0..3 {
+            let current = self
+                .release
+                .lanes
+                .load(lane)
+                .await
+                .map_err(|error| error.to_string())?;
+            let image = current
+                .as_ref()
+                .map_or(pin, |record| record.active.image.as_str());
+            let can_publish = current.is_none()
+                && (lane == ReleasedLane::Agent
+                    || self
+                        .release
+                        .lanes
+                        .load(ReleasedLane::Agent)
+                        .await
+                        .map_err(|error| error.to_string())?
+                        .is_some());
+            let pool = crate::warm_pools::startup::boot_effect(writer, async {
+                if self.pools.default_held(machine) {
+                    return Ok(Some(()));
+                }
+                // Only errors raised inside this effect can be pool conflicts.
+                // A failed boot-writer guard still propagates as an error.
+                match self
+                    .ensure_bootstrap_pool(image, machine, can_publish)
+                    .await
+                {
+                    Err(WarmPoolError::Conflict) => Ok(None),
+                    result => result.map(Some),
+                }
+            })
+            .await
+            .map_err(|error| format!("configure {lane:?} startup pool: {error:?}"))?;
+            if pool.is_some() {
+                if can_publish && !self.pools.default_held(machine) {
+                    self.publish_bootstrap(lane, image).await?;
+                }
+                return Ok(());
+            }
+
+            let observed = self
+                .release
+                .lanes
+                .load(lane)
+                .await
+                .map_err(|error| error.to_string())?;
+            if observed != current {
+                continue;
+            }
+            if observed.is_some() {
+                return Err(format!(
+                    "durable {lane:?} pointer conflicts with pool authority"
+                ));
+            }
+            if can_publish && self.recover_bootstrap_default(lane, pin).await? {
+                continue;
+            }
+            if crate::warm_pools::startup::boot_effect(
+                writer,
+                self.pools
+                    .hold_conflicting_pin(&deployment_image(pin.into()), machine),
+            )
+            .await
+            .map_err(|error| format!("verify {lane:?} fixed runtime pin: {error:?}"))?
+            {
+                return Ok(());
+            }
+        }
+        Err(format!(
+            "{lane:?} pool authority changed repeatedly during startup"
+        ))
+    }
+
+    async fn ensure_bootstrap_pool(
+        &self,
+        image: &str,
+        machine: bool,
+        can_publish: bool,
+    ) -> Result<(), WarmPoolError> {
+        self.targets.verify_bootstrap(machine, image).await?;
+        self.pools.ensure_released_image(image, machine).await?;
+        if can_publish {
+            self.targets.verify_bootstrap(machine, image).await?;
+            let target = self.pools.active_default_target(image, machine).await?;
+            self.targets.retain_release_authority(&target).await?;
+        }
+        Ok(())
+    }
+
+    async fn publish_bootstrap(&self, lane: ReleasedLane, image: &str) -> Result<(), String> {
+        let record = ReleasedLaneRecord::bootstrap(lane, image.into(), &layer2_core::now_rfc3339())
+            .map_err(|error| error.to_string())?;
+        self.release
+            .lanes
+            .bootstrap(record)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    async fn recover_bootstrap_default(
         &self,
         lane: ReleasedLane,
-        image: &str,
-    ) -> Result<(), String> {
+        pin: &str,
+    ) -> Result<bool, String> {
         let machine = lane == ReleasedLane::Machine;
-        let has_release = self
-            .release
-            .lanes
-            .load(lane)
+        let Some(image) = self
+            .targets
+            .latest_activated_image(machine)
             .await
-            .map_err(|error| error.to_string())?
-            .is_some();
-        let verified = if has_release {
-            self.targets.verify_bootstrap(machine, image).await
-        } else {
-            // Without a pointer record, the snapshot contains a configured
-            // pin. Prove any conflict against durable pool order before holding it.
-            self.pools
-                .hold_conflicting_pin(&deployment_image(image.into()), machine)
-                .await
-                .map(|_| ())
+            .map_err(|error| format!("read {lane:?} pool release order: {error:?}"))?
+            .filter(|image| image != pin)
+        else {
+            return Ok(false);
         };
-        verified.map_err(|error| format!("verify {lane:?} runtime release order: {error:?}"))
+        let target = match self.pools.active_default_target(&image, machine).await {
+            Ok(target) if target.activated_at.is_some() => target,
+            Ok(_) | Err(WarmPoolError::Conflict) => return Ok(false),
+            Err(error) => return Err(format!("locate existing {lane:?} pool: {error:?}")),
+        };
+        let retained = crate::warm_pools::startup::boot_effect(
+            Some((&self.release.lanes, &self.writer)),
+            async {
+                match self.targets.verify_bootstrap(machine, &image).await {
+                    Ok(()) => (),
+                    Err(WarmPoolError::Conflict) => return Ok(false),
+                    Err(error) => return Err(error),
+                }
+                self.targets.retain_release_authority(&target).await?;
+                Ok(true)
+            },
+        )
+        .await
+        .map_err(|error| format!("retain existing {lane:?} pool authority: {error:?}"))?;
+        if retained {
+            self.publish_bootstrap(lane, &image).await?;
+            tracing::warn!(target: "cma_warm_pool_startup", parent: None,
+                reason = "recovered_durable_default", machine,
+                config_sha256 = %target.plan.config_sha256,
+                "Agent Manager bootstrapped the existing native pool release");
+        }
+        Ok(retained)
     }
 
     pub(crate) async fn await_active_ready(

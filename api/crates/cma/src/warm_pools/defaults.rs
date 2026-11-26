@@ -51,20 +51,29 @@ impl NativeWarmPools {
     /// The target is keyed by the exact immutable plan, so a runtime image or
     /// Pod-policy change creates a new pool identity and never mutates a claimed
     /// pool. Provider resources are still created only by the normal reconciler.
+    #[cfg(test)]
     pub async fn ensure_default(&self) -> Result<(), WarmPoolError> {
         let released = self.released_images();
-        if !self.default_held(false) {
-            self.ensure_image(&released.agent, self.default_target, false)
-                .await?;
-        }
-        if let Some((image, target)) = released
-            .machine
-            .as_ref()
-            .filter(|_| !self.default_held(true))
-        {
+        self.ensure_image(&released.agent, self.default_target, false)
+            .await?;
+        if let Some((image, target)) = &released.machine {
             self.ensure_image(image, *target, true).await?;
         }
         Ok(())
+    }
+
+    pub(crate) async fn ensure_released_image(
+        &self,
+        image: &str,
+        machine: bool,
+    ) -> Result<(), WarmPoolError> {
+        let target = if machine {
+            self.machine_target
+        } else {
+            self.default_target
+        };
+        self.ensure_image(&deployment_image(image.into()), target, machine)
+            .await
     }
 
     async fn ensure_image(
