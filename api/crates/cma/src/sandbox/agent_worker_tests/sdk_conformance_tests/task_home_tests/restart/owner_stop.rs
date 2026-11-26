@@ -2,8 +2,10 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
-async fn owner_stop_settles_inflight_turn_without_runtime_restart_capability() {
-    exercise_owner_stop_restart(false, false).await;
+async fn owner_stop_without_capability_then_restart_with_retained_history() {
+    for segmented in [false, true] {
+        Box::pin(exercise_owner_stop_restart(false, segmented)).await;
+    }
 }
 
 #[tokio::test]
@@ -78,6 +80,7 @@ async fn exercise_owner_stop_restart(historical: bool, segmented: bool) {
                 close_proofs: Some(close_proofs.clone()),
                 restart_supported: restart_supported.clone(),
                 close_refusal: close_refusal.clone(),
+                replay_restart_history: !historical,
             }),
             CodexSandboxSpec::default(),
         )
@@ -279,11 +282,107 @@ async fn exercise_owner_stop_restart(historical: bool, segmented: bool) {
             acceptance
         );
         budget.assert_settled_once(&store).await;
+    } else {
+        restart_supported.store(true, Ordering::SeqCst);
+        let acceptance = restart.restart(&caller, &agent.id, key).await.unwrap();
+        assert_eq!(
+            restart.restart(&caller, &agent.id, key).await.unwrap(),
+            acceptance
+        );
+        harness.run(&agent.id, SystemTime::now()).await;
+        let ready = harness.stored(&agent.id).await;
+        assert_eq!(ready.status, AgentStatus::Ready);
+        assert_eq!(ready.work.step, AgentWorkStep::None);
+        assert_eq!(ready.id, stopped.id);
+        assert_eq!(ready.worktree_id, stopped.worktree_id);
+        assert_eq!(
+            ready.conversation.conversation_id,
+            stopped.conversation.conversation_id
+        );
+        assert_eq!(
+            ready.conversation.last_seq,
+            stopped.conversation.last_seq + 2
+        );
+        let checkpoint = store
+            .agent_message_checkpoint(&agent.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(checkpoint.runtime_generation, 2);
+        assert_eq!(checkpoint.output.unwrap().cursor, 4);
+        assert_eq!(
+            restart.restart(&caller, &agent.id, key).await.unwrap(),
+            acceptance
+        );
+        assert_eq!(ready.sandbox_id, stopped.sandbox_id);
+        let retained = store.get_sandbox(&ready.sandbox_id).await.unwrap().unwrap();
+        assert_eq!(retained.lifecycle.home, sandbox.lifecycle.home);
+        assert_eq!(retained.runtime, sandbox.runtime);
+        operations
+            .send_message(&caller, &agent.id, "Continue the same conversation".into())
+            .await
+            .unwrap();
+        let continued = harness.stored(&agent.id).await;
+        assert_eq!(continued.status, AgentStatus::Working);
+        assert_eq!(
+            continued.conversation.conversation_id,
+            ready.conversation.conversation_id
+        );
     }
     let history = store.agent_log(&agent.id, 0, 50).await.unwrap();
     assert_eq!(history.iter().filter(|row| matches!(
         row.kind, AgentLogKind::TurnInterrupted { turn_sequence, .. } if turn_sequence == turn
     )).count(), 1);
-    assert_eq!(close_proofs.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        close_proofs.load(Ordering::SeqCst),
+        if historical { 1 } else { 2 }
+    );
     database.drop().await.unwrap();
+}
+
+pub(super) async fn replay_retained_history(
+    conversation: &str,
+    updates: &mpsc::Sender<ConversationUpdate>,
+) -> layer3_adapter::Result<()> {
+    use layer3_adapter::{
+        RuntimeOutputReceipt, RuntimeOutputSource, RuntimeOutputUpdate, SessionUpdate,
+    };
+    let (ack, mut acknowledged) = mpsc::channel(1);
+    let chunk = || layer3_adapter::ContentChunk::new(ContentBlock::from("prior turn"));
+    // Match the real ACP bridge: initialize and load replies have receipts
+    // but no effect, and historical assistant output has no prompt authority.
+    let effects = [
+        None,
+        Some(ConversationUpdate::Said(SessionUpdate::UserMessageChunk(
+            chunk(),
+        ))),
+        Some(
+            ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(chunk()))
+                .without_prompt_evidence(),
+        ),
+        None,
+    ];
+    let stream_id = uuid::Uuid::new_v4().to_string();
+    for (index, effect) in effects.into_iter().enumerate() {
+        let source = RuntimeOutputSource {
+            stream_id: stream_id.clone(),
+            cursor: index as u64 + 1,
+            native_conversation_id: conversation.into(),
+            payload_sha256: format!("{index:064x}"),
+        };
+        updates
+            .send(ConversationUpdate::RuntimeOutput {
+                receipt: RuntimeOutputReceipt::new(source.clone(), ack.clone()),
+                update: effect.map(|update| RuntimeOutputUpdate::new(update, true)),
+            })
+            .await
+            .map_err(|_| AdapterError::Unavailable("restart output receiver closed".into()))?;
+        let receipt = tokio::time::timeout(Duration::from_secs(3), acknowledged.recv())
+            .await
+            .map_err(|_| {
+                AdapterError::Unavailable("restart output acknowledgment timed out".into())
+            })?;
+        assert_eq!(receipt, Some(source));
+    }
+    Ok(())
 }
