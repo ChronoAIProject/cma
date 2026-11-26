@@ -75,6 +75,25 @@ jobs:
       - "changes"
     if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
     uses: "./.github/workflows/ci-omarchy.yml"
+  two-am-features:
+    name: "2.10 Two Agent Managers"
+    needs:
+      - "changes"
+      - "am-images"
+      - "runtime-images"
+      - "omarchy"
+    if: >-
+      !cancelled() && needs.changes.outputs.two_am_features == 'true' &&
+      github.event.pull_request.base.ref == 'develop' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: "read"
+      actions: "read"
+    uses: "./.github/workflows/ci-two-am.yml"
+    with:
+      am_image_result: "${{ needs.am-images.result }}"
+      runtime_image_result: "${{ needs.runtime-images.result }}"
+      omarchy_image_result: "${{ needs.omarchy.result }}"
   gate-am:
     name: "CI / Agent Manager"
     needs:

@@ -8,6 +8,9 @@ on:
       changed_deployables:
         default: "[]"
         type: "string"
+      export_verification_image:
+        default: false
+        type: boolean
 permissions:
   contents: "read"
   actions: "read"
@@ -361,7 +364,14 @@ jobs:
           compression-level: 0
       -
         name: "Export tested native image"
-        if: "steps.staging-image.outputs.adopted != 'true' && (success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository))"
+        if: >-
+          steps.staging-image.outputs.adopted != 'true' && success() &&
+          (github.event_name == 'push' || github.event_name == 'merge_group' ||
+           github.event.pull_request.head.repo.full_name == github.repository ||
+           (inputs.export_verification_image && github.ref == 'refs/heads/develop' &&
+            (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
+            (matrix.component == 'api' || matrix.component == 'runtime')))
+        id: native-image-export
         timeout-minutes: 10
         env:
           IMAGE_COMPONENT: "${{ matrix.component }}"
@@ -384,7 +394,7 @@ jobs:
         run: "python3 -B .github/scripts/ci_image_secret_scan.py \"$IMAGE_COMPONENT\" \"$RUNNER_TEMP/ci-native-image\" \"$GITHUB_SHA\""
       -
         name: "Retain tested native image"
-        if: "steps.staging-image.outputs.adopted != 'true' && (success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository))"
+        if: "success() && steps.native-image-export.outcome == 'success'"
         timeout-minutes: 10
         uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:

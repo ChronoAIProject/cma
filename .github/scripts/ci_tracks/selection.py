@@ -169,9 +169,15 @@ def determine_ci(root, event, event_name, repository):
         result['reasons'] = sorted(set(result['reasons']) | {'full-ci-event'})
     # A Web consumer change can require the shared Rust test archive without
     # changing Agent Manager's product test or image scope.
+    paths = changed_paths(root, result['base'], result['head'])
     result['approval_contract'] = result['am'] or any(
         path in APPROVAL_CONTRACT_INPUTS or path.startswith(APPROVAL_CONTRACT_DIRECTORIES)
-        for path in changed_paths(root, result['base'], result['head'])
+        for path in paths
+    )
+    result['two_am_features'] = any(
+        path.startswith('.github/scripts/multi-am-features/')
+        or path in {'.github/workflows/ci-two-am.yml', '.github/workflows/ci-pr-am.yml'}
+        for path in paths
     )
     return result
 
@@ -200,7 +206,7 @@ def main():
             keys = ('repo', 'am', 'eg', 'web', 'am_packages', 'eg_packages', 'test_tracks',
                     'deployables', 'base', 'head', 'reasons')
             if args.ci:
-                keys += ('approval_contract',)
+                keys += ('approval_contract', 'two_am_features')
             for key in keys:
                 value = result[key] if isinstance(result[key], str) else json.dumps(result[key], separators=(',', ':'))
                 output.write(f"{key}={value}\n")

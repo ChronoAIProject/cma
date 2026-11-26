@@ -170,7 +170,8 @@ def require_omarchy_image_secret_scan(steps)
   require_check(export['env'] == {
     'OMARCHY_SCAN_STARTED' => '${{ steps.omarchy-scan-start.outputs.ready }}',
   } && export['timeout-minutes'] == 31 && export['run'] == <<~'SH', 'Omarchy could export before image scan completion')
-    if [ "$GITHUB_EVENT_NAME" = push ] && [[ "$GITHUB_REF" != refs/heads/tl/release/* ]]; then
+    if [[ "$GITHUB_EVENT_NAME" = schedule || "$GITHUB_EVENT_NAME" = workflow_dispatch ]] ||
+       [[ "$GITHUB_EVENT_NAME" = push && "$GITHUB_REF" != refs/heads/tl/release/* ]]; then
       timeout 10m python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
     else
       test "$OMARCHY_SCAN_STARTED" = true

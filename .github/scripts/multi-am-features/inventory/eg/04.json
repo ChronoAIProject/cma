@@ -1,0 +1,225 @@
+[
+  {
+    "id": "EG-016",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Usage totals, measured charts, sorting, pagination and Sandbox detail",
+    "entry_point": "Your usage -> summary/chart/table -> Sandbox",
+    "steps": [
+      "Inspect allocated totals and measured resources if enabled.",
+      "Change CPU/memory/disk selection, sort and page the table, and open a test Sandbox detail and allocation history."
+    ],
+    "expected_result": "Totals, charts and pages refer to the same completed report; detail retains scope and shows available allocation history without presenting missing measurements as zero.",
+    "writes": false,
+    "api": [
+      "GET /api/v1/usage/metrics/reports/{id}/sandboxes",
+      "GET /api/v1/usage/metrics/reports/{id}/sandboxes/{sandbox}",
+      "GET /api/v1/usage/metrics/reports/{id}/series"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/MetricsDashboard.tsx",
+        "line": 160,
+        "anchor": "<MetricSummary",
+        "sha256": "6e12f406a04e08c552c7f5fe025248189af66fa79fcd771e56bc6ed137fb4615"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricDetail.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "c9a3a96752170305b7aa9905e2bc1163b92daaaaf89f0d80a9bfd86726620ea6"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricTable.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "770bb17a5b6fb4e2427b8213885982f056ac6baf1e1608edd50887830e4aeb3c"
+      }
+    ]
+  },
+  {
+    "id": "EG-017",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Refresh, POST-and-poll fallback, errors and dialog lifecycle",
+    "entry_point": "Your usage -> Refresh / Retry / close / reopen",
+    "steps": [
+      "Refresh a personal report and close/reopen the dialog.",
+      "Locally exercise typed report_view_disabled 501 or missing-route 404, pending report, expiry, 403 and transient failure."
+    ],
+    "expected_result": "Foreground loading falls back to POST-and-poll only for supported unavailable-view cases; pending jobs are observed by exact report ID. Identity failures clear data, and background/hidden observation stops appropriately.",
+    "writes": true,
+    "api": [],
+    "minimum_runs": 3,
+    "execution_lane": "production_read_and_local_negative_cases",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/reportLoad.ts",
+        "line": 243,
+        "anchor": "unsupportedLatestRoute(error)",
+        "sha256": "64b7da541df58d7aeb06956ea48ed23f47271243594a64673d10140efd1a87b3"
+      },
+      {
+        "path": "web/src/usage/metrics/latest.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "2a3b67b8d996da3e3b5fb1b5ab0e19a2b7ae5641d6723c45e450c108cfa1fd79"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/view.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "ba7d138663600c3207e7d446d225dd00be539100bfe56dd8a5da45bf8754311e"
+      }
+    ]
+  },
+  {
+    "id": "EG-018",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "List, refresh, paginate and open owned Channels",
+    "entry_point": "/event-gateway -> Channels",
+    "steps": [
+      "Refresh the list and load additional pages where present.",
+      "Select a channel and inspect its producer/consumer topology and record metadata."
+    ],
+    "expected_result": "Owner-scoped channels and correct saved versions are displayed; missing addresses are explicit and no secret values are exposed.",
+    "writes": false,
+    "api": [
+      "GET /v1/channels",
+      "GET /v1/channels/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/EventGateway.tsx",
+        "line": 110,
+        "anchor": "Refresh channels",
+        "sha256": "8638a5fa6509dcb183331af5a5f2038bfa051efcb0b49aa6cd0e0f119a4fe1c0"
+      },
+      {
+        "path": "web/src/services/ChannelMap.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "7f4bdfea8c6e34de6ff3813dcab0015601da801cd39f48b2886fad88ee226340"
+      },
+      {
+        "path": "web/src/services/GatewayRecordMeta.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "e43eb25b59bcefb783f4dbedc8e2fdde8eb5de06a05b296fee551070b66e72a3"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10555,
+        "anchor": "\"operationId\": \"listChannels\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10739,
+        "anchor": "\"operationId\": \"getChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-019",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Discover supported source, verification and delivery capabilities",
+    "entry_point": "Channel editor -> producer and delivery choices",
+    "steps": [
+      "Load gateway capabilities before choosing a source.",
+      "Compare available choices and saved disabled choices without saving a downgrade."
+    ],
+    "expected_result": "Only supported new writes are enabled. Saved unavailable settings are retained; capability discovery does not claim platform connectivity.",
+    "writes": false,
+    "api": [
+      "GET /v1/channel-capabilities"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/RelayCapabilities.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "8aa277950e8b41c90bed30f5b897da6f1f96f9411379ef448e9a2af75df1bd4e"
+      },
+      {
+        "path": "api/crates/cmaeg/src/http/relay_capabilities.rs",
+        "line": 11,
+        "anchor": "Configuration, not connection health",
+        "sha256": "7f19251621d8870b0c48ec72c2e398a0bac13c8eaebaf733d1bc3d68dbee63e4"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10246,
+        "anchor": "\"operationId\": \"getChannelCapabilities\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-020",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Create channel with durable intent",
+    "entry_point": "Channels -> New channel",
+    "steps": [
+      "Configure a test channel name, producer, consumer and reply policy.",
+      "Save once, retain record ID/idempotency intent, then reload from the other replica."
+    ],
+    "expected_result": "One channel is created and recoverable by its durable record ID; an uncertain response is reconciled before any changed request.",
+    "writes": true,
+    "api": [
+      "POST /v1/channels"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/ChannelEditor.tsx",
+        "line": 115,
+        "anchor": "async function send",
+        "sha256": "08b57a858e8f321172020103c0667e4ce472144a730654a936b553fdacf8012c"
+      },
+      {
+        "path": "web/src/services/channelForm/NodeFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "f50590a24e8e30cbcd861d997e7079d92158ab9e933092dafb1950a797eb2cd6"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10610,
+        "anchor": "\"operationId\": \"createChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  }
+]

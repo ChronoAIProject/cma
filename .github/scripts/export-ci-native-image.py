@@ -50,9 +50,12 @@ def export(component, revision, destination):
     run_id = os.environ.get("GITHUB_RUN_ID", "")
     attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
     event = os.environ.get("GITHUB_EVENT_NAME", "")
+    ref = os.environ.get("GITHUB_REF", "")
     require(repository == "ChronoAIProject/cma", "CI repository differs")
     require(re.fullmatch(r"[1-9][0-9]*", run_id) and re.fullmatch(r"[1-9][0-9]*", attempt), "CI run identity required")
-    require(event in ("push", "pull_request", "merge_group"), "CI event identity required")
+    verification = (event in ("schedule", "workflow_dispatch") and ref == "refs/heads/develop"
+                    and component in ("api", "runtime", "runtime-omarchy"))
+    require(event in ("push", "pull_request", "merge_group") or verification, "CI event identity required")
 
     destination.mkdir(mode=0o700, parents=True, exist_ok=False)
     archive = destination / f"cma-{component}-linux-amd64.docker.tar.gz"
@@ -83,7 +86,7 @@ def export(component, revision, destination):
             "archiveBytes": archive.stat().st_size,
             "workflow": {
                 "repository": repository, "runId": run_id, "runAttempt": attempt,
-                "event": event, "ref": os.environ.get("GITHUB_REF", ""),
+                "event": event, "ref": ref,
             },
         }
         (destination / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")

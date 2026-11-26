@@ -1,0 +1,327 @@
+[
+  {
+    "id": "ADM-090",
+    "role": "admin",
+    "feature": "Organization-admin inventory and effective resource role",
+    "entry_point": "/organizations/{organization}/agents; scope picker",
+    "steps": [
+      "Use current local organization admin/member/viewer memberships.",
+      "Select organization scope, browse Agent/Sandbox hierarchy and inspect Resource admin/View-only attribution."
+    ],
+    "expected_result": "Current resource policy, not membership title alone, determines controls; missing/stale membership never reuses an old grant.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/organizations",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_organizations"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_resource_access_by_kind_by_id"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_agents"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_sandboxes"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/resources/AgentInventory.tsx",
+        "line": 1,
+        "sha256": "ea02c883c3952c91f20b131fb43cd1c0ea45a3511cd147e6e73d3c1614e1b181"
+      },
+      {
+        "path": "web/src/resources/SandboxTree.tsx",
+        "line": 1,
+        "sha256": "a5a48284f87362e70690b01457fad060a3c6ff1beed476a89e26661adebf4426"
+      },
+      {
+        "path": "web/src/resources/accessSummary.ts",
+        "line": 1,
+        "sha256": "ab0f1321ae5536c3ad230d5d7bf66b8e5d35b30a15b462b54f3e65cea86ded58"
+      },
+      {
+        "path": "api/crates/layer2-core/src/resource_access/policy.rs",
+        "line": 1,
+        "sha256": "1f5bf2c1661f7d7898004a4ae2eaab405be8b3293bc3d77bb41b606b383e7409"
+      }
+    ]
+  },
+  {
+    "id": "ADM-091",
+    "role": "admin",
+    "feature": "Organization-admin interaction and resource operating roles",
+    "entry_point": "Organization or org_roles-shared Agent → conversation, approvals, settings and files",
+    "steps": [
+      "Exercise the user matrix’s send/interrupt/approval/files/settings cases as organization admin on local fixtures.",
+      "Compare member/viewer and view-only grants; revoke membership between AM requests.",
+      "Test an isolated Agent grant versus a compatible whole-Sandbox grant."
+    ],
+    "expected_result": "Current authorized admin can interact only within safe sharing scope; members/viewers do not inherit interaction; unsafe narrow sharing never escalates.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_resource_access_by_kind_by_id"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/input",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_agents_by_id_input"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/interrupt",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_agents_by_id_interrupt"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/approvals/{request_id}",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_agents_by_id_approvals_by_request_id"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "api/crates/layer2-core/src/resource_access/policy.rs",
+        "line": 1,
+        "sha256": "1f5bf2c1661f7d7898004a4ae2eaab405be8b3293bc3d77bb41b606b383e7409"
+      },
+      {
+        "path": "web/src/resources/SharedAgent.tsx",
+        "line": 1,
+        "sha256": "93554cd32e46df76d248d4d03f043c437c83d08c308905a7e5873c73c96f3b67"
+      },
+      {
+        "path": "web/src/resources/accessSummary.ts",
+        "line": 1,
+        "sha256": "ab0f1321ae5536c3ad230d5d7bf66b8e5d35b30a15b462b54f3e65cea86ded58"
+      },
+      {
+        "path": "web/src/resources/sharing.ts",
+        "line": 1,
+        "sha256": "e3cab9a13cf1acf76790f535a445a68bebb1696b2954e8598f91216a0ba60464"
+      }
+    ]
+  },
+  {
+    "id": "ADM-092",
+    "role": "admin",
+    "feature": "Organization-admin sharing boundary and personal-owner grant management",
+    "entry_point": "Sharing control/API on local personal-owned versus organization-owned Agent/Sandbox",
+    "steps": [
+      "As a local personal owner, list/create a view or org_roles grant; update mode with revision, then revoke across AMs.",
+      "As an organization admin with manage_sharing in effective policy, attempt the same management reads/writes on an organization-owned fixture.",
+      "Test unknown outcome and stale membership/revision only on supported personal-owner grants."
+    ],
+    "expected_result": "Personal-owner grants use current authority and revision CAS. Selected sharing_service still requires personal_owner, so an organization admin alone is refused; no organization-owned sharing support is inferred from the policy capability.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/{kind}/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_resource_shares_by_kind_by_id"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/{kind}/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_resource_shares_by_kind_by_id"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/{kind}/{id}/{share_id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_resource_shares_by_kind_by_id_by_share_id"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/v1/resource-shares/{kind}/{id}/{share_id}",
+        "in_captured_openapi": true,
+        "operation_id": "patch_api_v1_resource_shares_by_kind_by_id_by_share_id"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/v1/resource-shares/{kind}/{id}/{share_id}",
+        "in_captured_openapi": true,
+        "operation_id": "delete_api_v1_resource_shares_by_kind_by_id_by_share_id"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/resources/ShareScopeEditor.tsx",
+        "line": 1,
+        "sha256": "ab2621d44bd30300b140d254bfc4a646cf6ff879e8632a6a5a495b00b6ca06b9"
+      },
+      {
+        "path": "web/src/resources/ShareRow.tsx",
+        "line": 1,
+        "sha256": "3854e3b2cccaeebbbd5ecff9f84b9c78cb4bfa9c92f35f561623cf24604a7c61"
+      },
+      {
+        "path": "sdk/typescript/src/resource-access.ts",
+        "line": 1,
+        "sha256": "c1c99c2ca1ceffe9bb1b670ff6eae38c8904a8e767cb7ef2286bef5170a891e2"
+      },
+      {
+        "path": "api/crates/layer2-core/src/resource_access/policy.rs",
+        "line": 1,
+        "sha256": "1f5bf2c1661f7d7898004a4ae2eaab405be8b3293bc3d77bb41b606b383e7409"
+      },
+      {
+        "path": "api/crates/layer2-core/src/resource_access/sharing_service.rs",
+        "line": 1,
+        "sha256": "933a7005705423db585cbfd1203dd5594933c14b3ce58d046a981ef196f7aa86"
+      },
+      {
+        "path": "api/crates/layer2-core/src/resource_access/service.rs",
+        "line": 1,
+        "sha256": "515a7e2496daa22d24d08f92300b87161f5f65e0c0fd660de369f9ee89297025"
+      }
+    ]
+  },
+  {
+    "id": "ADM-093",
+    "role": "admin",
+    "feature": "Admin boundary on personal-owner share links and service-access requests",
+    "entry_point": "Local Agent share-links/access-requests API; owner menu for positive control",
+    "steps": [
+      "As the personal owner, create/redeem/revoke a local share link, separately approve/deny a synthetic service-access request.",
+      "Repeat management attempts as a global operator and an organization admin without the direct personal-owner identity.",
+      "Verify refusal and no credential-scope change through the other AM."
+    ],
+    "expected_result": "Link management requires personal_owner; service-access requests require direct owner authority and are not share-link access requests. Organization/admin labels do not grant credential custody.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/share-links",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_agents_by_id_share_links"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/share-links",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_agents_by_id_share_links"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/v1/agents/{id}/share-links/{share_id}",
+        "in_captured_openapi": true,
+        "operation_id": "delete_api_v1_agents_by_id_share_links_by_share_id"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/access-requests",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_agents_by_id_access_requests"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/access-requests/{request_id}/approve",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_agents_by_id_access_requests_by_request_id_approve"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/access-requests/{request_id}/deny",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_agents_by_id_access_requests_by_request_id_deny"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/resources/AgentShareLinks.tsx",
+        "line": 1,
+        "sha256": "3f4a47caa14a0d60adb41ed4025d9aeccd7bdebfa7970934979c33691c67250b"
+      },
+      {
+        "path": "sdk/typescript/src/resource-access.ts",
+        "line": 1,
+        "sha256": "c1c99c2ca1ceffe9bb1b670ff6eae38c8904a8e767cb7ef2286bef5170a891e2"
+      },
+      {
+        "path": "api/crates/layer2-core/src/resource_access/share_links.rs",
+        "line": 1,
+        "sha256": "8c85ca7fe8aeba95f329b1a5de3d705ed83f05baf1aff2ccd7bafbdef5ec0a93"
+      },
+      {
+        "path": "api/crates/layer2-core/src/resource_access/service.rs",
+        "line": 1,
+        "sha256": "515a7e2496daa22d24d08f92300b87161f5f65e0c0fd660de369f9ee89297025"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/agent_access_requests.rs",
+        "line": 1,
+        "sha256": "14c8539038775ebaf2f42be7c5bf52e85eebd8b61658bc76e1167529d5604fcb"
+      }
+    ]
+  },
+  {
+    "id": "ADM-094",
+    "role": "admin",
+    "feature": "Organization-admin pause, resume and retirement",
+    "entry_point": "Organization-owned Sandbox → Sandbox controls",
+    "steps": [
+      "On local disposable organization-owned Sandbox, exercise pause/resume with manage_sandbox.",
+      "Exercise confirmed retire only with manage_sharing; poll receipt and actual cleanup.",
+      "Verify an org_roles recipient without ownership does not gain retirement/sharing administration."
+    ],
+    "expected_result": "Pause/revive and retire use different resource capabilities; current memberships and original command identities are rechecked across AMs.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_resource_access_by_kind_by_id"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/{id}/commands",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_sandboxes_by_id_commands"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/resources/SandboxControls.tsx",
+        "line": 1,
+        "sha256": "73d9816f8401a54a753638fc3a4bc804cb0b9fe69ca900b123d2d6c4ba55be59"
+      },
+      {
+        "path": "web/src/resources/useSandboxControl.ts",
+        "line": 1,
+        "sha256": "206c3b33f09ebe03f3be93b63fb6a6138e169d17036d392f85308d9369330f9c"
+      },
+      {
+        "path": "api/crates/layer2-core/src/resource_access/policy.rs",
+        "line": 1,
+        "sha256": "1f5bf2c1661f7d7898004a4ae2eaab405be8b3293bc3d77bb41b606b383e7409"
+      }
+    ]
+  }
+]

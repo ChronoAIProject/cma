@@ -31,8 +31,10 @@ STAGING_IMAGE_FALLBACK = "steps.staging-image.outputs.adopted != 'true'"
 STAGING_READ_ONLY = {'contents' => 'read', 'actions' => 'read', 'issues' => 'read'}.freeze
 
 
-MERGE_GROUP_EXPORT = "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || " \
-  "github.event.pull_request.head.repo.full_name == github.repository)"
+NATIVE_IMAGE_EVENTS = "github.event_name == 'push' || github.event_name == 'merge_group' || " \
+  "github.event.pull_request.head.repo.full_name == github.repository"
+VERIFICATION_IMAGE_EVENT = "inputs.export_verification_image && github.ref == 'refs/heads/develop' && " \
+  "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
 API_CACHE_READERS = "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || " \
   "(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || " \
   "github.event_name == 'merge_group')"
@@ -40,15 +42,22 @@ API_CACHE_READERS = "matrix.component == 'api' && ((github.event_name == 'push' 
 # A queue entry tests the exact commit develop becomes, so its tested images
 # are retained for exact-source CD reuse; fork PR runs still retain nothing.
 def check_merge_group_artifacts(documents)
-  [['ci-images', 'images', ['Export tested native image', 'Retain tested native image']],
-   ['ci-omarchy', 'omarchy', ['Export tested Omarchy image', 'Retain tested Omarchy image']]].each do |file, job, names|
+  [['ci-images', 'images', 'native', " && (matrix.component == 'api' || matrix.component == 'runtime')"],
+   ['ci-omarchy', 'omarchy', 'Omarchy', '']].each do |file, job, kind, component_filter|
     steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
-    names.each do |name|
-      found = steps.select { |s| s['name'] == name }
-      require_check(found.length == 1 && found.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (#{MERGE_GROUP_EXPORT})" && !found.first.key?('continue-on-error'),
-        "#{name} must retain push, same-repository PR and merge-group images only")
-    end
+    export, retain = %w[Export Retain].map { |action| steps.select { |s| s['name'] == "#{action} tested #{kind} image" } }
+    require_check(export.length == 1 && retain.length == 1, "#{file} must export and retain the tested image once")
+    export, retain = export.first, retain.first
+    condition = "#{STAGING_IMAGE_FALLBACK} && success() && (#{NATIVE_IMAGE_EVENTS} || (#{VERIFICATION_IMAGE_EVENT}#{component_filter}))"
+    require_check(export['id'] == 'native-image-export' && export['if'].gsub(/\s+/, ' ') == condition &&
+      !export.key?('continue-on-error'), "#{file} must export only from eligible tested runs")
+    require_check(retain['if'] == "success() && steps.native-image-export.outcome == 'success'" &&
+      !retain.key?('continue-on-error'), "#{file} must only retain a successful native image export")
   end
+  jobs = documents.fetch('ci').fetch('jobs')
+  selected = jobs.select { |_, config| config.dig('with', 'export_verification_image') }.keys.sort
+  require_check(selected == %w[am-images omarchy runtime-images],
+    'develop verification must export exactly the three two-AM fixture images')
   images = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
   prepare = images.select { |s| s['name'] == 'Prepare API Cargo cache identity' }
   require_check(prepare.length == 1 && prepare.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (#{API_CACHE_READERS})",
@@ -259,7 +268,9 @@ def validate(documents, actions)
     selector = track_jobs.fetch('changes')
     require_check(track_jobs.keys.first == 'changes' && selector['name'] == "#{number}.1 Select changes" &&
       selector['uses'] == './.github/workflows/ci-track-selection.yml', 'each workflow selects before validating')
-    require_check(track_jobs.keys.sort == (prerequisites + [gate_key]).sort, 'product validation task missing or duplicated')
+    additional = track == 'am' ? ['two-am-features'] : []
+    require_check(track_jobs.keys.sort == (prerequisites + [gate_key] + additional).sort,
+      'product validation task missing or duplicated')
     gate = track_jobs.fetch(gate_key)
     require_check(gate['name'] == check_name && gate['if'] == 'always()' && gate['needs'].sort == prerequisites.sort &&
       gate.fetch('steps').last.fetch('run') == "python3 -B .github/scripts/ci_tracks/gate.py #{track} --split",
@@ -280,6 +291,26 @@ def validate(documents, actions)
   select_workflow = documents.fetch('ci-track-selection')
   require_check(select_workflow.fetch('jobs').fetch('changes') == jobs.fetch('changes').reject { |key, _| key == 'if' },
     'pull requests and post-merge CI must use identical selection')
+  two_am = documents.fetch('ci-two-am')
+  two_am_permissions = {'contents' => 'read', 'actions' => 'read'}
+  require_check(two_am['permissions'] == two_am_permissions &&
+    two_am.fetch('on', two_am[true]).keys == ['workflow_call'], 'two-AM fixture must remain a read-only reusable workflow')
+  [[jobs, %w[am-images runtime-images omarchy],
+    "!cancelled() && github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' && " \
+    "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"],
+   [documents.fetch('ci-pr-am').fetch('jobs'), %w[changes am-images runtime-images omarchy],
+    "!cancelled() && needs.changes.outputs.two_am_features == 'true' && " \
+    "github.event.pull_request.base.ref == 'develop' && github.event.pull_request.head.repo.full_name == github.repository"]]
+    .each do |caller, needs, condition|
+    suite = caller.fetch('two-am-features')
+    require_check(suite['uses'] == './.github/workflows/ci-two-am.yml' &&
+      suite['permissions'] == two_am_permissions && suite['needs'] == needs &&
+      suite['if'].gsub(/\s+/, ' ') == condition && !suite.key?('continue-on-error') &&
+      suite['with'] == {'am_image_result' => '${{ needs.am-images.result }}',
+                        'runtime_image_result' => '${{ needs.runtime-images.result }}',
+                        'omarchy_image_result' => '${{ needs.omarchy.result }}'},
+                  'two-AM verification must use its own three image jobs and trusted CI events')
+  end
   check_version_label(ci, "!cancelled() && (#{verification_ref})")
   check_version_label(documents.fetch('ci-pr-repo'))
   selector = jobs.fetch('changes').fetch('steps').find { |step| step['id'] == 'select' }
