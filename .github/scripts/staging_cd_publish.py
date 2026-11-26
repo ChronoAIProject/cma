@@ -365,7 +365,8 @@ def main():
                                                       env.get("GH_TOKEN"), env.get("GITHUB_ACTOR"), source=source,
                                                       reservation_check=current, prepared_checksum=prepared_checksum,
                                                       max_files=int(env["CD_WEB_RETENTION_FILE_LIMIT"]),
-                                                      max_bytes=int(env["CD_WEB_RETENTION_BYTE_LIMIT"]))
+                                                      max_bytes=int(env["CD_WEB_RETENTION_BYTE_LIMIT"]),
+                                                      mark=diagnostics.mark)
                             else:
                                 receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
                                                   env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
@@ -398,6 +399,9 @@ def main():
 
     outcome = {}
     result = run_publication(operation, on_superseded=superseded, component=env.get("CD_COMPONENT"), outcome=outcome)
+    if env.get("CD_WEB_CONTINUITY") == "required" and outcome.get("registry_failure"):
+        registry_operation, status = outcome["registry_failure"]
+        print(f"Web registry authorization refused operation={registry_operation} http_status={status}", flush=True)
     # run_private has restored the public descriptors; only fixed stage records
     # cross that boundary, including the failing phase on an unsuccessful run.
     component = env.get("CD_COMPONENT")

@@ -116,7 +116,8 @@ async fn measure(
     enabled: bool,
     observers: usize,
 ) -> (meter::Stats, Vec<Vec<Value>>) {
-    let replicas = servers_mode(f, enabled).await;
+    let (start_idle, idle_start) = tokio::sync::watch::channel(false);
+    let replicas = response_budget_servers(f, enabled, idle_start).await;
     let client = client();
     f.meter.clear();
     let mut consumers = Vec::new();
@@ -139,16 +140,25 @@ async fn measure(
         );
         let buffer = Arc::new(Mutex::new(Vec::new()));
         let captured = buffer.clone();
+        let opened = std::time::Instant::now();
         consumers.push(tokio::spawn(async move {
             let mut body = response.bytes_stream();
             while let Some(chunk) = body.next().await {
                 captured.lock().unwrap().extend_from_slice(&chunk.unwrap());
             }
-            panic!("unchanged response stream closed");
+            let captured = captured.lock().unwrap();
+            let last_event = events(&captured).pop();
+            let kind = last_event.as_ref().and_then(|event| event["type"].as_str());
+            let code = last_event.as_ref().and_then(|event| event["code"].as_str());
+            panic!(
+                "unchanged response stream closed: shared={enabled} observer={index} age={:?} last_type={kind:?} code={code:?}",
+                opened.elapsed()
+            );
         }));
         buffers.push(buffer);
     }
     readiness::wait_for_replay(&buffers, &consumers).await;
+    start_idle.send_replace(true);
     tokio::time::sleep(Duration::from_secs(12)).await;
     let measured = f.meter.stats.lock().unwrap().clone();
     for consumer in consumers {

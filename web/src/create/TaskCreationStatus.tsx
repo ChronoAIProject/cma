@@ -7,6 +7,22 @@ import { DiscardWaitingCreation } from './DiscardWaitingCreation';
 import { PreparationView } from '../preparation/PreparationView';
 import { derivePreparationView } from '../preparation/preparationPresentation';
 
+export function TaskQuotaNotice({
+  quotaUsage,
+}: {
+  readonly quotaUsage?: NonNullable<AgentLifecycleOperationView['failure']>['quota_usage'];
+}) {
+  return (
+    <p role="alert">
+      The Sandbox environment limit is now reached. Your task draft is saved. Manage environments
+      and check capacity before starting again.
+      {quotaUsage
+        ? ` Active: ${quotaUsage.active}. Deletions using slots: ${quotaUsage.retiring_charged}. Deletions that released slots: ${quotaUsage.retiring_released}.`
+        : null}
+    </p>
+  );
+}
+
 export function TaskCreationStatus({
   intent,
   operation,

@@ -38,16 +38,21 @@ class WebPublicationTests(unittest.TestCase):
         self.tags = {item.digest: (item.digest, {}) for item in (self.first, self.previous)}
         self.events = []
         self.fail_version = False
+        self.fail_pull = False
+        self.stages = []
 
     def runner(self, args, **_options):
         if args[1] == "login":
             self.events.append("login")
             Path(args[3]).touch()
         else:
-            self.assertEqual(args[1:3], ["copy", "--preserve-digests"])
-            expected = args[3].split("@")[1]
+            self.assertEqual(args[1:4], ["copy", "--preserve-digests", "--src-authfile"])
+            self.assertEqual(Path(args[4]).stat().st_mode & 0o777, 0o600)
+            if self.fail_pull:
+                raise Refusal("registry pull denied")
+            expected = args[5].split("@")[1]
             item = {item.digest: item for item in (self.first, self.previous)}[expected]
-            shutil.copyfile(item.archive, Path(args[4].removeprefix("oci-archive:")))
+            shutil.copyfile(item.archive, Path(args[6].removeprefix("oci-archive:")))
 
     def scan(self, archive, report_path, *, component, source):
         self.assertEqual((component, source), ("web", self.root))
@@ -80,17 +85,25 @@ class WebPublicationTests(unittest.TestCase):
             return publish(self.candidate.archive, self.identity, self.scope, work, self.registry,
                            "synthetic-publisher", "test-actor", source=self.root, reservation_check=lambda: True,
                            prepared_checksum=checksum(self.candidate.archive), max_files=16, max_bytes=512,
-                           runner=self.runner)
+                           runner=self.runner, mark=self.stages.append)
 
     def test_all_scans_precede_any_write_and_only_promote_owns_the_version(self):
         receipt = self.protected_publish()
         continuity = receipt["asset_continuity"]
-        self.assertEqual(self.events[:4], ["scan:c.oci.tar", "scan:web-prepare.oci.tar", "scan:web-promote.oci.tar", "login"])
+        self.assertEqual(self.events[:4], ["scan:c.oci.tar", "login", "scan:web-prepare.oci.tar", "scan:web-promote.oci.tar"])
         self.assertEqual(self.events[4:], ["push:asset-sha256-" + self.candidate.digest[7:],
                                           "push:asset-sha256-" + continuity["prepare_image"].split(":")[-1],
                                           "push:" + self.identity["version"]])
         self.assertEqual(self.tags[self.identity["version"]][0], receipt["digest"])
         self.assertNotEqual(receipt["digest"], self.candidate.digest)
+        self.assertFalse(list(self.root.rglob("web-registry-auth.json")))
+
+    def test_denied_pull_cleans_auth_before_any_registry_write(self):
+        self.fail_pull = True
+        with self.assertRaisesRegex(Refusal, "registry pull denied"):
+            self.protected_publish()
+        self.assertEqual(self.stages[-2:], ["registry_login", "registry_preflight"])
+        self.assertEqual(self.events, ["scan:c.oci.tar", "login"])
         self.assertFalse(list(self.root.rglob("web-registry-auth.json")))
 
     def test_interrupted_unfinalized_publication_burns_version_instead_of_rewriting_it(self):
