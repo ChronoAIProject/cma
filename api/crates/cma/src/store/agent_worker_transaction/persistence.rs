@@ -1,6 +1,28 @@
 //! Aggregate CAS and worktree writes inside the publication transaction.
 use super::*;
 
+pub(super) fn fence_workspace_binding_lease(
+    filter: &mut Document,
+    current: &Agent,
+    mutation: &AgentWorkMutation,
+) {
+    if current.work.step == AgentWorkStep::WaitForWorkspace
+        && mutation.agent.work.step == AgentWorkStep::AddWorktree
+    {
+        filter.insert(
+            "$expr",
+            doc! {
+                "$gt": [
+                    { "$dateFromString": {
+                        "dateString": "$work_lease_expires_at", "onError": null, "onNull": null,
+                    }},
+                    "$$NOW",
+                ],
+            },
+        );
+    }
+}
+
 pub(super) async fn advance_agent(
     store: &MongoSandboxStore,
     current_row: &Document,
@@ -49,6 +71,7 @@ pub(super) async fn advance_agent(
     };
     owner_stop::fence_live_lease(&mut filter, mutation);
     restart_ready::fence_live_lease(&mut filter, current);
+    fence_workspace_binding_lease(&mut filter, current, mutation);
     let advanced = store
         .agents
         .update_one(filter, doc! { "$set": fields })
