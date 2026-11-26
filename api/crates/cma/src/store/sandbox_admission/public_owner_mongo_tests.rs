@@ -73,7 +73,9 @@ async fn concurrent_public_owners_share_two_homes_and_exact_origin_replays() {
     for (request, result) in results {
         match result {
             Ok(SandboxAdmissionResult::Created(sandbox)) => accepted.push((request, sandbox)),
-            Err(SandboxStoreError::LimitReached { limit: 2, live: 2 }) => {}
+            Err(SandboxStoreError::LimitReached {
+                limit: 2, live: 2, ..
+            }) => {}
             other => panic!("unexpected public admission: {other:?}"),
         }
     }
@@ -132,7 +134,11 @@ async fn concurrent_public_owners_share_two_homes_and_exact_origin_replays() {
             secondary
                 .admit_sandbox(create("public", index + 6, origin))
                 .await,
-            Err(SandboxStoreError::LimitReached { limit: 2, live: 2 })
+            Err(SandboxStoreError::LimitReached {
+                limit: 2,
+                live: 2,
+                ..
+            })
         ));
     }
     assert_eq!(primary.sandboxes.count_documents(doc! {}).await.unwrap(), 2);
@@ -165,7 +171,11 @@ async fn public_owner_override_preserves_unrelated_quotas_and_respects_live_sett
     let extra = create("public", 3, SandboxOrigin::Manual);
     assert!(matches!(
         on.admit_sandbox(extra.clone()).await,
-        Err(SandboxStoreError::LimitReached { limit: 3, live: 3 })
+        Err(SandboxStoreError::LimitReached {
+            limit: 3,
+            live: 3,
+            ..
+        })
     ));
     off.admit_sandbox(extra).await.unwrap();
     assert_eq!(
@@ -209,7 +219,11 @@ async fn public_owner_override_preserves_unrelated_quotas_and_respects_live_sett
     on.admit_sandbox(visitor(0)).await.unwrap();
     assert!(matches!(
         on.admit_sandbox(visitor(1)).await,
-        Err(SandboxStoreError::LimitReached { limit: 1, live: 1 })
+        Err(SandboxStoreError::LimitReached {
+            limit: 1,
+            live: 1,
+            ..
+        })
     ));
 
     let operator = MongoPlatformSettingsStore::open(&client, &name)
@@ -221,7 +235,11 @@ async fn public_owner_override_preserves_unrelated_quotas_and_respects_live_sett
     assert!(matches!(
         on.admit_sandbox(create("public", 4, SandboxOrigin::Manual))
             .await,
-        Err(SandboxStoreError::LimitReached { limit: 1, live: 4 })
+        Err(SandboxStoreError::LimitReached {
+            limit: 1,
+            live: 4,
+            ..
+        })
     ));
     client.database(&name).drop().await.unwrap();
 }

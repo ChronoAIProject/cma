@@ -73,6 +73,8 @@ export const sandboxLifecycleResult = object({
   started_at: optional(text),
   result_due_at: optional(text),
   continuing: boolean,
+  owner_slot_released: optional(boolean),
+  blocked_retirement_step: optional(text),
   actions: array(enumeration('observe', 'retire')),
   retry_after_seconds: optional(positiveInteger),
 });
