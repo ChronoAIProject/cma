@@ -230,7 +230,7 @@ try {
 } finally {
   await admin.close(); await user.close(); await outsider.close(); await journal.close();
   result.coverage = coverage(inventory, mappings, rows);
-  result.writer_coverage = writerCoverage(writerRegistry, rows, result.journey);
+  result.writer_coverage = writerCoverage(writerRegistry, rows, result.journey, 'features');
   if (result.verdict !== 'FAIL') result.verdict = result.coverage.verdict === 'PASS'
     && result.writer_coverage.verdict === 'PASS' ? 'PASS' : 'FAIL';
   result.finished_at = new Date().toISOString();

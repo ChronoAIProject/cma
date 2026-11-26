@@ -11,6 +11,7 @@ def needs(track, selected=True):
     tracks = dict(repo=True, am=selected, eg=selected, web=selected)
     outputs = {key: json.dumps(value) for key, value in tracks.items()}
     outputs['approval_contract'] = json.dumps(selected)
+    outputs['two_am_features'] = json.dumps(selected)
     outputs.update(test_tracks=json.dumps(tracks), deployables='[]', am_packages='["cma"]' if selected else '[]', eg_packages='["cmaeg"]' if selected else '[]')
     result = {job: {'result': 'success' if selected or track == 'repo' else 'skipped'} for job in EXPECTED[track]}
     result['changes'] = {'result': 'success', 'outputs': outputs}
@@ -83,6 +84,17 @@ class GateTests(unittest.TestCase):
                         evaluate('am', mutated, split=split)
         data['changes']['outputs'].pop('approval_contract')
         with self.assertRaises(ValueError):
+            evaluate('am', data, split=True)
+
+    def test_two_manager_fixture_is_required_only_when_selected(self):
+        data = needs('am')
+        data['changes']['outputs']['two_am_features'] = 'false'
+        with self.assertRaisesRegex(ValueError, 'fixture did not reach'):
+            evaluate('am', data, split=True)
+        data['two-am-features']['result'] = 'skipped'
+        self.assertEqual(evaluate('am', data, split=True), 'passed')
+        del data['changes']['outputs']['two_am_features']
+        with self.assertRaisesRegex(ValueError, 'fixture selection'):
             evaluate('am', data, split=True)
 
     def test_split_eg_expects_no_runtime_jobs(self):

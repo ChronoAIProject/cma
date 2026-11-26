@@ -241,7 +241,7 @@ def validate(documents, actions)
   require_check(jobs.keys.none? { |key| key.start_with?('trigger-') }, 'Trigger job retained')
   required = {
     'gate-repo' => ['CI / Repo', %w[changes repo version-label]],
-    'gate-am' => ['CI / Agent Manager', %w[changes rust-test-build approval-contract am am-images runtime-images omarchy]],
+    'gate-am' => ['CI / Agent Manager', %w[changes rust-test-build approval-contract am am-images runtime-images omarchy two-am-features]],
     'gate-eg' => ['CI / Event Gateway', %w[changes rust-test-build eg eg-images runtime-images omarchy]],
     'gate-web' => ['CI / Web', %w[changes web web-images]]
   }
@@ -268,8 +268,7 @@ def validate(documents, actions)
     selector = track_jobs.fetch('changes')
     require_check(track_jobs.keys.first == 'changes' && selector['name'] == "#{number}.1 Select changes" &&
       selector['uses'] == './.github/workflows/ci-track-selection.yml', 'each workflow selects before validating')
-    additional = track == 'am' ? ['two-am-features'] : []
-    require_check(track_jobs.keys.sort == (prerequisites + [gate_key] + additional).sort,
+    require_check(track_jobs.keys.sort == (prerequisites + [gate_key]).sort,
       'product validation task missing or duplicated')
     gate = track_jobs.fetch(gate_key)
     require_check(gate['name'] == check_name && gate['if'] == 'always()' && gate['needs'].sort == prerequisites.sort &&
@@ -295,17 +294,11 @@ def validate(documents, actions)
   two_am_permissions = {'contents' => 'read', 'actions' => 'read'}
   require_check(two_am['permissions'] == two_am_permissions &&
     two_am.fetch('on', two_am[true]).keys == ['workflow_call'], 'two-AM fixture must remain a read-only reusable workflow')
-  [[jobs, %w[am-images runtime-images omarchy],
-    "!cancelled() && github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' && " \
-    "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"],
-   [documents.fetch('ci-pr-am').fetch('jobs'), %w[changes am-images runtime-images omarchy],
-    "!cancelled() && needs.changes.outputs.two_am_features == 'true' && " \
-    "github.event.pull_request.base.ref == 'develop' && github.event.pull_request.head.repo.full_name == github.repository"]]
-    .each do |caller, needs, condition|
+  [jobs, documents.fetch('ci-pr-am').fetch('jobs')].each do |caller|
     suite = caller.fetch('two-am-features')
     require_check(suite['uses'] == './.github/workflows/ci-two-am.yml' &&
-      suite['permissions'] == two_am_permissions && suite['needs'] == needs &&
-      suite['if'].gsub(/\s+/, ' ') == condition && !suite.key?('continue-on-error') &&
+      suite['permissions'] == two_am_permissions && suite['needs'] == %w[changes am-images runtime-images omarchy] &&
+      suite['if'] == "!cancelled() && needs.changes.outputs.two_am_features == 'true'" && !suite.key?('continue-on-error') &&
       suite['with'] == {'am_image_result' => '${{ needs.am-images.result }}',
                         'runtime_image_result' => '${{ needs.runtime-images.result }}',
                         'omarchy_image_result' => '${{ needs.omarchy.result }}'},

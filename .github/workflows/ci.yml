@@ -191,13 +191,11 @@ jobs:
   two-am-features:
     name: "Two Agent Managers"
     needs:
+      - "changes"
       - "am-images"
       - "runtime-images"
       - "omarchy"
-    if: >-
-      !cancelled() && github.repository == 'ChronoAIProject/cma' &&
-      github.ref == 'refs/heads/develop' &&
-      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    if: "!cancelled() && needs.changes.outputs.two_am_features == 'true'"
     permissions:
       contents: "read"
       actions: "read"
@@ -233,6 +231,7 @@ jobs:
       - "am-images"
       - "runtime-images"
       - "omarchy"
+      - "two-am-features"
     if: "always() && ((github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop')"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5

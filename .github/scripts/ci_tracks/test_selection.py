@@ -195,6 +195,8 @@ class CIEventSelectionTests(unittest.TestCase):
         self.assertTrue(result['two_am_features'])
         self.assertTrue(result['am'])
         self.assertEqual(result['deployables'], [])
+        event['pull_request']['head']['repo']['full_name'] = 'example/fork'
+        self.assertFalse(selection.determine_ci(self.root, event, 'pull_request', repository)['two_am_features'])
 
     def test_approval_contract_web_inputs_do_not_select_rust_product_tracks(self):
         repository = 'example/repository'
@@ -275,7 +277,7 @@ class CIEventSelectionTests(unittest.TestCase):
 
     def test_develop_verification_is_full_and_uses_the_exact_event_commit(self):
         from unittest import mock
-        repository = 'example/repository'
+        repository = 'ChronoAIProject/cma'
         event = {'repository': {'full_name': repository}}
         environment = {'GITHUB_REF': 'refs/heads/develop', 'GITHUB_SHA': self.third}
         for name in ('schedule', 'workflow_dispatch'):
@@ -283,6 +285,7 @@ class CIEventSelectionTests(unittest.TestCase):
                 result = selection.determine_ci(self.root, event, name, repository)
                 self.assertEqual((result['base'], result['head']), (self.second, self.third))
                 self.assertEqual(result['test_tracks'], dict(repo=True, am=True, eg=True, web=True))
+                self.assertTrue(result['two_am_features'])
             for change in ({'GITHUB_REF': 'refs/heads/main'}, {'GITHUB_SHA': '0' * 40}):
                 with self.subTest(event=name, change=change), mock.patch.dict('os.environ', environment | change):
                     with self.assertRaises(ValueError):

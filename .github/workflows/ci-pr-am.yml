@@ -82,10 +82,7 @@ jobs:
       - "am-images"
       - "runtime-images"
       - "omarchy"
-    if: >-
-      !cancelled() && needs.changes.outputs.two_am_features == 'true' &&
-      github.event.pull_request.base.ref == 'develop' &&
-      github.event.pull_request.head.repo.full_name == github.repository
+    if: "!cancelled() && needs.changes.outputs.two_am_features == 'true'"
     permissions:
       contents: "read"
       actions: "read"
@@ -104,6 +101,7 @@ jobs:
       - "am-images"
       - "runtime-images"
       - "omarchy"
+      - "two-am-features"
     if: "always()"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5

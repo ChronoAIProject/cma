@@ -259,12 +259,17 @@
     {
       "id": "SW13",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Actual prepared-hit and supported/refused parent schema evidence, real-Web Starting/Open/Send, plain-create comparison on each ingress and live owner.",
+      "remaining": "Validate prepared consumption and the cold comparison in hosted CI, then cover supported and refused parent schemas and real-Web Starting/Open/Send.",
       "issues": "#2168/#2156",
       "feature": "Prepared startup with renewed parent schemas",
       "requirement": "Supported parent1/3/4 publication succeeds; no repeated schema-filterConflict, no18minute lease stall. Unknown Worktree schema, cleanup and paused parents still refuse. Record request/ingress/owner/epoch and distinguish targetenabled from actualpreparedhit.",
       "trigger": "Claim an actual prepared Sandbox under replica feature mode, retain prepared-hit plus Sandbox/Workspace envelope evidence, immediately open through actual web route while Starting, reach Ready and Send/reply. Compare plain create; exercise each ingress/current owner in integrated twoAM matrix.",
-      "required_assertions": []
+      "required_assertions": [
+        {"case": "cold_comparison_on_a", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "cold_comparison_on_b", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_create_on_a", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_create_on_b", "minimum_runs": 1, "phases": [], "routing": "journey"}
+      ]
     }
   ],
   "common": [

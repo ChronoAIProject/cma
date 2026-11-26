@@ -13,36 +13,60 @@ const observations = () => complete().cases.flatMap(group => ['before_restart', 
 
 test('all thirteen writer groups remain required independently of C275', async () => {
   const actual = JSON.parse(await readFile(new URL('../writer-regressions.json', import.meta.url)));
-  const result = writerCoverage(actual, []);
-  assert.equal(result.total, 13);
-  assert.equal(result.verdict, 'FAIL');
-  assert.equal(result.groups.at(-1).id, 'SW13');
-  assert.ok(result.groups.every(row => row.verdict === 'BLOCKED'));
-  for (const malformed of [actual.cases.slice(0, 12), [...actual.cases.slice(0, 12), actual.cases[0]]]) {
-    assert.throws(() => writerCoverage({...actual, cases: malformed}, []), /writer_registry_ids/);
+  const features = writerCoverage(actual, [], undefined, 'features');
+  const prepared = writerCoverage(actual, [], undefined, 'prepared');
+  const groups = [...features.groups, ...prepared.groups];
+  assert.equal(features.total + prepared.total, 13);
+  assert.equal(new Set(groups.map(row => row.id)).size, 13);
+  assert.equal(features.groups.at(-1).id, 'SW12');
+  assert.equal(prepared.groups[0].id, 'SW13');
+  assert.ok(groups.every(row => row.verdict === 'BLOCKED'));
+  for (const fixture of ['features', 'prepared']) {
+    for (const malformed of [actual.cases.slice(0, 12), [...actual.cases.slice(0, 12), actual.cases[0]]]) {
+      assert.throws(() => writerCoverage({...actual, cases: malformed}, [], undefined, fixture), /writer_registry_ids/);
+    }
   }
+  assert.throws(() => writerCoverage(actual, [], undefined, 'invalid'), /writer_fixture/);
 });
 
 test('complete mapping needs all distinct repetitions and both restart phases', () => {
   const registry = complete(), rows = observations();
-  assert.equal(writerCoverage(registry, rows).verdict, 'PASS');
-  assert.equal(writerCoverage(registry, rows.filter(row => row.phase === 'before_restart')).verdict, 'FAIL');
-  assert.equal(writerCoverage(registry, rows.filter(row => row.case !== 'case_12')).groups[12].verdict, 'NOT_RUN');
+  const evaluate = selected => writerCoverage(registry, selected, undefined, 'features');
+  assert.equal(evaluate(rows).verdict, 'PASS');
+  assert.equal(evaluate(rows.filter(row => row.phase === 'before_restart')).verdict, 'FAIL');
+  assert.equal(evaluate(rows.filter(row => row.case !== 'case_11')).groups[11].verdict, 'NOT_RUN');
   rows[0].non_owner = false;
-  assert.equal(writerCoverage(registry, rows).groups[0].verdict, 'FAIL');
+  assert.equal(evaluate(rows).groups[0].verdict, 'FAIL');
 });
 
 test('partial assertions and journey-only evidence never complete missing barriers', () => {
   const registry = complete(), rows = observations();
+  const evaluate = journey => writerCoverage(registry, rows, journey, 'features');
   registry.cases[0].status = 'INCOMPLETE_NOT_EXECUTION_PASS';
   registry.cases[0].remaining = 'native publication barrier';
-  assert.equal(writerCoverage(registry, rows).groups[0].verdict, 'BLOCKED');
+  assert.equal(evaluate().groups[0].verdict, 'BLOCKED');
   registry.cases[1].required_assertions = [];
-  assert.equal(writerCoverage(registry, rows).groups[1].verdict, 'BLOCKED');
+  assert.equal(evaluate().groups[1].verdict, 'BLOCKED');
   registry.cases[2].required_assertions = [{case: 'restart', routing: 'journey', minimum_runs: 1, phases: []}];
   const journey = {steps: [{name: 'restart', verdict: 'PASS'}], verdict: 'FAIL'};
-  assert.equal(writerCoverage(registry, rows, journey).groups[2].verdict, 'FAIL');
+  assert.equal(evaluate(journey).groups[2].verdict, 'FAIL');
   journey.verdict = 'LOCAL_TWO_AM_JOURNEY_PASS';
-  assert.equal(writerCoverage(registry, rows, journey).groups[2].verdict, 'PASS');
-  assert.equal(writerCoverage(registry, rows, journey).verdict, 'FAIL');
+  assert.equal(evaluate(journey).groups[2].verdict, 'PASS');
+  assert.equal(evaluate(journey).verdict, 'FAIL');
+});
+
+test('prepared coverage requires both ingress steps and a completed prepared journey', async () => {
+  const registry = JSON.parse(await readFile(new URL('../writer-regressions.json', import.meta.url)));
+  const group = registry.cases.find(row => row.id === 'SW13');
+  const journey = {verdict: 'LOCAL_PREPARED_TWO_AM_PASS',
+    steps: group.required_assertions.map(row => ({name: row.case, verdict: 'PASS'}))};
+  const evaluate = () => writerCoverage(registry, [], journey, 'prepared');
+  assert.equal(evaluate().groups[0].verdict, 'BLOCKED');
+  group.status = 'COMPLETE';
+  assert.equal(evaluate().verdict, 'PASS');
+  journey.verdict = 'LOCAL_TWO_AM_JOURNEY_PASS';
+  assert.equal(evaluate().verdict, 'FAIL');
+  journey.verdict = 'LOCAL_PREPARED_TWO_AM_PASS';
+  journey.steps.pop();
+  assert.equal(evaluate().groups[0].verdict, 'NOT_RUN');
 });

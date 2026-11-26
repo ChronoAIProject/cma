@@ -2,11 +2,17 @@ import {coverage} from './coverage.mjs';
 
 const requireValue = (value, message) => { if (!value) throw Error(message); };
 const ids = Array.from({length: 13}, (_, index) => 'SW' + String(index + 1).padStart(2, '0'));
+const fixtures = {
+  features: {ids: ids.slice(0, 12), journeyPass: 'LOCAL_TWO_AM_JOURNEY_PASS'},
+  prepared: {ids: ['SW13'], journeyPass: 'LOCAL_PREPARED_TWO_AM_PASS'},
+};
 
 // The registry is reviewed source, never a result packet that can mark itself
 // complete. Native fixtures and image/browser observations must be mapped before
 // clearing a group's INCOMPLETE status. Missing groups cannot shrink the gate.
-export function writerCoverage(registry, results, journey) {
+export function writerCoverage(registry, results, journey, fixture) {
+  requireValue(Object.hasOwn(fixtures, fixture), 'writer_fixture');
+  const {ids: assignedIds, journeyPass} = fixtures[fixture];
   requireValue(registry.schema === 'multi-am-writer-regressions-v2', 'writer_registry_schema');
   requireValue(Array.isArray(registry.cases) && registry.cases.length === ids.length
     && registry.cases.map(row => row.id).sort().join(',') === ids.join(','), 'writer_registry_ids');
@@ -23,7 +29,7 @@ export function writerCoverage(registry, results, journey) {
       if (assertion.routing === 'journey') {
         const steps = journey?.steps?.filter(step => step.name === assertion.case) ?? [];
         return {case: assertion.case, verdict: !steps.length ? 'NOT_RUN'
-          : journey.verdict === 'LOCAL_TWO_AM_JOURNEY_PASS' && steps.length === 1
+          : journey.verdict === journeyPass && steps.length === 1
             && steps[0].verdict === 'PASS' ? 'PASS' : 'FAIL'};
       }
       const mapping = {...assertion, cases: [assertion.case]};
@@ -37,8 +43,10 @@ export function writerCoverage(registry, results, journey) {
     return {id: group.id, verdict, assertions,
       ...(incomplete ? {remaining: group.remaining || 'required_evidence_mapping_incomplete'} : {})};
   });
+  const assigned = groups.filter(group => assignedIds.includes(group.id));
   const counts = Object.fromEntries(['PASS', 'FAIL', 'BLOCKED', 'NOT_RUN']
-    .map(verdict => [verdict, groups.filter(row => row.verdict === verdict).length]));
+    .map(verdict => [verdict, assigned.filter(row => row.verdict === verdict).length]));
   return {schema: 'multi-am-writer-coverage-v1', requirements_sha256: registry.requirements_sha256,
-    verdict: counts.PASS === ids.length ? 'PASS' : 'FAIL', total: ids.length, counts, groups};
+    fixture, verdict: counts.PASS === assignedIds.length ? 'PASS' : 'FAIL',
+    total: assignedIds.length, counts, groups: assigned};
 }

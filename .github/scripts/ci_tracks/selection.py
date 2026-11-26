@@ -174,11 +174,14 @@ def determine_ci(root, event, event_name, repository):
         path in APPROVAL_CONTRACT_INPUTS or path.startswith(APPROVAL_CONTRACT_DIRECTORIES)
         for path in paths
     )
-    result['two_am_features'] = any(
+    pull = event.get('pull_request', {})
+    fixture_pr = event_name == 'pull_request' and not full and pull['head']['repo']['full_name'] == repository
+    verification = event_name in VERIFICATION_EVENTS and repository == 'ChronoAIProject/cma'
+    result['two_am_features'] = verification or (fixture_pr and any(
         path.startswith('.github/scripts/multi-am-features/')
         or path in {'.github/workflows/ci-two-am.yml', '.github/workflows/ci-pr-am.yml'}
         for path in paths
-    )
+    ))
     return result
 
 
