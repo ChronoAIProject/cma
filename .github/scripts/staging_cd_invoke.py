@@ -285,7 +285,7 @@ def deploy(env, masker, script_reader=private_script, runner=None,
                 profile = script.with_name("am_rollout_budget.py")
                 if not profile.is_symlink() and profile.is_file():
                     limit = STAGING_AM_RELEASE_TOTAL_SECONDS
-            request = private_document(release_set(receipts))
+            request = private_document(release_set(receipts), target=target)
             with path.open("x", encoding="utf-8") as stream:
                 os.chmod(path, 0o600)
                 stream.write(canonical(request))

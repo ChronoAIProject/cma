@@ -1,0 +1,111 @@
+name: Publish and promote protected staging Web
+
+on:
+  workflow_call:
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY:
+        required: true
+      CD_NYXID_CLIENT_ID:
+        required: true
+      CD_NYXID_CLIENT_SECRET:
+        required: true
+    inputs:
+      tasks:
+        required: true
+        type: string
+      publication_matrix:
+        required: true
+        type: string
+      infra_ref:
+        required: true
+        type: string
+      file_limit:
+        required: true
+        type: number
+      byte_limit:
+        required: true
+        type: number
+    outputs:
+      finalized:
+        value: ${{ jobs.protected.outputs.finalized }}
+      publish_result:
+        value: ${{ jobs.protected.outputs.publish_result }}
+      disposition:
+        value: ${{ jobs.protected.outputs.disposition }}
+      promotion:
+        value: ${{ jobs.protected.outputs.promotion }}
+
+permissions:
+  contents: read
+
+jobs:
+  raw:
+    name: Prepare raw Web archive
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'
+    concurrency:
+      group: cma-staging-web-release
+      queue: max
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      artifact: ${{ steps.archive.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+        timeout-minutes: 5
+      - name: Ensure registry transport
+        timeout-minutes: 10
+        env:
+          CD_COMPONENT: web
+        run: bash .github/scripts/staging_cd_transport.sh
+      - name: Build and seal raw Web
+        id: raw
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_COMPONENT: web
+          CD_TASKS: ${{ inputs.tasks }}
+          CD_WEB_CONTINUITY_RAW: 'true'
+        run: python3 -B .github/scripts/staging_cd_produce.py
+      - name: Retain exact raw Web handoff
+        id: archive
+        if: steps.raw.outputs.prepared == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: staging-web-raw-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cma-prepared-release
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+  protected:
+    name: Protect Web rollout
+    needs: raw
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: read
+      packages: write
+      deployments: read
+    uses: ./.github/workflows/staging-web-continuity-epoch.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+    with:
+      tasks: ${{ inputs.tasks }}
+      publication_matrix: ${{ inputs.publication_matrix }}
+      infra_ref: ${{ inputs.infra_ref }}
+      file_limit: ${{ inputs.file_limit }}
+      byte_limit: ${{ inputs.byte_limit }}
+      archive: ${{ needs.raw.outputs.artifact }}

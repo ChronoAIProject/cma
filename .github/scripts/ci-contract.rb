@@ -202,7 +202,8 @@ module CIContract
       end
     end
     publications = %w[web am eg runtime runtime_omarchy].map { |component| "release_#{component}" }
-    allowed = %w[publish:images staging-release:publish omarchy-package-bundle:bundle] + publications.map { |id| "staging-cd:#{id}" }
+    allowed = %w[publish:images staging-release:publish omarchy-package-bundle:bundle staging-cd:protected_web
+      staging-web-continuity:protected staging-web-continuity-epoch:release] + publications.map { |id| "staging-cd:#{id}" }
     require!(grants.sort == allowed.sort,
       "only the reviewed release entry points may grant package write")
     omarchy_package_bundle_authority(inputs.fetch("omarchy-package-bundle"))
@@ -214,10 +215,32 @@ module CIContract
       require!(staging.dig("jobs", id, "uses") == "./.github/workflows/staging-release.yml",
         "staging package authority must delegate to the reviewed publisher")
     end
+    check_web_publication_authority(inputs)
     writer = inputs.fetch("staging-release").fetch("jobs").fetch("publish")
     require!(writer["permissions"] == { "contents" => "read", "pull-requests" => "read", "actions" => "read", "packages" => "write" } &&
       writer["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'",
       "staging publisher authority changed")
+  end
+
+  def self.check_web_publication_authority(inputs)
+    staging = inputs.fetch("staging-cd").fetch("jobs")
+    entry = staging.fetch("protected_web")
+    wrapper = inputs.fetch("staging-web-continuity")
+    epoch = inputs.fetch("staging-web-continuity-epoch")
+    [wrapper, epoch].each do |workflow|
+      require!((workflow["on"] || workflow[true]).keys == ["workflow_call"], "protected Web cannot run directly")
+    end
+    parent = wrapper.dig("jobs", "protected")
+    release = epoch.dig("jobs", "release")
+    require!(entry["uses"] == "./.github/workflows/staging-web-continuity.yml" && entry["name"] == "Publish protected Web" &&
+      entry["if"].start_with?("vars.CMA_STAGING_WEB_CONTINUITY == 'true' && ") && !entry.key?("concurrency") &&
+      %w[release_web promote_web].all? { |id| staging[id]["if"].start_with?("vars.CMA_STAGING_WEB_CONTINUITY != 'true' && ") } &&
+      parent["uses"] == "./.github/workflows/staging-web-continuity-epoch.yml" &&
+      parent["concurrency"] == { "group" => "cma-staging-deploy-set", "queue" => "max", "cancel-in-progress" => false } &&
+      parent["needs"] == "raw" && release["needs"] == "observe" &&
+      release["uses"] == "./.github/workflows/staging-release.yml" &&
+      release.dig("with", "component") == "web" && release.dig("with", "protected_web") == true &&
+      !release.key?("secrets"), "protected Web package authority must delegate inside its writer lock")
   end
 
   BUNDLE_ABSENT = 'python3 -B .github/scripts/omarchy-package-bundle.py absent --repository "$REPOSITORY" --tag "$TAG"'

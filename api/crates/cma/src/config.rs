@@ -55,6 +55,7 @@ mod shell_settings;
 pub(crate) use relay_capacity::RelayCapacityConfig;
 pub(crate) use shell_settings::BackendFreeConfig;
 
+mod feature_switches;
 mod features;
 mod quiet_output;
 pub(crate) mod task_audit;
@@ -236,8 +237,9 @@ impl StartupConfig {
     }
 
     pub(crate) fn from_lookup(
-        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+        lookup: impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
+        let mut lookup = feature_switches::with_bundle(lookup)?;
         match runtime::RuntimeMode::from_lookup(&mut lookup)? {
             runtime::RuntimeMode::Execution(provider) => Config::with_provider(lookup, provider)
                 .map(|config| Self::Execution(Box::new(config))),
@@ -272,14 +274,14 @@ impl Config {
 
     #[cfg(test)]
     fn from_lookup(
-        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+        lookup: impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
-        let runtime::RuntimeMode::Execution(provider) =
-            runtime::RuntimeMode::from_lookup(&mut lookup)?
-        else {
-            return Err("an execution backend is required for runtime configuration".into());
-        };
-        Self::with_provider(lookup, provider)
+        match StartupConfig::from_lookup(lookup)? {
+            StartupConfig::Execution(config) => Ok(*config),
+            StartupConfig::BackendFree(_) => {
+                Err("an execution backend is required for runtime configuration".into())
+            }
+        }
     }
 
     fn with_provider(
