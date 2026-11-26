@@ -239,6 +239,20 @@ impl AgentWorkState {
         if holder.trim().is_empty() || expires_at.as_str() <= now || !self.is_due(now) {
             return Err(SandboxModelError::invalid_value("agent.work.lease"));
         }
+        // This step only observes parents or publishes a fenced Worktree base.
+        // A failed publication must become discoverable even if requeue also fails.
+        let expires_at = if self.step == AgentWorkStep::WaitForWorkspace {
+            use std::time::{Duration, SystemTime};
+            const WORKSPACE_WAIT_LEASE: Duration = Duration::from_secs(30);
+            let claimed_at = crate::seconds_from_rfc3339(now)
+                .ok_or_else(|| SandboxModelError::invalid_value("agent.work.lease"))?;
+            let limit = crate::rfc3339_at(
+                SystemTime::UNIX_EPOCH + Duration::from_secs(claimed_at) + WORKSPACE_WAIT_LEASE,
+            );
+            expires_at.min(limit)
+        } else {
+            expires_at
+        };
         let fence = self.next_fence;
         self.next_fence = fence
             .checked_add(1)
