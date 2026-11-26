@@ -6,6 +6,7 @@ const DEFAULT_RETRY: Duration = Duration::from_secs(30);
 #[derive(Clone)]
 pub(crate) struct WorkspaceWorkerConfig {
     pub renewable_work: bool,
+    pub prepare_observations: bool,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
@@ -17,6 +18,7 @@ impl WorkspaceWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
             renewable_work: false,
+            prepare_observations: false,
             execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
@@ -31,6 +33,11 @@ impl WorkspaceWorkerConfig {
             self.lease_duration =
                 Duration::from_secs(layer2_core::sandbox::store::WORK_LEASE_SECONDS);
         }
+        self
+    }
+
+    pub fn with_prepare_observations(mut self, enabled: bool) -> Self {
+        self.prepare_observations = enabled;
         self
     }
 
