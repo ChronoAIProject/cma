@@ -124,19 +124,22 @@ impl FrameOperation {
     ) -> Result<Admission, ExecutionError> {
         match &self.payload {
             Some((payload, answer)) => {
-                let admitted = store
+                let reason = match store
                     .admit_keyed_answer(
                         plan,
                         target,
                         (self.id.clone(), payload.clone(), Some(answer)),
                     )
-                    .await?;
-                if matches!(admitted, Admission::Unknown) {
-                    store
-                        .recover_answer(plan, target, &self.id, payload)
-                        .await?;
-                }
-                Ok(admitted)
+                    .await
+                {
+                    Err(ExecutionError::OperationLimit) => "reply_operation_limit",
+                    Ok(Admission::Unknown) => "accepted_answer_reply_guard_uncertain",
+                    result => return result,
+                };
+                store
+                    .refuse_answer(plan, target, &self.id, payload, answer, reason)
+                    .await
+                    .map(Admission::Replay)
             }
             None => {
                 store

@@ -35,7 +35,7 @@ async fn conflicting_first_bindings_cannot_make_the_winning_answer_unreadable() 
             target,
             (operation.clone(), stream_digest.clone(), Some(&stream))
         ),
-        store.refuse_delayed_answer(
+        store.refuse_answer(
             &setup.plan,
             target,
             &operation,
@@ -250,7 +250,7 @@ async fn delayed_refusal_is_terminal_for_both_aliases_before_reservation() {
     ));
     for refusal in ["reply_operation_limit", "delayed_reply_authority_refused"] {
         let receipt = store
-            .refuse_delayed_answer(&setup.plan, target, &operation, &digest, &answer, refusal)
+            .refuse_answer(&setup.plan, target, &operation, &digest, &answer, refusal)
             .await
             .unwrap();
         assert_eq!(
@@ -312,7 +312,7 @@ async fn delayed_refusal_is_terminal_for_both_aliases_before_reservation() {
     assert_eq!(operation, other_operation);
     assert!(matches!(
         store
-            .refuse_delayed_answer(
+            .refuse_answer(
                 &setup.plan,
                 target,
                 &other_operation,
@@ -362,7 +362,7 @@ async fn accepted_answer_aliases_share_the_saved_operation_in_both_orders() {
         };
         assert!(matches!(
             store
-                .refuse_delayed_answer(
+                .refuse_answer(
                     &setup.plan,
                     setup.target(),
                     &key.0,
@@ -405,7 +405,7 @@ async fn accepted_answer_aliases_share_the_saved_operation_in_both_orders() {
             .unwrap();
         assert_eq!(
             store
-                .refuse_delayed_answer(
+                .refuse_answer(
                     &setup.plan,
                     setup.target(),
                     &key.0,

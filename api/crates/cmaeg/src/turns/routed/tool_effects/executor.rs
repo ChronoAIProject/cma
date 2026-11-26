@@ -314,7 +314,7 @@ impl Handler {
         let answer = root.answer.as_ref().ok_or(ExecutionError::Corrupt)?;
         let replies = ReplyStore(self.0.journal.clone(), Some(token.clone()));
         let receipt = match replies
-            .refuse_delayed_answer(
+            .refuse_answer(
                 plan,
                 target,
                 &root.operation,

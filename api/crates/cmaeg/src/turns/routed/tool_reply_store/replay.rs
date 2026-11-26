@@ -23,15 +23,15 @@ impl ReplyStore {
         content_hash: &str,
     ) -> Result<Option<StoredReceipt>, ExecutionError> {
         let record = self.load(plan, target).await?;
-        if !record.operation_keys.contains(operation) {
-            return Ok(None);
-        }
         let ops = OperationStore(self.0.clone());
         if let Some(receipt) = ops
             .retained_receipt(&record, operation, content_hash)
             .await?
         {
             return Ok(Some(receipt));
+        }
+        if !record.operation_keys.contains(operation) {
+            return Ok(None);
         }
         let attempt = record.keyed_attempt(operation)?;
         if attempt.content_hash.as_deref() != Some(content_hash) {

@@ -280,6 +280,54 @@ impl ReplyStore {
         self.admit_keyed_inner(plan, target, key, Kind::Automatic, true, false)
             .await
     }
+
+    pub async fn refuse_answer(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        operation: &str,
+        content_hash: &str,
+        answer: &AcceptedAnswerIdentity,
+        reason: &str,
+    ) -> Result<IntentReceipt, ExecutionError> {
+        let record = self.load(plan, target).await?;
+        self.0
+            .bind_answer_payload(&self.1, &record, operation, content_hash, answer)
+            .await?;
+        let operations = OperationStore(self.0.clone());
+        if let Some(receipt) = operations.lookup(&record, operation, content_hash).await? {
+            return Ok(receipt);
+        }
+        let receipt = if record.operation_keys.contains(operation) {
+            let attempt = record.keyed_attempt(operation)?;
+            if attempt.content_hash.as_deref() != Some(content_hash)
+                || attempt.answer.as_ref() != Some(answer)
+            {
+                return Err(ExecutionError::IdempotencyConflict);
+            }
+            operations
+                .recover_answer(&self.1, &record, attempt)
+                .await?
+                .ok_or(ExecutionError::Corrupt)?
+        } else {
+            let refusal = Attempt {
+                claim: uuid::Uuid::new_v4().to_string(),
+                operation: operation.into(),
+                content_hash: Some(content_hash.into()),
+                until: (self.0.clock)(),
+                receipt: None,
+                answer: Some(answer.clone()),
+            };
+            operations
+                .close_unprepared(&self.1, &record, &refusal, reason)
+                .await?
+        };
+        self.0
+            .receipts(operation, &record.owner, record.retained_until)
+            .load(&receipt)
+            .await
+            .map_err(|_| ExecutionError::Unavailable)
+    }
     async fn admit_keyed_inner(
         &self,
         plan: &AdmittedPlan,

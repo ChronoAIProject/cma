@@ -152,6 +152,8 @@ mod builder_tests;
 #[cfg(test)]
 mod executor_activity_tests;
 #[cfg(test)]
+mod executor_answer_tests;
+#[cfg(test)]
 pub(crate) mod executor_tests;
 #[cfg(test)]
 mod expiry_tests;
