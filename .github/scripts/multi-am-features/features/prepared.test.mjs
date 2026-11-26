@@ -51,6 +51,7 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
       assert.equal(agentId, 'fixture-agent');
       actions.push('reply-' + am);
       return {effects, ready_request_sha256: ready ? (repeatRequest ? 'b' : 'c').repeat(64) : null,
+        send_request_sha256: 'd'.repeat(64),
         answer_sha256: 'a'.repeat(64)};
     },
   })};
@@ -79,6 +80,7 @@ test('cold comparison and two ingress checks join the exact prepared reservation
   assert.equal(context.results[1].owner_epoch, 1);
   assert.equal(context.results[1].request_sha256.browser_starting, 'b'.repeat(64));
   assert.equal(context.results[1].request_sha256.browser_ready, 'c'.repeat(64));
+  assert.equal(context.results[1].request_sha256.browser_send, 'd'.repeat(64));
   assert.match(context.results[1].request_sha256.admission, /^[a-f0-9]{64}$/);
   assert.deepEqual(context.results[1].parent_schema_versions, [4, 3, 1]);
 });

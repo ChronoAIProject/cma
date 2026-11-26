@@ -106,18 +106,29 @@ class PreparedAgentPage {
     if (ready?.error) throw ready.error;
     check(ready?.response, 'prepared_browser_ready_read_unproven');
     const readyRequest = await requestHash(ready.response);
+    let sendRequest;
     await adapter.prepareTurn({caseId, marker});
     await withRestoration(async () => {
       const composer = this.page.getByRole('textbox', {name: 'Message', exact: true});
       await composer.fill(input, {timeout: 15000});
       await adapter.releaseTurn({caseId});
-      await this.page.getByRole('button', {name: 'Send message', exact: true}).click({timeout: 15000});
+      const [submitted] = await Promise.all([
+        this.page.waitForResponse(response => {
+          const request = response.request();
+          return request.method() === 'POST' && new URL(response.url()).pathname === '/api/v1/agui/run'
+            && request.postDataJSON()?.threadId === agentId;
+        }, {timeout: 30000}),
+        this.page.getByRole('button', {name: 'Send message', exact: true}).click({timeout: 15000}),
+      ]);
+      check(submitted.ok(), 'prepared_browser_send_refused');
+      sendRequest = await requestHash(submitted);
       await this.page.getByText(answer, {exact: true}).waitFor({state: 'visible', timeout: 90000});
       const settled = await poll(() => adapter.oracle({caseId}), value => value.active_streams === 0,
         {timeout: 20000, code: 'prepared_browser_model_still_active'});
       assertOracle(settled, caseId, 1);
     }, () => adapter.releaseTurn({caseId}));
-    return {answer_sha256: hash(answer), effects: 1, ready_request_sha256: readyRequest};
+    return {answer_sha256: hash(answer), effects: 1, ready_request_sha256: readyRequest,
+      send_request_sha256: sendRequest};
   }
 }
 

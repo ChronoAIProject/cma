@@ -62,14 +62,15 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       await openBoth(record);
       const browserReply = await page.sendAndRead(record.agentId, adapter);
       check(browserReply?.effects === 1 && isDigest(browserReply.ready_request_sha256)
-        && isDigest(browserReply.answer_sha256),
+        && isDigest(browserReply.send_request_sha256) && isDigest(browserReply.answer_sha256),
         'prepared_browser_reply_unproven');
       const requests = {
         admission: hash(record.admissionRequest),
         browser_starting: browserOpen.started,
         browser_ready: browserReply.ready_request_sha256,
+        browser_send: browserReply.send_request_sha256,
       };
-      check(new Set(Object.values(requests)).size === 3, 'prepared_request_attribution_reused');
+      check(new Set(Object.values(requests)).size === Object.keys(requests).length, 'prepared_request_attribution_reused');
       const finalOwner = assertOwner(await adapter.ownerOf({agentId: record.agentId}), record.agentId);
       check(owner.instance_id && owner.instance_id === finalOwner.instance_id && owner.pod_uid === finalOwner.pod_uid
         && owner.epoch === finalOwner.epoch && owner.am === finalOwner.am, 'prepared_browser_owner_changed');
