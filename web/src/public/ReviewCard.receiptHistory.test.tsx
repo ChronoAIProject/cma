@@ -77,7 +77,7 @@ it.each([
     expect(calls[2]?.[0]).toBe(calls[0]?.[0]);
     expect(calls[2]?.[1]).toEqual(calls[0]?.[1]);
     expect(calls[2]?.[2].idempotencyKey).toBe(calls[0]?.[2].idempotencyKey);
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
   },
 );
 
@@ -123,7 +123,7 @@ it('checks the Launch on RecoveryRequired without replacing the unresolved comma
   await waitFor(() => expect(client.requests.start).toHaveBeenCalledTimes(3));
   const calls = vi.mocked(client.requests.start).mock.calls;
   expect(calls[2]).toEqual(calls[0]);
-  expect(client.requests.createOrResume).not.toHaveBeenCalled();
+  expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
 });
 
 it('control: an initial definite refusal permits a fresh explicit command', async () => {
@@ -225,7 +225,7 @@ it.each([401, 403])(
     expect(sent[1]).toEqual(sent[0]);
     expect(sent[2]?.body).toEqual(sent[0]?.body);
     expect(sent[0]?.key).toBeTruthy();
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
     expect(sent[2]?.key).toBe(sent[0]?.key);
   },
 );

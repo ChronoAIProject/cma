@@ -167,6 +167,28 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertEqual(len(server.refs), 4)
 
+    def test_lagging_develop_advertisement_cannot_complete_allocation_without_work(self):
+        current = []
+
+        def command(server, args, kwargs, _advance):
+            if args[1] == "ls-remote":
+                if not current:
+                    older = "f" * 40
+                    head = server.history().head
+                    current.append(DevelopHistory(head, [head, older]))
+                    server._history = DevelopHistory(older, [older])
+                else:
+                    server._history = current[0]
+            return server.command(args, **kwargs)
+
+        status, server, first, output, events, _ = self.execute(command=command)
+        self.assertEqual(status, 0)
+        self.assertEqual(events, ["readback", "readback", "matrix", "changed"])
+        self.assertEqual(retries(output), ["RETRY allocation reason=DEVELOP_ADVERTISEMENT_UNSETTLED attempt=2/2 wait=10.0s"])
+        self.assertFalse(first.loaded)
+        self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
+        self.assertEqual({item["source"] for item in self.stores[1].planned}, {server.sources[-1]})
+
     def test_a_listing_torn_by_a_concurrent_push_is_read_again_and_succeeds(self):
         # git ls-remote is not an atomic snapshot. While another job's atomic
         # push lands, one listing can show its claim but not its reservation.
@@ -390,19 +412,25 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertEqual((allocation.ALLOCATION_ATTEMPTS, worst), (2, 260))
         self.assertLessEqual(2 * worst, timeout)
 
-    def test_replan_keeps_controller_proof_for_current_final(self):
+    def test_replan_reloads_controller_proof_for_current_final(self):
         head = "a" * 40
         queue = {"head": head, "event_source": head, "changes": []}
         proofs = {"web": {"writer": head, "stamp": "web " + "a" * 64}}
         env = {"GH_TOKEN": "fixture", "GITHUB_RUN_ID": "999", "GITHUB_RUN_ATTEMPT": "1",
-               "CD_CONTROLLER_PROOFS": json.dumps(proofs)}
+               "CD_STAGING_ENVIRONMENT": "staging"}
         first, second = Mock(), Mock()
         first.commit.side_effect = AllocationConflict()
+        seen = []
+
+        def allocate_queue(*args, read_proofs, **kwargs):
+            seen.append(read_proofs())
+            return {"include": []}
+
         with patch.object(allocation, "Reservations", side_effect=[first, second]), \
-                patch.object(allocation, "GitHub"), patch.object(allocation, "allocate_queue",
-                        return_value={"include": []}) as plan:
+                patch.object(allocation, "GitHub"), patch.object(allocation, "allocate_queue", side_effect=allocate_queue), \
+                patch.object(allocation, "available_proofs", side_effect=[{}, proofs]):
             self.assertEqual(allocation.allocate_current(queue, env, Mock(), Mock()), {"include": []})
-        self.assertEqual([call.kwargs["proofs"] for call in plan.call_args_list], [proofs, proofs])
+        self.assertEqual(seen, [{}, proofs])
         for snapshot in (first, second):
             snapshot.load.assert_called_once_with(event_source=head)
             snapshot.commit.assert_called_once_with()

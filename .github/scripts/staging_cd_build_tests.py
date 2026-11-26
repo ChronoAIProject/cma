@@ -30,7 +30,7 @@ class BuildTests(unittest.TestCase):
         path.write_bytes(manifest.read_bytes())
         dockerfile = root / "web/Dockerfile"
         dockerfile.parent.mkdir()
-        dockerfile.write_text("FROM scratch AS runtime\n")
+        dockerfile.write_text("FROM scratch AS runtime\nARG VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED=false\n")
         value = json.loads(path.read_text())
         value["cma-web"]["dockerfile_sha256"] = hashlib.sha256(dockerfile.read_bytes()).hexdigest()
         path.write_text(json.dumps(value))
@@ -44,6 +44,7 @@ class BuildTests(unittest.TestCase):
             first, _, args = identity(reservation, root)
             self.assertEqual(args["CHRONO_BUILD"], "0.10.1")
             self.assertEqual(args["CHRONO_BUILD_SHA"], "a" * 40)
+            self.assertEqual(args["VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED"], "true")
             self.assertEqual(args["OS_SECURITY_REFRESH"], "a" * 40, "non-runtime images keep a per-build refresh")
             (root / "web/Dockerfile").write_text("FROM scratch AS runtime\nUSER 101\n")
             with self.assertRaises(Refusal):
@@ -54,6 +55,7 @@ class BuildTests(unittest.TestCase):
             manifest.write_text(json.dumps(value))
             second, _, _ = identity(reservation, root)
             self.assertNotEqual(first["build"], second["build"])
+            self.assertNotIn("VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED", identity(reservation, root)[2])
             (root / ".dockerignore").write_text("")
             with self.assertRaises(Refusal):
                 recipe(root, "web")
@@ -75,6 +77,7 @@ class BuildTests(unittest.TestCase):
             self.assertEqual(run.call_count, 1)
             args = run.call_args.args[0]
             self.assertIn("CHRONO_BUILD=0.10.1", args)
+            self.assertIn("VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED=true", args)
             self.assertIn("--provenance=false", args)
             self.assertIn(IDENTITY_LABEL + "=" + canonical(release), args)
             with patch.dict(os.environ, {"GH_TOKEN": "fixture", "NYXID_CHRONO_CD_KEY": "fixture"}), \
@@ -132,6 +135,7 @@ class BuildTests(unittest.TestCase):
                 for reservation in (first, second):
                     _release, _value, arguments = identity(reservation, root)
                     self.assertEqual(arguments["OS_SECURITY_REFRESH"], "20261121T100000Z")
+                    self.assertNotIn("VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED", arguments)
 
     def test_runtime_build_refuses_a_missing_or_ambiguous_snapshot_pin(self):
         pins = ("", "ARG DEBIAN_SNAPSHOT=latest\n",
@@ -170,7 +174,8 @@ class BuildTests(unittest.TestCase):
             "org.opencontainers.image.version": expected["version"]}}}
         self.assertTrue(inspect(Path("fixture.tar"), expected, Mock(side_effect=[manifest, json.dumps(config).encode()])).startswith("sha256:"))
         for mutated in (dict(config, architecture="arm64"), dict(config, config=dict(config["config"], User="0")),
-                        dict(config, config=dict(config["config"], Labels={}))):
+                        dict(config, config=dict(config["config"], Labels={})),
+                        dict(config, config=dict(config["config"], Labels=None)), ["invalid"]):
             with self.assertRaises(Refusal):
                 inspect(Path("fixture.tar"), expected, Mock(side_effect=[manifest, json.dumps(mutated).encode()]))
 

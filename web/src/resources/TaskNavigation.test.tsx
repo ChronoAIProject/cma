@@ -146,7 +146,10 @@ it.each([403, 404])('withdraws a row refused after the inventory read (%s)', asy
       if (path === '/api/v1/agents/provenance')
         return Response.json({ items: [task, { ...task, agent_id: 'agt_shared_z' }] });
       if (path === '/api/v1/agents/agt_shared_task')
-        return Response.json({ code: 'resource_not_found', detail: 'Agent unavailable' }, { status });
+        return Response.json(
+          { code: 'resource_not_found', detail: 'Agent unavailable' },
+          { status },
+        );
       if (path === '/api/v1/agents/agt_shared_z')
         return Response.json({
           access: 'shared',

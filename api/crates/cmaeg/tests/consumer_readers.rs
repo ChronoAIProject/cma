@@ -39,6 +39,14 @@ const ALLOWED: &[(&str, &str)] = &[
         "storage: restore validates the stored profile digest",
     ),
     (
+        "channels/profile_revision.rs",
+        "management: baseline and publish retained revisions on the stored binding",
+    ),
+    (
+        "channels/profile_assignment_tests.rs",
+        "storage fixtures: publish and retain synthetic worker revisions",
+    ),
+    (
         "connections/",
         "connection flows stay default-only by design",
     ),

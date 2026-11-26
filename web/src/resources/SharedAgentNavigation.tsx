@@ -10,12 +10,12 @@ import { ResourceLink } from './ResourceLink';
 import { Button } from '../ui/Button';
 import { creationLabels } from '../agent/provenance';
 import { TreeRow } from '../shell/TreeRow';
+import '../shell/Tree.css';
 import { keyboardNavigation } from '../shell/treePresentation';
 import { taskStateMeta, taskStatus, taskWords } from '../shell/taskStatus';
 import { taskTitle } from '../shell/taskTitle';
 import { IconAgentPresetOutline16 } from '../ui/icons';
 import { channelLabel } from './channelLabels';
-import './SharedAgentNavigation.css';
 
 /** Narrow grants are listed as Agents, without fetching unauthorized parents. */
 export function SharedAgentNavigation({

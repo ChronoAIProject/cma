@@ -14,6 +14,25 @@ const validate = (proof) =>
     providerRevision: "a".repeat(40),
   });
 
+for (const version of ['v1', 'v2']) test(`accepts ${version} Launch admission without changing connection proof requirements`, () => {
+  for (const caseId of Object.keys(connectionCaseTitles)) {
+    const proof = connectionProof(caseId);
+    proof.commands[0].path = `/api/${version}/triggers/public/trg_local/launches`;
+    assert.equal(validate(proof).caseId, caseId);
+  }
+});
+
+for (const path of [
+  '/api/v3/triggers/public/trg_local/launches',
+  '/api/v2/triggers/public/trg_local/launches/extra',
+  '/api/v2/triggers/public/trg_local/launches?extra=true',
+  '/api/v2/launches/lch_local/start',
+]) test(`refuses unsupported journey command ${path}`, () => {
+  const proof = connectionProof();
+  proof.commands[0].path = path;
+  assert.throws(() => validate(proof));
+});
+
 test("validates each original connection case with separate browser and provider evidence", () => {
   for (const caseId of Object.keys(connectionCaseTitles))
     assert.equal(validate(connectionProof(caseId)).caseId, caseId);

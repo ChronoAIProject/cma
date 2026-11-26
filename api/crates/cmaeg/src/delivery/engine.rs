@@ -127,7 +127,8 @@ async fn run(
                     &message_ref.event_id,
                     message_ref.consumer.as_ref(),
                 ),
-                DeliveryCommand::StreamOutcome { turn, .. } => {
+                DeliveryCommand::StreamOutcome { turn, .. }
+                | DeliveryCommand::RetireStream { turn } => {
                     // The worker checks this identity against the authenticated EventRef
                     // before admitting any state or transport effect.
                     (

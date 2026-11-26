@@ -69,7 +69,7 @@ pub use pool::{
 };
 pub use pool::{NativeHomeVolumes, NativePoolHomeOrigin};
 pub use pool::{NativePoolCleanup, NativePoolMember};
-pub use pool::{NativePoolConfiguration, NativePoolControl, NativePoolTarget};
+pub use pool::{NativePoolConfiguration, NativePoolControl, NativePoolDrain, NativePoolTarget};
 pub(crate) use pool::{NATIVE_HOME_ANNOTATION, NATIVE_HOME_REQUEST_LABEL};
 pub use runtime_stream::RuntimeStream;
 pub(crate) use runtime_stream::RuntimeStreamKind;

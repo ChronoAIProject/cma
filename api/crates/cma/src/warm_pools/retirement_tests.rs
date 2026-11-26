@@ -49,7 +49,7 @@ async fn late_allocation_after_provider_marker_prevents_drain_and_definition_rem
 }
 
 #[tokio::test]
-async fn pending_allocation_prevents_admission_marker_or_any_provider_mutation() {
+async fn pending_allocation_prevents_both_retirement_markers() {
     let (store, provider) = fixture(&[true]);
     reconcile(&store, &provider).await;
     assert_eq!(*store.calls.lock().unwrap(), ["drain-scan", "finish:false"]);
@@ -211,7 +211,7 @@ async fn lost_binding_ack_preserves_retirement_marker_and_reuses_binding() {
         [
             "drain-scan",
             "persist-retiring",
-            "configure:0",
+            "inventory",
             "persist-binding",
             "finish:false",
         ]

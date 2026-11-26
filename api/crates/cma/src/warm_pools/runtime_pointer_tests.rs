@@ -201,6 +201,9 @@ impl Fixture {
 #[path = "runtime_pointer_tests/mongo.rs"]
 mod mongo;
 
+#[path = "runtime_pointer_tests/fixed_startup.rs"]
+mod fixed_startup;
+
 #[path = "runtime_pointer_tests/released_source.rs"]
 pub(crate) mod released_source;
 #[path = "runtime_pointer_tests/shared_consumer_tests.rs"]

@@ -130,14 +130,14 @@ class LayerTests(unittest.TestCase):
                 api.request.assert_not_called()
         self.assertEqual(self.check(Mock(), component=PRIVATE), [])
 
-    def test_only_a_develop_push_with_the_cache_runtime_exports_layers(self):
+    def test_legacy_remote_layer_exports_are_disabled(self):
         from staging_cd_build_cache import BuildCache
         with tempfile.TemporaryDirectory() as directory:
             base = dict(DEVELOP, GITHUB_SHA="a" * 40, GITHUB_RUN_ID="1", GITHUB_RUN_ATTEMPT="1",
                         CD_COMPONENT="runtime", RUNNER_TEMP=directory)
             runtime = {"ACTIONS_RUNTIME_TOKEN": "synthetic-runtime", "ACTIONS_RESULTS_URL": "https://example.invalid"}
             root = Path(directory)
-            self.assertIs(BuildCache(root, dict(base, **runtime), root, "runtime").exports_layers(), True)
+            self.assertIs(BuildCache(root, dict(base, **runtime), root, "runtime").exports_layers(), False)
             self.assertIs(BuildCache(root, base, root, "runtime").exports_layers(), False)
             cache = BuildCache(root, dict(base, **runtime), root, "runtime")
             cache.env = dict(cache.env, GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/12/merge")

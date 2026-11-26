@@ -95,6 +95,11 @@ it.each([
     view.rerender(<Composer {...current} responseControls="available" />);
     expect(stop).toBeEnabled();
     expect(screen.getByText('Esc to stop')).toBeVisible();
+    expect(stop).toHaveAccessibleDescription('Esc to stop Running Sandbox commands may continue.');
+    expect(stop).toHaveAttribute(
+      'title',
+      'Stop response (Esc). Running Sandbox commands may continue.',
+    );
     await act(async () => fireEvent.keyDown(field, { key: 'Escape' }));
     expect(current.onStop).toHaveBeenCalledOnce();
     view.rerender(<Composer {...current} running={false} status="ready" />);

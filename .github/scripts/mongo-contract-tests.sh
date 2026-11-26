@@ -92,7 +92,7 @@ nextest_contracts() {
   # Process children need their parent's request/database; their parents invoke
   # them explicitly. Desktop latency is a separate matched-measurement fixture.
   nextest_build "$@" --run-ignored only \
-    -E "$selection_filter & not test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure) & not test(=agent_manager::relay::tests::mongo::preferences::process_recovery::child::preferences_replica_child) & not test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors) & not test(=store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison) & not test(=store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration) & not test(=store::usage_reports::tests::hotfix_matrix::native_usage_hotfix_full_report_six_case_matrix) & not test(store::migrations::tests::segments_runtime::) & not test(=sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child) & not test(=store::sandbox_sessions::exclusive::process_tests::desktop_claim_child) & not test(=store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_disabled_services_and_ownerless_receiver_refuse_new_streams) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::retained_legacy_rows_block_until_close_or_expiry_and_cannot_release_successor) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::measurements::matched_public_desktop_connect_windows) & not test(=store::sandbox_mongo_integration_tests::command_ledger_tests::execution_tests::stale_turn_tests::native_stop_trace::native_stop_trace_recorder_ack_matches_a_fresh_checkpoint) & ($suite_filter)" || contract_failure "$?"
+    -E "$selection_filter & not test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure) & not test(=agent_manager::relay::tests::mongo::preferences::process_recovery::child::preferences_replica_child) & not test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors) & not test(=store::bindings::reset_tests::gateway_reset_tests::profile_reset_receipt_replays_after_a_later_channel_revision) & not test(=store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison) & not test(=store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration) & not test(=store::usage_reports::tests::hotfix_matrix::native_usage_hotfix_full_report_six_case_matrix) & not test(store::migrations::tests::segments_runtime::) & not test(=sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child) & not test(=store::sandbox_sessions::exclusive::process_tests::desktop_claim_child) & not test(=store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_disabled_services_and_ownerless_receiver_refuse_new_streams) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::retained_legacy_rows_block_until_close_or_expiry_and_cannot_release_successor) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::measurements::matched_public_desktop_connect_windows) & not test(=store::sandbox_mongo_integration_tests::command_ledger_tests::execution_tests::stale_turn_tests::native_stop_trace::native_stop_trace_recorder_ack_matches_a_fresh_checkpoint) & not test(=store::agent_log_segments::active_proof::prepare::tests::active_proof_operator_cli_uses_generated_isolated_role) & ($suite_filter)" || contract_failure "$?"
 }
 if [[ $# == 0 || ( $# == 2 && "$1" == '--shard' ) ]]; then
   exec python3 "$script_directory/mongo-contract-partitions.py" "${BASH_SOURCE[0]}" "$@"
@@ -218,20 +218,67 @@ done
 docker exec "$contract_name" mongosh --quiet --eval \
   'rs.initiate({_id:"cma_ci",members:[{_id:0,host:"localhost:27017"}]})' >/dev/null
 readiness_deadline=$((SECONDS + 60))
-until docker exec "$contract_name" mongosh --quiet --eval \
-  'if (!db.hello().isWritablePrimary) quit(1)' >/dev/null 2>&1; do
+until mongo_server=$(docker exec "$contract_name" mongosh --quiet --eval \
+  'const hello = db.hello(); if (!hello.isWritablePrimary) quit(1); print(hello.topologyVersion.processId.toHexString(), hello.localTime.getTime())' 2>/dev/null); do
   (( SECONDS < readiness_deadline )) || exit 1
   sleep 0.25
 done
+[[ "$mongo_server" =~ ^([0-9a-f]{24})\ ([0-9]{10,16})$ ]] || exit 1
+mongo_process=${BASH_REMATCH[1]}
+mongo_unix_ms=${BASH_REMATCH[2]}
 endpoint=$(docker port "$contract_name" 27017/tcp)
 [[ "$endpoint" =~ ^127\.0\.0\.1:[0-9]+$ ]] || exit 1
 export CHRONO_TEST_MONGODB_URI="mongodb://${endpoint}/?directConnection=true&replicaSet=cma_ci"
 export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
+partition_name=${partition:-$selection}
+shard=${CMA_MONGO_COORDINATOR_SHARD:-standalone}
+[[ "$shard" =~ ^([1-8]/8|all|isolated|standalone)$ ]] || shard=standalone
+python3 -B - "$repo_root" "$contract_suffix" "$mongo_process" "$mongo_unix_ms" "$partition_name" "$shard" "$mongo_cpus" <<'PY'
+from hashlib import sha256
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+
+root, fixture, process, mongo_time, partition, shard, cpus = sys.argv[1:]
+host_time = time.time_ns() // 1_000_000
+revision = clean = metadata = host_load = None
+try:
+    commit = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=root,
+                            capture_output=True, text=True, check=True, timeout=5).stdout.strip()
+    if re.fullmatch(r"[0-9a-f]{40}", commit):
+        revision = commit
+        tracked = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root,
+                                 capture_output=True, check=True, timeout=5)
+        clean = not tracked.stdout
+except (OSError, subprocess.SubprocessError):
+    pass
+try:
+    if os.environ.get("CMA_NEXTEST_REUSE") == "1":
+        metadata = sha256((Path(root) / "api/target/nextest/binaries-metadata.json").read_bytes()).hexdigest()
+    host_load = [round(value, 2) for value in os.getloadavg()]
+except OSError:
+    pass
+print("Mongo fixture " + json.dumps({
+    "event": "started", "fixture": fixture, "partition": partition, "shard": shard,
+    "checkout_sha": revision, "tracked_checkout_clean": clean, "archive_metadata_sha256": metadata,
+    "mongo_process": process, "mongo_unix_ms": int(mongo_time), "mongo_cpus": cpus,
+    "host_load": host_load, "host_unix_ms": host_time,
+}), flush=True)
+PY
+test_started=$SECONDS
+test_status=0
 cd "$repo_root/api"
 if [[ "$selection" == 'availability' ]]; then
-  nextest_contracts run --test-threads 1 --no-fail-fast --no-capture
+  nextest_contracts run --test-threads 1 --no-fail-fast --no-capture || test_status=$?
 elif [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'organization-inventory' || "$selection" == 'agent-list-contracts' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'request-limits' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' || "$selection" == 'bson-ceiling' || "$selection" == 'first-response' || "$selection" == 'history' || "$selection" == 'observation-budget' ]]; then
-  nextest_contracts run --test-threads 1 --no-fail-fast --success-output final
+  nextest_contracts run --test-threads 1 --no-fail-fast --success-output final || test_status=$?
 else
-  nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition"
+  nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition" || test_status=$?
 fi
+printf 'Mongo fixture {"event":"finished","fixture":"%s","partition":"%s","status":%d,"elapsed_seconds":%d}\n' \
+  "$contract_suffix" "$partition_name" "$test_status" "$((SECONDS - test_started))"
+exit "$test_status"

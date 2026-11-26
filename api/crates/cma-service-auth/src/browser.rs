@@ -441,14 +441,15 @@ pub fn validator() -> Document {
     doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","kind","payload","expires_at"],"properties":{"_id":{"bsonType":"string"},"kind":{"enum":["transaction","session"]},"payload":{"bsonType":"binData"},"expires_at":{"bsonType":"date"}}}}
 }
 pub async fn migrate(db: &Database, collection: &str) -> Result<(), mongodb::error::Error> {
-    match db.run_command(doc!{"create":collection,"validator":validator(),"validationLevel":"strict","validationAction":"error"}).await {Ok(_)=>{},Err(e) if matches!(e.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code==48)=>{db.run_command(doc!{"collMod":collection,"validator":validator(),"validationLevel":"strict","validationAction":"error"}).await?;},Err(e)=>return Err(e)}
-    db.collection::<Document>(collection)
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! {"expires_at":1})
-                .options(IndexOptions::builder().expire_after(Duration::ZERO).build())
-                .build(),
-        )
-        .await?;
+    cma_service_migrations::collection(db, collection, validator(), true).await?;
+    cma_service_migrations::indexes(
+        db,
+        collection,
+        vec![IndexModel::builder()
+            .keys(doc! {"expires_at":1})
+            .options(IndexOptions::builder().expire_after(Duration::ZERO).build())
+            .build()],
+    )
+    .await?;
     Ok(())
 }

@@ -1,5 +1,5 @@
 use super::{
-    gate::{expired, SendGate, Ungated, NO_CHAT_ROUTE},
+    gate::{expired, SendGate, NO_CHAT_ROUTE},
     intents::{DeliveryOutcome, IntentReceipt},
     render::custom,
     sync::SyncRegistry,
@@ -130,6 +130,7 @@ impl CustomDelivery {
         channel = %crate::telemetry::channel_hash(channel.id.as_str()), event_id = %event.event_id))]
     pub async fn outcome(
         &self,
+        gate: &dyn SendGate,
         channel: &ResolvedChannel,
         event: &EventRefPayload,
         outcome: &TurnOutcome,
@@ -145,7 +146,7 @@ impl CustomDelivery {
             "custom",
         );
         let delivered = self
-            .webhook(&Ungated, channel, event, body, false, answer_response_id)
+            .webhook(gate, channel, event, body, false, answer_response_id)
             .await;
         observation.finish(delivered.kind());
         tracing::info!(

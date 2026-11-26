@@ -38,6 +38,7 @@ class DetectorReportTests(unittest.TestCase):
                                "Match": padding}, stream)
                 stream.write("]")
             self.assertGreater(self.report.stat().st_size, 64 * 1024 * 1024)
+            kwargs["stderr"].write(f"WRN leaks found: {count}\n".encode())
             return subprocess.CompletedProcess([], 1)
 
         with patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, b"8.30.1")):
@@ -64,10 +65,18 @@ class DetectorReportTests(unittest.TestCase):
                                 "Secret": "synthetic", "StartLine": 1})
         with patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, b"8.30.1")):
             backend = Gitleaks("gitleaks", self.root / "rules", self.root, 5)
-        for payload, code in ((f"[{valid_row},", 1), (f"[{valid_row}]{{}}", 1),
-                              (f"[{valid_row}]", 0), ("[]", 1)):
+        for payload, code, warning in (
+            (f"[{valid_row},", 1, b"WRN leaks found: 1\n"),
+            (f"[{valid_row}]{{}}", 1, b"WRN leaks found: 1\n"),
+            (f"[{valid_row}]", 0, b""),
+            ("[]", 1, b"WRN leaks found: 1\n"),
+            (f"[{valid_row}]", 1, b"WRN leaks found: 2\n"),
+            (f"[{valid_row}]", 1, b""),
+            (f"[{valid_row}]", 1, b"WRN leaks found: 1\nWRN leaks found: 1\n"),
+        ):
             def fake_detector(*args, **kwargs):
                 self.report.write_text(payload)
+                kwargs["stderr"].write(warning)
                 return subprocess.CompletedProcess([], code)
 
             findings = Findings(None)

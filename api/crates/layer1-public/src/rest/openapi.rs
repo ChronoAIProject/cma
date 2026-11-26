@@ -80,6 +80,7 @@ use self::schemas::*;
         super::trigger_placements::list,
         super::trigger_placements::retire,
         super::launches::create,
+        super::launch_subject::create_bound,
         super::launches::list,
         super::launches::read,
         super::launches::events,

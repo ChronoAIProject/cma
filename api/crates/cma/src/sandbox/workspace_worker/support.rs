@@ -136,6 +136,7 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
             "repository_source_invalid", "Repository files could not be safely prepared. The task has not run. Check source contents before starting another task.",
         ),
         AdapterError::Rejected(_)
+        | AdapterError::AdmittedSandboxSpecDrift
         | AdapterError::NativePoolConfigurationDrift
         | AdapterError::DesktopFailed
         | AdapterError::SkillUpgradeRefused(_)

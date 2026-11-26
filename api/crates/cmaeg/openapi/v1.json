@@ -1491,6 +1491,20 @@
         ],
         "type": "string"
       },
+      "BaselineRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "type": "object"
+      },
       "BindRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1670,6 +1684,30 @@
       },
       "BindingId": {
         "type": "string"
+      },
+      "BindingProfileDrift": {
+        "additionalProperties": false,
+        "properties": {
+          "assigned_profile_digest": {
+            "type": "string"
+          },
+          "model": {
+            "type": "boolean"
+          },
+          "prompt": {
+            "type": "boolean"
+          },
+          "skills": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "assigned_profile_digest",
+          "prompt",
+          "skills",
+          "model"
+        ],
+        "type": "object"
       },
       "Block": {
         "oneOf": [
@@ -2057,6 +2095,82 @@
             "type": "object"
           }
         ]
+      },
+      "CancelCreateCapability": {
+        "properties": {
+          "contract_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contract_version"
+        ],
+        "type": "object"
+      },
+      "CancelCreateReceipt": {
+        "properties": {
+          "contract_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/CancelCreateReceiptOwner"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/CancelCreateReceiptProvider"
+          },
+          "record_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "status",
+          "record_id",
+          "owner",
+          "provider"
+        ],
+        "type": "object"
+      },
+      "CancelCreateReceiptOwner": {
+        "properties": {
+          "issuer": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "issuer",
+          "kind",
+          "subject"
+        ],
+        "type": "object"
+      },
+      "CancelCreateReceiptProvider": {
+        "properties": {
+          "binding_id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "binding_id"
+        ],
+        "type": "object"
       },
       "Capabilities": {
         "properties": {
@@ -3292,6 +3406,16 @@
             "minimum": 0,
             "type": "integer"
           },
+          "profile_drift": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BindingProfileDrift"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "state": {
             "type": "string"
           }
@@ -3895,6 +4019,34 @@
             "type": "object"
           }
         ]
+      },
+      "DesiredProfileDrift": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "type": "boolean"
+          },
+          "profile_digest": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "boolean"
+          },
+          "service_scope": {
+            "type": "boolean"
+          },
+          "skills": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "profile_digest",
+          "prompt",
+          "skills",
+          "model",
+          "service_scope"
+        ],
+        "type": "object"
       },
       "DispatchProgress": {
         "additionalProperties": false,
@@ -6486,8 +6638,24 @@
       },
       "PartitionInspection": {
         "properties": {
+          "assigned_profile_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "consumer_id": {
             "type": "string"
+          },
+          "desired_profile_drift": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DesiredProfileDrift"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "mapping": {
             "$ref": "#/components/schemas/ConversationInspection"
@@ -7382,6 +7550,7 @@
         "enum": [
           "create",
           "update",
+          "profile_revision",
           "delete",
           "audit_routing",
           "audit_attachments"
@@ -8050,6 +8219,59 @@
         },
         "required": [
           "expected_version"
+        ],
+        "type": "object"
+      },
+      "RevisionReceipt": {
+        "properties": {
+          "baseline_complete": {
+            "type": "boolean"
+          },
+          "channel_id": {
+            "type": "string"
+          },
+          "profile_digest": {
+            "type": "string"
+          },
+          "profile_revision": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "channel_id",
+          "version",
+          "profile_revision",
+          "profile_digest",
+          "baseline_complete"
+        ],
+        "type": "object"
+      },
+      "RevisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_key": {
+            "$ref": "#/components/schemas/Secret"
+          },
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/EventWorkerProfile"
+          }
+        },
+        "required": [
+          "expected_version",
+          "profile",
+          "agent_key"
         ],
         "type": "object"
       },
@@ -11105,6 +11327,41 @@
         ]
       }
     },
+    "/channel-records/cancel-create-capability": {
+      "get": {
+        "operationId": "cancelCreateCapability",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelCreateCapability"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
     "/channel-records/{record_id}": {
       "get": {
         "operationId": "recoverChannel",
@@ -11136,6 +11393,51 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channel-records/{record_id}/cancel-create": {
+      "post": {
+        "operationId": "cancelChannelCreate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelCreateReceipt"
                 }
               }
             },
@@ -11349,7 +11651,7 @@
             }
           },
           {
-            "description": "1..=256 ASCII bytes; identical creates replay locally for ten minutes",
+            "description": "1..=256 ASCII bytes; identical creates replay locally for ten minutes. For a supplied record_id, replay requires the original channel to remain ready and unretired.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": false,
@@ -12686,6 +12988,138 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/profile-revisions": {
+      "put": {
+        "operationId": "publishChannelProfileRevision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevisionReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/profile-revisions/baseline": {
+      "post": {
+        "operationId": "baselineChannelProfileRevisions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BaselineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevisionReceipt"
                 }
               }
             },

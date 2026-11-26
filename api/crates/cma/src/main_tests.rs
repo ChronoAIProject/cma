@@ -455,33 +455,6 @@ async fn agent_routes_are_composed_before_the_rest_fallback() {
 }
 
 #[tokio::test]
-async fn trigger_route_families_are_composed_before_the_rest_fallback() {
-    let app = composed_rest_router();
-    for (method, path) in [
-        (Method::POST, "/api/v1/triggers"),
-        (Method::GET, "/api/v1/triggers/trg_missing/embed"),
-        (Method::POST, "/api/v1/triggers/public/pub_missing/launches"),
-        (Method::GET, "/api/v1/launches"),
-        (Method::GET, "/api/v1/service-connections/hnd_missing"),
-        (Method::GET, "/api/v1/agui/launches/lnch_missing/events"),
-    ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri(path)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
-        assert_eq!(response.headers().get(header::LINK), Some(&REST_LINKS));
-    }
-}
-
-#[tokio::test]
 async fn retired_session_and_terminal_ticket_routes_remain_absent() {
     let app = composed_rest_router();
     for path in [
@@ -508,3 +481,6 @@ async fn unknown_rest_paths_keep_problem_and_profile_headers() {
     assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
     assert_eq!(response.headers().get(header::LINK), Some(&REST_LINKS));
 }
+
+#[path = "main_tests/launch_subject.rs"]
+mod launch_subject;

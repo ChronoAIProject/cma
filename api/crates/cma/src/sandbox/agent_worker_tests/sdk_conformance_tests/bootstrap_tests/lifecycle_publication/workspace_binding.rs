@@ -2,6 +2,54 @@ use super::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing to a disposable replica set"]
+async fn workspace_wait_requeue_rebuilds_after_a_concurrent_workspace_revision() {
+    let fixture = Fixture::new().await;
+    let h = &fixture.bootstrap.harness;
+    let waiting = fixture.bootstrap.admit(Some("queued prompt")).await;
+    let (claimed, now) = fixture.claim(&waiting.id).await;
+    let requests_before = h.backend.requests().await.len();
+    let workspace = h
+        .store
+        .get_workspace(&claimed.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.trace.bodies.store(0, Ordering::SeqCst);
+    *fixture.trace.workspace_advance.lock().unwrap() = Some(WorkspaceAdvance {
+        id: workspace.id.clone(),
+        transaction: 1,
+    });
+
+    let result = h
+        .worker
+        .execute_claimed_for_test(claimed.clone(), now)
+        .await;
+    let updated = h.store.get_workspace(&workspace.id).await.unwrap().unwrap();
+    assert_eq!(updated.revision, workspace.revision + 1);
+    result.unwrap();
+    assert_eq!(fixture.trace.bodies.load(Ordering::SeqCst), 2);
+    let deferred = h.stored(&claimed.id).await;
+    assert_eq!(deferred.work.step, AgentWorkStep::WaitForWorkspace);
+    assert!(deferred.work.lease.is_none());
+    assert_eq!(deferred.work.ready_at, deferred.updated_at);
+    assert_eq!(
+        deferred.conversation.first_message,
+        claimed.conversation.first_message
+    );
+    assert_eq!(h.backend.requests().await.len(), requests_before);
+    fixture.bootstrap.ready().await;
+    let (next_claim, now) = fixture.claim(&waiting.id).await;
+    h.worker
+        .execute_claimed_for_test(next_claim, now)
+        .await
+        .unwrap();
+    let ready = h.store.get_workspace(&workspace.id).await.unwrap().unwrap();
+    assert_bound(&fixture, &claimed, &ready, requests_before).await;
+    fixture.cleanup().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing to a disposable replica set"]
 async fn wait_binding_rebuilds_after_a_concurrent_workspace_revision() {
     let fixture = Fixture::new().await;
     let h = &fixture.bootstrap.harness;
