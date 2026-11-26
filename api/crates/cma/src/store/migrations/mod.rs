@@ -149,7 +149,7 @@ async fn execute(arguments: &[String]) -> Result<Value> {
             return Err("manifest checksum mismatch");
         }
         Some(ledger::Identity::new(
-            option_env!("CHRONO_BUILD_SHA").unwrap_or("development"),
+            crate::build_stamp().1.unwrap_or("development"),
             image,
         )?)
     } else {

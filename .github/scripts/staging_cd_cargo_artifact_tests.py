@@ -10,18 +10,22 @@ from unittest.mock import patch
 
 import ci_retry
 import staging_cd_cargo_artifact as transport
+from staging_cd_build_cargo_keys import CargoKey
 
 REPO = "ChronoAIProject/cma"
 SOURCE = "a" * 40
 CURRENT = "b" * 40
 FAMILY = "cma-cd-cargo-v4-am-" + "c" * 64 + "-"
 OTHER_FAMILY = "cma-cd-cargo-v4-am-" + "d" * 64 + "-"
-PREFIX = FAMILY + "e" * 64 + "-"
-INDEX = "graph-" + PREFIX.removesuffix("-")
+GRAPH = "e" * 64
+INDEX = f"graph-{FAMILY}{GRAPH}"
 
 
-def manifest(family, graph="e" * 64):
-    return json.dumps({"format": 1, "prefix": family + graph + "-"}).encode()
+def manifest(family, graph=GRAPH, *, source=None):
+    metadata = {"format": 1, "prefix": CargoKey(family, graph, source or "").prefix}
+    if source is not None:
+        metadata.update(format=2, graph=graph, source=source)
+    return json.dumps(metadata).encode()
 
 
 FILES = {"manifest.json": manifest(FAMILY), "registry.tar.gz": b"registry", "target.tar.gz": b"target"}
@@ -142,7 +146,7 @@ class CargoArtifactTests(unittest.TestCase):
         remote = Remote(self.root, [self.spec(42, artifact={"name": family_name}, members=partial),
                                     self.spec(41, artifact={"name": family_name}),
                                     self.spec(41, artifact={"name": INDEX, "id": 411})])
-        result = self.restore(remote, self.env | {"CD_CARGO_CACHE_PREFIX": PREFIX})
+        result = self.restore(remote, self.env | {"CD_CARGO_CACHE_GRAPH": GRAPH})
         self.assertEqual((result["state"], result["producer_run"], result["selection"]), ("RESTORED", 41, "exact-graph"))
         self.assertEqual((self.accepted / "manifest.json").read_bytes(), FILES["manifest.json"])
         self.assertEqual([path.split("/")[-2] for path in remote.paths if path.endswith("/zip")], ["410"])
@@ -153,18 +157,39 @@ class CargoArtifactTests(unittest.TestCase):
         remote = Remote(self.root, [self.spec(42, artifact={"name": family_name}, members=partial),
                                     self.spec(42, artifact={"name": INDEX, "id": 421}),
                                     self.spec(41)])
-        result = self.restore(remote, self.env | {"CD_CARGO_CACHE_PREFIX": PREFIX})
+        result = self.restore(remote, self.env | {"CD_CARGO_CACHE_GRAPH": GRAPH})
         self.assertEqual((result["state"], result["producer_run"]), ("RESTORED", 41))
         self.assertNotIn("selection", result)
         self.assertEqual((self.accepted / "manifest.json").read_bytes(), FILES["manifest.json"])
         self.assertEqual([path.split("/")[-2] for path in remote.paths if path.endswith("/zip")], ["420", "410"])
+
+    def test_new_source_restores_the_indexed_workspace_bundle_from_the_same_graph(self):
+        producer = {**FILES, "manifest.json": manifest(FAMILY, source=SOURCE)}
+        remote = Remote(self.root, [self.spec(41, artifact={"name": FAMILY.removesuffix("-")}, members=producer),
+                                    self.spec(41, artifact={"name": INDEX, "id": 411})])
+        result = self.restore(remote, self.env | {"CD_CARGO_CACHE_GRAPH": GRAPH})
+        self.assertEqual((result["state"], result["selection"]), ("RESTORED", "exact-graph"))
+        stored = json.loads((self.accepted / "manifest.json").read_bytes())
+        self.assertEqual(stored["source"], SOURCE)
+        self.assertNotEqual(stored["prefix"], CargoKey(FAMILY, GRAPH, CURRENT).prefix)
+
+    def test_graph_marker_cannot_bypass_workspace_generation_binding(self):
+        metadata = json.loads(manifest(FAMILY, "f" * 64, source=SOURCE))
+        metadata["graph"] = GRAPH
+        corrupt = {**FILES, "manifest.json": json.dumps(metadata).encode()}
+        remote = Remote(self.root, [self.spec(42, artifact={"name": FAMILY.removesuffix("-")}, members=corrupt),
+                                    self.spec(42, artifact={"name": INDEX, "id": 421}),
+                                    self.spec(41)])
+        result = self.restore(remote, self.env | {"CD_CARGO_CACHE_GRAPH": GRAPH})
+        self.assertEqual((result["state"], result["producer_run"]), ("RESTORED", 41))
+        self.assertNotIn("selection", result)
 
     def test_marker_cannot_authorize_a_bulk_archive_outside_its_successful_publish_attempt(self):
         family_name = FAMILY.removesuffix("-")
         remote = Remote(self.root, [self.spec(42, artifact={"name": INDEX, "id": 421}),
                                     self.spec(42, artifact={"name": family_name, "created_at": "2026-11-20T00:30:00Z"}),
                                     self.spec(41)])
-        result = self.restore(remote, self.env | {"CD_CARGO_CACHE_PREFIX": PREFIX})
+        result = self.restore(remote, self.env | {"CD_CARGO_CACHE_GRAPH": GRAPH})
         self.assertEqual((result["state"], result["producer_run"]), ("RESTORED", 41))
         self.assertEqual([path.split("/")[-2] for path in remote.paths if path.endswith("/zip")], ["410"])
 
@@ -176,7 +201,7 @@ class CargoArtifactTests(unittest.TestCase):
                 raise transport.Refused("read")
             return remote(path, **kwargs)
 
-        result = self.restore(unavailable, self.env | {"CD_CARGO_CACHE_PREFIX": PREFIX})
+        result = self.restore(unavailable, self.env | {"CD_CARGO_CACHE_GRAPH": GRAPH})
         self.assertEqual((result["state"], result["producer_run"]), ("RESTORED", 41))
         self.assertNotIn("selection", result)
 
@@ -193,7 +218,7 @@ class CargoArtifactTests(unittest.TestCase):
                 self.assertEqual(timeout, transport.DOWNLOAD_SECONDS)
             return remote(path, timeout=timeout, output=output)
 
-        result = self.restore(slow_index, self.env | {"CD_CARGO_CACHE_PREFIX": PREFIX},
+        result = self.restore(slow_index, self.env | {"CD_CARGO_CACHE_GRAPH": GRAPH},
                               clock=lambda: now, sleep=self.fail)
         self.assertEqual(result["state"], "RESTORED")
 
@@ -289,7 +314,7 @@ class CargoArtifactTests(unittest.TestCase):
         for altered in ({"GITHUB_REPOSITORY": "fork/cma"}, {"GITHUB_EVENT_NAME": "pull_request"},
                         {"GITHUB_REF": "refs/heads/feature"}, {"CD_COMPONENT": "web"}, {"GITHUB_RUN_ID": "0"},
                         {"CD_CARGO_CACHE_FAMILY": ""}, {"CD_CARGO_CACHE_FAMILY": FAMILY.replace("-am-", "-eg-")},
-                        {"CD_CARGO_CACHE_PREFIX": OTHER_FAMILY + "e" * 64 + "-"}):
+                        {"CD_CARGO_CACHE_GRAPH": "malformed"}):
             with self.subTest(altered=altered):
                 remote = Remote(self.root, [self.spec(61)])
                 with self.assertRaises(transport.Refused):

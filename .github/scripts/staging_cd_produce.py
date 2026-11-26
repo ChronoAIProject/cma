@@ -60,7 +60,7 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
         cache = None
         if env.get("CD_BUILD_CACHE") == "enabled":
             diagnostics.mark("cache_restore")
-            cache = BuildCache(root, env, source, reservation["component"])
+            cache = BuildCache(root, env, source, reservation["component"], revision=reservation["source"])
             with timings.stage("cache-restore"):
                 cache.restore()
             if cache.key is not None and cache_metrics is not None:

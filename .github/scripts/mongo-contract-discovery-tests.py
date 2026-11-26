@@ -29,8 +29,8 @@ class DiscoveryTests(unittest.TestCase):
             cases.update({name: {"ignored": True, "filter-match": {"status": "matches"}}
                           for _, name in PARTITIONS["ISOLATED_TESTS"]})
             cases["synthetic::ordinary"] = {"ignored": True, "filter-match": {"status": "matches"}}
-            metadata = {"rust-suites": {"cma::bin/cma": {
-                "package-name": "cma", "binary-name": "cma", "kind": "bin", "testcases": cases,
+            metadata = {"rust-suites": {"cma": {
+                "package-name": "cma", "binary-name": "cma", "kind": "lib", "testcases": cases,
             }}}
             if scenario == "large":
                 metadata["synthetic-padding"] = "x" * 600_000

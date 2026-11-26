@@ -80,8 +80,10 @@ class ArchiveHandoffTests(unittest.TestCase):
             publisher_authority = stack.enter_context(patch.object(staging_cd_publish, "Reservations")).return_value
             stack.enter_context(patch.object(staging_cd_publish, "Registry"))
             producer_day = date(2026, 11, 25)
-            cache = Mock(key=CargoKey("cma-cd-cargo-v4-am-" + "e" * 64 + "-", "f" * 64), cache_day=producer_day,
+            family = "cma-cd-cargo-v4-am-" + "e" * 64 + "-"
+            cache = Mock(key=CargoKey(family, "f" * 64, reservation["source"]), cache_day=producer_day,
                          namespace="a" * 32, restore_result="hit", export_headroom=None, export_retained_groups=None)
+            cache.export_key = cache.key
             cache.exports_layers.return_value = True
             cache.can_overlap_export.return_value = overlap
             export_started = Mock()
@@ -131,9 +133,10 @@ class ArchiveHandoffTests(unittest.TestCase):
             self.assertEqual(staging_cd_publish.main(), 0)
             self.assertIn("build-cache-artifact=" + cache.key.family.removesuffix("-") + "\n",
                           (root / "output").read_text())
-            self.assertIn("build-cache-index=graph-" + cache.key.prefix.removesuffix("-") + "\n",
+            self.assertIn(f"build-cache-index=graph-{family}{cache.key.graph}\n",
                           (root / "output").read_text())
-            publisher_cache.assert_called_once_with(root, ANY, ANY, "am", cache_day=producer_day)
+            publisher_cache.assert_called_once_with(root, ANY, ANY, "am", revision=reservation["source"],
+                                                    cache_day=producer_day)
             if overlap:
                 cache.background_export.assert_called_once()
                 cache.export_mounts.assert_not_called()

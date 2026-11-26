@@ -162,7 +162,7 @@ pub(crate) async fn legacy_startup(db: &Database, command: &str) -> Result<()> {
         .legacy_startup(manifest, || inspect(db, manifest), converge(db, manifest))
         .await
 }
-pub async fn cli(db: &Database, args: &[&str]) -> Result<()> {
+pub async fn cli(db: &Database, args: &[&str], source: &str) -> Result<()> {
     let runner = runner(db).await?;
     match args {
         ["--migration-plan", id] => {
@@ -175,10 +175,7 @@ pub async fn cli(db: &Database, args: &[&str]) -> Result<()> {
         ["--migration-status", id] => println!("{}", runner.status(runner.manifest(id)?).await?),
         ["--migration-activate", evidence] => runner.activate(evidence).await?,
         ["--migration-apply", CHANNEL_FLOOR, checksum, image, acknowledgement @ ..] => {
-            let release = Release {
-                source: option_env!("CHRONO_BUILD_SHA").unwrap_or("development"),
-                image,
-            };
+            let release = Release { source, image };
             println!(
                 "{}",
                 apply_channel_floor(
@@ -194,10 +191,7 @@ pub async fn cli(db: &Database, args: &[&str]) -> Result<()> {
         }
         ["--migration-apply", id, checksum, image] => {
             let manifest = runner.manifest(id)?;
-            let release = Release {
-                source: option_env!("CHRONO_BUILD_SHA").unwrap_or("development"),
-                image,
-            };
+            let release = Release { source, image };
             println!(
                 "{}",
                 runner

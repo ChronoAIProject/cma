@@ -13,10 +13,11 @@ import sys
 
 
 def check_selection(metadata, exceptions):
-    suite = metadata["rust-suites"]["cma::bin/cma"]
-    if (suite["package-name"], suite["binary-name"], suite["kind"]) != ("cma", "cma", "bin"):
-        raise ValueError("Expected the complete CMA binary test inventory")
-    cases = suite["testcases"]
+    suites = [suite for suite in metadata["rust-suites"].values()
+              if (suite["package-name"], suite["binary-name"], suite["kind"]) == ("cma", "cma", "lib")]
+    if len(suites) != 1:
+        raise ValueError("Expected one complete CMA library test inventory")
+    cases = suites[0]["testcases"]
     ignored = set()
     selected = set()
     for name, case in cases.items():

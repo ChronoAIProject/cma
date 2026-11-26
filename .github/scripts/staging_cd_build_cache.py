@@ -1,7 +1,9 @@
 """Component-scoped GHA layers and bounded Cargo mounts for fresh builders."""
+from dataclasses import replace
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -13,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from staging_cd_build import snapshot
-from staging_cd_build_cargo_keys import identity
+from staging_cd_build_cargo_keys import CargoKey, identity
 from staging_cd_common import require
 from staging_cd_cache_context import context
 from staging_cd_cargo_artifact import MAX_BUNDLE_BYTES, MAX_EXPANDED_BYTES
@@ -58,8 +60,18 @@ def layer_options(env, component):
     return args
 
 
+def source_identity(root, component, revision, *, day=None):
+    key = identity(root, component, day=day)
+    # Keep old reservations on the incremental-only transport and retain
+    # component/compiler family fallback between source generations.
+    if revision and (root / "api/build_support/workspace_cache.py").is_file():
+        require(re.fullmatch(r"[0-9a-f]{40}", revision), "invalid workspace cache source")
+        return replace(key, source=revision)
+    return key
+
+
 class BuildCache:
-    def __init__(self, root, env, source, component, *, cache_day=None):
+    def __init__(self, root, env, source, component, *, revision="", cache_day=None):
         context(env)  # Authority failures are never downgraded to cache misses.
         require(component == env["CD_COMPONENT"], "Build cache component differs")
         self.component, self.env = component, env
@@ -68,12 +80,14 @@ class BuildCache:
         self.root.mkdir(mode=0o700, exist_ok=True)
         self.accepted, self.pending = self.root / "accepted", self.root / "pending"
         self.cache_day = cache_day if cache_day is not None else datetime.now(timezone.utc).date()
-        self.key = identity(source, component, day=self.cache_day) if component in ("am", "eg") else None
+        self.key = (source_identity(source, component, revision, day=self.cache_day)
+                    if component in ("am", "eg") else None)
         self.namespace = uuid.uuid4().hex
         self.restore_result = "miss"
         self.export_reason = None
         self.export_headroom = None
         self.export_retained_groups = None
+        self.export_key = None
         self.layer_root = Path(env["RUNNER_TEMP"]) / "cma-layer-cache"
         self.layer_export_requested = False
 
@@ -90,7 +104,11 @@ class BuildCache:
                                             max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
             exact = manifest["prefix"] == self.key.prefix
             # A different graph must let Cargo resolve and verify its own registry.
-            tool.transfer("inject" if exact else "inject-target", self.accepted, namespace=self.namespace,
+            legacy_prefix = CargoKey(self.key.family, self.key.graph).prefix
+            registry = (manifest["prefix"] == legacy_prefix or
+                        (manifest.get("format") == tool.WORKSPACE_FORMAT
+                         and manifest.get("graph") == self.key.graph))
+            tool.transfer("inject" if registry else "inject-target", self.accepted, namespace=self.namespace,
                           timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES)
             self.restore_result = "hit" if exact else "partial"
         except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError):
@@ -150,6 +168,11 @@ class BuildCache:
             return {}
         return {key: self.env[key] for key in RUNTIME_KEYS}
 
+    def can_export_mounts(self):
+        # Source-bound outputs require the protected v4 budget and readers.
+        return self.key is not None and (
+            not self.key.source or self.key.family.startswith("cma-cd-cargo-v4-"))
+
     def can_overlap_export(self, archive):
         # The scan is complete. Leave room for the BuildKit stage copies, the
         # local bundle, and another archive-sized copy during registry work.
@@ -163,17 +186,22 @@ class BuildCache:
         self.export_reason = None
         self.export_headroom = None
         self.export_retained_groups = None
+        self.export_key = None
 
     def accept_export(self, candidate):
         require(candidate.is_dir() and not candidate.is_symlink(), "Cargo cache candidate is invalid")
         tool = bridge()
+        export_key = self.key
         compacted = candidate / "compacted"
         if compacted.exists():
             groups = int(compacted.read_text())
             require(0 < groups <= tool.MAX_MEMBERS, "invalid compacted cache group count")
             self.export_retained_groups = groups
             compacted.unlink()
-        tool.seal(candidate, self.key.prefix, family=self.key.family,
+            # Compaction strips the workspace inventory and source-bound proof.
+            export_key = replace(export_key, source="")
+        tool.seal(candidate, export_key.prefix, family=export_key.family,
+                  source=export_key.source or None, graph=export_key.graph,
                   max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
         size = sum((candidate / name).lstat().st_size for name in ("registry.tar.gz", "target.tar.gz"))
         self.export_headroom = "low" if size > HEADROOM_WARNING * MAX_BUNDLE_BYTES else "ok"
@@ -181,13 +209,14 @@ class BuildCache:
             require(not self.accepted.is_symlink(), "Build cache accepted root is invalid")
             shutil.rmtree(self.accepted)
         candidate.rename(self.accepted)
+        self.export_key = export_key
         return True
 
     def export_mounts(self):
         # Refresh after exact hits too. A single daily bundle makes later builds
         # recompile everything merged since that seed.
         self.reset_export()
-        if self.key is None:
+        if not self.can_export_mounts():
             return False
         require(not self.pending.exists(), "Cargo cache export must be fresh")
         try:
@@ -205,10 +234,10 @@ class BuildCache:
 
     @contextmanager
     def background_export(self, directory):
-        if self.key is None:
+        self.reset_export()
+        if not self.can_export_mounts():
             yield None
             return
-        self.reset_export()
         candidate = directory / "cargo-candidate"
         deadline = time.monotonic() + TRANSFER_SECONDS
         try:
@@ -277,9 +306,9 @@ def lookup_key(root, component, env):
                 with tempfile.TemporaryDirectory(dir=env["RUNNER_TEMP"]) as directory:
                     source = Path(directory) / "source"
                     snapshot(root, reservation["source"], source)
-                    return identity(source, component)
+                    return source_identity(source, component, reservation["source"])
             break
-    return identity(root, component)
+    return source_identity(root, component, env["GITHUB_SHA"])
 
 
 def prepare(root, env):
@@ -288,7 +317,7 @@ def prepare(root, env):
     require(component in ("am", "eg"), "Cargo caching is limited to Rust services")
     key = lookup_key(root, component, env)
     return {"directory": str(Path(env["RUNNER_TEMP"]) / "cma-build-cache/accepted"),
-            "prefix": key.prefix, "family": key.family, "key": key.archive_key(env)}
+            "prefix": key.prefix, "graph": key.graph, "family": key.family, "key": key.archive_key(env)}
 
 
 if __name__ == "__main__":

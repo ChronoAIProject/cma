@@ -41,7 +41,9 @@ fn parse(arguments: &[String]) -> Result<Options, &'static str> {
         return Err(USAGE);
     }
     validate_parent(&socket).map_err(|_| "qualification socket directory refused")?;
-    let build = option_env!("CHRONO_BUILD_SHA").ok_or("qualification build identity missing")?;
+    let build = crate::build_stamp()
+        .1
+        .ok_or("qualification build identity missing")?;
     let plan = Plan::open(&plan, build).map_err(|_| "qualification plan refused")?;
     Ok(Options { plan, socket })
 }

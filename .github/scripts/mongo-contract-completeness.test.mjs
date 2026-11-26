@@ -30,7 +30,7 @@ test('capacity recovery completion contracts remain in the ordinary selector', (
     assert.ok(registeredFilter.includes(`test(${prefix})`));
     assert.ok(!runner.includes(`not test(=${name})`));
     const metadata = inventory();
-    metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(false);
+    metadata['rust-suites']['cma'].testcases[name] = caseMetadata(false);
     const result = check(metadata);
     assert.equal(result.status, 1);
     assert.ok(result.stderr.includes(name), result.stderr);
@@ -51,8 +51,8 @@ const caseMetadata = (selected, ignored = true) => ({
 });
 const exceptions = {[child]: {kind: 'helper', reason: 'Invoked by its process-exit parent.'}};
 function inventory() {
-  return {'rust-suites': {'cma::bin/cma': {
-    'package-name': 'cma', 'binary-name': 'cma', kind: 'bin',
+  return {'rust-suites': {'cma': {
+    'package-name': 'cma', 'binary-name': 'cma', kind: 'lib',
     testcases: {
       [`${taskHome}subprocess::initial_task_public_service_process_exit_preserves_admission`]: caseMetadata(true),
       'a_new_contract_module::new_mongo_contract': caseMetadata(true),
@@ -97,7 +97,7 @@ test('metadata completeness catches omitted task-home and newly introduced modul
     `${child}_another_contract`,
   ]) {
     const metadata = inventory();
-    metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(false);
+    metadata['rust-suites']['cma'].testcases[name] = caseMetadata(false);
     const result = check(metadata);
     assert.equal(result.status, 1);
     assert.ok(result.stderr.includes(`Omitted eligible Mongo contracts:\n  ${name}`), result.stderr);
@@ -116,7 +116,7 @@ test('visitor admission contracts remain covered by the Launch prefix and cannot
   ]) {
     const fullName = `${prefix}visitor_contention::${name}`;
     const metadata = inventory();
-    const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+    const cases = metadata['rust-suites']['cma'].testcases;
     cases[fullName] = caseMetadata(true);
     assert.equal(check(metadata).status, 0, fullName);
     cases[fullName] = caseMetadata(false);
@@ -128,7 +128,7 @@ test('visitor admission contracts remain covered by the Launch prefix and cannot
 
 test('metadata completeness rejects helper selection and stale or undocumented exceptions', () => {
   const metadata = inventory();
-  metadata['rust-suites']['cma::bin/cma'].testcases[child] = caseMetadata(true);
+  metadata['rust-suites']['cma'].testcases[child] = caseMetadata(true);
   assert.match(check(metadata).stderr, /Selected non-ordinary contracts/);
   assert.match(check(inventory(), {...exceptions, removed: exceptions[child]}).stderr, /Stale exceptions/);
   for (const exception of [{kind: 'helper'}, {kind: 'unknown', reason: 'unknown'}, {kind: 'deferred', reason: 'broken'}]) {
@@ -136,14 +136,14 @@ test('metadata completeness rejects helper selection and stale or undocumented e
   }
 });
 
-test('metadata completeness refuses missing binary inventory, malformed test metadata and nonignored selections', () => {
+test('metadata completeness refuses missing library inventory, malformed test metadata and nonignored selections', () => {
   for (const mutate of [
     metadata => { metadata['rust-suites'] = {}; },
-    metadata => { metadata['rust-suites']['cma::bin/cma'].kind = 'lib'; },
-    metadata => { metadata['rust-suites']['cma::bin/cma'].testcases = {}; },
-    metadata => { metadata['rust-suites']['cma::bin/cma'].testcases[child].ignored = 'true'; },
-    metadata => { metadata['rust-suites']['cma::bin/cma'].testcases[child]['filter-match'].status = 'unknown'; },
-    metadata => { metadata['rust-suites']['cma::bin/cma'].testcases.ordinary_unit_test = caseMetadata(true, false); },
+    metadata => { metadata['rust-suites']['cma'].kind = 'bin'; },
+    metadata => { metadata['rust-suites']['cma'].testcases = {}; },
+    metadata => { metadata['rust-suites']['cma'].testcases[child].ignored = 'true'; },
+    metadata => { metadata['rust-suites']['cma'].testcases[child]['filter-match'].status = 'unknown'; },
+    metadata => { metadata['rust-suites']['cma'].testcases.ordinary_unit_test = caseMetadata(true, false); },
   ]) {
     const metadata = inventory();
     mutate(metadata);
@@ -189,13 +189,13 @@ const desktopEndpoints = [
 ];
 function desktopInventory() {
   const metadata = inventory();
-  Object.assign(metadata['rust-suites']['cma::bin/cma'].testcases, {
+  Object.assign(metadata['rust-suites']['cma'].testcases, {
     [desktopParent]: caseMetadata(true),
     [desktopChild]: caseMetadata(false),
     [desktopPerformance]: caseMetadata(false),
   });
   const declared = JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8'));
-  for (const name of desktopEndpoints) metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(false);
+  for (const name of desktopEndpoints) metadata['rust-suites']['cma'].testcases[name] = caseMetadata(false);
   return [metadata, {...exceptions, [desktopChild]: declared[desktopChild], [desktopPerformance]: declared[desktopPerformance],
     ...Object.fromEntries(desktopEndpoints.map(name => [name, declared[name]]))}];
 }
@@ -221,7 +221,7 @@ test('desktop completeness refuses omitted parents, selected children and unclas
   for (const [name, selected] of [[desktopParent, false], [desktopChild, true], [desktopPerformance, true],
     ...desktopEndpoints.map(name => [name, true]), [desktopEndpoints[0] + '_new_contract', false], [`${desktopChild}_new_contract`, false]]) {
     const [metadata, exclusions] = desktopInventory();
-    metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(selected);
+    metadata['rust-suites']['cma'].testcases[name] = caseMetadata(selected);
     const result = check(metadata, exclusions);
     assert.equal(result.status, 1, name);
     assert.ok(result.stderr.includes(name), result.stderr);
@@ -247,7 +247,7 @@ test('usage hotfix keeps reader and startup contracts while assigning only the e
   assert.ok(source.includes(`not test(=${matrix})`));
   assert.equal(declared[matrix].kind, 'fixture');
   const metadata = inventory();
-  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  const cases = metadata['rust-suites']['cma'].testcases;
   cases[matrix] = caseMetadata(false);
   for (const name of names) {
     assert.ok(!source.includes(`not test(=${name})`));
@@ -287,7 +287,7 @@ test('standing permission loss uses its authenticated fixture while replica acce
   assert.ok(!source.includes(`not test(=${acceptance})`));
   assert.equal(declared[acceptance], undefined);
   const metadata = inventory();
-  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  const cases = metadata['rust-suites']['cma'].testcases;
   cases[permission] = caseMetadata(false);
   cases[acceptance] = caseMetadata(true);
   const exclusions = {...exceptions, [permission]: declared[permission]};
@@ -314,12 +314,12 @@ test('resource execution selection includes root and nested contracts without om
     'uncertainty::ambiguous_commits_preserve_frozen_members_and_replay_the_exact_final_receipt',
   ].map(name => resourceExecutionPrefix + name);
   const metadata = inventory();
-  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  const cases = metadata['rust-suites']['cma'].testcases;
   for (const name of names) cases[name] = caseMetadata(true);
   const selected = check(metadata);
   assert.equal(selected.status, 0, selected.stderr);
   const missingSuite = structuredClone(metadata);
-  delete missingSuite['rust-suites']['cma::bin/cma'];
+  delete missingSuite['rust-suites']['cma'];
   assert.equal(check(missingSuite).status, 1);
   for (const omitted of [names, ...names.map(name => [name])]) {
     for (const name of omitted) cases[name] = caseMetadata(false);

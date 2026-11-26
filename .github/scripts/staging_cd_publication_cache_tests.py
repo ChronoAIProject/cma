@@ -1,7 +1,9 @@
 """Protected cache writers cannot bypass fresh image publication gates."""
 import io
 import contextlib
+from dataclasses import replace
 from datetime import date
+import hashlib
 import json
 import os
 import subprocess
@@ -12,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from staging_cd_build_cache import BuildCache, SCOPES, bridge, identity, layer_options, prepare
+from staging_cd_build_cache import BuildCache, SCOPES, bridge, identity, layer_options, prepare, source_identity
 from staging_cd_build_progress import summarize
 from staging_cd_common import Refusal
 from staging_cd_cache_context import context
@@ -127,6 +129,8 @@ class CacheTests(unittest.TestCase):
         from staging_cd_publish import record_cache_export
 
         cache = self.cache()
+        self.populate(cache.pending)
+        self.assertTrue(cache.accept_export(cache.pending))
         metrics = []
         record_cache_export(cache, True, dict(self.env, GITHUB_OUTPUT=str(self.root)), metrics)
         self.assertEqual(metrics, [{"operation": "export", "result": "withheld", "reason": "invalid"}])
@@ -143,6 +147,65 @@ class CacheTests(unittest.TestCase):
             disk.return_value.free = required
             self.assertTrue(cache.can_overlap_export(archive))
         self.assertFalse(cache.can_overlap_export(self.root / "missing-image.tar"))
+
+    def test_compacted_workspace_bundle_keeps_a_qualified_incremental_seed(self):
+        tool = bridge()
+        cache = BuildCache(ROOT, self.env, ROOT, "eg", revision=self.env["GITHUB_SHA"])
+        self.assertEqual(cache.key.source, self.env["GITHUB_SHA"])
+
+        def transfer(operation, directory, **kwargs):
+            self.assertEqual(operation, "extract")
+            self.populate(directory)
+            (directory / "compacted").write_text("1\n")
+
+        with patch("staging_cd_build_cache.bridge", return_value=tool), patch.object(tool, "transfer", side_effect=transfer):
+            self.assertTrue(cache.export_mounts())
+        self.assertEqual(cache.export_retained_groups, 1)
+        self.assertEqual(cache.export_key, replace(cache.key, source=""))
+        manifest = tool.validate_bundle(cache.accepted, cache.key.prefix, family=cache.key.family)
+        self.assertEqual(manifest["format"], tool.FORMAT)
+        self.assertEqual(manifest["prefix"], cache.key.family + cache.key.graph + "-")
+        with patch("staging_cd_build_cache.bridge", return_value=tool), patch.object(tool, "transfer") as inject:
+            self.assertTrue(cache.restore())
+        self.assertEqual(cache.restore_result, "partial")
+        inject.assert_called_once_with("inject", cache.accepted, namespace=cache.namespace,
+                                       timeout=360, max_content=6 * 1024 ** 3)
+
+    def test_background_compaction_publishes_the_incremental_key_and_graph_index(self):
+        from staging_cd_publish import record_cache_export
+
+        tool = bridge()
+        cache = BuildCache(ROOT, self.env, ROOT, "eg", revision=self.env["GITHUB_SHA"])
+        process = Mock()
+        process.wait.return_value = process.poll.return_value = 0
+
+        def start(candidate, _context, **_kwargs):
+            self.populate(candidate)
+            (candidate / "compacted").write_text("1\n")
+            return process
+
+        with patch("staging_cd_build_cache.bridge", return_value=tool), \
+                patch.object(tool, "start_extract", side_effect=start):
+            with cache.background_export(self.root) as finish:
+                self.assertTrue(finish())
+
+        output = self.root / "github-output"
+        record_cache_export(cache, True, dict(self.env, GITHUB_OUTPUT=str(output)), [])
+        key = replace(cache.key, source="")
+        bundle = tool.validate_bundle(cache.accepted, key.prefix)
+        self.assertEqual(bundle["prefix"], key.prefix)
+        self.assertIn(f"build-cache-key={key.archive_key(self.env)}\n", output.read_text())
+        self.assertIn(f"build-cache-index=graph-{key.family}{key.graph}\n", output.read_text())
+
+    def test_legacy_writer_cannot_start_a_source_bound_export(self):
+        cache = BuildCache(ROOT, self.env, ROOT, "eg", revision=self.env["GITHUB_SHA"])
+        cache.key = replace(cache.key, family=cache.key.family.replace("-v4-", "-v3-"))
+
+        with patch("staging_cd_build_cache.bridge") as tool:
+            with cache.background_export(self.root) as finish:
+                self.assertIsNone(finish)
+            self.assertFalse(cache.export_mounts())
+        tool.assert_not_called()
 
     def test_legacy_layer_cache_is_read_only(self):
         for event, ref in [('push', 'refs/heads/develop'),
@@ -235,7 +298,7 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(prepare(ROOT, env)['key'], actual.archive_key(env))
             source = snapshot.call_args.args[2]
             snapshot.assert_called_once_with(ROOT, reservation["source"], source)
-            key.assert_called_once_with(source, 'eg')
+            key.assert_called_once_with(source, 'eg', day=None)
         task['reservation'] = dict(reservation, source='invalid')
         with self.assertRaises(Refusal):
             prepare(ROOT, dict(env, CD_TASKS=json.dumps([task])))
@@ -328,6 +391,21 @@ class CacheTests(unittest.TestCase):
             self.assertFalse(self.cache().restore())
             self.assertEqual(transfer.call_count, 2)
 
+    def test_workspace_build_can_restore_registry_from_a_legacy_bundle_with_the_same_graph(self):
+        tool = bridge()
+        day = date(2026, 11, 25)
+        producer = self.cache(day=day)
+        self.populate(producer.accepted)
+        tool.seal(producer.accepted, producer.key.prefix, family=producer.key.family)
+        consumer = BuildCache(ROOT, self.env, ROOT, "eg", revision=self.env["GITHUB_SHA"], cache_day=day)
+        self.assertNotEqual(producer.key.prefix, consumer.key.prefix)
+        self.assertEqual(producer.key.graph, consumer.key.graph)
+        with patch.object(tool, "transfer") as transfer, patch("staging_cd_build_cache.bridge", return_value=tool):
+            self.assertTrue(consumer.restore())
+        self.assertEqual(consumer.restore_result, "partial")
+        transfer.assert_called_once_with("inject", consumer.accepted, namespace=consumer.namespace,
+                                         timeout=360, max_content=6 * 1024 ** 3)
+
     def test_yesterdays_bundle_seeds_only_incremental_state_after_midnight(self):
         tool = bridge()
         yesterday, today = date(2026, 11, 20), date(2026, 11, 21)
@@ -418,6 +496,45 @@ class CacheTests(unittest.TestCase):
         cache.accepted.rename(outside)
         cache.accepted.symlink_to(outside, target_is_directory=True)
         self.assertFalse(self.cache().restore())
+
+    def test_workspace_archive_binds_exact_source_and_output_bytes(self):
+        archive = self.root / "bundle"
+        self.populate(archive)
+        tool = bridge()
+        graph, source = "b" * 64, "c" * 40
+        family = "cma-cd-cargo-v4-am-" + "d" * 64 + "-"
+        generation = hashlib.sha256(json.dumps({"graph": graph, "source": source}, sort_keys=True).encode()).hexdigest()
+        prefix = family + generation + "-"
+        path = "release/deps/libexample-0123456789abcdef.rlib"
+        state = {"compiler": {"binary": "cma"}, "files": {},
+                 "outputs": {path: [0o644, hashlib.sha256(b"data").hexdigest()]},
+                 "producer": {"CHRONO_BUILD_SHA": source}}
+
+        def pack(data):
+            files = {path: data, ".cma-workspace-seed.json": json.dumps(state).encode()}
+            with tarfile.open(archive / "target.tar.gz", "w:gz") as target:
+                for name, content in files.items():
+                    member = tarfile.TarInfo(name)
+                    member.size = len(content)
+                    target.addfile(member, io.BytesIO(content))
+
+        pack(b"data")
+        tool.seal(archive, prefix, family=family, source=source, graph=graph)
+        self.assertEqual(tool.validate_bundle(archive, family + "a" * 64 + "-", family=family)["source"], source)
+        with self.assertRaisesRegex(ValueError, "incompatible cache format"):
+            tool.validate_bundle(archive, prefix)
+        with self.assertRaisesRegex(ValueError, "workspace seed identity differs"):
+            tool.seal(archive, prefix, family=family, source="f" * 40, graph=graph)
+        pack(b"stale")
+        with self.assertRaisesRegex(ValueError, "workspace receipt inventory differs"):
+            tool.seal(archive, prefix, family=family, source=source, graph=graph)
+
+    def test_same_dependency_graph_admits_distinct_source_generations(self):
+        first = source_identity(ROOT, "am", "a" * 40)
+        successor = source_identity(ROOT, "am", "b" * 40)
+        self.assertEqual((first.family, first.graph), (successor.family, successor.graph))
+        self.assertNotEqual(first.prefix, successor.prefix)
+        self.assertEqual(successor.source, "b" * 40)
 
     def test_export_failure_never_becomes_ready_and_success_validates_bundle(self):
         cache = self.cache()
@@ -557,7 +674,7 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(base, identity(fake, 'eg'))
         self.assertEqual(prepare(fake, self.env), {
             "directory": str(self.root / "cma-build-cache/accepted"), "key": base.prefix + "123-1",
-            "prefix": base.prefix, "family": base.family})
+            "prefix": base.prefix, "graph": base.graph, "family": base.family})
         for relative, old, new in [('api/rust-toolchain.toml', '1.96.1', '1.97.0'),
                                    ('api/crates/cmaeg/Dockerfile', 'codegen-units=256', 'codegen-units=16'),
                                    ('api/crates/cmaeg/Dockerfile', 'rust:1.96.1-alpine', 'rust:other'),
@@ -579,7 +696,7 @@ class CacheTests(unittest.TestCase):
         self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'", workflow)
         self.assertIn("run: python3 -B .github/scripts/staging_cd_cargo_artifact.py", workflow)
         self.assertIn("CD_CARGO_CACHE_FAMILY: ${{ steps.build-cache.outputs.family }}", workflow)
-        self.assertIn("CD_CARGO_CACHE_PREFIX: ${{ steps.build-cache.outputs.prefix }}", workflow)
+        self.assertIn("CD_CARGO_CACHE_GRAPH: ${{ steps.build-cache.outputs.graph }}", workflow)
         self.assertIn("name: ${{ steps.publication.outputs.build-cache-artifact }}", workflow)
         self.assertIn("path: ${{ steps.publication.outputs.build-cache-directory }}", workflow)
         self.assertIn("if: steps.cargo-bundle.outcome == 'success'", workflow)

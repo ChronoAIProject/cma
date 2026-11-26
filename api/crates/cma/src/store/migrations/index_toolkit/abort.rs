@@ -9,10 +9,7 @@ pub(super) async fn abort(query: &Query, checksum: &str, image: &str, fence: i64
     if checksum != step.checksum() {
         return Err("abort manifest checksum mismatch");
     }
-    let identity = ledger::Identity::new(
-        option_env!("CHRONO_BUILD_SHA").unwrap_or("development"),
-        image,
-    )?;
+    let identity = ledger::Identity::new(crate::build_stamp().1.unwrap_or("development"), image)?;
     let (client, database, mode) = open_database().await?;
     super::authority::verify(&database, mode, &[query.collection], true).await?;
     execute(query, client, database, &identity, image, fence).await

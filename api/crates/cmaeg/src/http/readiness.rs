@@ -19,6 +19,7 @@ use tokio::sync::Notify;
 #[derive(Clone, Default)]
 pub struct Readiness {
     inner: Arc<Inner>,
+    build: Option<ReleaseBuild>,
 }
 #[derive(Default)]
 struct Inner {
@@ -44,6 +45,7 @@ pub struct ReadinessReport {
 impl Readiness {
     pub fn initialized() -> Self {
         Self {
+            build: None,
             inner: Arc::new(Inner {
                 keys_loaded: true.into(),
                 registry_loaded: true.into(),
@@ -56,6 +58,10 @@ impl Readiness {
                 served: Notify::new(),
             }),
         }
+    }
+    pub(crate) fn with_build(mut self, build: Option<ReleaseBuild>) -> Self {
+        self.build = build;
+        self
     }
     /// Note that `/readyz` answered ready, waking [`Readiness::served`].
     pub fn note_served_ready(&self) {
@@ -148,14 +154,17 @@ struct ReadinessResponse<'a> {
     build: Option<ReleaseBuild>,
 }
 
-#[derive(Serialize)]
-struct ReleaseBuild {
+#[derive(Clone, Copy, Serialize)]
+pub struct ReleaseBuild {
     source_sha: &'static str,
     version: &'static str,
 }
 
 impl ReleaseBuild {
-    fn from_stamp(source_sha: Option<&'static str>, version: Option<&'static str>) -> Option<Self> {
+    pub fn from_stamp(
+        source_sha: Option<&'static str>,
+        version: Option<&'static str>,
+    ) -> Option<Self> {
         let source_sha = source_sha?;
         let version = version?;
         let full_revision = source_sha.len() == 40
@@ -180,10 +189,7 @@ pub async fn readyz(State(readiness): State<Readiness>) -> Response {
     };
     let body = ReadinessResponse {
         readiness: &report,
-        build: ReleaseBuild::from_stamp(
-            option_env!("CHRONO_BUILD_SHA"),
-            option_env!("CHRONO_BUILD"),
-        ),
+        build: readiness.build,
     };
     let mut response = (status, Json(body)).into_response();
     // Readiness has a typed diagnostic body even when local startup is incomplete.
@@ -194,6 +200,23 @@ pub async fn readyz(State(readiness): State<Readiness>) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn readiness_uses_the_executable_stamp() {
+        const SOURCE: &str = "1234567890abcdef1234567890abcdef12345678";
+        let stamped = Readiness::initialized()
+            .with_build(ReleaseBuild::from_stamp(Some(SOURCE), Some("1.2.3")));
+        let response = readyz(State(stamped)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body["build"],
+            serde_json::json!({"source_sha": SOURCE, "version": "1.2.3"})
+        );
+    }
 
     #[test]
     fn readiness_serializes_only_a_complete_release_stamp() {

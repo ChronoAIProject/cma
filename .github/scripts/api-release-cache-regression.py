@@ -11,6 +11,7 @@ import datetime
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -27,10 +28,10 @@ def run(args, **kwargs):
 
 def fixture(root, binary):
     files = {
-        "Cargo.toml": '[workspace]\nresolver="2"\nmembers=["app","library"]\n',
-        "app/Cargo.toml": f'[package]\nname="{binary}"\nversion="0.1.0"\nedition="2021"\n'
-                          '[dependencies]\ncache_library={path="../library"}\n',
-        "app/src/main.rs": '''fn main() {
+        "Cargo.toml": f'[workspace]\nresolver="2"\nmembers=["crates/{binary}","library"]\n',
+        f"crates/{binary}/Cargo.toml": f'[package]\nname="{binary}"\nversion="0.1.0"\nedition="2021"\n'
+                          '[dependencies]\ncache_library={path="../../library"}\n',
+        f"crates/{binary}/src/main.rs": '''fn main() {
     if std::env::args().any(|a| a == "--media-sandbox-check") {
         std::process::exit(if cfg!(target_arch = "aarch64") { 125 } else { 0 });
     }
@@ -106,6 +107,11 @@ def exercise(source, binary, platform):
     with tempfile.TemporaryDirectory(prefix="cma-release-regression-") as directory:
         root = Path(directory)
         fixture(root, binary)
+        for name in ("workspace_cache.py", "release_rustc.py"):
+            helper = Path("api/build_support") / name
+            if (source / helper).is_file():
+                (root / helper).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source / helper, root / helper)
         (root / "api/rust-toolchain.toml").write_text((source / "api/rust-toolchain.toml").read_text())
         (root / "Dockerfile").write_text(recipe)
         run(["docker", "run", "--rm", "--platform", platform, "--mount",

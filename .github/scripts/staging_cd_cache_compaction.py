@@ -1,13 +1,14 @@
 """Bounded, read-only export of Rust service Cargo cache mounts."""
 
 
-def export_script(max_expanded, max_compressed, max_members):
+def export_script(max_expanded, max_compressed, max_members, *, incremental_only=False):
     # Measurements include the tar headers and padding, so the unpacked-byte
     # budget is conservative relative to the bundle validator's member sizes.
     limits = (
         f"max_expanded={int(max_expanded)}\n"
         f"max_compressed={int(max_compressed)}\n"
         f"max_members={int(max_members)}\n"
+        f"target_entry={'./release/incremental' if incremental_only else '.'}\n"
     )
     return limits + r'''set -euo pipefail
 export LC_ALL=C
@@ -79,7 +80,8 @@ archive_registry() {
     registry_members=$archive_members
 }
 
-total=$(du -sk "$registry" "$target" | awk '{n += $1} END {print n}')
+[ -d "$target/$target_entry" ] || refuse empty
+total=$(du -sk "$registry" "$target/$target_entry" | awk '{n += $1} END {print n}')
 bound_kib=$((max_expanded / 1024))
 skip_src=
 if [ "$total" -gt "$((bound_kib * 3 / 4))" ] && [ -d "$registry/src" ]; then
@@ -101,7 +103,7 @@ attempts=0
 if [ "$total" -le "$bound_kib" ]; then
     attempts=1
     archive_stream "$target" "$target_archive" \
-        "$((max_expanded - registry_expanded))" "$((max_compressed - registry_compressed))" .
+        "$((max_expanded - registry_expanded))" "$((max_compressed - registry_compressed))" "$target_entry"
     if fits "$((registry_expanded + archive_expanded))" \
         "$((registry_compressed + archive_compressed))" \
         "$((registry_members + archive_members))"; then
