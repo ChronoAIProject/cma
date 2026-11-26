@@ -1,4 +1,5 @@
 """Bounded storage-service dependency; AM document policy and Mongo remain real."""
+from contextlib import closing
 import hashlib
 import hmac
 import http.client
@@ -146,16 +147,17 @@ class Storage(BaseHTTPRequestHandler):
         connection = http.client.HTTPSConnection('provider.localhost.direct', 8080,
                                                   timeout=45 if suggestions else 10)
         try:
-            connection.request('POST', '/v1/responses', body, {'Content-Type': 'application/json'})
-            response = connection.getresponse()
-            result = response.read(24 * 1024 + 1)
-            if response.getheader('Content-Type') != 'application/json' or len(result) > 24 * 1024:
-                return self.reply(502, {'error': 'invalid_suggestion_result'})
-            return self.reply(response.status, result)
+            with closing(connection):
+                connection.request('POST', '/v1/responses', body, {'Content-Type': 'application/json'})
+                response = connection.getresponse()
+                result = response.read(24 * 1024 + 1)
+                status = response.status
+                media_type = response.getheader('Content-Type')
         except (OSError, http.client.HTTPException):
             return self.reply(503, {'error': 'fixture_model_unavailable'})
-        finally:
-            connection.close()
+        if media_type != 'application/json' or len(result) > 24 * 1024:
+            return self.reply(502, {'error': 'invalid_suggestion_result'})
+        return self.reply(status, result)
 
     def skill(self, skill, download, query):
         if query != ('' if download else 'version=1.0'):

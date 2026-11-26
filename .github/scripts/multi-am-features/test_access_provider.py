@@ -7,6 +7,7 @@ from pathlib import Path
 import secrets
 import sys
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -71,7 +72,13 @@ class AccessProviderTests(unittest.TestCase):
                 ]})
                 self.assertEqual(status, 200)
                 self.assertIn('WS4 complete ACCESS_MARKER', data)
+                # The client can finish reading before the server records its flush.
+                deadline = time.monotonic() + 2
                 observed = provider.snapshot('access-case')
+                while observed['active_streams'] and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                    observed = provider.snapshot('access-case')
+                self.assertEqual(observed['active_streams'], 0)
                 self.assertEqual(observed['request_count'], 2)
                 self.assertEqual(observed['access_tool_calls'], 1)
                 self.assertEqual(observed['completed_effect_count'], 2)
