@@ -219,7 +219,8 @@ impl NativeWarmPools {
             if stopping() {
                 break;
             }
-            if target.retired
+            if self.default_holds.lane(target.machine)
+                || target.retired
                 || (!target.retiring
                     && (self.current_plan(&target)?
                         || self.store.candidate_protected(&target).await?))

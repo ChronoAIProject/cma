@@ -1,6 +1,8 @@
+#[path = "schema_predecessors.rs"]
+mod predecessors;
 use mongodb::{
     bson::{doc, Document},
-    options::{Acknowledgment, ReadConcern, WriteConcern},
+    options::ReadConcern,
     Database, IndexModel,
 };
 
@@ -12,7 +14,7 @@ pub fn runtime_role(database: &str) -> Document {
     role(database, false)
 }
 pub fn migration_role(database: &str) -> Document {
-    role(database, true)
+    crate::migrations::migration_role(role(database, true), database)
 }
 
 fn role(database: &str, migration: bool) -> Document {
@@ -46,9 +48,17 @@ pub(super) async fn migration_required(database: &Database) -> Result<bool, Erro
 }
 
 pub async fn migrate(database: &Database) -> Result<(), Error> {
-    if !migration_required(database).await? {
-        return Ok(());
-    }
+    let ready = cma_service_migrations::marker(
+        database,
+        crate::records::mongo::MIGRATIONS,
+        "github_integrations",
+        "version",
+        &[1, 2, 3, 4, 5, 6],
+        6,
+    )
+    .await
+    .map_err(|_| Error::Unavailable)?;
+    let needed = !ready;
     let mut validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","kind","version","schema_version","blob"],"properties":{"_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"kind":{"enum":["binding","binding_operation","binding_approval","delivery","execution_group","app_integration","app_registration","webhook_credential","app_operation","app_identity"]},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0},"lease_until":{"bsonType":"long"},"next_dispatch_at":{"bsonType":"long"},"expires_at":{"bsonType":"date"},"blob":{"bsonType":"binData"}}}};
     validator.insert(
         "$or",
@@ -57,23 +67,22 @@ pub async fn migrate(database: &Database) -> Result<(), Error> {
             {"kind":{"$ne":"delivery"},"expires_at":{"$exists":false}}
         ]),
     );
-    match database.run_command(doc! {"create":COLLECTION,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await {
-        Ok(_) => (),
-        Err(error) if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command) if command.code == 48) => { database.run_command(doc! {"collMod":COLLECTION,"validator":validator,"validationLevel":"strict","validationAction":"error"}).await.map_err(|_| Error::Unavailable)?; },
-        Err(_) => return Err(Error::Unavailable),
-    }
-    database
-        .collection::<Document>(COLLECTION)
-        .create_index(
+    cma_service_migrations::collection_with_predecessors(
+        database,
+        COLLECTION,
+        validator,
+        true,
+        predecessors::prior_validators(),
+    )
+    .await
+    .map_err(|_| Error::Unavailable)?;
+    cma_service_migrations::indexes(
+        database,
+        COLLECTION,
+        vec![
             IndexModel::builder()
                 .keys(doc! {"owner":1,"kind":1,"_id":1})
                 .build(),
-        )
-        .await
-        .map_err(|error| migration_failure("create_index", error))?;
-    database
-        .collection::<Document>(COLLECTION)
-        .create_index(
             IndexModel::builder()
                 .keys(doc! {"expires_at":1})
                 .options(
@@ -82,56 +91,71 @@ pub async fn migrate(database: &Database) -> Result<(), Error> {
                         .build(),
                 )
                 .build(),
-        )
-        .await
-        .map_err(|error| migration_failure("receipt_expiry_index", error))?;
-    database
-        .collection::<Document>(COLLECTION)
-        .create_index(
             IndexModel::builder()
                 .keys(doc! {"owner":1,"kind":1,"next_dispatch_at":1,"_id":1})
                 .build(),
-        )
-        .await
-        .map_err(|error| migration_failure("dispatch_recovery_index", error))?;
-    let legacy_until = mongodb::bson::DateTime::from_millis((super::now() + 7 * 86400) * 1000);
-    database
-        .collection::<Document>(COLLECTION)
-        .update_many(
-            doc! {"kind":"delivery","expires_at":{"$exists":false}},
+        ],
+    )
+    .await
+    .map_err(|error| migration_failure("create_index", error))?;
+    let expiry_filter = doc! {"kind":"delivery","expires_at":{"$exists":false}};
+    let dispatch_filter = doc! {"kind":"delivery","next_dispatch_at":{"$exists":false}};
+    if needed || cma_service_migrations::inspecting() {
+        cma_service_migrations::absent(database, COLLECTION, expiry_filter.clone())
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        cma_service_migrations::absent(database, COLLECTION, dispatch_filter.clone())
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let now = if cma_service_migrations::describing() {
+            0
+        } else {
+            super::now()
+        };
+        let legacy_until = mongodb::bson::DateTime::from_millis((now + 7 * 86400) * 1000);
+        cma_service_migrations::update(
+            database,
+            COLLECTION,
+            expiry_filter,
             doc! {"$set":{"expires_at":legacy_until}},
+            false,
+            true,
         )
-        .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
         .await
         .map_err(|error| migration_failure("legacy_receipt_expiry", error))?;
-    database
-        .collection::<Document>(COLLECTION)
-        .update_many(
-            doc! {"kind":"delivery","next_dispatch_at":{"$exists":false}},
+        cma_service_migrations::update(
+            database,
+            COLLECTION,
+            dispatch_filter,
             doc! {"$set":{"next_dispatch_at":i64::MAX}},
+            false,
+            true,
         )
         .await
         .map_err(|error| migration_failure("legacy_dispatch_deadline", error))?;
-    database.run_command(doc! {"collMod":crate::records::mongo::MIGRATIONS,"validator":crate::records::mongo::migration_validator(),"validationLevel":"strict","validationAction":"error"}).await.map_err(|_| Error::Unavailable)?;
-    let committed = database
-        .collection::<Document>(crate::records::mongo::MIGRATIONS)
-        .update_one(
+    }
+    cma_service_migrations::collection_with_predecessors(
+        database,
+        crate::records::mongo::MIGRATIONS,
+        crate::records::mongo::migration_validator(),
+        false,
+        crate::records::mongo::migration_predecessors(),
+    )
+    .await
+    .map_err(|_| Error::Unavailable)?;
+    if needed {
+        cma_service_migrations::update(
+            database,
+            crate::records::mongo::MIGRATIONS,
             doc! {"_id":"github_integrations","version":{"$in":[1,2,3,4,5]}},
             doc! {"$set":{"version":6}},
+            true,
+            false,
         )
-        .upsert(true)
-        .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
-        .await;
-    match committed {
-        Ok(_) => Ok(()),
-        Err(error)
-            if error_code(&error) == Some(11000)
-                && matches!(migration_required(database).await, Ok(false)) =>
-        {
-            Ok(())
-        }
-        Err(error) => Err(migration_failure("commit_marker", error)),
+        .await
+        .map_err(|error| migration_failure("commit_marker", error))?;
     }
+    Ok(())
 }
 
 fn error_code(error: &mongodb::error::Error) -> Option<i32> {

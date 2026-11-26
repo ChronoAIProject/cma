@@ -2,6 +2,7 @@ use super::*;
 use crate::background::{BackgroundBudget, BackgroundWork};
 use crate::sandbox::binding_lifecycle_test_support::ConnectionSweep;
 use std::time::Duration;
+use tokio::sync::Notify;
 
 #[path = "owner_page_tests.rs"]
 mod owner_page;
@@ -10,12 +11,14 @@ mod owner_page;
 struct PrefixProbe {
     visits: AtomicU64,
     blocked: AtomicBool,
+    entered_when_blocked: Notify,
 }
 
 impl PrefixProbe {
     async fn observe(&self) {
         self.visits.fetch_add(1, Ordering::Relaxed);
         if self.blocked.load(Ordering::Relaxed) {
+            self.entered_when_blocked.notify_one();
             std::future::pending::<()>().await;
         }
     }
@@ -363,7 +366,8 @@ async fn agent_reconciliation_continuation_keeps_transport_limit_after_cancellat
     let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
     let registry = Arc::new(LiveAgentRegistry::default());
     let first = attached_prefix(&store, "001_migrate").await;
-    paused_rows(&store, 32).await;
+    const PAUSED_ROWS: usize = 32;
+    paused_rows(&store, PAUSED_ROWS).await;
     let second = attached_prefix(&store, "200_migrate").await;
     let third = attached_prefix(&store, "201_migrate").await;
     let probes = [(); 3].map(|_| Arc::new(PrefixProbe::default()));
@@ -406,22 +410,26 @@ async fn agent_reconciliation_continuation_keeps_transport_limit_after_cancellat
     );
     let now = SystemTime::now();
     let mut sweep = ConnectionSweep::default();
-    assert!(tokio::time::timeout(
-        Duration::from_secs(1),
-        worker.reconcile_connection_slice(now, &mut sweep),
-    )
-    .await
-    .is_err());
+    {
+        let reconciliation = worker.reconcile_connection_slice(now, &mut sweep);
+        tokio::pin!(reconciliation);
+        tokio::select! {
+            outcome = &mut reconciliation => panic!("reconciliation settled before reaching the blocked probe: {outcome:?}"),
+            () = probes[0].entered_when_blocked.notified() => {}
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), &mut reconciliation)
+                .await
+                .is_err()
+        );
+    }
     assert_eq!(probes[0].visits.load(Ordering::Relaxed), 1);
     probes[0].blocked.store(false, Ordering::Relaxed);
     assert!(!worker
         .reconcile_connection_slice(now, &mut sweep)
         .await
         .unwrap());
-    assert!(worker
-        .reconcile_connection_slice(now, &mut sweep)
-        .await
-        .unwrap());
+    finish_connection_sweep(&worker, now, &mut sweep, PAUSED_ROWS + probes.len()).await;
     assert_eq!(probes[0].visits.load(Ordering::Relaxed), 1);
     assert_eq!(probes[1].visits.load(Ordering::Relaxed), 1);
     assert_eq!(probes[2].visits.load(Ordering::Relaxed), 0);
@@ -429,10 +437,24 @@ async fn agent_reconciliation_continuation_keeps_transport_limit_after_cancellat
         .reconcile_connection_slice(now, &mut sweep)
         .await
         .unwrap());
-    assert!(worker
-        .reconcile_connection_slice(now, &mut sweep)
-        .await
-        .unwrap());
+    finish_connection_sweep(&worker, now, &mut sweep, PAUSED_ROWS + probes.len()).await;
     assert_eq!(probes[2].visits.load(Ordering::Relaxed), 1);
     client.database(&name).drop().await.unwrap();
+}
+
+async fn finish_connection_sweep(
+    worker: &AgentWorker,
+    now: SystemTime,
+    sweep: &mut ConnectionSweep,
+    candidates: usize,
+) {
+    // A slow page may use additional slices. Each incomplete slice must settle a candidate.
+    for _ in 0..candidates {
+        let (_, previously_visited) = sweep.visited();
+        if worker.reconcile_connection_slice(now, sweep).await.unwrap() {
+            return;
+        }
+        assert!(sweep.visited().1 > previously_visited);
+    }
+    panic!("connection sweep must complete within the number of fixture candidates");
 }

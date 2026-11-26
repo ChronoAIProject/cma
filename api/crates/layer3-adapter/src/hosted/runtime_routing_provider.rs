@@ -1,5 +1,15 @@
 use super::*;
 
+/// Persistence port for the provider chosen before a runtime creation request.
+#[async_trait::async_trait]
+pub trait RuntimeRoutingStore: Send + Sync {
+    fn require_allocation_image(&self, _image: &str) -> Result<()> {
+        Ok(())
+    }
+
+    async fn select(&self, sandbox: &str, generation: u64, default_new: bool) -> Result<bool>;
+}
+
 impl RuntimeBackends {
     pub(super) fn require_home_routes(&self, home: &crate::HomeVolumeRequest) -> Result<()> {
         if self.home_routes.is_none() && home.scope.is_some() {
@@ -23,6 +33,7 @@ impl RuntimeBackends {
         &self,
         request: &ProviderSandboxRequest,
     ) -> Result<bool> {
+        self.routing.require_allocation_image(&request.image.uri)?;
         let identity = crate::hosted::deployment::provider_request_identity(request)?;
         self.routing
             .select(

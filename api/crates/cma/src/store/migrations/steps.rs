@@ -1,9 +1,9 @@
 //! The explicit manifest registry is also the migrator's reader floor.
 use super::{
-    activity_indexes, activity_page_index, agent_log_active_proofs, agent_log_segments,
-    agent_log_source_keys, agent_owner_index, binding_indexes, collection_indexes,
-    command_cohort_index, measured_batches, measured_custody, measured_index, opening_index,
-    sandbox_usage_capture, turn_policy_index, usage_projections, Result,
+    activity_audit_index, activity_indexes, activity_page_index, agent_log_active_proofs,
+    agent_log_segments, agent_log_source_keys, agent_owner_index, binding_indexes,
+    collection_indexes, command_cohort_index, measured_batches, measured_custody, measured_index,
+    opening_index, sandbox_usage_capture, turn_policy_index, usage_projections, Result,
 };
 use mongodb::bson::{doc, Document};
 
@@ -11,6 +11,7 @@ use mongodb::bson::{doc, Document};
 pub(super) enum Step {
     Activity,
     ActivityPage,
+    ActivityAudit,
     LedgerCollection,
     AgentOpening,
     AgentOwnerPage,
@@ -28,7 +29,7 @@ pub(super) enum Step {
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 16] = [
+    pub(super) const ALL: [Self; 17] = [
         Self::AgentLogActiveProofs,
         Self::MeasuredIndex,
         Self::MeasuredBatches,
@@ -36,6 +37,7 @@ impl Step {
         Self::SandboxUsageCapture,
         Self::Activity,
         Self::ActivityPage,
+        Self::ActivityAudit,
         Self::LedgerCollection,
         Self::AgentOpening,
         Self::AgentOwnerPage,
@@ -63,6 +65,7 @@ impl Step {
             Self::BindingIndexes => binding_indexes::ID,
             Self::Activity => activity_indexes::ID,
             Self::ActivityPage => activity_page_index::ID,
+            Self::ActivityAudit => activity_audit_index::ID,
             Self::LedgerCollection => collection_indexes::ID,
             Self::AgentOpening => opening_index::ID,
             Self::AgentOwnerPage => agent_owner_index::ID,
@@ -83,6 +86,7 @@ impl Step {
             Self::BindingIndexes => binding_indexes::checksum(),
             Self::Activity => activity_indexes::checksum(),
             Self::ActivityPage => activity_page_index::checksum(),
+            Self::ActivityAudit => activity_audit_index::checksum(),
             Self::LedgerCollection => collection_indexes::checksum(),
             Self::AgentOpening => opening_index::checksum(),
             Self::AgentOwnerPage => agent_owner_index::checksum(),
@@ -104,7 +108,7 @@ impl Step {
             Self::SandboxUsageCapture => crate::store::sandbox_usage_export::schema::MAX_STEPS,
             Self::BindingIndexes => 11,
             Self::Activity => 2,
-            Self::ActivityPage => 1,
+            Self::ActivityPage | Self::ActivityAudit => 1,
             Self::LedgerCollection => 5,
             Self::AgentOpening
             | Self::AgentOwnerPage
@@ -126,7 +130,7 @@ impl Step {
             Self::AgentLogActiveProofs => &[agent_log_active_proofs::COLLECTION],
             Self::SandboxUsageCapture => crate::store::sandbox_usage_export::COLLECTIONS,
             Self::BindingIndexes => crate::store::bindings::schema::COLLECTIONS,
-            Self::Activity | Self::ActivityPage => &["activity"],
+            Self::Activity | Self::ActivityPage | Self::ActivityAudit => &["activity"],
             Self::LedgerCollection => &collection_indexes::COLLECTIONS,
             Self::AgentOpening => &opening_index::COLLECTIONS,
             Self::CommandCohort => &["agent_commands"],
@@ -140,6 +144,7 @@ impl Step {
             Self::AgentLogSegments | Self::SandboxUsageCapture => "applied_schema_steps",
             Self::Activity
             | Self::ActivityPage
+            | Self::ActivityAudit
             | Self::LedgerCollection
             | Self::AgentOpening
             | Self::AgentOwnerPage
@@ -177,6 +182,11 @@ impl Step {
                 .map(|index| ("activity", index))
                 .collect()),
             Self::ActivityPage => Ok(activity_page_index::inspect(database)
+                .await?
+                .into_iter()
+                .map(|index| ("activity", index))
+                .collect()),
+            Self::ActivityAudit => Ok(activity_audit_index::inspect(database)
                 .await?
                 .into_iter()
                 .map(|index| ("activity", index))
@@ -230,6 +240,9 @@ impl Step {
             }
             Self::ActivityPage if collection == "activity" => {
                 activity_page_index::create(database, index).await
+            }
+            Self::ActivityAudit if collection == "activity" => {
+                activity_audit_index::create(database, index).await
             }
             Self::LedgerCollection => collection_indexes::create(database, collection, index).await,
             Self::AgentOpening => opening_index::create(database, collection, index).await,
