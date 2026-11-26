@@ -4,38 +4,48 @@ import {configurationCases, heldConfigurationCases, assertWriterTitle,
   verifyLifecycleReplay} from './agent_configuration.mjs';
 
 function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = false,
-  mutateOnRefusal = false} = {}) {
+  mutateOnRefusal = false, effect = [3]} = {}) {
   let preferences = {title: 'Original', system_prompt: 'Original instructions',
     prompt_pending: false, prompt_supported: true, revision: 1};
   let settings = {model: 'fixture-model', reasoning_effort: 'high',
     permission_mode: 'autonomous', pending: false};
   const original = structuredClone({preferences, settings}), calls = [], rows = [], failures = [];
+  const replies = new Map();
   const record = {agentId: 'agent', name: 'Original'};
   const api = {request: async (am, method, path, options = {}) => {
-    const {body, allowed = [200]} = options;
+    const {body, allowed = [200], key} = options;
     calls.push({am, method, path, ...structuredClone(options)});
     const prompt = path.endsWith('/preferences');
     if (method === 'GET') return {body: structuredClone(prompt ? preferences : settings)};
+    if (replies.has(key)) return structuredClone(replies.get(key));
     if (busy && !body.title) {
       if (mutateOnRefusal) preferences.system_prompt = 'corrupted by refused write';
       return {status: 409, body: {code: badRefusal ? 'record_revision_changed' : 'agent_not_ready'}};
     }
     if (prompt && body.expected_revision !== preferences.revision) {
-      assert.deepEqual(allowed, [409]); return {status: 409, body: {code: 'conflict'}};
+      assert.deepEqual(allowed, [409]);
+      return {status: 409, body: {code: 'conflict', settings_update_reason: 'stale_revision'}};
     }
     if (prompt) {
       if (!falseAck) preferences = {...preferences, revision: preferences.revision + 1,
         ...(body.title === undefined ? {system_prompt: body.system_prompt} : {title: body.title})};
       if (lostAck && preferences.revision === 2) throw Error('lost_ack');
     } else settings = {...settings, ...body};
-    return {status: 200, body: structuredClone(prompt ? preferences : settings)};
+    const response = {status: 200, body: structuredClone(prompt ? preferences : settings)};
+    replies.set(key, response);
+    return response;
   }};
   const runCase = async (name, operation) => {
     const row = {case: name, verdict: 'RUNNING'}; rows.push(row);
     try { await operation(); row.verdict = 'PASS'; }
     catch (error) { row.verdict = 'FAIL'; throw error; }
   };
-  return {api, record, runCase, recordFailure: async (stage, error) => failures.push({stage, message: error.message}),
+  const adapter = {titleEffects: async ({agentId, title}) => {
+    assert.equal(agentId, record.agentId);
+    assert.equal(title, preferences.title);
+    return effect;
+  }};
+  return {api, adapter, record, runCase, recordFailure: async (stage, error) => failures.push({stage, message: error.message}),
     calls, rows, failures, original, state: () => ({preferences, settings})};
 }
 
@@ -74,12 +84,26 @@ test('held-turn busy refusals preserve state while acknowledged changed rename s
   assert.equal(x.rows.length, 2); assert.ok(x.rows.every(row => row.verdict === 'PASS'));
   assert.notEqual(x.record.writerTitle.title, x.original.preferences.title);
   assert.equal(x.record.writerTitle.revision, 2);
-  await assertWriterTitle(x.api, x.record);
+  await assertWriterTitle(x.api, x.adapter, x.record);
+  const [first, replay, stale] = x.calls.filter(row => row.method === 'PATCH' && row.body.title);
+  assert.equal(first.key, replay.key);
+  assert.deepEqual(first.body, replay.body);
+  assert.notEqual(stale.key, first.key);
+  assert.equal(stale.prefer, 'cma-settings-reasons');
+  assert.equal(x.state().preferences.revision, 2);
   const oldRead = x.api.request;
   x.api.request = async (...args) => {
     const response = await oldRead(...args); response.body.title = 'Lost acknowledged title'; return response;
   };
-  await assert.rejects(assertWriterTitle(x.api, x.record), /acknowledged_title_lost_after_owner_move/);
+  await assert.rejects(assertWriterTitle(x.api, x.adapter, x.record), /acknowledged_title_lost_after_owner_move/);
+});
+
+test('fresh read and successful replay cannot hide duplicate durable rename effects', async () => {
+  const effect = [3];
+  const x = fixture({busy: true, effect});
+  await heldConfigurationCases(x);
+  effect.push(4);
+  await assert.rejects(assertWriterTitle(x.api, x.adapter, x.record), /rename_effect_changed_or_repeated/);
 });
 
 test('busy refusal must be the typed business boundary and must not mutate state', async () => {

@@ -56,8 +56,10 @@ def dependencies(secret):
     config = {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': metadata('client-code'),
               'data': {'identity.py': Path(__file__).with_name('identity.py').read_text()}}
     protected = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': metadata('client-secrets'),
-                 'stringData': {'identity.json': json.dumps({k: secret[k] for k in
-                    ['bearer', 'admin_bearer', 'outsider_bearer', 'refresh_token', 'client_id', 'client_secret', 'expires_at']}),
+                'stringData': {'identity.json': json.dumps({
+                    **{k: secret[k] for k in ['bearer', 'admin_bearer', 'outsider_bearer',
+                       'refresh_token', 'client_id', 'client_secret', 'expires_at']},
+                    'deployment_id': DEPLOYMENT}),
                     'control-key': secret['control_key'], 'replica-key': secret['replica_key'],
                     'mongo-root': secret['mongo_root'], 'mongo-app': secret['mongo_app']}}
     mongo = pod('mongo', MONGO, resource('1', '3Gi', '250m', '2Gi'),
@@ -111,7 +113,7 @@ def am(secret, runtime, family='base', base_image=None):
         'CHRONO_SANDBOX_CPU': '1', 'CHRONO_SANDBOX_MEMORY': '2Gi',
         'CHRONO_UPSTREAM_BASE_URL': 'https://provider.native-am.invalid', 'CHRONO_UPSTREAM_WIRE_API': 'responses',
         'CHRONO_PLATFORM_BASE_URL': 'https://identity.native-am.invalid',
-        'RUST_LOG': 'info,cma::sandbox=debug,layer3_adapter::agent_sandbox=debug',
+        'RUST_LOG': 'info,cma::sandbox=debug,layer3_adapter::agent_sandbox=debug,cma::agent_manager::peer_write=debug',
     }
     if family == 'omarchy':
         if not base_image or base_image == runtime:

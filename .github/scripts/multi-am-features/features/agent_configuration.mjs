@@ -83,7 +83,7 @@ export async function configurationCases({api, record: resource, runCase, record
 
 // Called only after the held provider's real active-stream oracle is observed.
 // This exercises working-state admission, not a deterministic injected CAS race.
-export async function heldConfigurationCases({api, record: resource, runCase,
+export async function heldConfigurationCases({api, adapter, record: resource, runCase,
   recordState = async () => {}}) {
   const preferences = preferencesPath(resource), settings = settingsPath(resource);
   await runCase('writer.busy_configuration_refused', async () => {
@@ -104,23 +104,39 @@ export async function heldConfigurationCases({api, record: resource, runCase,
   await runCase('writer.held_rename', async () => {
     const before = await read(api, preferences), title = 'Owner move ' + randomUUID();
     check(before.title !== title, 'rename_change_required');
-    const updated = (await patch(api, preferences, {expected_revision: before.revision, title})).body;
+    const intent = {key: randomUUID(), body: {expected_revision: before.revision, title}};
+    const updated = (await api.request('a', 'PATCH', preferences, intent)).body;
     check(updated.title === title && updated.revision === before.revision + 1, 'held_rename_ack');
     const seen = await read(api, preferences);
     check(seen.title === title && seen.revision === updated.revision, 'held_rename_readback');
+    const effects = await adapter.titleEffects({agentId: resource.agentId, title});
+    check(Array.isArray(effects) && effects.length === 1 &&
+      Number.isSafeInteger(effects[0]) && effects[0] > 0, 'one_durable_title_effect_required');
     // This exact acknowledged value must survive the existing actual owner loss.
-    resource.writerTitle = {title, revision: updated.revision};
+    resource.writerTitle = {title, revision: updated.revision, intent, effect: effects[0]};
     await recordState('held_rename_changed', seen);
   });
 }
 
-export async function assertWriterTitle(api, resource) {
+export async function assertWriterTitle(api, adapter, resource) {
   const expected = resource.writerTitle;
-  check(expected && Number.isSafeInteger(expected.revision), 'held_title_evidence_missing');
-  const current = await read(api, preferencesPath(resource));
+  check(expected && expected.intent && Number.isSafeInteger(expected.revision), 'held_title_evidence_missing');
+  const path = preferencesPath(resource);
+  const current = await read(api, path);
   check(current.title === expected.title && current.revision === expected.revision,
     'acknowledged_title_lost_after_owner_move');
-  return current;
+  const replay = (await api.request('a', 'PATCH', path, expected.intent)).body;
+  check(replay.title === expected.title && replay.revision === expected.revision, 'rename_replay_changed_receipt');
+  const stale = await api.request('a', 'PATCH', path, {
+    key: randomUUID(), body: {...expected.intent.body, title: 'Stale ' + randomUUID()},
+    prefer: 'cma-settings-reasons', allowed: [409],
+  });
+  check(stale.body?.settings_update_reason === 'stale_revision', 'rename_stale_refusal_reason');
+  const final = await read(api, path);
+  check(final.title === current.title && final.revision === current.revision, 'rename_replay_or_stale_changed_state');
+  const effects = await adapter.titleEffects({agentId: resource.agentId, title: expected.title});
+  check(equal(effects, [expected.effect]), 'rename_effect_changed_or_repeated');
+  return final;
 }
 
 export async function verifyLifecycleReplay(api, resource) {

@@ -4,7 +4,7 @@ import {NonOwnerRouter} from './routing.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
 import {RequestPacer} from './pacing.mjs';
-import {API, assertOwner} from './cma/core.mjs';
+import {API, assertOwner, hash} from './cma/core.mjs';
 
 test('command polling follows its Agent receipt to the current non-owner', async () => {
   const api = new API({bearer: 'command-routing-fixture'});
@@ -85,6 +85,28 @@ test('uses the live non-owner and records independent process identities', async
   assert.equal(proofs[0].verdict, 'PASS');
   assert.notEqual(proofs[0].owner_instance_sha256, proofs[0].ingress_instance_sha256);
   assert.ok(!JSON.stringify(proofs).includes('pod-a'));
+});
+test('writer route needs one matching event from the owning process', async () => {
+  const requestId = '5ecbd0e3-4d26-465d-9595-7ba12271cf05';
+  const request = {status: 202, timing: {request_id: requestId, method: 'POST',
+    route: '/api/v1/agents/{id}/skills'}};
+  for (const matches of [0, 1, 2]) {
+    let calls = 0;
+    const {router, proofs} = setup({peerWriteEvidence: async value => {
+      assert.deepEqual(value, {am: owner.am, requestHash: hash(requestId), epoch: owner.epoch,
+        operation: 'skill_install'});
+      return {matches};
+    }});
+    const submitted = router.dispatch('agent', async () => { calls++; return request; });
+    if (matches === 1) {
+      assert.equal(await submitted, request);
+      assert.equal(proofs[0].verified_owner_write, true);
+    } else {
+      await assert.rejects(submitted, /verified_owner_write_missing_or_duplicated/);
+      assert.equal(proofs[0].verdict, 'FAIL');
+    }
+    assert.equal(calls, 1);
+  }
 });
 test('refuses absent leases and a mismatched topology before executing', async () => {
   let calls = 0;

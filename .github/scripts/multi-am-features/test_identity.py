@@ -3,6 +3,7 @@ import contextlib
 import http.client
 from http.server import ThreadingHTTPServer
 import io
+import json
 from pathlib import Path
 import secrets
 import sys
@@ -12,7 +13,7 @@ import unittest
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'owner'))
-from identity import Identity
+from identity import Identity, scope_plan
 
 
 class IndependentActorTests(unittest.TestCase):
@@ -20,8 +21,10 @@ class IndependentActorTests(unittest.TestCase):
         self.credentials = {key: secrets.token_urlsafe(32) for key in (
             'bearer', 'admin_bearer', 'outsider_bearer', 'refresh_token', 'client_id', 'client_secret')}
         self.credentials['expires_at'] = int(time.time()) + 3600
+        self.credentials['deployment_id'] = 'cma-ci-123456789abc'
         class Handler(Identity):
             config = self.credentials
+            keys = {}
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -31,12 +34,12 @@ class IndependentActorTests(unittest.TestCase):
         self.server.shutdown(); self.server.server_close(); self.thread.join(timeout=5)
         self.assertFalse(self.thread.is_alive())
 
-    def request(self, method, path, *, token=None, form=None):
-        import json
+    def request(self, method, path, *, token=None, form=None, data=None):
         client = http.client.HTTPConnection(*self.server.server_address, timeout=5)
         try:
             with contextlib.redirect_stdout(io.StringIO()):
-                client.request(method, path, body=urlencode(form) if form else None,
+                body = urlencode(form) if form else json.dumps(data) if data else None
+                client.request(method, path, body=body,
                                headers={'Authorization': 'Bearer ' + token} if token else {})
                 response = client.getresponse(); body = json.loads(response.read())
                 return response.status, body
@@ -65,6 +68,25 @@ class IndependentActorTests(unittest.TestCase):
             'token': 'unknown-fixture-input', 'token_type_hint': 'access_token',
             'client_id': self.credentials['client_id'], 'client_secret': self.credentials['client_secret']})
         self.assertEqual(status, 401); self.assertFalse(body['active'])
+
+    def test_scope_key_uses_disposable_deployment_and_ornn_revocation(self):
+        token = self.credentials['bearer']
+        endpoint = '/api/v1/api-keys'
+        selected = ['fixture-ornn']
+        body = {'name': 'cma:another-deployment:fixture-sandbox', 'scopes': 'proxy read',
+                'expires_at': '2099-01-01T00:00:00Z', 'allowed_service_ids': selected,
+                'allowed_node_ids': ['fixture-node'], 'allow_all_services': False,
+                'allow_all_nodes': False, 'allow_auto_connected_services': False,
+                'scope_plan_digest': scope_plan(selected)['normalized_grant_digest']}
+        self.assertEqual(self.request('POST', endpoint, token=token, data=body)[0], 400)
+        body['name'] = 'cma:' + self.credentials['deployment_id'] + ':fixture-sandbox'
+        status, created = self.request('POST', endpoint, token=token, data=body)
+        self.assertEqual(status, 200)
+        credential = created['full_key']
+        self.assertEqual(self.request('GET', '/fixture/ornn-grant', token=credential), (200, {'granted': True}))
+        self.assertEqual(self.request('GET', '/fixture/ornn-grant', token=token)[0], 401)
+        self.assertEqual(self.request('DELETE', endpoint + '/' + created['id'], token=token)[0], 200)
+        self.assertEqual(self.request('GET', '/fixture/ornn-grant', token=credential)[0], 401)
 
 
 class LoginRedirectTests(unittest.TestCase):

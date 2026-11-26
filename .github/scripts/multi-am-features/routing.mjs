@@ -2,6 +2,12 @@ import {createHash} from 'node:crypto';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const requireValue = (value, message) => { if (!value) throw new Error(message); };
+const evidencedOperations = new Map([
+  ['PATCH /api/v1/agents/{id}/preferences', 'preferences'],
+  ['PATCH /api/v1/agents/{id}/settings', 'settings'],
+  ['POST /api/v1/agents/{id}/skills', 'skill_install'],
+  ['POST /api/v2/agents/{id}/responses/{id}/controls', 'response_control'],
+]);
 
 // The owner observation comes from the fixture's live lease/member join. A
 // direct Pod forward identifies ingress independently of routing/relay logs.
@@ -44,6 +50,13 @@ export class NonOwnerRouter {
       requireValue(after?.instance_id === owner.instance_id && after.epoch === owner.epoch
         && after.pod_uid === owner.pod_uid && after.am === owner.am,
       'owner_changed_during_feature_request');
+      const writer = evidencedOperations.get(`${result?.timing?.method} ${result?.timing?.route}`);
+      if (writer && [200, 202].includes(result.status)) {
+        const evidence = await this.adapter.peerWriteEvidence({am: owner.am,
+          requestHash: digest(proof.request_id), epoch: owner.epoch, operation: writer});
+        requireValue(evidence.matches === 1, 'verified_owner_write_missing_or_duplicated');
+        proof.verified_owner_write = true;
+      }
       proof.verdict = 'PASS';
       return result;
     } catch (error) {

@@ -112,6 +112,13 @@ class Identity(BaseHTTPRequestHandler):
         return None
 
     def do_GET(self):
+        if self.path == '/fixture/ornn-grant':
+            auth = self.headers.get('Authorization', '')
+            with self.lock:
+                granted = any('fixture-ornn' in value.get('service_ids', ())
+                              and hmac.compare_digest(auth, 'Bearer ' + value['credential'])
+                              for value in self.keys.values())
+            return self.reply(200 if granted else 401, {'granted': granted})
         if urlsplit(self.path).path == '/authorize':
             params = parse_qs(urlsplit(self.path).query)
             try:
@@ -207,18 +214,21 @@ class Identity(BaseHTTPRequestHandler):
                           'allow_all_services', 'allow_all_nodes', 'allow_auto_connected_services', 'scope_plan_digest'}
                 plan = scope_plan(body['allowed_service_ids'])
                 if (set(body) != fields or body['scopes'] != 'proxy read'
-                    or not re.fullmatch(r'cma:native-am-1115:[A-Za-z0-9_.-]{1,128}', body['name'])
+                    or not re.fullmatch(r'cma:' + re.escape(self.config.get('deployment_id', 'native-am-1115'))
+                                        + r':[A-Za-z0-9_.-]{1,128}', body['name'])
                     or body['allowed_node_ids'] != ['fixture-node']
                     or any(body[x] is not False for x in ['allow_all_services', 'allow_all_nodes', 'allow_auto_connected_services'])
                     or body['scope_plan_digest'] != plan['normalized_grant_digest']
                     or datetime.fromisoformat(body['expires_at'].replace('Z', '+00:00')).timestamp() <= time.time()):
                     raise ValueError('mint_contract')
                 identifier = 'fixture-key-' + secrets.token_hex(16)
+                credential = 'local-' + secrets.token_hex(32)
                 with self.lock:
                     if len(self.keys) >= 16:
                         raise ValueError('mint_bound')
-                    self.keys[identifier] = {'name': body['name']}
-                return self.reply(200, dict(id=identifier, full_key='local-' + secrets.token_hex(32),
+                    self.keys[identifier] = {'name': body['name'], 'credential': credential,
+                                             'service_ids': body['allowed_service_ids']}
+                return self.reply(200, dict(id=identifier, full_key=credential,
                     scopes=body['scopes'], state_version=1, allowed_service_ids=body['allowed_service_ids'],
                     allowed_node_ids=body['allowed_node_ids'], allow_all_services=False,
                     allow_all_nodes=False, allow_auto_connected_services=False))

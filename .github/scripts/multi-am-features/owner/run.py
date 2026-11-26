@@ -51,6 +51,7 @@ class Fixture:
         self.origins={}
         self.templates={}
         self.killed={}
+        self.drained={}
         self.events=[]
         self.provider_observation_lock=threading.Lock()
         self.mongo_observation_lock=threading.Lock()
@@ -197,6 +198,9 @@ class Fixture:
         actual=self.ownerOf(agentId=agentId)
         if actual is None:raise RuntimeError('agent_owner_absent_before_kill')
         if owner and any(actual.get(k)!=owner.get(k) for k in ['am','epoch','pod_uid']):raise RuntimeError('owner_changed_before_kill')
+        return self.stopOwnedAm(actual)
+
+    def stopOwnedAm(self, actual):
         am=actual['am']; name='am-'+am+'-0'
         if am in self.killed:raise RuntimeError('am_already_killed')
         pod=self.client.kjson(['get','pod',name,'-o','json'])
@@ -214,6 +218,36 @@ class Fixture:
         if forward:self.client.stop(forward[0])
         self.record('owning_am_killed',owner=actual,container_id=cid,actual_container_exited=True)
         return {'killed_am':am,'actual_container_exited':True,'pod_uid':actual['pod_uid']}
+
+    def drainOwner(self, agentId=None, owner=None):
+        actual = self.ownerOf(agentId=agentId)
+        if actual is None or not isinstance(owner, dict) or any(
+                actual.get(key) != owner.get(key) for key in ('am', 'epoch', 'pod_uid', 'instance_id')):
+            raise RuntimeError('owner_changed_before_drain')
+        am = actual['am']
+        name = 'am-' + am + '-0'
+        if am in self.drained or am in self.killed:
+            raise RuntimeError('manager_already_disrupted')
+        if self.client.http(self.origins[am], 'GET', '/ready', timeout=3)[0] != 200:
+            raise RuntimeError('manager_not_ready_before_drain')
+        started = time.monotonic()
+        self.client.k(['exec', name, '--', '/usr/local/bin/cma', '--agent-manager-drain'], timeout=30)
+        status, body = self.client.http(self.origins[am], 'GET', '/ready', timeout=3)
+        if status != 503 or body.get('reason') not in ('membership', 'draining'):
+            raise RuntimeError('drain_readiness_predicate_still_serving')
+        pod = self.client.kjson(['get', 'pod', name, '-o', 'json'])
+        if pod['metadata']['uid'] != actual['pod_uid'] or pod['metadata'].get('deletionTimestamp'):
+            raise RuntimeError('drained_process_replaced_before_observation')
+        self.drained[am] = actual
+        return {'am': am, 'readiness': status, 'elapsed_ms': round((time.monotonic() - started) * 1000)}
+
+    def restartDrained(self, am=None):
+        if am not in self.drained:
+            raise RuntimeError('owned_drain_required')
+        self.stopOwnedAm(self.drained[am])
+        result = self.restoreAm(am=am)
+        del self.drained[am]
+        return result
 
     def restoreAm(self, am=None, am_id=None, **_):
         am=am or am_id
@@ -265,6 +299,45 @@ class Fixture:
         self.provider_observation('oracle',snapshot=value)
         return value
 
+    def titleEffects(self, agentId=None, title=None):
+        if not isinstance(agentId, str) or not 1 <= len(agentId) <= 200:
+            raise ValueError('agent_id_required')
+        if not isinstance(title, str) or not 1 <= len(title) <= 256:
+            raise ValueError('fixture_title_required')
+        query = json.dumps({'agent_id': agentId, 'record.kind.type': 'title_set',
+                            'record.kind.title': title}, separators=(',', ':'))
+        return self.mongo(
+            "const rows=d.agent_log.find(" + query + ",{_id:0,seq:1}).limit(2).toArray();"
+            "print(JSON.stringify(rows.map(row=>Number(row.seq))));")
+
+    def skillEffects(self, agentId=None, skillId=None):
+        if not isinstance(agentId, str) or not 1 <= len(agentId) <= 200:
+            raise ValueError('agent_id_required')
+        if skillId not in ('two-am-before-restart', 'two-am-after-restart'):
+            raise ValueError('fixture_skill_required')
+        return self.mongo(
+            "const a=d.agents.findOne({_id:" + json.dumps(agentId) + "},{_id:0,'work.live_skills':1});"
+            "const id=" + json.dumps(skillId) + ";"
+            "print(JSON.stringify(a? a.work.live_skills.filter(row=>row.reference.id===id)"
+            ".map(row=>({status:row.status,version:row.material?.version})):null));")
+
+    def peerWriteEvidence(self, am=None, requestHash=None, epoch=None, operation=None):
+        if (am not in ('a', 'b') or not isinstance(requestHash, str)
+                or not re.fullmatch(r'[a-f0-9]{64}', requestHash)
+                or type(epoch) is not int or not 0 < epoch < 2**53
+                or operation not in ('preferences', 'settings', 'skill_install', 'response_control')):
+            raise ValueError('peer_write_evidence_scope')
+        raw = self.client.k(['logs', f'am-{am}-0', '--since=20s', '--limit-bytes=1048576'], timeout=5)
+        matches = 0
+        for entry in raw.splitlines():
+            line = re.sub(r'\x1b\[[0-9;]*m', '', entry)
+            if 'cma::agent_manager::peer_write:' not in line:
+                continue
+            fields = dict(re.findall(r'(?<!\S)(request_sha256|operation|epoch)="?([a-z0-9_]+)"?(?=\s|$)', line))
+            if fields == {'request_sha256': requestHash, 'operation': operation, 'epoch': str(epoch)}:
+                matches += 1
+        return {'matches': matches}
+
     def serve(self):
         fixture=self
         class Handler(BaseHTTPRequestHandler):
@@ -280,7 +353,9 @@ class Fixture:
                     if not 0<=size<=8192:raise ValueError('control_body_bound')
                     body=json.loads(self.rfile.read(size))
                     name=self.path.strip('/')
-                    allowed=['topology','runtimeFor','ownerOf','killAm','restoreAm','prepareTurn','releaseTurn','oracle','captureFailure']
+                    allowed=['topology','runtimeFor','ownerOf','killAm','restoreAm','prepareTurn',
+                             'releaseTurn','oracle','captureFailure','titleEffects','skillEffects',
+                             'drainOwner','restartDrained','peerWriteEvidence']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

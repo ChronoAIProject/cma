@@ -1,16 +1,29 @@
 """Bounded storage-service dependency; AM document policy and Mongo remain real."""
 import hashlib
 import hmac
+import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import io
 import json
 from pathlib import Path
 import re
 import ssl
 import threading
 from urllib.parse import parse_qs, urlsplit
+import zipfile
 
 PREFIX = '/api/v1/proxy/s/chrono-storage-service/api/buckets/cma-ci-documents/objects'
 LIMIT = 2 * 1024 * 1024
+SKILL_PATH = re.compile(r'/api/v1/proxy/s/ornn-api/api/v1/skills/'
+                        r'(two-am-(?:before|after)-restart)(/versions/1\.0/download)?')
+
+
+def skill_archive(skill):
+    content = io.BytesIO()
+    with zipfile.ZipFile(content, 'w') as archive:
+        archive.writestr(zipfile.ZipInfo('SKILL.md'),
+                         f'---\nname: {skill}\ndescription: Verify a disposable Agent skill.\n---\n')
+    return content.getvalue()
 
 
 class Storage(BaseHTTPRequestHandler):
@@ -86,9 +99,12 @@ class Storage(BaseHTTPRequestHandler):
             return self.reply(400, {'error': 'invalid_request'})
 
     def do_GET(self):
+        url = urlsplit(self.path)
+        if match := SKILL_PATH.fullmatch(url.path):
+            return self.skill(match[1], match[2] is not None, url.query)
         if not self.authorized():
             return self.reply(401, {'error': 'unauthorized'})
-        if urlsplit(self.path).path != PREFIX + '/download':
+        if url.path != PREFIX + '/download':
             return self.reply(404, {'error': 'unsupported_route'})
         try:
             key, _ = self.object_key()
@@ -97,6 +113,26 @@ class Storage(BaseHTTPRequestHandler):
             return self.reply(404, {'error': 'missing'}) if data is None else self.reply(200, data, 'text/markdown; charset=utf-8')
         except ValueError:
             return self.reply(400, {'error': 'invalid_request'})
+
+    def skill(self, skill, download, query):
+        if query != ('' if download else 'version=1.0'):
+            return self.reply(404, {'error': 'unknown_skill_version'})
+        connection = http.client.HTTPConnection('identity', 8080, timeout=3)
+        try:
+            connection.request('GET', '/fixture/ornn-grant',
+                               headers={'Authorization': self.headers.get('Authorization', '')})
+            response = connection.getresponse()
+            if response.status != 200:
+                return self.reply(401, {'error': 'unauthorized'})
+        except (OSError, http.client.HTTPException):
+            return self.reply(503, {'error': 'fixture_authority_unavailable'})
+        finally:
+            connection.close()
+        material = skill_archive(skill)
+        if download:
+            return self.reply(200, material, 'application/zip')
+        return self.reply(200, {'data': {'guid': skill, 'name': skill, 'version': '1.0',
+                                       'skillHash': hashlib.sha256(material).hexdigest(), 'isPrivate': False}})
 
 
 if __name__ == '__main__':

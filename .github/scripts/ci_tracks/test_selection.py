@@ -153,7 +153,7 @@ class CIEventSelectionTests(unittest.TestCase):
         cd = selection.determine(self.root, push, 'push')
         selective = selection.determine_ci(self.root, pull, 'pull_request', repository)
         self.assertEqual(selective, dict(selection.determine(self.root, pull, 'pull_request'),
-                                         approval_contract=False))
+                                         approval_contract=False, two_am_features=False))
         self.assertFalse(selective['am'])
         self.assertEqual(cd['deployables'], ['cma-web'])
         self.assertFalse(cd['eg'])
@@ -181,6 +181,20 @@ class CIEventSelectionTests(unittest.TestCase):
         self.assertEqual(queued, selection.determine_ci(self.root, pull, 'pull_request', repository))
         self.assertFalse(queued['am'])
         self.assertEqual((queued['base'], queued['head']), (release_base, head))
+
+    def test_two_manager_fixture_change_selects_the_agent_manager_images(self):
+        base = self.git('rev-parse', 'HEAD')
+        self.write('.github/scripts/multi-am-features/probe.py', 'print("fixture")\n')
+        head = self.commit()
+        repository = 'example/repository'
+        event = {'number': 7, 'repository': {'full_name': repository}, 'pull_request': {
+            'base': {'ref': 'develop', 'sha': base, 'repo': {'full_name': repository}},
+            'head': {'ref': 'feature', 'sha': head, 'repo': {'full_name': repository}},
+        }}
+        result = selection.determine_ci(self.root, event, 'pull_request', repository)
+        self.assertTrue(result['two_am_features'])
+        self.assertTrue(result['am'])
+        self.assertEqual(result['deployables'], [])
 
     def test_approval_contract_web_inputs_do_not_select_rust_product_tracks(self):
         repository = 'example/repository'

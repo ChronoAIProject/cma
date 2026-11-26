@@ -10,6 +10,7 @@ export function createAdapter(config) {
     return value;
   }
   return Object.fromEntries(['topology','runtimeFor','prepareTurn','ownerOf','killAm',
-    'releaseTurn','oracle','restoreAm','captureFailure'].map(name=>[name,(body)=>call(name,body)]));
+    'releaseTurn','oracle','restoreAm','captureFailure','titleEffects','skillEffects',
+    'drainOwner','restartDrained','peerWriteEvidence'].map(name=>[name,(body)=>call(name,body)]));
 }
 export default createAdapter;

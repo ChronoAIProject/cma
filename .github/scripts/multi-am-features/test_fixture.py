@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -16,9 +17,29 @@ sys.path.insert(0, str(ROOT / 'owner'))
 from fixture_no_secrets import NoSecretClient, synthetic_configmaps
 import manifests
 import legacy_manifests
+from run import Fixture
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_peer_write_requires_matching_hash_operation_epoch_and_process(self):
+        wanted = 'a' * 64
+        records = [
+            f'DEBUG cma::agent_manager::peer_write: entry request_sha256={wanted} operation="settings" epoch=3',
+            f'DEBUG cma::agent_manager::peer_write: entry request_sha256={wanted} operation="settings" epoch=4',
+            f'DEBUG cma::agent_manager::peer_write: entry request_sha256={wanted} operation="preferences" epoch=3',
+            f'DEBUG cma::unrelated: entry request_sha256={wanted} operation="settings" epoch=3',
+        ]
+        fixture = Fixture.__new__(Fixture)
+        def logs(args, **kwargs):
+            self.assertEqual(args, ['logs', 'am-b-0', '--since=20s', '--limit-bytes=1048576'])
+            return '\n'.join(records)
+        fixture.client = SimpleNamespace(k=logs)
+        self.assertEqual(fixture.peerWriteEvidence('b', wanted, 3, 'settings'), {'matches': 1})
+        records.append(records[0])
+        self.assertEqual(fixture.peerWriteEvidence('b', wanted, 3, 'settings'), {'matches': 2})
+        with self.assertRaisesRegex(ValueError, 'peer_write_evidence_scope'):
+            fixture.peerWriteEvidence('foreign', wanted, 3, 'settings')
+
     def test_cleanup_refuses_unrelated_cluster_before_calling_docker(self):
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / 'cluster-state.private.json').write_text(json.dumps({'cluster': 'production'}))

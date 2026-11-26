@@ -16,6 +16,7 @@ import {NonOwnerRouter} from './routing.mjs';
 import {writerCoverage} from './writer_coverage.mjs';
 import {queuedCommandCase} from './features/queued_commands.mjs';
 import {configurationDenials} from './features/configuration_denials.mjs';
+import {installSkillCase} from './features/skills.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -140,7 +141,7 @@ try {
       const previousRecorder = context.api.router.record;
       context.api.router.record = async proof => { observations.push(proof); await previousRecorder(proof); };
       const row = {case: 'writer.held_title_survives_restart', phase, iteration: 1, verdict: 'RUNNING'};
-      try { row.final_state = await assertWriterTitle(context.api, context.record); row.verdict = 'PASS'; }
+      try { row.final_state = await assertWriterTitle(context.api, context.adapter, context.record); row.verdict = 'PASS'; }
       catch (error) { row.verdict = 'FAIL'; throw error; }
       finally {
         context.api.router.record = previousRecorder;
@@ -195,6 +196,9 @@ try {
             row.elapsed_ms = performance.now() - start; await record(row);
           }
         }};
+        if (iteration === 1) {
+          await caseContext.runCase('writer.skill_installs_once', () => installSkillCase(caseContext));
+        }
         await userCases(caseContext);
         await configurationDenials({...caseContext, outsider});
         await configurationCases(caseContext);

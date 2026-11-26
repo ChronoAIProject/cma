@@ -10,7 +10,7 @@
       "feature": "Rename",
       "requirement": "Request is authorized and executed under current owning AM authority; server-internal CAS conflict re-reads and retries boundedly; acknowledged title remains after reload and owner move. A stale explicit expected revision receives the established typed stale-client response.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Deterministic lifecycle/log publication race and original title effect custody assertions.",
+      "remaining": "Deterministic lifecycle/log publication race and native execution of title effect custody assertions.",
       "trigger": "PATCH Agent preferences with a genuinely changed title while owner lifecycle/log publication advances the Agent",
       "required_assertions": [
         {
@@ -110,9 +110,16 @@
       "feature": "Skill installation",
       "requirement": "Existing owner route and authority scope survive; bounded intent CAS retry succeeds or returns bounded availability outcome, never duplicates installation. Do not presume missing route: /skills is already allowlisted in exact4eaf.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Deterministic skill catalog/installation fixture and publication barrier.",
+      "remaining": "Deterministic concurrent publication barrier and native execution of skill installation.",
       "trigger": "New eligible skill intent through POST /skills while ordinary publication races",
-      "required_assertions": []
+      "required_assertions": [
+        {
+          "case": "writer.skill_installs_once",
+          "minimum_runs": 1,
+          "phases": ["before_restart", "after_restart"],
+          "routing": "non_owner"
+        }
+      ]
     },
     {
       "id": "SW04",
@@ -240,7 +247,14 @@
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
       "remaining": "Third-AM never-Ready and approved HPA 2-to-3-to-2 integrated scenario.",
       "trigger": "Reuse existing never-Ready third-AM and early SIGTERM/delete tests plus final exact-image HPA2->3->2 journey",
-      "required_assertions": []
+      "required_assertions": [
+        {
+          "case": "owner_drain_and_readiness",
+          "minimum_runs": 1,
+          "phases": [],
+          "routing": "journey"
+        }
+      ]
     },
     {
       "id": "SW13",
