@@ -5,6 +5,64 @@ use layer2_core::{
 };
 
 #[tokio::test]
+async fn peer_reopen_observes_renewal_of_a_short_initial_lease() {
+    let (fixture, parent, agent, _) = retained_reopen_tests::restored_reopen().await;
+    let (parent, _) = ready_on_wall_clock(&fixture, parent).await;
+    let (ownership, replicas) = cluster(2).await;
+    let (owner, _) = acquire(&ownership, &replicas, &agent.id).await;
+    let _workers = workers_with_renewal(&fixture.harness, &replicas, true);
+    let now = SystemTime::now();
+    let store = &fixture.harness.store;
+    let claimed = store
+        .claim_sandbox_work(
+            &parent.id,
+            "short-reopen-lease",
+            rfc3339_at(now),
+            rfc3339_at(now + Duration::from_secs(3)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let old_expiry = stamp_time(&claimed.work.lease.as_ref().unwrap().expires_at);
+    fixture.backend.hold_reopen.store(true, Ordering::SeqCst);
+    let caller = replicas[(owner + 1) % replicas.len()].relay.clone();
+    let attempted = claimed.clone();
+    let reopen =
+        tokio::spawn(async move { caller.reopen_agent(&attempted, &agent.id, false).await });
+
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        fixture.backend.reopen_entered.notified(),
+    )
+    .await
+    .expect("the signed peer must enter reconnect under the short lease");
+    let renewed_at = SystemTime::now();
+    let refreshed = store
+        .renew_sandbox_work(
+            &claimed,
+            &rfc3339_at(renewed_at),
+            &rfc3339_at(renewed_at + Duration::from_secs(15)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stamp_time(&refreshed) > old_expiry);
+    tokio::time::sleep(
+        old_expiry
+            .duration_since(SystemTime::now())
+            .unwrap_or_default()
+            + Duration::from_millis(100),
+    )
+    .await;
+    fixture.backend.reopen_release.notify_one();
+    tokio::time::timeout(Duration::from_secs(2), reopen)
+        .await
+        .unwrap()
+        .unwrap()
+        .expect("the same renewed claim must authorize reconnect after its old expiry");
+}
+
+#[tokio::test]
 async fn issue_1164_peer_delete_fences_reconnect_and_settings_dispatch() {
     for hold_adoption in [true, false] {
         let settings = AgentSettings {
