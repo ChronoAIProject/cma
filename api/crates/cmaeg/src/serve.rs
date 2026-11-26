@@ -230,6 +230,7 @@ pub(crate) async fn serve(
             config.turns.clone(),
         )
         .with_activity(observers.activity.clone())
+        .with_recovery_authority(Arc::new(state.resolver.clone()))
         .with_media_tool_providers(tool_providers)
         .with_media(
             media.clone(),
