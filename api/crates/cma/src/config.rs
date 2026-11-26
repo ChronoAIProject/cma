@@ -175,8 +175,6 @@ pub struct Config {
     pub agent_access_retained_origins: Vec<String>,
     pub(crate) agent_access_transport_migration: Option<AgentAccessMigration>,
     pub(crate) provider_tool_relay: Option<ProviderToolRelay>,
-    /// Base URL for the independently deployed Image Manager service.  CMA
-    /// only uses it with the request's delegated user credential.
     pub nyxid_public_url: Option<String>,
     pub nyxid_service_id: Option<String>,
     pub nyxid_oauth_api_resource: Option<String>,

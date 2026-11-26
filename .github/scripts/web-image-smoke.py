@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 
@@ -46,6 +47,29 @@ def run_browser(command, *, cwd, env, evidence, timeout, grace=30,
         raise subprocess.CalledProcessError(result.returncode, command)
 
 
+
+def verify_retired_routes(origin):
+    for path in ("/api/image-manager", "/api/image-manager/", "/api/image-manager/v1/images",
+                 "/image-manager/openapi.json"):
+        for method in ("GET", "HEAD"):
+            request = urllib.request.Request(origin + path, method=method)
+            try:
+                with urllib.request.urlopen(request, timeout=2):
+                    raise AssertionError(f"{method} {path} was not retired")
+            except urllib.error.HTTPError as response:
+                with response:
+                    if (response.code != 404
+                            or response.headers.get_content_type() != "application/problem+json"
+                            or response.headers.get("Cache-Control") != "no-store"):
+                        raise AssertionError(f"{method} {path} returned an invalid retirement response")
+                    body = response.read()
+                    if method == "HEAD":
+                        if body:
+                            raise AssertionError(f"HEAD {path} returned a body")
+                    elif json.loads(body).get("code") != "not_found":
+                        raise AssertionError(f"GET {path} returned an invalid problem type")
+
+
 def verify_image(reference):
     root = Path(__file__).resolve().parents[2]
     image_id = output("docker", "image", "inspect", reference, "--format", "{{.Id}}")
@@ -80,6 +104,7 @@ def verify_image(reference):
                     time.sleep(0.2)
             else:
                 raise RuntimeError("Web image did not start")
+            verify_retired_routes(url)
             evidence = Path(os.environ.get("CMA_WEB_IMAGE_EVIDENCE_DIR")
                             or tempfile.mkdtemp(prefix="cma-web-image-evidence-"))
             # Passing CI suites already consume 176s before CLI overhead. Allow

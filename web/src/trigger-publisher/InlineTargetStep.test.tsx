@@ -44,16 +44,17 @@ it('preserves a legacy Trigger image when saving metadata', async () => {
   };
   const fixture = show(retained);
   const user = userEvent.setup();
+  expect(screen.queryByRole('button', { name: 'Image' })).not.toBeInTheDocument();
   await user.click(await screen.findByRole('button', { name: 'Next' }));
   await user.click(screen.getByRole('button', { name: 'Next' }));
-  await user.clear(screen.getByLabelText('Title'));
-  await user.type(screen.getByLabelText('Title'), 'Updated title');
-  expect(screen.queryByRole('button', { name: 'Image' })).not.toBeInTheDocument();
+  await user.clear(screen.getByLabelText('title'));
+  await user.type(screen.getByLabelText('title'), 'Updated title');
   await user.click(screen.getByRole('button', { name: 'Save draft' }));
   await waitFor(() => expect(fixture.triggers.save).toHaveBeenCalledOnce());
   expect(fixture.triggers.save.mock.calls[0]?.[1].content.target.inline).toMatchObject({
     image: retained,
   });
+  expect(fixture.triggers.save.mock.calls[0]?.[1].content.presentation.title).toBe('Updated title');
   expect(fetcher).not.toHaveBeenCalled();
 });
 
