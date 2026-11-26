@@ -97,7 +97,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(target.get_bool(CLAIMED_FIELD), Ok(true));
+        assert!(target.get_bool(CLAIMED_FIELD).unwrap());
         assert!(!untargeted.contains_key(CLAIMED_FIELD));
         first.database(&database).drop().await.unwrap();
     }
