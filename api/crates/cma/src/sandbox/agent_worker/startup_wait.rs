@@ -44,14 +44,22 @@ impl AgentWorker {
             let changed = readiness.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
-            let at = now + started.elapsed();
             let Some(current) = self.dependencies.store.get_agent(&agent.id).await? else {
                 return Ok(());
             };
-            if !same_publication_claim(&agent, &current, &self.config.holder, at) {
+            if !same_publication_claim(
+                &agent,
+                &current,
+                &self.config.holder,
+                now + started.elapsed(),
+            ) {
                 return Ok(());
             }
             let (parent, workspace, worktree) = self.unstarted_lineage(&current).await?;
+            let at = now + started.elapsed();
+            if !same_publication_claim(&agent, &current, &self.config.holder, at) {
+                return Ok(());
+            }
             if matches!(
                 parent.status,
                 SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
@@ -114,13 +122,23 @@ impl AgentWorker {
         observed: PublicationParents,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         let Some(current) = self.dependencies.store.get_agent(&original.id).await? else {
             return Ok(());
         };
-        if !same_publication_claim(&original, &current, &self.config.holder, now) {
+        if !same_publication_claim(
+            &original,
+            &current,
+            &self.config.holder,
+            now + started.elapsed(),
+        ) {
             return Ok(());
         }
         let (sandbox, workspace, worktree) = self.unstarted_lineage(&current).await?;
+        let at = now + started.elapsed();
+        if !same_publication_claim(&original, &current, &self.config.holder, at) {
+            return Ok(());
+        }
         let parents = PublicationParents {
             sandbox,
             workspace,
@@ -131,7 +149,7 @@ impl AgentWorker {
         if !workspace_can_bind(&parents) || !observed.workspace_became_ready(&parents, &current) {
             return Err(SandboxStoreError::Conflict);
         }
-        self.bind_workspace(current, parents, now).await
+        self.bind_workspace(current, parents, at).await
     }
 
     async fn defer_workspace(
