@@ -183,7 +183,11 @@ fn assert_limit(result: Result<Sandbox, SandboxServiceError>, live: u16) {
     assert_eq!(error.code(), "sandbox_limit_reached");
     assert_eq!(
         error,
-        SandboxServiceError::SandboxLimitReached { limit: 2, live }
+        SandboxServiceError::SandboxLimitReached {
+            limit: 2,
+            live,
+            usage: Default::default(),
+        }
     );
 }
 

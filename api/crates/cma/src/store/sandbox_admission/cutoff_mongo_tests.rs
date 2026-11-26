@@ -104,7 +104,7 @@ async fn operator_cutoff_refreshes_both_sandbox_cap_classes_on_the_same_admissio
             assert_eq!(result.is_ok(), allowed, "{class:?} {result:?}");
             if !allowed {
                 assert!(
-                    matches!(result, Err(SandboxStoreError::LimitReached { limit, live: 1 }) if u32::from(limit) == lowered)
+                    matches!(result, Err(SandboxStoreError::LimitReached { limit, live: 1, .. }) if u32::from(limit) == lowered)
                 );
             }
             assert!(pause.attempts() >= 2);

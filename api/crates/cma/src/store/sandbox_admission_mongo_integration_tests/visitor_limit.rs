@@ -40,7 +40,9 @@ async fn visitor_limit_admits_two_and_refuses_third_across_replicas() {
     for result in results {
         match result {
             Ok(SandboxAdmissionResult::Created(sandbox)) => created.push(sandbox),
-            Err(SandboxStoreError::LimitReached { limit: 2, live: 2 }) => refused += 1,
+            Err(SandboxStoreError::LimitReached {
+                limit: 2, live: 2, ..
+            }) => refused += 1,
             other => panic!("unexpected visitor admission result: {other:?}"),
         }
     }
@@ -72,7 +74,11 @@ async fn visitor_limit_admits_two_and_refuses_third_across_replicas() {
                 2
             ))
             .await,
-        Err(SandboxStoreError::LimitReached { limit: 2, live: 2 })
+        Err(SandboxStoreError::LimitReached {
+            limit: 2,
+            live: 2,
+            ..
+        })
     ));
 
     retiring.status = SandboxStatus::Retired;
@@ -109,7 +115,11 @@ async fn visitor_limit_admits_two_and_refuses_third_across_replicas() {
                 1
             ))
             .await,
-        Err(SandboxStoreError::LimitReached { limit: 1, live: 2 })
+        Err(SandboxStoreError::LimitReached {
+            limit: 1,
+            live: 2,
+            ..
+        })
     ));
     let after = left
         .list_sandboxes(&SubjectId::new("owner"), &Default::default())

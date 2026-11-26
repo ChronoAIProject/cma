@@ -122,7 +122,11 @@ pub enum SandboxServiceError {
     #[error("trust confirmation required for digest {commands_digest}")]
     TrustConfirmationRequired { commands_digest: String },
     #[error("sandbox limit reached: {live} of {limit}")]
-    SandboxLimitReached { limit: u16, live: u16 },
+    SandboxLimitReached {
+        limit: u16,
+        live: u16,
+        usage: super::SandboxQuotaUsage,
+    },
     #[error("global sandbox capacity is unavailable")]
     GlobalCapacityReached,
     #[error("model budget refused the commitment: {0}")]
@@ -444,8 +448,8 @@ pub(super) fn store_error(error: SandboxStoreError) -> SandboxServiceError {
         }
         SandboxStoreError::NotFound => SandboxServiceError::NotFound,
         SandboxStoreError::Duplicate => SandboxServiceError::NameConflict,
-        SandboxStoreError::LimitReached { limit, live } => {
-            SandboxServiceError::SandboxLimitReached { limit, live }
+        SandboxStoreError::LimitReached { limit, live, usage } => {
+            SandboxServiceError::SandboxLimitReached { limit, live, usage }
         }
         SandboxStoreError::GlobalCapacityReached => SandboxServiceError::GlobalCapacityReached,
         SandboxStoreError::Budget(reason) => SandboxServiceError::Budget(reason),

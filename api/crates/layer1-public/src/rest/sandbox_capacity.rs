@@ -7,6 +7,16 @@ use utoipa::{OpenApi, ToSchema};
 use super::{instances::HierarchyState, instances_problem::HierarchyProblem};
 use crate::AuthenticatedCaller;
 
+pub(super) fn quota_usage_json(
+    usage: layer2_core::sandbox::SandboxQuotaUsage,
+) -> serde_json::Value {
+    serde_json::json!({
+        "active": usage.active,
+        "retiring_charged": usage.retiring_charged,
+        "retiring_released": usage.retiring_released,
+    })
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct SandboxCapacityView {
     pub resource: &'static str,
@@ -14,6 +24,7 @@ pub struct SandboxCapacityView {
     pub live: u64,
     pub available: u64,
     pub counts_by_status: BTreeMap<String, u64>,
+    pub retiring_released: u64,
     pub observed_at: String,
 }
 
@@ -44,6 +55,7 @@ pub(super) async fn read(
         live: capacity.live,
         available: capacity.available,
         counts_by_status: capacity.counts_by_status,
+        retiring_released: capacity.retiring_released,
         observed_at: capacity.observed_at,
     }))
 }

@@ -22,6 +22,7 @@ pub(crate) enum HierarchyProblem {
         resource: &'static str,
         limit: u64,
         live: u64,
+        quota_usage: Option<layer2_core::sandbox::SandboxQuotaUsage>,
     },
     Conflict(&'static str),
     Invalid(&'static str),
@@ -64,10 +65,11 @@ impl HierarchyProblem {
             SandboxServiceError::TrustConfirmationRequired { commands_digest } => {
                 Self::TrustConfirmationRequired(commands_digest)
             }
-            SandboxServiceError::SandboxLimitReached { limit, live } => Self::LimitReached {
+            SandboxServiceError::SandboxLimitReached { limit, live, usage } => Self::LimitReached {
                 resource: "sandbox",
                 limit: u64::from(limit),
                 live: u64::from(live),
+                quota_usage: Some(usage),
             },
             SandboxServiceError::InvalidName => Self::Invalid("invalid_sandbox_name"),
             SandboxServiceError::NameConflict => Self::Conflict("sandbox_name_conflict"),
@@ -98,6 +100,7 @@ impl HierarchyProblem {
                 resource: "workspace",
                 limit: u64::from(limit),
                 live: u64::from(live),
+                quota_usage: None,
             },
             WorkspaceServiceError::HasLiveAgents => Self::Conflict("workspace_has_live_agents"),
             WorkspaceServiceError::TrustConfirmationRequired { digest } => {
@@ -229,12 +232,25 @@ impl IntoResponse for HierarchyProblem {
                 resource,
                 limit,
                 live,
+                quota_usage,
             } => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "resource-limit-reached",
                 "The owner has reached the live resource limit.",
                 format!("{resource}_limit_reached"),
-                vec![("limit", limit.into()), ("live", live.into())],
+                [
+                    Some(("limit", limit.into())),
+                    Some(("live", live.into())),
+                    quota_usage.map(|usage| {
+                        (
+                            "quota_usage",
+                            super::sandbox_capacity::quota_usage_json(usage),
+                        )
+                    }),
+                ]
+                .into_iter()
+                .flatten()
+                .collect(),
             ),
             Self::Conflict(code) => (
                 StatusCode::CONFLICT,
