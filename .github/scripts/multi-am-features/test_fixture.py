@@ -154,6 +154,25 @@ class OwnershipTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'configuration_dispatch_lineage_required'):
             fixture.configurationDispatch('owned-agent', True)
 
+    def test_retirement_purge_writes_are_scoped_to_the_local_feature_fixture(self):
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture = Fixture.__new__(Fixture)
+        fixture.client = SimpleNamespace(namespace='cma-native-am')
+        local = {'fixture': 'features', 'run_id': run_id, 'context': 'kind-' + run_id,
+                 'server': 'https://127.0.0.1:12345'}
+        fixture.ready = local
+        script = []
+        fixture.mongo = lambda query: script.append(query) or {'armed': True}
+        self.assertEqual(fixture.retirementPurge('fixture-agent', 'fixture-sandbox', 'fixture-create', True),
+                         {'armed': True})
+        self.assertIn('"arm": true', script[0])
+        for changes in [{'fixture': 'prepared'}, {'context': 'another-kind-context'},
+                        {'server': 'https://example.invalid'}, {'run_id': 'foreign'}]:
+            fixture.ready = {**local, **changes}
+            with self.assertRaisesRegex(ValueError, 'retirement_purge_fixture_scope_required'):
+                fixture.retirementPurge('fixture-agent', 'fixture-sandbox', 'fixture-create', True)
+        self.assertEqual(len(script), 1)
+
     def test_cleanup_refuses_unrelated_cluster_before_calling_docker(self):
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / 'cluster-state.private.json').write_text(json.dumps({'cluster': 'production'}))

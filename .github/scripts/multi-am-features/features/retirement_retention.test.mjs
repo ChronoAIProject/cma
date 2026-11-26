@@ -3,13 +3,15 @@ import test from 'node:test';
 import {retirementRetention} from './retirement_retention.mjs';
 
 function fixture({foreignDeleteWrites = false, deadlineFuture = true, duplicateRetirement = false,
-  duplicateStop = false, stopReplayWrites = false, duplicateDelete = false, deleteReplayWrites = false} = {}) {
-  const record = {agentId: 'fixture-agent', sandboxId: 'fixture-sandbox'};
+  duplicateStop = false, stopReplayWrites = false, duplicateDelete = false, deleteReplayWrites = false,
+  missingTerminalRow = false, staleManager = false} = {}) {
+  const record = {agentId: 'fixture-agent', sandboxId: 'fixture-sandbox', operationId: 'fixture-create'};
   const sandboxPath = `/api/v1/sandboxes/${record.sandboxId}`;
   const agentPath = `/api/v1/agents/${record.agentId}`;
   const deleteKey = 'fixture-delete-key';
   const attempts = [];
   let retired = false, stopped = false, deleteEffect = false, ownerCleanupCount = 0, stopKey, revision = 1;
+  let armed = false, readsAfterArm = 0;
   const outsider = {request: async (am, method, path, options) => {
     assert.equal(method, 'DELETE');
     assert.deepEqual(options.allowed, [404]);
@@ -18,6 +20,19 @@ function fixture({foreignDeleteWrites = false, deadlineFuture = true, duplicateR
     return {status: 404};
   }};
   const adapter = {ownerOf: async ({agentId}) => ({agent_id: agentId, am: 'a', epoch: 7, pod_uid: 'owner-pod'}),
+    retirementPurge: async ({agentId, sandboxId, operationId, arm}) => {
+      assert.deepEqual({agentId, sandboxId, operationId}, record);
+      assert(retired);
+      if (arm) {
+        assert(!armed);
+        armed = true;
+        return {armed: true, agents: 1};
+      }
+      assert(armed);
+      const present = ++readsAfterArm === 1;
+      return {present, agents: present ? 1 : 0, agent_events: present && !missingTerminalRow,
+        sandbox_events: present, workspaces: present, worktrees: present};
+    },
     lifecycleSnapshot: async input => {
     assert.deepEqual(input, {sandboxId: record.sandboxId, agentIds: [record.agentId]});
     return retired ? {status: 'retired', revision: 4, runtime_detached: true, purge_deadline_future: deadlineFuture,
@@ -75,12 +90,22 @@ function fixture({foreignDeleteWrites = false, deadlineFuture = true, duplicateR
     const event = {sandbox_id: record.sandboxId, seq: 16, kind: {type: 'status_changed', to: 'retired'}};
     return {body: duplicateRetirement ? [event, {...event, seq: 17}] : [event]};
   }};
+  user.rawRequest = async (am, method, path, options) => {
+    assert.equal(readsAfterArm, 2);
+    assert.equal(method, 'GET');
+    assert.ok([sandboxPath, agentPath].includes(path));
+    assert.deepEqual(options.allowed, [404]);
+    return {status: staleManager && am === 'b' ? 200 : 404};
+  };
   return {attempts, count: () => ownerCleanupCount, context: {adapter, user, outsider, record, cleanup: async value => {
     assert.equal(value, record);
     ownerCleanupCount += 1;
     retired = true;
     revision += 1;
     return {deleteKey, deleteReceipt: {status: 202, body: null, timing: {am: 'b'}}};
+  }, waitForPurge: async (read, accept) => {
+    assert.equal(accept(await read()), false);
+    assert.equal(accept(await read()), true);
   }}};
 }
 
@@ -92,6 +117,9 @@ test('both Managers refuse foreign cleanup and retain one exact terminal publica
   assert.equal(proof.delete_events, 1);
   assert.equal(proof.stop_ingress, 'b');
   assert.equal(proof.observed_future_purge_deadline, true);
+  assert.equal(proof.eligible_purge, true);
+  assert.equal(proof.purged_agents, 1);
+  assert.equal(proof.purge_snapshot_samples, 2);
   assert.equal(attempts.length, 4);
   assert.equal(count(), 1);
 });
@@ -105,6 +133,8 @@ test('a foreign side effect, early purge deadline or duplicate retirement fails'
     [{deleteReplayWrites: true}, /delete_replay_mutated_terminal_lineage/],
     [{deadlineFuture: false}, /retirement_retained_state_or_deadline_missing/],
     [{duplicateRetirement: true}, /retirement_history_missing_or_duplicated/],
+    [{missingTerminalRow: true}, /retirement_purge_partially_removed_lineage/],
+    [{staleManager: true}, /retirement_purge_public_readback_present/],
   ]) {
     const {context} = fixture(input);
     await assert.rejects(retirementRetention(context), expected);

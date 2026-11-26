@@ -27,6 +27,7 @@ import manifests
 import legacy_manifests as old
 from login import login
 from readiness_scaling import observe_never_ready, observe_scale
+from retirement_purge import retirement_purge
 
 ROOT=Path(__file__).resolve().parent
 PROVIDER=ROOT.parent/'cma'/'provider.py'
@@ -44,6 +45,7 @@ def validate_runtime_sources(ready):
 class Fixture:
     configurationLog = configuration_log
     configurationDispatch = configuration_dispatch
+    retirementPurge = retirement_purge
     def __init__(self, ready, output):
         self.ready=ready
         self.client=Client(ready,output)
@@ -412,7 +414,7 @@ class Fixture:
                              'releaseTurn','oracle','captureFailure','titleEffects','skillEffects',
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
                              'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
-                             'organizationMembership','configurationLog','configurationDispatch']
+                             'organizationMembership','configurationLog','configurationDispatch','retirementPurge']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {assertOwner, check, hash, id, other, poll} from '../cma/core.mjs';
 
-export async function retirementRetention({adapter, user, outsider, record, cleanup}) {
+export async function retirementRetention({adapter, user, outsider, record, cleanup, waitForPurge = poll}) {
   const {agentId, sandboxId} = record;
   check(id(agentId) && id(sandboxId), 'retirement_lineage_required');
   const agentPath = `/api/v1/agents/${agentId}`;
@@ -87,7 +87,31 @@ export async function retirementRetention({adapter, user, outsider, record, clea
   const terminal = await snapshot();
   check(terminal?.revision === retained.revision && terminal.children?.[0]?.revision === retained.children[0].revision
     && terminal.children[0].last_seq === retained.children[0].last_seq, 'delete_replay_mutated_terminal_lineage');
+  const purged = await observeEligiblePurge({adapter, user, record, paths: [agentPath, sandboxPath], waitForPurge});
   return {agent_sha256: hash(agentId), sandbox_sha256: hash(sandboxId), terminal_event_count: 1,
     stop_ingress: ingress, stop_owner: owner.am, stop_owner_epoch: owner.epoch, stop_events: 1, delete_events: 1,
-    retained_history: true, observed_future_purge_deadline: true};
+    retained_history: true, observed_future_purge_deadline: true, ...purged};
+}
+
+async function observeEligiblePurge({adapter, user, record, paths, waitForPurge}) {
+  const {agentId, sandboxId, operationId} = record;
+  check(id(operationId), 'retirement_purge_lifecycle_required');
+  const target = {agentId, sandboxId, operationId};
+  const armed = await adapter.retirementPurge({...target, arm: true});
+  check(armed?.armed === true && [1, 2].includes(armed.agents), 'retirement_purge_not_armed');
+  const fields = ['agent_events', 'sandbox_events', 'workspaces', 'worktrees'];
+  let samples = 0;
+  await waitForPurge(() => adapter.retirementPurge(target), sample => {
+    check(typeof sample?.present === 'boolean' && sample.agents === (sample.present ? armed.agents : 0)
+      && fields.every(key => sample[key] === sample.present), 'retirement_purge_partially_removed_lineage');
+    samples += 1;
+    return !sample.present;
+  }, {timeout: 90000, code: 'retirement_purge_did_not_finish'});
+  for (const am of ['a', 'b']) {
+    for (const path of paths) {
+      const response = await user.rawRequest(am, 'GET', path, {allowed: [404]});
+      check(response.status === 404, 'retirement_purge_public_readback_present');
+    }
+  }
+  return {eligible_purge: true, purged_agents: armed.agents, purge_snapshot_samples: samples};
 }

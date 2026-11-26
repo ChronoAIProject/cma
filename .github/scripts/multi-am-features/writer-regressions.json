@@ -276,7 +276,7 @@
       "feature": "Local destructive/admin matrix",
       "requirement": "Exact capture/retention/title-finality guards remain enforced. Known contention re-evaluates safely and boundedly; terminal cleanup never deletes a live Agent or bypasses retained evidence. Local topology only.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Checkpoint capture, eligible purge and deterministic title-finality contention, plus hosted execution of terminal retention.",
+      "remaining": "The retention journey now drives an eligible fixture to worker purge and checks terminal absence on both Managers. Checkpoint capture, deterministic title-finality contention and integrated execution remain pending.",
       "trigger": "Checkpoint publication, runtime maintenance, retirement and eligible purge with active/terminated Agent writers",
       "required_assertions": [
         {"case": "retirement_retains_terminal_evidence", "minimum_runs": 1, "phases": [], "routing": "journey"}
