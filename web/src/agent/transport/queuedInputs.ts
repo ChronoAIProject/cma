@@ -43,6 +43,10 @@ export async function sendQueuedInputIntent(
           )))
     ) {
       await session.authorize(signal);
+      if (intent.action === 'edit' && error.code === 'queued_input_not_admitted') {
+        session.journal.queuedInputs.settle(intent, true);
+        return;
+      }
       session.journal.queuedInputs.settle(intent);
     }
     throw error;

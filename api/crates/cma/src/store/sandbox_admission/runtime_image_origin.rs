@@ -1,6 +1,6 @@
 //! Capture only image intent retained by the operation that owns this profile.
 use super::SandboxAdmission;
-use crate::store::agent_lifecycle_operations::{LifecycleBehavior, LifecycleRecord};
+use crate::store::agent_lifecycle_operations::LifecycleRecord;
 use layer2_core::{
     profiles::private_sandbox_profile_id,
     released_runtime::ReleasedLane,
@@ -22,7 +22,7 @@ pub(super) fn selection(
         || crate::store::agent_lifecycle_operations::canary_key::is_reserved(&row.key)
         || row.id != *operation_id
         || row.owner != sandbox.owner.as_str()
-        || row.input.behavior != LifecycleBehavior::PromptRepository
+        || !row.input.behavior.uses_repository_profile()
         || row.status != "running"
         || row.sandbox_id.is_some()
         || row.lease_token.as_deref() != Some(admission.lifecycle_lease()?)

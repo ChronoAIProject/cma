@@ -337,6 +337,11 @@ pub(super) fn binding_config(
 }
 
 pub(super) fn verify(actual: &DynamicObject, desired: &DynamicObject) -> Result<()> {
+    verify_identity(actual, desired)?;
+    verify_spec(actual, desired)
+}
+
+pub(super) fn verify_identity(actual: &DynamicObject, desired: &DynamicObject) -> Result<()> {
     if actual.name_any() != desired.name_any()
         || actual.namespace() != desired.namespace()
         || actual.types != desired.types
@@ -359,14 +364,28 @@ pub(super) fn verify(actual: &DynamicObject, desired: &DynamicObject) -> Result<
             .annotations()
             .iter()
             .any(|(k, v)| actual.annotations().get(k) != Some(v))
-        || !network_policy_matches(&actual.data["spec"], &desired.data["spec"])
-        || !contains(&actual.data["spec"], &desired.data["spec"])
     {
-        return Err(rejected(
-            "native pool resource conflicts with its recorded configuration",
-        ));
+        return Err(rejected("native pool resource identity does not match"));
     }
     Ok(())
+}
+
+pub(super) fn verify_spec(actual: &DynamicObject, desired: &DynamicObject) -> Result<()> {
+    if network_policy_matches(&actual.data["spec"], &desired.data["spec"])
+        && contains(&actual.data["spec"], &desired.data["spec"])
+    {
+        return Ok(());
+    }
+    if desired
+        .types
+        .as_ref()
+        .is_some_and(|types| matches!(types.kind.as_str(), "SandboxTemplate" | "SandboxWarmPool"))
+    {
+        return Err(crate::AdapterError::NativePoolConfigurationDrift);
+    }
+    Err(rejected(
+        "native pool resource conflicts with its recorded configuration",
+    ))
 }
 
 fn network_policy_matches(actual: &serde_json::Value, desired: &serde_json::Value) -> bool {

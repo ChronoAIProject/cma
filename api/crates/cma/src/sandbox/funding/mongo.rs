@@ -67,28 +67,30 @@ pub(super) struct RuntimeControl {
 }
 #[async_trait]
 impl FundingControl for RuntimeControl {
-    async fn deadline(&self, sandbox: &Sandbox, until: u64) -> Result<(), FundingError> {
+    async fn deadline(&self, runtime: FundedRuntime<'_>) -> Result<(), FundingError> {
+        let sandbox = runtime.target().sandbox();
         let Some(binding) = &sandbox.runtime else {
             return Ok(());
         };
         let request = layer3_adapter::RuntimeAdoptionRequest::new(
-            generation(sandbox),
+            runtime.target().generation(),
             layer3_adapter::RuntimeHandle::new(&binding.runtime_id),
             crate::sandbox::runtime_mapping::sandbox_spec(sandbox, &self.deployment)
                 .map_err(|error| FundingError::Invalid(error.to_string()))?,
         )
         .with_expected_image(&binding.runtime_version);
         self.adapter
-            .set_runtime_deadline(&request, until)
+            .set_runtime_deadline(&request, runtime.until())
             .await
             .map_err(|e| FundingError::Retryable(e.to_string()))
     }
     async fn pause(
         &self,
-        sandbox: &Sandbox,
+        runtime: FundingRuntime<'_>,
         detail: &str,
         now: SystemTime,
     ) -> Result<(), FundingError> {
+        let sandbox = runtime.sandbox();
         let result = self
             .store
             .schedule_sandbox_lifecycle(

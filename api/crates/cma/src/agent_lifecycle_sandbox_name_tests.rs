@@ -1,4 +1,5 @@
-use super::{create_sandbox_with_fence, sandbox_error, sandbox_name, validate_request};
+use super::{create_sandbox_with_fence, sandbox_name};
+use crate::agent_lifecycle::validation::{sandbox_error, validate_request};
 use crate::agent_lifecycle::*;
 use layer2_core::profiles::InMemoryProfileStore;
 use layer2_core::sandbox::store::{InMemorySandboxStore, SandboxEventStore, SandboxStore};
@@ -31,6 +32,7 @@ async fn admission(
         },
         LifecycleBehavior::PromptRepository,
         Default::default(),
+        "",
     )
     .await
     .unwrap();
@@ -361,5 +363,5 @@ async fn create_sandbox(
     agent_name: &str,
     lease: &LifecycleLease,
 ) -> Result<layer2_core::sandbox::Sandbox, SandboxServiceError> {
-    create_sandbox_with_fence(service, caller, profile, agent_name, lease, None).await
+    create_sandbox_with_fence(service, caller, profile, agent_name, lease, None, None).await
 }

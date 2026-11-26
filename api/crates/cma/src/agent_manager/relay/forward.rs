@@ -5,8 +5,8 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::Response,
 };
-use environment_diagnostics::EnvironmentRead;
 use futures_util::StreamExt as _;
+use relay_diagnostics::{RecoveryTrigger, RelayDiagnostic};
 use reqwest::RequestBuilder;
 use tokio::time::Instant;
 
@@ -27,9 +27,9 @@ pub(super) fn send(
     request: &Request,
     body: &[u8],
     deadline: Instant,
-    environment: Option<&mut EnvironmentRead>,
+    diagnostic: Option<&mut RelayDiagnostic>,
 ) -> impl std::future::Future<Output = Result<reqwest::Response, Failure>> + use<> {
-    let outgoing = prepare(relay, destination, request, body, environment);
+    let outgoing = prepare(relay, destination, request, body, diagnostic);
     async move {
         let (request, write_tag) = outgoing?;
         match tokio::time::timeout_at(deadline, request.send()).await {
@@ -53,7 +53,7 @@ fn prepare(
     destination: Destination,
     request: &Request,
     body: &[u8],
-    environment: Option<&mut EnvironmentRead>,
+    diagnostic: Option<&mut RelayDiagnostic>,
 ) -> Result<(RequestBuilder, Option<authentication::WriteNotEntered>), Failure> {
     let mut headers = HeaderMap::new();
     for (name, value) in ingress::headers(request) {
@@ -76,8 +76,8 @@ fn prepare(
             body,
         )
         .map_err(|_| Failure::Signature)?;
-    if let Some(environment) = environment {
-        environment.correlate_hop(headers[PROOF].as_bytes());
+    if let Some(diagnostic) = diagnostic {
+        diagnostic.correlate_hop(headers[PROOF].as_bytes());
     }
     let write_tag = (relay.authentication.file_write_handoff_enabled()
         && file_write::eligible(request.uri().path(), request.method(), body))
@@ -104,14 +104,14 @@ fn prepare(
     ))
 }
 
-pub(super) fn handoff(outcome: &Result<reqwest::Response, Failure>) -> Option<&'static str> {
+pub(super) fn handoff(outcome: &Result<reqwest::Response, Failure>) -> Option<RecoveryTrigger> {
     match outcome {
-        Err(Failure::Connect) => Some("peer_connection_failed"),
+        Err(Failure::Connect) => Some(RecoveryTrigger::PeerConnectionFailed),
         Ok(response)
             if response.status() == StatusCode::SERVICE_UNAVAILABLE
                 && file_read::reported(response.headers()) =>
         {
-            Some("peer_owner_handoff")
+            Some(RecoveryTrigger::PeerOwnerHandoff)
         }
         _ => None,
     }
@@ -121,25 +121,25 @@ pub(super) fn finish(
     outcome: Result<reqwest::Response, Failure>,
     permit: capacity::Permit,
     deadline: Instant,
-    environment: Option<&EnvironmentRead>,
+    diagnostic: Option<&RelayDiagnostic>,
 ) -> Response {
     let response = match outcome {
         Ok(response) => response,
         Err(Failure::Signature) => {
-            return http::unavailable_with(environment, Refusal::PeerSignature)
+            return http::unavailable_with(diagnostic, Refusal::PeerSignature)
         }
         Err(Failure::Connect | Failure::Transport) => {
-            return http::unavailable_with(environment, Refusal::PeerTransport);
+            return http::unavailable_with(diagnostic, Refusal::PeerTransport);
         }
         Err(Failure::WriteNotEntered) => {
-            return http::unavailable_with(environment, Refusal::PeerResponse);
+            return http::unavailable_with(diagnostic, Refusal::PeerResponse);
         }
     };
     let status = response.status();
-    if let Some(environment) =
-        environment.filter(|_| status.is_client_error() || status.is_server_error())
+    if let Some(diagnostic) =
+        diagnostic.filter(|_| status.is_client_error() || status.is_server_error())
     {
-        environment.record(Refusal::PeerResponse);
+        diagnostic.record(Refusal::PeerResponse);
     }
     let headers = response.headers().clone();
     // Keep the original relay deadline and capacity permit through the body.
@@ -183,4 +183,25 @@ pub(super) fn finish(
         }
     }
     result
+}
+
+pub(super) async fn forward(
+    relay: &Relay,
+    destination: Destination,
+    request: Request,
+    body: &[u8],
+    permit: capacity::Permit,
+    mut diagnostic: Option<RelayDiagnostic>,
+) -> Response {
+    let deadline = deadline();
+    let outcome = send(
+        relay,
+        destination,
+        &request,
+        body,
+        deadline,
+        diagnostic.as_mut(),
+    )
+    .await;
+    finish(outcome, permit, deadline, diagnostic.as_ref())
 }

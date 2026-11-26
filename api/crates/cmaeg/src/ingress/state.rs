@@ -14,6 +14,7 @@ pub struct IngressState {
     pub native_lark_media_enabled: bool,
     pub native_lark_stickers_enabled: bool,
     pub resolver: ChannelResolver,
+    pub profile_revisions_enabled: bool,
     pub master_keys: Arc<MasterKeyRing>,
     pub jwks: Arc<JwksCache>,
     pub launcher: Arc<dyn TurnLauncher>,
@@ -60,6 +61,10 @@ impl IngressState {
     }
     pub fn with_whatsapp_media(mut self, enabled: bool) -> Self {
         self.native_whatsapp_media_enabled = enabled;
+        self
+    }
+    pub(crate) fn with_profile_revisions(mut self, enabled: bool) -> Self {
+        self.profile_revisions_enabled = enabled;
         self
     }
     pub fn with_routed(mut self, routed: Option<Arc<super::routed::RoutedIngress>>) -> Self {
@@ -140,6 +145,7 @@ impl IngressState {
             native_lark_media_enabled: false,
             native_lark_stickers_enabled: false,
             routed: None,
+            profile_revisions_enabled: false,
             interactions: None,
             telegram: None,
             whatsapp_receipts: None,

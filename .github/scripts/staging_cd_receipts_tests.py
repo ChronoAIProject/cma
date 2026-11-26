@@ -12,8 +12,9 @@ from staging_cd_versions import plan_version
 
 
 def fixture_identity(**changes):
-    return dict({"schema": "cma-image-release-v1", "component": "web", "version": "0.10.1",
-                 "previous": "0.10.0", "source": "a" * 40, "tree": "b" * 40, "pr": 42,
+    previous, version = ("0.10.1", "0.10.2") if changes.get("component") == "runtime" else ("0.10.0", "0.10.1")
+    return dict({"schema": "cma-image-release-v1", "component": "web", "version": version,
+                 "previous": previous, "source": "a" * 40, "tree": "b" * 40, "pr": 42,
                  "bump": "patch", "run_id": 100, "run_attempt": 1, "build": "c" * 64}, **changes)
 
 

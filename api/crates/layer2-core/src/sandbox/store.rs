@@ -405,6 +405,8 @@ pub struct InMemorySandboxStore {
     #[cfg(test)]
     artifact_body_reads: Arc<std::sync::atomic::AtomicUsize>,
     managed_runtime_version: Option<String>,
+    #[cfg(test)]
+    managed_machine_runtime_version: Option<String>,
     state: Arc<Mutex<State>>,
     profiles: crate::profiles::InMemoryProfileStore,
 }
@@ -458,17 +460,6 @@ struct State {
 }
 
 impl InMemorySandboxStore {
-    #[cfg(test)]
-    pub(crate) fn with_agent_fixture(agent: Agent) -> Self {
-        agent
-            .work
-            .validate_resolved_skills(&agent.profile.content.skills)
-            .expect("valid stored skill material");
-        let store = Self::default();
-        store.lock().agents.insert(agent.id.clone(), agent);
-        store
-    }
-
     #[cfg(test)]
     pub(crate) fn artifact_body_reads(&self) -> usize {
         self.artifact_body_reads

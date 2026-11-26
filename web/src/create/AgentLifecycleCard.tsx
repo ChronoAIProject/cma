@@ -365,7 +365,7 @@ function AgentLifecycleForm({
         {viewerId && connectionRequest?.repository_access ? (
           <RepositoryConnectionRepair
             owner={viewerId}
-            target={connectionRequest.target}
+            {...connectionRequest}
             pending={pending || lifecycle.blocked}
             onRecheck={() => void lifecycle.submit()}
           />

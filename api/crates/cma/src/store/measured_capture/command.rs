@@ -27,6 +27,26 @@ type Result<T> = std::result::Result<T, &'static str>;
 mod tests;
 
 pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
+    if let [command] = arguments {
+        if matches!(
+            command.as_str(),
+            "--measured-index-backfill" | "--measured-index-certify"
+        ) {
+            return index_command(command).await;
+        }
+    }
+    if arguments.first().is_some_and(|value| {
+        matches!(
+            value.as_str(),
+            "--measured-freeze"
+                | "--measured-evidence-read"
+                | "--measured-period-read"
+                | "--measured-period-replay"
+        )
+    }) {
+        return batch_command(arguments).await;
+    }
+
     if arguments
         .first()
         .is_some_and(|value| value == "--measured-preview")
@@ -36,7 +56,7 @@ pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
         return tokio::time::timeout(Duration::from_secs(30), async {
             verify_authority(&database).await?;
             check_schema(&database).await?;
-            MeasuredCapture::new(&database)
+            capture_store(&database)?
                 .preview(anchor, window)
                 .await
                 .map_err(|_| PREVIEW_UNAVAILABLE)
@@ -50,10 +70,77 @@ pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
     let source = MetricsClient::internal(&source).map_err(|_| UNAVAILABLE)?;
     tokio::time::timeout(Duration::from_secs(90), async {
         verify_authority(&database).await?;
-        execute(&database, &source, sandbox, range).await
+        let receipt = execute(&database, &source, sandbox, range).await?;
+        if receipt["status"] == "no_attributable_observations" {
+            eprintln!("{receipt}");
+            return Err("measured capture has no attributable observations in the window");
+        }
+        Ok(receipt)
     })
     .await
     .map_err(|_| UNAVAILABLE)?
+}
+
+async fn batch_command(arguments: &[String]) -> Result<Value> {
+    use super::ledger::{
+        ExactPeriodReadRequest, FreezeRequest, MeasuredLedger, PeriodReadRequest, ReadRequest,
+        SelectedWindow,
+    };
+    use crate::store::{ledger_census::files, migrations::measured_batches};
+    use std::path::Path;
+    let [command, input, output] = arguments else {
+        return Err("measured evidence requires a private request and new output file");
+    };
+    if std::env::var("CHRONO_MEASURED_BATCH_ENABLED").as_deref() != Ok("true") {
+        return Err("measured finalization is disabled");
+    }
+    let bytes = files::read(Path::new(input))?;
+    let output = Path::new(output);
+    files::require_parent(output)?;
+    if output.exists() {
+        return Err("measured evidence requires a new output file");
+    }
+    let database = open_database().await?;
+    let (payload, receipt) = tokio::time::timeout(Duration::from_secs(45), async {
+        verify_authority(&database).await?;
+        let status = database.run_command(doc!{"connectionStatus":1,"showPrivileges":true}).await.map_err(|_| AUTHORITY)?;
+        let batch = doc!{"privileges":[{"resource":{"db":database.name(),"collection": measured_batches::COLLECTION},"actions":isolation::MEASURED_CUSTODY_ACTIONS}]};
+        verify_shared_schema(&status, database.name(), &batch).map_err(|_|AUTHORITY)?;
+        check_schema(&database).await?;
+        if !crate::store::migrations::measured_batches_ready(&database).await? {
+            return Err("measured batch custody requires its explicit schema migration");
+        }
+        let mut ledger = MeasuredLedger::new(&database);
+        if let Some(indexed) = indexed_store(&database)? {
+            ledger = ledger.with_indexed(indexed);
+        }
+        if matches!(command.as_str(), "--measured-period-read" | "--measured-period-replay") {
+            let windows = if command == "--measured-period-read" {
+                let request: PeriodReadRequest = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
+                ledger.read_period(request).await
+            } else {
+                let request: ExactPeriodReadRequest = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
+                ledger.read_exact_period(request).await
+            }.map_err(|_| "measured period evidence is unavailable or incomplete")?;
+            let receipt = json!({"selected": windows.iter().map(|batch| SelectedWindow { revision: batch.revision(), reference: batch.reference() }).collect::<Vec<_>>()});
+            return Ok((serde_json::to_vec(&windows).map_err(|_| UNAVAILABLE)?, receipt));
+        }
+        let evidence = match command.as_str() {
+            "--measured-freeze" => {
+                let request: FreezeRequest = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
+                if request.source_cutoff_ms > usage_reports::now().checked_mul(1000).ok_or(INVALID)? { return Err(INVALID); }
+                ledger.freeze(request).await
+            }
+            "--measured-evidence-read" => {
+                let request: ReadRequest = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
+                ledger.read(request).await
+            }
+            _ => return Err(INVALID),
+        }.map_err(|_| "measured batch evidence is unavailable or conflicts with retained custody")?;
+        Ok((serde_json::to_vec(&evidence).map_err(|_| UNAVAILABLE)?, json!({"evidence_id": evidence.evidence_id(), "evidence_sha256": evidence.evidence_sha256(), "revision": evidence.revision()})))
+    }).await.map_err(|_|UNAVAILABLE)??;
+    files::publish(output, &payload)?;
+    Ok(receipt)
 }
 
 async fn open_database() -> Result<Database> {
@@ -81,7 +168,76 @@ async fn verify_authority(database: &Database) -> Result<()> {
         "resource": {"db": database.name(), "collection": COLLECTION},
         "actions": isolation::MEASURED_CUSTODY_ACTIONS,
     }]};
-    verify_shared_schema(&status, database.name(), &custody).map_err(|_| AUTHORITY)
+    verify_shared_schema(&status, database.name(), &custody).map_err(|_| AUTHORITY)?;
+    use crate::store::migrations::measured_index::{BATCHES, MANIFESTS, PROJECTIONS};
+    let indexed = doc! {"privileges": [
+        {"resource": {"db":database.name(),"collection":PROJECTIONS},
+         "actions":isolation::MEASURED_CUSTODY_ACTIONS},
+        {"resource": {"db":database.name(),"collection":BATCHES},
+         "actions":isolation::MEASURED_CUSTODY_ACTIONS},
+        {"resource": {"db":database.name(),"collection":MANIFESTS},
+         "actions":isolation::MEASURED_MANIFEST_ACTIONS},
+    ]};
+    let indexed_grant = verify_shared_schema(&status, database.name(), &indexed).is_ok();
+    if indexed_store(database)?.is_some() {
+        if !indexed_grant {
+            return Err("measured index writer floor requires its matching isolated credential");
+        }
+        if !crate::store::migrations::measured_index::inspect(database)
+            .await?
+            .is_empty()
+        {
+            return Err("measured index requires its explicit schema migration");
+        }
+    } else {
+        let manifest_grant = doc! {"privileges":[{"resource":{"db":database.name(),"collection":MANIFESTS},
+        "actions":["find"]}]};
+        if verify_shared_schema(&status, database.name(), &manifest_grant).is_ok()
+            && indexed::started(database).await.map_err(|_| AUTHORITY)?
+        {
+            return Err("measured index generation forbids legacy capture and finalization");
+        }
+    }
+    Ok(())
+}
+
+fn indexed_store(database: &Database) -> Result<Option<indexed::IndexedCustody>> {
+    match std::env::var("CHRONO_MEASURED_INDEX_WRITER_FLOOR_SHA256") {
+        Ok(floor) => indexed::IndexedCustody::new(database, floor)
+            .map(Some)
+            .map_err(|_| AUTHORITY),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(_) => Err(AUTHORITY),
+    }
+}
+
+fn capture_store(database: &Database) -> Result<MeasuredCapture> {
+    let store = MeasuredCapture::new(database);
+    Ok(match indexed_store(database)? {
+        Some(indexed) => store.with_indexed(indexed),
+        None => store,
+    })
+}
+
+// The floor identifies the independently documented exclusion and drain of
+// v1-only writers. The operator must establish it before starting backfill.
+async fn index_command(command: &str) -> Result<Value> {
+    let database = open_database().await?;
+    tokio::time::timeout(Duration::from_secs(300), async {
+        verify_authority(&database).await?;
+        check_schema(&database).await?;
+        let indexed = indexed_store(&database)?.ok_or(AUTHORITY)?;
+        if command == "--measured-index-backfill" {
+            indexed.begin().await.map_err(|_| UNAVAILABLE)?;
+            let (rows, exhausted) = indexed.advance().await.map_err(|_| UNAVAILABLE)?;
+            Ok(json!({"projected_rows":rows, "exhausted":exhausted}))
+        } else {
+            let proof = indexed.certify().await.map_err(|_| UNAVAILABLE)?;
+            serde_json::to_value(proof).map_err(|_| UNAVAILABLE)
+        }
+    })
+    .await
+    .map_err(|_| UNAVAILABLE)?
 }
 
 fn invocation(arguments: &[String], now: u64) -> Result<(&str, Range)> {
@@ -138,6 +294,8 @@ async fn execute(
     let (revision, bindings) = binding_snapshot(database, sandbox, range).await?;
     let mut observations = Vec::new();
     let mut incomplete = 0;
+    let mut unattributed_series = 0_u64;
+    let mut unattributed_samples = 0_u64;
     for binding in &bindings {
         for metric in SourceMetric::ALL
             .into_iter()
@@ -166,7 +324,14 @@ async fn execute(
                 .export_raw(&selected)
                 .await
                 .map_err(|_| UNAVAILABLE)?;
-            series.retain(|row| has_physical_identity(binding, row, metric));
+            series.retain(|row| {
+                let verified = has_physical_identity(binding, row, metric);
+                if !verified {
+                    unattributed_series += 1;
+                    unattributed_samples += row.samples().len() as u64;
+                }
+                verified
+            });
             let mut captured = capture_observations(binding, revision, metric, &series, active)
                 .map_err(|_| "measured capture could not attribute a source observation")?;
             if captured.is_empty() {
@@ -179,9 +344,14 @@ async fn execute(
         }
     }
     if observations.is_empty() {
-        return Err("measured capture has no attributable observations in the window");
+        return Ok(json!({
+            "status": "no_attributable_observations", "inserted": 0,
+            "replayed": 0, "disputed": 0, "incomplete_metric_intervals": incomplete,
+            "bindings": bindings.len(), "unattributed_source_series": unattributed_series,
+            "unattributed_source_samples": unattributed_samples,
+        }));
     }
-    let store = MeasuredCapture::new(database);
+    let store = capture_store(database)?;
     let (mut inserted, mut replayed, mut disputed) = (0, 0, 0);
     for observation in &observations {
         match store.capture(observation).await.map_err(|_| UNAVAILABLE)? {
@@ -193,6 +363,8 @@ async fn execute(
     Ok(json!({
         "inserted": inserted, "replayed": replayed, "disputed": disputed,
         "incomplete_metric_intervals": incomplete, "bindings": bindings.len(),
+        "unattributed_source_series": unattributed_series,
+        "unattributed_source_samples": unattributed_samples,
     }))
 }
 

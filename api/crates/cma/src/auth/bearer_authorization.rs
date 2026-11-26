@@ -88,6 +88,7 @@ pub(super) async fn verify_request(
 ) -> Result<Arc<VerifiedSubject>, ProviderVerificationError> {
     verify_optional_metadata(auth, None, credential, PROVIDER_VERIFICATION_TIMEOUT)
         .await
+        .inspect_err(VerificationFailure::record_local_cause)
         .map_err(|failure| failure.error)
 }
 

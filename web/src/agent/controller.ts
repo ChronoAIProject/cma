@@ -379,7 +379,7 @@ export function useAgentController(
     };
   }, [agentId, client, options.viewerId, suspended]);
   const applyAgentTitle = useAgentTitle(agentId, setState);
-  const { run, command, recoverPending } = useAgentActions({
+  const { run, command, recoverPending, initialSend } = useAgentActions({
     agentId: suspended ? undefined : agentId,
     client,
     historyIncomplete: historyIncomplete || suspended,
@@ -443,6 +443,7 @@ export function useAgentController(
       : resourceAvailability,
     progressObservation,
     pending,
+    initialSendPending: pending === 'send' && initialSend,
     actionError: actionError ?? streamError,
     reload,
     refreshDetail,

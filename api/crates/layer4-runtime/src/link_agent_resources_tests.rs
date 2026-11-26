@@ -343,6 +343,7 @@ async fn selected_credential_can_only_be_installed_by_the_negotiated_receiver() 
                 catalog_id: "github-catalog".into(),
                 service_id: "selected-connection".into(),
                 other_services: Vec::new(),
+                repository_scope: None,
             }),
         },
     };

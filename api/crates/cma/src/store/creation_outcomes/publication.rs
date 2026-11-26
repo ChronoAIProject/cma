@@ -83,10 +83,7 @@ pub(in crate::store) async fn publish_sandbox(
 }
 
 fn refusal(code: RefusalCode) -> Document {
-    let code = match code {
-        RefusalCode::SandboxLimitReached => "sandbox_limit_reached",
-        RefusalCode::TrustConfirmationRequired => "trust_confirmation_required",
-    };
+    let code = code.code();
     doc! {"$set":{"state":{"kind":"refused","code":code}}}
 }
 
@@ -110,7 +107,95 @@ pub(in crate::store) async fn refuse_with_operation(
     id: &str,
     lease: &str,
     operation_failure: Document,
+    code: RefusalCode,
 ) -> Result<bool, StoreError> {
+    settle_operation(
+        database,
+        owner,
+        fence,
+        id,
+        live_operation(owner.as_str(), id, lease),
+        operation_failure,
+        code,
+    )
+    .await
+}
+
+pub(in crate::store) async fn cancel_with_operation(
+    database: &Database,
+    owner: &SubjectId,
+    fence: &CreationFence,
+    id: &str,
+    operation_failure: Document,
+) -> Result<bool, StoreError> {
+    let filter = doc! {"_id":id, "owner":owner.as_str(), "document_schema_version":schema::DOCUMENT_SCHEMA_VERSION,
+    "status":{"$in":["queued","running","waiting_for_connection"]}};
+    settle_operation(
+        database,
+        owner,
+        fence,
+        id,
+        filter,
+        operation_failure,
+        RefusalCode::CreationCancelled,
+    )
+    .await
+}
+
+pub(super) async fn recover_failed_operation(
+    database: &Database,
+    owner: &SubjectId,
+    fence: &CreationFence,
+    id: &str,
+) -> Result<bool, StoreError> {
+    let filter = doc! {"_id":id, "owner":owner.as_str(), "document_schema_version":schema::DOCUMENT_SCHEMA_VERSION,
+    "status":"failed", "lease_token":Bson::Null, "lease_expires_at":Bson::Null};
+    settle_operation(
+        database,
+        owner,
+        fence,
+        id,
+        filter,
+        doc! {"$inc":{"creation_publication_fence":1_i64}},
+        RefusalCode::CreationFailed,
+    )
+    .await
+}
+
+pub(in crate::store) async fn cancellation_committed(
+    database: &Database,
+    owner: &SubjectId,
+    fence: &CreationFence,
+    id: &str,
+) -> Result<bool, StoreError> {
+    let mut filter = pending(owner.as_str(), fence);
+    filter.insert("operation_id", id);
+    filter.insert("operation", "agent_bootstrap");
+    filter.insert("state.kind", "refused");
+    filter.insert("state.code", RefusalCode::CreationCancelled.code());
+    majority_collection::<Document>(database, COLLECTION)
+        .find_one(filter)
+        .projection(doc! {"_id":1})
+        .max_time(IO_BUDGET)
+        .await
+        .map(|row| row.is_some())
+        .map_err(driver)
+}
+
+async fn settle_operation(
+    database: &Database,
+    owner: &SubjectId,
+    fence: &CreationFence,
+    id: &str,
+    mut operation_filter: Document,
+    operation_failure: Document,
+    code: RefusalCode,
+) -> Result<bool, StoreError> {
+    operation_filter.insert("sandbox_id", Bson::Null);
+    operation_filter.insert("agent_id", Bson::Null);
+    operation_filter.insert("creation_fence.record_id", &fence.record_id);
+    operation_filter.insert("creation_fence.generation", &fence.generation);
+    operation_filter.insert("creation_fence.epoch", &fence.epoch);
     for _ in 0..4 {
         let mut session = database.client().start_session().await.map_err(driver)?;
         transaction::start_transaction(&mut session)
@@ -122,17 +207,15 @@ pub(in crate::store) async fn refuse_with_operation(
             filter.insert("operation", "agent_bootstrap");
             let result = database
                 .collection::<Document>(COLLECTION)
-                .update_one(filter, refusal(RefusalCode::SandboxLimitReached))
+                .update_one(filter, refusal(code))
                 .session(&mut session)
                 .await?;
             if result.matched_count != 1 {
                 return Ok(false);
             }
-            let mut operation_filter = live_operation(owner.as_str(), id, lease);
-            operation_filter.insert("sandbox_id", Bson::Null);
             let result = database
                 .collection::<Document>(LIFECYCLES)
-                .update_one(operation_filter, operation_failure.clone())
+                .update_one(operation_filter.clone(), operation_failure.clone())
                 .session(&mut session)
                 .await?;
             Ok(result.matched_count == 1)

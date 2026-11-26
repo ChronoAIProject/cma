@@ -27,6 +27,7 @@ SUPPORTED_SCANS = frozenset({
     ("1.0.4", "3d562617c65f85ae9fd958adfbf76e1e38e18a135f95ad2209348be42fa3a810"),
     ("1.0.4", "791cef403329aa642586b3d3d937109524b98f87a3b09064c303c4aadbcc0051"),
     ("1.0.4", "a3eb9041f1b920bda1f8b2bd63241ea5ed0c890f60841a7303670b35dbb384c3"),
+    ("1.0.4", "4ad252394ac8d144da7b316f138c71f90ebf9578bce9f3d118b77bee7b8da11c"),
 })
 IDENTITY_FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump",
                    "run_id", "run_attempt", "build"}

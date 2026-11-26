@@ -22,6 +22,12 @@ async fn inspection_reports_the_retained_mapping_and_agent_lifecycle_without_reb
         .unwrap();
     assert_eq!(inspected.conversation, conversation);
     assert_eq!(inspected.agent_status, Some(agent.status));
+    let drift = inspected
+        .profile_drift
+        .as_ref()
+        .expect("owned Agent profile");
+    assert_eq!(drift.assigned_profile_digest, binding.profile_digest);
+    assert!(!drift.prompt && !drift.skills && !drift.model);
     let revision = agent.revision;
     agent
         .transition(
@@ -118,4 +124,32 @@ async fn inspection_requires_the_binding_manager_and_never_reserves_a_missing_ma
             .await,
         Err(BindingError::Forbidden)
     ));
+}
+
+#[tokio::test]
+async fn inspection_drift_tracks_owner_prompt_and_installed_skill_changes() {
+    let fixture = fixture();
+    let binding = fixture.ready().await;
+    let conversation = resource_access::ready_conversation(&fixture, &binding).await;
+    let mut agent = fixture
+        .store
+        .get_agent(&conversation.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut settings = agent.settings();
+    settings.system_prompt = Some("Owner changed prompt".into());
+    agent.conversation.settings = Some(settings);
+    let expected = &binding.profile.agent;
+    let drift = super::super::inspection::profile_drift(&agent, expected, &binding.profile_digest);
+    assert!(drift.prompt);
+    assert!(!drift.skills);
+    let mut changed = expected.clone();
+    changed.skills.push(crate::profiles::SkillRef {
+        source: crate::profiles::SkillSource::Ornn,
+        id: crate::SkillId::new("synthetic"),
+        version: Some("1.0".into()),
+    });
+    let drift = super::super::inspection::profile_drift(&agent, &changed, &binding.profile_digest);
+    assert!(drift.skills);
 }

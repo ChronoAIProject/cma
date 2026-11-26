@@ -5,13 +5,19 @@ impl HostedAdapter {
         &self,
         handle: &RuntimeHandle,
         proof: &crate::wire::AgentProcessCloseProof,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<bool> {
         self.known_state(handle).await?;
-        match self
-            .exchange(handle, RequestFrame::ProveAgentProcessClosed(proof.clone()))
-            .await?
-        {
-            ResponseFrame::ProveAgentProcessClosed(observed) if &observed == proof => Ok(()),
+        let request = RequestFrame::ProveAgentProcessClosed(proof.clone());
+        let operation = request.operation();
+        match self.backend.exchange(handle, request).await? {
+            ResponseFrame::ProveAgentProcessClosed(observed) if &observed == proof => Ok(true),
+            ResponseFrame::Failure(failure) if failure.operation == operation => {
+                if !failure.retryable && failure.code == "agent_process_close_unproved" {
+                    Ok(false)
+                } else {
+                    Err(failure_error(failure))
+                }
+            }
             _ => Err(AdapterError::Rejected(
                 "runtime returned a mismatched Agent Close proof".into(),
             )),

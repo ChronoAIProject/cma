@@ -176,6 +176,16 @@ impl WorkerCredentials {
                     .to_owned(),
             );
         }
+        if let Some(revisions) = &definition.secrets.profile_revisions {
+            for retained in &revisions.retained {
+                hashes.insert(
+                    canonical_digest(&crate::channels::definition::hash_secret(
+                        retained.credential.as_str(),
+                    ))?
+                    .to_owned(),
+                );
+            }
+        }
         for hash in hashes {
             self.record_digest(&hash).await?;
         }

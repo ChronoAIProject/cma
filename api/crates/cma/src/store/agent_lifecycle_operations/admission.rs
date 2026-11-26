@@ -49,12 +49,15 @@ impl LifecycleRecord {
             sandbox_id: None,
             agent_id: None,
             repository_commit: None,
+            repository_access_pin: None,
+            public_repository: None,
             error: None,
             failure: None,
             connection: None,
             lease_expires_at: None,
             lease_token: None,
             attempts: 0,
+            sandbox_quota_refusals: None,
             retry_at: None,
             created_at: now,
             updated_at: now,
@@ -68,7 +71,7 @@ impl LifecycleRecord {
         if self.document_schema_version != DOCUMENT_SCHEMA_VERSION
             || self.canary_admission.is_some()
             || canary_key::is_reserved(&self.key)
-            || self.input.behavior != LifecycleBehavior::PromptRepository
+            || !self.input.behavior.uses_repository_profile()
             || !request.machine_included
             || request.image.is_some()
             || request.workspace_id.is_some()
@@ -93,6 +96,10 @@ impl MongoAgentLifecycleStore {
     ) -> Result<CreateResult, LifecycleCreateError> {
         self.create_with_submission(owner, key, input, None, None)
             .await
+    }
+
+    pub(crate) fn creation_terminal_settlement_enabled(&self) -> bool {
+        self.creation_terminal_settlement_enabled
     }
 
     pub(crate) fn supports_creation(
@@ -197,7 +204,10 @@ impl MongoAgentLifecycleStore {
                 layer2_core::released_runtime::ReleasedLane::Agent => Some(snapshot.agent.as_str()),
                 layer2_core::released_runtime::ReleasedLane::Machine => snapshot.machine.as_deref(),
             };
-            if released::managed_lifecycle_release_lane(&record.input.request) != Some(lane)
+            if released::managed_lifecycle_release_lane(
+                &record.input.request,
+                record.input.behavior,
+            ) != Some(lane)
                 || image.is_none()
                 || record.input.resolved_image.as_deref() != image
             {
@@ -297,6 +307,7 @@ impl MongoAgentLifecycleStore {
         fence: &layer2_core::sandbox::store::CreationFence,
         message: &str,
         failure: Option<layer1_public::rest::AgentLifecycleFailure>,
+        code: layer1_public::rest::creation_outcomes::RefusalCode,
     ) -> Result<bool, StoreError> {
         if !self.supports_creation(fence) {
             return Err(StoreError::Unavailable(
@@ -314,7 +325,46 @@ impl MongoAgentLifecycleStore {
             &lease.id,
             &lease.token,
             super::writes::failure_update(message, failure)?,
+            code,
         )
         .await
+    }
+
+    pub(crate) async fn cancel_fenced_creation(
+        &self,
+        owner: &SubjectId,
+        record: &LifecycleRecord,
+    ) -> Result<bool, StoreError> {
+        let Some(fence) = record.creation_fence.as_ref() else {
+            return Ok(false);
+        };
+        if !self.creation_terminal_settlement_enabled
+            || !self.supports_creation(fence)
+            || record.owner != owner.as_str()
+        {
+            return Ok(false);
+        }
+        let database = self
+            .operations
+            .client()
+            .database(&self.operations.namespace().db);
+        let mut failure =
+            super::writes::failure_update("Creation cancelled before Sandbox allocation", None)?;
+        failure
+            .get_document_mut("$set")
+            .expect("failure update is a set")
+            .insert("connection", Bson::Null);
+        let result = super::super::creation_outcomes::cancel_with_operation(
+            &database, owner, fence, &record.id, failure,
+        )
+        .await;
+        if super::super::creation_outcomes::cancellation_committed(
+            &database, owner, fence, &record.id,
+        )
+        .await?
+        {
+            return Ok(true);
+        }
+        result.map(|_| false)
     }
 }

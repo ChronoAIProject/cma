@@ -1,6 +1,9 @@
 //! Method-scoped faults around real in-memory stores for public route contracts.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 
 use async_trait::async_trait;
 use layer2_core::trigger_domain::*;
@@ -63,6 +66,7 @@ impl FaultTriggerStore {
 }
 
 pub struct FaultLaunchStore {
+    calls: AtomicUsize,
     inner: Arc<InMemoryLaunchStore>,
     failure: Mutex<Option<(&'static str, LaunchStoreError)>>,
 }
@@ -70,9 +74,14 @@ pub struct FaultLaunchStore {
 impl FaultLaunchStore {
     pub fn new(inner: Arc<InMemoryLaunchStore>) -> Self {
         Self {
+            calls: AtomicUsize::new(0),
             inner,
             failure: Mutex::new(None),
         }
+    }
+
+    pub fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
     }
 
     pub fn fail(&self, method: &'static str, error: LaunchStoreError) {
@@ -80,6 +89,7 @@ impl FaultLaunchStore {
     }
 
     fn check(&self, method: &str) -> Result<(), LaunchStoreError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
         match self.failure.lock().unwrap().as_ref() {
             Some((target, error)) if *target == "*" || *target == method => Err(error.clone()),
             _ => Ok(()),

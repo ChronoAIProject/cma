@@ -199,6 +199,52 @@ async fn promotion_keeps_the_original_claim_until_its_adoption_finishes() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn promotion_preserves_the_first_claim_of_a_persisted_home_request() {
+    let rig = Rig::new().await;
+    let leader = rig.controller(&rig.first).await;
+    let registry = rig.registry.clone();
+    let follower =
+        controller::bind_controller(&rig.second, move |lane| registry.resolve(lane), true).await;
+    rig.boot(leader.as_ref(), &follower).await;
+    let lifecycle = follower.lifecycle().await.unwrap();
+    let creating = lifecycle
+        .create_agent_sandbox("before-first-claim")
+        .await
+        .unwrap();
+    let old = rig.fixture.plan(Lane::Agent, 'a', capacity());
+    let (requested, resume) = rig.second.provider.hold_claim_request();
+    let change_release = async {
+        let request = at_gate(requested).await;
+        let stored = follower.sandbox(&creating.id).await;
+        let reservation = stored.lifecycle.home.unwrap().native_pool.unwrap();
+        assert_eq!(reservation.request, request);
+        assert!(reservation.claim.is_none());
+        assert_eq!(request.pool.config_sha256, old.config_sha256);
+        assert!(rig
+            .second
+            .provider
+            .inventory_claims()
+            .await
+            .unwrap()
+            .is_empty());
+        promote(&rig, leader.as_ref(), Lane::Agent, 'b').await;
+        leader.expire_release_settle(Lane::Agent).await;
+        leader.retire_once(&old).await.unwrap();
+        assert!(!rig.first.target_for(&old).await.retiring);
+        assert_undrained(&rig.fixture, &old);
+        resume.send(()).unwrap();
+        request
+    };
+    let (allocated, request) = tokio::join!(lifecycle.drive_active(&creating.id), change_release);
+    let allocated = allocated.unwrap();
+    assert_eq!(runtime(&allocated), image(Lane::Agent, 'a'));
+    let result = allocated.lifecycle.home.unwrap().native_pool.unwrap();
+    assert_eq!(result.claim.unwrap().request, request);
+    rig.fixture.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn superseded_spares_can_drain_while_the_retained_home_stays_bound() {
     let rig = Rig::new().await;
     let leader = rig.controller(&rig.first).await;

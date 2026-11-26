@@ -61,12 +61,15 @@ pub(super) fn adapter_outcome(error: &AdapterError) -> &'static str {
         AdapterError::AccessRevoked => "access_revoked",
         AdapterError::Unavailable(_) | AdapterError::RuntimeStartupHold(_) => "unavailable",
         AdapterError::NativeClaimNotReady(_) => "claim_pending",
+        AdapterError::NativePoolDefinitionAbsent { .. } => "pool_definition_absent",
         AdapterError::RuntimeLedgerHold(_) => "ledger_hold",
         AdapterError::RuntimeCapacity(_) | AdapterError::AtCapacity(_) => "capacity",
         AdapterError::InputAuthorityUnavailable(_) | AdapterError::PromptNotWritten(_) => {
             "authority_unavailable"
         }
         AdapterError::Rejected(_)
+        | AdapterError::AdmittedSandboxSpecDrift
+        | AdapterError::NativePoolConfigurationDrift
         | AdapterError::DesktopFailed
         | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)

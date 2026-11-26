@@ -39,9 +39,10 @@ import time
 
 import ci_retry
 from staging_cd_catch_up import advertised, final_receipt, lane_versions
-from staging_cd_common import Refusal
+from staging_cd_common import Refusal, require
 from staging_cd_compatibility import ContractPolicy, RECIPE, VERSION_FILE
 from staging_cd_github import GitHub
+from staging_cd_history import DevelopHistory
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_versions import DEPLOYABLES, version_tuple
 
@@ -147,19 +148,34 @@ def read_finals(root, token, history, *, runner=subprocess.run, seconds=FINAL_SE
                 clock=time.monotonic, sleep=time.sleep):
     """Return the advertised develop head and each lane's newest final.
 
-    A head that is neither this plan's head nor one of its ancestors is newer:
-    allocation will find this run stale and do nothing, so finals are not read.
+    A different head makes this plan obsolete only when its first-parent
+    history contains the push. Retry a lagging or inconclusive advertisement.
     """
     deadline = clock() + seconds
+
+    def bounded(args, *, timeout, **kwargs):
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(args, timeout)
+        return runner(args, timeout=min(timeout, remaining), **kwargs)
+
+    def read_refs():
+        refs = advertised(bounded)
+        develop = refs["refs/heads/develop"]
+        if develop != history.head:
+            require(develop not in history.positions, "Develop advertisement predates the push")
+            fresh = DevelopHistory.from_head(develop, root=root, runner=bounded, depth=HISTORY_LIMIT)
+            require(history.head in fresh.positions, "Develop history has not reached the push")
+        return refs
+
     try:
-        # Any failed listing may pass; only a listing that arrived malformed is wrong.
-        refs = ci_retry.call(lambda: advertised(runner), name="release-tag-inventory", classify=inventory_retryable,
+        refs = ci_retry.call(read_refs, name="release-tag-inventory", classify=inventory_retryable,
                              deadline=deadline, clock=clock, sleep=sleep, **READ_POLICY)
     except UNREADABLE as error:
         kind = "untrusted" if inventory_retryable(error) == ci_retry.PERMANENT else "unreadable"
         return None, dict.fromkeys(DEPLOYABLES, (None, kind))
     develop = refs["refs/heads/develop"]
-    if develop not in history.positions:
+    if develop != history.head:
         return develop, None
     try:
         api = GitHub(token, runner, local_tags=local_tag_reader(root, deadline=deadline),

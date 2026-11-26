@@ -30,6 +30,10 @@ import type { ResourceViewsClient } from '../resources/client';
 import type { BotClient } from '../bots/model';
 import type { createAgentTransport } from '../agent/transport/client';
 import type { ConnectionTarget } from '../connections/client';
+import type {
+  RepositoryAccessRefusal,
+  RepositoryScopeRepair,
+} from '../api-client/agents/lifecycle';
 import type { AgentFilesClient } from './agentFiles';
 import type { AgentBrowserClient, AgentBrowserControlClient } from '@cma/client';
 import type { DocumentsClient } from './documents';
@@ -145,7 +149,8 @@ export interface AgentLifecycleOperationView {
   readonly connection?: {
     readonly services: readonly string[];
     readonly target: ConnectionTarget;
-    readonly repository_access?: 'verification_unavailable';
+    readonly repository_access?: RepositoryAccessRefusal;
+    readonly repository_scope_repair?: RepositoryScopeRepair;
   };
 }
 

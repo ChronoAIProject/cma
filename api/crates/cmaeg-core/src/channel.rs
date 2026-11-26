@@ -27,7 +27,11 @@ pub use lark_resources::{LarkMessageEffectsBinding, LarkResourceBinding, LarkRes
 pub mod native_lark;
 mod partition;
 mod platform;
+mod profile_revision;
 mod provider;
+pub use profile_revision::{
+    ProfilePublication, ProfileRevisionView, ProfileRevisions, RetainedProfileRevision,
+};
 pub use provider::{ConformanceLevel, ProviderBinding, ProviderTarget};
 mod routing;
 mod routing_validation;
@@ -282,6 +286,9 @@ impl ChannelDefinition {
             mutation.validate()?;
         }
         self.validate_head()?;
+        if let Some(revisions) = &self.secrets.profile_revisions {
+            revisions.validate(self)?;
+        }
         if self.validate_legacy_sources_and_partition().is_err() {
             sources::validate_extended_sources(&self.sources, &self.secrets)?;
             self.partition.validate_extended(&self.sources)?;

@@ -1,7 +1,7 @@
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::{store::SandboxStoreError, AgentLogEntry, AgentLogKind};
 use mongodb::{
-    bson::{doc, Document, RawDocumentBuf},
+    bson::{doc, Binary, Document, RawDocumentBuf},
     options::ReadConcern,
     ClientSession, Database,
 };
@@ -19,13 +19,26 @@ use crate::store::{
 
 type Result<T> = std::result::Result<T, TransactionLogError>;
 
+pub(in crate::store) async fn verify_terminal_seal(
+    store: &MongoSandboxStore,
+    head: &Head,
+    session: &mut ClientSession,
+) -> Result<()> {
+    if head.active_ordinal > 0 {
+        metadata::seal_at(store, head, head.active_ordinal - 1, session, true)
+            .await?
+            .precedes(head)?;
+    }
+    Ok(())
+}
+
 pub(in crate::store) struct LogRange {
     pub after: u64,
     pub through: u64,
     pub limit: u16,
 }
 
-mod metadata;
+pub(super) mod metadata;
 pub(in crate::store) use metadata::read_head;
 pub(super) use metadata::{
     containing, preview_containing, preview_head, preview_seal_at, read_export_head, seal_at,
@@ -45,7 +58,40 @@ pub(in crate::store) async fn visit_range<F>(
 where
     F: FnMut(AgentLogEntry) -> std::result::Result<(), SandboxStoreError> + Send,
 {
-    visit_range_from(&database(store), head, range, session, snapshot, visit).await
+    let end = range
+        .through
+        .min(range.after.saturating_add(u64::from(range.limit)));
+    let leaves =
+        if store.active_log_proofs && (end >= head.active_start_seq as u64 || range.after == end) {
+            let row = crate::store::stale_turns::find_with_proof_budget(
+                &store.agents,
+                doc! {"_id":&head.agent_id},
+                session,
+                snapshot,
+            )
+            .await
+            .map_err(TransactionLogError::Driver)?
+            .ok_or_else(corrupt)?;
+            let agent = crate::store::agents::read_agent(&row)?;
+            if read_format(&row)? != Some((head.incarnation.as_str(), head.revision))
+                || agent.conversation.last_seq != head.last_seq as u64
+            {
+                return Err(corrupt().into());
+            }
+            super::active_proof::read(store, head, agent.revision, session, snapshot).await?
+        } else {
+            None
+        };
+    visit_range_from(
+        &database(store),
+        head,
+        range,
+        session,
+        snapshot,
+        leaves.as_ref(),
+        visit,
+    )
+    .await
 }
 
 async fn visit_range_from<F>(
@@ -54,6 +100,7 @@ async fn visit_range_from<F>(
     range: LogRange,
     session: &mut ClientSession,
     snapshot: bool,
+    active_leaves: Option<&Binary>,
     mut visit: F,
 ) -> Result<()>
 where
@@ -75,7 +122,7 @@ where
             db,
             head,
             next..=stop,
-            Some(&seal),
+            Some((&seal.leaf_digests, seal.start_seq)),
             session,
             snapshot,
             &mut visit,
@@ -95,6 +142,27 @@ where
             }
             Ok(())
         };
+        if let Some(leaves) = active_leaves {
+            if head.active_count > 0 {
+                // An empty page still witnesses the current original tail row.
+                let selected_range = if next <= end {
+                    next..=end
+                } else {
+                    head.last_seq..=head.last_seq
+                };
+                scan_rows(
+                    db,
+                    head,
+                    selected_range,
+                    Some((leaves, head.active_start_seq)),
+                    session,
+                    snapshot,
+                    &mut selected,
+                )
+                .await?;
+            }
+            return Ok(());
+        }
         let bytes = if head.active_count == 0 {
             0
         } else {
@@ -120,7 +188,7 @@ async fn scan_rows<F>(
     db: &Database,
     head: &Head,
     range: std::ops::RangeInclusive<i64>,
-    seal: Option<&Seal>,
+    proof: Option<(&Binary, i64)>,
     session: &mut ClientSession,
     snapshot: bool,
     visit: &mut F,
@@ -137,6 +205,7 @@ where
     let find = collection
         .find(doc! {"agent_id":&head.agent_id,"seq":{"$gte":start,"$lte":end}})
         .sort(doc! {"seq":1})
+        .hint(mongodb::options::Hint::Name("agent_log_sequence".into()))
         .limit(MAX_ENTRIES + 1)
         // Bound the driver batch by 64 rows and Mongo's 16-MiB reply ceiling.
         // One-row batches make a full active tail require 10,128 round trips.
@@ -175,9 +244,9 @@ where
             .checked_add(size)
             .filter(|n| *n <= MAX_BYTES)
             .ok_or_else(corrupt)?;
-        if let Some(seal) = seal {
+        if let Some((leaves, first)) = proof {
             let actual = digest::leaf(&head.agent_id, &head.incarnation, expected, raw.as_bytes());
-            digest::check_leaf(&seal.leaf_digests, expected - seal.start_seq, &actual)?;
+            digest::check_leaf(leaves, expected - first, &actual)?;
         }
         visit(entry)?;
         expected += 1;
@@ -221,6 +290,7 @@ pub(in crate::store) async fn retained_turn(
             },
             session,
             true,
+            None,
             |row| {
                 entry = Some(row);
                 Ok(())

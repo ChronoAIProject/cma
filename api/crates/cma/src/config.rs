@@ -60,7 +60,7 @@ mod quiet_output;
 pub(crate) mod task_audit;
 mod task_experience;
 pub(crate) use features::home_backup::HomeBackupConfig;
-pub(crate) use features::FeatureFlags;
+pub(crate) use features::{FeatureFlags, ManagedMachineUpdates};
 mod service_authorization;
 pub(crate) use gateway::GatewayConfig;
 pub(crate) use service_authorization::ServiceAuthorizationConfig;
@@ -205,6 +205,8 @@ pub struct Config {
     pub default_profiles: DefaultProfileConfig,
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
+    pub(crate) public_repository_verified_runtime_images: BTreeSet<String>,
+    pub(crate) public_repository_snapshot_enabled: bool,
     pub auth_mode: AuthMode,
     pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
@@ -243,6 +245,22 @@ impl StartupConfig {
                 .map(|config| Self::BackendFree(Box::new(config))),
         }
     }
+}
+
+fn parse_public_repository_images(raw: Option<String>) -> Result<BTreeSet<String>, String> {
+    let mut images = BTreeSet::new();
+    for image in raw
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .into_iter()
+        .flat_map(|value| value.split(','))
+    {
+        if !crate::agent_lifecycle::valid_immutable_image(image) || !images.insert(image.to_owned())
+        {
+            return Err("CHRONO_PUBLIC_REPOSITORY_VERIFIED_RUNTIME_IMAGES requires unique immutable image references".into());
+        }
+    }
+    Ok(images)
 }
 
 impl Config {
@@ -406,6 +424,13 @@ impl Config {
             agent_manager_sandbox_capacity,
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?
                 .filter(|value| !value.is_empty()),
+            public_repository_snapshot_enabled: features::flag(
+                &mut lookup,
+                "CHRONO_PUBLIC_REPOSITORY_SNAPSHOT_ENABLED",
+            )?,
+            public_repository_verified_runtime_images: parse_public_repository_images(lookup(
+                "CHRONO_PUBLIC_REPOSITORY_VERIFIED_RUNTIME_IMAGES",
+            )?)?,
             auth_mode,
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,

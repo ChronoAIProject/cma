@@ -23,6 +23,7 @@ pub struct ChannelMutation {
 pub enum ChannelMutationKind {
     Create,
     Update,
+    ProfileRevision,
     Delete,
     AuditRouting,
     AuditAttachments,

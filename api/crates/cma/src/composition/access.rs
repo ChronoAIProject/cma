@@ -10,7 +10,6 @@ use layer2_core::{
         agent_io::AgentCommandService, answer_deliverables::AnswerDeliverableService,
         AgentReadService, SandboxOperatorService, SandboxPolicySource, StoredSandboxRetirement,
     },
-    trigger_domain::ServiceConnectionBroker,
     ActivityService,
 };
 use layer3_adapter::SandboxAdapter;
@@ -38,6 +37,8 @@ pub(super) struct ToolServices {
     pub deliverables: Arc<layer2_core::sandbox::answer_deliverables::AnswerDeliverableService>,
     pub public_origin: String,
     pub task_experience: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
+    pub github_connection_approval: bool,
+    pub runtime_adapter: Arc<dyn SandboxAdapter>,
 }
 
 pub(super) fn sandbox_control(
@@ -81,7 +82,7 @@ pub(super) fn compose(
     stores: &MongoStores,
     auth: Arc<AuthState>,
     policy: Arc<dyn SandboxPolicySource>,
-    broker: Arc<dyn ServiceConnectionBroker>,
+    broker: Arc<crate::trigger::CmaServiceConnectionBroker>,
     resource_access: Arc<ResourceAccessService>,
     holder: String,
     tools: ToolServices,
@@ -94,13 +95,19 @@ pub(super) fn compose(
             .with_model_credit_required(tools.model_credit_required)
             .with_model_funding(tools.model_funding);
     let service = AgentAccessService::new(stores.sandbox_model.clone(), auth.clone(), policy);
+    let service = if tools.github_connection_approval {
+        service.with_github_approval(auth.clone(), broker.clone())
+    } else {
+        service
+    };
     let worker = AgentAccessWorker::new(
         stores.sandbox_model.clone(),
         auth,
-        broker,
+        broker.clone(),
         commands.clone(),
         holder,
-    );
+    )
+    .with_github_approval(broker, tools.runtime_adapter);
     AccessComposition {
         commands,
         worker,

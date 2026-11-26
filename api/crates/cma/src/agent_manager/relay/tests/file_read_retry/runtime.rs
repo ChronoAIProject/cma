@@ -3,6 +3,7 @@ use futures_util::{SinkExt, StreamExt};
 use l3::hosted::{HostedControlTransport, NativeRuntimeTransport, ProviderHostedControlTransport};
 use layer3_adapter as l3;
 use serde_json::{json, Value};
+use sha2::Digest;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
@@ -35,6 +36,10 @@ pub(super) struct Counts {
     pub confirm: AtomicUsize,
     pub files: AtomicUsize,
     pub status: AtomicUsize,
+    pub edits: AtomicUsize,
+    pub edit_admissions: AtomicUsize,
+    pub edited_bytes: Mutex<Option<Vec<u8>>>,
+    pub lose_edit_reply: AtomicBool,
     pub challenges: Mutex<VecDeque<Challenge>>,
     pub lose_confirmation: AtomicBool,
     pub restarted: AtomicBool,
@@ -266,7 +271,12 @@ async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>) {
     } else {
         assert!(path.contains("/runtime/control "), "{path}");
         let frame: l3::wire::RequestFrame = serde_json::from_slice(&body).unwrap();
-        control(frame, &counts).await
+        let edit = matches!(frame, l3::wire::RequestFrame::WriteAgentFile(_));
+        let result = control(frame, &counts).await;
+        if edit && counts.lose_edit_reply.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        result
     };
     let mut response_bytes = vec![1];
     response_bytes.extend_from_slice(response(code, &reply.to_string()).as_bytes());
@@ -318,6 +328,29 @@ async fn control(frame: l3::wire::RequestFrame, counts: &Counts) -> (u16, Value)
                     sha256: digest(),
                     content_base64: base64::engine::general_purpose::STANDARD.encode(FILE_BYTES),
                 })
+            }
+            RequestFrame::WriteAgentFile(request) => {
+                assert_eq!(request.path, FILE_PATH);
+                assert!(request.owner_access);
+                assert!(!request.directory);
+                counts.edits.fetch_add(1, Ordering::SeqCst);
+                let mut stored = counts.edited_bytes.lock().unwrap();
+                let original = stored.as_deref().unwrap_or(FILE_BYTES);
+                let actual = format!("{:x}", sha2::Sha256::digest(original));
+                if request.expected_sha256.as_ref() != Some(&actual) {
+                    return (
+                        409,
+                        json!({"t":"failure", "code":"file_conflict", "retryable":false}),
+                    );
+                }
+                let bytes = request.content().unwrap();
+                let receipt = l3::AgentFileWriteReceipt {
+                    path: request.path,
+                    size_bytes: bytes.len() as u64,
+                    sha256: format!("{:x}", sha2::Sha256::digest(&bytes)),
+                };
+                *stored = Some(bytes);
+                ResponseFrame::WriteAgentFile(receipt)
             }
             other => panic!("unexpected fixture operation {other:?}"),
         };

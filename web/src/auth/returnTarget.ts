@@ -69,6 +69,8 @@ export function classifyReturnTarget(value: string): ReturnTarget {
     case 'docs':
     case 'usage':
       return { kind: 'restore', target: value };
+    case 'agent_share':
+      return value.includes('?') ? { kind: 'reject' } : { kind: 'restore', target: value };
     case 'artifacts':
     case 'workspace':
     case 'inventory':
@@ -78,7 +80,6 @@ export function classifyReturnTarget(value: string): ReturnTarget {
     case 'operations':
       return { kind: 'fallback', target: '/agent-manager' };
     default:
-      // Share, Launch and OAuth completion routes retain their own authority flow.
       return { kind: 'reject' };
   }
 }

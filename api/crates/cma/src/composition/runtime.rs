@@ -12,6 +12,27 @@ pub(super) fn image_manager_resolver(
     )
 }
 
+pub(super) fn configure_inline_lifecycle(
+    config: &Config,
+    stores: &MongoStores,
+    lifecycle: Arc<crate::agent_lifecycle::InlineAgentLifecycle>,
+    broker: Arc<crate::trigger::CmaServiceConnectionBroker>,
+) -> Arc<crate::agent_lifecycle::InlineAgentLifecycle> {
+    lifecycle
+        .with_released_runtime(stores.released_runtime.clone())
+        .with_task_experience(config.task_experience.clone())
+        .with_session_guidance(
+            config.features.session_guidance_v4,
+            config.features.session_guidance_v5,
+        )
+        .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
+        .with_repository_preflight_config(config, broker)
+        .with_public_repository_images(
+            config.public_repository_verified_runtime_images.clone(),
+            config.public_repository_snapshot_enabled,
+        )
+}
+
 pub(super) fn worker_observations(
     config: &Config,
     stores: &MongoStores,
@@ -69,6 +90,8 @@ impl RuntimeServices {
                 .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
         )
         .with_target_fencing(config.agent_manager_replicas.is_some())
+        .with_default_pool_holds(stores.sandbox_model.default_pool_holds.clone())
+        .with_empty_pool_startup(config.features.am_empty_warm_pool_startup)
         .with_released_runtime(stores.released_runtime.clone());
         let pointer = crate::runtime_pointer::RuntimePointerController::compose(
             config,

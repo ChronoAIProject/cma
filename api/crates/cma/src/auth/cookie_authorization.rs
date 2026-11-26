@@ -11,14 +11,13 @@ use super::{
     identity,
     permissions::PermissionEvidence,
     persistence::{DurableSubjectTokens, SecretDigest, SubjectAuthState},
-    verification_error::ProviderVerificationError,
+    verification_error::{ProviderVerificationError, VerificationCause, VerificationFailure},
     AuthState, RequestAuth,
 };
 
 const PROVIDER_VERIFICATION_TIMEOUT: Duration = super::identity_retry::DEADLINE;
 const MAX_VERIFICATION_FLIGHTS: usize = 256;
-type VerificationFlight =
-    OnceCell<Result<Arc<identity::VerifiedSubject>, ProviderVerificationError>>;
+type VerificationFlight = OnceCell<Result<Arc<identity::VerifiedSubject>, VerificationFailure>>;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct VerificationKey {
@@ -132,7 +131,7 @@ async fn verify_with_timeout(
         timeout,
         flight.get_or_init(|| {
             led.store(true, std::sync::atomic::Ordering::Relaxed);
-            super::identity_retry::verify(
+            super::identity_retry::verify_detailed(
                 auth,
                 None,
                 tokens.access_token.expose(),
@@ -156,7 +155,10 @@ async fn verify_with_timeout(
                 None,
                 &error,
             );
-            Err(error)
+            Err(VerificationFailure::new(
+                error,
+                VerificationCause::CallerDeadline,
+            ))
         }
     };
     let source = if led.load(std::sync::atomic::Ordering::Relaxed) {
@@ -171,7 +173,10 @@ async fn verify_with_timeout(
     if flight.initialized() {
         auth.cookie_verifications.release(&key, &flight).await;
     }
-    let verified = match verified {
+    let verified = match verified
+        .inspect_err(VerificationFailure::record_local_cause)
+        .map_err(|failure| failure.error)
+    {
         Ok(verified) => verified,
         Err(ProviderVerificationError::Rejected(_)) => {
             // A refusal of a replaced token says nothing about the current login.

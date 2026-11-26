@@ -94,7 +94,7 @@ it('groups a fresh inventory result without fetching details and preserves task 
   expect(sandboxNavigation([base], (value) => value, 'failed').visible).toEqual([base]);
   for (const [taskStatus, presentedStatus, label] of [
     ['completed', 'completed', 'Turn ended'],
-    ['stopped', 'stopped', 'Stopped'],
+    ['stopped', 'interrupted', 'Response interrupted'],
     ['failed', 'failed', 'Failed'],
     ['working', 'needs_attention', 'Needs attention'],
   ] as const) {
@@ -105,6 +105,16 @@ it('groups a fresh inventory result without fetching details and preserves task 
     expect(task?.showRunningTime).toBe(false);
     expect(task?.parentNotice).toBe('Runtime update failed');
   }
+  const stoppedAgent = {
+    ...workspaceFixture().agents[0]!,
+    status: 'stopped',
+    taskStatus: 'stopped',
+  } as const;
+  expect(taskPresentation(stoppedAgent, base, 'fresh')).toMatchObject({
+    status: 'stopped',
+    label: 'Stopped',
+    parentNotice: 'Runtime update failed',
+  });
 });
 
 it('does not grant a parked revival deletion without the server retire action', () => {

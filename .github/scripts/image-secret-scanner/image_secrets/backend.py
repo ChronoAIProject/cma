@@ -4,7 +4,8 @@ import os
 import re
 import subprocess
 
-from .common import ScanError, digest_bytes, digest_file, json_bytes
+from .common import ScanError, digest_bytes, digest_file
+from .detector_report import report_rows
 
 
 class Gitleaks:
@@ -98,21 +99,24 @@ class Gitleaks:
         # A depth-limit, unreadable archive, or other skipped input invalidates CLEAN.
         # The only expected warning is Gitleaks' final finding count; never publish log text.
         messages = error_log.read_text(errors="replace").splitlines()
-        unexpected_warning = any(
-            not re.fullmatch(r".*\bWRN leaks found: \d+\s*", line) for line in messages if line.strip()
-        )
-        if result.returncode not in (0, 1) or not raw.is_file() or unexpected_warning:
+        counts = []
+        for line in messages:
+            if not line.strip():
+                continue
+            match = re.fullmatch(r".*\bWRN leaks found: ([0-9]{1,12})\s*", line)
+            if match is None:
+                raise ScanError("gitleaks-incomplete")
+            counts.append(int(match.group(1)))
+        if result.returncode not in (0, 1) or not raw.is_file() or len(counts) > 1:
             raise ScanError("gitleaks-incomplete")
-        if raw.stat().st_size > 64 * 1024 * 1024:
-            raise ScanError("gitleaks-report-too-large")
-        rows = json_bytes(raw.read_bytes())
-        if not isinstance(rows, list) or (bool(rows) != (result.returncode == 1)):
+        detector_count = counts[0] if counts else 0
+        if bool(detector_count) != (result.returncode == 1):
             raise ScanError("gitleaks-result-inconsistent")
         index = self.index(stage, locations)
         digests = {} if digests is None else digests
         cacheable = True
         mapped = []
-        for row in rows:
+        for row in report_rows(raw):
             if not isinstance(row, dict):
                 raise ScanError("invalid-gitleaks-finding")
             name, rule, secret = row.get("File"), row.get("RuleID"), row.get("Secret")
@@ -130,9 +134,12 @@ class Gitleaks:
             if physical not in digests:
                 digests[physical] = digest_file(physical)
             mapped.append((physical.name, "gitleaks." + rule, digest_bytes(secret.encode()), line, location, physical))
+        if len(mapped) != detector_count:
+            raise ScanError("gitleaks-result-inconsistent")
         # Gitleaks workers may return rows in different orders. Canonical mapping
         # makes cold and reused evidence identical without dropping occurrences.
-        for _, rule, candidate, line, location, physical in sorted(mapped, key=lambda value: value[:4]):
+        mapped.sort(key=lambda value: value[:4])
+        for _, rule, candidate, line, location, physical in mapped:
             if observed is not None:
                 if location != locations[physical]:
                     cacheable = False

@@ -24,6 +24,14 @@ pub(super) async fn prepare(
         &request.request_sha256,
         request.has_valid_sha256(),
     )?;
+    if request.repository_connection_id.is_some()
+        && !adapter
+            .inspect_runtime_status(handle)
+            .await?
+            .github_repository_scope
+    {
+        return Err(repository_scope_unsupported());
+    }
     match adapter
         .exchange(handle, RequestFrame::PrepareWorkspace(request.clone()))
         .await?
@@ -204,6 +212,9 @@ pub(super) async fn recover_prepare(
     request.validate()?;
     let state = adapter.known_state(handle).await?;
     let runtime = adapter.inspect_runtime_status(handle).await?;
+    if request.original.repository_connection_id.is_some() && !runtime.github_repository_scope {
+        return Err(repository_scope_unsupported());
+    }
     let frame = crate::WorkspacePrepareRecoveryFrame {
         runtime,
         request: request.clone(),
@@ -226,4 +237,8 @@ pub(super) async fn recover_prepare(
     }
     adapter.verify_bound_home(handle).await?;
     Ok(receipt)
+}
+
+fn repository_scope_unsupported() -> AdapterError {
+    AdapterError::Unsupported("runtime does not support verified GitHub repository access".into())
 }

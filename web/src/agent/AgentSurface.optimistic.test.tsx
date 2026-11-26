@@ -134,10 +134,14 @@ it('skips the per-message catalog wait, retains identity and acknowledgement gat
   expect(bubbles('Immediate local message')).toHaveLength(1);
   await act(async () => identity.resolve('alice'));
   expect(h.post).toHaveBeenCalledOnce();
+  expect(screen.getByText('Sending…')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Pending request')).not.toBeInTheDocument();
+  expect(screen.queryByText('We can’t confirm this message arrived')).not.toBeInTheDocument();
   expect(screen.queryByText('Sent')).not.toBeInTheDocument();
   await act(async () => response.resolve(accepted()));
   await waitFor(() => expect(field).toHaveValue(''));
   expect(screen.getByText('Sent')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Pending request')).not.toBeInTheDocument();
   await act(async () => {
     h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding);
     h.durable(2, { type: 'message', role: 'user', content: 'Immediate local message' });
@@ -181,6 +185,8 @@ it('preserves the draft and original request through a lost acknowledgement, rel
   click();
   expect(bubbles('Immediate local message')).toHaveLength(1);
   await waitFor(() => expect(screen.getByText('Awaiting confirmation')).toBeInTheDocument());
+  expect(within(screen.getByLabelText('Pending request')).getByRole('alert')).toBeInTheDocument();
+  expect(await screen.findByText('We can’t confirm this message arrived')).toBeInTheDocument();
   expect(field).toHaveValue('Immediate local message');
   expect(h.post).toHaveBeenCalledOnce();
   const original = h.post.mock.calls[0]![0]!;

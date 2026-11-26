@@ -12,7 +12,7 @@ import { RetiredAgentRow } from './PersonalAgentTree';
 import { DeletionProgressList } from './DeletionProgressList';
 import { runtimeAttention, type RuntimeAttention } from './runtimeAttention';
 import { SkeletonRows } from '../ui/Skeleton';
-import type { AgentDetail } from '../api/types';
+import type { AgentDetail, SandboxSummary } from '../api/types';
 import type { AppRoute } from '../routing/routes';
 import type { ResourceViewsClient } from '../resources/client';
 import {
@@ -234,7 +234,8 @@ function ViewerNavigation({
     });
   const deletions = new Map<
     string,
-    { id: string; name: string; status?: AgentDetail['sandbox']['status']; unknown?: boolean }
+    Pick<SandboxSummary, 'id' | 'name'> &
+      Partial<Pick<SandboxSummary, 'status' | 'lifecycle'>> & { unknown?: boolean }
   >();
   if (scope === '') {
     for (const id of deletingSandboxIds) deletions.set(id, { id, name: 'Environment' });
@@ -248,6 +249,7 @@ function ViewerNavigation({
             id: sandbox.id,
             name: sandbox.name,
             status: sandbox.status,
+            lifecycle: navigation.refreshError ? undefined : sandbox.lifecycle,
             unknown: sandbox.status === 'retiring' ? false : deletions.get(sandbox.id)?.unknown,
           });
         if (

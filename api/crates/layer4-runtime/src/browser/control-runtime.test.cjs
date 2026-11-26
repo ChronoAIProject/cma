@@ -119,7 +119,7 @@ test('Agent navigation reports the first H1 of the committed main document', { t
     }, path);
   }
   await assert.rejects(navigate('/superseded-heading'), {
-    code: 1, stdout: /^\{"error":"browser_(navigation_unconfirmed|disconnected)"\}$/,
+    code: 1, stdout: /^\{"error":"browser_navigation_(unconfirmed|failed)"\}$/,
   });
   const status = await browser.call({ operation: 'status' });
   assert.equal(Object.hasOwn(status, 'first_heading'), false);
@@ -127,6 +127,65 @@ test('Agent navigation reports the first H1 of the committed main document', { t
   assert.equal(lease.state, 'user');
   await assert.rejects(navigate('/heading-final'), {
     code: 1, stdout: '{"error":"browser_control_conflict"}',
+  });
+});
+
+test('invalid navigation gives the Agent a recovery path and an unavailable browser reports disconnect', { timeout: 30000 }, async test => {
+  const browser = await fixture(test);
+  const navigate = url => run(process.execPath, [join(__dirname, 'command.cjs'), 'navigate', url], {
+    env: { ...process.env, CMA_BROWSER_SOCKET: join(browser.directory, 'browser.sock') },
+  });
+  const overEnvelopeLimit = 'http://127.0.0.1/' + 'a'.repeat(16384);
+  const refused = await browser.agent('/navigate', { url: overEnvelopeLimit });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.error, 'browser_navigation_invalid');
+
+  const partialBody = Buffer.from('{"url":"' + overEnvelopeLimit);
+  let pendingRequest;
+  try {
+    const streamed = await new Promise((resolve, reject) => {
+      pendingRequest = httpRequest({
+        socketPath: join(browser.directory, 'browser.sock'),
+        path: '/navigate',
+        method: 'POST',
+        headers: { 'content-length': partialBody.length + 2 },
+        signal: AbortSignal.timeout(5000),
+      }, response => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', chunk => { body += chunk; });
+        response.on('error', reject);
+        response.on('end', () => resolve({
+          status: response.statusCode, connection: response.headers.connection, ...JSON.parse(body),
+        }));
+      });
+      pendingRequest.on('error', reject);
+      // Leave the closing quote and brace outstanding until the refusal arrives.
+      pendingRequest.write(partialBody);
+    });
+    assert.equal(streamed.status, 400);
+    assert.equal(streamed.connection, 'close');
+    assert.equal(streamed.error, 'browser_navigation_invalid');
+    assert.match(streamed.message, /HTTP or HTTPS URL without credentials/);
+  } finally {
+    pendingRequest?.destroy();
+  }
+
+  for (const url of ['file:///workspace/preview.html', 'not-a-url', 'https://user:placeholder@example.test/',
+    'http://127.0.0.1/' + 'a'.repeat(8192), overEnvelopeLimit]) {
+    await assert.rejects(navigate(url), error => {
+      assert.equal(error.code, 1);
+      const result = JSON.parse(error.stdout);
+      assert.equal(result.error, 'browser_navigation_invalid');
+      assert.match(result.message, /HTTP or HTTPS URL without credentials/);
+      assert.match(result.message, /serve it over HTTP on 127\.0\.0\.1/);
+      return true;
+    });
+  }
+  assert.equal(JSON.parse((await navigate(browser.url)).stdout).navigated, true);
+  await browser.call({ operation: 'disable' });
+  await assert.rejects(navigate(browser.url), {
+    code: 1, stdout: '{"error":"browser_disconnected"}',
   });
 });
 

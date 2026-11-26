@@ -25,7 +25,7 @@ ARG OMARCHY_CMA_BASE=runtime-tools
 #     output moved, from the signed indexes.
 #  4. Land it only with an independent review of both catalogs, which sets
 #     APPROVED_PACKAGE_EVIDENCE and APPROVED_OMARCHY_PACKAGE_EVIDENCE.
-ARG DEBIAN_SNAPSHOT=20261123T154646Z
+ARG DEBIAN_SNAPSHOT=20261124T215723Z
 # The Omarchy stages install Arch packages exactly as the Arch Linux Archive
 # indexed core, extra and multilib on this one date, so the same source
 # installs the same packages and rebuilds the OpenSSL CLI, wlroots, Aquamarine
@@ -71,15 +71,37 @@ ARG OMARCHY_PACKAGES_IMAGE=ghcr.io/chronoaiproject/cma-omarchy-packages@sha256:7
 # 4 supervisor. The image supplies the one supported agent provider, the tools
 # needed to prepare git workspaces, and the NyxID CLI used through the local
 # credential proxy.
-FROM rust:1.96.1-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479 AS build
+# Cook the locked dependency graph in an exportable layer shared by both
+# runtime targets. Fresh CI builders do not inherit BuildKit cache mounts.
+FROM rust:1.96.1-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479 AS compiler-base
 RUN apk add --no-cache musl-dev
 WORKDIR /build
+
+FROM compiler-base AS chef
+COPY api/rust-toolchain.toml ./
+RUN CARGO_BUILD_JOBS=2 cargo install --locked --version 0.1.78 cargo-chef
+
+FROM chef AS planner
+COPY api/ ./
+RUN cargo chef prepare --recipe-path /recipe.json
+
+FROM chef AS dependencies
+COPY --from=planner /recipe.json /recipe.json
+RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,sharing=locked \
+    CARGO_BUILD_JOBS=2 cargo chef cook --release --locked --bin layer4-runtime --recipe-path /recipe.json
+
+FROM compiler-base AS build
 COPY api/ ./
 ARG TARGETARCH
+# Rebuild every workspace crate from actual source, even when source timestamps
+# predate the cooked placeholder artifacts. The dependency objects remain reusable.
 # Statically linked against musl, so it runs on any base the runtime stage uses.
 RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cma-runtime-target-${TARGETARCH},target=/build/target,sharing=locked \
-    cargo build --jobs 2 --release --locked --bin layer4-runtime \
+    --mount=type=bind,from=dependencies,source=/build/target,target=/dependency-target \
+    cp -a /dependency-target/. /build/target/ \
+    && cargo clean --release --workspace --locked \
+    && cargo build --jobs 2 --release --locked --bin layer4-runtime \
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
 # The base image carries only debian.sources; any other apt source is refused
@@ -490,6 +512,7 @@ ENV HOME=/home/cma \
     CHRONO_RUNTIME_HOME_IDENTITY="" \
     PATH=/home/cma/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED=false \
+    CHRONO_RUNTIME_AGENT_PROCESS_RESTART_ENABLED=true \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 \
     TERM=xterm-256color
 EXPOSE 9090
@@ -564,6 +587,7 @@ USER 10001:10001
 ENV HOME=/home/cma CHRONO_RUNTIME_GENERATION=1 CHRONO_RUNTIME_HOME_IDENTITY="" \
     PATH=/home/cma/.local/bin:/usr/local/bin:/usr/share/omarchy/bin:/usr/bin \
     CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED=false \
+    CHRONO_RUNTIME_AGENT_PROCESS_RESTART_ENABLED=true \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 TERM=xterm-256color \
     CODEX_PATH=/usr/local/bin/codex OMARCHY_PATH=/usr/share/omarchy
 EXPOSE 9090

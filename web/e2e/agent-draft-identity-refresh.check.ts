@@ -197,6 +197,7 @@ for (const exit of ['explicit sign-out', 'session expiry'] as const) {
         });
         await page.getByRole('button', { name: /Account menu for/ }).click();
         await page.getByRole('menuitem', { name: 'Sign out', exact: true }).click();
+        await expect(page).toHaveURL(new URL('/', baseURL!).href);
       } else {
         signedOut = true;
         await page.evaluate(() => window.dispatchEvent(new Event('online')));
@@ -209,7 +210,8 @@ for (const exit of ['explicit sign-out', 'session expiry'] as const) {
       fixture.owner = 'second-owner';
       fixture.boundary.sandbox = { ...fixture.boundary.sandbox, owner: fixture.owner };
       signedOut = false;
-      await page.reload();
+      if (exit === 'explicit sign-out') await page.goto('/agents/agt_contract');
+      else await page.reload();
       await expect(
         page.getByRole('button', { name: 'Account menu for second-owner' }),
       ).toBeVisible();

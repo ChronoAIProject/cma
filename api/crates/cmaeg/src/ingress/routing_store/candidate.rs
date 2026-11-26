@@ -12,6 +12,7 @@ pub struct Candidate {
     pub(super) manifest: Manifest,
     pub(super) bytes: Vec<u8>,
     pub(super) event_expires_at: i64,
+    pub(crate) profile_admission: Option<crate::channels::profile_assignment::Admission>,
 }
 impl Candidate {
     pub fn prepare(
@@ -306,6 +307,7 @@ impl Candidate {
             manifest,
             bytes,
             event_expires_at,
+            profile_admission: None,
         })
     }
     pub fn identity(&self) -> &EventIdentity {

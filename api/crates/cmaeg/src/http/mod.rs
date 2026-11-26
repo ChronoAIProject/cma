@@ -29,6 +29,7 @@ pub mod outbound;
 pub mod partition_resets;
 pub mod partitions;
 pub mod problems;
+pub mod profile_revisions;
 pub(crate) mod public_urls;
 pub mod readiness;
 mod record_ids;

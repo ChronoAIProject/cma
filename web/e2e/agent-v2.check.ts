@@ -28,6 +28,19 @@ for (const theme of ['light', 'dark']) {
     try {
       await open(page, fixture, baseURL!);
       await expect.poll(() => fixture.streams.size).toBe(1);
+      await page.evaluate(() => {
+        document.body.dataset.recoveryPanelSeen = 'false';
+        const observe = (node: Node) => {
+          if (
+            node instanceof Element &&
+            (node.matches('.agent-pending-panel') || node.querySelector('.agent-pending-panel'))
+          )
+            document.body.dataset.recoveryPanelSeen = 'true';
+        };
+        new MutationObserver((records) => {
+          for (const record of records) for (const node of record.addedNodes) observe(node);
+        }).observe(document.body, { childList: true, subtree: true });
+      });
       await message(page).fill('Inspect the repository.');
       await page.getByRole('button', { name: 'Send message', exact: true }).click();
       await expect.poll(() => fixture.writes.length).toBe(1);
@@ -66,11 +79,13 @@ for (const theme of ['light', 'dark']) {
       await expect(page.locator('.message--user').filter({ hasText: 'Sending…' })).toContainText(
         'Inspect the repository.',
       );
-      await expect(recover(page)).toBeDisabled();
+      await expect(recover(page)).toHaveCount(0);
+      await expect(page.getByLabel('Pending request')).toHaveCount(0);
       expect(fixture.streams.size).toBe(1);
       fixture.acceptInput();
       await expect(message(page)).toHaveValue('');
       await expect(recover(page)).toHaveCount(0);
+      await expect(page.locator('body')).toHaveAttribute('data-recovery-panel-seen', 'false');
       const text = 'Live progress remains readable.\n\n'.repeat(70);
       fixture.live('text_delta', text);
       await expect(page.locator('.message--assistant')).toContainText(
@@ -165,6 +180,9 @@ test('LOCAL: explicit input recovery after reload keeps its body, key and select
     await message(page).fill('First line\nSecond line 🛰️');
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
     await expect(recover(page)).toBeEnabled();
+    await expect(page.getByLabel('Pending request').getByRole('alert')).toContainText(
+      'We can’t confirm this message arrived',
+    );
     expect(fixture.writes).toHaveLength(1);
     fixture.enabled = false;
     await page.reload();

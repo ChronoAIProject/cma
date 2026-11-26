@@ -41,6 +41,33 @@ fn mint_body_closes_both_provider_wildcards() {
 }
 
 #[test]
+fn mint_body_preserves_bson_millisecond_precision() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../.github/scripts/work-recovery/fixtures/mint-expiry.json"
+    )))
+    .unwrap();
+    let base = fixture["base_unix_seconds"].as_u64().unwrap();
+    for case in fixture["cases"].as_array().unwrap() {
+        let millis = case[0].as_u64().unwrap();
+        let expires_at =
+            SystemTime::UNIX_EPOCH + Duration::from_secs(base) + Duration::from_millis(millis);
+        let body = mint_request_body(
+            "work-recovery-fixture",
+            "resource_1",
+            &["fixture-service".into()],
+            expires_at,
+        )
+        .unwrap();
+        assert_eq!(body["expires_at"], case[1], "millisecond {millis}");
+        let parsed =
+            mongodb::bson::DateTime::parse_rfc3339_str(body["expires_at"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(parsed.to_system_time(), expires_at);
+    }
+}
+
+#[test]
 fn mint_response_must_exactly_match_requested_authority() {
     let expiry = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
     let minted = minted_key_from_response(

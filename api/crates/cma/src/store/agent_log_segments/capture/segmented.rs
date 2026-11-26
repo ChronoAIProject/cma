@@ -57,6 +57,30 @@ pub(super) async fn read(
         };
         seal.precedes(&head)?;
     }
+    if !export && budget.is_none() && store.active_log_proofs {
+        if let Some(leaves) =
+            super::super::active_proof::read(store, &head, agent.revision, session, snapshot)
+                .await?
+        {
+            let mut captured = CapturedLog {
+                agent: agent.clone(),
+                format: CapturedFormat::Segmented,
+                incarnation: head.incarnation.clone(),
+                latest_entry: None,
+                max_opened_generation: projection.max_opened_generation,
+                max_retired_generation: projection.max_retired_generation,
+                projection,
+                active_head: head,
+                active_leaf_digests: leaves,
+                context,
+            };
+            if captured.through() > 0 {
+                captured.latest_entry =
+                    Some(latest(store, &captured, session, snapshot, None).await?);
+            }
+            return Ok(captured);
+        }
+    }
     let source = store.agent_log.clone_with_type::<RawDocumentBuf>();
     let mut read = budget
         .is_none()
@@ -160,10 +184,14 @@ async fn latest(
     mut budget: Option<&mut preview_budget::PreviewBudget>,
 ) -> Result<AgentLogEntry, TransactionLogError> {
     let seq = captured.active_head.last_seq;
-    let seal = if let Some(budget) = budget.as_deref_mut() {
-        reads::preview_containing(store, &captured.active_head, seq, session, budget).await?
+    let seal = if seq >= captured.active_head.active_start_seq {
+        None
     } else {
-        reads::containing(store, &captured.active_head, seq, session, snapshot).await?
+        Some(if let Some(budget) = budget.as_deref_mut() {
+            reads::preview_containing(store, &captured.active_head, seq, session, budget).await?
+        } else {
+            reads::containing(store, &captured.active_head, seq, session, snapshot).await?
+        })
     };
     let source = store.agent_log.clone_with_type::<RawDocumentBuf>();
     let mut read = budget
@@ -202,9 +230,16 @@ async fn latest(
     if entry.seq != captured.through() || entry.agent_id != captured.agent.id {
         return Err(corrupt().into());
     }
+    let (leaves, start) = seal.as_ref().map_or(
+        (
+            &captured.active_leaf_digests,
+            captured.active_head.active_start_seq,
+        ),
+        |seal| (&seal.leaf_digests, seal.start_seq),
+    );
     digest::check_leaf(
-        &seal.leaf_digests,
-        seq - seal.start_seq,
+        leaves,
+        seq - start,
         &digest::leaf(
             captured.agent.id.as_str(),
             &captured.incarnation,

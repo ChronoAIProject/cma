@@ -4,6 +4,7 @@ import type { LatestMetricsClient } from './latest';
 import type { UsageReportOwner } from './reportOwner';
 import { bindCacheOwner, entryFor, notify, reportKey } from './reportCache';
 import { startReportLoad } from './reportLoad';
+import { viewUnavailable } from './viewCapability';
 
 /** Two one-shot admissions, not hidden poll loops. Selected work retains priority. */
 export function useWarmUsageRanges(
@@ -27,7 +28,12 @@ export function useWarmUsageRanges(
           ? (['24h', '7d', '30d'] as const)
           : (['7d', '30d'] as const);
       for (const range of ranges) {
-        if (cancelled || document.visibilityState === 'hidden') return;
+        if (
+          cancelled ||
+          document.visibilityState === 'hidden' ||
+          viewUnavailable(api, owner.cacheKey, admin, 'latest')
+        )
+          return;
         if (range === selection.range) continue;
         const wanted = { ...selection, range };
         const entry = entryFor(api, reportKey(wanted, admin, owner.cacheKey), owner.cacheKey);

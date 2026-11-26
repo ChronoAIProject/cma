@@ -84,3 +84,46 @@ fn worktree_digests_cover_every_execution_field() {
     assert_ne!(changed_workspace.computed_sha256(), remove.request_sha256);
     assert_ne!(changed_name.computed_sha256(), remove.request_sha256);
 }
+
+#[test]
+fn public_repository_archive_binds_the_canonical_locator_and_commit() {
+    let commit = "a".repeat(40);
+    let repository = "https://github.com/example/project";
+    assert_eq!(
+        public_repository_archive_url(repository, &commit)
+            .unwrap()
+            .as_str(),
+        format!("https://codeload.github.com/example/project/zip/{commit}")
+    );
+    for invalid in [
+        "https://github.com/example",
+        "https://github.com/example/project/",
+        "https://example.com/example/project",
+    ] {
+        assert!(public_repository_archive_url(invalid, &commit).is_none());
+    }
+    assert!(public_repository_archive_url(repository, "main").is_none());
+    let public = WorkspaceRequest::new(
+        "prepare",
+        "workspace",
+        "repo",
+        WorkspaceSource::PublicRepositorySnapshot {
+            url: repository.into(),
+            commit: commit.clone(),
+        },
+    );
+    let ordinary = WorkspaceRequest::new(
+        "prepare",
+        "workspace",
+        "repo",
+        WorkspaceSource::RepositorySnapshot {
+            url: repository.into(),
+            reference: Some(commit),
+        },
+    );
+    assert_ne!(public.request_sha256, ordinary.request_sha256);
+    assert_eq!(
+        serde_json::from_value::<WorkspaceRequest>(serde_json::to_value(&public).unwrap()).unwrap(),
+        public
+    );
+}

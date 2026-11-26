@@ -3,7 +3,7 @@
 use futures_util::TryStreamExt;
 use layer2_core::agent_ownership::{
     Member, Membership, OwnershipError, OwnershipFailure, OwnershipLease, OwnershipStore,
-    OwnershipToken, DEFAULT_LEASE_MS, PROTOCOL_VERSION,
+    OwnershipToken, ReconciliationOwner, DEFAULT_LEASE_MS, PROTOCOL_VERSION,
 };
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::AgentId;
@@ -301,6 +301,45 @@ impl OwnershipStore for MongoAgentOwnership {
             .transpose()
     }
 
+    async fn reconciliation_owners(
+        &self,
+        ids: &[&AgentId],
+    ) -> Result<Vec<ReconciliationOwner>, OwnershipError> {
+        let ids: Vec<_> = ids.iter().map(|id| id.as_str()).collect();
+        let mut rows = self
+            .owners
+            .aggregate([
+                doc! {"$match": {
+                    "_id": {"$in": &ids}, "instance_id": {"$type": "string"},
+                    "expires_at": {"$type": "date"},
+                    "$expr": {"$gt": ["$expires_at", "$$NOW"]},
+                }},
+                doc! {"$project": {
+                    "document_schema_version": 1, "instance_id": 1, "epoch": 1, "protocol": 1,
+                    "expires_at": 1, "remaining_ms": {"$subtract": ["$expires_at", "$$NOW"]},
+                }},
+            ])
+            .batch_size(ids.len() as u32 + 1)
+            .await
+            .map_err(unavailable)?;
+        let mut owners = Vec::new();
+        while let Some(row) = rows.try_next().await.map_err(unavailable)? {
+            let (Ok(lease), Some(remaining_ms)) = (
+                owner_from(&row),
+                row.get_i64("remaining_ms")
+                    .ok()
+                    .and_then(|millis| u64::try_from(millis).ok()),
+            ) else {
+                continue;
+            };
+            owners.push(ReconciliationOwner {
+                token: lease.token,
+                remaining_ms,
+            });
+        }
+        Ok(owners)
+    }
+
     async fn has_owner_history(&self, id: &AgentId) -> Result<bool, OwnershipError> {
         self.owners
             .find_one(doc! {"_id": id.as_str()})
@@ -316,6 +355,15 @@ impl OwnershipStore for MongoAgentOwnership {
         instance_id: &str,
     ) -> Result<Option<OwnershipLease>, OwnershipError> {
         self.acquire_owner(agent_id, instance_id).await
+    }
+
+    async fn reconcile_acquisition(
+        &self,
+        agent_id: &AgentId,
+        instance_id: &str,
+    ) -> Result<Option<OwnershipToken>, OwnershipError> {
+        self.reconcile_owner_acquisition(agent_id, instance_id)
+            .await
     }
 
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError> {

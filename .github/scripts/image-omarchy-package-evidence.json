@@ -190,7 +190,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b"
         }
       },
@@ -359,7 +359,7 @@
       "occurrences": 2,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/build-arch-openssl-cli.sh": "197eca4614bfc35634d442e4f72b323cebe716c52c78ee5db1498e75d7af4d56",
           "api/crates/layer4-runtime/image/build-omarchy-base.sh": "87ffb596ef639b183286ab24d6d7d45cf51cc822fc45dcc7c7e79504e9d7ee3c",
           "api/crates/layer4-runtime/image/install-arch-openssl-cli.sh": "cabc06916d5d4e529eea51f2d441cf1f6181b5012ab48050b5717681ec49c7e5",
@@ -4595,7 +4595,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69"
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940"
         }
       },
       "package_member": {
@@ -4742,7 +4742,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69"
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940"
         }
       },
       "package_member": {
@@ -4826,7 +4826,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69"
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940"
         }
       },
       "package_member": {
@@ -4977,7 +4977,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/desktop-provider/package-lock.json": "e5cd0739406680570b5c0ce9cfc141ddbef3807c857ce888a9fb403d24d4833f",
           "api/crates/layer4-runtime/image/desktop-provider/package.json": "94867a57ccf9147178414475860c2b6d9d091a9335b099950993ed0b03cd0e23",
           "api/crates/layer4-runtime/image/install-provider.sh": "7a9c79bb89accc1d5fb2b6eb6be2ce540e759faead336214fca5c6ab9705b294"
@@ -5092,7 +5092,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/desktop-provider/package-lock.json": "e5cd0739406680570b5c0ce9cfc141ddbef3807c857ce888a9fb403d24d4833f",
           "api/crates/layer4-runtime/image/desktop-provider/package.json": "94867a57ccf9147178414475860c2b6d9d091a9335b099950993ed0b03cd0e23",
           "api/crates/layer4-runtime/image/install-provider.sh": "7a9c79bb89accc1d5fb2b6eb6be2ce540e759faead336214fca5c6ab9705b294"
@@ -5207,7 +5207,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/desktop-provider/package-lock.json": "e5cd0739406680570b5c0ce9cfc141ddbef3807c857ce888a9fb403d24d4833f",
           "api/crates/layer4-runtime/image/desktop-provider/package.json": "94867a57ccf9147178414475860c2b6d9d091a9335b099950993ed0b03cd0e23",
           "api/crates/layer4-runtime/image/install-provider.sh": "7a9c79bb89accc1d5fb2b6eb6be2ce540e759faead336214fca5c6ab9705b294"
@@ -5242,7 +5242,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/desktop-provider/package-lock.json": "e5cd0739406680570b5c0ce9cfc141ddbef3807c857ce888a9fb403d24d4833f",
           "api/crates/layer4-runtime/image/desktop-provider/package.json": "94867a57ccf9147178414475860c2b6d9d091a9335b099950993ed0b03cd0e23",
           "api/crates/layer4-runtime/image/install-provider.sh": "7a9c79bb89accc1d5fb2b6eb6be2ce540e759faead336214fca5c6ab9705b294"
@@ -5277,7 +5277,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/desktop-provider/package-lock.json": "e5cd0739406680570b5c0ce9cfc141ddbef3807c857ce888a9fb403d24d4833f",
           "api/crates/layer4-runtime/image/desktop-provider/package.json": "94867a57ccf9147178414475860c2b6d9d091a9335b099950993ed0b03cd0e23",
           "api/crates/layer4-runtime/image/install-provider.sh": "7a9c79bb89accc1d5fb2b6eb6be2ce540e759faead336214fca5c6ab9705b294"
@@ -5336,7 +5336,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69"
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940"
         }
       },
       "package_member": {
@@ -5368,7 +5368,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5403,7 +5403,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5452,7 +5452,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5511,7 +5511,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5553,7 +5553,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5595,7 +5595,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5630,7 +5630,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5665,7 +5665,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -6285,7 +6285,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b"
         }
       },
@@ -6518,7 +6518,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b"
         }
       },
@@ -6785,7 +6785,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b",
           "api/crates/layer4-runtime/src/omarchy/remove-google-account.patch": "6cc22a06a77dd6e474896f3c5176acc43247e8d2d14df016d98855fbcbec74f1"
         }
@@ -6819,7 +6819,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b",
           "api/crates/layer4-runtime/src/omarchy/remove-google-account.patch": "6cc22a06a77dd6e474896f3c5176acc43247e8d2d14df016d98855fbcbec74f1"
         }
@@ -6853,7 +6853,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b",
           "api/crates/layer4-runtime/src/omarchy/remove-google-account.patch": "6cc22a06a77dd6e474896f3c5176acc43247e8d2d14df016d98855fbcbec74f1"
         }
@@ -6887,7 +6887,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b",
           "api/crates/layer4-runtime/src/omarchy/remove-google-account.patch": "6cc22a06a77dd6e474896f3c5176acc43247e8d2d14df016d98855fbcbec74f1"
         }
@@ -6921,7 +6921,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "be00cc140b0b2711e6d3311ba292a129c9b6a3bc19fb6682ac018cd749621d69",
+          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b",
           "api/crates/layer4-runtime/src/omarchy/remove-google-account.patch": "6cc22a06a77dd6e474896f3c5176acc43247e8d2d14df016d98855fbcbec74f1"
         }
@@ -7586,7 +7586,7 @@
       "version": "0.8.4-1"
     }
   ],
-  "scanner_manifest_sha256": "a3eb9041f1b920bda1f8b2bd63241ea5ed0c890f60841a7303670b35dbb384c3",
+  "scanner_manifest_sha256": "4ad252394ac8d144da7b316f138c71f90ebf9578bce9f3d118b77bee7b8da11c",
   "schema": "cma-staging-omarchy-package-evidence-v2",
   "trust_store": {
     "alias": {

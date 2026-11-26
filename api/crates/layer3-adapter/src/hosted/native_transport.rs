@@ -298,12 +298,13 @@ impl ProviderHostedControlTransport {
                 endpoint.accept().map_or_else(
                     || {
                         format!(
-                            "{}, {}, {}, {}, {}",
+                            "{}, {}, {}, {}, {}, {}",
                             crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
                             crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
                             crate::wire::AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE,
                             crate::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
                             crate::wire::GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE,
+                            crate::wire::GITHUB_REPOSITORY_SCOPE_STATUS_MEDIA_TYPE,
                         )
                     },
                     str::to_owned,

@@ -171,6 +171,7 @@ async fn prepare_in_staging(
     let receipt = if matches!(
         request.source,
         layer3_adapter::WorkspaceSource::RepositorySnapshot { .. }
+            | layer3_adapter::WorkspaceSource::PublicRepositorySnapshot { .. }
     ) {
         crate::repository_snapshot::prepare(config, &staging_root, &staged).await?
     } else {

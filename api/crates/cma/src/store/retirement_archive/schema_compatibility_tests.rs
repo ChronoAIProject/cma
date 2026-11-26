@@ -248,6 +248,7 @@ async fn pre_proof_manifest_reconciles_without_capturing_live_creation_evidence(
             epoch,
             first_day: day,
             legacy_custody: false,
+            terminal_settlement: true,
         },
     )
     .await

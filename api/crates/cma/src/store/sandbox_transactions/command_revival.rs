@@ -39,20 +39,15 @@ pub(super) async fn fence(
         })?;
     proof.validate_snapshot(&snapshot).map_err(|_| conflict())?;
     let current = &snapshot.lineage.sandbox;
-    let target = release.and_then(|release| store.managed_runtime_target(current, &release.agent));
-    if let Some(release) = release.filter(|_| target.is_some()) {
-        if current.has_managed_runtime_image() {
-            store
-                .fence_released_admission(
-                    release,
-                    layer2_core::released_runtime::ReleasedLane::Agent,
-                    session,
-                )
-                .await
-                .map_err(ApplyError::Domain)?;
-        }
+    let selected = release.and_then(|release| store.managed_runtime_for_release(current, release));
+    if let (Some(release), Some((lane, _))) = (release, selected) {
+        store
+            .fence_released_admission(release, lane, session)
+            .await
+            .map_err(ApplyError::Domain)?;
     }
-    validate_command_revival_transition(&snapshot.lineage.sandbox, candidate, at, event, target)
+    let target = selected.map(|(_, target)| target);
+    validate_command_revival_transition(current, candidate, at, event, target)
         .map_err(ApplyError::Domain)?;
     let command_id = proof.command().receipt.envelope.command_id.clone();
     let document = store

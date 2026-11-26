@@ -4,7 +4,6 @@ import { ChannelPolicyFields } from './ChannelPolicyFields';
 import { Section } from './Fields';
 import { SourceAdmissionFields } from './SourceAdmissionFields';
 import { ValidationScope } from './ValidationPath';
-import { repliesToOrigin } from './authoringRules';
 import { object, records, strings, text, type Fields } from './model';
 
 export function SetupSection({
@@ -121,9 +120,7 @@ export function SetupReview({ value }: { value: Fields }) {
               ? 'Explicit reply tool calls only'
               : records(reply.sinks).length > 0
                 ? 'Final answers sent automatically'
-                : repliesToOrigin(value)
-                  ? 'Final answers sent automatically to the original conversation'
-                  : 'Final answers have no reply destination. Add one or turn off automatic answers.'}
+                : 'Final answers have no reply destination. Add one or turn off automatic answers.'}
           </dd>
         </div>
       </dl>

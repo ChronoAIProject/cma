@@ -49,6 +49,8 @@ fn rank(name: &str) -> u8 {
         "sandbox_billing_state" => 12,
         "sandbox_usage" => 13,
         "sandboxes" => 14,
+        // Keep the erasure fence until all source and its Agent are gone.
+        "agent_log_active_proofs_v1" => 15,
         _ => 1,
     }
 }

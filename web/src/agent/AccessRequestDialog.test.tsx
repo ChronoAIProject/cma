@@ -110,8 +110,10 @@ it('opens only a durable request, keeps required scopes fixed, and submits only 
     expect.any(String),
     ['chrono-llm-public', 'ornn-api', 'api-github', 'storage'],
     expect.any(AbortSignal),
+    undefined,
   );
 });
+
 it('opens owner-scoped GitHub connection management without submitting an approval', async () => {
   const decide = vi.spyOn(accessRequests, 'decide');
   const manageUrl = 'https://nyx.example/keys';

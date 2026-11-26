@@ -55,6 +55,7 @@ pub(super) struct NativeBackend {
         Arc<Mutex<Option<Arc<layer3_adapter::agent_sandbox::AgentSandboxClient>>>>,
     pub timeout_inventory: Arc<AtomicBool>,
     pub nonexecuting: Arc<AtomicBool>,
+    pub nonexecuting_inspection_pause: Arc<Mutex<Option<Arc<RetirementProbePause>>>>,
     pub proof_revision: Arc<AtomicU64>,
     pub change_before_suspend: Arc<AtomicBool>,
     pub run_before_suspend: Arc<AtomicBool>,
@@ -146,6 +147,11 @@ impl HostedBackend for NativeBackend {
         home: &layer3_adapter::HomeVolumeAttachment,
     ) -> layer3_adapter::Result<Option<layer3_adapter::hosted::NonexecutingRuntimeProof>> {
         use sha2::{Digest, Sha256};
+        let pause = self.nonexecuting_inspection_pause.lock().unwrap().take();
+        if let Some(pause) = pause {
+            pause.entered.notify_one();
+            pause.release.notified().await;
+        }
         self.inspected_generations
             .lock()
             .unwrap()

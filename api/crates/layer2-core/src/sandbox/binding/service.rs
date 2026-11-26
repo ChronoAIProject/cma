@@ -247,6 +247,11 @@ impl BindingService {
                     }
                 }
                 None => {
+                    if plan.environment.is_none() {
+                        return Err(BindingError::InvalidRequest(
+                            "environment is required for a profile-managed binding".into(),
+                        ));
+                    }
                     let next = ProviderBinding::new_with_tool_endpoint(
                         id.into(),
                         caller.subject.clone(),

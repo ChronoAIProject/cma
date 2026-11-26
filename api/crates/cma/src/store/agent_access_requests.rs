@@ -116,6 +116,7 @@ pub(in crate::store) use records::{document, lease_filter, read};
 pub(crate) use records::{
     AgentAccessDecision, AgentAccessHotUpdate, AgentAccessLease, AgentAccessNotificationIntent,
     AgentAccessPhase, AgentAccessProgress, AgentAccessRecord, AgentAccessScopeMode,
+    ConnectionApprovalBinding,
 };
 mod lineage;
 pub(in crate::store) use lineage::validate_lineage_transaction;

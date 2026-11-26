@@ -14,6 +14,8 @@ mod home_backup_tests;
 #[cfg(test)]
 #[path = "ingress_coordinator_tests.rs"]
 mod ingress_coordinator_tests;
+mod machine_updates;
+pub(crate) use machine_updates::ManagedMachineUpdates;
 #[cfg(test)]
 mod native_close_lane_tests;
 #[cfg(test)]
@@ -32,7 +34,9 @@ mod strict_inactivity_tests;
 pub(crate) struct FeatureFlags {
     pub image_manager_retirement: bool,
     pub session_guidance_v4: bool,
+    pub session_guidance_v5: bool,
     pub am_startup_health_serving: bool,
+    pub am_empty_warm_pool_startup: bool,
     pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
     pub usage_snapshot_cursors_enabled: bool,
@@ -78,6 +82,7 @@ pub(crate) struct FeatureFlags {
     pub startup_sibling_hold_enabled: bool,
     pub retained_reopen_enabled: bool,
     pub runtime_image_origin_enabled: bool,
+    pub managed_machine_updates: ManagedMachineUpdates,
     pub retained_suspended_reopen_enabled: bool,
     pub retained_repeat_reopen_enabled: bool,
     pub agent_skill_upgrade_enabled: bool,
@@ -105,6 +110,7 @@ pub(crate) struct FeatureFlags {
     pub sandbox_detail_timings: bool,
     pub agent_file_read_timings: bool,
     pub bounded_response_reads: bool,
+    pub active_log_proofs: bool,
     pub bounded_transcript_reads: bool,
     pub privacy_export_enabled: bool,
     pub bounded_usage_reads: bool,
@@ -114,6 +120,7 @@ pub(crate) struct FeatureFlags {
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
     pub github_repository_preflight: bool,
+    pub github_connection_approval: bool,
     pub github_connection_recovery: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
@@ -155,8 +162,10 @@ impl FeatureFlags {
         let flags = Self {
             binding_diagnostics: flag(lookup, "CHRONO_BINDING_DIAGNOSTICS_ENABLED")?,
             session_guidance_v4: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED")?,
+            session_guidance_v5: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V5_ENABLED")?,
             image_manager_retirement: flag(lookup, "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED")?,
             am_startup_health_serving: flag(lookup, "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED")?,
+            am_empty_warm_pool_startup: flag(lookup, "CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED")?,
             pending_home_reconciliation: flag(
                 lookup,
                 "CHRONO_PENDING_HOME_RECONCILIATION_ENABLED",
@@ -233,6 +242,7 @@ impl FeatureFlags {
             )?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
             runtime_image_origin_enabled: flag(lookup, "CHRONO_RUNTIME_IMAGE_ORIGIN_ENABLED")?,
+            managed_machine_updates: ManagedMachineUpdates::read(lookup)?,
             retained_suspended_reopen_enabled: flag(
                 lookup,
                 "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED",
@@ -349,6 +359,7 @@ impl FeatureFlags {
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
+            active_log_proofs: flag(lookup, "CHRONO_AGENT_LOG_ACTIVE_PROOFS_ENABLED")?,
             bounded_transcript_reads: flag(
                 lookup,
                 "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED",
@@ -361,6 +372,7 @@ impl FeatureFlags {
             v2_ui_transport: tail.v2_ui_transport,
             trigger_command_admission: tail.trigger_command_admission,
             github_repository_preflight: tail.github_repository_preflight,
+            github_connection_approval: tail.github_connection_approval,
             github_connection_recovery: tail.github_connection_recovery,
             nyxid_resource_request: tail.nyxid_resource_request,
             nyxid_proxy: tail.nyxid_proxy,
@@ -386,6 +398,9 @@ impl FeatureFlags {
         }
         if flags.am_startup_health_serving && flags.am_failure_containment_enabled {
             return Err("CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED cannot be combined with CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED".into());
+        }
+        if flags.am_empty_warm_pool_startup && !flags.am_startup_health_serving {
+            return Err("CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED requires CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED".into());
         }
         Ok(flags)
     }

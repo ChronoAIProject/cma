@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 import time
 import zipfile
 
@@ -173,8 +174,11 @@ def restore(env, root, get=github, match_source=source_matches, sleep=time.sleep
             raw = read(f"repos/{REPO}/actions/artifacts/{matches[0]['id']}/zip", binary=True)
             data = unpack(raw, matches[0])
             destination.parent.mkdir(parents=True, exist_ok=True)
-            with destination.open("xb") as stream:
-                stream.write(data)
+            # The scanner must see either complete evidence or no cache.
+            with tempfile.TemporaryDirectory(prefix="cma-detector-restore-", dir=destination.parent) as temporary:
+                candidate = Path(temporary) / "cache.json"
+                candidate.write_bytes(data)
+                os.link(candidate, destination)
             return {"state": "RESTORED", "producer_run": run_id, "producer_attempt": attempt,
                     "artifact_id": matches[0]["id"], "artifact_digest": matches[0]["digest"]}
         except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):

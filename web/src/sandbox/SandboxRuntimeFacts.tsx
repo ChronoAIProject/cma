@@ -71,18 +71,21 @@ export function SandboxRuntimeFacts({
   update,
   target = update?.targetVersion,
   copyable = false,
+  sandboxStatus,
 }: {
   readonly sandboxId?: string;
   readonly runtimeVersion?: string;
   readonly update?: SandboxRuntimeUpdate;
   readonly target?: string;
   readonly copyable?: boolean;
+  readonly sandboxStatus?: SandboxDetail['status'];
 }) {
   const current = update === undefined ? runtimeVersion : update.currentVersion;
   const rows = [
     ...(sandboxId === undefined ? [] : [['Sandbox ID', sandboxId]]),
     ['Current runtime', current || 'Not reported'],
     ...(update?.imageOrigin === 'managed_desktop' ? [['Runtime channel', 'Managed Agent']] : []),
+    ...(update?.imageOrigin === 'managed_machine' ? [['Runtime channel', 'Managed Machine']] : []),
     ...(update === undefined
       ? []
       : [
@@ -97,9 +100,11 @@ export function SandboxRuntimeFacts({
       : [
           [
             'Automatic updates',
-            update.preservesHome
-              ? `Daily at ${update.schedule.localTime} SGT (${update.schedule.timezone}), when idle`
-              : 'Not available for this Sandbox',
+            !update.preservesHome
+              ? 'Not available for this Sandbox'
+              : sandboxStatus === 'failed' && !update.canUpdate
+                ? 'Unavailable while the Sandbox needs attention'
+                : `Daily at ${update.schedule.localTime} SGT (${update.schedule.timezone}), when idle`,
           ],
         ]),
   ];

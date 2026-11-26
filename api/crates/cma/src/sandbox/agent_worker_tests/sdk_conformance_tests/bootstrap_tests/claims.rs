@@ -1,5 +1,56 @@
 use super::*;
 
+#[tokio::test(start_paused = true)]
+async fn bootstrap_stop_preempts_the_workspace_readiness_lease() {
+    for reason in [AgentStopReason::Owner, AgentStopReason::SandboxRetired] {
+        let fixture = BootstrapHarness::new().await;
+        let h = &fixture.harness;
+        let agent = fixture.admit(None).await;
+        let lease_end = h.now + Duration::from_secs(18 * 60);
+        let claimed = h
+            .store
+            .claim_agent_work(
+                &agent.id,
+                "workspace-waiter",
+                rfc3339_at(h.now),
+                rfc3339_at(lease_end),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let stop_at = h.now + Duration::from_secs(1);
+        h.store
+            .schedule_agent_stop(AgentStopRequest {
+                target: AgentControlTarget::from(&claimed),
+                reason: reason.clone(),
+                requested_at: rfc3339_at(stop_at),
+            })
+            .await
+            .unwrap();
+        assert!(h.worker.run_one(&agent.id, stop_at).await.unwrap());
+        let closing = h.stored(&agent.id).await;
+        assert_eq!(closing.work.step, AgentWorkStep::CloseProcess);
+        assert_eq!(closing.work.ready_at, rfc3339_at(stop_at));
+
+        // A waiter that resumes after fencing cannot advance startup, even if
+        // the parents become ready within its original lease.
+        fixture.ready().await;
+        let requests_before = h.backend.requests().await.len();
+        h.worker
+            .execute_claimed_for_test(claimed, stop_at)
+            .await
+            .unwrap();
+        assert_eq!(h.stored(&agent.id).await, closing);
+        assert!(h.worker.run_one(&agent.id, stop_at).await.unwrap());
+        assert!(h.worker.run_one(&agent.id, stop_at).await.unwrap());
+        let stopped = h.stored(&agent.id).await;
+        assert_eq!(stopped.status, AgentStatus::Stopped);
+        assert_eq!(stopped.stop_reason, Some(reason));
+        assert_eq!(stopped.stopped_at, Some(rfc3339_at(stop_at)));
+        assert_eq!(h.backend.requests().await.len(), requests_before);
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable local replica set"]
 async fn bootstrap_mongo_workspace_claim_defers_without_mutation_until_parent_install_ready() {

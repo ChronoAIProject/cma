@@ -70,7 +70,10 @@ impl IngressState {
         self.routed
             .as_ref()
             .filter(|routing| {
-                routing.plans.replicas_enabled()
+                crate::channels::profile_assignment::requires_guard(
+                    &request.channel.definition,
+                    self.profile_revisions_enabled,
+                ) || routing.plans.replicas_enabled()
                     || (routing.selected_request(request) && ordinary(request))
             })
             .map(|_| VerifiedIngress {
@@ -104,12 +107,34 @@ impl IngressState {
         mut source: Option<VerifiedIngress>,
         hold: OwnedSemaphorePermit,
     ) -> LaunchOutcome {
+        if self.profile_revisions_enabled {
+            let current = match self
+                .resolver
+                .resolve_current(request.channel.id.as_str())
+                .await
+            {
+                Ok(current) => current,
+                Err(error) => return LaunchOutcome::Refused(error.problem()),
+            };
+            if current.version != request.channel.version || current.definition.mutation.is_some() {
+                self.resolver.invalidate(request.channel.id.as_str());
+                return LaunchOutcome::Refused(Problem::new(
+                    ProblemCode::Conflict,
+                    409,
+                    "channel changed before event admission",
+                ));
+            }
+        }
         if let Some(routing) = self
             .routed
             .as_ref()
             .filter(|routing| routing.selected_request(&request) && ordinary(&request))
         {
-            let selected_source = if routing.plans.replicas_enabled() {
+            let selected_source = if routing.plans.replicas_enabled()
+                || crate::channels::profile_assignment::requires_guard(
+                    &request.channel.definition,
+                    self.profile_revisions_enabled,
+                ) {
                 source.clone()
             } else {
                 source.take()
@@ -137,7 +162,13 @@ impl IngressState {
                 "telegram_member_join_durable_admission_unavailable",
             ));
         }
-        if let Some(routing) = self.routed.as_ref().filter(|r| r.plans.replicas_enabled()) {
+        if let Some(routing) = self.routed.as_ref().filter(|r| {
+            r.plans.replicas_enabled()
+                || crate::channels::profile_assignment::requires_guard(
+                    &request.channel.definition,
+                    self.profile_revisions_enabled,
+                )
+        }) {
             let Some(source) = source else {
                 return LaunchOutcome::Refused(Problem::new(
                     ProblemCode::Internal,
@@ -159,6 +190,9 @@ impl IngressState {
         }
         if let Some(refusal) = custom::refusal(&request) {
             return refusal;
+        }
+        if let Err(problem) = validate_legacy_command(&request) {
+            return LaunchOutcome::Refused(problem);
         }
         self.launcher.launch_holding(request, hold).await
     }

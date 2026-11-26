@@ -8,12 +8,17 @@ mod inspection;
 pub use access::{
     BindingAccessService, BindingConversationAuthority, BindingPrincipal, BindingSubmissionPolicy,
 };
-pub use inspection::BindingConversationInspection;
+pub use inspection::{
+    BindingConversationCatalog, BindingConversationInspection, BindingProfileDrift,
+    DesiredProfileDrift,
+};
 mod fence;
 mod model;
 mod preparation_service;
 mod profile;
 mod profile_input;
+mod profile_transfer;
+pub use profile_transfer::{ProfileTransferReceipt, ProfileTransferRequest};
 mod profiles;
 pub use preparation_service::{BindingPreparationEvent, BindingPreparationInspection};
 mod readiness;

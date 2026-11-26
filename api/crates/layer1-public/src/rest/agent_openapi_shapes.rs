@@ -326,6 +326,7 @@ impl AgentView {
                 source: matches!(
                     workspace.source,
                     layer2_core::sandbox::WorkspaceSource::RepositorySnapshot { .. }
+                        | layer2_core::sandbox::WorkspaceSource::PublicRepositorySnapshot { .. }
                 )
                 .then(|| {
                     super::instances_openapi_shapes::WorkspaceSourceView::from(&workspace.source)

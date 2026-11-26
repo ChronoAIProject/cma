@@ -14,7 +14,9 @@ mod agent_open_ready;
 mod agent_replay;
 pub(in crate::store) use agent_open_ready::open_ready_proof_revision;
 mod authority;
+mod machine_origin;
 mod model;
+pub(super) use machine_origin::verify_machine_origin;
 mod planning;
 #[cfg(test)]
 pub(crate) mod tests;

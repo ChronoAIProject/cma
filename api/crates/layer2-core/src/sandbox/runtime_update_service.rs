@@ -6,7 +6,7 @@ use super::{
     Sandbox, SandboxImageRotationPhase, SandboxLifecycleOperation, SandboxRevivePhase,
     SandboxStatus, SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoveryVerifier,
 };
-use crate::{Caller, Capability, SandboxId, SubjectId};
+use crate::{released_runtime::ReleasedLane, Caller, Capability, SandboxId, SubjectId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SandboxRuntimeUpdateError {
@@ -40,8 +40,7 @@ impl SandboxRuntimeUpdateService {
         )
     }
 
-    /// The latest managed runtime is the source's agent-lane release, read
-    /// once per decision so one request never mixes two releases.
+    /// Capture the source once per decision so one request never mixes two releases.
     pub fn with_released(
         store: Arc<dyn SandboxStore>,
         released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
@@ -65,12 +64,25 @@ impl SandboxRuntimeUpdateService {
         self.released.snapshot().agent
     }
 
+    pub fn latest_version_for(&self, sandbox: &Sandbox) -> Option<String> {
+        sandbox
+            .managed_runtime_lane()
+            .unwrap_or(ReleasedLane::Agent)
+            .version_in(&self.released.snapshot())
+            .map(str::to_owned)
+    }
+
     pub fn target_is_qualified(&self, sandbox: &Sandbox, target: &str) -> bool {
         self.store.managed_runtime_target(sandbox, target).is_some()
     }
 
     pub fn can_update(&self, sandbox: &Sandbox) -> bool {
-        self.can_update_to(sandbox, &self.latest_version())
+        self.can_update_to(
+            sandbox,
+            self.latest_version_for(sandbox)
+                .as_deref()
+                .unwrap_or_default(),
+        )
     }
 
     /// `can_update` against a release the caller already captured.
@@ -157,8 +169,12 @@ impl SandboxRuntimeUpdateService {
             .map_err(store_error)?
             .ok_or(SandboxRuntimeUpdateError::NotFound)?;
         let release = self.released.snapshot();
+        let latest = sandbox
+            .managed_runtime_lane()
+            .and_then(|lane| lane.version_in(&release))
+            .unwrap_or_default();
         let target = sandbox
-            .automatic_unpublished_recovery_target_for_release(&release.agent)
+            .automatic_unpublished_recovery_target_for_release(latest)
             .ok_or(SandboxRuntimeUpdateError::NotAvailable)?;
         if sandbox.has_managed_runtime_image() && !self.target_is_qualified(&sandbox, target) {
             return Err(SandboxRuntimeUpdateError::NotAvailable);
@@ -222,7 +238,6 @@ impl SandboxRuntimeUpdateService {
             // One release per attempt. An attempt whose release is superseded
             // before its write admits nothing and retries against the new one.
             let released = self.released.snapshot();
-            let latest = released.agent.clone();
             let mut sandbox = self
                 .store
                 .get_sandbox(id)
@@ -233,31 +248,37 @@ impl SandboxRuntimeUpdateService {
             // Custom authority is admitted only by the operator migration path,
             // including recovery. The ordinary latest-image route cannot select
             // a target before the custom model's stronger admission runs.
-            if !sandbox.has_managed_runtime_image() || scoped_explicit_retry(&sandbox) {
+            let lane = sandbox
+                .managed_runtime_lane()
+                .ok_or(SandboxRuntimeUpdateError::NotAvailable)?;
+            if scoped_explicit_retry(&sandbox) {
                 return Err(SandboxRuntimeUpdateError::NotAvailable);
             }
+            let latest = lane.version_in(&released).unwrap_or_default();
             let pinned = sandbox.runtime_update_request().is_some_and(|request| {
                 request.retained_transition.is_none()
                     && request.completed_at.is_none()
                     && request.target_version == target_version
             });
+            if !pinned && latest.is_empty() {
+                return Err(SandboxRuntimeUpdateError::NotAvailable);
+            }
             if !pinned && target_version != latest {
                 return Err(SandboxRuntimeUpdateError::TargetChanged);
             }
             if !pinned
-                && (!self.target_is_qualified(&sandbox, &latest)
+                && (!self.target_is_qualified(&sandbox, latest)
                     || !sandbox.managed_desktop_runtime_confirmed())
             {
                 return Err(SandboxRuntimeUpdateError::NotAvailable);
             }
             if sandbox.unpublished_recovery_candidate() {
-                // A reopen stalled on a superseded pinned runtime cannot succeed there:
-                // the current manager refuses that runtime. Retrying it would park the
-                // Sandbox in the same place again, so recover onto the latest (#2257).
-                let target = if self.target_is_qualified(&sandbox, &latest)
-                    && recover_on_latest(&sandbox, target_version, &latest)
+                // Agent reopens can recover on the current release after a
+                // terminal refusal of the pinned release (#2257).
+                let target = if self.target_is_qualified(&sandbox, latest)
+                    && recover_on_latest(&sandbox, target_version, latest)
                 {
-                    latest.as_str()
+                    latest
                 } else {
                     target_version
                 };
@@ -265,7 +286,7 @@ impl SandboxRuntimeUpdateService {
                     superseded_release(&released).await;
                     continue;
                 }
-                let authoritative = (target == latest).then_some(released);
+                let authoritative = (target == latest).then(|| released.clone());
                 match self
                     .recover_unpublished(&sandbox, target, false, authoritative)
                     .await
@@ -294,12 +315,7 @@ impl SandboxRuntimeUpdateService {
                 self.store.save_sandbox(revision, sandbox.clone()).await
             } else {
                 self.store
-                    .save_sandbox_against_release(
-                        revision,
-                        sandbox.clone(),
-                        &released,
-                        crate::released_runtime::ReleasedLane::Agent,
-                    )
+                    .save_sandbox_against_release(revision, sandbox.clone(), &released, lane)
                     .await
             };
             match saved {
@@ -343,9 +359,10 @@ impl Sandbox {
     }
 }
 
-/// Stalled at reopening conversations on an unpublished runtime, which recovery rebuilds.
+/// Agent recovery can rebuild a reopen stalled on a superseded release.
 fn recover_on_latest(sandbox: &Sandbox, requested: &str, latest: &str) -> bool {
-    requested != latest
+    sandbox.managed_runtime_lane() == Some(ReleasedLane::Agent)
+        && requested != latest
         && matches!(
             sandbox.lifecycle.operation,
             Some(SandboxLifecycleOperation::ImageRotation {

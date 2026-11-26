@@ -24,6 +24,16 @@ impl HostedAdapter {
                     "runtime does not support a bound GitHub credential route".into(),
                 ));
             }
+            if frame
+                .github_route
+                .as_ref()
+                .is_some_and(|route| route.repository_scope.is_some())
+                && !status.github_repository_scope
+            {
+                return Err(AdapterError::Unsupported(
+                    "runtime does not support GitHub repository scope reporting".into(),
+                ));
+            }
             RequestFrame::CredentialForReceiver {
                 receiver: crate::RuntimeStatusRequest {
                     sandbox_id: status.sandbox_id,

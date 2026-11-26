@@ -114,10 +114,9 @@ impl Sandbox {
         }
         let connection = connection.or_else(|| {
             self.credential
-                .service_scope
-                .as_ref()
-                .and_then(|scope| scope.connection.clone())
+                .selected_connection()
                 .filter(|selection| selection.matches_scope(&services))
+                .cloned()
         });
         let runtime = self.runtime.as_ref().ok_or_else(invalid)?;
         let scope = SandboxServiceScopeRevision {

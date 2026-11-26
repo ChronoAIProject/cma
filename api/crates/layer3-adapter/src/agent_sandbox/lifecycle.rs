@@ -107,9 +107,7 @@ impl AgentSandboxClient {
             object.remove("shutdownPolicy");
         }
         if !super::pool::contains_spec(&actual.data["spec"], &admitted) {
-            return Err(rejected(
-                "Sandbox spec differs from its admitted configuration",
-            ));
+            return Err(crate::AdapterError::AdmittedSandboxSpecDrift);
         }
         Ok(())
     }

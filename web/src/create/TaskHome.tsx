@@ -441,7 +441,7 @@ function TaskHomeContent({
       {viewerId && lifecycle.connection?.repository_access ? (
         <RepositoryConnectionRepair
           owner={viewerId}
-          target={lifecycle.connection.target}
+          {...lifecycle.connection}
           pending={lifecycle.pending || lifecycle.blocked}
           onRecheck={() => void lifecycle.submit()}
         />
