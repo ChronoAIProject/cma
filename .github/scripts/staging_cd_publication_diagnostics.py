@@ -33,7 +33,8 @@ class ImageCommandRefusal(Refusal):
         # Match only diagnostic tokens; never interpolate remote text or argv.
         registry = len(args) > 1 and args[0] == "skopeo" and args[1] in {"login", "copy", "inspect"}
         diagnostic = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else ""
-        status = re.search(r"(?:status(?: code)?|response status)\s*:?\s*(401|403)\b", diagnostic, re.IGNORECASE)
+        status = re.search(r"\b(?:(?:response\s+)?status(?:\s*code)?|invalid status code from registry)"
+                           r"(?:\s*:\s*|\s+)(401|403)\b", diagnostic, re.IGNORECASE)
         denied = status or re.search(r"\b(?:UNAUTHORIZED|DENIED|permission_denied|write_package)\b",
                                      diagnostic, re.IGNORECASE)
         self.reason = "registry_denied" if registry and denied else "command_failed"
