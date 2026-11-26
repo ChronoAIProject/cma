@@ -539,33 +539,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cma-image-manager"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "base64 0.22.1",
- "cma-service-auth",
- "cma-service-migrations",
- "futures-util",
- "meteroid-utoipa",
- "meteroid-utoipa-axum",
- "mongodb",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.21",
- "time",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "cma-journey-probe"
 version = "0.1.0"
 dependencies = [

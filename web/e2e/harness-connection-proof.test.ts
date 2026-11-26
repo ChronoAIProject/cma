@@ -58,7 +58,7 @@ function proof(h: Harness) {
     ...identity,
     schema: 'forged',
     execution: 'local',
-    scope: 'current_image_inline',
+    scope: 'managed_default_inline',
     run: 'other-run',
     caseId: 'J6',
     variant: 'valid',

@@ -10,7 +10,6 @@ export type AppRoute =
   | { readonly kind: 'artifacts' }
   | { readonly kind: 'document'; readonly documentId: string }
   | { readonly kind: 'event_gateway' }
-  | { readonly kind: 'image_manager' }
   | { readonly kind: 'docs'; readonly view?: DocsView }
   | { readonly kind: 'sandbox'; readonly sandboxId: string }
   | { readonly kind: 'workspace'; readonly workspaceId: string }
@@ -74,8 +73,6 @@ export function parseRoute(pathname: string): AppRoute {
     switch (path[0]) {
       case 'event-gateway':
         return { kind: 'event_gateway' };
-      case 'image-manager':
-        return { kind: 'not_found', pathname };
       case 'artifacts':
         return { kind: 'artifacts' };
       case 'docs':
@@ -166,8 +163,6 @@ export function routePath(route: AppRoute): string {
       return '/agent-manager';
     case 'event_gateway':
       return '/event-gateway';
-    case 'image_manager':
-      return '/image-manager';
     case 'artifacts':
       return '/artifacts';
     case 'document':

@@ -44,7 +44,7 @@ export function ServicePage({
     refusedFor?: string;
   }>({});
   const [revision, setRevision] = useState(0);
-  const name = service === 'image-manager' ? 'Image Manager' : 'Event Gateway';
+  const name = 'Event Gateway';
   const signedOutOfGateway =
     service === 'event-gateway' && state.anonymous === true && state.refusedFor === viewer;
   const currentViewer = useRef(viewer);

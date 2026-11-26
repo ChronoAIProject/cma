@@ -213,14 +213,20 @@ class EntrypointTests(unittest.TestCase):
 
     def test_analyze_combines_old_ownership_with_current_suite(self):
         current = Workspace(metadata(self.root), self.root)
-        older = Workspace(metadata(self.root), self.root)
-        # Simulate an old dependency edge selecting AM for a now-removed input.
-        older.reverse['cma-image-manager'].add('cma')
+        data = metadata(self.root)
+        name = 'cma-image-manager'
+        data['workspace_members'].append(name)
+        data['packages'].append({
+            'id': name, 'name': name, 'dependencies': [],
+            'manifest_path': str(self.root / 'api/crates' / name / 'Cargo.toml'),
+        })
+        older = Workspace(data, self.root)
         snapshots = [(self.root, older, {}), (self.root, current, {})]
         with patch.object(selection, 'image_inputs', return_value={}), patch.object(selection, 'recipes', return_value={}), \
                 patch.object(selection, 'changed_input_maps', return_value=[]):
             result = selection.analyze(['api/crates/cma-image-manager/src/lib.rs'], snapshots)
         self.assertTrue(result['am'])
+        self.assertNotIn(name, result['am_packages'])
         self.assertEqual(result['test_tracks']['repo'], True)
         self.assertEqual(result['deployables'], [])
 

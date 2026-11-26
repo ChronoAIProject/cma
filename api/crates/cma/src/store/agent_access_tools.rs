@@ -32,6 +32,7 @@ mod transport;
 #[cfg(test)]
 mod transport_tests;
 mod validation;
+pub(super) use origins::AccessRecordAuthority;
 use records::{OpenRecord, Scope};
 
 pub(super) const COLLECTION: &str = "agent_access_tools";
@@ -43,9 +44,7 @@ pub(crate) use layer2_core::sandbox::agent_access_tool::AgentAccessRequester as 
 pub(crate) struct MongoAgentAccessToolSource {
     standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
     store: Arc<MongoSandboxStore>,
-    origin: String,
-    signing_key: ring::hmac::Key,
-    retained_origins: Vec<origins::Authority>,
+    records: AccessRecordAuthority,
 }
 
 impl MongoAgentAccessToolSource {

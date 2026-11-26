@@ -56,7 +56,6 @@ export interface PublicJourneyFixtures {
   owners: Record<
     PublisherRole,
     {
-      image: { id: string; name: string; version: string; reference: string };
       model: string;
       embedUrl: string;
     }
@@ -233,10 +232,6 @@ function publicJourneys(value: unknown): PublicJourneyFixtures {
   const parsed = {} as PublicJourneyFixtures['owners'];
   for (const role of ['owner', 'secondOwner'] as const) {
     const row = object(owners[role], `publicJourneys.owners.${role}`);
-    const image = object(row.image, `${role}.image`);
-    const imageReference = required(image.reference, `${role}.image.reference`);
-    if (!/^[a-zA-Z0-9./:_-]+@sha256:[a-f0-9]{64}$/.test(imageReference))
-      throw new Error('Invalid E2E public journey immutable image reference');
     const embed = new URL(required(row.embedUrl, `${role}.embedUrl`));
     if (
       embed.protocol !== 'https:' ||
@@ -247,12 +242,6 @@ function publicJourneys(value: unknown): PublicJourneyFixtures {
     )
       throw new Error('Invalid E2E public journey embed URL');
     parsed[role] = {
-      image: {
-        id: identifier(image.id, `${role}.image.id`),
-        name: required(image.name, `${role}.image.name`),
-        version: identifier(image.version, `${role}.image.version`),
-        reference: imageReference,
-      },
       model: required(row.model, `${role}.model`),
       embedUrl: embed.href,
     };

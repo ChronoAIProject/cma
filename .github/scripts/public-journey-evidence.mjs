@@ -114,7 +114,7 @@ export function validatePublicJourneyProof(title, proof, journal) {
   keys(proof, [...common, ...(title === currentJourneyCases.j5 ? ['visitor', 'publications'] : ['owner', 'bootstrap', 'sandboxId', 'workspaceId', 'agents', 'workspaceAgentIds', 'expectedManagedImageHash', 'before', 'after', 'retry', 'deletedAgentId', 'survivingAgentId'])]);
   assert.equal(proof.schema, 'cma-public-journey-v1');
   assert.equal(proof.execution, 'configured_remote_origin');
-  assert.equal(proof.scope, 'current_image_inline');
+  assert.ok(['current_image_inline', 'managed_default_inline'].includes(proof.scope));
   id(proof.run);
   if (title === currentJourneyCases.j5) {
     id(proof.visitor);
@@ -122,7 +122,7 @@ export function validatePublicJourneyProof(title, proof, journal) {
     distinct(proof.publications.map((entry) => entry.publisher));
     assert.ok(!proof.publications.some((entry) => entry.publisher === proof.visitor));
     assert.equal(new Set(proof.publications.map((entry) => entry.requestedTargetHash)).size, 2);
-    for (const entry of proof.publications) publication(entry, proof, journal, proof.visitor, false);
+    for (const entry of proof.publications) publication(entry, proof, journal, proof.visitor, proof.scope === 'managed_default_inline');
     for (const read of [
       (entry) => entry.triggerId, (entry) => entry.publicId,
       (entry) => entry.launch.id, (entry) => entry.launch.agentId, (entry) => entry.launch.sandboxId,

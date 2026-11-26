@@ -16,6 +16,9 @@ from staging_cd_versions import DEPLOYABLES, SEMVER
 MEDIA = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"
 WEB_AUXILIARY = r"asset-sha256-[0-9a-f]{64}"
 WEB_REPOSITORY = "ghcr.io/chronoaiproject/cma-web"
+JOURNEY_REPOSITORY = "ghcr.io/chronoaiproject/cma-journey-probe"
+JOURNEY_TAG = r"sha256-[0-9a-f]{64}"
+REPOSITORIES = frozenset("ghcr.io/chronoaiproject/" + name for name in DEPLOYABLES.values()) | {JOURNEY_REPOSITORY}
 RUNTIME_REPOSITORIES = frozenset("ghcr.io/chronoaiproject/" + DEPLOYABLES[key] for key in RUNTIME_TARGETS)
 RUNTIME_POINTER_TAGS = {"staging": "staging-current", "production": "production-current"}
 
@@ -68,8 +71,7 @@ class Registry:
         return self._token(repository, "pull")
 
     def _token(self, repository, actions):
-        require(repository in {"ghcr.io/chronoaiproject/" + name for name in DEPLOYABLES.values()},
-                "Registry repository is not a canonical deployable")
+        require(repository in REPOSITORIES, "Registry repository is not a canonical CMA image")
         scope = "repository:" + repository[len("ghcr.io/"):] + ":" + actions
         headers = {}
         if self.credential:
@@ -84,7 +86,9 @@ class Registry:
 
     def manifest(self, repository, reference, *, absent=False, settle=False):
         auxiliary = repository == WEB_REPOSITORY and matches(WEB_AUXILIARY, reference)
-        require(auxiliary or matches(SEMVER, reference) or matches(r"sha256:[0-9a-f]{64}", reference),
+        tagged = (matches(JOURNEY_TAG, reference) if repository == JOURNEY_REPOSITORY
+                  else auxiliary or matches(SEMVER, reference))
+        require(tagged or matches(r"sha256:[0-9a-f]{64}", reference),
                 "Registry reference is not immutable")
         return self._manifest(repository, reference, absent=absent, settle=settle)
 
@@ -123,6 +127,7 @@ class Registry:
         digest = "sha256:" + hashlib.sha256(data).hexdigest()
         require(headers.get("Docker-Content-Digest") == digest
                 and (not reference.startswith("sha256:") or reference == digest)
+                and (not reference.startswith("sha256-") or reference == "sha256-" + digest[7:])
                 and (not reference.startswith("asset-sha256-") or reference == "asset-sha256-" + digest[7:]),
                 "Registry returned a different manifest digest")
         body = json.loads(data)

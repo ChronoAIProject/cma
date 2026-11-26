@@ -23,12 +23,6 @@ export function fixtureDocument() {
         ['owner', 'secondOwner'].map((role) => [
           role,
           {
-            image: {
-              id: `image-${role}`,
-              name: `Public ${role}`,
-              version: 'version-one',
-              reference: `registry.example.test/image@sha256:${'a'.repeat(64)}`,
-            },
             model: 'fixture-model',
             embedUrl: `https://embed.example.test/j5/${role}`,
           },

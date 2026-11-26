@@ -12,7 +12,7 @@ use mongodb::{
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture with failpoints"]
 async fn migration_cli_reports_uncertain_abort_on_stderr_without_rust_log() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("migration_cli_{}", uuid::Uuid::new_v4().simple());
     let database = admin.database(&name);
@@ -77,7 +77,7 @@ mod shared_schema;
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn gateway_records_are_exclusive_owner_immutable_and_revision_fenced() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_eg_contract_{}", uuid::Uuid::new_v4().simple());
     let result = exercise(&uri, &admin, &name).await;
@@ -87,7 +87,7 @@ async fn gateway_records_are_exclusive_owner_immutable_and_revision_fenced() {
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn disabled_github_import_refuses_new_github_channels_and_retains_stored_ones() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_eg_github_import_{}", uuid::Uuid::new_v4().simple());
     let result = github_import::verify(&admin.database(&name)).await;
