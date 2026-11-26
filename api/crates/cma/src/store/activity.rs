@@ -209,9 +209,8 @@ impl MongoActivityStore {
             _ => doc! { "$and": clauses },
         };
         let fetch = i64::from(query.limit.saturating_add(1));
-        let find = self
-            .entries
-            .clone_with_type::<ActivityDoc<T>>()
+        let entries = self.entries.clone_with_type::<ActivityDoc<T>>();
+        let find = entries
             .find(filter)
             .with_options(
                 mongodb::options::FindOptions::builder()
