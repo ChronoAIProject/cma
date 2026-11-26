@@ -158,6 +158,9 @@ async fn run() {
         }
         return;
     }
+    if store::sandbox_usage_export::run_repair_command(&arguments).await {
+        return;
+    }
     if retirement_archive::is_command(&arguments) {
         match retirement_archive::command(&arguments).await {
             Ok(summary) => println!("{summary}"),

@@ -250,6 +250,11 @@ impl ControlPlaneComposition {
             },
             runtime::lifecycle_config(config, worker_holder.clone(), ownership.clone(), &stores),
         )?;
+        if let (Some(manager), Some(capture)) =
+            (&agent_manager, sandbox_lifecycle.capture_drain.take())
+        {
+            manager.register_retirement_capture(capture)?;
+        }
         sandbox_lifecycle.register_inline_lifecycle(lifecycle_drain);
         let (admin, binding_diagnostics) = binding_diagnostics::compose(
             config,

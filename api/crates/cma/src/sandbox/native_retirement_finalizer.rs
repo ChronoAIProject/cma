@@ -15,8 +15,10 @@ use layer3_adapter::{
 };
 
 use crate::store::native_retirement_action::{
-    RetirementAction, RetirementPhase, RetirementRecords,
+    capture::RetirementCaptureConsumer, RetirementAction, RetirementPhase, RetirementRecords,
 };
+
+mod dispatch;
 
 trait RetirementStore:
     SandboxStore + SandboxReconciliationStore + SandboxLifecycleExecutionStore
@@ -42,6 +44,8 @@ pub(crate) struct NativeRetirementFinalizer {
     clock: Arc<dyn Fn() -> SystemTime + Send + Sync>,
     records: Arc<dyn RetirementRecords>,
     admit: bool,
+    capture: Option<Arc<dyn RetirementCaptureConsumer>>,
+    capture_admission: Option<crate::agent_lifecycle::LifecycleDrain>,
 }
 
 impl NativeRetirementFinalizer {
@@ -61,8 +65,20 @@ impl NativeRetirementFinalizer {
             deployment,
             records,
             admit,
+            capture: None,
+            capture_admission: None,
             clock: Arc::new(SystemTime::now),
         }
+    }
+
+    pub(crate) fn with_capture(
+        mut self,
+        capture: Arc<dyn RetirementCaptureConsumer>,
+        admission: Option<crate::agent_lifecycle::LifecycleDrain>,
+    ) -> Self {
+        self.capture = Some(capture);
+        self.capture_admission = admission;
+        self
     }
 
     #[cfg(test)]
@@ -249,6 +265,37 @@ impl NativeRetirementFinalizer {
         Ok(Self::applies(sandbox) && self.records.action(&sandbox.id).await?.is_some())
     }
 
+    pub(super) async fn offer_capture(&self, parent: &Sandbox) -> Result<(), SandboxStoreError> {
+        let Some(capture) = self
+            .capture
+            .as_ref()
+            .filter(|_| self.capture_admission.is_some())
+        else {
+            return Ok(());
+        };
+        let children = super::live_agent_stopper::retirement_agents(self.store.as_ref(), parent)
+            .await
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        for child in children.iter().filter(|child| {
+            child.status.is_live()
+                && !child.has_no_runtime_effects()
+                && child
+                    .conversation
+                    .runtime_generation
+                    .is_some_and(|generation| generation > 0)
+        }) {
+            if self
+                .capture_admission
+                .as_ref()
+                .is_some_and(|admission| admission.is_closed())
+            {
+                break;
+            }
+            capture.offer(parent, child).await?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn admission_enabled(&self) -> bool {
         self.admit
     }
@@ -333,104 +380,44 @@ impl NativeRetirementFinalizer {
         provider: &dyn RuntimeRetirement,
         request: &RuntimeAdoptionRequest,
     ) -> Result<Option<RetirementAction>, SandboxStoreError> {
-        let Some((observation, fences)) = self
-            .records
-            .observation(&sandbox.id)
-            .await?
-            .filter(|(observation, _)| observation.matches(sandbox))
-        else {
-            return Ok(None);
+        let legacy = if self.capture_admission.is_none() {
+            self.records
+                .observation(&sandbox.id)
+                .await?
+                .filter(|(observation, _)| observation.matches(sandbox))
+        } else {
+            None
         };
+        let capture = self.capture.as_ref();
+        if capture.is_none() && legacy.is_none() {
+            return Ok(None);
+        }
         let children = super::live_agent_stopper::retirement_agents(self.store.as_ref(), sandbox)
             .await
             .map_err(|_| SandboxStoreError::Conflict)?;
+        let captured = match capture {
+            Some(capture) => capture
+                .observed(sandbox, &children)
+                .await?
+                .map(|observed| (capture, observed)),
+            None => None,
+        };
+        let Some((observation, fences)) = captured
+            .as_ref()
+            .map(|(_, observed)| observed.observation())
+            .or(legacy)
+        else {
+            return Ok(None);
+        };
         let action = RetirementAction::new(sandbox, observation, &children, fences)?;
         if probe(provider, request, &action).await != Some(true) {
             return Ok(None);
         }
-        self.records.admit(sandbox, &action).await?;
+        match captured {
+            Some((capture, observed)) => capture.admit(sandbox, &action, &observed).await?,
+            None => self.records.admit(sandbox, &action).await?,
+        }
         Ok(Some(action))
-    }
-
-    async fn dispatch(
-        &self,
-        parent: &Sandbox,
-        holder: &str,
-        provider: &dyn RuntimeRetirement,
-        request: &RuntimeAdoptionRequest,
-        action: &mut RetirementAction,
-        after_graceful_stop: bool,
-    ) -> Result<Option<RetirementOutcome>, SandboxStoreError> {
-        if !after_graceful_stop {
-            match probe(provider, request, action).await {
-                Some(true) => {}
-                Some(false) if action.phase == RetirementPhase::Admitted => {
-                    self.records.transition(parent, action, None).await?;
-                    return Ok(Some(RetirementOutcome::GracefulPending));
-                }
-                Some(false) => {
-                    // The previous provider call may still be in flight.
-                    // Resume normal closes while retaining the same custody.
-                    return Ok(Some(RetirementOutcome::GracefulWithCustody));
-                }
-                None => {
-                    return Ok(Some(RetirementOutcome::ProviderPending(
-                        "retirement receiver proof is unavailable",
-                    )))
-                }
-            }
-        }
-        if action.phase == RetirementPhase::Admitted {
-            let mut dispatched = action.clone();
-            dispatched.phase = RetirementPhase::Dispatching;
-            self.records
-                .transition(parent, action, Some(&dispatched))
-                .await?;
-            *action = dispatched;
-        }
-        self.delete_with_custody(
-            parent,
-            holder,
-            action,
-            provider.retire_unreachable(request, &action.observation.receiver.pod),
-        )
-        .await
-    }
-
-    async fn dispatch_suspended(
-        &self,
-        parent: &Sandbox,
-        holder: &str,
-        provider: &dyn RuntimeRetirement,
-        request: &RuntimeAdoptionRequest,
-        action: &RetirementAction,
-    ) -> Result<Option<RetirementOutcome>, SandboxStoreError> {
-        self.delete_with_custody(parent, holder, action, provider.retire_suspended(request))
-            .await
-    }
-
-    async fn delete_with_custody(
-        &self,
-        parent: &Sandbox,
-        holder: &str,
-        action: &RetirementAction,
-        delete: impl std::future::Future<Output = layer3_adapter::Result<()>>,
-    ) -> Result<Option<RetirementOutcome>, SandboxStoreError> {
-        if !self.current(parent, holder).await? {
-            return Ok(Some(RetirementOutcome::Superseded));
-        }
-        if self.records.action(&parent.id).await?.as_ref() != Some(action) {
-            return Err(SandboxStoreError::Conflict);
-        }
-        if !matches!(
-            tokio::time::timeout(Duration::from_secs(180), delete).await,
-            Ok(Ok(())),
-        ) {
-            return Ok(Some(RetirementOutcome::ProviderPending(
-                "native retirement deletion remains unconfirmed",
-            )));
-        }
-        Ok(None)
     }
 
     async fn current(&self, original: &Sandbox, holder: &str) -> Result<bool, SandboxStoreError> {

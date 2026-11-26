@@ -81,7 +81,18 @@ pub(super) fn parent_worker_with_retirement_admission(
     clock: Arc<Mutex<SystemTime>>,
     admission_enabled: bool,
 ) -> Arc<SandboxWorker> {
-    let service = crate::sandbox::native_retirement_finalizer::NativeRetirementFinalizer::new(
+    parent_worker_with_capture(f, clock, admission_enabled, None)
+}
+
+pub(super) fn parent_worker_with_capture(
+    f: &Fixture,
+    clock: Arc<Mutex<SystemTime>>,
+    admission_enabled: bool,
+    capture: Option<
+        Arc<dyn crate::store::native_retirement_action::capture::RetirementCaptureConsumer>,
+    >,
+) -> Arc<SandboxWorker> {
+    let mut service = crate::sandbox::native_retirement_finalizer::NativeRetirementFinalizer::new(
         f.harness.store.clone(),
         f.harness.adapter.clone(),
         "test".into(),
@@ -89,6 +100,9 @@ pub(super) fn parent_worker_with_retirement_admission(
         admission_enabled,
     )
     .with_clock(Arc::new(move || *clock.lock().unwrap()));
+    if let Some(capture) = capture {
+        service = service.with_capture(capture, None);
+    }
     parent_worker_inner(f, Some(Arc::new(service)))
 }
 fn parent_worker_inner(
@@ -133,7 +147,16 @@ pub(super) fn child_worker(
     owner: Option<Arc<OwnershipCoordinator>>,
     name: &str,
 ) -> Arc<AgentWorker> {
-    let mut config = AgentWorkerConfig::new(name, "test").with_ownership(owner);
+    configured_child_worker(
+        f,
+        AgentWorkerConfig::new(name, "test").with_ownership(owner),
+    )
+}
+
+pub(super) fn configured_child_worker(
+    f: &Fixture,
+    mut config: AgentWorkerConfig,
+) -> Arc<AgentWorker> {
     config.retry_delay = Duration::from_secs(5);
     AgentWorker::new(
         AgentWorkerDependencies {
@@ -282,23 +305,29 @@ impl Receiver {
                           axum::Json(transport_owner): axum::Json<
                         layer3_adapter::owner_protocol::TransportOwner,
                     >| {
-                        assert_eq!(action, "challenge");
                         assert_eq!(transport_owner.agent_id, agent);
                         assert_eq!(headers["open-sandbox-api-key"], "local-fixture-only");
                         transport_owner.validate().unwrap();
-                        let sequence = counter.fetch_add(1, Ordering::SeqCst);
-                        *records.observation.lock().unwrap() = Some(
-                            crate::store::native_retirement_action::RetirementObservation {
-                                owner: owner.clone(),
-                                binding: binding.clone(),
-                                receiver: layer3_adapter::receiver_failure::RetirementReceiver {
-                                    runtime: RuntimeHandle::new(&binding.runtime_id),
-                                    pod: super::records::pod(),
-                                    owner: transport_owner,
-                                },
-                            },
-                        );
-                        let healthy = sequence >= recovery.load(Ordering::SeqCst);
+                        let healthy = match action.as_str() {
+                            "revoke" => false,
+                            "challenge" => {
+                                let sequence = counter.fetch_add(1, Ordering::SeqCst);
+                                *records.observation.lock().unwrap() = Some(
+                                    crate::store::native_retirement_action::RetirementObservation {
+                                        owner: owner.clone(),
+                                        binding: binding.clone(),
+                                        receiver:
+                                            layer3_adapter::receiver_failure::RetirementReceiver {
+                                                runtime: RuntimeHandle::new(&binding.runtime_id),
+                                                pod: super::records::pod(),
+                                                owner: transport_owner,
+                                            },
+                                    },
+                                );
+                                sequence >= recovery.load(Ordering::SeqCst)
+                            }
+                            _ => panic!("unexpected retirement receiver action"),
+                        };
                         async move {
                             use axum::response::IntoResponse;
                             if healthy {

@@ -9,6 +9,7 @@ struct State {
     tasks: Mutex<Option<JoinSet<()>>>,
     completed: watch::Sender<bool>,
     capacity: usize,
+    cancel_on_close: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -27,19 +28,28 @@ impl TaskScope {
     }
 
     pub(super) fn new(capacity: usize) -> Self {
+        Self::with_close_policy(capacity, true)
+    }
+
+    pub(crate) fn completing(capacity: usize) -> Self {
+        Self::with_close_policy(capacity, false)
+    }
+
+    fn with_close_policy(capacity: usize, cancel_on_close: bool) -> Self {
         Self(Arc::new(State {
             tasks: Mutex::new(Some(JoinSet::new())),
             completed: watch::channel(false).0,
             capacity,
+            cancel_on_close,
         }))
     }
 
-    pub(super) fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         self.0.tasks.lock().unwrap().is_none()
     }
 
     /// Admission and closure share one short lock, never held across IO.
-    pub(super) fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) -> bool {
+    pub(crate) fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) -> bool {
         let mut state = self.0.tasks.lock().unwrap();
         let Some(tasks) = state.as_mut() else {
             return false;
@@ -58,7 +68,9 @@ impl TaskScope {
         let tasks = self.0.tasks.lock().unwrap().take();
         if let Some(mut tasks) = tasks {
             tracing::info!(tasks = tasks.len(), "closing lifecycle task admission");
-            tasks.abort_all();
+            if self.0.cancel_on_close {
+                tasks.abort_all();
+            }
             let signal = self.0.completed.clone();
             // This supervisor owns only joins. A cancelled drain caller or a
             // timeout must not lose custody and let a later drain report success

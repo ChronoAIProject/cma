@@ -350,7 +350,8 @@ pub(super) async fn disabled_admission_preserves_legacy_absent_runtime_retiremen
         .is_none());
 }
 
-pub(super) async fn recovered_dispatch_resumes_graceful_stop_with_admission_disabled(
+pub(super) async fn recovered_dispatch_resumes_graceful_stop(
+    capture_enabled: bool,
     credential_hold: bool,
 ) {
     use crate::store::native_retirement_action::{RetirementPhase, RetirementRecords};
@@ -387,7 +388,13 @@ pub(super) async fn recovered_dispatch_resumes_graceful_stop_with_admission_disa
     receiver.recover_after.store(0, Ordering::SeqCst);
     *f.backend.close_transport.lock().unwrap() = None;
     *f.backend.gc_credentials.lock().unwrap() = Some(f.harness.credentials.clone());
-    let successor = parent_worker_with_retirement_admission(&f, clock.clone(), false);
+    let capture = Arc::new(super::records::UnavailableCapture::default());
+    let successor = parent_worker_with_capture(
+        &f,
+        clock.clone(),
+        capture_enabled,
+        capture_enabled.then(|| capture.clone() as Arc<_>),
+    );
     let child = child_worker(&f, None, "recovered-child");
     now += Duration::from_secs(1200);
     *clock.lock().unwrap() = now + Duration::from_secs(1);
@@ -440,6 +447,8 @@ pub(super) async fn recovered_dispatch_resumes_graceful_stop_with_admission_disa
     let retired = f.harness.stored(&active.id).await;
     assert_eq!(retired.status, SandboxStatus::Retired);
     assert!(retired.runtime.is_none());
+    assert!(retired.credential.current.is_none());
+    assert!(retired.lifecycle.home.as_ref().unwrap().released);
     assert!(f
         .backend
         .retirement_records
@@ -454,6 +463,14 @@ pub(super) async fn recovered_dispatch_resumes_graceful_stop_with_admission_disa
             .filter(|call| call.as_str() == "retire-alternative")
             .count(),
         1
+    );
+    assert_eq!(capture.0.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.as_str() == "retire-suspended")
+            .count(),
+        usize::from(credential_hold)
     );
     receiver.server.abort();
     owners.cleanup().await;

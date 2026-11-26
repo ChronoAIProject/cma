@@ -86,10 +86,13 @@ impl ProviderHostedControlTransport {
         phase: Phase,
         status: http::StatusCode,
     ) {
-        if phase != Phase::Challenge || !crate::receiver_failure::unavailable_status(status) {
+        if phase != Phase::Challenge {
             return;
         }
-        crate::receiver_failure::record(|| {
+        let Some(refusal) = crate::receiver_failure::ChallengeRefusal::from_status(status) else {
+            return;
+        };
+        crate::receiver_failure::record(refusal, || {
             let (runtime, pod) = endpoint.retirement_receiver()?;
             Some(crate::receiver_failure::RetirementReceiver {
                 runtime,

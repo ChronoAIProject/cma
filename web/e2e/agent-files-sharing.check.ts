@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
+import {
+  test,
+  expect,
+  type Download,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from '@playwright/test';
 import type { AgentShareLink } from '../src/api-client/index';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 
@@ -575,6 +582,55 @@ for (const { access, unavailable } of [
             holdDownload.release();
           }
           await downloadDotfile();
+          const heldResponse = hold();
+          const lateResponse = hold();
+          const downloadEvents: string[] = [];
+          const recordDownload = (download: Download) =>
+            downloadEvents.push(download.suggestedFilename());
+          page.on('download', recordDownload);
+          await page.route(
+            downloadPath,
+            async (route) => {
+              await heldResponse.promise;
+              await route.fulfill({ contentType: 'application/octet-stream', body: dotfile });
+              lateResponse.release();
+            },
+            { times: 1 },
+          );
+          const interrupted = 'Download was interrupted. Try downloading the file again.';
+          const notice = page.getByRole('alert').filter({ hasText: interrupted });
+          try {
+            const [request] = await Promise.all([
+              page.waitForRequest(downloadPath),
+              downloadButton.click(),
+            ]);
+            await expect(computer.getByText('Downloading file…')).toBeVisible();
+            const failed = page.waitForEvent('requestfailed', {
+              predicate: (item) => item === request,
+            });
+            accessUnavailable = true;
+            await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+            await expect(page.getByRole('heading', { name: 'Agent unavailable' })).toBeVisible();
+            await expect(computer).toHaveCount(0);
+            expect((await failed).failure()?.errorText).toContain('ABORTED');
+            await expect(notice).toBeVisible();
+            await expect(notice.getByRole('button', { name: 'Dismiss' })).toBeEnabled();
+            expect(downloadEvents).toEqual([]);
+            accessUnavailable = false;
+            await page.getByRole('button', { name: 'Check access again', exact: true }).click();
+            await computer.getByRole('checkbox', { name: 'Show hidden' }).check();
+            await computer.getByRole('button', { name: '.dockerignore', exact: true }).click();
+            await expect(preview).toHaveValue(dotfile);
+            await downloadDotfile();
+            await expect(notice).toHaveCount(0);
+            heldResponse.release();
+            await lateResponse.promise;
+            await expect(notice).toHaveCount(0);
+            expect(downloadEvents).toHaveLength(1);
+          } finally {
+            heldResponse.release();
+            page.off('download', recordDownload);
+          }
           await page.route(
             downloadPath,
             (route) => route.fulfill({ status: 404, json: { code: 'resource_not_found' } }),

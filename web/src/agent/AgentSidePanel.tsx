@@ -42,6 +42,7 @@ export function AgentSidePanel({
   panel,
   onClose,
   onAccessChanged,
+  beginFileDownload,
   onOpenSandbox,
   pending,
   historyLoading,
@@ -64,6 +65,7 @@ export function AgentSidePanel({
   readonly panel: AgentPanel;
   readonly onClose: () => void;
   readonly onAccessChanged: (downloadMessage?: string) => void;
+  readonly beginFileDownload?: () => (message: string) => void;
   readonly onOpenSandbox?: () => void;
   readonly pending?: AgentCommand;
   readonly historyLoading?: boolean;
@@ -363,6 +365,7 @@ export function AgentSidePanel({
               readOnly={!mayWrite}
               onClose={onClose}
               onAccessChanged={accessChanged}
+              beginDownload={shared ? beginFileDownload : undefined}
             />
           ) : filesOpen ? (
             <aside className="agent-files-panel" aria-label="Agent files">
