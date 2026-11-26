@@ -175,10 +175,10 @@ class Fixture:
             "print(JSON.stringify(row!==null));")
 
     def lifecycleSnapshot(self, sandboxId=None, agentIds=None):
-        if not isinstance(agentIds, list) or len(agentIds) != 2 or any(
+        if not isinstance(agentIds, list) or len(agentIds) not in (1, 2) or any(
             not isinstance(value, str) or not re.fullmatch(r'[-A-Za-z0-9_]{1,160}', value)
             for value in [sandboxId, *agentIds]
-        ) or agentIds[0] == agentIds[1]:
+        ) or len(set(agentIds)) != len(agentIds):
             raise ValueError('lifecycle_snapshot_lineage_required')
         sample = json.dumps({'sandboxId': sandboxId, 'agentIds': agentIds})
         return self.mongo(f'const lifecycleSample = {sample};\n' + (ROOT / 'lifecycle_snapshot.js').read_text())

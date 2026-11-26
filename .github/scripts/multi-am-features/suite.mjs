@@ -20,6 +20,7 @@ import {installSkillCase} from './features/skills.mjs';
 import {shareAgentArtifact} from './features/sharing.mjs';
 import {organizationShare} from './features/organization_share.mjs';
 import {accessRequest} from './features/access_request.mjs';
+import {retirementRetention} from './features/retirement_retention.mjs';
 import {triggerAlwaysOn} from './features/trigger_always_on.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -77,7 +78,10 @@ const matrix = new ExtendedAdminMatrix({fixture,
 const result = {schema: 'multi-am-features-v1', verdict: 'RUNNING', source: config.expected_api_source,
   production_acceptance: false, image: config.expected_api_image, started_at: new Date().toISOString()};
 try {
-  result.journey = await runJourney(config, {triggerHook: context => {
+  result.journey = await runJourney(config, {retirementHook: context => {
+    Object.assign(normal.ams, context.config.ams);
+    return retirementRetention({...context, user, outsider});
+  }, triggerHook: context => {
     Object.assign(normal.ams, context.config.ams);
     return triggerAlwaysOn({...context, user, admin, outsider});
   }, queuedTurnHook: async context => {

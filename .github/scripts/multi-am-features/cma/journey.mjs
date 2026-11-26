@@ -10,7 +10,8 @@ import {cleanupFixture} from './cleanup.mjs';
 import {drainOwnerCase, neverReadyManagerCase, scaleManagerCase} from '../features/readiness.mjs';
 import {retainedLifecycle} from '../features/lifecycle_atomicity.mjs';
 
-export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook, preparedHook, triggerHook} = {}) {
+export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook,
+  preparedHook, triggerHook, retirementHook} = {}) {
   const config = normalizeConfig(raw);
   check(config.adapter_module && config.output_dir && config.owner_id, 'config_missing');
   let runtimes = runtimeBindings(config);
@@ -386,7 +387,12 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
         check(kill.killed_am === killedAm && kill.actual_container_exited === true, 'revival_owner_exit_unproven');
         await restoreKilledAm();
       }});
-    await step('plain_public_stop_retire', async () => {await cleanup(plain); return {retired: true};});
+    await step('plain_public_stop_retire', async () => {
+      if (retirementHook) await step('retirement_retains_terminal_evidence', () => retirementHook({adapter,
+        record: plain, cleanup, config}));
+      else await cleanup(plain);
+      return {retired: true};
+    });
     if (triggerHook) await step('trigger_origin_always_on_and_replay', () => triggerHook({adapter, config}));
     if (!runtimes.omarchy) {
       await step('await_omarchy_runtime_input', async () => {
