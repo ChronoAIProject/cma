@@ -52,9 +52,9 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
         createKey = options.key;
         calls.push('create');
       } else if (options.body.start_if_ready) {
-        assert.deepEqual(options.allowed, [409]);
+        assert.deepEqual(options.allowed, [422]);
         assert.equal(options.key, createKey);
-        return {status: 409};
+        return {status: 422, body: {code: 'idempotency_key_reused'}};
       } else {
         assert.equal(options.key, createKey);
         calls.push('replay-create');

@@ -93,7 +93,10 @@ async function exerciseTrigger({adapter, user, admin, outsider, config}) {
         const current = await readSandbox(am);
         check(current.id === sandbox.id && current.profile.always_on === desired, 'trigger_sandbox_always_on_not_visible');
       }
-      await user.request(peer, 'POST', admission, {body: {...request, start_if_ready: true}, key: launchKey, allowed: [409]});
+      const {body: denied} = await user.request(peer, 'POST', admission, {
+        body: {...request, start_if_ready: true}, key: launchKey, allowed: [422],
+      });
+      check(denied.code === 'idempotency_key_reused', 'trigger_changed_payload_refusal_mismatch');
       const {body: replay} = await user.request(owner.am, 'POST', admission, {body: request, key: launchKey, allowed: [201]});
       check(replay.id === launch.id && replay.revision_digest === launch.revision_digest,
         'trigger_always_on_changed_original_admission');
