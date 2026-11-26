@@ -49,6 +49,80 @@ async fn media_continuation_reconciliation_fences_the_same_transaction_after_han
             .unwrap(),
         row_before
     );
+    let parent_query = doc! { "_id": f.agent.sandbox_id.as_str() };
+    let parent_row = owners
+        .store
+        .sandboxes
+        .find_one_and_delete(parent_query.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let db = f.client.database(&f.name);
+    let bindings = db.collection::<mongodb::bson::Document>("provider_bindings");
+    let binding = bindings.find_one(doc! {}).await.unwrap().unwrap();
+    let command_query = doc! { "_id": id.as_str() };
+    let command_row = owners
+        .store
+        .agent_commands
+        .find_one(command_query.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let lane_row = owners
+        .store
+        .agent_command_orders
+        .find_one(agent_query.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(before.work.dispatch.is_some());
+    assert_eq!(
+        owners
+            .current
+            .run(owners.store.reconcile_command(id))
+            .await
+            .unwrap(),
+        Err(CommandLedgerError::Conflict)
+    );
+    assert_eq!(
+        owners
+            .store
+            .sandboxes
+            .find_one(parent_query.clone())
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        owners
+            .store
+            .agent_commands
+            .find_one(command_query)
+            .await
+            .unwrap(),
+        Some(command_row)
+    );
+    assert_eq!(
+        owners
+            .store
+            .agent_command_orders
+            .find_one(agent_query.clone())
+            .await
+            .unwrap(),
+        Some(lane_row)
+    );
+    assert_eq!(
+        owners
+            .store
+            .agents
+            .find_one(agent_query.clone())
+            .await
+            .unwrap()
+            .as_ref(),
+        Some(&row_before)
+    );
+    assert_eq!(bindings.find_one(doc! {}).await.unwrap(), Some(binding));
+    owners.store.sandboxes.insert_one(parent_row).await.unwrap();
     let queued = owners
         .current
         .run(owners.store.reconcile_command(id))
