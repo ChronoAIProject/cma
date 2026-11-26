@@ -24,7 +24,7 @@ const TOKEN_HEX_CHARS: usize = 64;
 /// the clock is public to within the round trip that observes it, and address
 /// layout is randomised per process rather than per call, so a single token
 /// observed by an attacker would fix the non-time half of every later one.
-pub(super) fn random_token() -> String {
+pub fn random_token() -> String {
     let mut token = String::with_capacity(TOKEN_HEX_CHARS);
     while token.len() < TOKEN_HEX_CHARS {
         token.push_str(&uuid::Uuid::new_v4().simple().to_string());
