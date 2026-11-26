@@ -9,7 +9,7 @@ use std::{ffi::OsString, io::Write, path::Path};
 
 use cma_allocator_qualification as allocator_self_test;
 
-const USAGE: &str = "usage: cmaeg [--replica-drain | --replica-list-unresolved | --replica-abandon-unknown --dry-run|--apply --partition ID --head-work ID --head-version N --request-id UUID --reason REASON [--plan-digest DIGEST] | --replica-abandonment-audit --request-id UUID | --print-openapi | --migrate | --attest-activity-history FROM UNTIL_OR_OPEN REVISION --all-writers-capable | --backfill-activity-history | --migrate-activity-history | --print-activity-history-runtime-role | --print-activity-history-migration-role | --migrate-console-sessions | --print-console-sessions-runtime-role | --print-console-sessions-migration-role | --migrate-replicas | --print-runtime-role | --print-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir> | --allocator-self-test]";
+const USAGE: &str = "usage: cmaeg [--replica-drain | --replica-list-unresolved | --replica-abandon-unknown --dry-run|--apply --partition ID --head-work ID --head-version N --request-id UUID --reason REASON [--plan-digest DIGEST] | --replica-abandonment-audit --request-id UUID | --print-openapi | --migrate | --attest-activity-history FROM UNTIL_OR_OPEN REVISION --all-writers-capable | --backfill-activity-history | --migrate-activity-history | --print-activity-history-runtime-role | --print-activity-history-migration-role | --migrate-console-sessions | --print-console-sessions-runtime-role | --print-console-sessions-migration-role | --migrate-replicas | --print-runtime-role | --print-migration-role | --migrate-channel-create-fence-floor --all-writers-drained | --print-channel-create-fence-runtime-role | --print-channel-create-fence-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir> | --allocator-self-test]";
 
 fn main() {
     // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
@@ -67,6 +67,9 @@ fn main() {
             history_admin(Some((from, until, revision)))
         }
         ["--backfill-activity-history"] => history_admin(None),
+        ["--migrate-channel-create-fence-floor", "--all-writers-drained"] => {
+            run_database_command("--migrate-channel-create-fence-floor")
+        }
         [command, ..]
             if matches!(
                 *command,
@@ -83,6 +86,21 @@ fn main() {
                 fail(error);
             }
         }
+        [command, ..] if command.starts_with("--migration-") => {
+            let runtime = audit_runtime();
+            if let Err(error) = runtime.block_on(async {
+                let database = std::env::var(cmaeg::CMAEG_MONGODB_DATABASE)
+                    .map_err(|_| "database name unavailable")?;
+                let uri = std::env::var(cmaeg::CMAEG_MONGODB_URI)
+                    .map_err(|_| "database URI unavailable")?;
+                let client = mongodb::Client::with_uri_str(uri)
+                    .await
+                    .map_err(|_| "database client unavailable")?;
+                cmaeg::migrations::cli(&client.database(&database), &arguments).await
+            }) {
+                fail(error);
+            }
+        }
         [command @ ("--migrate"
         | "--migrate-replicas"
         | "--migrate-activity-history"
@@ -92,7 +110,10 @@ fn main() {
         | "--print-console-sessions-runtime-role"
         | "--print-console-sessions-migration-role"
         | "--print-runtime-role"
+        | "--print-migration-operator-role"
         | "--print-migration-role"
+        | "--print-channel-create-fence-runtime-role"
+        | "--print-channel-create-fence-migration-role"
         | "--migrate-worker-credentials"
         | "--print-worker-credentials-runtime-role"
         | "--print-worker-credentials-migration-role"
@@ -245,6 +266,9 @@ fn fail(reason: &str) -> ! {
 }
 
 fn run_database_command(command: &str) {
+    if command.starts_with("--migrate") {
+        cmaeg::init_logging_to_stderr();
+    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -252,6 +276,13 @@ fn run_database_command(command: &str) {
     if let Err(error) = runtime.block_on(async {
         let database = std::env::var(cmaeg::CMAEG_MONGODB_DATABASE)
             .map_err(|_| "CMAEG_MONGODB_DATABASE is missing or not valid UTF-8")?;
+        if command == "--print-migration-operator-role" {
+            println!(
+                "{}",
+                cma_service_migrations::operator_role(&database, cmaeg::migrations::LEDGER)
+            );
+            return Ok(());
+        }
         if !matches!(
             command,
             "--migrate"
@@ -263,49 +294,58 @@ fn run_database_command(command: &str) {
                 | "--migrate-thread-fences"
                 | "--migrate-whatsapp-forms"
                 | "--migrate-media-continuations"
+                | "--migrate-channel-create-fence-floor"
         ) {
-            println!(
-                "{}",
-                if command.contains("activity-history") {
-                    cmaeg::activity::history::schema::role(
-                        &database,
-                        command.ends_with("migration-role"),
-                    )
-                } else if command.contains("console-sessions") {
-                    cmaeg::console::session_backend::schema::role(
-                        &database,
-                        command.ends_with("migration-role"),
-                    )
-                } else if command.contains("automation") {
-                    if command.ends_with("migration-role") {
-                        cmaeg::github::migration_role(&database)
-                    } else {
-                        cmaeg::github::runtime_role(&database)
-                    }
-                } else if command.contains("worker-credentials") {
-                    cmaeg::worker_credentials::mongo::role(
-                        &database,
-                        command.ends_with("migration-role"),
-                    )
-                } else if command.contains("thread-fences") {
-                    cmaeg::records::mongo::thread_fences_role(
-                        &database,
-                        command.ends_with("migration-role"),
-                    )
-                } else if command.contains("media-continuations") {
-                    cmaeg::records::mongo::media_continuations_role(
-                        &database,
-                        command.ends_with("migration-role"),
-                    )
-                } else if command.contains("whatsapp-forms") {
-                    cmaeg::records::mongo::whatsapp_flows_role(
-                        &database,
-                        command.ends_with("migration-role"),
-                    )
+            let role = if command.contains("activity-history") {
+                cmaeg::activity::history::schema::role(
+                    &database,
+                    command.ends_with("migration-role"),
+                )
+            } else if command.contains("channel-create-fence") {
+                cmaeg::records::mongo::create_fence_role(
+                    &database,
+                    command.ends_with("migration-role"),
+                )
+            } else if command.contains("console-sessions") {
+                cmaeg::console::session_backend::schema::role(
+                    &database,
+                    command.ends_with("migration-role"),
+                )
+            } else if command.contains("automation") {
+                if command.ends_with("migration-role") {
+                    cmaeg::github::migration_role(&database)
                 } else {
-                    cmaeg::records::mongo::role(&database, command == "--print-migration-role")
+                    cmaeg::github::runtime_role(&database)
                 }
-            );
+            } else if command.contains("worker-credentials") {
+                cmaeg::worker_credentials::mongo::role(
+                    &database,
+                    command.ends_with("migration-role"),
+                )
+            } else if command.contains("thread-fences") {
+                cmaeg::records::mongo::thread_fences_role(
+                    &database,
+                    command.ends_with("migration-role"),
+                )
+            } else if command.contains("media-continuations") {
+                cmaeg::records::mongo::media_continuations_role(
+                    &database,
+                    command.ends_with("migration-role"),
+                )
+            } else if command.contains("whatsapp-forms") {
+                cmaeg::records::mongo::whatsapp_flows_role(
+                    &database,
+                    command.ends_with("migration-role"),
+                )
+            } else {
+                cmaeg::records::mongo::role(&database, command == "--print-migration-role")
+            };
+            let role = if command.ends_with("migration-role") {
+                cmaeg::migrations::migration_role(role, &database)
+            } else {
+                role
+            };
+            println!("{role}");
             return Ok::<(), &'static str>(());
         }
         let uri = std::env::var(cmaeg::CMAEG_MONGODB_URI)
@@ -313,38 +353,7 @@ fn run_database_command(command: &str) {
         let client = mongodb::Client::with_uri_str(uri)
             .await
             .map_err(|_| "Gateway database client configuration failed; details withheld")?;
-        if command == "--migrate-activity-history" {
-            cmaeg::activity::history::schema::migrate(&client.database(&database))
-                .await
-                .map_err(|_| "Gateway activity history migration failed; details withheld")?;
-            return Ok(());
-        }
-        if command == "--migrate-console-sessions" {
-            cmaeg::console::session_backend::schema::migrate(&client.database(&database))
-                .await
-                .map_err(|_| "Gateway Console session migration failed; details withheld")?;
-            return Ok(());
-        }
-        if command == "--migrate-automation" {
-            cmaeg::github::migrate(&client.database(&database))
-                .await
-                .map_err(|_| "Gateway automation migration failed; details withheld")?;
-            return Ok(());
-        }
-        if command == "--migrate-replicas" {
-            cmaeg::records::mongo::migrate_replicas(&client.database(&database)).await
-        } else if command == "--migrate-worker-credentials" {
-            cmaeg::worker_credentials::mongo::migrate(&client.database(&database)).await
-        } else if command == "--migrate-thread-fences" {
-            cmaeg::records::mongo::migrate_thread_fences(&client.database(&database)).await
-        } else if command == "--migrate-media-continuations" {
-            cmaeg::records::mongo::migrate_media_continuations(&client.database(&database)).await
-        } else if command == "--migrate-whatsapp-forms" {
-            cmaeg::records::mongo::migrate_whatsapp_flows(&client.database(&database)).await
-        } else {
-            cmaeg::records::mongo::migrate(&client.database(&database)).await
-        }
-        .map_err(|_| "Gateway schema migration failed; details withheld")?;
+        cmaeg::migrations::legacy(&client.database(&database), command).await?;
         Ok(())
     }) {
         fail(error);

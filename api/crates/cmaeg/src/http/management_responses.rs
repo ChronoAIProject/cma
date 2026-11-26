@@ -251,6 +251,22 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             ProblemCode::Conflict,
             format!("expected version {expected}, actual {actual:?}"),
         ),
+        ManagementError::Record(crate::records::RecordError::GuardConflict {
+            scope: "channel_create",
+            ..
+        }) => (
+            StatusCode::CONFLICT,
+            ProblemCode::Conflict,
+            "channel_create_fenced".into(),
+        ),
+        ManagementError::Record(crate::records::RecordError::GuardConflict {
+            scope: "connection",
+            ..
+        }) => (
+            StatusCode::CONFLICT,
+            ProblemCode::Conflict,
+            "connection_claim_changed".into(),
+        ),
         ManagementError::Record(crate::records::RecordError::NotFound)
         | ManagementError::NotFound => (
             StatusCode::NOT_FOUND,

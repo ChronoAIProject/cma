@@ -94,30 +94,36 @@ impl Drop for KillOnDrop {
         let Some((client, lsid)) = self.armed.take() else {
             return;
         };
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            tracing::warn!(
-                "cancelled transaction terminal command has no runtime to end its session"
-            );
-            return;
-        };
-        runtime.spawn(
-            async move {
-                match tokio::time::timeout(KILL_DEADLINE, kill_session(&client, &lsid)).await {
-                    Ok(Ok(())) => {
-                        tracing::debug!("ended the session of a cancelled terminal command")
-                    }
-                    Ok(Err(error)) => tracing::warn!(
-                        %error,
-                        "cancelled transaction terminal command could not end its session"
-                    ),
-                    Err(_) => tracing::warn!(
-                        "ending the session of a cancelled terminal command exceeded its deadline"
-                    ),
+        spawn_end_session(client, lsid, None);
+    }
+}
+
+pub(crate) fn end_owned_session(session: ClientSession) {
+    spawn_end_session(session.client(), session.id().clone(), Some(session));
+}
+
+fn spawn_end_session(client: Client, lsid: Document, held_session: Option<ClientSession>) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        tracing::warn!("cancelled transaction has no runtime to end its session");
+        return;
+    };
+    runtime.spawn(
+        async move {
+            match tokio::time::timeout(KILL_DEADLINE, kill_session(&client, &lsid)).await {
+                Ok(Ok(())) => tracing::debug!("ended the session of a cancelled transaction"),
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "could not end a cancelled transaction session")
+                }
+                Err(_) => {
+                    tracing::warn!("ending a cancelled transaction session exceeded its deadline")
                 }
             }
-            .in_current_span(),
-        );
-    }
+            // Keep the session checked out through the bounded kill attempt.
+            // After a timeout, an already-sent server command may still finish late.
+            drop(held_session);
+        }
+        .in_current_span(),
+    );
 }
 
 #[cfg(test)]

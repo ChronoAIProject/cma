@@ -79,8 +79,8 @@ pub(in crate::store) async fn refuse(
     code: CommandFailureCode,
     now: String,
     scope: &mut TransactionScope<'_>,
-) -> Result<Option<terminal::Receipt>, CommandLedgerError> {
-    let command = crate::store::trigger_first_messages::refusal::apply(
+) -> Result<Option<terminal::Receipt>, ApplyError> {
+    let command = commands::unclaimed::apply(
         store,
         expected,
         revision,
@@ -91,10 +91,7 @@ pub(in crate::store) async fn refuse(
     .await?;
     Box::pin(terminal::project(store, &command, &now, scope))
         .await
-        .map_err(|e| match error(e) {
-            ApplyError::Domain(error) => error,
-            ApplyError::Driver(_) => CommandLedgerError::Unavailable,
-        })
+        .map_err(error)
 }
 
 fn error(error: TransactionLogError) -> ApplyError {

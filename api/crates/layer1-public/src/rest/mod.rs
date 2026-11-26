@@ -50,7 +50,7 @@ mod agent_artifacts_tests;
 mod agent_channel_usage;
 pub(crate) mod sandbox_metrics;
 mod sandbox_usage;
-pub use sandbox_metrics::sandbox_metrics_router;
+pub use sandbox_metrics::{sandbox_metrics_router, UsageReportViewDisabled};
 pub use sandbox_usage::sandbox_usage_router;
 mod agent_provider_associations;
 pub use agent_provider_associations::agent_provider_associations_router;

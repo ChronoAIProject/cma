@@ -37,9 +37,27 @@ class SourceInputRegressions(unittest.TestCase):
 
     def test_r1_ambiguous_rust_is_retained(self):
         self.write('api/crates/cmaeg/src/live.rs', 'pub fn shipped() {}')
-        for source in ['#[cfg_attr(test, path="else.rs")] mod live;', '#[cfg(test)] mod live;\nthis is invalid rust']:
+        for source in [
+            '#[cfg_attr(test, path="else.rs")] mod live;',
+            '#[cfg_attr(test, allow(dead_code), path="else.rs")] mod live;',
+            '#[cfg_attr(test, external::allow(dead_code))] mod live;',
+            '#[cfg(test)] mod live;\nthis is invalid rust',
+        ]:
             self.write('api/crates/cmaeg/src/lib.rs', source)
             self.assertEqual(self.selected('api/crates/cmaeg/src/live.rs'), ['cma-event-gateway'])
+
+    def test_conditional_builtin_lint_preserves_test_and_production_edges(self):
+        live = 'api/crates/cmaeg/src/live.rs'
+        checks = 'api/crates/cmaeg/src/checks.rs'
+        self.write(live, 'pub fn shipped() {}')
+        self.write(checks, 'pub fn check() {}')
+        for lint in ('allow', 'expect', 'warn', 'deny', 'forbid'):
+            with self.subTest(lint=lint):
+                attribute = f'#[cfg_attr(not(test), {lint}(dead_code, reason = "example"),)]'
+                self.write('api/crates/cmaeg/src/lib.rs',
+                           f'{attribute}\nmod live;\n#[cfg(test)]\n{attribute}\nmod checks;')
+                self.assertEqual(self.selected(live), ['cma-event-gateway'])
+                self.assertEqual(self.selected(checks), [])
 
     def test_only_a_real_include_macro_makes_module_edges_uncertain(self):
         self.write('api/crates/cmaeg/src/checks.rs', 'pub fn check() {}')

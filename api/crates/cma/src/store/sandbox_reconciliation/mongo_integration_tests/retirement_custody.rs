@@ -92,6 +92,52 @@ fn new_child(parent: &Sandbox) -> Agent {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn maintenance_preserves_the_native_retirement_receiver_observation() {
+    let (client, name, store) = database().await;
+    let (parent, _, _) = candidate(&store, false).await;
+    let (original, _) = store.observation(&parent.id).await.unwrap().unwrap();
+    let mut replacement = original.clone();
+    replacement.receiver.pod.restart_count += 1;
+    let replica = mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let parents = replica
+        .database(&name)
+        .collection::<mongodb::bson::Document>("sandboxes");
+    let filter = doc! { "_id": parent.id.as_str() };
+    for hold in [
+        doc! { "phase": "requested" }.into(),
+        mongodb::bson::Bson::Null,
+    ] {
+        parents
+            .update_one(
+                filter.clone(),
+                doc! { "$set": { "ledger_maintenance": hold } },
+            )
+            .write_concern(mongodb::options::WriteConcern::majority())
+            .await
+            .unwrap();
+        let held = parents.find_one(filter.clone()).await.unwrap().unwrap();
+        assert_eq!(
+            store.note(&parent, &replacement).await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert_eq!(parents.find_one(filter.clone()).await.unwrap(), Some(held));
+    }
+    parents
+        .update_one(filter, doc! { "$unset": { "ledger_maintenance": "" } })
+        .await
+        .unwrap();
+    store.note(&parent, &replacement).await.unwrap();
+    assert_eq!(
+        store.observation(&parent.id).await.unwrap().unwrap().0,
+        replacement
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn retirement_custody_fences_earlier_and_prestarted_child_writers() {
     for writer_wins in [true, false] {
         for attach in [true, false] {

@@ -42,6 +42,8 @@ jobs:
         run: python3 -B .github/scripts/actions_cache_workload.py
   sweep:
     needs: staging_activity
+    outputs:
+      observed_bytes_to_admit: ${{ steps.preview.outputs.observed_bytes_to_admit }}
     if: >-
       always() && !cancelled() &&
       (needs.staging_activity.result != 'success' || needs.staging_activity.outputs.needed != 'false') &&
@@ -66,6 +68,7 @@ jobs:
           git -c credential.helper= fetch --quiet --no-tags --depth=1 https://github.com/ChronoAIProject/cma.git "$GITHUB_SHA"
           git checkout --quiet --detach "$GITHUB_SHA"
       - name: "Report cache candidates and projected remaining bytes"
+        id: preview
         env:
           GH_TOKEN: "${{ github.token }}"
         run: python3 -B .github/scripts/actions_cache_sweep.py
@@ -75,9 +78,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 -B .github/scripts/actions_cache_sweep.py --preview-recovery
   inspect_buildkit:
+    needs: sweep
     if: >-
-      github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
-      github.event_name == 'workflow_dispatch' && inputs.inspect_buildkit
+      always() && !cancelled() && github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.inspect_buildkit) ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'develop' && github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.path == '.github/workflows/staging-cd.yml' && github.event.workflow_run.conclusion == 'success' &&
+        vars.CMA_LEGACY_BUILDKIT_GC != 'true' && needs.sweep.result == 'success' &&
+        fromJSON(needs.sweep.outputs.observed_bytes_to_admit || '0') > 0))
+    concurrency:
+      group: cma-develop-buildkit-observation
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     cache-mode: read
     timeout-minutes: 12
