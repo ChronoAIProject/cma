@@ -254,7 +254,7 @@ impl MongoSandboxStore {
         }
         let stored = record_bson(observation).map_err(SandboxStoreError::Corrupt)?;
         let result = self.sandboxes.update_one(
-            super::work_schema::query(doc! {
+            super::work_claim_authority::without_ledger_maintenance(super::work_schema::query(doc! {
                 "_id": parent.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "record.owner": parent.owner.as_str(),
@@ -262,7 +262,7 @@ impl MongoSandboxStore {
                 "record.work.step": record_bson(&parent.work.step).map_err(SandboxStoreError::Corrupt)?,
                 "record.runtime": record_bson(&observation.binding).map_err(SandboxStoreError::Corrupt)?,
                 FIELD: {"$exists":false},
-            }),
+            })),
             doc! {"$set":{OBSERVATION: stored}},
         ).await.map_err(unavailable)?;
         if result.matched_count == 1 {
