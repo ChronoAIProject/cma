@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import yaml
 
-from actions_cache_workload import PROVEN_SKIP, PROVEN_SUCCESS, idle_attempt, needs_maintenance
+from actions_cache_workload import CONTROL_OUTCOMES, PROVEN_SKIP, idle_attempt, needs_maintenance
 from staging_cd_common import Refusal
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,10 +18,12 @@ RUN = {"id": 42, "run_attempt": 2, "head_sha": SOURCE, "status": "completed", "c
        "path": ".github/workflows/staging-cd.yml"}
 
 
-def idle_inventory():
+def idle_inventory(*, allocate="success"):
+    conclusions = dict.fromkeys(PROVEN_SKIP, "skipped")
+    conclusions.update({"plan": "success", "allocate": allocate, "Report component outcomes": "success"})
     jobs = [{"id": index, "name": name, "run_id": RUN["id"], "run_attempt": RUN["run_attempt"],
-             "head_sha": SOURCE, "status": "completed", "conclusion": "success" if name in PROVEN_SUCCESS else "skipped"}
-            for index, name in enumerate(sorted(PROVEN_SUCCESS | PROVEN_SKIP), 1)]
+             "head_sha": SOURCE, "status": "completed", "conclusion": conclusions[name]}
+            for index, name in enumerate(sorted(conclusions), 1)]
     return {"total_count": len(jobs), "jobs": jobs}
 
 
@@ -47,6 +49,17 @@ class CacheWorkloadTests(unittest.TestCase):
         request.assert_called_once()
         self.assertEqual(request.call_args.args, ("actions/runs/42/attempts/2/jobs?per_page=100",))
         self.assertEqual(request.call_args.kwargs["attempts"], 2)
+
+    def test_allocation_handoff_is_idle_only_if_no_component_job_ran(self):
+        self.event()
+        client = Mock()
+        inventory = idle_inventory(allocate="skipped")
+        client.return_value.request.return_value = inventory
+        self.assertFalse(needs_maintenance(self.env, client))
+
+        release = next(job for job in inventory["jobs"] if job["name"] == "Release web")
+        release.update(name="Release web / Publish", conclusion="failure")
+        self.assertTrue(needs_maintenance(self.env, client))
 
     def test_activity_incomplete_or_different_attempt_preserves_maintenance(self):
         def check(inventory):
@@ -99,7 +112,7 @@ class CacheWorkloadTests(unittest.TestCase):
     def test_activity_contract_and_failed_classifier_keep_existing_authority(self):
         workflow_dir = ROOT / ".github/workflows"
         stage = yaml.safe_load((workflow_dir / "staging-cd.yml").read_text())["jobs"]
-        self.assertEqual(set(PROVEN_SUCCESS | PROVEN_SKIP), {job.get("name", key) for key, job in stage.items()})
+        self.assertEqual(CONTROL_OUTCOMES.keys() | PROVEN_SKIP, {job.get("name", key) for key, job in stage.items()})
         retention = yaml.safe_load((workflow_dir / "cache-retention.yml").read_text())["jobs"]
         self.assertEqual(retention["staging_activity"]["permissions"], {"actions": "read"})
         self.assertIn("workflow_run.path == '.github/workflows/staging-cd.yml'", retention["staging_activity"]["if"])
