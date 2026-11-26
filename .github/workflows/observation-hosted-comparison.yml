@@ -1,0 +1,48 @@
+name: Observation hosted comparison
+on:
+  push:
+    branches: [tl/developer-23/observation-hosted-comparison]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  comparison:
+    if: github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUST_MIN_STACK: "33554432"
+      CMA_NEXTEST_REUSE: "1"
+      CMA_MONGO_FLAKY_RETRIES: "0"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
+        with:
+          toolchain: "1.96.1"
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f
+        with:
+          tool: cargo-nextest@0.9.151
+          fallback: none
+      - name: Restore the exact failed candidate archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          GITHUB_RUN_ID=45803337877 python3 -B .github/scripts/ci_artifact_download.py \
+            --name rust-tests-8b8e543117a9eb3245a5861efbc1e41574c2a5ad --path "$RUNNER_TEMP"
+          sha256sum "$RUNNER_TEMP/backend-tests.tar.zst"
+          cd api
+          cargo nextest list --archive-file "$RUNNER_TEMP/backend-tests.tar.zst" \
+            --extract-to "$PWD" --list-type binaries-only
+      - name: Run the two arms once
+        run: bash .github/scripts/observation-hosted-comparison.sh "$RUNNER_TEMP/observation-comparison"
+      - name: Preserve both raw results and resource samples
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: observation-comparison
+          path: ${{ runner.temp }}/observation-comparison
+          retention-days: 7
+          if-no-files-found: error
