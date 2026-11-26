@@ -54,6 +54,7 @@ impl ReportingStore {
         metric_bindings::read_sandbox_page(self.collection(COLLECTION), after, range, DB_DEADLINE)
             .await
     }
+    #[cfg(test)]
     pub(crate) async fn reconcile_bindings(
         &self,
         holder: &str,
@@ -61,13 +62,32 @@ impl ReportingStore {
         observed: Vec<Binding>,
         at: u64,
     ) -> Result<()> {
+        self.reconcile_bindings_with_evidence(holder, sandbox, observed, at, None)
+            .await
+    }
+
+    pub(crate) async fn reconcile_bindings_with_evidence(
+        &self,
+        holder: &str,
+        sandbox: &str,
+        observed: Vec<Binding>,
+        at: u64,
+        evidence_parent: Option<&layer2_core::sandbox::Sandbox>,
+    ) -> Result<()> {
         // The original scheduling claim and mappings commit together. Unique
         // physical reservation and row CAS still reject contradictory owners.
         tx::run(
             &self.client,
-            (self, holder, sandbox, &observed, at),
-            |&(store, holder, sandbox, observed, at), session| {
+            (self, holder, sandbox, &observed, at, evidence_parent),
+            |&(store, holder, sandbox, observed, at, evidence_parent), session| {
                 Box::pin(async move {
+                    if let Some(parent) = evidence_parent {
+                        let matched = store.collection("sandboxes").update_one(
+                            doc! {"_id":sandbox,"owner":parent.owner.as_str(),"revision":parent.revision as i64},
+                            doc! {"$inc":{"measured_observation_fence_v1":1_i64}})
+                            .session(&mut *session).await.map_err(tx::mongo)?.matched_count;
+                        if matched != 1 { return Err(tx::domain(MetricsError::Unavailable)); }
+                    }
                     for kind in [BindingKind::Compute, BindingKind::Home] {
                         let kind_value = encode(&kind).map_err(tx::domain)?;
                         let filter =
@@ -104,6 +124,11 @@ impl ReportingStore {
                                 .session(&mut *session)
                                 .await
                                 .map_err(tx::mongo)?;
+                            if unchanged {
+                                if let Some(parent) = evidence_parent {
+                                    super::sandbox_usage_export::retain_binding_bridge(store, session, &previous, parent, at).await?;
+                                }
+                            }
                             if result.matched_count != 1 {
                                 return Err(tx::domain(MetricsError::Unavailable));
                             }
@@ -121,6 +146,9 @@ impl ReportingStore {
                                     .session(&mut *session)
                                     .await
                                     .map_err(tx::mongo)?;
+                                if let Some(parent) = evidence_parent {
+                                    super::sandbox_usage_export::retain_binding_bridge(store, session, &b, parent, at).await?;
+                                }
                             }
                             store
                                 .collection(super::usage_reports::CONTROL)

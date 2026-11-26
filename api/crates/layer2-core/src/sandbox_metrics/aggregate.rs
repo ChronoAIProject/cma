@@ -11,6 +11,15 @@ pub fn aggregate(
     series: &[PhysicalSeries],
     range: Range,
 ) -> Result<Vec<Minute>> {
+    aggregate_observing(bindings, series, range, &mut |_, _, _, _| {})
+}
+
+pub(crate) fn aggregate_observing(
+    bindings: &[Binding],
+    series: &[PhysicalSeries],
+    range: Range,
+    observe: &mut impl FnMut(&Binding, Metric, f64, f64),
+) -> Result<Vec<Minute>> {
     if range.seconds() > 86_400 {
         return Err(MetricsError::Invalid(
             "aggregate chunk exceeds one day".into(),
@@ -101,8 +110,15 @@ pub fn aggregate(
                 .copied()
                 .filter(|s| s.at >= bound.from as f64 && s.at < bound.to as f64)
                 .collect();
+            let mut observed = |metric, from, to| observe(binding, metric, from, to);
             if *metric == Metric::Cpu {
-                counters(&mut minutes, &samples, supported, binding.cpu_limit_cores);
+                counters(
+                    &mut minutes,
+                    &samples,
+                    supported,
+                    binding.cpu_limit_cores,
+                    &mut observed,
+                );
             } else {
                 gauges(
                     &mut minutes,
@@ -111,6 +127,7 @@ pub fn aggregate(
                     *metric,
                     binding.memory_limit_bytes,
                     &capacity_samples,
+                    &mut observed,
                 );
             }
         }
@@ -133,6 +150,7 @@ fn counters(
     samples: &[Sample],
     range: Range,
     capacity: Option<f64>,
+    observe: &mut impl FnMut(Metric, f64, f64),
 ) {
     let mut baseline = 0;
     for (i, pair) in samples.windows(2).enumerate() {
@@ -158,6 +176,7 @@ fn counters(
                 capacity,
             },
             Metric::Cpu,
+            observe,
         );
     }
 }
@@ -168,6 +187,7 @@ fn gauges(
     metric: Metric,
     memory_capacity: Option<f64>,
     capacities: &[Sample],
+    observe: &mut impl FnMut(Metric, f64, f64),
 ) {
     for (i, sample) in samples.iter().enumerate() {
         let end = samples
@@ -207,6 +227,7 @@ fn gauges(
                     capacity,
                 },
                 metric,
+                observe,
             );
             from = to;
         }
@@ -220,7 +241,15 @@ struct Segment {
     observed_at: f64,
     capacity: Option<f64>,
 }
-fn add(minutes: &mut BTreeMap<u64, Minute>, s: Segment, metric: Metric) {
+fn add(
+    minutes: &mut BTreeMap<u64, Minute>,
+    s: Segment,
+    metric: Metric,
+    observe: &mut impl FnMut(Metric, f64, f64),
+) {
+    if s.from < s.to {
+        observe(metric, s.from, s.to);
+    }
     visit(minutes, s.from, s.to, metric, |v, seconds| {
         v.integral += s.value * seconds;
         v.display_integral += s.envelope * seconds;

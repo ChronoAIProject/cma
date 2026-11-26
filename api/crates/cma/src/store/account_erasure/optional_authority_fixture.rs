@@ -36,7 +36,9 @@ impl Fixture {
                 .unwrap()
                 .get_str("collection")
                 .unwrap();
-            (optional || name != collection) && omit != Some(name)
+            (optional || name != collection)
+                && omit != Some(name)
+                && !crate::store::sandbox_usage_export::COLLECTIONS.contains(&name)
         });
         if let Some(missing) = missing {
             for grant in role.get_array_mut("privileges").unwrap() {

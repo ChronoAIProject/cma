@@ -85,7 +85,13 @@ impl MetricsWorkers {
                     }
                     // Serialize mapping revision/CAS commits after concurrent I/O.
                     self.store
-                        .reconcile_bindings(holder, sandbox.id.as_str(), bindings, at)
+                        .reconcile_bindings_with_evidence(
+                            holder,
+                            sandbox.id.as_str(),
+                            bindings,
+                            at,
+                            self.measured.as_ref().map(|_| &sandbox),
+                        )
                         .await?;
                     max_proof_age_seconds = max_proof_age_seconds
                         .max(crate::store::usage_reports::now().saturating_sub(at));
