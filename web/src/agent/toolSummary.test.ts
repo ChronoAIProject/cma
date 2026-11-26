@@ -65,3 +65,13 @@ it('bounds the final error lines after retaining a reported exit code', () => {
   expect(error.split('\n')).toHaveLength(3);
   expect(error.split('\n').every((line) => line.length <= 240)).toBe(true);
 });
+
+it('explains missing historical deliverable results without claiming a retry is safe', () => {
+  expect(
+    conciseToolError({
+      id: 'delivery',
+      title: 'mcp.cma_access.describe_deliverable',
+      status: 'failed',
+    }),
+  ).toContain('result_projection_unavailable');
+});

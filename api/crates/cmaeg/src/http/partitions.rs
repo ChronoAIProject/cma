@@ -173,7 +173,7 @@ async fn read(
                 &selected.provider.binding_id,
                 &conversation,
                 credential,
-                &loaded.definition.profile,
+                consumer.profile,
             )
             .await
             .map_err(ManagementError::Provider)?

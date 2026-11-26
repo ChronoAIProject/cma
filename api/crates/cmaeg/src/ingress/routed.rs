@@ -279,7 +279,18 @@ impl RoutedIngress {
                     desired.consumer = None;
                     desired.conversation_id = target.event.conversation_id.clone();
                     let (mut assigned, assignment) = self.assign_profile(&desired).await?;
-                    target.provider = assigned.channel.definition.provider.clone();
+                    target.provider = assigned
+                        .channel
+                        .consumer(Some(&target.consumer))
+                        .ok_or_else(|| {
+                            Problem::new(
+                                ProblemCode::AdmissionRefused,
+                                403,
+                                "routing_admission_refused",
+                            )
+                        })?
+                        .provider
+                        .clone();
                     assigned.consumer = request.consumer.clone();
                     assigned.conversation_id = request.conversation_id.clone();
                     (assigned, assignment)
