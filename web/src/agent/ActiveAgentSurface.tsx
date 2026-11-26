@@ -41,7 +41,7 @@ import { messageSubmission } from './messageSubmission';
 import { useFirstTextSend } from './useFirstTextSend';
 import { composerInputAvailability } from './composerPresentation';
 import { turnRetryAvailable } from './turnRetryAvailability';
-import { WORKSPACE_READ_RECONNECTING } from './controllerError';
+import { agentHistoryIssue, WORKSPACE_READ_RECONNECTING } from './controllerError';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -210,11 +210,7 @@ export function ActiveAgentSurface({
     !controlReady ||
     !controller.inputAvailability.allowed ||
     controller.controlsUnavailable === true;
-  const historyIssue = state.historyLoading
-    ? 'Loading conversation activity.'
-    : state.historyUnavailable
-      ? 'Earlier activity could not be loaded. Retrying…'
-      : undefined;
+  const historyIssue = agentHistoryIssue(state);
   const issue = state.workspaceUnavailable
     ? WORKSPACE_READ_RECONNECTING
     : historyIssue !== undefined

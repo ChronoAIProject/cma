@@ -7,7 +7,11 @@ import { activityEntries } from './sandbox/activity';
 import { Button } from './ui/Button';
 import { IconCheckOutline16, IconCopyOutline16, IconWarningOutline16 } from './ui/icons';
 import './DeletionPresentation.css';
-import { stoppedProofMissing, deleteMayHaveBeenSent } from './agent/stopDeletion';
+import {
+  blockedBeforeDelete,
+  deleteMayHaveBeenSent,
+  stoppedProofMissing,
+} from './agent/stopDeletion';
 
 export function DeletionReference({ request }: { readonly request: DeletionRequest }) {
   const [copy, setCopy] = useState<'copied' | 'failed'>();
@@ -37,6 +41,51 @@ export function DeletionReference({ request }: { readonly request: DeletionReque
         </p>
       )}
     </div>
+  );
+}
+
+export function DeletionStatusActions({
+  request,
+  complete,
+  sending,
+  enabled,
+  canRefresh,
+  onClose,
+  onRetry,
+  onAbandon,
+  onRefresh,
+}: {
+  readonly request: DeletionRequest;
+  readonly complete: boolean;
+  readonly sending: boolean;
+  readonly enabled: boolean;
+  readonly canRefresh: boolean;
+  readonly onClose: () => void;
+  readonly onRetry: () => void;
+  readonly onAbandon: () => void;
+  readonly onRefresh: () => void;
+}) {
+  return (
+    <>
+      <Button disabled={sending} onClick={onClose}>
+        {complete ? 'Done' : 'Close'}
+      </Button>
+      {!request.accepted && !complete ? (
+        <Button
+          variant="primary"
+          disabled={sending || blockedBeforeDelete(request) || !enabled}
+          onClick={onRetry}
+        >
+          {request.stop?.phase === 'requested' && !deleteMayHaveBeenSent(request)
+            ? 'Retry stop request'
+            : 'Check request'}
+        </Button>
+      ) : null}
+      {request.stop?.phase === 'blocked' && !request.accepted && !complete ? (
+        <Button onClick={onAbandon}>End this request</Button>
+      ) : null}
+      {canRefresh && !complete ? <Button onClick={onRefresh}>Refresh status</Button> : null}
+    </>
   );
 }
 
