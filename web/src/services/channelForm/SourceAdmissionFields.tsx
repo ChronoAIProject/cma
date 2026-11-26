@@ -21,6 +21,7 @@ export function SourceAdmissionFields({
       allowReplyToBot={value.type !== 'native_lark' && !whatsapp}
       privateChats={whatsapp && strings(value.group_ids).length === 0}
       allowGroupMentions={!whatsapp}
+      requireAllowedSender={value.type === 'native_lark'}
     />
   );
 }

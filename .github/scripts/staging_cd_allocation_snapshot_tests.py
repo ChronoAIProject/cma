@@ -45,7 +45,7 @@ class AllocationSnapshotTests(unittest.TestCase):
                 matrix = self.allocate(server, store)
                 tasks = json.loads(matrix["include"][0]["tasks"])
                 self.assertEqual(len(tasks), 1)
-                self.assertEqual(tasks[0]["reservation"]["version"], "0.10.26")
+                self.assertEqual(tasks[0]["reservation"]["version"], "0.10.27" if component == "runtime" else "0.10.26")
                 self.assertEqual([args[1] for args in server.commands].count("ls-remote"), 1)
                 pushes = [args for args in server.commands if args[1] == "push"]
                 self.assertEqual(len(pushes), 1)
@@ -75,7 +75,8 @@ class AllocationSnapshotTests(unittest.TestCase):
         self.assertEqual(len(result["include"]), 5)
         expected = {key: server.sources[14 - i] for i, key in enumerate(DEPLOYABLES)}
         self.assertEqual({item["component"]: item["source"] for item in store.planned}, expected)
-        self.assertTrue(all(item["version"] == "0.10.1" for item in store.list()))
+        self.assertEqual({item["component"]: item["version"] for item in store.list()},
+                         {key: "0.10.2" if key == "runtime" else "0.10.1" for key in expected})
         self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertEqual(len([path for path in server.calls if path.startswith("git/ref/tags/")]), 5)
         self.assertEqual({p.split("/")[1] for p in server.calls if p.startswith("commits/")}, set(expected.values()))
@@ -443,7 +444,8 @@ class AllocationSnapshotTests(unittest.TestCase):
         self.assertEqual(len([path for path in server.calls if path.startswith("git/ref/tags/")]), 5)
         self.assertEqual(len([path for path in server.calls if path.startswith("actions/")]), 0)
         for group in matrix["include"]:
-            self.assertEqual(json.loads(group["tasks"])[0]["reservation"]["version"], "0.10.5")
+            expected = "0.10.6" if group["component"] == "runtime" else "0.10.5"
+            self.assertEqual(json.loads(group["tasks"])[0]["reservation"]["version"], expected)
 
     def test_unsupported_upgrade_label_prevents_the_entire_batch(self):
         server, store = self.fixture(3, reserved=False)

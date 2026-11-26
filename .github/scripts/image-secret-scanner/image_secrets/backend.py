@@ -99,11 +99,19 @@ class Gitleaks:
         # A depth-limit, unreadable archive, or other skipped input invalidates CLEAN.
         # The only expected warning is Gitleaks' final finding count; never publish log text.
         messages = error_log.read_text(errors="replace").splitlines()
-        unexpected_warning = any(
-            not re.fullmatch(r".*\bWRN leaks found: \d+\s*", line) for line in messages if line.strip()
-        )
-        if result.returncode not in (0, 1) or not raw.is_file() or unexpected_warning:
+        counts = []
+        for line in messages:
+            if not line.strip():
+                continue
+            match = re.fullmatch(r".*\bWRN leaks found: ([0-9]{1,12})\s*", line)
+            if match is None:
+                raise ScanError("gitleaks-incomplete")
+            counts.append(int(match.group(1)))
+        if result.returncode not in (0, 1) or not raw.is_file() or len(counts) > 1:
             raise ScanError("gitleaks-incomplete")
+        detector_count = counts[0] if counts else 0
+        if bool(detector_count) != (result.returncode == 1):
+            raise ScanError("gitleaks-result-inconsistent")
         index = self.index(stage, locations)
         digests = {} if digests is None else digests
         cacheable = True
@@ -126,7 +134,7 @@ class Gitleaks:
             if physical not in digests:
                 digests[physical] = digest_file(physical)
             mapped.append((physical.name, "gitleaks." + rule, digest_bytes(secret.encode()), line, location, physical))
-        if bool(mapped) != (result.returncode == 1):
+        if len(mapped) != detector_count:
             raise ScanError("gitleaks-result-inconsistent")
         # Gitleaks workers may return rows in different orders. Canonical mapping
         # makes cold and reused evidence identical without dropping occurrences.

@@ -26,6 +26,24 @@ fn enabled(setup: &mut Setup) -> Arc<Queue> {
         .plans = setup.server.store().with_admission_queue(queue.clone());
     queue
 }
+
+#[tokio::test]
+async fn command_refusal_precedes_every_new_default_dispatch() {
+    let request = fixture::request(|_| {}, fixture::message("/to absent-fixture hello"));
+    for (selected, replicated) in [(false, false), (false, true), (true, false), (true, true)] {
+        let mut setup = Setup::new(&request, selected).await;
+        if replicated {
+            enabled(&mut setup);
+        }
+        assert!(matches!(
+            setup.launch(request.clone(), b"wire", true).await,
+            LaunchOutcome::Refused(Problem { status: 403, detail: Some(detail), .. })
+                if detail == "target_unknown"
+        ));
+        assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), 0);
+        assert_eq!(setup.legacy.0.load(Ordering::SeqCst), 0);
+    }
+}
 async fn one(setup: &Setup) -> AdmittedPlan {
     let page = setup
         .server
@@ -36,6 +54,109 @@ async fn one(setup: &Setup) -> AdmittedPlan {
     assert!(page.issues.is_empty());
     assert_eq!(page.plans.len(), 1);
     page.plans.into_iter().next().unwrap()
+}
+
+async fn assert_command_replay(setup: &Setup, request: LaunchRequest, original: AdmittedPlan) {
+    let writes = setup.server.memory.writes.load(Ordering::SeqCst);
+    let expected = (
+        original.admission_id.clone(),
+        request.conversation_id.clone(),
+    );
+    assert_eq!(original.targets.len(), 1);
+    assert!(original.targets[0].launch.consumer.is_default());
+    assert_eq!(
+        original.targets[0].launch.idempotency_key,
+        request.idempotency_key
+    );
+    assert_eq!(original.source_body, b"original command bytes");
+    assert_eq!(
+        admitted(
+            setup
+                .launch(request.clone(), &original.source_body, true)
+                .await
+        ),
+        expected
+    );
+    assert!(matches!(
+        setup
+            .launch(request.clone(), b"changed command bytes", true)
+            .await,
+        LaunchOutcome::Refused(Problem { status: 409, .. })
+    ));
+
+    let mut fresh = request;
+    fresh.activity.event_id = fixture::event_id("another-event");
+    fresh.idempotency_key = cmaeg_core::ids::IdempotencyKey::from_event(&fresh.activity.event_id);
+    let activity = fresh.activity.clone();
+    fixture::rewrite_ref(&mut fresh, |event| {
+        event.event_id = activity.event_id.clone();
+        event.activity_sha256 = Some(activity_digest(&activity));
+    });
+    assert!(matches!(
+        setup.launch(fresh, &original.source_body, true).await,
+        LaunchOutcome::Refused(Problem { status: 403, detail: Some(detail), .. })
+            if detail == "target_unknown"
+    ));
+    assert_eq!(one(setup).await, original);
+    assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), writes);
+    assert_eq!(setup.legacy.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn retained_compatibility_command_replays_before_current_command_policy() {
+    for selected in [false, true] {
+        let mut request = fixture::request(
+            |value| value["routing"]["addressing"]["command"] = false.into(),
+            fixture::message("/to absent-fixture hello"),
+        );
+        let mut setup = Setup::new(&request, false).await;
+        enabled(&mut setup);
+        admitted(
+            setup
+                .launch(request.clone(), b"original command bytes", true)
+                .await,
+        );
+        let original = one(&setup).await;
+        assert!(original.is_compatibility());
+        Arc::make_mut(&mut request.channel)
+            .definition
+            .routing
+            .as_mut()
+            .unwrap()
+            .addressing
+            .command = true;
+        if selected {
+            Arc::get_mut(setup.state.routed.as_mut().unwrap())
+                .unwrap()
+                .records
+                .insert(request.channel.pointer.record_id.to_string());
+        }
+        assert_command_replay(&setup, request, original).await;
+    }
+}
+
+#[tokio::test]
+async fn admitted_default_alias_replays_after_alias_rename() {
+    for selected in [false, true] {
+        let mut request = fixture::request(|_| {}, fixture::message("/to lead hello"));
+        let mut setup = Setup::new(&request, selected).await;
+        enabled(&mut setup);
+        admitted(
+            setup
+                .launch(request.clone(), b"original command bytes", true)
+                .await,
+        );
+        let original = one(&setup).await;
+        assert_eq!(original.is_compatibility(), !selected);
+        Arc::make_mut(&mut request.channel)
+            .definition
+            .routing
+            .as_mut()
+            .unwrap()
+            .default_consumer
+            .name = cmaeg_core::ids::ConsumerName::parse("renamed").unwrap();
+        assert_command_replay(&setup, request, original).await;
+    }
 }
 fn interactive() -> LaunchRequest {
     let mut request = request();

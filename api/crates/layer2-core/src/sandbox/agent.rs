@@ -375,11 +375,15 @@ impl Agent {
                     | AgentWorkStep::DispatchFirstMessage
                     | AgentWorkStep::None
             );
+        // Workspace readiness only observes the parents before a fenced
+        // publication. Stop can supersede that claim without a runtime wait.
+        let readiness_only =
+            self.work.step == AgentWorkStep::WaitForWorkspace && self.has_no_runtime_effects();
         let cleanup_not_before = self
             .work
             .lease
             .as_ref()
-            .filter(|lease| !process_is_published && lease.expires_at > at)
+            .filter(|lease| !process_is_published && !readiness_only && lease.expires_at > at)
             .map(|lease| lease.expires_at.clone());
         self.work
             .schedule(super::AgentWorkStep::FenceInteraction, at);

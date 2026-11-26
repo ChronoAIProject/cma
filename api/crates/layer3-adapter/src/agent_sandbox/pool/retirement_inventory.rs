@@ -1,7 +1,7 @@
 //! Complete absence evidence for spare capacity; user resources are never deleted.
 use super::{
     cleanup_inventory::complete, rejected, runtime_upgrade::RuntimeUpgradeProof, AgentSandboxPools,
-    NativePoolBinding, NativePoolHomeOrigin, Result,
+    NativePoolBinding, NativePoolClaim, NativePoolHomeOrigin, Result,
 };
 use crate::HomeVolumeAttachment;
 use kube::{api::DynamicObject, ResourceExt};
@@ -50,27 +50,27 @@ impl AgentSandboxPools {
     pub(super) fn verify_retained_claim_inventory(
         &self,
         binding: &NativePoolBinding,
-        origins: &[&NativePoolHomeOrigin],
+        expected_claims: &[&NativePoolClaim],
         claims: &[DynamicObject],
     ) -> Result<()> {
         let mut seen_claims = BTreeSet::new();
         for claim in claims {
             let recorded_pool = recorded_claim_pool(claim, binding, &self.config.deployment)?;
-            let expected = origins.iter().find(|o| {
-                claim.uid().as_deref() == Some(&o.claim.uid) || claim.name_any() == o.claim.name
-            });
+            let expected = expected_claims
+                .iter()
+                .find(|o| claim.uid().as_deref() == Some(&o.uid) || claim.name_any() == o.name);
             if let Some(expected) = expected {
                 super::claims::verify_claim(
                     claim,
-                    &super::model::claim(&self.config, &expected.claim.request)?,
+                    &super::model::claim(&self.config, &expected.request)?,
                 )?;
-                if claim.uid().as_deref() != Some(&expected.claim.uid)
-                    || super::claims::receipt(&expected.claim.request, claim)?.sandbox_name
-                        != expected.claim.sandbox_name
+                if claim.uid().as_deref() != Some(&expected.uid)
+                    || super::claims::receipt(&expected.request, claim)?.sandbox_name
+                        != expected.sandbox_name
                 {
                     return Err(rejected("native retirement retained Claim changed"));
                 }
-                seen_claims.insert(expected.claim.uid.clone());
+                seen_claims.insert(expected.uid.clone());
             } else if claim
                 .data
                 .pointer("/spec/warmPoolRef/name")
@@ -89,7 +89,7 @@ impl AgentSandboxPools {
                 ));
             }
         }
-        if seen_claims.len() != origins.len() {
+        if seen_claims.len() != expected_claims.len() {
             return Err(rejected(
                 "native retirement inventory lost a retained Claim",
             ));
@@ -116,7 +116,8 @@ impl AgentSandboxPools {
         let volumes = volumes?;
         let pools = pools?;
         let origins = homes.iter().map(origin).collect::<Result<Vec<_>>>()?;
-        self.verify_retained_claim_inventory(binding, &origins, &claims)?;
+        let expected_claims = origins.iter().map(|o| &o.claim).collect::<Vec<_>>();
+        self.verify_retained_claim_inventory(binding, &expected_claims, &claims)?;
         for pool in pools {
             if pool.name_any() == binding.name {
                 if pool.uid().as_deref() != Some(&binding.uid) {
@@ -236,7 +237,7 @@ fn recorded_claim_pool(
         || request.pool.template_uid == binding.template_uid)
 }
 
-fn owners<K: kube::Resource>(
+pub(super) fn owners<K: kube::Resource>(
     resource: &K,
 ) -> &[k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference] {
     resource

@@ -35,7 +35,7 @@ export function taskPresentation(
   const failed = sandboxHasParkedRuntimeUpdate(sandbox);
   if (parent.status === 'rotating' || failed) {
     const recorded = observedTaskStatus(agent, undefined, currentTask);
-    const ended = recorded === 'failed' || recorded === 'stopped';
+    const ended = recorded === 'failed' || recorded === 'interrupted' || recorded === 'stopped';
     const showRecordedOutcome = ended || recorded === 'completed';
     const group = failed ? 'Needs attention' : 'Updating environment';
     return {

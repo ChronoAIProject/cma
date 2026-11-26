@@ -8,7 +8,10 @@ use layer1_public::rest::admin::warm_pools::{
 };
 use layer2_core::{Caller, Capability};
 use layer3_adapter::{
-    agent_sandbox::{NativePoolBinding, NativePoolConfiguration, NativePoolSpec, NativePoolStatus},
+    agent_sandbox::{
+        NativePoolBinding, NativePoolConfiguration, NativePoolDrain, NativePoolSpec,
+        NativePoolStatus,
+    },
     HomeVolumePolicy, RuntimeImage, SandboxAdapter,
 };
 use serde::{Deserialize, Serialize};
@@ -21,7 +24,7 @@ mod released;
 mod retirement;
 pub(crate) mod startup;
 mod supervision;
-mod telemetry;
+pub(crate) mod telemetry;
 mod view;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -92,7 +95,7 @@ pub(crate) trait PoolTargetStore: Send + Sync {
         &self,
         _target: &PoolTarget,
         _image: &str,
-    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
     async fn begin_retirement(&self, _target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
@@ -421,6 +424,7 @@ async fn reconcile_one(
 enum PoolApply {
     Settled,
     ConfigurationDrift,
+    Failed,
 }
 
 fn provider_apply_error(error: layer3_adapter::AdapterError) -> WarmPoolError {
@@ -476,8 +480,10 @@ async fn reconcile_claimed(
     Ok(
         if matches!(result, Ok(Err(WarmPoolError::ProviderConfigurationDrift))) {
             PoolApply::ConfigurationDrift
-        } else {
+        } else if success {
             PoolApply::Settled
+        } else {
+            PoolApply::Failed
         },
     )
 }

@@ -82,7 +82,7 @@ class TransitionTests(unittest.TestCase):
 
     def allocate(self, head, changes, *, proofs=None):
         return allocate_queue({"head": head, "event_source": head, "changes": changes,
-                               "contract_transition": self.anchor}, self.api, self.store, 999, 1, proofs=proofs)
+                               "contract_transition": self.anchor}, self.api, self.store, 999, 1, read_proofs=lambda: proofs or {})
 
     def successor(self):
         matrix = self.allocate(self.head, self.rows)

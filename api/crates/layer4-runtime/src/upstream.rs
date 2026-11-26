@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::any;
 use axum::Router;
@@ -14,9 +14,11 @@ use crate::failure::{Result, RuntimeError};
 use crate::upstream_target::TargetBase;
 #[path = "github_scope_proxy.rs"]
 pub(crate) mod github_scope;
-#[path = "upstream_response_headers.rs"]
-mod response_headers;
-pub(crate) use response_headers::{encoded, headers_contain};
+#[path = "github_write_proxy.rs"]
+mod github_write;
+#[path = "upstream_headers.rs"]
+mod headers;
+pub(crate) use headers::{copy_request_headers, copy_response_headers, encoded, headers_contain};
 
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CREDENTIAL_BYTES: usize = 64 * 1024;
@@ -137,6 +139,7 @@ struct ProxyState {
     target: TargetBase,
     credential: CredentialHolder,
     client: reqwest::Client,
+    github_client: Option<reqwest::Client>,
     allowed_host: Option<&'static str>,
     model_proxy: bool,
     model_credit_required: bool,
@@ -253,6 +256,7 @@ fn proxy_router(
         target,
         credential,
         client,
+        github_client: (!model_proxy).then(github_write::client),
         allowed_host,
         model_proxy,
         model_credit_required,
@@ -287,6 +291,16 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
             .into_response();
     };
     let (parts, body) = request.into_parts();
+    let route = credential.github_route.as_ref();
+    let github_client = state.github_client.as_ref().filter(|_| {
+        github_write::is_write(
+            state.allowed_host,
+            state.model_proxy,
+            &parts.method,
+            &parts.uri,
+            route,
+        )
+    });
     let github_scope = credential.github_route.as_ref().and_then(|route| {
         let scoped = route.repository_scope.as_ref()?;
         github_scope::is_selected_route(state.allowed_host, state.model_proxy, &parts.uri, route)
@@ -321,6 +335,16 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
     };
     let target = match target {
         Ok(target) => target,
+        Err(error) if github_client.is_some() => {
+            return github_write::failure(
+                StatusCode::BAD_REQUEST,
+                &error.code,
+                &error.detail,
+                false,
+                route,
+                credential.generation,
+            )
+        }
         Err(error) => return (StatusCode::BAD_REQUEST, error.detail).into_response(),
     };
     let body = match axum::body::to_bytes(body, MAX_REQUEST_BYTES).await {
@@ -365,8 +389,15 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
     };
     outbound.headers_mut().insert(header::AUTHORIZATION, bearer);
     *outbound.body_mut() = Some(body.to_vec().into());
-    let response = match state.client.execute(outbound).await {
+    if github_client.is_some() {
+        github_write::set_deadline(&mut outbound);
+    }
+    let client = github_client.unwrap_or(&state.client);
+    let response = match client.execute(outbound).await {
         Ok(response) => response,
+        Err(error) if github_client.is_some() => {
+            return github_write::transport_error(&error, route, credential.generation)
+        }
         Err(error) => {
             tracing::warn!(error = %error.without_url(), "credential proxy upstream request failed");
             return (StatusCode::BAD_GATEWAY, "upstream request failed").into_response();
@@ -423,58 +454,6 @@ fn allowed_request_host(request: &Request, host: &str) -> bool {
             .uri()
             .authority()
             .is_none_or(|authority| matches(authority.as_str()))
-}
-
-pub(crate) fn copy_request_headers(source: &HeaderMap, target: &mut HeaderMap) {
-    for (name, value) in source {
-        if !owned_header(name.as_str()) && name.as_str() != github_scope::SOURCE_AUTHORITY_HEADER {
-            target.insert(name, value.clone());
-        }
-    }
-    target.insert(
-        header::ACCEPT_ENCODING,
-        HeaderValue::from_static("identity"),
-    );
-}
-
-pub(crate) fn copy_response_headers(source: &HeaderMap, target: &mut HeaderMap) {
-    for (name, value) in source {
-        if !hop_header(name.as_str()) && name != header::CONTENT_LENGTH {
-            target.insert(name, value.clone());
-        }
-    }
-}
-
-fn owned_header(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "authorization"
-            | "open-sandbox-api-key"
-            | "host"
-            | "content-length"
-            | "accept-encoding"
-            | "connection"
-            | "proxy-authorization"
-            | "proxy-authenticate"
-            | "te"
-            | "trailer"
-            | "transfer-encoding"
-            | "upgrade"
-    )
-}
-
-fn hop_header(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "connection"
-            | "keep-alive"
-            | "proxy-authenticate"
-            | "proxy-authorization"
-            | "te"
-            | "trailer"
-            | "transfer-encoding"
-            | "upgrade"
-    )
 }
 
 #[cfg(test)]

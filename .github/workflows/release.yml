@@ -80,11 +80,8 @@ jobs:
       - name: main is an ancestor of the release head
         # Every release leaves a merge commit on main that develop does not
         # have, so main ends one commit ahead and the next release PR reads
-        # BEHIND. publish.yml now opens the back-merge itself; this says so
-        # early and in words when something has gone wrong anyway, rather than
-        # letting an author find out from a merge button after every gate has
-        # already run. The head is the PR's own: develop, or a release branch
-        # cut from it.
+        # BEHIND. The prior publication's summary links the verified branch.
+        # The head is the PR's own: develop, or a release branch cut from it.
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -97,8 +94,7 @@ jobs:
             exit 0
           fi
           echo "::error::The release head does not contain main, so this cannot merge."
-          echo "::error::Merge origin/main into develop first — it carries no content,"
-          echo "::error::only the merge commit from the last release — then cut the release again."
+          echo "::error::Reconcile main through a back-merge PR, then cut the release again. See the last publication for the back-merge result."
           git log --oneline "$HEAD_SHA"..origin/main
           exit 1
 

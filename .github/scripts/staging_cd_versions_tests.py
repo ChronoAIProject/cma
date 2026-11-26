@@ -72,7 +72,7 @@ class VersionTests(unittest.TestCase):
         self.assertEqual(eg.version, "1.0.0")
         for component, package in versions.DEPLOYABLES.items():
             plan = versions.plan_version(component, "patch", [], REVISION)
-            self.assertEqual(plan.version, "0.10.1")
+            self.assertEqual(plan.version, "0.10.2" if component == "runtime" else "0.10.1")
             self.assertEqual(plan.repository, "ghcr.io/chronoaiproject/" + package)
 
     def test_mutable_malformed_duplicate_and_already_claimed_tags_fail(self):

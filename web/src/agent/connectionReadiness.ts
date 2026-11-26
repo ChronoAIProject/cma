@@ -10,11 +10,22 @@ export function useAgentConnectionReadiness(
   enabled: boolean,
 ) {
   const [revision, setRevision] = useState(0);
+  const identityScope = useMemo(() => ({ agentId, owner, context }), [agentId, owner, context]);
   const scope = useMemo(
-    () => ({ agentId, owner, context, enabled, revision }),
-    [agentId, owner, context, enabled, revision],
+    () => ({ ...identityScope, identityScope, enabled, revision }),
+    [identityScope, enabled, revision],
   );
+  const contradicted = useRef<typeof identityScope | undefined>(undefined);
+  const [ownerMismatch, setOwnerMismatch] = useState<typeof identityScope>();
   const active = useRef<typeof scope | undefined>(undefined);
+  const ownerIdentityCurrent = useCallback(
+    () =>
+      owner !== undefined &&
+      active.current?.identityScope === identityScope &&
+      active.current.enabled &&
+      contradicted.current !== identityScope,
+    [identityScope, owner],
+  );
   const prepared = useRef<
     | {
         readonly scope: typeof scope;
@@ -53,17 +64,25 @@ export function useAgentConnectionReadiness(
     (report: ConnectionReport) => {
       if (!enabled || active.current !== scope) return;
       prepared.current = undefined;
-      if (owner !== undefined && report.owner !== owner)
+      if (owner !== undefined && report.owner !== owner) {
+        contradicted.current = identityScope;
+        setOwnerMismatch(identityScope);
         setResult({
           scope,
           error: 'Your CMA account changed. Open the Agent again to continue.',
         });
-      else if (report.ready) setResult({ scope, verified: report });
+        return;
+      }
+      if (owner !== undefined && report.owner === owner) {
+        contradicted.current = undefined;
+        setOwnerMismatch(undefined);
+      }
+      if (report.ready) setResult({ scope, verified: report });
       else if (report.services.some((row) => row.state === 'missing' || row.state === 'inactive'))
         setResult({ scope, needed: true });
       else setResult({ scope, error: 'The connections could not be verified. Please try again.' });
     },
-    [enabled, owner, scope],
+    [enabled, identityScope, owner, scope],
   );
   useEffect(() => {
     if (!enabled) return;
@@ -98,6 +117,8 @@ export function useAgentConnectionReadiness(
   return {
     scope,
     verified: current?.verified,
+    ownerMismatch: ownerMismatch === identityScope,
+    ownerIdentityCurrent,
     needed: current?.needed === true,
     error: current?.error,
     accept,

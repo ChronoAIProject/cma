@@ -184,10 +184,13 @@ def dockerfile(operation, max_content=None, *, compact_registry=False, max_archi
     # A unique RUN environment invalidates the bridge layer without that flag.
     header = f"FROM {BRIDGE_IMAGE} AS transfer\nARG CMA_CACHE_TRANSFER\n"
     if operation in ("inject", "inject-target"):
-        archives = " ".join(f"{name}.tar.gz" for name in names)
+        # The compressed inputs are needed only while tar populates the
+        # mounts. Keep them out of BuildKit's intermediate image layers.
+        archives = " ".join(f"--mount=type=bind,source={name}.tar.gz,target=/restore/{name}.tar.gz"
+                            for name in names)
         commands = "; ".join(f"tar -xzpf /restore/{name}.tar.gz -C /cache/{name}" for name in names)
-        return (header + f"COPY {archives} /restore/\n"
-                + f'RUN --network=none {mounts} set -eu; test -n "$CMA_CACHE_TRANSFER"; {commands}\n')
+        return (header + f"RUN --network=none {mounts} {archives} "
+                + f'set -eu; test -n "$CMA_CACHE_TRANSFER"; {commands}\n')
     require(operation == "extract", "unknown cache transfer")
     bound_kib = (MAX_CONTENT_BYTES if max_content is None else max_content) // 1024
     if compact_registry:
@@ -209,8 +212,7 @@ def dockerfile(operation, max_content=None, *, compact_registry=False, max_archi
         "FROM scratch\nCOPY --from=transfer /out/ /\n")
 
 
-def transfer(operation, directory, builder=None, *, namespace=None, timeout=150, max_content=None,
-             compact_registry=False, max_archive=None):
+def transfer_command(builder, namespace):
     env = {key: value for key, value in os.environ.items()
            if key in ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")}
     command = ["docker", "buildx", "build", "--platform", "linux/amd64", "--progress=plain",
@@ -219,6 +221,12 @@ def transfer(operation, directory, builder=None, *, namespace=None, timeout=150,
         command += ["--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + namespace]
     if builder:
         command += ["--builder", builder]
+    return command, env
+
+
+def transfer(operation, directory, builder=None, *, namespace=None, timeout=150, max_content=None,
+             compact_registry=False, max_archive=None):
+    command, env = transfer_command(builder, namespace)
     if operation in ("inject", "inject-target"):
         command += ["--output", "type=cacheonly", "--file", "-", str(directory)]
         subprocess.run(command, input=dockerfile(operation, max_content), text=True, check=True,
@@ -228,6 +236,17 @@ def transfer(operation, directory, builder=None, *, namespace=None, timeout=150,
             command += ["--output", f"type=local,dest={directory}", "--file", "-", empty]
             subprocess.run(command, input=dockerfile(operation, max_content, compact_registry=compact_registry, max_archive=max_archive),
                            text=True, check=True, timeout=timeout, env=env)
+
+
+def start_extract(directory, context, *, namespace, max_content, max_archive):
+    """Start the bounded staging export in a process group owned by the publisher."""
+    context.mkdir(mode=0o700)
+    recipe = context / "Dockerfile"
+    recipe.write_text(dockerfile("extract", max_content, compact_registry=True, max_archive=max_archive))
+    command, env = transfer_command(None, namespace)
+    command += ["--output", f"type=local,dest={directory}", "--file", str(recipe), str(context)]
+    return subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
 
 
 def seal(directory, prefix, *, family=None, max_archive=None, max_content=None):
