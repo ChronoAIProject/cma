@@ -41,10 +41,28 @@ async fn exercise_owner_stop_restart(historical: bool, segmented: bool) {
     let skills = Arc::new(EmptyAgentSkillResolver);
     let mut harness =
         Harness::with_store_services_home(store.clone(), skills.clone(), 1, None, true).await;
-    let sandbox = store
+    let mut sandbox = store
         .get_sandbox(&harness.workspace.sandbox_id)
         .await
         .unwrap()
+        .unwrap();
+    // The production access-tool source runs before the native successor Open.
+    // A synthetic runtime alone cannot catch a refusal at that boundary.
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode([9_u8; 32]);
+    let encryption = crate::store::AuthEncryptionKey::from_base64(&encoded).unwrap();
+    let access_tools = crate::store::MongoAgentAccessToolSource::new(
+        store.clone(),
+        "https://control.example.test",
+        &encryption,
+    )
+    .unwrap();
+    sandbox.credential.current.as_mut().unwrap().expires_at =
+        rfc3339_at(SystemTime::now() + Duration::from_secs(3600));
+    sandbox.revision += 1;
+    store
+        .save_sandbox(sandbox.revision - 1, sandbox.clone())
+        .await
         .unwrap();
     let close_proofs = Arc::new(AtomicUsize::new(0));
     let close_refusal = Arc::new(Mutex::new(
@@ -62,7 +80,8 @@ async fn exercise_owner_stop_restart(historical: bool, segmented: bool) {
                 close_refusal: close_refusal.clone(),
             }),
             CodexSandboxSpec::default(),
-        ),
+        )
+        .with_access_tools(access_tools),
         sandbox.lifecycle.home.as_deref().unwrap(),
     ));
     harness.adapter = adapter.clone();

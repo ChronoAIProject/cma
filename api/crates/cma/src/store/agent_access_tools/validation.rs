@@ -96,21 +96,7 @@ pub(super) fn retained_request(
 }
 
 fn request_identity(snapshot: &AgentProvenanceSnapshot, request: &AgentOpenRequest) -> Result<()> {
-    let lineage = &snapshot.resource.lineage;
-    let agent = lineage.agent.as_ref().ok_or(Error::Refused)?;
-    let tree = lineage.worktree.as_ref().ok_or(Error::Refused)?;
-    let expected = AgentOpenRequest::new(
-        format!("agent:{}:open:v1", agent.id),
-        crate::sandbox::runtime_options(agent, &lineage.sandbox, tree),
-        request.resume_conversation.clone(),
-    );
-    if !request.has_valid_sha256()
-        || request != &expected
-        || request
-            .resume_conversation
-            .as_deref()
-            .is_some_and(|value| agent.conversation.conversation_id.as_deref() != Some(value))
-    {
+    if !crate::store::agent_tool_open::matches(&snapshot.resource.lineage, request) {
         return Err(Error::Refused);
     }
     Ok(())

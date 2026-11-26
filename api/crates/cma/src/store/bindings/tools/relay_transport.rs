@@ -43,6 +43,7 @@ impl MongoProviderToolSource {
         // Settings may legitimately change after installation. The creation,
         // provider, native runtime and pinned profiles must still match exactly.
         current.request_sha256 = scope.request_sha256.clone();
+        current.numbered_open.clone_from(&scope.numbered_open);
         if current != *scope {
             return Err(refused().into());
         }
@@ -122,7 +123,7 @@ impl MongoProviderToolSource {
         if original.conversation != conversation
             || original.boot_id != observed.boot_id
             || scope.runtime.runtime_id != runtime.0
-            || scope.request_sha256 != request.request_sha256
+            || !scope.matches_open(request)
             || scope
                 .runtime
                 .boot_id
