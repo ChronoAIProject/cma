@@ -203,12 +203,13 @@ pub trait HostedBackend: Send + Sync {
             "native retirement challenge is unavailable".into(),
         ))
     }
-    async fn retire_unreachable(
+    /// A receiver fences a running Sandbox. Its absence requires proved suspension.
+    async fn retire_verified(
         &self,
         _handle: &RuntimeHandle,
         _request: &ProviderSandboxRequest,
         _home: &crate::HomeVolumeAttachment,
-        _receiver: &crate::RetirementPod,
+        _receiver: Option<&crate::RetirementPod>,
     ) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "verified provider retirement is unavailable".into(),
@@ -236,6 +237,7 @@ pub trait HostedBackend: Send + Sync {
         &self,
         _handle: &RuntimeHandle,
         _request: &ProviderSandboxRequest,
+        _for_retirement: bool,
     ) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "provider suspension observation is unavailable".into(),

@@ -35,6 +35,9 @@ pub(crate) struct PoolTarget {
     pub id: String,
     #[serde(default)]
     pub activated_at: Option<mongodb::bson::DateTime>,
+    /// Independent order of immutable Desktop plans within a released image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_plan_activated_at: Option<mongodb::bson::DateTime>,
     /// Separate release order; schema 2 keeps older reconcilers from claiming machine pools.
     #[serde(default)]
     pub machine: bool,
@@ -301,6 +304,7 @@ impl WarmPoolAdministration for NativeWarmPools {
         let target = PoolTarget {
             id,
             activated_at: None,
+            machine_plan_activated_at: None,
             machine: false,
             retiring: false,
             retired: false,
@@ -365,6 +369,7 @@ fn default_target(plan: NativePoolConfiguration, requested: ConfigureWarmPoolBod
     PoolTarget {
         id: target_id(SYSTEM_ACTOR, &key),
         activated_at: None,
+        machine_plan_activated_at: None,
         machine: false,
         retiring: false,
         retired: false,

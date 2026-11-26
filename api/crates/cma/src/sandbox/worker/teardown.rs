@@ -17,6 +17,8 @@ impl SandboxWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         if let Some(failure) = self.prepare_retirement_cleanup(&mut sandbox, now).await? {
+            self.suspend_credential_blocked_retirement(&mut sandbox, &failure)
+                .await?;
             return self.retry_failure(sandbox, failure, now).await;
         }
         let funding_completion = sandbox.clone();

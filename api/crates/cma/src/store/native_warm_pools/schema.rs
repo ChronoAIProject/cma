@@ -2,7 +2,11 @@
 use super::*;
 
 pub(super) async fn initialize(database: &Database) -> Result<(), StoreError> {
-    crate::store::schema::ensure_collections(database, &[COLLECTION]).await?;
+    crate::store::schema::ensure_collections(
+        database,
+        &[COLLECTION, crate::store::settings::SETTINGS],
+    )
+    .await?;
     let unknown = doc! {"$or":[
         {"document_schema_version":{"$not":{"$type":["int","long"]}}},
         {"document_schema_version":{"$type":"array"}},

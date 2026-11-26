@@ -93,7 +93,7 @@ impl HostedAdapter {
         self.verify_adoption_home_route(request)?;
         if observe_only {
             self.backend
-                .verify_suspended(&request.handle, &rendered)
+                .verify_suspended(&request.handle, &rendered, false)
                 .await?;
         } else {
             self.backend.suspend(&request.handle, &rendered).await?;
