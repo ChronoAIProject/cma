@@ -300,6 +300,22 @@ class StagingWorkflowTest < Minitest::Test
     end
   end
 
+  def test_protected_web_callers_forward_oidc_to_deployment_only
+    entry = workflow('staging-cd').fetch('jobs').fetch('protected_web')
+    wrapper = workflow('staging-web-continuity').fetch('jobs')
+    epoch = workflow('staging-web-continuity-epoch').fetch('jobs')
+    promotion = workflow('staging-promote').fetch('jobs')
+
+    [entry, wrapper.fetch('protected'), epoch.fetch('promote'),
+     promotion.fetch('deploy'), promotion.fetch('redeploy')].each do |job|
+      assert_equal 'write', job.fetch('permissions')['id-token'], job.fetch('name')
+    end
+    [wrapper.fetch('raw'), epoch.fetch('observe'), epoch.fetch('release'),
+     promotion.fetch('admit'), promotion.fetch('readmit')].each do |job|
+      refute job.fetch('permissions').key?('id-token'), job.fetch('name')
+    end
+  end
+
   def test_credentials_and_write_permissions_cannot_reach_build_or_redeploy
     image = workflow('staging-release')['jobs']['publish']
     final = workflow('staging-release')['jobs']['finalize']
