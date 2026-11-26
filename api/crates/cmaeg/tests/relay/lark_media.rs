@@ -274,8 +274,14 @@ async fn lark_index_follows_nyxid_position() {
     assert_eq!(source, json!({"type": "nyxid_relay", "index": 1}));
 }
 
+#[test]
+fn lark_long_file_name_is_truncated_not_refused() {
+    run_isolated("lark_media::lark_long_file_name_is_truncated_not_refused_child");
+}
+
 #[tokio::test]
-async fn lark_long_file_name_is_truncated_not_refused() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn lark_long_file_name_is_truncated_not_refused_child() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let fixture = media_fixture().await;
     let before = counter(&metrics.render(), &repaired("filename"));
@@ -293,8 +299,14 @@ async fn lark_long_file_name_is_truncated_not_refused() {
     );
 }
 
+#[test]
+fn lark_huge_duration_is_dropped() {
+    run_isolated("lark_media::lark_huge_duration_is_dropped_child");
+}
+
 #[tokio::test]
-async fn lark_huge_duration_is_dropped() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn lark_huge_duration_is_dropped_child() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let fixture = media_fixture().await;
     let before = counter(&metrics.render(), &repaired("duration_seconds"));
@@ -328,8 +340,14 @@ async fn lark_type_mismatch_is_content_unsupported() {
     assert!(fixture.recorder.requests.lock().unwrap().is_empty());
 }
 
+#[test]
+fn lark_unmatched_key_has_no_source() {
+    run_isolated("lark_media::lark_unmatched_key_has_no_source_child");
+}
+
 #[tokio::test]
-async fn lark_unmatched_key_has_no_source() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn lark_unmatched_key_has_no_source_child() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let series =
         |outcome: &str| format!("cmaeg_media_relay_correlation_total{{outcome=\"{outcome}\"}}");
@@ -352,8 +370,14 @@ async fn lark_unmatched_key_has_no_source() {
     assert!(rendered(&fixture).contains("not retrievable through this channel"));
 }
 
+#[test]
+fn lark_invalid_key_degrades() {
+    run_isolated("lark_media::lark_invalid_key_degrades_child");
+}
+
 #[tokio::test]
-async fn lark_invalid_key_degrades() {
+#[ignore = "run by the enclosing telemetry test in its own process"]
+async fn lark_invalid_key_degrades_child() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let series = "cmaeg_media_items_total{source=\"nyxid_relay\",kind=\"image\",outcome=\"invalid_locator\"}";
     let fixture = media_fixture().await;

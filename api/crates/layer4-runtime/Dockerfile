@@ -533,6 +533,7 @@ ENV HOME=/home/cma \
     CHRONO_RUNTIME_HOME_IDENTITY="" \
     PATH=/home/cma/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED=false \
+    CHRONO_RUNTIME_AGENT_PROCESS_RESTART_ENABLED=true \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 \
     TERM=xterm-256color
 EXPOSE 9090
@@ -607,6 +608,7 @@ USER 10001:10001
 ENV HOME=/home/cma CHRONO_RUNTIME_GENERATION=1 CHRONO_RUNTIME_HOME_IDENTITY="" \
     PATH=/home/cma/.local/bin:/usr/local/bin:/usr/share/omarchy/bin:/usr/bin \
     CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED=false \
+    CHRONO_RUNTIME_AGENT_PROCESS_RESTART_ENABLED=true \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 TERM=xterm-256color \
     CODEX_PATH=/usr/local/bin/codex OMARCHY_PATH=/usr/share/omarchy
 EXPOSE 9090

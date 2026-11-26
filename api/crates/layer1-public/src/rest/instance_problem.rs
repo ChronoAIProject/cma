@@ -32,6 +32,8 @@ pub(crate) enum InstanceProblem {
     WorkspaceNotReady,
     AgentNotReady,
     AgentNotStopped,
+    RestartRuntimeUnsupported,
+    RestartTurnUnsettled,
     WorktreeRecoveryConflict,
     AgentLimitReached {
         limit: u8,
@@ -87,6 +89,8 @@ impl InstanceProblem {
             }
             AgentServiceError::InvalidRequest(_) => Self::InvalidRequest,
             AgentServiceError::WorktreeRecoveryConflict => Self::WorktreeRecoveryConflict,
+            AgentServiceError::RestartRuntimeUnsupported => Self::RestartRuntimeUnsupported,
+            AgentServiceError::RestartTurnUnsettled => Self::RestartTurnUnsettled,
             AgentServiceError::CreationConflict
             | AgentServiceError::StatusConflict { .. }
             | AgentServiceError::WorkConflict { .. }
@@ -347,6 +351,18 @@ impl IntoResponse for InstanceProblem {
                 "agent-capability-unsupported",
                 "The agent runtime does not support this operation.",
                 "agent_capability_unsupported",
+            ),
+            Self::RestartRuntimeUnsupported => (
+                StatusCode::CONFLICT,
+                "agent-restart-runtime-unsupported",
+                "This Sandbox runtime does not support Agent restart. Update the Sandbox to a runtime that supports Agent restart, then try again.",
+                "agent_restart_runtime_unsupported",
+            ),
+            Self::RestartTurnUnsettled => (
+                StatusCode::CONFLICT,
+                "agent-restart-turn-unsettled",
+                "The stopped Agent still has an unsettled turn. Ask support to reconcile it before retrying Agent restart or updating this Sandbox.",
+                "agent_restart_turn_unsettled",
             ),
             Self::OperationInFlight => (
                 StatusCode::CONFLICT,

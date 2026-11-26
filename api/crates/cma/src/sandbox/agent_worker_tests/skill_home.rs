@@ -1,5 +1,6 @@
 //! Exact persistent-home authority for live skill capability tests.
 use super::*;
+use layer2_core::sandbox::SandboxHome;
 use layer3_adapter::{
     HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeStore,
 };
@@ -25,7 +26,7 @@ impl HomeVolumeStore for Home {
     }
 }
 pub(super) fn attach(adapter: CodexAdapter, sandbox: &mut Sandbox) -> CodexAdapter {
-    let mut home = layer2_core::sandbox::SandboxHome::reserve(
+    let mut home = SandboxHome::reserve(
         &sandbox.id,
         HomeVolumePolicy {
             mode: Default::default(),
@@ -44,7 +45,11 @@ pub(super) fn attach(adapter: CodexAdapter, sandbox: &mut Sandbox) -> CodexAdapt
         storage_generation: "original-disk".into(),
     })
     .unwrap();
-    let attachment = home.attachment().unwrap();
+    let adapter = with_bound_home(adapter, &home);
     sandbox.lifecycle.home = Some(Box::new(home));
-    adapter.with_home_volumes(Arc::new(Home(attachment)))
+    adapter
+}
+
+pub(super) fn with_bound_home(adapter: CodexAdapter, home: &SandboxHome) -> CodexAdapter {
+    adapter.with_home_volumes(Arc::new(Home(home.attachment().unwrap())))
 }
