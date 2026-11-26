@@ -233,9 +233,101 @@ async fn channel_validator_is_strict(db: &Database) -> Result<bool, RecordError>
     }))
 }
 
+fn fence_validator() -> Document {
+    doc! {"$or": [
+        {"$and": [{"_id": "writer_floor"}, {"version": 1}, {"issuer": {"$type": "string"}}]},
+        {"$jsonSchema": {"bsonType": "object", "required": ["_id", "revision", "cancelled"],
+            "additionalProperties": false,
+            "properties": {
+                "_id": {"bsonType": "object", "required": ["issuer", "kind", "subject", "record"],
+                    "additionalProperties": false,
+                    "properties": {
+                        "issuer": {"bsonType": "string"}, "kind": {"enum": ["human", "organization"]},
+                        "subject": {"bsonType": "string"}, "record": {"bsonType": "string"}
+                    }
+                },
+                "revision": {"bsonType": "long", "minimum": 1}, "cancelled": {"bsonType": "bool"}
+            }
+        }}
+    ]}
+}
+
+async fn marker_catalog(db: &Database) -> Result<(), RecordError> {
+    cma_service_migrations::collection_with_predecessors(
+        db,
+        MIGRATIONS,
+        schema::migration_validator(),
+        false,
+        schema::migration_predecessors(),
+    )
+    .await
+    .map_err(failure)
+}
+
+async fn channel_catalog(db: &Database) -> Result<(), RecordError> {
+    cma_service_migrations::collection_with_guarded_replacement(
+        db,
+        RECORDS,
+        schema::record_validator(true),
+        false,
+        vec![schema::record_validator(false)],
+        None,
+        |validator| async move { set_channel_validator(db, validator).await.map(|_| ()) },
+    )
+    .await
+    .map_err(failure)
+}
+
+pub(crate) async fn inspect_migration(db: &Database, issuer: &str) -> Result<bool, RecordError> {
+    let catalog_ready = cma_service_migrations::inspect(async {
+        marker_catalog(db)
+            .await
+            .map_err(|_| "Channel migration-marker validator unavailable")?;
+        cma_service_migrations::collection(db, CREATE_FENCES, fence_validator(), false)
+            .await
+            .map_err(|_| "Channel create fence validator unavailable")?;
+        channel_catalog(db)
+            .await
+            .map_err(|_| "Channel record validator unavailable")
+    })
+    .await
+    .map_err(|reason| RecordError::Unavailable(reason.into()))?;
+    if installed(db).await? {
+        if !catalog_ready {
+            return Err(RecordError::Unavailable(
+                "Channel create fence catalog drift".into(),
+            ));
+        }
+        return verify(db, issuer).await;
+    }
+
+    if !matches!(
+        validator_phase(db).await?,
+        None | Some(IDLE | FENCED_WRITERS)
+    ) {
+        return Err(RecordError::Unavailable(
+            "Channel validator migration is in progress or unresolved".into(),
+        ));
+    }
+    let retained = db
+        .collection::<Document>(CREATE_FENCES)
+        .find_one(doc! {"_id": "writer_floor"})
+        .read_concern(ReadConcern::majority())
+        .await
+        .map_err(failure)?;
+    if retained.is_some_and(|row| {
+        row.get_str("issuer").ok() != Some(issuer) || row.get_i32("version").ok() != Some(1)
+    }) {
+        return Err(RecordError::Unavailable(
+            "Channel create fence writer floor is incompatible".into(),
+        ));
+    }
+    Ok(false)
+}
+
 pub async fn migrate(db: &Database, issuer: &str) -> Result<(), RecordError> {
-    if !cma_service_migrations::describing() && installed(db).await? {
-        return require_installed(db, issuer).await;
+    if !cma_service_migrations::describing() && inspect_migration(db, issuer).await? {
+        return Ok(());
     }
     let url = url::Url::parse(issuer)
         .map_err(|_| RecordError::Rejected("invalid Channel create fence issuer".into()))?;
@@ -252,33 +344,9 @@ pub async fn migrate(db: &Database, issuer: &str) -> Result<(), RecordError> {
             "invalid Channel create fence issuer".into(),
         ));
     }
-    cma_service_migrations::collection_with_predecessors(
-        db,
-        MIGRATIONS,
-        schema::migration_validator(),
-        false,
-        schema::migration_predecessors(),
-    )
-    .await
-    .map_err(failure)?;
+    marker_catalog(db).await?;
     begin_validator_change(db, FENCED_WRITERS).await?;
-    let fence_validator = doc! {"$or": [
-        {"$and": [{"_id": "writer_floor"}, {"version": 1}, {"issuer": {"$type": "string"}}]},
-        {"$jsonSchema": {"bsonType": "object", "required": ["_id", "revision", "cancelled"],
-            "additionalProperties": false,
-            "properties": {
-                "_id": {"bsonType": "object", "required": ["issuer", "kind", "subject", "record"],
-                    "additionalProperties": false,
-                    "properties": {
-                        "issuer": {"bsonType": "string"}, "kind": {"enum": ["human", "organization"]},
-                        "subject": {"bsonType": "string"}, "record": {"bsonType": "string"}
-                    }
-                },
-                "revision": {"bsonType": "long", "minimum": 1}, "cancelled": {"bsonType": "bool"}
-            }
-        }}
-    ]};
-    cma_service_migrations::collection(db, CREATE_FENCES, fence_validator, true)
+    cma_service_migrations::collection(db, CREATE_FENCES, fence_validator(), true)
         .await
         .map_err(failure)?;
     cma_service_migrations::update(
@@ -291,17 +359,7 @@ pub async fn migrate(db: &Database, issuer: &str) -> Result<(), RecordError> {
     )
     .await
     .map_err(failure)?;
-    cma_service_migrations::collection_with_guarded_replacement(
-        db,
-        RECORDS,
-        schema::record_validator(true),
-        false,
-        vec![schema::record_validator(false)],
-        None,
-        |validator| async move { set_channel_validator(db, validator).await.map(|_| ()) },
-    )
-    .await
-    .map_err(failure)?;
+    channel_catalog(db).await?;
     let without_floor =
         doc! {"$or": [{"guard_revision": {"$exists": false}}, {"guard_revision": 0}]};
     cma_service_migrations::update(
@@ -331,7 +389,7 @@ pub async fn migrate(db: &Database, issuer: &str) -> Result<(), RecordError> {
 }
 
 async fn require_installed(db: &Database, issuer: &str) -> Result<(), RecordError> {
-    if verify(db, issuer).await? {
+    if inspect_migration(db, issuer).await? {
         Ok(())
     } else {
         Err(RecordError::Unavailable(

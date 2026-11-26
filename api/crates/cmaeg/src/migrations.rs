@@ -47,6 +47,14 @@ fn id(command: &str) -> Result<&'static str> {
     }
 }
 async fn converge(db: &Database, manifest: Manifest) -> Result<()> {
+    converge_with_issuer(db, manifest, None).await
+}
+
+async fn converge_with_issuer(
+    db: &Database,
+    manifest: Manifest,
+    writer_issuer: Option<&str>,
+) -> Result<()> {
     let unavailable = |_| "Gateway schema migration failed; details withheld";
     use crate::records::mongo;
     if !matches!(
@@ -83,6 +91,8 @@ async fn converge(db: &Database, manifest: Manifest) -> Result<()> {
         CHANNEL_FLOOR => {
             let issuer = if cma_service_migrations::describing() {
                 "https://migration.invalid".to_owned()
+            } else if let Some(issuer) = writer_issuer {
+                issuer.to_owned()
             } else {
                 channel_floor_issuer()?
             };
@@ -104,11 +114,38 @@ fn channel_floor_issuer() -> Result<String> {
 
 async fn inspect(db: &Database, manifest: Manifest) -> Result<bool> {
     if manifest.id == CHANNEL_FLOOR {
-        return crate::records::mongo::check_create_fence_floor(db, &channel_floor_issuer()?)
-            .await
-            .map_err(|_| "Gateway Channel create fence floor inspection failed");
+        return inspect_channel_floor(db, &channel_floor_issuer()?).await;
     }
     cma_service_migrations::inspect(converge(db, manifest)).await
+}
+
+async fn inspect_channel_floor(db: &Database, issuer: &str) -> Result<bool> {
+    crate::records::mongo::inspect_create_fence_floor_migration(db, issuer)
+        .await
+        .map_err(|_| "Gateway Channel create fence floor inspection failed")
+}
+
+async fn apply_channel_floor(
+    runner: &Runner,
+    db: &Database,
+    checksum: &str,
+    release: Release<'_>,
+    issuer: &str,
+    acknowledgement: &[&str],
+) -> Result<serde_json::Value> {
+    if acknowledgement != ["--all-writers-drained"] {
+        return Err("Channel create fence floor requires --all-writers-drained");
+    }
+    let manifest = runner.manifest(CHANNEL_FLOOR)?;
+    runner
+        .apply(
+            manifest,
+            checksum,
+            release,
+            || inspect_channel_floor(db, issuer),
+            || converge_with_issuer(db, manifest, Some(issuer)),
+        )
+        .await
 }
 
 pub async fn legacy(db: &Database, command: &str) -> Result<()> {
@@ -137,6 +174,24 @@ pub async fn cli(db: &Database, args: &[&str]) -> Result<()> {
         }
         ["--migration-status", id] => println!("{}", runner.status(runner.manifest(id)?).await?),
         ["--migration-activate", evidence] => runner.activate(evidence).await?,
+        ["--migration-apply", CHANNEL_FLOOR, checksum, image, acknowledgement @ ..] => {
+            let release = Release {
+                source: option_env!("CHRONO_BUILD_SHA").unwrap_or("development"),
+                image,
+            };
+            println!(
+                "{}",
+                apply_channel_floor(
+                    &runner,
+                    db,
+                    checksum,
+                    release,
+                    &channel_floor_issuer()?,
+                    acknowledgement,
+                )
+                .await?
+            );
+        }
         ["--migration-apply", id, checksum, image] => {
             let manifest = runner.manifest(id)?;
             let release = Release {
@@ -237,6 +292,27 @@ mod mongo_tests {
         let release = || {
             Release{source:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",image:"example.invalid/cma-event-gateway@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
         };
+        let issuer = "https://issuer.example";
+        let floor = runner.manifest(CHANNEL_FLOOR).unwrap();
+        let checksum = floor.checksum();
+        assert_eq!(
+            apply_channel_floor(&runner, &db, &checksum, release(), issuer, &[])
+                .await
+                .unwrap_err(),
+            "Channel create fence floor requires --all-writers-drained"
+        );
+        let drained = ["--all-writers-drained"];
+        assert_eq!(
+            apply_channel_floor(&runner, &db, &checksum, release(), issuer, &drained)
+                .await
+                .unwrap_err(),
+            "migration prerequisite is incomplete"
+        );
+        assert!(markers
+            .find_one(doc! {"_id":"channel_validator_change"})
+            .await
+            .unwrap()
+            .is_none());
         runner
             .apply(
                 base,
@@ -247,6 +323,14 @@ mod mongo_tests {
             )
             .await
             .unwrap();
+        let applied = apply_channel_floor(&runner, &db, &checksum, release(), issuer, &drained)
+            .await
+            .unwrap();
+        assert_eq!(applied["outcome"], "completed");
+        let replay = apply_channel_floor(&runner, &db, &checksum, release(), issuer, &drained)
+            .await
+            .unwrap();
+        assert_eq!(replay["outcome"], "already_completed");
         let replicas = runner.manifest("gateway-replicas-v1").unwrap();
         runner
             .apply(
@@ -263,6 +347,20 @@ mod mongo_tests {
             .await
             .unwrap()
             .is_some());
+        db.run_command(doc! {
+            "collMod":"eg_channel_create_fences",
+            "validator":{"revision":{"$exists":true}},
+            "validationLevel":"strict",
+            "validationAction":"error",
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            apply_channel_floor(&runner, &db, &checksum, release(), issuer, &drained)
+                .await
+                .unwrap_err(),
+            "Gateway Channel create fence floor inspection failed"
+        );
         db.drop().await.unwrap();
     }
 }

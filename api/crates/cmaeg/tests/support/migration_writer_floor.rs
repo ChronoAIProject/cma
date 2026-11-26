@@ -119,7 +119,15 @@ async fn channel_writer_floor_command_refuses_strict_and_unresolved_gateway_ledg
         assert_eq!(lock.get_bool("strict").unwrap(), strict);
         assert_eq!(lock.get_bool("pending").unwrap(), !strict);
         let before = snapshot(&db).await;
-        let floor = cli(&db, &uri, &["--migrate-channel-create-fence-floor"]).await;
+        let floor = cli(
+            &db,
+            &uri,
+            &[
+                "--migrate-channel-create-fence-floor",
+                "--all-writers-drained",
+            ],
+        )
+        .await;
         assert!(!floor.status.success());
         assert!(String::from_utf8_lossy(&floor.stderr)
             .contains("migration lease held or an interrupted effect requires reconciliation"));
@@ -140,7 +148,15 @@ async fn channel_writer_floor_command_records_a_completed_gateway_attempt() {
         "{}",
         String::from_utf8_lossy(&base.stderr)
     );
-    let floor = cli(&db, &uri, &["--migrate-channel-create-fence-floor"]).await;
+    let floor = cli(
+        &db,
+        &uri,
+        &[
+            "--migrate-channel-create-fence-floor",
+            "--all-writers-drained",
+        ],
+    )
+    .await;
     assert!(
         floor.status.success(),
         "{}",
@@ -168,5 +184,58 @@ async fn channel_writer_floor_command_records_a_completed_gateway_attempt() {
     let plan: serde_json::Value = serde_json::from_slice(&plan.stdout).unwrap();
     assert_eq!(plan["postcondition_ready"], true);
     assert_eq!(plan["writes"], false);
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn channel_writer_floor_requires_drain_and_refuses_unknown_catalog_before_phase_change() {
+    let uri = url::Url::parse(&std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap()).unwrap();
+    let admin = Client::with_uri_str(uri.as_str()).await.unwrap();
+    let db = admin.database(&format!("channel_floor_{}", uuid::Uuid::new_v4().simple()));
+    let base = cli(&db, &uri, &["--migrate"]).await;
+    assert!(base.status.success());
+    let before = snapshot(&db).await;
+    let missing_legacy = cli(&db, &uri, &["--migrate-channel-create-fence-floor"]).await;
+    assert!(!missing_legacy.status.success());
+    assert!(String::from_utf8_lossy(&missing_legacy.stderr).contains("--all-writers-drained"));
+    let missing_explicit = cli(
+        &db,
+        &uri,
+        &[
+            "--migration-apply",
+            "gateway-channel-create-fence-floor-v1",
+            "fixture-checksum",
+            "fixture-image",
+        ],
+    )
+    .await;
+    assert!(!missing_explicit.status.success());
+    assert!(String::from_utf8_lossy(&missing_explicit.stderr)
+        .contains("Channel create fence floor requires --all-writers-drained"));
+    assert_eq!(snapshot(&db).await, before);
+
+    db.run_command(doc! {
+        "collMod":cmaeg::records::mongo::RECORDS,
+        "validator":{"unexpected":{"$exists":true}},
+        "validationLevel":"strict",
+        "validationAction":"error",
+    })
+    .await
+    .unwrap();
+    let drifted = snapshot(&db).await;
+    let refused = cli(
+        &db,
+        &uri,
+        &[
+            "--migrate-channel-create-fence-floor",
+            "--all-writers-drained",
+        ],
+    )
+    .await;
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr)
+        .contains("Gateway Channel create fence floor inspection failed"));
+    assert_eq!(snapshot(&db).await, drifted);
     db.drop().await.unwrap();
 }
