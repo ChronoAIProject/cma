@@ -54,10 +54,7 @@ impl Store {
             .start_session()
             .await
             .map_err(transaction_error)?;
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+        crate::transaction_start::start_write(&self.database, &mut session, None)
             .await
             .map_err(transaction_error)?;
         let result = self.records.replace_one(doc! {"_id":&integration.app_ref,"owner":owner,"kind":"app_integration","version":expected}, row).session(&mut session).await.map_err(transaction_error)?;
