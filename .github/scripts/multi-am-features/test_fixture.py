@@ -7,10 +7,11 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from cleanup import cleanup
 from infrastructure import Infrastructure
+from run_ci import run as run_ci
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'owner'))
@@ -23,6 +24,40 @@ from readiness_scaling import observe_never_ready, observe_scale
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_fixture_cleanup_failures_preserve_the_main_result_and_remove_the_cluster(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'results'
+            args = SimpleNamespace(revision='a' * 40, release_packet=None, packet_sha256=None,
+                                   artifacts=Path(directory), run_id='1', attempt='1',
+                                   fixture='prepared', output=output)
+            image = 'localhost/fixture@sha256:' + 'b' * 64
+            ready = {'expected_api_image': image, 'runtime_images': {'base': image, 'omarchy': image}}
+            infrastructure = Mock(created=False, stage='two_am_initialized', failed_command=None,
+                                  command_outcomes=[])
+            infrastructure.setup.return_value = ready
+            infrastructure.cleanup.return_value = {'cluster_absent': True, 'children_joined': True}
+            fixture = Mock(thread=None)
+            fixture.initialize.side_effect = RuntimeError('fixture_initialization_failure')
+            fixture.server.server_close.side_effect = OSError('fixture listener')
+            fixture.client.deadline = 0
+            fixture.client.close.side_effect = TimeoutError('fixture child')
+
+            with patch('run_ci.Infrastructure', return_value=infrastructure), \
+                    patch('run_ci.LocalFixture', return_value=fixture), \
+                    patch('run_ci.prepare_tls', return_value=output / 'tls'), \
+                    patch('run_ci.signal.signal'), patch('run_ci.os.umask'), patch('builtins.print'):
+                self.assertEqual(run_ci(args), 1)
+
+            result = json.loads((output / 'summary' / 'result.json').read_text())
+            self.assertEqual(result['failure_code'], 'fixture_initialization_failure')
+            self.assertEqual(result['fixture_control_cleanup_failure_class'], 'OSError')
+            self.assertEqual(result['fixture_child_cleanup_failure_class'], 'TimeoutError')
+            self.assertTrue(result['cleanup']['cluster_absent'])
+            self.assertEqual(result['verdict'], 'FAIL')
+            fixture.server.shutdown.assert_not_called()
+            fixture.client.close.assert_called_once_with()
+            infrastructure.cleanup.assert_called_once_with()
+
     def test_csi_registration_waits_for_the_hostpath_driver(self):
         with tempfile.TemporaryDirectory() as directory:
             infra = Infrastructure(directory)

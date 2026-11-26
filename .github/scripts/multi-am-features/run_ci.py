@@ -120,10 +120,19 @@ def run(args):
                 result['setup_capture_failed'] = True
         if fixture:
             fixture.client.deadline = max(fixture.client.deadline, time.monotonic() + 120)
-            if fixture.server:
-                fixture.server.shutdown(); fixture.server.server_close()
-            if fixture.thread:
-                fixture.thread.join(timeout=5)
+            try:
+                if fixture.server:
+                    try:
+                        if fixture.thread and fixture.thread.is_alive():
+                            fixture.server.shutdown()
+                    finally:
+                        fixture.server.server_close()
+                if fixture.thread and fixture.thread.ident is not None:
+                    fixture.thread.join(timeout=5)
+                result['fixture_control_thread_joined'] = not fixture.thread or not fixture.thread.is_alive()
+            except Exception as error:
+                result['fixture_control_thread_joined'] = False
+                result['fixture_control_cleanup_failure_class'] = type(error).__name__
             try:
                 fixture.capture()
             except Exception:
@@ -136,8 +145,11 @@ def run(args):
                 result['scheduler_stage_evidence'] = summarize_stages(private)
             except Exception:
                 result['stage_evidence_failed'] = True
-            result['fixture_children_joined'] = fixture.client.close()
-            result['fixture_control_thread_joined'] = not fixture.thread or not fixture.thread.is_alive()
+            try:
+                result['fixture_children_joined'] = fixture.client.close()
+            except Exception as error:
+                result['fixture_children_joined'] = False
+                result['fixture_child_cleanup_failure_class'] = type(error).__name__
         try:
             result['cleanup'] = infrastructure.cleanup()
         except Exception as error:
