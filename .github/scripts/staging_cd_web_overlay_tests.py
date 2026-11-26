@@ -115,6 +115,17 @@ class WebOverlayTests(unittest.TestCase):
             self.assertEqual(first[key]["archive"].read_bytes(), second[key]["archive"].read_bytes())
             self.assertNotEqual(first[key]["archive"], second[key]["archive"])
 
+    def test_both_layout_archives_declare_blob_directories_before_their_files(self):
+        result = assemble(self.incumbent, self.candidate, [self.first], self.root, max_files=16, max_bytes=512)
+        for role in ("prepare", "promote"):
+            with self.subTest(role=role), tarfile.open(result[role]["archive"]) as archive:
+                members = archive.getmembers()
+                directories = [entry for entry in members if entry.isdir()]
+                self.assertEqual([(entry.name, entry.mode) for entry in directories],
+                                 [("blobs", 0o755), ("blobs/sha256", 0o755)])
+                first_blob = next(entry for entry in members if entry.name.startswith("blobs/sha256/"))
+                self.assertLess(directories[-1].offset, first_blob.offset)
+
     def test_overlay_records_its_layer_in_existing_oci_history(self):
         history = [{"created_by": "COPY Web files"}, {"created_by": "LABEL version", "empty_layer": True}]
         incumbent, _, _ = fixture_archive(self.root, "d" * 40, "0.22.11", history=history)

@@ -209,6 +209,12 @@ def pack_overlay(base, image, reader, layer, diff_id, inventory, destination):
     with tarfile.open(destination, "x", format=tarfile.USTAR_FORMAT) as result:
         add_member(result, "index.json", encoded(index))
         add_member(result, "oci-layout", encoded({"imageLayoutVersion": "1.0.0"}))
+        # Skopeo's archive reader tries to chown implicit parents to root.
+        for name in ("blobs", "blobs/sha256"):
+            directory = tarfile.TarInfo(name)
+            directory.type = tarfile.DIRTYPE
+            directory.mode = 0o755
+            result.addfile(directory)
         for raw in (payload, config_payload, layer):
             add_member(result, "blobs/sha256/" + hashed(raw), raw)
         seen = set()
