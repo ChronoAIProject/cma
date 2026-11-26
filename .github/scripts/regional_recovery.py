@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import sys
 
-from release_candidate_evidence import fields, hash_value, timestamp
+from release_candidate_evidence import has_exact_fields, hash_value, timestamp
 from release_candidate_packet import EvidenceFiles, decode, digest, outside_checkout, read_file, source_value
 from staging_cd_common import matches, require
 from staging_cd_receipts import canonical, sha256
@@ -29,18 +29,18 @@ def nonnegative(value):
 
 
 def validate_scope(scope):
-    fields(scope, {"schema", "mode", "phase", "candidate", "window", "initial_report_sha256", "frozen_at", "inventory",
-                   "home_sample", "coverage_sha256", "backup_campaign_sha256", "copy_changes", "failure_scopes", "commitments", "exercise_copy_receipts"}, "Reviewed recovery scope is incomplete")
+    require(has_exact_fields(scope, {"schema", "mode", "phase", "candidate", "window", "initial_report_sha256", "frozen_at", "inventory",
+                   "home_sample", "coverage_sha256", "backup_campaign_sha256", "copy_changes", "failure_scopes", "commitments", "exercise_copy_receipts"}), "Reviewed recovery scope is incomplete")
     require(scope["schema"] == "cma-regional-recovery-v1" and scope["mode"] in ("synthetic", "isolated-staging")
             and scope["phase"] in ("initial", "frozen_recheck"), "Recovery scope identity differs")
     candidate = scope["candidate"]
-    fields(candidate, {"source", "images", "configuration_sha256", "flags_sha256", "environment_sha256"}, "Candidate is incomplete")
-    fields(candidate["images"], TARGETS, "Candidate image inventory differs")
+    require(has_exact_fields(candidate, {"source", "images", "configuration_sha256", "flags_sha256", "environment_sha256"}), "Candidate is incomplete")
+    require(has_exact_fields(candidate["images"], TARGETS), "Candidate image inventory differs")
     require(source_value(candidate["source"]) and hashes(candidate[key] for key in
             ("configuration_sha256", "flags_sha256", "environment_sha256"))
             and all(matches(r"sha256:[0-9a-f]{64}", value) for value in candidate["images"].values()), "Candidate identity is malformed")
     window = scope["window"]
-    fields(window, {"start", "end"}, "Qualification window is incomplete")
+    require(has_exact_fields(window, {"start", "end"}), "Qualification window is incomplete")
     start, end = timestamp(window["start"]), timestamp(window["end"])
     require(start < end, "Qualification window is invalid")
     if scope["phase"] == "initial":
@@ -54,9 +54,8 @@ def validate_scope(scope):
     require(isinstance(inventory, dict) and len(inventory) >= 10 and hashes(inventory), "Retained home inventory is incomplete")
     volumes, backups = set(), set()
     for home in inventory.values():
-        fields(home, {"class", "used_bytes", "owner_sha256", "home_sha256", "native_sha256", "manifest_sha256", "receipts_sha256",
-                      "source_storage_sha256", "source_domain_sha256", "backup_sha256", "backup_storage_sha256", "backup_domain_sha256"},
-               "Reviewed home is malformed")
+        require(has_exact_fields(home, {"class", "used_bytes", "owner_sha256", "home_sha256", "native_sha256", "manifest_sha256", "receipts_sha256",
+                      "source_storage_sha256", "source_domain_sha256", "backup_sha256", "backup_storage_sha256", "backup_domain_sha256"}), "Reviewed home is malformed")
         require(home["class"] in HOME_CLASSES and nonnegative(home["used_bytes"])
                 and hashes(home[key] for key in set(home) - {"class", "used_bytes"}), "Reviewed home identity is malformed")
         require(home["source_storage_sha256"] not in volumes and home["backup_sha256"] not in backups
@@ -67,9 +66,9 @@ def validate_scope(scope):
     copies = {home["backup_storage_sha256"] for home in inventory.values()}
     require(len(copies) == len(inventory) and not volumes & (backups | copies) and not backups & copies and sum(home["used_bytes"] for home in inventory.values()) > 0,
             "Independent backup identity or equivalent volume size is missing")
-    fields(scope["copy_changes"], inventory, "Reviewed changed-byte inventory differs")
+    require(has_exact_fields(scope["copy_changes"], inventory), "Reviewed changed-byte inventory differs")
     for change in scope["copy_changes"].values():
-        fields(change, {"steady", "peak"}, "Reviewed change volume is incomplete")
+        require(has_exact_fields(change, {"steady", "peak"}), "Reviewed change volume is incomplete")
         require(nonnegative(change["steady"]) and nonnegative(change["peak"]) and change["peak"] >= change["steady"],
                 "Reviewed change volume is malformed")
     require(sum(change["steady"] for change in scope["copy_changes"].values()) > 0
@@ -77,18 +76,17 @@ def validate_scope(scope):
     sample = scope["home_sample"]
     require(isinstance(sample, list) and len(sample) == len(set(sample)) == 10 and set(sample) <= set(inventory)
             and {inventory[home]["class"] for home in sample} == HOME_CLASSES, "Reviewed local sample differs")
-    fields(scope["failure_scopes"], SCOPES, "Three regional fault scopes are required")
+    require(has_exact_fields(scope["failure_scopes"], SCOPES), "Three regional fault scopes are required")
     for row in scope["failure_scopes"].values():
-        fields(row, {"source_domain_sha256", "recovery_domain_sha256", "review_sha256", "quota_bytes", "consumer_order"},
-               "Reviewed failure scope is incomplete")
+        require(has_exact_fields(row, {"source_domain_sha256", "recovery_domain_sha256", "review_sha256", "quota_bytes", "consumer_order"}), "Reviewed failure scope is incomplete")
         require(hashes(row[key] for key in ("source_domain_sha256", "recovery_domain_sha256", "review_sha256"))
                 and row["source_domain_sha256"] != row["recovery_domain_sha256"]
                 and nonnegative(row["quota_bytes"]) and row["quota_bytes"] >= sum(home["used_bytes"] for home in inventory.values())
                 and isinstance(row["consumer_order"], list) and bool(row["consumer_order"]) and hashes(row["consumer_order"])
                 and len(row["consumer_order"]) == len(set(row["consumer_order"])), "Reviewed recovery capacity or scope differs")
-    fields(scope["exercise_copy_receipts"], SCOPES | set(sample), "Reviewed exercise backup observation inventory differs")
+    require(has_exact_fields(scope["exercise_copy_receipts"], SCOPES | set(sample)), "Reviewed exercise backup observation inventory differs")
     require(hashes(scope["exercise_copy_receipts"].values()), "Exercise copies are unpinned")
-    fields(scope["commitments"], DEPENDENCIES, "Critical dependency inventory differs")
+    require(has_exact_fields(scope["commitments"], DEPENDENCIES), "Critical dependency inventory differs")
     require(hashes(scope["commitments"].values()) and hashes(scope[key] for key in ("coverage_sha256", "backup_campaign_sha256")), "Reviewed external evidence is unpinned")
 
 
@@ -110,7 +108,7 @@ def verify_coverage(scope, reference, files):
         require(isinstance(row, dict) and row.get("reasons") == [] and row.get("sandbox_sha256") not in observed,
                 "Backup coverage row is duplicated or unresolved")
         observed[row["sandbox_sha256"]] = row
-    fields(observed, scope["inventory"], "Backup coverage omits a reviewed home")
+    require(has_exact_fields(observed, scope["inventory"]), "Backup coverage omits a reviewed home")
     for key, home in scope["inventory"].items():
         require(observed[key].get("owner_sha256") == home["owner_sha256"]
                 and observed[key].get("backup_sha256") == home["backup_sha256"], "Backup coverage row identity differs")
@@ -119,15 +117,14 @@ def verify_coverage(scope, reference, files):
 def verify_backup_campaign(scope, reference, files):
     require(reference["sha256"] == scope["backup_campaign_sha256"], "Backup campaign differs from review")
     row = files.json(reference)
-    fields(row, {"mode", "candidate_sha256", "started_at", "finished_at", "homes", "api_load_sha256", "quota_sha256", "cost_sha256"},
-           "Backup campaign is incomplete")
+    require(has_exact_fields(row, {"mode", "candidate_sha256", "started_at", "finished_at", "homes", "api_load_sha256", "quota_sha256", "cost_sha256"}), "Backup campaign is incomplete")
     start, finish = timestamp(row["started_at"]), timestamp(row["finished_at"])
     require(row["mode"] == scope["mode"] and row["candidate_sha256"] == sha256(scope["candidate"])
             and timestamp(scope["window"]["start"]) <= start < finish <= timestamp(scope["window"]["end"])
             and (scope["phase"] == "frozen_recheck" or finish < datetime(2026, 11, 20, tzinfo=SGT))
             and hashes(row[key] for key in ("api_load_sha256", "quota_sha256", "cost_sha256")),
             "Backup qualification window or resource evidence differs")
-    fields(row["homes"], scope["inventory"], "Backup campaign omits a retained home")
+    require(has_exact_fields(row["homes"], scope["inventory"]), "Backup campaign omits a retained home")
     receipts, copies, backup_ids = set(), set(), set()
     known_copies = {}
     sources = {home["source_storage_sha256"] for home in scope["inventory"].values()}
@@ -138,8 +135,8 @@ def verify_backup_campaign(scope, reference, files):
         require(isinstance(captures, list) and len(captures) == len(sizes), "Backup capture history is incomplete")
         previous = previous_capture = None
         for kind, capture in zip(("full", "steady", "peak"), captures):
-            fields(capture, {"kind", "started_at", "finished_at", "bytes", "receipt_sha256", "backup_sha256", "storage_sha256",
-                             "domain_sha256", "readable", "manifest_sha256", "checkpoint_sha256", "captured_at"}, "Backup capture evidence is incomplete")
+            require(has_exact_fields(capture, {"kind", "started_at", "finished_at", "bytes", "receipt_sha256", "backup_sha256", "storage_sha256",
+                             "domain_sha256", "readable", "manifest_sha256", "checkpoint_sha256", "captured_at"}), "Backup capture evidence is incomplete")
             began, ended = timestamp(capture["started_at"]), timestamp(capture["finished_at"])
             captured = timestamp(capture["captured_at"])
             require(capture["kind"] == kind and start <= began < ended <= finish and ended - began <= timedelta(minutes=30)
@@ -175,13 +172,12 @@ def verify_backup_campaign(scope, reference, files):
 
 
 def verify_commitments(scope, references, files):
-    fields(references, DEPENDENCIES, "Critical dependency evidence differs")
+    require(has_exact_fields(references, DEPENDENCIES), "Critical dependency evidence differs")
     for name, reference in references.items():
         require(reference["sha256"] == scope["commitments"][name], "Dependency evidence differs from review")
         row = files.json(reference)
-        fields(row, {"dependency", "approval_sha256", "support_sha256", "maintenance_sha256", "breaking_change_sha256",
-                     "compatibility_sha256", "upgrade_contact_sha256", "sla_sha256", "no_sla_risk_sha256"},
-               "Dependency commitment is incomplete")
+        require(has_exact_fields(row, {"dependency", "approval_sha256", "support_sha256", "maintenance_sha256", "breaking_change_sha256",
+                     "compatibility_sha256", "upgrade_contact_sha256", "sla_sha256", "no_sla_risk_sha256"}), "Dependency commitment is incomplete")
         require(row["dependency"] == name and hashes(row[key] for key in set(row) - {"dependency", "sla_sha256", "no_sla_risk_sha256"})
                 and ((hash_value(row["sla_sha256"]) and row["no_sla_risk_sha256"] is None)
                      or (row["sla_sha256"] is None and hash_value(row["no_sla_risk_sha256"]))), "Dependency support or SLA risk is unresolved")
@@ -205,8 +201,8 @@ class RecoveryEvidence:
 
     def execution(self, reference, name, inventory, regional):
         row = self.artifact(reference)
-        fields(row, {"case", "mode", "candidate_sha256", "run_id", "attempt", "cancelled", "status", "started_at", "finished_at",
-                     "samples", "fault", "cut", "readback", "stages", "copies"}, "Recovery execution is incomplete")
+        require(has_exact_fields(row, {"case", "mode", "candidate_sha256", "run_id", "attempt", "cancelled", "status", "started_at", "finished_at",
+                     "samples", "fault", "cut", "readback", "stages", "copies"}), "Recovery execution is incomplete")
         require(row["case"] == name and row["mode"] == self.scope["mode"] and row["candidate_sha256"] == sha256(self.scope["candidate"])
                 and hash_value(row["run_id"]) and row["run_id"] not in self.runs and type(row["attempt"]) is int and row["attempt"] == 1
                 and row["cancelled"] is False and row["status"] == "PASS" and type(row["samples"]) is int and row["samples"] == len(inventory),
@@ -215,8 +211,7 @@ class RecoveryEvidence:
         start, end = timestamp(row["started_at"]), timestamp(row["finished_at"])
         require(timestamp(self.scope["window"]["start"]) <= start < end <= timestamp(self.scope["window"]["end"]), "Recovery execution is outside its reviewed window")
         fault = self.artifact(row["fault"])
-        fields(fault, {"run_id", "fault_sha256", "case", "loss_at", "source_domain_sha256", "recovery_domain_sha256", "source_unavailable"},
-               "Independent failure observation is incomplete")
+        require(has_exact_fields(fault, {"run_id", "fault_sha256", "case", "loss_at", "source_domain_sha256", "recovery_domain_sha256", "source_unavailable"}), "Independent failure observation is incomplete")
         loss = timestamp(fault["loss_at"])
         require(regional or self.scope["phase"] == "frozen_recheck" or end < datetime(2026, 11, 20, tzinfo=SGT),
                 "Initial home sample missed its qualification date")
@@ -233,14 +228,14 @@ class RecoveryEvidence:
         else:
             require(fault["source_domain_sha256"] == self.inventory[name]["source_domain_sha256"], "Sample fault scope differs from home source")
         cut = self.artifact(row["cut"])
-        fields(cut, {"run_id", "fault_sha256", "mongo_at", "common_at", "checkpoint_sha256", "data_classes", "home_backups", "mongo_point"}, "Consistent cut is incomplete")
+        require(has_exact_fields(cut, {"run_id", "fault_sha256", "mongo_at", "common_at", "checkpoint_sha256", "data_classes", "home_backups", "mongo_point"}), "Consistent cut is incomplete")
         require(cut["run_id"] == row["run_id"] and cut["fault_sha256"] == fault["fault_sha256"] and hash_value(cut["checkpoint_sha256"]), "Consistent cut identity differs")
         mongo, common = timestamp(cut["mongo_at"]), timestamp(cut["common_at"])
         require(common <= mongo <= loss and loss - mongo <= timedelta(minutes=5) and loss - common <= timedelta(hours=1), "Recovery point objective exceeded")
-        fields(cut["data_classes"], CUSTODY, "Consistent cut class inventory differs")
+        require(has_exact_fields(cut["data_classes"], CUSTODY), "Consistent cut class inventory differs")
         for data_class, item in cut["data_classes"].items():
-            fields(item, {"checkpoint_sha256", "available_at", "independent_copy_sha256", "copy_storage_sha256",
-                          "source_storage_sha256", "copy_domain_sha256"}, "Consistent cut class is missing its copy")
+            require(has_exact_fields(item, {"checkpoint_sha256", "available_at", "independent_copy_sha256", "copy_storage_sha256",
+                          "source_storage_sha256", "copy_domain_sha256"}), "Consistent cut class is missing its copy")
             require(item["checkpoint_sha256"] == cut["checkpoint_sha256"] and common <= timestamp(item["available_at"]) <= loss
                     and hashes(item[key] for key in ("independent_copy_sha256", "copy_storage_sha256", "source_storage_sha256", "copy_domain_sha256"))
                     and item["copy_domain_sha256"] != fault["source_domain_sha256"], "Consistent data-class cut differs")
@@ -253,8 +248,7 @@ class RecoveryEvidence:
                         "Data-class backup aliases another storage identity")
                 self.backup_storage.add(identity)
         mongo_point = self.artifact(cut["mongo_point"])
-        fields(mongo_point, {"run_id", "fault_sha256", "copy_sha256", "earliest_at", "latest_at", "recoverable_at", "observed_at"},
-               "Independent Mongo recovery point is incomplete")
+        require(has_exact_fields(mongo_point, {"run_id", "fault_sha256", "copy_sha256", "earliest_at", "latest_at", "recoverable_at", "observed_at"}), "Independent Mongo recovery point is incomplete")
         mongo_copy = cut["data_classes"]["mongo"]
         earliest, latest = timestamp(mongo_point["earliest_at"]), timestamp(mongo_point["latest_at"])
         require(mongo_point["run_id"] == row["run_id"] and mongo_point["fault_sha256"] == fault["fault_sha256"]
@@ -265,17 +259,16 @@ class RecoveryEvidence:
                 "Mongo recoverable point is outside the independently observed PITR copy")
         copies = self.artifact(row["copies"])
         require(row["copies"]["sha256"] == self.scope["exercise_copy_receipts"][name], "Exercise copy observation differs from review")
-        fields(copies, {"run_id", "fault_sha256", "candidate_sha256", "homes"}, "Exercise backup observation is incomplete")
+        require(has_exact_fields(copies, {"run_id", "fault_sha256", "candidate_sha256", "homes"}), "Exercise backup observation is incomplete")
         require(copies["run_id"] == row["run_id"] and copies["fault_sha256"] == fault["fault_sha256"]
                 and copies["candidate_sha256"] == row["candidate_sha256"], "Exercise backup observation differs from run")
-        fields(copies["homes"], inventory, "Exercise backup observation omits a reviewed home")
-        fields(cut["home_backups"], inventory, "Consistent cut omits a reviewed home")
+        require(has_exact_fields(copies["homes"], inventory), "Exercise backup observation omits a reviewed home")
+        require(has_exact_fields(cut["home_backups"], inventory), "Consistent cut omits a reviewed home")
         for home, backup in cut["home_backups"].items():
             expected = self.inventory[home]
             copy = copies["homes"][home]
-            fields(copy, {"backup_sha256", "backup_storage_sha256", "backup_domain_sha256", "checkpoint_sha256",
-                          "captured_at", "completed_at", "source_storage_sha256", "home_sha256", "manifest_sha256"},
-                   "Exercise copy identity is incomplete")
+            require(has_exact_fields(copy, {"backup_sha256", "backup_storage_sha256", "backup_domain_sha256", "checkpoint_sha256",
+                          "captured_at", "completed_at", "source_storage_sha256", "home_sha256", "manifest_sha256"}), "Exercise copy identity is incomplete")
             require(all(copy[key] == expected[key] for key in ("source_storage_sha256", "home_sha256", "manifest_sha256"))
                     and hashes(copy[key] for key in ("backup_sha256", "backup_storage_sha256", "backup_domain_sha256"))
                     and copy["backup_sha256"] != copy["backup_storage_sha256"]
@@ -285,8 +278,7 @@ class RecoveryEvidence:
                 identity = copy[key]
                 require(self.exercise_copies.setdefault(identity, copy) == copy, "Exercise copy identity was reused for another observation")
                 self.backup_storage.add(identity)
-            fields(backup, {"backup_sha256", "backup_storage_sha256", "backup_domain_sha256", "checkpoint_sha256", "available_at"},
-                   "Home backup cut is incomplete")
+            require(has_exact_fields(backup, {"backup_sha256", "backup_storage_sha256", "backup_domain_sha256", "checkpoint_sha256", "available_at"}), "Home backup cut is incomplete")
             require(all(backup[key] == copy[key] for key in ("backup_sha256", "backup_storage_sha256", "backup_domain_sha256"))
                     and backup["backup_domain_sha256"] != fault["source_domain_sha256"]
                     and backup["checkpoint_sha256"] == cut["checkpoint_sha256"] == copy["checkpoint_sha256"]
@@ -295,9 +287,9 @@ class RecoveryEvidence:
                     and timestamp(copy["completed_at"]) - common <= timedelta(minutes=30),
                     "Recovery cut uses an unavailable or inconsistent home backup")
         readback = self.artifact(row["readback"])
-        fields(readback, {"run_id", "fault_sha256", "checkpoint_sha256", "mongo_restored_at", "service_verified_at", "homes", "old_writer_fenced",
+        require(has_exact_fields(readback, {"run_id", "fault_sha256", "checkpoint_sha256", "mongo_restored_at", "service_verified_at", "homes", "old_writer_fenced",
                           "tombstones_replayed", "key_custody_verified", "object_inventory_verified", "duplicate_effects",
-                          "unreadable_records", "secret_matches", "resurrected_records", "mongo_recoverable_at", "mongo_copy_sha256"}, "Recovery readback is incomplete")
+                          "unreadable_records", "secret_matches", "resurrected_records", "mongo_recoverable_at", "mongo_copy_sha256"}), "Recovery readback is incomplete")
         require(readback["run_id"] == row["run_id"] and readback["fault_sha256"] == fault["fault_sha256"]
                 and readback["checkpoint_sha256"] == cut["checkpoint_sha256"]
                 and timestamp(readback["mongo_recoverable_at"]) == mongo
@@ -307,13 +299,13 @@ class RecoveryEvidence:
                         ("duplicate_effects", "unreadable_records", "secret_matches", "resurrected_records")), "Recovered custody or effect ledger differs")
         mongo_restored, verified = timestamp(readback["mongo_restored_at"]), timestamp(readback["service_verified_at"])
         require(loss <= mongo_restored <= verified <= end and verified - loss <= timedelta(hours=4 if regional else 0, minutes=0 if regional else 30), "Recovery time objective exceeded")
-        fields(readback["homes"], inventory, "Restored home inventory differs")
+        require(has_exact_fields(readback["homes"], inventory), "Restored home inventory differs")
         home_times = []
         home_starts, home_finishes = [], []
         for key, actual in readback["homes"].items():
             expected = self.inventory[key]
             identity = set(expected) - {"class", "source_storage_sha256", "source_domain_sha256"}
-            fields(actual, identity | {"restored_storage_sha256", "restored_domain_sha256", "started_at", "verified_at"}, "Restored home identity is incomplete")
+            require(has_exact_fields(actual, identity | {"restored_storage_sha256", "restored_domain_sha256", "started_at", "verified_at"}), "Restored home identity is incomplete")
             expected = {**expected, **{field: copies["homes"][key][field] for field in
                                       ("backup_sha256", "backup_storage_sha256", "backup_domain_sha256")}}
             require(all(actual[field] == expected[field] for field in identity)
@@ -343,14 +335,14 @@ class RecoveryEvidence:
 
     def stage_order(self, reference, run_id, loss, verified, reviewed):
         row = self.artifact(reference)
-        fields(row, {"run_id", "stages", "consumers", "available_quota_bytes", "capacity_receipt_sha256",
-                     "throttle_receipt_sha256", "queue_receipt_sha256", "manual_steps_receipt_sha256"}, "Regional readiness evidence is incomplete")
+        require(has_exact_fields(row, {"run_id", "stages", "consumers", "available_quota_bytes", "capacity_receipt_sha256",
+                     "throttle_receipt_sha256", "queue_receipt_sha256", "manual_steps_receipt_sha256"}), "Regional readiness evidence is incomplete")
         require(row["run_id"] == run_id and type(row["available_quota_bytes"]) is int and row["available_quota_bytes"] >= reviewed["quota_bytes"]
                 and hashes(row[key] for key in ("capacity_receipt_sha256", "throttle_receipt_sha256", "queue_receipt_sha256", "manual_steps_receipt_sha256"))
                 and isinstance(row["stages"], list) and len(row["stages"]) == len(STAGES), "Regional recovery capacity differs")
         last = loss
         for name, stage in zip(STAGES, row["stages"]):
-            fields(stage, {"stage", "verified_at", "receipt_sha256"}, "Regional readiness stage is incomplete")
+            require(has_exact_fields(stage, {"stage", "verified_at", "receipt_sha256"}), "Regional readiness stage is incomplete")
             observed = timestamp(stage["verified_at"])
             require(stage["stage"] == name and hash_value(stage["receipt_sha256"]) and last <= observed <= verified, "Regional readiness order differs")
             last = observed
@@ -360,7 +352,7 @@ class RecoveryEvidence:
 def validate_initial_result(result, homes, used_bytes, limit):
     bounds = {"mongo_rpo_seconds": 300, "integrated_rpo_seconds": 3600, "mongo_restore_seconds": limit,
               "home_max_rto_seconds": limit, "verified_service_seconds": limit}
-    fields(result, {"restored_homes", "used_bytes", "restore_bytes_per_second", *bounds}, "Initial recovery result differs")
+    require(has_exact_fields(result, {"restored_homes", "used_bytes", "restore_bytes_per_second", *bounds}), "Initial recovery result differs")
     require(result["restored_homes"] == homes and result["used_bytes"] == used_bytes
             and all(type(result[key]) in (int, float) and 0 <= result[key] <= upper for key, upper in bounds.items())
             and type(result["restore_bytes_per_second"]) in (int, float) and result["restore_bytes_per_second"] >= 0,
@@ -371,13 +363,13 @@ def verify(scope_bytes, expected_hash, index, files):
     require(hash_value(expected_hash) and digest(scope_bytes) == expected_hash, "Scope differs from independent hash")
     scope = decode(scope_bytes)
     validate_scope(scope)
-    fields(index, {"scope_sha256", "coverage", "backup_campaign", "commitments", "regional", "home_sample", "initial_report"}, "Observation index is incomplete")
+    require(has_exact_fields(index, {"scope_sha256", "coverage", "backup_campaign", "commitments", "regional", "home_sample", "initial_report"}), "Observation index is incomplete")
     require(index["scope_sha256"] == expected_hash, "Observation index binds another scope")
     verify_coverage(scope, index["coverage"], files)
     backup, historical_copies = verify_backup_campaign(scope, index["backup_campaign"], files)
     verify_commitments(scope, index["commitments"], files)
-    fields(index["regional"], SCOPES, "Regional fault observations are incomplete")
-    fields(index["home_sample"], scope["home_sample"], "Independent home sample is incomplete")
+    require(has_exact_fields(index["regional"], SCOPES), "Regional fault observations are incomplete")
+    require(has_exact_fields(index["home_sample"], scope["home_sample"]), "Independent home sample is incomplete")
     evidence = RecoveryEvidence(scope, files, historical_copies)
     regional = {name: evidence.execution(reference, name, scope["inventory"], True) for name, reference in index["regional"].items()}
     sample = {key: evidence.execution(reference, key, {key}, False) for key, reference in index["home_sample"].items()}
@@ -398,14 +390,14 @@ def verify(scope_bytes, expected_hash, index, files):
                 and initial.get("phase") == "initial" and initial.get("mode") == scope["mode"]
                 and initial.get("candidate_sha256") == candidate_sha and initial.get("inventory_sha256") == inventory_sha
                 and initial.get("commitments_sha256") == sha256(scope["commitments"]) and initial.get("plan_sha256") == plan_sha, "Initial report does not bind this recovery scope")
-        fields(initial.get("regional"), SCOPES, "Initial regional result inventory differs")
-        fields(initial.get("sample"), scope["home_sample"], "Initial home sample result inventory differs")
+        require(has_exact_fields(initial.get("regional"), SCOPES), "Initial regional result inventory differs")
+        require(has_exact_fields(initial.get("sample"), scope["home_sample"]), "Initial home sample result inventory differs")
         for result in initial["regional"].values():
             validate_initial_result(result, len(scope["inventory"]), sum(home["used_bytes"] for home in scope["inventory"].values()), 14400)
         for key, result in initial["sample"].items():
             validate_initial_result(result, 1, scope["inventory"][key]["used_bytes"], 1800)
         backup_result = initial.get("backup_campaign")
-        fields(backup_result, {"copied_bytes", "campaign_seconds"}, "Initial backup campaign result differs")
+        require(has_exact_fields(backup_result, {"copied_bytes", "campaign_seconds"}), "Initial backup campaign result differs")
         require(backup_result["copied_bytes"] == backup["copied_bytes"]
                 and type(backup_result["campaign_seconds"]) in (int, float) and backup_result["campaign_seconds"] > 0,
                 "Initial backup campaign is incomplete")
