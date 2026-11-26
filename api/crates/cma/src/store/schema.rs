@@ -322,7 +322,7 @@ mod tests {
         assert_eq!(versions("agent_log"), mongodb::bson::bson!([1_i64]));
         assert_eq!(
             versions("sandboxes"),
-            mongodb::bson::bson!([1_i64, 3_i64, 4_i64, 5_i64, 6_i64])
+            mongodb::bson::bson!([1_i64, 3_i64, 4_i64, 5_i64, 6_i64, 7_i64])
         );
         assert_eq!(
             versions("workspaces"),

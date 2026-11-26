@@ -1,5 +1,6 @@
 //! Canonical projection and independently anchored time-bucket manifests.
 use super::super::{decode, CaptureError};
+use super::sharded_capacity::SHARDS;
 use layer2_core::sandbox_metrics::measured_evidence::CustodyProjection;
 use mongodb::bson::{doc, Document};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -41,6 +42,7 @@ pub(super) struct Generation {
 }
 
 impl Generation {
+    #[cfg(test)]
     pub fn new(generation: u64, writer_floor_sha256: String) -> Result<Self, CaptureError> {
         if generation == 0 || !valid_digest(&writer_floor_sha256) {
             return Err(CaptureError::Corrupt);
@@ -102,6 +104,8 @@ pub(super) struct Projection {
     pub source_row_id: String,
     pub kind: String,
     pub keys: CustodyProjection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permit_segment: Option<u8>,
 }
 
 impl Projection {
@@ -126,6 +130,7 @@ impl Projection {
             keys: evidence
                 .custody_projection()
                 .map_err(|_| CaptureError::Corrupt)?,
+            permit_segment: None,
         })
     }
 
@@ -148,7 +153,7 @@ impl Projection {
     pub fn document(&self) -> Result<Document, CaptureError> {
         Ok(doc! {
             "_id": self.id(),
-            "schema_version": 1_i64,
+            "schema_version": if self.permit_segment.is_some() { 2_i64 } else { 1_i64 },
             "generation": signed(self.generation)?,
             "source_row_id": &self.source_row_id,
             "series": &self.keys.physical_series_id,
@@ -169,6 +174,9 @@ impl Projection {
             || value.keys.owner_id.is_empty()
             || value.keys.sandbox_id.is_empty()
             || !matches!(value.kind.as_str(), "sample" | "conflict")
+            || value
+                .permit_segment
+                .is_some_and(|segment| segment >= SHARDS)
             || value.document()? != *row
         {
             return Err(CaptureError::Corrupt);
@@ -178,6 +186,15 @@ impl Projection {
 
     pub fn leaf(&self) -> Result<String, CaptureError> {
         digest(self)
+    }
+
+    pub fn verify_source(&self, source: &Document) -> Result<(), CaptureError> {
+        let mut expected = Self::from_source(self.generation, source)?;
+        expected.permit_segment = self.permit_segment;
+        if expected != *self {
+            return Err(CaptureError::Corrupt);
+        }
+        Ok(())
     }
 }
 
@@ -219,16 +236,24 @@ pub(super) fn digest<T: Serialize>(value: &T) -> Result<String, CaptureError> {
     ))
 }
 
-/// Every manifest is authenticated by its parent digest. The root document is
-/// the sole mutable authority for the generation and its complete directories.
+#[cfg(test)]
 pub(super) fn sealed<T: Serialize>(
     id: &str,
     generation: u64,
     value: &T,
 ) -> Result<Document, CaptureError> {
+    sealed_versioned(id, generation, 1, value)
+}
+
+pub(super) fn sealed_versioned<T: Serialize>(
+    id: &str,
+    generation: u64,
+    version: i64,
+    value: &T,
+) -> Result<Document, CaptureError> {
     Ok(doc! {
         "_id": id,
-        "schema_version": 1_i64,
+        "schema_version": version,
         "generation": signed(generation)?,
         "payload_sha256": digest(value)?,
         "payload": canonical(value)?,
@@ -241,9 +266,19 @@ pub(super) fn open<T: Serialize + DeserializeOwned>(
     generation: u64,
     expected: Option<&str>,
 ) -> Result<T, CaptureError> {
+    open_versioned(row, id, generation, 1, expected)
+}
+
+pub(super) fn open_versioned<T: Serialize + DeserializeOwned>(
+    row: &Document,
+    id: &str,
+    generation: u64,
+    version: i64,
+    expected: Option<&str>,
+) -> Result<T, CaptureError> {
     let payload = row.get_str("payload").map_err(|_| CaptureError::Corrupt)?;
     let value: T = serde_json::from_str(payload).map_err(|_| CaptureError::Corrupt)?;
-    if sealed(id, generation, &value)? != *row
+    if sealed_versioned(id, generation, version, &value)? != *row
         || expected.is_some_and(|expected| row.get_str("payload_sha256").ok() != Some(expected))
     {
         return Err(CaptureError::Corrupt);

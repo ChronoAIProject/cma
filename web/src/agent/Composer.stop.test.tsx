@@ -18,6 +18,7 @@ it.each([{ controlsUnavailable: true }, { busy: true }, { stopping: true }])(
     render(<Composer {...current} {...state} />);
     expect(screen.getByRole('button', { name: /Stop.*response/ })).toBeDisabled();
     expect(screen.queryByText('Esc to stop')).not.toBeInTheDocument();
+    expect(screen.queryByText('Running Sandbox commands may continue.')).not.toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Message' }), { key: 'Escape' });
     expect(current.onStop).not.toHaveBeenCalled();
   },
@@ -59,6 +60,12 @@ it('advertises Escape only in the message field and yields to commands and IME',
   expect(screen.getByText('Esc to stop')).toBeVisible();
   act(() => screen.getByRole('button', { name: 'Desktop' }).focus());
   expect(screen.queryByText('Esc to stop')).not.toBeInTheDocument();
+  const scope = screen.getByText('Running Sandbox commands may continue.');
+  expect(scope).toBeVisible();
+  expect(scope).not.toHaveClass('sr-only');
+  expect(screen.getByRole('button', { name: 'Stop response' })).toHaveAccessibleDescription(
+    'Running Sandbox commands may continue.',
+  );
   fireEvent.keyDown(screen.getByRole('button', { name: 'Desktop' }), { key: 'Escape' });
   act(() => field.focus());
   fireEvent.compositionStart(field);
@@ -104,6 +111,7 @@ it.each([
     expect(current.onStop).toHaveBeenCalledOnce();
     view.rerender(<Composer {...current} running={false} status="ready" />);
     expect(screen.queryByText('Esc to stop')).not.toBeInTheDocument();
+    expect(screen.queryByText('Running Sandbox commands may continue.')).not.toBeInTheDocument();
     fireEvent.keyDown(field, { key: 'Escape' });
     expect(current.onStop).toHaveBeenCalledOnce();
   },

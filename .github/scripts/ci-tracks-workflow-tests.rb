@@ -280,6 +280,8 @@ mutations = [
   ->(d) { d['ci']['concurrency']['cancel-in-progress'] = true },
   ->(d) { d['ci']['jobs']['gate-eg']['needs'].delete('runtime-images') },
   ->(d) { d['ci']['jobs']['gate-am']['if'] = 'success()' },
+  ->(d) { d['ci']['jobs']['gate-repo']['if'] = 'always()' },
+  ->(d) { d['ci']['jobs']['version-label']['if'] = '${{ !cancelled() }}' },
   ->(d) { d['ci']['jobs']['version-label']['name'] = 'Optional label' },
   ->(d) { d['ci']['jobs']['version-label']['if'] = 'always()' },
   ->(d) { d['ci']['jobs']['version-label']['if'] = 'success()' },

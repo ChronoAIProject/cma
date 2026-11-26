@@ -93,6 +93,26 @@ pub(super) async fn remove(
         "sandbox_billing_state" => guards::billing_filter(rows, ids),
         _ => doc! {"_id":{"$in":ids}},
     };
+    use crate::store::usage_reports::{CHARTS, INVALIDATED_FIELD, JOBS, ROWS};
+    if [ROWS, CHARTS].contains(&entry.collection) {
+        let reports = rows
+            .iter()
+            .filter(|row| row.get("_id").is_some_and(|id| ids.contains(id)))
+            .map(|row| {
+                row.get_str("report_id")
+                    .map_err(|_| Error::InvalidRecord(entry.collection))
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        // This majority write conflicts with the projection publication on
+        // the same job. Keep the fence through later generations: erasure
+        // can proceed after this acknowledgement without holding a lease.
+        majority_collection::<Document>(db, JOBS)
+            .update_many(
+                doc! {"_id":{"$in":reports.into_iter().collect::<Vec<_>>()}},
+                doc! {"$set":{INVALIDATED_FIELD:true}},
+            )
+            .await?;
+    }
     let removed = if entry.collection == "agent_log" {
         erase_source_log(db, rows, ids, filter).await?
     } else {

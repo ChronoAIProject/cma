@@ -257,13 +257,24 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/image/install-os.sh,targe
     && useradd --no-log-init --create-home --uid 10001 --gid 10001 --shell /bin/bash cma
 FROM runtime-system AS runtime-tools
 ARG NYXID_CLI_VERSION=v0.10.0
-ARG CODEX_VERSION=0.147.0
-ARG CODEX_NATIVE_SHA256_AMD64=cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40
-ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2
-ARG CODEX_LAUNCHER_SHA256=134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
+ARG CODEX_VERSION=0.165.0
+ARG CODEX_UPSTREAM_NATIVE_SHA256_AMD64=c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5
+ARG CODEX_UPSTREAM_NATIVE_SHA256_ARM64=b32ece31af06440da980b733fb8fefdd1f193439595fda84096f1caaceec543f
+ARG CODEX_LAUNCHER_SHA256=61b0194f3bb6534439c8d26a3ed57d0805f84b884588b761795323eeb92fcf70
+ARG CODEX_FORK_RELEASE=cma-codex-0.165.0-146878dacb49
+ARG CODEX_FORK_PACKAGE_SHA256_AMD64=a42f99774031bcdfb5785554c0f5b458e463054e87df09d3d67851787f994ee8
+ARG CODEX_FORK_PACKAGE_SHA256_ARM64=103cc138ebb72cadfab457f5eda807465c3e9842df68ca0948d245115c852389
+ARG CODEX_NATIVE_SHA256_AMD64=1e9d2fb238b9c0d012c9b36e1ba1203ab5a8382ae937720320775c00d853d6dd
+ARG CODEX_NATIVE_SHA256_ARM64=eb3dba09164f2aef23e7a32105f69ff5b172e2c717c4b6f75abc43faae183118
+ARG CODEX_FORK_CODE_MODE_SHA256_AMD64=6d40220f43b937342f9cf7eaa50ba2965cc36b33ff8e36eda2760382e2691f25
+ARG CODEX_FORK_CODE_MODE_SHA256_ARM64=d1108c33139eb38a2a73bfc6340128a0aa4d0e86dec9e8dea03a489d62139e99
+ARG CODEX_FORK_BWRAP_SHA256_AMD64=fdedfbcc81efe3509735bfc73c51acc5a2da061ad7f816dd6ad3c332c973166d
+ARG CODEX_FORK_BWRAP_SHA256_ARM64=2ec3517c8fd054be1f9c27a32b79c897fe88017a427d56852df08962dc49ecf3
+ARG CODEX_FORK_RG_SHA256_AMD64=e62198eb19b136b88c330af83647b5a962cb99b6b1f066758568f12de1974849
+ARG CODEX_FORK_RG_SHA256_ARM64=e36d0eb52e70696bdf1781392722e05a21bb91d3b7b762ef5ec20e5df2ec687b
 ARG DESKTOP_CODEX_VERSION=0.165.0
-ARG DESKTOP_CODEX_NATIVE_SHA256_AMD64=c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5
-ARG DESKTOP_CODEX_NATIVE_SHA256_ARM64=b32ece31af06440da980b733fb8fefdd1f193439595fda84096f1caaceec543f
+ARG DESKTOP_CODEX_NATIVE_SHA256_AMD64=1e9d2fb238b9c0d012c9b36e1ba1203ab5a8382ae937720320775c00d853d6dd
+ARG DESKTOP_CODEX_NATIVE_SHA256_ARM64=eb3dba09164f2aef23e7a32105f69ff5b172e2c717c4b6f75abc43faae183118
 ARG DESKTOP_CODEX_LAUNCHER_SHA256=61b0194f3bb6534439c8d26a3ed57d0805f84b884588b761795323eeb92fcf70
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
@@ -307,6 +318,7 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/image/npm,target=/tmp/cma
 RUN --mount=type=bind,source=api/crates/layer4-runtime/image/provider,target=/tmp/cma-image-inputs/provider,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/desktop-provider,target=/tmp/cma-image-inputs/desktop-provider,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/install-provider.sh,target=/tmp/install-provider.sh,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/install-codex-package.py,target=/tmp/install-codex-package.py,readonly \
     sh /tmp/install-provider.sh
 # ACP's dependency can retain an older CLI. Always execute the verified global
 # CLI selected above; this does not alter persisted Agent launch requests.
@@ -427,9 +439,18 @@ FROM runtime-application-inputs AS runtime-qualification
 RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma-codex-source,readonly \
     --mount=type=bind,source=api/crates/layer3-adapter/src/runtime_control_relay.py,target=/tmp/runtime_control_relay.py,readonly \
     cp -a /payload/. / \
-    && export CMA_CODEX_TEST_NATIVE_BINARY=/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex \
-    && export CMA_CODEX_TEST_NATIVE_SHA256="${CODEX_NATIVE_SHA256_AMD64}" \
-    && if [ "${RUNTIME_DESKTOP}" = "1" ]; then export CMA_CODEX_TEST_NATIVE_SHA256="${DESKTOP_CODEX_NATIVE_SHA256_AMD64}"; fi \
+    && case "${TARGETARCH}" in \
+      amd64) platform=x64; target=x86_64-unknown-linux-musl; export CMA_CODEX_TEST_NATIVE_SHA256="${CODEX_NATIVE_SHA256_AMD64}";; \
+      arm64) platform=arm64; target=aarch64-unknown-linux-musl; export CMA_CODEX_TEST_NATIVE_SHA256="${CODEX_NATIVE_SHA256_ARM64}";; \
+      *) exit 1;; \
+    esac \
+    && export CMA_CODEX_TEST_NATIVE_BINARY="/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-${platform}/vendor/${target}/bin/codex" \
+    && export CMA_CODEX_TEST_LEGACY_BINARY="$(find /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/node_modules/@openai -path "*/vendor/${target}/bin/codex" -type f -print -quit)" \
+    && test -x "$CMA_CODEX_TEST_LEGACY_BINARY" \
+    && test "$("$CMA_CODEX_TEST_LEGACY_BINARY" --version)" = "codex-cli 0.147.0" \
+    && node --test /tmp/cma-codex-source/native_stop_seal.test.cjs \
+    && env CMA_RUNTIME_TEST_BINARY=/usr/local/bin/layer4-runtime CMA_CODEX_TEST_BINARY=/usr/local/bin/codex CMA_ACP_TEST_BRIDGE=/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js \
+      node --test /tmp/cma-codex-source/repository_task.test.cjs /tmp/cma-codex-source/initial_task.test.cjs /tmp/cma-codex-source/suggested_reply.test.cjs /tmp/cma-codex-source/recorded_output.test.cjs /tmp/cma-codex-source/composer_completion.test.cjs /tmp/cma-codex-source/plan_progress.test.cjs \
     && node --test /tmp/cma-codex-source/session_open_overlap.test.cjs /tmp/cma-codex-source/native_process_identity.test.cjs /tmp/cma-codex-source/deferred_metadata_runtime.test.cjs /tmp/cma-codex-source/deferred_session_metadata.test.cjs \
     && node --test /tmp/cma-codex-source/prompt_output_buffer.test.cjs /tmp/cma-codex-source/prompt_output_identity.test.cjs /tmp/cma-codex-source/native_bound_dispatch.test.cjs \
     && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs /tmp/cma-codex-source/endpoint_migration.test.cjs /tmp/cma-codex-source/turn_steering.test.cjs /tmp/cma-codex-source/open_completion.test.cjs /tmp/cma-codex-source/open_completion_native.test.cjs /tmp/cma-codex-source/recovery_rejoin_native.test.cjs \

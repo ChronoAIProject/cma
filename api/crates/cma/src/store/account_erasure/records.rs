@@ -108,6 +108,7 @@ async fn run(
     .await?;
     if cursor.allocation_absent != Some(receipt.allocation_absent)
         || cursor.observer_absent != Some(receipt.observer_absent)
+        || cursor.usage_projections_absent != Some(receipt.usage_projections_absent)
     {
         // A persisted absence marker cannot hide a namespace created later.
         cursor.operation = 0;
@@ -116,6 +117,7 @@ async fn run(
         cursor.indexes_ready = false;
         cursor.allocation_absent = Some(receipt.allocation_absent);
         cursor.observer_absent = Some(receipt.observer_absent);
+        cursor.usage_projections_absent = Some(receipt.usage_projections_absent);
     }
     if !cursor.indexes_ready {
         super::indexes::ensure_with_receipt(db, &receipt).await?;
@@ -127,7 +129,11 @@ async fn run(
     if contexts.len() != targets.len() {
         *contexts = context::load_cohort_with_receipt(db, targets, &receipt).await?;
     }
-    let mut expanded = false;
+    let mut expanded = if receipt.usage_projections_absent {
+        false
+    } else {
+        context::discover_usage_projections(db, contexts).await?
+    };
     for context in contexts.iter_mut() {
         let target = targets
             .iter()

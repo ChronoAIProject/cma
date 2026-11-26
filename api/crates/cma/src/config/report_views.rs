@@ -5,6 +5,7 @@ use serde::Deserialize;
 #[derive(Clone, Debug)]
 pub(crate) struct ViewPolicy {
     pub enabled: bool,
+    pub aggregate_projections_enabled: bool,
     pub allocation_rollups_enabled: bool,
     pub freshness_seconds: u64,
     pub retain_seconds: u64,
@@ -17,6 +18,7 @@ impl Default for ViewPolicy {
     fn default() -> Self {
         Self {
             enabled: false,
+            aggregate_projections_enabled: false,
             allocation_rollups_enabled: false,
             freshness_seconds: 300,
             retain_seconds: 86_400,
@@ -106,6 +108,8 @@ impl ViewPolicy {
             Ok(value)
         }
         let enabled = boolean(lookup, "CHRONO_USAGE_REPORT_VIEWS_ENABLED")?;
+        let aggregate_projections_enabled =
+            boolean(lookup, "CHRONO_USAGE_REPORT_AGGREGATE_PROJECTIONS_ENABLED")?;
         let allocation_rollups_enabled =
             boolean(lookup, "CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED")?;
         let warm_enabled = boolean(lookup, "CHRONO_USAGE_REPORT_WARMER_ENABLED")?;
@@ -164,7 +168,7 @@ impl ViewPolicy {
                     .into(),
             );
         }
-        if enabled && view_scopes.is_empty() {
+        if (enabled || aggregate_projections_enabled) && view_scopes.is_empty() {
             return Err("retained views require an explicit approved scope".into());
         }
         if warm_scopes.iter().any(|warm| {
@@ -182,6 +186,7 @@ impl ViewPolicy {
         }
         Ok(Self {
             enabled,
+            aggregate_projections_enabled,
             allocation_rollups_enabled,
             freshness_seconds,
             retain_seconds,

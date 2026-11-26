@@ -426,3 +426,6 @@ async fn admission_retry_reuses_committed_identity_before_charging_budget() {
     );
     f.store.db.drop().await.unwrap();
 }
+
+#[path = "projection_replay_tests.rs"]
+mod projection_replay;
