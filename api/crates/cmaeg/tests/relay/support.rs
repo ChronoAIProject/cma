@@ -401,3 +401,17 @@ pub async fn problem(response: reqwest::Response, status: u16, reason: &str) {
         assert_eq!(body["code"], "callback_invalid");
     }
 }
+
+/// Run a telemetry case without other callbacks changing its global counters.
+pub fn run_isolated(name: &str) {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--ignored"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
