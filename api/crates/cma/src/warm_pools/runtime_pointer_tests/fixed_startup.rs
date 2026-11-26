@@ -107,16 +107,16 @@ async fn fixed_pin_rollback_serves_with_the_conflicting_lane_held() {
     let rollback =
         pools('a', 0, Some((image(Lane::Machine, '1'), TARGET))).with_default_pool_holds(holds);
     assert!(matches!(
-        fixed_pool_startup(&rollback, None).await.unwrap(),
-        WarmPoolStartup::ConfigurationDrift
-    ));
-    assert!(rollback.fixed_agent_default_held());
-    assert_eq!(sandbox_store.managed_agent_release(), None);
-    assert!(!updates.target_is_qualified(&retained, &old_pin));
-    assert!(matches!(
         rollback.ensure_default().await,
         Err(WarmPoolError::Conflict)
     ));
+    assert!(matches!(
+        fixed_pool_startup(&rollback, None).await.unwrap(),
+        WarmPoolStartup::ConfigurationDrift
+    ));
+    assert!(rollback.default_held(false));
+    assert_eq!(sandbox_store.managed_agent_release(), None);
+    assert!(!updates.target_is_qualified(&retained, &old_pin));
 
     let fresh = SandboxSpec {
         sandbox_id: "rollback-fresh".into(),

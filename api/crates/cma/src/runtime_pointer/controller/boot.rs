@@ -1,6 +1,6 @@
 //! Publish the early writer before configuring or draining any native pool.
 use super::*;
-use crate::warm_pools::startup::WarmPoolStartup;
+use crate::warm_pools::{deployment_image, startup::WarmPoolStartup};
 
 impl RuntimePointerController {
     pub(crate) async fn register_boot(&self) -> Result<(), String> {
@@ -61,10 +61,7 @@ impl RuntimePointerController {
             (ReleasedLane::Machine, captured.machine.as_deref()),
         ] {
             if let Some(image) = image {
-                self.targets
-                    .verify_bootstrap(lane == ReleasedLane::Machine, image)
-                    .await
-                    .map_err(|error| format!("verify {lane:?} runtime release order: {error:?}"))?;
+                self.verify_bootstrap_default(lane, image).await?;
             }
         }
         crate::warm_pools::startup::boot_effect(
@@ -78,6 +75,12 @@ impl RuntimePointerController {
             (ReleasedLane::Machine, captured.machine),
         ] {
             if let Some(image) = image {
+                let machine = lane == ReleasedLane::Machine;
+                // A machine pointer requires a bootstrapped Agent lane. Its
+                // pool can initialize independently while Agent is held.
+                if self.pools.default_held(machine) || (machine && self.pools.default_held(false)) {
+                    continue;
+                }
                 if self
                     .release
                     .lanes
@@ -86,12 +89,10 @@ impl RuntimePointerController {
                     .map_err(|error| error.to_string())?
                     .is_none()
                 {
-                    self.targets
-                        .verify_bootstrap(lane == ReleasedLane::Machine, &image)
-                        .await
-                        .map_err(|error| {
-                            format!("verify {lane:?} bootstrap release order: {error:?}")
-                        })?;
+                    self.verify_bootstrap_default(lane, &image).await?;
+                    if self.pools.default_held(machine) {
+                        continue;
+                    }
                     let record =
                         ReleasedLaneRecord::bootstrap(lane, image, &layer2_core::now_rfc3339())
                             .map_err(|error| error.to_string())?;
@@ -119,11 +120,43 @@ impl RuntimePointerController {
         Ok(())
     }
 
+    async fn verify_bootstrap_default(
+        &self,
+        lane: ReleasedLane,
+        image: &str,
+    ) -> Result<(), String> {
+        let machine = lane == ReleasedLane::Machine;
+        let has_release = self
+            .release
+            .lanes
+            .load(lane)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_some();
+        let verified = if has_release {
+            self.targets.verify_bootstrap(machine, image).await
+        } else {
+            // Without a pointer record, the snapshot contains a configured
+            // pin. Prove any conflict against durable pool order before holding it.
+            self.pools
+                .hold_conflicting_pin(&deployment_image(image.into()), machine)
+                .await
+                .map(|_| ())
+        };
+        verified.map_err(|error| format!("verify {lane:?} runtime release order: {error:?}"))
+    }
+
     pub(crate) async fn await_active_ready(
         &self,
         admission: Option<&crate::startup::Admission>,
     ) -> Result<WarmPoolStartup, String> {
         for _ in 0..3 {
+            if admission.is_some_and(crate::startup::Admission::is_draining) {
+                return Ok(WarmPoolStartup::Stopping);
+            }
+            if self.pools.default_held(false) {
+                return Ok(WarmPoolStartup::ConfigurationDrift);
+            }
             let before = self.release.snapshot();
             let ready = self
                 .pools

@@ -69,6 +69,14 @@ impl PoolTargetStore for RetirementStore {
         self.store.activate(id).await
     }
 
+    async fn default_pin_conflicts(
+        &self,
+        plan: &NativePoolConfiguration,
+        machine: bool,
+    ) -> Result<bool, WarmPoolError> {
+        self.store.default_pin_conflicts(plan, machine).await
+    }
+
     async fn retirement_homes(
         &self,
         target: &PoolTarget,

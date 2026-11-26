@@ -27,7 +27,7 @@ impl NativeWarmPools {
         }
     }
 
-    pub(super) async fn hold_conflicting_pin(
+    pub(crate) async fn hold_conflicting_pin(
         &self,
         image: &RuntimeImage,
         machine: bool,
@@ -43,8 +43,8 @@ impl NativeWarmPools {
         Ok(true)
     }
 
-    pub(crate) fn fixed_agent_default_held(&self) -> bool {
-        self.default_holds.lane(false)
+    pub(crate) fn default_held(&self, machine: bool) -> bool {
+        self.default_holds.lane(machine)
     }
 
     /// Persist the deployment-owned default target before the reconciler starts.
@@ -53,9 +53,15 @@ impl NativeWarmPools {
     /// pool. Provider resources are still created only by the normal reconciler.
     pub async fn ensure_default(&self) -> Result<(), WarmPoolError> {
         let released = self.released_images();
-        self.ensure_image(&released.agent, self.default_target, false)
-            .await?;
-        if let Some((image, target)) = &released.machine {
+        if !self.default_held(false) {
+            self.ensure_image(&released.agent, self.default_target, false)
+                .await?;
+        }
+        if let Some((image, target)) = released
+            .machine
+            .as_ref()
+            .filter(|_| !self.default_held(true))
+        {
             self.ensure_image(image, *target, true).await?;
         }
         Ok(())

@@ -135,24 +135,23 @@ async fn warm_pools(
         return Ok((writer_ready, WarmPoolStartup::Stopping));
     }
     let result = match &composition.runtime_pointer {
-        Some(controller) => {
-            observe(
-                "default_warm_pool_configuration",
-                controller.bootstrap(),
-                |_| None,
-            )
-            .await?;
-            observe_pool_readiness(async {
-                if admission.is_some_and(Admission::is_draining) {
-                    return Ok(WarmPoolStartup::Stopping);
-                }
-                controller.await_active_ready(admission).await
-            })
-            .await
-        }
+        Some(controller) => pointer_pool_startup(controller, admission).await,
         None => fixed_pool_startup(&composition.native_warm_pools, admission).await,
     };
     result.map(|result| (writer_ready, result))
+}
+
+pub(crate) async fn pointer_pool_startup(
+    controller: &crate::runtime_pointer::RuntimePointerController,
+    admission: Option<&Admission>,
+) -> Result<WarmPoolStartup, String> {
+    observe(
+        "default_warm_pool_configuration",
+        controller.bootstrap(),
+        |_| None,
+    )
+    .await?;
+    observe_pool_readiness(controller.await_active_ready(admission)).await
 }
 
 pub(crate) async fn fixed_pool_startup(
@@ -170,7 +169,7 @@ pub(crate) async fn fixed_pool_startup(
         if admission.is_some_and(Admission::is_draining) {
             return Ok(WarmPoolStartup::Stopping);
         }
-        if pools.fixed_agent_default_held() {
+        if pools.default_held(false) {
             return Ok(WarmPoolStartup::ConfigurationDrift);
         }
         let readiness = pools
