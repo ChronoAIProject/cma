@@ -199,12 +199,13 @@ async fn fenced_worker_quota_refusal_preserves_flagged_lifecycle_failure_metadat
         );
         effect.creation_fence = Some(fence.clone());
         let error = sandboxes.admit_sandbox(effect.clone()).await.unwrap_err();
-        let SandboxStoreError::LimitReached { limit, live } = error else {
+        let SandboxStoreError::LimitReached { limit, live, usage } = error else {
             panic!("expected typed quota refusal, got {error:?}")
         };
         let failure = enabled.then_some(AgentLifecycleFailure::SandboxLimitReached {
             limit,
             live: u64::from(live),
+            quota_usage: Some(usage),
         });
         assert!(operations
             .fail_fenced_creation(
@@ -222,7 +223,7 @@ async fn fenced_worker_quota_refusal_preserves_flagged_lifecycle_failure_metadat
         assert_eq!(
             view["failure"],
             if enabled {
-                serde_json::json!({"code":"sandbox_limit_reached","limit":limit,"live":live})
+                serde_json::json!({"code":"sandbox_limit_reached","limit":limit,"live":live,"quota_usage":usage})
             } else {
                 Value::Null
             }

@@ -4,6 +4,126 @@ use mongodb::bson::Bson;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
+async fn one_settled_retirement_slot_is_reused_once_across_managers() {
+    for debt in [
+        RetirementDebt::Missing,
+        RetirementDebt::Empty,
+        RetirementDebt::Outstanding,
+    ] {
+        exercise_retirement_admission(debt).await;
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RetirementDebt {
+    Missing,
+    Empty,
+    Outstanding,
+}
+
+async fn exercise_retirement_admission(debt: RetirementDebt) {
+    use layer2_core::sandbox::{
+        SandboxHome, SandboxLifecycleResult, SandboxStatus, SandboxWorkStep,
+    };
+
+    let (client, name) = database("owner_retirement_slot").await;
+    let left = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let right = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let release_expected = !matches!(debt, RetirementDebt::Outstanding);
+    for i in 0..2 {
+        let id = format!("sbx_outgoing_{i}");
+        let SandboxAdmissionResult::Created(mut parent) = left
+            .admit_sandbox(admission(&id, &format!("launch-outgoing-{i}"), 2))
+            .await
+            .unwrap()
+        else {
+            panic!("expected new Sandbox");
+        };
+        let previous = parent.revision;
+        parent.begin_retirement(NOW.into()).unwrap();
+        if i == 0 {
+            let mut home = SandboxHome::reserve(
+                &parent.id,
+                layer3_adapter::HomeVolumePolicy {
+                    mode: Default::default(),
+                    storage_class: "storage".into(),
+                    capacity_gib: 64,
+                    template_name: "empty".into(),
+                    template_generation: "seed-generation".into(),
+                },
+            )
+            .unwrap();
+            home.released = true;
+            parent.lifecycle.home = Some(Box::new(home));
+            parent
+                .work
+                .schedule(SandboxWorkStep::MarkRetired, NOW.into());
+            if !release_expected {
+                parent
+                    .credential
+                    .queue_revoke("fixture-key".into(), NOW.into());
+            }
+        } else {
+            assert!(!parent.retirement_released_owner_slot());
+        }
+        left.save_sandbox(previous, parent).await.unwrap();
+    }
+    if matches!(debt, RetirementDebt::Missing) {
+        assert_eq!(
+            left.sandboxes
+                .update_one(
+                    doc! {"_id": "sbx_outgoing_0"},
+                    doc! {"$unset": {"record.credential.revoke_debt": ""}},
+                )
+                .await
+                .unwrap()
+                .modified_count,
+            1,
+        );
+    }
+    let retained = right
+        .get_sandbox(&SandboxId("sbx_outgoing_0".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let lifecycle =
+        SandboxLifecycleResult::observe(&retained, Some(NOW), std::time::SystemTime::now(), true)
+            .unwrap();
+    assert_eq!(lifecycle.owner_slot_released, Some(release_expected));
+
+    let owner = SubjectId::new("owner");
+    let snapshot = right.owner_capacity(&owner).await.unwrap();
+    let released = u64::from(release_expected);
+    assert_eq!(snapshot.counts, [(SandboxStatus::Retiring, 2 - released)]);
+    assert_eq!(snapshot.retiring_released, released);
+    let (a, b) = tokio::join!(
+        left.admit_sandbox(admission("sbx_replacement_a", "launch-replacement-a", 2)),
+        right.admit_sandbox(admission("sbx_replacement_b", "launch-replacement-b", 2)),
+    );
+    let results = [a, b];
+    assert_eq!(
+        results
+            .iter()
+            .filter(|value| matches!(value, Ok(SandboxAdmissionResult::Created(_))))
+            .count(),
+        usize::from(release_expected)
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|value| matches!(
+                value,
+                Err(SandboxStoreError::LimitReached { limit: 2, live: 2, usage })
+                    if usage.retiring_charged == 2 - released && usage.retiring_released == released
+            ))
+            .count(),
+        2 - usize::from(release_expected),
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
 async fn two_clients_enforce_three_sandboxes_per_owner_without_splitting_capacity() {
     let (client, name) = database("owner_three_replicas").await;
     let peer = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
@@ -35,7 +155,9 @@ async fn two_clients_enforce_three_sandboxes_per_owner_without_splitting_capacit
     for (request, result) in results {
         match result {
             Ok(SandboxAdmissionResult::Created(value)) => accepted.push((request, value)),
-            Err(SandboxStoreError::LimitReached { limit: 3, live: 3 }) => refused += 1,
+            Err(SandboxStoreError::LimitReached {
+                limit: 3, live: 3, ..
+            }) => refused += 1,
             other => panic!("unexpected shared owner admission: {other:?}"),
         }
     }
@@ -73,7 +195,11 @@ async fn two_clients_enforce_three_sandboxes_per_owner_without_splitting_capacit
         restarted
             .admit_sandbox(admission("sbx_fourth", "launch-fourth", 3))
             .await,
-        Err(SandboxStoreError::LimitReached { limit: 3, live: 3 })
+        Err(SandboxStoreError::LimitReached {
+            limit: 3,
+            live: 3,
+            ..
+        })
     ));
     // Another owner's allowance remains independently available on either pod.
     let mut other = sandbox("sbx_other_owner", "launch-other-owner");

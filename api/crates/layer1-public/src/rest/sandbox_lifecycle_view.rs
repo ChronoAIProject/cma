@@ -163,6 +163,10 @@ pub struct SandboxLifecycleResultView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_due_at: Option<String>,
     pub continuing: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_slot_released: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked_retirement_step: Option<&'static str>,
     #[schema(value_type = Vec<String>)]
     pub actions: Vec<layer2_core::sandbox::SandboxLifecycleAction>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -178,6 +182,8 @@ impl From<layer2_core::sandbox::SandboxLifecycleResult> for SandboxLifecycleResu
             started_at: value.started_at,
             result_due_at: value.result_due_at,
             continuing: value.continuing,
+            owner_slot_released: value.owner_slot_released,
+            blocked_retirement_step: value.blocked_retirement_step,
             actions: value.actions,
             retry_after_seconds: value.retry_after_seconds,
         }

@@ -71,17 +71,19 @@ export function DeletionStatusPanel({
         ? 'Status unavailable'
         : sending
           ? 'Submitting'
-          : observation?.failure
-            ? 'Cleanup needs attention'
-            : observation?.retirementDelayed
-              ? 'Cleanup taking longer'
-              : observation?.inProgress
-                ? 'Deleting'
-                : request.accepted
-                  ? 'Deletion requested'
-                  : !unknownDelete && request.stop?.phase === 'accepted'
-                    ? 'Stopping'
-                    : 'Request unconfirmed';
+          : observation?.retirementFailed
+            ? 'Cleanup stopped'
+            : observation?.failure
+              ? 'Cleanup needs attention'
+              : observation?.retirementDelayed
+                ? 'Cleanup taking longer'
+                : observation?.inProgress
+                  ? 'Deleting'
+                  : request.accepted
+                    ? 'Deletion requested'
+                    : !unknownDelete && request.stop?.phase === 'accepted'
+                      ? 'Stopping'
+                      : 'Request unconfirmed';
   return (
     <section className="deletion-status" aria-label="Deletion status">
       <span className="deletion-status__badge" data-complete={complete}>
@@ -99,9 +101,11 @@ export function DeletionStatusPanel({
                 ? 'Waiting for the Agent to stop. Deletion will follow only after stopping is confirmed.'
                 : sending
                   ? 'Submitting delete request.'
-                  : request.accepted
-                    ? 'Delete request accepted. Cleanup continues even if you close this page.'
-                    : 'The delete request has not been confirmed. Check the same request before trying another action.'}
+                  : observation?.retirementFailed
+                    ? 'Automatic cleanup stopped after repeated failures. Contact support with this request reference.'
+                    : request.accepted
+                      ? 'Delete request accepted. Cleanup continues even if you close this page.'
+                      : 'The delete request has not been confirmed. Check the same request before trying another action.'}
       </p>
       {!complete && !request.accepted ? (
         <p>
@@ -126,10 +130,7 @@ export function DeletionStatusPanel({
           ) : null}
         </p>
       ) : target === 'Sandbox' && request.accepted && !complete ? (
-        <p>
-          Deleting — still uses one Sandbox slot. The slot becomes available when deletion is
-          confirmed.
-        </p>
+        <p>Check Environments for your current Sandbox capacity while deletion finishes.</p>
       ) : null}
       {!complete && !readError && observation?.retirementDelayed ? (
         <p>

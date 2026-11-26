@@ -36,6 +36,15 @@ pub const WORK_RETRY_PROBE_INTERVAL: Duration = Duration::from_secs(30 * 60);
 pub const WORK_RETRY_BUDGET: u32 = 12;
 pub const WORK_RETRY_EXTERNAL_BUDGET: u32 = 3;
 
+impl WorkRetryFailure {
+    pub const fn retry_budget(self) -> u32 {
+        match self {
+            Self::ExternalAction => WORK_RETRY_EXTERNAL_BUDGET,
+            Self::Waiting | Self::Transient => WORK_RETRY_BUDGET,
+        }
+    }
+}
+
 /// `attempts` is the persisted count before publishing this failed attempt.
 /// The caller retains the claim and records the chosen due time atomically.
 /// Advancing or scheduling new work resets that count through the existing model.
@@ -45,11 +54,7 @@ pub fn work_retry_policy(
     attempts: u32,
     base: Duration,
 ) -> WorkRetryDecision {
-    let budget = match failure {
-        WorkRetryFailure::ExternalAction => WORK_RETRY_EXTERNAL_BUDGET,
-        WorkRetryFailure::Waiting | WorkRetryFailure::Transient => WORK_RETRY_BUDGET,
-    };
-    if class == WorkRetryClass::Maintenance && attempts >= budget {
+    if class == WorkRetryClass::Maintenance && attempts >= failure.retry_budget() {
         return WorkRetryDecision {
             delay: WORK_RETRY_PROBE_INTERVAL.max(base),
             parked: true,

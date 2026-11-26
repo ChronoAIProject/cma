@@ -76,6 +76,7 @@ impl InlineAgentLifecycle {
         Err(AgentLifecycleProvisioningError::SandboxLimitReached {
             limit: capacity.limit,
             live: capacity.live,
+            quota_usage: Some(capacity.quota_usage()),
         })
     }
 }
