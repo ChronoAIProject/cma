@@ -101,6 +101,34 @@ it('places Computer after Share and before More and reports its actual expanded 
   );
 });
 
+it('retains Agent provenance and recovery supplied alongside curated actions', async () => {
+  const user = userEvent.setup();
+  const onMenuSelect = vi.fn();
+  render(
+    draw({
+      onMenuSelect,
+      menu: [
+        { id: 'rename-agent', label: 'Rename' },
+        { type: 'label', id: 'creation-origin', text: 'Created by Trigger' },
+        { id: 'published-trigger', label: 'Published Trigger: Review', href: '/t/trigger-1' },
+        { id: 'subscription-sign-in', label: 'Sign in to your ChatGPT subscription again' },
+      ],
+    }),
+  );
+
+  await user.click(screen.getByRole('button', { name: 'More Agent actions' }));
+  expect(screen.getByText('Created by Trigger')).toBeVisible();
+  expect(screen.getByRole('menuitem', { name: 'Published Trigger: Review' })).toHaveAttribute(
+    'href',
+    '/t/trigger-1',
+  );
+  expect(screen.getAllByRole('menuitem', { name: /^Rename$/ })).toHaveLength(1);
+  await user.click(
+    screen.getByRole('menuitem', { name: 'Sign in to your ChatGPT subscription again' }),
+  );
+  expect(onMenuSelect).toHaveBeenCalledExactlyOnceWith('subscription-sign-in');
+});
+
 it('retains a reason while access is uncertain and omits unavailable capabilities', async () => {
   const user = userEvent.setup();
   const onDetailsOpenChange = vi.fn();

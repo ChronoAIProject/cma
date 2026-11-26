@@ -214,9 +214,8 @@ class CacheTests(unittest.TestCase):
         self.assertIn("--exclude=./src", compact)
         self.assertIn(f"max_expanded={bound}", compact)
         self.assertIn(f"max_compressed={cache.MAX_ARCHIVE_BYTES}", compact)
-        self.assertIn('archive_stream "$registry" "$registry_archive" $skip_src .', compact)
-        self.assertIn('archive_stream "$target" "$target_archive" .', compact)
-        self.assertIn('archive_stream "$target" "$target_archive" "$@"', compact)
+        self.assertIn('archive_stream "$registry" "$registry_archive" "$max_expanded" "$max_compressed"', compact)
+        self.assertIn('archive_stream "$target" "$target_archive" "$remaining_expanded" "$remaining_compressed"', compact)
         self.assertNotIn("rm -rf /cache", compact)
 
     def test_am_compaction_restores_complete_groups_and_cross_group_links(self):
@@ -408,12 +407,24 @@ class CacheTests(unittest.TestCase):
                 info.size = len(value)
                 tar.addfile(info, io.BytesIO(value))
         recipe = cache.dockerfile("inject-target")
-        self.assertIn("COPY target.tar.gz /restore/", recipe)
+        self.assertIn("--mount=type=bind,source=target.tar.gz,target=/restore/target.tar.gz", recipe)
+        self.assertNotIn("COPY", recipe)
         self.assertNotIn("registry", recipe)
         with patch("subprocess.run") as run:
             cache.transfer("inject-target", self.root, namespace="synthetic")
         self.assertIn("BUILDKIT_CACHE_MOUNT_NS=synthetic", run.call_args.args[0])
         self.assertEqual(run.call_args.kwargs["input"], recipe)
+
+    def test_full_restore_binds_each_archive_and_extracts_into_locked_cache_mounts(self):
+        recipe = cache.dockerfile("inject")
+        for name in cache.MOUNTS:
+            with self.subTest(mount=name):
+                self.assertIn(f"--mount=type=bind,source={name}.tar.gz,target=/restore/{name}.tar.gz", recipe)
+                self.assertIn(f"target=/cache/{name},sharing=locked", recipe)
+                self.assertIn(f"tar -xzpf /restore/{name}.tar.gz -C /cache/{name}", recipe)
+        self.assertIn("RUN --network=none", recipe)
+        self.assertNotIn("COPY", recipe)
+        self.assertNotIn(",rw", recipe)
 
     def test_bridge_mount_ids_match_the_real_api_dockerfile(self):
         definition = (cache.ROOT / "api/crates/cma/Dockerfile").read_text()
@@ -483,6 +494,24 @@ class CacheTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             cache.main()
         self.assertEqual(output.read_text(), "ready=false\n")
+
+    def test_background_extract_uses_the_build_namespace_without_publisher_credentials(self):
+        context = self.root / "context"
+        output = self.root / "candidate"
+        with patch.dict(os.environ, {"BUILDX_BUILDER": "fixture-builder", "GH_TOKEN": "fixture-token",
+                                     "ACTIONS_RUNTIME_TOKEN": "fixture-runtime"}, clear=True), \
+                patch.object(cache.subprocess, "Popen") as popen:
+            process = cache.start_extract(output, context, namespace="a" * 32, max_content=1024, max_archive=512)
+        self.assertIs(process, popen.return_value)
+        command = popen.call_args.args[0]
+        self.assertIn("BUILDKIT_CACHE_MOUNT_NS=" + "a" * 32, command)
+        self.assertIn(f"type=local,dest={output}", command)
+        self.assertEqual(command[command.index("--file") + 1], str(context / "Dockerfile"))
+        self.assertEqual(command[-1], str(context))
+        self.assertIn("max_compressed=512", (context / "Dockerfile").read_text())
+        self.assertEqual(popen.call_args.kwargs["env"], {"BUILDX_BUILDER": "fixture-builder"})
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        self.assertIs(popen.call_args.kwargs["stderr"], subprocess.DEVNULL)
 
 
 if __name__ == "__main__":

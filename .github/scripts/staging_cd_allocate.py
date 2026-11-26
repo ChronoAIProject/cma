@@ -22,7 +22,7 @@ from staging_cd_reservations import next_reservation
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
 from staging_cd_promotion import available_proofs, proven_components
-from staging_cd_versions import DEPLOYABLES, label_level, merged_pr, version_tuple
+from staging_cd_versions import DEPLOYABLES, label_level, merged_pr, source_is_retired, version_tuple
 
 REFUSAL_CODES = {
     "Reservation owner run could not be read": "RESERVATION_OWNER_UNREADABLE",
@@ -56,6 +56,8 @@ REFUSAL_CODES = {
     "Allocation planned a duplicate reservation": "RESERVATION_PLAN_INVALID",
     "Unknown reservation component": "RESERVATION_PLAN_INVALID",
     "Allocation tag inventory is incomplete": "INVENTORY_INCOMPLETE",
+    "Develop history has not reached the push": "DEVELOP_ADVERTISEMENT_UNSETTLED",
+    "Develop ancestry could not be verified": "DEVELOP_ADVERTISEMENT_UNSETTLED",
     "Allocation tag inventory exceeds 16 MiB": "INVENTORY_TOO_LARGE",
     "Allocation reservation readback differs": "RESERVATION_VERIFY_FAILED",
     "Allocation reservation readback is unavailable": "RESERVATION_NOT_VISIBLE",
@@ -71,7 +73,7 @@ TRANSIENT_CODES = frozenset({
     "VERSION_LABELS_INVALID", "GITHUB_READ_TRANSIENT", "GITHUB_RESPONSE_INVALID", "RESERVATION_COLLISION_LIMIT",
     "RESERVATION_PUSH_FAILED", "RESERVATION_VERIFY_FAILED", "FINAL_SETTLEMENT_UNCERTAIN", "DEADLINE_EXCEEDED",
     "READ_FAILED", "WRITE_UNCERTAIN", "INVENTORY_INCOMPLETE", "INVENTORY_CLAIM_ORPHANED", "RESERVATION_COLLISION",
-    "RESERVATION_NOT_VISIBLE",
+    "RESERVATION_NOT_VISIBLE", "DEVELOP_ADVERTISEMENT_UNSETTLED",
 })
 # A transient refusal raised before the reservation push started left nothing
 # on the remote, so the whole allocation runs once more in the same job, with
@@ -205,6 +207,8 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
     for item in pending:
         if item["component"] not in DEPLOYABLES or DEPLOYABLES[item["component"]] not in newest:
             continue
+        if source_is_retired(item["component"], item["source"]):
+            continue
         # Only duplicate work for the very same source needs an owner lookup.
         # A strictly older owner that has not started building yields to the
         # successor; one already building finishes unless a higher final lands.
@@ -269,6 +273,10 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
         published = [tag["receipt"] for tag in finals if tag["target"] == source]
         for component, name in DEPLOYABLES.items():
             if name not in deployables or source != newest[name] or component in busy:
+                continue
+            # Keep the retired source in newest to prevent an implicit fallback
+            # to its predecessor. An eligible successor may release normally.
+            if source_is_retired(component, source):
                 continue
             stored = [item for item in pending if item["component"] == component]
             stored += [tag["receipt"]["identity"] for tag in finals

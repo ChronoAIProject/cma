@@ -2,9 +2,10 @@ name: Staging CD catch-up
 
 # Allocation skips a lane while another run owns it. When that owner fails and
 # no push follows, nothing re-plans the lane; nor does anything re-deploy a
-# published final whose staging deployment failed. After every Staging CD run,
-# and hourly as a backstop, re-run the develop head's own push run once if a
-# lane was left behind. A re-run attempt is the same develop push event, so
+# published final whose staging deployment failed. Check after every Staging CD
+# run and every ten minutes. A completion that needs to settle schedules a
+# fresh check. If a lane was left behind, re-run the develop head's own push
+# run once. A re-run attempt is the same develop push event, so
 # staging-cd.yml stays push-only and keeps every authority check.
 on:
   workflow_run:
@@ -12,7 +13,7 @@ on:
     types: [completed]
     branches: [develop]
   schedule:
-    - cron: '23 * * * *'
+    - cron: '3-59/10 * * * *'
 
 permissions: {}
 
@@ -23,12 +24,15 @@ jobs:
       (github.event_name == 'schedule' ||
        (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'develop' &&
         github.event.workflow_run.head_repository.full_name == github.repository))
-    # One check at a time; a newer pending check replaces an older one.
+    # Both checks share the write queue so a check never displaces a pending one.
     concurrency:
       group: cma-staging-cd-catch-up
+      queue: max
       cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    outputs:
+      settle_until: ${{ steps.check.outputs.settle_until }}
     permissions:
       contents: read
       actions: write
@@ -39,6 +43,51 @@ jobs:
         with:
           persist-credentials: false
       - name: Re-plan lanes a failed run left behind
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_STAGING_ENVIRONMENT: chrono-ai-staging
+        run: python3 -B .github/scripts/staging_cd_catch_up.py
+
+  settle:
+    needs: catch_up
+    if: github.event_name == 'workflow_run' && needs.catch_up.outputs.settle_until != ''
+    concurrency:
+      group: cma-staging-cd-settle
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    permissions: {}
+    steps:
+      - name: Wait for the latest staging completion to settle
+        env:
+          SETTLE_UNTIL: ${{ needs.catch_up.outputs.settle_until }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import time
+
+          remaining = int(os.environ["SETTLE_UNTIL"]) - time.time()
+          time.sleep(max(0, remaining))
+          PY
+
+  recheck:
+    needs: settle
+    concurrency:
+      group: cma-staging-cd-catch-up
+      queue: max
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+      deployments: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Re-evaluate staging after settling
         env:
           GH_TOKEN: ${{ github.token }}
           CD_STAGING_ENVIRONMENT: chrono-ai-staging
