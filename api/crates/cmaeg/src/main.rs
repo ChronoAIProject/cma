@@ -9,7 +9,7 @@ use std::{ffi::OsString, io::Write, path::Path};
 
 use cma_allocator_qualification as allocator_self_test;
 
-const USAGE: &str = "usage: cmaeg [--replica-drain | --replica-list-unresolved | --replica-abandon-unknown --dry-run|--apply --partition ID --head-work ID --head-version N --request-id UUID --reason REASON [--plan-digest DIGEST] | --replica-abandonment-audit --request-id UUID | --print-openapi | --migrate | --attest-activity-history FROM UNTIL_OR_OPEN REVISION --all-writers-capable | --backfill-activity-history | --migrate-activity-history | --print-activity-history-runtime-role | --print-activity-history-migration-role | --migrate-console-sessions | --print-console-sessions-runtime-role | --print-console-sessions-migration-role | --migrate-replicas | --print-runtime-role | --print-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir> | --allocator-self-test]";
+const USAGE: &str = "usage: cmaeg [--replica-drain | --replica-list-unresolved | --replica-abandon-unknown --dry-run|--apply --partition ID --head-work ID --head-version N --request-id UUID --reason REASON [--plan-digest DIGEST] | --replica-abandonment-audit --request-id UUID | --print-openapi | --migrate | --attest-activity-history FROM UNTIL_OR_OPEN REVISION --all-writers-capable | --backfill-activity-history | --migrate-activity-history | --print-activity-history-runtime-role | --print-activity-history-migration-role | --migrate-console-sessions | --print-console-sessions-runtime-role | --print-console-sessions-migration-role | --migrate-replicas | --print-runtime-role | --print-migration-role | --migrate-channel-create-fence-floor --all-writers-drained | --print-channel-create-fence-runtime-role | --print-channel-create-fence-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir> | --allocator-self-test]";
 
 fn main() {
     // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
@@ -67,6 +67,9 @@ fn main() {
             history_admin(Some((from, until, revision)))
         }
         ["--backfill-activity-history"] => history_admin(None),
+        ["--migrate-channel-create-fence-floor", "--all-writers-drained"] => {
+            run_database_command("--migrate-channel-create-fence-floor")
+        }
         [command, ..]
             if matches!(
                 *command,
@@ -93,6 +96,8 @@ fn main() {
         | "--print-console-sessions-migration-role"
         | "--print-runtime-role"
         | "--print-migration-role"
+        | "--print-channel-create-fence-runtime-role"
+        | "--print-channel-create-fence-migration-role"
         | "--migrate-worker-credentials"
         | "--print-worker-credentials-runtime-role"
         | "--print-worker-credentials-migration-role"
@@ -263,11 +268,17 @@ fn run_database_command(command: &str) {
                 | "--migrate-thread-fences"
                 | "--migrate-whatsapp-forms"
                 | "--migrate-media-continuations"
+                | "--migrate-channel-create-fence-floor"
         ) {
             println!(
                 "{}",
                 if command.contains("activity-history") {
                     cmaeg::activity::history::schema::role(
+                        &database,
+                        command.ends_with("migration-role"),
+                    )
+                } else if command.contains("channel-create-fence") {
+                    cmaeg::records::mongo::create_fence_role(
                         &database,
                         command.ends_with("migration-role"),
                     )
@@ -331,7 +342,16 @@ fn run_database_command(command: &str) {
                 .map_err(|_| "Gateway automation migration failed; details withheld")?;
             return Ok(());
         }
-        if command == "--migrate-replicas" {
+        if command == "--migrate-channel-create-fence-floor" {
+            let issuer = std::env::var(cmaeg::CMAEG_NYXID_BASE_URL).map_err(|_| {
+                "CMAEG_NYXID_BASE_URL is required for the Channel create fence floor"
+            })?;
+            cmaeg::records::mongo::migrate_create_fence_floor(
+                &client.database(&database),
+                issuer.trim_end_matches('/'),
+            )
+            .await
+        } else if command == "--migrate-replicas" {
             cmaeg::records::mongo::migrate_replicas(&client.database(&database)).await
         } else if command == "--migrate-worker-credentials" {
             cmaeg::worker_credentials::mongo::migrate(&client.database(&database)).await

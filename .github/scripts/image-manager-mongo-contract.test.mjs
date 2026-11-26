@@ -35,6 +35,7 @@ const selections = [
   ['package(=cmaeg) and kind(test) and binary(=replica_admission_mongo)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~replicas::partition_discovery::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(=records::mongo::replica_schema::tests::replica_migration_recovers_after_second_index_conflict)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and (test(~channels::create_fence_tests::) or test(~records::mongo::create_fences::tests::))', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~turns::routed::replica_tool_tests::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~turns::routed::replica_legacy_tool_tests::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~turns::routed::compatibility_mongo_tests::)', 'only', true],
@@ -105,7 +106,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 36);
+      assert.equal(selections.length, 37);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];
