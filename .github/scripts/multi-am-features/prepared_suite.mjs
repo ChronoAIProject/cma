@@ -8,6 +8,7 @@ import {openPreparedBrowser} from './prepared_browser.mjs';
 import {writerCoverage} from './writer_coverage.mjs';
 
 const isDigest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+const OLD_WORK_LEASE_MS = 18 * 60 * 1000;
 
 async function servingManagers(adapter) {
   const topology = await adapter.topology();
@@ -56,6 +57,8 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       } else {
         record = await createAndOpen();
       }
+      check(Number.isSafeInteger(record.createToReadyMs) && record.createToReadyMs > 0
+        && record.createToReadyMs < OLD_WORK_LEASE_MS, 'prepared_ready_work_lease_bound_unproven');
       const durable = await evidenceFor(record);
       check(ready.includes(record.sandboxId) && durable.consumed === true &&
         durable.installation_bound === true && durable.agent_ready === true && !consumed.has(record.sandboxId),
@@ -102,6 +105,7 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       }
       await cleanup(record);
       return {ingress, owner: owner.am, owner_epoch: owner.epoch, parent_schema_versions: durable.schemas,
+        create_to_ready_ms: record.createToReadyMs,
         ingress_instance_sha256: hash(ingressMember.instance_id), owner_instance_sha256: hash(owner.instance_id),
         request_sha256: requests, publication_diagnostics: publicationDiagnostics,
         observed_known_abort: ingress === 'b',
@@ -134,11 +138,11 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
   await writeFile(join(config.summary_dir, 'coverage.json'), JSON.stringify({
     schema: 'multi-am-prepared-coverage-v1', suite_verdict: verdict, source: config.expected_api_source,
     writer_coverage: coverage,
-    steps: journey.steps.map(({name, verdict, elapsed_ms, parent_schema_versions, owner_epoch, ingress, owner,
+    steps: journey.steps.map(({name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
       atomic_publication_fence_count, startup_receipt_count, browser_starting_read, browser_ready_read, browser_reply_sha256,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256}) => ({
-      name, verdict, elapsed_ms, parent_schema_versions, owner_epoch, ingress, owner,
+      name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
       atomic_publication_fence_count, startup_receipt_count, browser_starting_read, browser_ready_read, browser_reply_sha256,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256,

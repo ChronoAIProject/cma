@@ -8,7 +8,7 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
   schemas = [4, 3, 1], readyFences = [1, 1, 1, 1], startupReceipts = [1, 1, 1],
   starting = true, ready = true, effects = 1, changedOwner = false, changedIngress = false,
   admissionRequest = 'fixture-admission', repeatRequest = false, injected = 1, observed = 1,
-  failCreation = false, abortManager = 'b'} = {}) {
+  failCreation = false, abortManager = 'b', createToReadyMs = 5000} = {}) {
   const actions = [];
   const records = [];
   let ownerReads = 0;
@@ -16,7 +16,8 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
   const create = async (am, desktop, overrides, onAgentId) => {
     assert.equal(desktop, false);
     const sandboxId = overrides?.profile ? 'cold-' + am : 'candidate-' + (repeatReservation ? 'a' : am);
-    const record = {agentId: 'fixture-agent', sandboxId, operationId: 'fixture-operation', am, admissionRequest};
+    const record = {agentId: 'fixture-agent', sandboxId, operationId: 'fixture-operation', am, admissionRequest,
+      createToReadyMs};
     records.push(record);
     actions.push('create-' + am + '-' + sandboxId);
     if (failCreation && am === 'b' && onAgentId) throw new Error('fixture_admission_failed');
@@ -94,6 +95,7 @@ test('cold comparison and two ingress checks join the exact prepared reservation
   assert.deepEqual(context.results[1].publication_diagnostics.b, {known_aborted_cas: {publish_connection: 1}});
   assert.equal(context.results[1].observed_known_abort, false);
   assert.equal(context.results[3].observed_known_abort, true);
+  assert.equal(context.results[3].create_to_ready_ms, 5000);
   assert.deepEqual(context.results[1].parent_schema_versions, [4, 3, 1]);
 });
 
@@ -104,6 +106,12 @@ test('prepared publication proves a consumed and attributed abort and always rem
   const failed = fixture({failCreation: true});
   await assert.rejects(preparedJourney(failed), /fixture_admission_failed/);
   assert.equal(failed.actions.at(-1), 'disarm-publication-abort');
+});
+
+test('prepared Ready must be observed before the original work lease could expire', async () => {
+  for (const createToReadyMs of [null, 0, 18 * 60 * 1000]) {
+    await assert.rejects(preparedJourney(fixture({createToReadyMs})), /prepared_ready_work_lease_bound_unproven/);
+  }
 });
 
 test('prepared coverage requires separate correlated requests and stable owner and ingress identities', async () => {

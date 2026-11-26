@@ -110,6 +110,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     }
     check(lineage(record, ready) && (desktop ? ready.desktop === true : ready.desktop !== true), 'created_lineage_variant_mismatch');
     record.ready = true;
+    record.createToReadyMs = Math.ceil(performance.now() - start);
     record.workspaceId = ready.workspace?.id;
     const runtime = await adapter.runtimeFor({agentId: record.agentId});
     const family = desktop ? 'omarchy' : 'base';
@@ -121,7 +122,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     api.routedAgents.add(record.agentId);
     api.bindAdmission(record.key, record.agentId);
     result.resources.push({name: record.name, desktop, agent_sha256: hash(record.agentId), sandbox_sha256: hash(record.sandboxId), operation_sha256: hash(record.operationId),
-      create_to_ready_ms: performance.now() - start, lifecycle_status: op.status, runtime_family: family,
+      create_to_ready_ms: record.createToReadyMs, lifecycle_status: op.status, runtime_family: family,
       runtime_source: runtimes[family].source, runtime_image: runtime.image,
       selected_runtime_image: runtimes[family].image, runtime_image_matches_selected: true,
       runtime_source_basis: 'Owner per-family artifact metadata joined to observed exact Pod image',
