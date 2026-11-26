@@ -2,10 +2,12 @@ import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual as equal} from 'node:util';
 import {check} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
+import {probeConfiguration} from './configuration_probe.mjs';
 
 const settingsBody = value => Object.fromEntries(
   ['model', 'reasoning_effort', 'permission_mode'].map(key => [key, value[key]]));
 const changedSettings = value => ({...settingsBody(value),
+  reasoning_effort: value.reasoning_effort === 'medium' ? 'high' : 'medium',
   permission_mode: value.permission_mode === 'guarded' ? 'autonomous' : 'guarded'});
 const preferencesPath = resource => `/api/v1/agents/${resource.agentId}/preferences`;
 const settingsPath = resource => `/api/v1/agents/${resource.agentId}/settings`;
@@ -16,14 +18,17 @@ const patch = (api, path, body, allowed = [200]) => api.request('a', 'PATCH', pa
 // These use the real owner-routed public API. A 200 for an unchanged value is
 // insufficient: both the acknowledgement and a fresh read must show the change.
 export async function configurationCases({api, record: resource, runCase, recordFailure,
-  recordState = async () => {}}) {
+  recordState = async () => {}, adapter, conversationApi = api}) {
   const preferences = preferencesPath(resource), settings = settingsPath(resource);
+  const probe = expected => probeConfiguration({api: conversationApi, adapter, record: resource}, expected);
   await runCase('user.system_prompt_roundtrip', async () => {
     const before = await read(api, preferences);
     await recordState('prompt_before', before);
     check(before.prompt_supported === true && before.prompt_pending === false
       && Number.isSafeInteger(before.revision), 'prompt_fixture_not_supported_and_idle');
-    const desired = 'Two-AM instructions ' + randomUUID();
+    const effort = (await read(api, settings)).reasoning_effort;
+    const instructionMarker = 'WS4_INSTRUCTIONS_' + randomUUID().replaceAll('-', '');
+    const desired = 'Two-AM instructions ' + instructionMarker;
     check(before.system_prompt !== desired, 'prompt_change_required');
     await withRestoration(async () => {
       const updated = (await patch(api, preferences,
@@ -37,6 +42,7 @@ export async function configurationCases({api, record: resource, runCase, record
       await patch(api, preferences, {expected_revision: before.revision,
         system_prompt: before.system_prompt}, [409]);
       check((await read(api, preferences)).system_prompt === desired, 'stale_prompt_changed_state');
+      await probe({effort, instructions: instructionMarker});
     }, async () => {
       const current = await read(api, preferences);
       if (current.system_prompt !== before.system_prompt) {
@@ -57,6 +63,7 @@ export async function configurationCases({api, record: resource, runCase, record
       'settings_fixture_not_supported_and_idle');
     const desired = changedSettings(before);
     await withRestoration(async () => {
+      await probe({effort: before.reasoning_effort});
       const updated = (await patch(api, settings, desired)).body;
       check(equal(settingsBody(updated), desired) && updated.pending === false,
         'settings_update_not_confirmed');
@@ -67,6 +74,7 @@ export async function configurationCases({api, record: resource, runCase, record
       check(afterPrompt.system_prompt === prompt.system_prompt
         && afterPrompt.revision === prompt.revision, 'settings_changed_owner_prompt');
       await recordState('settings_changed', {settings: seen, preferences: afterPrompt});
+      await probe({effort: desired.reasoning_effort});
     }, async () => {
       const current = await read(api, settings);
       if (!equal(settingsBody(current), settingsBody(before))) {

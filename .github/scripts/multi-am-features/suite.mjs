@@ -230,7 +230,7 @@ try {
         }
         await configurationDenials({...caseContext, outsider});
         await configurationCases(caseContext);
-        await configurationCases({...caseContext, api: admin,
+        await configurationCases({...caseContext, api: admin, conversationApi: context.api,
           runCase: (name, operation) => caseContext.runCase(name.replace('user.', 'admin.'), operation)});
         await matrix.sandboxAlwaysOn(iteration, {
           created_by_run: config.run_id, sandbox_id: context.record.sandboxId,

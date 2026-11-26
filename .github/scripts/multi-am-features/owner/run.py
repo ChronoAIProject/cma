@@ -323,6 +323,7 @@ class Fixture:
         self.provider_observation('prepare_turn',input={'case_id':caseId,'marker':marker,**extra})
         value=self.provider('POST','/__ws4/arm',{'case_id':caseId,'marker':marker,
             'suggestions': extra.get('suggestions', False),
+            **({'configuration': extra['configuration']} if 'configuration' in extra else {}),
             **({'access_request': extra['accessRequest']} if 'accessRequest' in extra else {})})
         self.provider_observation('prepare_turn_result',snapshot=value)
         return value

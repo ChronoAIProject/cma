@@ -46,7 +46,7 @@
       "feature": "Settings and system prompt",
       "requirement": "Current owner executes both durable admission and runtime effect; policy/idle/runtime/setting revisions revalidated. No false success from unchanged settings. Non-idle and unauthorized cases remain refused.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Exact native Configure-effect count and deterministic publication barriers; busy refusal runs before restart only. Authenticated outsider assertions implemented, integrated execution pending.",
+      "remaining": "The provider oracle checks changed runtime instructions and reasoning effort. Exact Configure-effect count and deterministic publication barriers remain required; busy refusal runs before restart only. Integrated execution is pending.",
       "trigger": "Changed supported settings/system prompt on eligible idle Agent, via both normal and authorized cross-owner entrypoints",
       "required_assertions": [
         {

@@ -29,7 +29,7 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def arm(case_id, marker, access_request=None, suggestions=False):
+def arm(case_id, marker, access_request=None, suggestions=False, configuration=None):
     global ACTIVE
     if not isinstance(case_id, str) or not 1 <= len(case_id) <= 128:
         raise ValueError('case_id_invalid')
@@ -42,6 +42,13 @@ def arm(case_id, marker, access_request=None, suggestions=False):
         raise ValueError('fixture_suggestion_case_invalid')
     if suggestions and not re.fullmatch(r'WS4_SUGGEST_[a-f0-9]{32}', marker):
         raise ValueError('fixture_suggestion_marker_invalid')
+    if configuration is not None:
+        if (suggestions or access_request is not None or not isinstance(configuration, dict)
+                or set(configuration) not in ({'effort'}, {'effort', 'instructions'})
+                or configuration['effort'] not in ('minimal', 'low', 'medium', 'high', 'xhigh')
+                or ('instructions' in configuration and (not isinstance(configuration['instructions'], str)
+                    or not re.fullmatch(r'WS4_INSTRUCTIONS_[a-f0-9]{32}', configuration['instructions'])))):
+            raise ValueError('fixture_configuration_invalid')
     with LOCK:
         if case_id in CASES:
             raise ValueError('case_already_exists')
@@ -49,6 +56,7 @@ def arm(case_id, marker, access_request=None, suggestions=False):
                          'access_call_id': 'call_' + digest(case_id)[:24], 'access_tool_calls': 0,
                          'access_receipt': None,
                          'suggestions': suggestions, 'suggestion_release': threading.Event(),
+                         'configuration': configuration, 'configuration_matches': 0,
                          'suggestion_requests': 0, 'suggestion_responses': 0,
                          'request_count': 0, 'completed_effect_count': 0,
                          'disconnect_count': 0, 'active_streams': 0,
@@ -65,6 +73,7 @@ def snapshot(case_id):
                 'access_tool_calls': case['access_tool_calls'], 'access_receipt': case['access_receipt'],
                 'suggestion_requests': case['suggestion_requests'], 'suggestion_responses': case['suggestion_responses'],
                 'suggestion_released': case['suggestion_release'].is_set(),
+                'configuration_matches': case['configuration_matches'],
                 'released': case['release'].is_set(),
                 'synthetic_effect': 'one_consent_proposal' if case['access_request'] else 'one_text_completion'}
 
@@ -94,6 +103,35 @@ def response_events(response_id, model, marker):
          'output': [item], 'usage': {'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}}},
     ]
     return [{**frame, 'sequence_number': i} for i, frame in enumerate(frames)]
+
+
+def configuration_matches(expected, body):
+    reasoning = body.get('reasoning')
+    if not isinstance(reasoning, dict) or reasoning.get('effort') != expected['effort']:
+        return False
+    marker = expected.get('instructions')
+    if marker is None:
+        return True
+    inputs = body.get('input')
+    if not isinstance(inputs, list):
+        return False
+    # The pinned Codex client projects AGENTS.md as its own structured
+    # user-role context message. An ordinary user prompt is a separate item.
+    for item in inputs:
+        if (not isinstance(item, dict) or item.get('role') != 'user'
+                or item.get('type') != 'message' or not isinstance(item.get('content'), list)):
+            continue
+        for part in item['content']:
+            if not isinstance(part, dict) or part.get('type') != 'input_text':
+                continue
+            text = part.get('text')
+            if not isinstance(text, str) or 'AGENTS.md instructions' not in text.split('\n', 1)[0]:
+                continue
+            _, opened, rest = text.partition('<INSTRUCTIONS>')
+            instructions, closed, _ = rest.partition('</INSTRUCTIONS>')
+            if opened and closed and 'Two-AM instructions ' + marker in instructions.splitlines():
+                return True
+    return False
 
 
 def access_tool_events(response_id, request, request_key, call_id):
@@ -213,7 +251,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 case_id = body['case_id']
                 if path == '/__ws4/arm':
-                    arm(case_id, body['marker'], body.get('access_request'), body.get('suggestions', False))
+                    arm(case_id, body['marker'], body.get('access_request'), body.get('suggestions', False),
+                        body.get('configuration'))
                 elif path in ('/__ws4/release', '/__ws4/release-suggestion'):
                     with LOCK:
                         gate = 'release' if path == '/__ws4/release' else 'suggestion_release'
@@ -262,6 +301,9 @@ class Handler(BaseHTTPRequestHandler):
                 case_id = '__bootstrap__'
             if case is not None:
                 case['request_count'] += 1
+                expected = case.get('configuration')
+                if expected is not None and configuration_matches(expected, body):
+                    case['configuration_matches'] += 1
                 ordinal = case['request_count']
                 response_id = 'resp_ws4_' + digest(case_id + ':' + str(ordinal))[:24]
                 case['request_hashes'].append(digest(encoded))
