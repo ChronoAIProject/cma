@@ -308,7 +308,7 @@ impl SandboxWorker {
                             return Err(refused());
                         }
                         claim.observe(&parent)?;
-                        tokio::time::sleep_until((Instant::now() + delay).min(claim.expires()))
+                        tokio::time::sleep_until(claim.next_read_at(delay).min(claim.expires()))
                             .await;
                         delay = (delay * 2).min(Duration::from_secs(2));
                     }

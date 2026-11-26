@@ -4,6 +4,7 @@ require 'json'
 require_relative 'omarchy-ci-contract'
 require_relative 'key-provider-ci-contract'
 require_relative 'ci-track-security-validation'
+require_relative 'ci-track-build-validation'
 
 def require_check(value, message)
   raise message unless value
@@ -29,54 +30,6 @@ end
 STAGING_IMAGE_FALLBACK = "steps.staging-image.outputs.adopted != 'true'"
 STAGING_READ_ONLY = {'contents' => 'read', 'actions' => 'read', 'issues' => 'read'}.freeze
 
-
-def check_component_cache_writers(documents)
-  develop = "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
-  writer = "${{ #{develop} }}"
-  image_job = documents.fetch('ci-images').fetch('jobs').fetch('images')
-  group = "${{ #{develop} && format('cma-develop-ci-image-{0}', matrix.component) || " \
-    "format('ci-image-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.component) }}"
-  require_check(image_job['concurrency'] == {'group' => group, 'queue' => 'max', 'cancel-in-progress' => false},
-    'develop image jobs must queue per component without cancelling active writers')
-  images = image_job.fetch('steps')
-  node_setup = ->(s) { s.fetch('uses', '').start_with?('actions/setup-node@') }
-  image_nodes = images.select(&node_setup)
-  require_check(!image_nodes.empty? && image_nodes.all? { |s|
-    s.dig('with', 'package-manager-cache') == false && !s.fetch('with').key?('cache')
-  }, 'image Node setup must disable automatic and explicit dependency caching')
-  scope = "matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component"
-  builds = images.select { |s| s.fetch('uses', '').start_with?('docker/build-push-action@') }
-  bounded = "${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}"
-  require_check(builds.size == 2 && builds.all? { |s| s.dig('with', 'cache-from').to_s.lines.map(&:strip) ==
-    ["type=gha,version=2,scope=${{ #{scope} }}", bounded] }, 'both image builds must restore validated component caches')
-  exports = builds.map { |s| s.dig('with', 'cache-to') }.compact
-  require_check(exports.empty?, 'CI image builds must not publish unbounded layers')
-  {'docker/setup-qemu-action' => 'cache-image', 'docker/setup-buildx-action' => 'cache-binary',
-   'aquasecurity/trivy-action' => 'cache'}.each do |action, option|
-    step = images.find { |s| s.fetch('uses', '').start_with?(action + '@') }
-    require_check(step&.dig('with', option) == writer, "#{action} may save a PR cache")
-  end
-  web = documents.fetch('ci-web').fetch('jobs').fetch('web').fetch('steps')
-  web_nodes = web.select(&node_setup)
-  require_check(web_nodes.size == 1 && web_nodes.first.dig('with', 'package-manager-cache') == false &&
-    web_nodes.first.dig('with', 'cache') == "${{ #{develop} && 'npm' || '' }}", 'setup-node may save a PR cache')
-  writers = (images + web).select { |s| s.fetch('uses', '').match?(%r{\Aactions/cache(?:/save)?@}) }
-  require_check(writers.size == 1 && writers.first['uses'].start_with?('actions/cache/save@') &&
-    writers.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (success() && #{develop} && matrix.component == 'api' && vars.CMA_LAYER_CACHE_WRITER_FLOOR != 'true' && steps.api-cargo-cache-export.outputs.ready == 'true')",
-    'only the accepted develop Cargo archive may be saved')
-  restore = 'actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25'
-  npm = {'path' => '${{ steps.npm-cache.outputs.directory }}',
-    'key' => "node-cache-${{ runner.os }}-${{ steps.npm-cache.outputs.architecture }}-npm-${{ hashFiles('web/package-lock.json') }}"}
-  database = {'path' => '${{ github.workspace }}/.cache/trivy', 'key' => 'cache-trivy-readonly', 'restore-keys' => 'cache-trivy-'}
-  [[web, 'Restore npm download cache', 'Install (lockfile integrity)', npm],
-   [images, 'Restore Trivy databases', 'Vulnerability scan', database]].each do |steps, name, consumer, inputs|
-    index = steps.index { |s| s['name'] == name }
-    run = steps.index { |s| s['name'] == consumer }
-    require_check(index && run && index < run && steps[index]['uses'] == restore && steps[index]['with'] == inputs &&
-      steps[index]['if'] == "github.event_name != 'push' || github.ref != 'refs/heads/develop'",
-      "#{name} must restore without saving before #{consumer}")
-  end
-end
 
 MERGE_GROUP_EXPORT = "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || " \
   "github.event.pull_request.head.repo.full_name == github.repository)"
@@ -245,6 +198,8 @@ def validate(documents, actions)
   require_runtime_inventory(documents)
   require_image_secret_scan(documents)
   require_runtime_vulnerability_gate(documents)
+  check_web_result(documents)
+  check_web_jobs(documents)
   check_component_cache_writers(documents)
   check_merge_group_artifacts(documents)
   check_staging_image_adoption(documents)

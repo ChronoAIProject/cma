@@ -14,7 +14,8 @@ from ci_outcome import entry, error_site, report
 from staging_cd_admission import event_identity
 from staging_cd_applied import configured_group
 from staging_cd_checkout import checkout_path
-from staging_cd_clock import (CONTROLLER_TOTAL_ENV, TERMINATION_GRACE_SECONDS, controller_seconds, elapsed, remaining)
+from staging_cd_clock import (CONTROLLER_TOTAL_ENV, STAGING_AM_RELEASE_TOTAL_SECONDS,
+                              TERMINATION_GRACE_SECONDS, controller_seconds, elapsed, remaining)
 from staging_cd_common import Refusal, matches, require
 from staging_cd_policy import selected as deploy_selection
 from staging_cd_process import ProcessTimeout, run as run_process
@@ -101,11 +102,9 @@ def private_script(env, run_command=subprocess.run):
 
 
 
-def execute(script, release_file, mode, started, env, *, timeout=None, target=STAGING):
-    # Reserve the same absolute clock for the child. Older controllers ignore
-    # this timing input and retain their shorter deadline. Only a production
-    # release reserves the production total; staging's budgets are unchanged.
-    limit = controller_seconds(mode, target)
+def execute(script, release_file, mode, started, env, *, timeout=None, target=STAGING, limit=None):
+    if limit is None:
+        limit = controller_seconds(mode, target)
     child_env = {**env, CONTROLLER_TOTAL_ENV: str(limit)}
     left = remaining(started, limit)
     wait = min(left, timeout) if timeout is not None else left
@@ -230,9 +229,6 @@ def deploy(env, masker, script_reader=private_script, runner=None,
                 "Bootstrap requires all components")
     target = target_name(env)
     limit = controller_seconds(mode, target)
-    if runner is None:
-        # The launcher's watchdog enforces the same target budget as this caller.
-        runner = partial(execute, target=target)
     credentials = {key: env.get(key) for key in ("CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET")}
     for credential in credentials.values():
         masker(credential)
@@ -275,12 +271,20 @@ def deploy(env, masker, script_reader=private_script, runner=None,
                     on_overtaken(selected_keys)
                 if not receipts:
                     return group_outcome
+            # The immutable private checkout advertises support for the longer
+            # profile. A runtime pin rolls AM even without a new AM image.
+            if target == STAGING and mode == "release" and receipts.keys() & GROUP:
+                profile = script.with_name("am_rollout_budget.py")
+                if not profile.is_symlink() and profile.is_file():
+                    limit = STAGING_AM_RELEASE_TOTAL_SECONDS
             request = private_document(release_set(receipts), target=target)
             with path.open("x", encoding="utf-8") as stream:
                 os.chmod(path, 0o600)
                 stream.write(canonical(request))
         with precondition("budget"):
             remaining(started, mode=mode)
+        if runner is None:
+            runner = partial(execute, limit=limit)
         try:
             code = runner(script, path, mode, started, child_env)
             if code == 20 and on_unverified is not None:
