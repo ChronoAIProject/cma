@@ -8,7 +8,7 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
   schemas = [4, 3, 1], readyFences = [1, 1, 1, 1], startupReceipts = [1, 1, 1],
   starting = true, ready = true, effects = 1, changedOwner = false, changedIngress = false,
   admissionRequest = 'fixture-admission', repeatRequest = false, injected = 1, observed = 1,
-  failCreation = false} = {}) {
+  failCreation = false, abortManager = 'b'} = {}) {
   const actions = [];
   const records = [];
   let ownerReads = 0;
@@ -40,7 +40,8 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
     },
     ownerOf: async () => ({agent_id: 'fixture-agent', am: 'b', epoch: ++ownerReads > 1 && changedOwner ? 2 : 1,
       instance_id: 'fixture-manager', pod_uid: 'fixture-pod'}),
-    publicationEvidence: async () => ({a: {}, b: {known_aborted_cas: {publish_connection: observed}}}),
+    publicationEvidence: async () => ({a: {}, b: {},
+      [abortManager]: {known_aborted_cas: {publish_connection: observed}}}),
     preparedPublicationAbort: async ({arm}) => {
       actions.push(arm ? 'arm-publication-abort' : 'disarm-publication-abort');
       return {count: arm ? 0 : injected};
@@ -99,6 +100,7 @@ test('cold comparison and two ingress checks join the exact prepared reservation
 test('prepared publication proves a consumed and attributed abort and always removes the failpoint', async () => {
   await assert.rejects(preparedJourney(fixture({injected: 0})), /prepared_publication_abort_not_consumed_once/);
   await assert.rejects(preparedJourney(fixture({observed: 0})), /prepared_publication_abort_not_attributed/);
+  await assert.rejects(preparedJourney(fixture({abortManager: 'a'})), /prepared_publication_abort_not_attributed/);
   const failed = fixture({failCreation: true});
   await assert.rejects(preparedJourney(failed), /fixture_admission_failed/);
   assert.equal(failed.actions.at(-1), 'disarm-publication-abort');

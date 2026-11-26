@@ -9,13 +9,15 @@ import {writerCoverage} from './writer_coverage.mjs';
 
 const isDigest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 
-async function servingMember(adapter, am) {
+async function servingManagers(adapter) {
   const topology = await adapter.topology();
-  const member = topology.ams?.[am];
+  const managers = ['a', 'b'].map(am => topology.ams?.[am]);
   check(topology.shared_database === true && topology.coordination_enabled === true
-    && member?.ready === true && typeof member.instance_id === 'string' && member.instance_id
-    && typeof member.pod_uid === 'string' && member.pod_uid, 'prepared_browser_ingress_unbound');
-  return member;
+    && managers.every(member => member?.ready === true && typeof member.instance_id === 'string'
+      && member.instance_id && typeof member.pod_uid === 'string' && member.pod_uid)
+    && managers[0].instance_id !== managers[1].instance_id && managers[0].pod_uid !== managers[1].pod_uid,
+  'prepared_browser_ingress_unbound');
+  return topology.ams;
 }
 
 export async function preparedJourney({adapter, create, openBoth, cleanup, step, browser, recordFailure}) {
@@ -36,7 +38,8 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       const ready = await poll(() => adapter.preparedReady(),
         rows => Array.isArray(rows) && rows.length > 0,
         {timeout: 180000, code: 'no_ready_prepared_reservation'});
-      const ingressMember = await servingMember(adapter, ingress);
+      const initialManagers = await servingManagers(adapter);
+      const ingressMember = initialManagers[ingress];
       let opening, record, armed, disarmed;
       const createAndOpen = () => create(ingress, false, {}, ({agentId}) => {
         opening = page.openStarting(agentId).then(started => ({started}), error => ({error}));
@@ -86,13 +89,15 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       const finalOwner = assertOwner(await adapter.ownerOf({agentId: record.agentId}), record.agentId);
       check(owner.instance_id && owner.instance_id === finalOwner.instance_id && owner.pod_uid === finalOwner.pod_uid
         && owner.epoch === finalOwner.epoch && owner.am === finalOwner.am, 'prepared_browser_owner_changed');
-      const finalIngress = await servingMember(adapter, ingress);
-      check(finalIngress.instance_id === ingressMember.instance_id && finalIngress.pod_uid === ingressMember.pod_uid,
-        'prepared_browser_ingress_changed');
+      const finalManagers = await servingManagers(adapter);
+      check(['a', 'b'].every(am => finalManagers[am].instance_id === initialManagers[am].instance_id
+        && finalManagers[am].pod_uid === initialManagers[am].pod_uid), 'prepared_browser_ingress_changed');
+      check(finalManagers[owner.am].instance_id === owner.instance_id && finalManagers[owner.am].pod_uid === owner.pod_uid,
+        'prepared_browser_owner_not_bound_to_manager');
       const publicationDiagnostics = await adapter.publicationEvidence({agentId: record.agentId});
       if (ingress === 'b') {
-        const aborts = ['a', 'b'].map(am => publicationDiagnostics[am]?.known_aborted_cas?.publish_connection ?? 0);
-        check(aborts.reduce((total, count) => total + count, 0) === 1,
+        const aborts = am => publicationDiagnostics[am]?.known_aborted_cas?.publish_connection ?? 0;
+        check(aborts(owner.am) === 1 && aborts(owner.am === 'a' ? 'b' : 'a') === 0,
           'prepared_publication_abort_not_attributed');
       }
       await cleanup(record);
