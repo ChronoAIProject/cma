@@ -20,6 +20,8 @@ mod preparation;
 mod preparation_support;
 #[path = "turns/projection.rs"]
 mod projection;
+#[path = "turns/recovery_delivery.rs"]
+mod recovery_delivery;
 #[path = "turns/refusals.rs"]
 mod refusals;
 #[path = "relay/support.rs"]

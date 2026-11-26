@@ -25,6 +25,7 @@ import {
   UsageObservationLimit,
 } from './retry';
 import { reportRequest } from './reportRequests';
+import { observeUsageView, viewUnavailable } from './viewCapability';
 import {
   abortWhenIdle,
   clearReportOwner,
@@ -33,7 +34,6 @@ import {
   notify,
   type ReportEntry,
 } from './reportCache';
-
 function retryAfterMilliseconds(report: UsageMetricReport): number {
   const seconds = Number(report.retry_after_seconds);
   return jitteredRetryDelay(Number.isFinite(seconds) ? seconds * 1000 : 1000);
@@ -71,7 +71,6 @@ function commitLatest(
   if (view.refresh.state !== 'pending') entry.observationStartedAt = 0;
   notify(entry);
 }
-
 function initialProjection(selection: Selection, measured: boolean): UsageInitialProjection {
   return {
     first_page: { limit: 50, sort: selection.sort, order: selection.order },
@@ -162,15 +161,18 @@ async function loadInitial(
   }
   const query = metricQuery(selection, admin);
   const latest = selection.range !== '1h' && api.latestInitial;
+  if (latest && viewUnavailable(api, entry.owner, admin, 'initial')) return false;
   const view = latest
-    ? await observeReport(api, entry, signal, (requestSignal) =>
-        latest.call(
-          api,
-          {
-            selection: latestQuery(selection, admin, forceRefresh) as UsageMetricViewQuery,
-            projection,
-          },
-          { signal: requestSignal },
+    ? await observeUsageView(api, entry.owner, signal, admin, 'initial', () =>
+        observeReport(api, entry, signal, (requestSignal) =>
+          latest.call(
+            api,
+            {
+              selection: latestQuery(selection, admin, forceRefresh) as UsageMetricViewQuery,
+              projection,
+            },
+            { signal: requestSignal },
+          ),
         ),
       )
     : undefined;
@@ -218,19 +220,25 @@ async function loadLatest(
   once = false,
 ) {
   const latest = api.latest;
-  // The retained view contract supports the report windows that can be
-  // retained server-side. Keep the existing report API for the one-hour view.
   if (!latest || selection.range === '1h') return false;
-  // After admission observe the exact job. Repeating latest while it fails can
-  // create another job and hide generation failures behind an endless 202 loop.
-  if (entry.latestPending && entry.refreshReportId && !once)
-    await observePending(api, entry, signal, principal, admin);
-  let view = await observeReport(api, entry, signal, (requestSignal) =>
-    latest.call(api, latestQuery(selection, admin, forceRefresh && !entry.latestPending), {
-      signal: requestSignal,
-    }),
-  );
+  if (!entry.latestPending && viewUnavailable(api, entry.owner, admin, 'latest')) return once;
+  const poll = () => observePending(api, entry, signal, principal, admin);
+  let observed = entry.latestPending && entry.refreshReportId && !once ? await poll() : undefined;
+  let refresh = forceRefresh && !entry.latestPending;
   while (!signal.aborted) {
+    let view;
+    try {
+      view = await observeUsageView(api, entry.owner, signal, admin, 'latest', () =>
+        observeReport(api, entry, signal, (requestSignal) =>
+          latest.call(api, latestQuery(selection, admin, refresh), { signal: requestSignal }),
+        ),
+      );
+    } catch (error) {
+      if (!observed || !unsupportedLatestRoute(error)) throw error;
+      signal.throwIfAborted();
+      commitLegacy(entry, observed, principal, admin);
+      return true;
+    }
     if (view.report.status === 'ready' && view.report.summary) {
       commitLatest(entry, view, principal, admin);
       if (view.refresh.state !== 'pending') return true;
@@ -249,10 +257,8 @@ async function loadLatest(
       entry.observationStartedAt = 0;
       return true;
     }
-    await observePending(api, entry, signal, principal, admin);
-    view = await observeReport(api, entry, signal, (requestSignal) =>
-      latest.call(api, latestQuery(selection, admin, false), { signal: requestSignal }),
-    );
+    observed = await poll();
+    refresh = false;
   }
   return true;
 }

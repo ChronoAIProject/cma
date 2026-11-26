@@ -126,6 +126,13 @@ remaining_compressed=$((max_compressed - registry_compressed))
 remaining_members=$((max_members - registry_members))
 : > "$tmp/candidates"
 mkdir "$tmp/preferred"
+if stat -c %s "$target" >/dev/null 2>&1; then
+    size_flag=-c
+    size_format=%s
+else
+    size_flag=-f
+    size_format=%z
+fi
 for group in "$target"/release/incremental/cma-* \
     "$target"/release/incremental/cmaeg-* \
     "$target"/release/incremental/cmaeg_*-* \
@@ -154,11 +161,12 @@ for group in "$target"/release/incremental/cma-* \
         completed=$((completed + 1))
     done
     [ "$completed" -eq 1 ] || continue
-    kib=$(du -sk "$group" | cut -f1)
     members=$(find "$group" -print | wc -l)
-    # Estimate the tar allocation, including a header and possible padding for
-    # each member. Exact archive checks remain authoritative for sparse files.
-    expanded=$((kib * 1024 + members * 1024 + 10240))
+    payload=$(find "$group" -type f -exec stat "$size_flag" "$size_format" {} + |
+        awk '{n += int(($1 + 511) / 512) * 512} END {printf "%.0f\n", n}')
+    # Tar carries file bytes, sector padding and headers. Filesystem blocks
+    # for directories or sparse data do not measure that stream.
+    expanded=$((payload + members * 1024 + 10240))
     printf '%s %s %s\n' "release/incremental/$name" "$expanded" "$members" >> "$tmp/candidates"
     # A dependency graph change gives the same crate a new incremental group.
     # Prefer its latest completed work products by mtime, for ranking only.
@@ -219,13 +227,18 @@ while [ "$attempts" -lt 3 ] && [ "$#" -gt 0 ]; do
     keep=$(($# - 1))
     if [ "$archive_compressed" -gt "$remaining_compressed" ] ||
        [ "$archive_expanded" -gt "$remaining_expanded" ]; then
-        # The stopped stream measures how many tar bytes the budget bought.
-        # Retry with a smaller complete prefix, keeping its priority order.
+        # Bytes queued in the pipeline can outlive the stopped compressor.
+        # Use the tighter budget as a conservative bound for the next prefix.
+        retry_bound=$remaining_expanded
+        if [ "$archive_compressed" -gt "$remaining_compressed" ] &&
+           [ "$remaining_compressed" -lt "$retry_bound" ]; then
+            retry_bound=$remaining_compressed
+        fi
         limit=0
         estimated=0
         while read -r expanded; do
             estimated=$((estimated + expanded))
-            [ "$estimated" -lt "$archive_expanded" ] || break
+            [ "$estimated" -le "$retry_bound" ] || break
             limit=$((limit + 1))
         done < "$tmp/picked"
         [ "$limit" -gt 0 ] || limit=1

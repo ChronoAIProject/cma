@@ -136,6 +136,9 @@ impl WebhookClient {
                 ] {
                     headers.insert(name, value.parse().map_err(|_| "webhook_event_invalid")?);
                 }
+                if !gate.authorize_webhook(destination, secret).await {
+                    return Err("webhook_authority_changed");
+                }
                 self.transport
                     .post(url.clone(), addresses, headers, bytes.clone())
                     .await
@@ -161,6 +164,7 @@ impl WebhookClient {
                 Ok(300..=399) => return rejected("webhook_redirect_refused"),
                 Err("webhook_target_invalid") => return rejected("webhook_target_invalid"),
                 Err("webhook_event_invalid") => return rejected("webhook_event_invalid"),
+                Err("webhook_authority_changed") => return rejected("webhook_authority_changed"),
                 _ => {}
             }
         }

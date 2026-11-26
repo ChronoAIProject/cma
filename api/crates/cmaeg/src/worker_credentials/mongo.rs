@@ -228,6 +228,9 @@ pub fn role(database: &str, migration: bool) -> Document {
 }
 
 pub async fn migrate(db: &Database) -> Result<(), RecordError> {
+    cma_service_migrations::marker(db, MIGRATIONS, "worker_credentials", "version", &[1], 1)
+        .await
+        .map_err(failure)?;
     let uses = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,
     "required":["_id","first_used_at","schema_version"],"properties":{
     "_id":{"bsonType":"string","pattern":"^[0-9a-f]{64}$"},"first_used_at":{"bsonType":"date"},"schema_version":{"enum":[1]}}}};
@@ -238,34 +241,32 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
     "writer_release":{"bsonType":"string","pattern":"^[0-9a-f]{40}$"},
     "all_writers_tracked":{"enum":[true]},"retained_records_backfilled":{"enum":[true]}}}};
     for (name, validator) in [(USES, uses), (CUTOVERS, cutovers)] {
-        match db.run_command(doc!{"create":name,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await {
-            Ok(_)=>(),Err(error) if matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code==48)=> {
-                db.run_command(doc!{"collMod":name,"validator":validator,"validationLevel":"strict","validationAction":"error"}).await.map_err(failure)?;
-            },Err(error)=>return Err(failure(error)),
-        }
-        let indexes: Vec<IndexModel> = db
-            .collection::<Document>(name)
-            .list_indexes()
-            .await
-            .map_err(failure)?
-            .try_collect()
+        cma_service_migrations::collection(db, name, validator, true)
             .await
             .map_err(failure)?;
-        if !indexes_valid(&indexes) {
-            return Err(RecordError::Rejected(
-                "worker history cannot have TTL or secondary indexes".into(),
-            ));
-        }
+        cma_service_migrations::exact_indexes(db, name, vec![], indexes_valid)
+            .await
+            .map_err(failure)?;
     }
-    db.run_command(doc!{"collMod":MIGRATIONS,"validator":crate::records::mongo::migration_validator(),"validationLevel":"strict","validationAction":"error"}).await.map_err(failure)?;
-    db.collection::<Document>(MIGRATIONS)
-        .update_one(
-            doc! {"_id":"worker_credentials"},
-            doc! {"$set":{"version":1}},
-        )
-        .upsert(true)
-        .await
-        .map_err(failure)?;
+    cma_service_migrations::collection_with_predecessors(
+        db,
+        MIGRATIONS,
+        crate::records::mongo::migration_validator(),
+        false,
+        crate::records::mongo::migration_predecessors(),
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::update(
+        db,
+        MIGRATIONS,
+        doc! {"_id":"worker_credentials"},
+        doc! {"$set":{"version":1}},
+        true,
+        false,
+    )
+    .await
+    .map_err(failure)?;
     Ok(())
 }
 

@@ -1,9 +1,42 @@
 use super::*;
 use crate::sandbox::{
-    model_credit::{AdmissionHold, AgentTurnFunding, Checkpoint},
+    model_credit::{AdmissionHold, AgentTurnFunding, Checkpoint, FundingError},
     task_experience::TaskExperiencePolicy,
     AgentApprovalDecision,
 };
+
+pub(super) struct ModelCreditRefusal {
+    funding: Option<Arc<AgentTurnFunding>>,
+    pending: Option<AdmissionHold>,
+}
+
+impl ModelCreditRefusal {
+    pub(super) async fn settle(&mut self) -> Result<(), CommandAdmissionError> {
+        if let Some(held) = &self.pending {
+            let funding = self.funding.as_ref().ok_or(CommandLedgerError::Corrupt)?;
+            report_refusal(funding, held).await?;
+            self.pending = None;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for ModelCreditRefusal {
+    fn drop(&mut self) {
+        let (Some(funding), Some(held)) = (self.funding.take(), self.pending.take()) else {
+            return;
+        };
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                if report_refusal(&funding, &held).await.is_err() {
+                    tracing::warn!(
+                        "Could not settle a definitively refused model credit participant"
+                    );
+                }
+            });
+        }
+    }
+}
 
 impl AgentCommandService {
     pub fn with_task_experience(self: Arc<Self>, policy: Arc<TaskExperiencePolicy>) -> Arc<Self> {
@@ -11,6 +44,13 @@ impl AgentCommandService {
             task_experience: policy,
             ..(*self).clone()
         })
+    }
+
+    pub(super) fn model_credit_refusal(&self) -> ModelCreditRefusal {
+        ModelCreditRefusal {
+            funding: self.model_funding.clone(),
+            pending: None,
+        }
     }
 
     pub fn with_model_credit_required(self: Arc<Self>, required: bool) -> Arc<Self> {
@@ -36,6 +76,8 @@ impl AgentCommandService {
         target: &ResourceTarget,
         mut request: CommandReservation,
         required: bool,
+        may_refresh: bool,
+        deferred_refusal: &mut ModelCreditRefusal,
     ) -> Result<Result<CommandReservationResult, CommandLedgerError>, CommandAdmissionError> {
         let capability = command_capability(&request.envelope.command);
         let funding = required
@@ -45,10 +87,26 @@ impl AgentCommandService {
                     .ok_or(AgentOperationError::ModelFundingUnsupported)
             })
             .transpose()?;
-        let hold = if let Some(funding) = funding {
-            let held = self
-                .reserve_model_credit(funding, authorized, &request)
+        let mut refusal = self.model_credit_refusal();
+        if let Some(funding) = funding {
+            self.reserve_model_credit(funding, authorized, &request, &mut refusal)
                 .await?;
+            let held = refusal
+                .pending
+                .as_ref()
+                .ok_or(CommandLedgerError::Corrupt)?;
+            if let Some(previous) = deferred_refusal.pending.as_ref() {
+                // Register the successor before retiring the known-aborted
+                // participant so the same reservation stays funded throughout.
+                if held.checkpoint != previous.checkpoint {
+                    refusal.settle().await?;
+                    return Err(CommandLedgerError::Conflict.into());
+                }
+                if let Err(error) = deferred_refusal.settle().await {
+                    refusal.settle().await?;
+                    return Err(error);
+                }
+            }
             let identity = held
                 .checkpoint
                 .reservation
@@ -61,27 +119,24 @@ impl AgentCommandService {
             request.envelope.correlation_id = command_ref;
             request.response_id = Some(identity.response_id.clone());
             if let Err(error) = self.fence(authorized, target, capability).await {
-                report_refusal(funding, &held).await?;
+                refusal.settle().await?;
                 return Err(error);
             }
-            Some((funding, held))
-        } else {
-            None
-        };
-        let mut definitively_refused = hold.is_some();
+        }
         let result = self
             .with_authority_bound(authorized, capability, async {
-                // Cancellation after this point may leave a durable receipt.
-                definitively_refused = false;
+                // During the store call a dropped future may hide a commit.
+                let in_flight = refusal.pending.take();
                 let result = self.store.reserve_command(request).await;
-                definitively_refused = hold
-                    .as_ref()
-                    .is_some_and(|(_, held)| admission_refused(&result, &held.checkpoint));
+                refusal.pending =
+                    in_flight.filter(|held| admission_refused(&result, &held.checkpoint));
                 result
             })
             .await;
-        if let Some((funding, held)) = hold.filter(|_| definitively_refused) {
-            report_refusal(funding, &held).await?;
+        if may_refresh && matches!(&result, Ok(Err(CommandLedgerError::Conflict))) {
+            deferred_refusal.pending = refusal.pending.take();
+        } else {
+            refusal.settle().await?;
         }
         // An unavailable write or a failed authorization response may hide a commit.
         // Keep the exact hold so a worker can settle it from the durable receipt.
@@ -94,13 +149,23 @@ impl AgentCommandService {
         funding: &AgentTurnFunding,
         authorized: &AuthorizedResource,
         request: &CommandReservation,
-    ) -> Result<AdmissionHold, CommandAdmissionError> {
+        refusal: &mut ModelCreditRefusal,
+    ) -> Result<(), CommandAdmissionError> {
         let lineage = &authorized.snapshot.lineage;
         let agent = lineage.agent.as_ref().ok_or(CommandLedgerError::Corrupt)?;
         self.with_authority_bound(
             authorized,
             command_capability(&request.envelope.command),
-            funding.reserve_admission(request, agent, &lineage.sandbox),
+            async {
+                // Keep confirmed custody even if the outer authorization fence
+                // expires as this funding request returns.
+                refusal.pending = Some(
+                    funding
+                        .reserve_admission(request, agent, &lineage.sandbox)
+                        .await?,
+                );
+                Ok::<(), FundingError>(())
+            },
         )
         .await?
         .map_err(|error| AgentOperationError::from(error).into())

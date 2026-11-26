@@ -92,37 +92,21 @@ pub(super) fn indexes(name: &str) -> Vec<IndexModel> {
     indexes
 }
 pub async fn migrate(db: &Database) -> Result<(), Error> {
-    // A predecessor must refuse a newer format before any collMod or index
-    // write. An absent marker permits resuming this additive first migration.
-    if let Some(marker) = db
-        .collection::<Document>(CONTROL)
-        .find_one(doc! {"_id":"capture"})
+    cma_service_migrations::marker_int32(db, CONTROL, "capture", "schema_version", &[1], 1)
         .await
-        .map_err(|_| Error::Unavailable)?
-    {
-        if marker.get_i32("schema_version").ok() != Some(1) {
-            return Err(Error::InvalidConfiguration);
-        }
-    }
+        .map_err(|_| Error::InvalidConfiguration)?;
     for name in COLLECTIONS {
-        match db.run_command(doc! {"create":*name,"validator":validator(name),"validationLevel":"strict","validationAction":"error","writeConcern":{"w":"majority"}}).await {
-            Ok(_) => (),
-            Err(e) if matches!(e.kind.as_ref(), mongodb::error::ErrorKind::Command(c) if c.code == 48) => {
-                db.run_command(doc! {"collMod":*name,"validator":validator(name),"validationLevel":"strict","validationAction":"error","writeConcern":{"w":"majority"}}).await.map_err(|_| Error::Unavailable)?;
-            }
-            Err(_) => return Err(Error::Unavailable),
-        }
-        let indices = indexes(name);
-        if !indices.is_empty() {
-            db.collection::<Document>(name)
-                .create_indexes(indices)
-                .write_concern(super::mongo::majority())
-                .await
-                .map_err(|_| Error::Unavailable)?;
-        }
+        cma_service_migrations::collection(db, name, validator(name), true)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        cma_service_migrations::indexes(db, name, indexes(name))
+            .await
+            .map_err(|_| Error::Unavailable)?;
     }
-    db.collection::<Document>(CONTROL).update_one(doc! {"_id":"capture"},doc! {"$setOnInsert":{"schema_version":1_i32,"revision":1_i64,"retention_days":7_i32,"since_ms":null,"until_ms":null}})
-        .upsert(true).write_concern(super::mongo::majority()).await.map_err(|_| Error::Unavailable)?;
+    cma_service_migrations::update(db, CONTROL, doc! {"_id":"capture"}, doc! {"$setOnInsert":{"schema_version":1_i32,"revision":1_i64,"retention_days":7_i32,"since_ms":null,"until_ms":null}}, true, false).await.map_err(|_| Error::Unavailable)?;
+    if cma_service_migrations::inspecting() {
+        return Ok(());
+    }
     verify(db).await
 }
 pub async fn verify(db: &Database) -> Result<(), Error> {

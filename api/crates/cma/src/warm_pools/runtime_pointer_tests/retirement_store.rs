@@ -17,6 +17,7 @@ struct RetirementHold {
 pub(super) struct RetirementStore {
     store: Arc<MongoNativeWarmPools>,
     hold: Mutex<Option<RetirementHold>>,
+    activation: Mutex<Option<RetirementHold>>,
 }
 
 impl RetirementStore {
@@ -24,7 +25,24 @@ impl RetirementStore {
         Self {
             store,
             hold: Mutex::new(None),
+            activation: Mutex::new(None),
         }
+    }
+
+    pub(super) fn hold_activation(&self, id: &str) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (reached, observation) = oneshot::channel();
+        let (release, resume) = oneshot::channel();
+        assert!(self
+            .activation
+            .lock()
+            .unwrap()
+            .replace(RetirementHold {
+                config_sha256: id.into(),
+                reached,
+                resume,
+            })
+            .is_none());
+        (observation, release)
     }
 
     pub(super) fn hold_marker(
@@ -66,7 +84,24 @@ impl PoolTargetStore for RetirementStore {
     }
 
     async fn activate(&self, id: &str) -> Result<(), WarmPoolError> {
+        let gate = self
+            .activation
+            .lock()
+            .unwrap()
+            .take_if(|gate| gate.config_sha256 == id);
+        if let Some(gate) = gate {
+            gate.reached.send(()).expect("activation observer dropped");
+            gate.resume.await.expect("activation was not released");
+        }
         self.store.activate(id).await
+    }
+
+    async fn default_pin_conflicts(
+        &self,
+        plan: &NativePoolConfiguration,
+        machine: bool,
+    ) -> Result<bool, WarmPoolError> {
+        self.store.default_pin_conflicts(plan, machine).await
     }
 
     async fn retirement_homes(

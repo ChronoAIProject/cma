@@ -273,6 +273,9 @@ async fn http_errors_and_openapi_share_the_management_contract() {
     assert_eq!(
         operations,
         [
+            "baselineChannelProfileRevisions",
+            "cancelChannelCreate",
+            "cancelCreateCapability",
             "createChannel",
             "deleteChannel",
             "getChannel",
@@ -283,6 +286,7 @@ async fn http_errors_and_openapi_share_the_management_contract() {
             "getEventMediaResponses",
             "inspectChannelPartition",
             "listChannels",
+            "publishChannelProfileRevision",
             "recoverChannel",
             "rekeyChannel",
             "resetChannelPartition",

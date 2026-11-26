@@ -72,37 +72,63 @@ impl MongoRecords {
     }
 }
 pub async fn migrate(db: &Database) -> Result<(), RecordError> {
+    cma_service_migrations::marker(db, MIGRATIONS, "whatsapp_forms", "version", &[1], 1)
+        .await
+        .map_err(failure)?;
     // A separate optional marker preserves the base schema version and existing startup.
     let validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","blob","version","schema_version"],"properties":{
     "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0}}}};
-    match db.run_command(doc!{"create":WHATSAPP_FLOWS,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await {
-        Ok(_)=>{}, Err(e) if matches!(e.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code == 48)=>{
-            db.run_command(doc!{"collMod":WHATSAPP_FLOWS,"validator":validator,"validationLevel":"strict","validationAction":"error"}).await.map_err(failure)?;
-        },Err(e)=>return Err(failure(e)),
-    }
-    db.collection::<Document>(WHATSAPP_FLOWS)
-        .create_index(IndexModel::builder().keys(doc! {"owner":1,"_id":1}).build())
-        .await
-        .map_err(failure)?;
-    let indexes: Vec<IndexModel> = db
-        .collection::<Document>(WHATSAPP_FLOWS)
-        .list_indexes()
-        .await
-        .map_err(failure)?
-        .try_collect()
-        .await
-        .map_err(failure)?;
-    if !indexes_valid(&indexes) {
-        return Err(RecordError::Rejected(
-            "WhatsApp Forms storage must have exact owner and ID indexes and no TTL".into(),
-        ));
-    }
-    db.run_command(doc!{"collMod":MIGRATIONS,"validator":super::schema::migration_validator(),"validationLevel":"strict","validationAction":"error"}).await.map_err(failure)?;
-    db.collection::<Document>(MIGRATIONS)
-        .update_one(doc! {"_id":"whatsapp_forms"}, doc! {"$set":{"version":1}})
-        .upsert(true)
-        .await
-        .map_err(failure)?;
+    // The published schema before 1f86a1b6 omitted only the optional guard revision.
+    let mut predecessor = validator.clone();
+    predecessor
+        .get_document_mut("$jsonSchema")
+        .unwrap()
+        .get_document_mut("properties")
+        .unwrap()
+        .remove("guard_revision");
+    cma_service_migrations::collection_with_predecessors(
+        db,
+        WHATSAPP_FLOWS,
+        validator,
+        true,
+        vec![predecessor],
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::indexes(
+        db,
+        WHATSAPP_FLOWS,
+        vec![IndexModel::builder().keys(doc! {"owner":1,"_id":1}).build()],
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::exact_indexes(
+        db,
+        WHATSAPP_FLOWS,
+        vec![IndexModel::builder().keys(doc! {"owner":1,"_id":1}).build()],
+        indexes_valid,
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::collection_with_predecessors(
+        db,
+        MIGRATIONS,
+        super::schema::migration_validator(),
+        false,
+        crate::records::mongo::migration_predecessors(),
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::update(
+        db,
+        MIGRATIONS,
+        doc! {"_id":"whatsapp_forms"},
+        doc! {"$set":{"version":1}},
+        true,
+        false,
+    )
+    .await
+    .map_err(failure)?;
     Ok(())
 }
 #[cfg(test)]

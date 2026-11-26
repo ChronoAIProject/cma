@@ -345,6 +345,18 @@ pub struct LoadedChannel {
     pub record: RecordValue,
 }
 
+impl LoadedChannel {
+    pub(crate) fn create_replayable(&self) -> bool {
+        self.definition
+            .creation
+            .as_ref()
+            .is_some_and(|creation| creation.ready)
+            && !self.definition.mutation.as_ref().is_some_and(|mutation| {
+                mutation.operation == cmaeg_core::channel::ChannelMutationKind::Delete
+            })
+    }
+}
+
 /// A channel read by its record id; see
 /// [`super::management::load_by_record`].
 #[derive(Debug)]

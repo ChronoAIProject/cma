@@ -113,7 +113,11 @@ impl Charge for Counted {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
 async fn two_replicas_never_admit_unpaid_requests_at_the_boundary_over_100_rounds() {
-    let fixture = Fixture::new().await;
+    let mut fixture = Fixture::new().await;
+    let clock = mongodb::bson::DateTime::now().timestamp_millis();
+    Arc::get_mut(&mut fixture.store)
+        .unwrap()
+        .set_test_clock_millis(clock);
     let prepaid = Arc::new(AtomicU32::new(0));
     let left_store = Counted {
         store: fixture.store.clone(),
@@ -122,14 +126,15 @@ async fn two_replicas_never_admit_unpaid_requests_at_the_boundary_over_100_round
     let peer = mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
+    let mut peer_store = MongoRequestLimits::open(&peer.database(fixture.database.name()))
+        .await
+        .unwrap();
+    peer_store.set_test_clock_millis(clock);
     let right_store = Counted {
-        store: Arc::new(
-            MongoRequestLimits::open(&peer.database(fixture.database.name()))
-                .await
-                .unwrap(),
-        ),
+        store: Arc::new(peer_store),
         prepaid: prepaid.clone(),
     };
+    let buckets = fixture.database.collection::<Document>(COLLECTION);
     for round in 0..100 {
         let left = LeaseTable::default();
         let right = LeaseTable::default();
@@ -137,7 +142,6 @@ async fn two_replicas_never_admit_unpaid_requests_at_the_boundary_over_100_round
         history(&left, &key, 2).await;
         history(&right, &key, 2).await;
         prepaid.store(0, Ordering::SeqCst);
-        let started = Instant::now();
         let attempts = (0..44).map(|index| {
             let (table, store) = if index % 2 == 0 {
                 (&left, &left_store)
@@ -148,9 +152,16 @@ async fn two_replicas_never_admit_unpaid_requests_at_the_boundary_over_100_round
         });
         let results = futures_util::future::join_all(attempts).await;
         let admitted = results.iter().filter(|result| result.is_ok()).count() as u32;
-        assert!(
-            started.elapsed() < Duration::from_millis(1500),
-            "fixture crossed a refill interval"
+        let stored = buckets
+            .find_one(doc! { "_id": &key })
+            .await
+            .unwrap()
+            .unwrap();
+        // Forty 1.5-second charges must fit in one minute of the shared token clock.
+        assert_eq!(
+            stored.get_i64("tat").unwrap(),
+            clock + 60_000,
+            "round {round}"
         );
         assert_eq!(admitted, 40, "round {round}");
         assert_eq!(prepaid.load(Ordering::SeqCst), 40);

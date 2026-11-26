@@ -427,7 +427,7 @@ async fn an_update_admitted_against_a_superseded_release_retries_instead_of_writ
 }
 
 #[test]
-fn managed_desktop_selection_enables_retained_update_without_rewriting_its_pin() {
+fn recorded_managed_selection_enables_retained_update_without_rewriting_its_pin() {
     let mut sandbox = native();
     let original = sandbox.runtime.as_ref().unwrap().runtime_version.clone();
     sandbox.origin = SandboxOrigin::Lifecycle {
@@ -443,44 +443,58 @@ fn managed_desktop_selection_enables_retained_update_without_rewriting_its_pin()
             .is_err());
     }
 
-    sandbox.lifecycle.runtime_image_origin = Some(SandboxRuntimeImageOrigin::ManagedDesktop);
-    let profile = sandbox.profile.clone();
-    let home = sandbox.lifecycle.home.clone();
-    assert!(sandbox.managed_desktop_runtime_confirmed());
-    assert!(sandbox.supports_retained_runtime_update());
-    let request = SandboxImageRotationRequest {
-        sandbox_id: sandbox.id.clone(),
-        requested_at: NOW.into(),
-        expected_runtime_version: "image-v2".into(),
-    };
-    assert!(matches!(
-        apply_image_rotation(&sandbox, &[], &request).unwrap(),
-        SandboxMaintenanceApplication::Complete(SandboxMaintenanceOutcome::NotEligible)
-    ));
-    assert!(sandbox
-        .request_runtime_update("image-v2".into(), false, NOW.into())
-        .unwrap());
-    let SandboxMaintenanceApplication::Persist { sandbox: next, .. } =
-        apply_image_rotation(&sandbox, &[], &request).unwrap()
-    else {
-        panic!("idle managed Desktop must admit its exact queued update");
-    };
-    assert_eq!(next.profile, profile);
-    assert_eq!(next.lifecycle.home, home);
-    assert_eq!(next.admitted_runtime_update_target(), Some("image-v2"));
-    assert_eq!(
-        next.lifecycle.runtime_image_origin,
-        sandbox.lifecycle.runtime_image_origin
-    );
-    assert_eq!(
-        next.custom_runtime_image_for_binding().unwrap(),
-        Some(original.as_str())
-    );
-    let mut changed = sandbox.clone();
-    changed.lifecycle.runtime_image_origin = None;
-    assert!(sandbox
-        .validate_runtime_generation_successor(&changed)
-        .is_err());
-    sandbox.runtime.as_mut().unwrap().boot_id = None;
-    assert!(!sandbox.managed_desktop_runtime_confirmed());
+    use crate::released_runtime::ReleasedLane;
+    for (origin, lane) in [
+        (
+            SandboxRuntimeImageOrigin::ManagedDesktop,
+            ReleasedLane::Agent,
+        ),
+        (
+            SandboxRuntimeImageOrigin::ManagedMachine,
+            ReleasedLane::Machine,
+        ),
+    ] {
+        let mut sandbox = sandbox.clone();
+        sandbox.lifecycle.runtime_image_origin = Some(origin);
+        assert_eq!(sandbox.managed_runtime_lane(), Some(lane));
+        let profile = sandbox.profile.clone();
+        let home = sandbox.lifecycle.home.clone();
+        assert!(sandbox.managed_desktop_runtime_confirmed());
+        assert!(sandbox.supports_retained_runtime_update());
+        let request = SandboxImageRotationRequest {
+            sandbox_id: sandbox.id.clone(),
+            requested_at: NOW.into(),
+            expected_runtime_version: "image-v2".into(),
+        };
+        assert!(matches!(
+            apply_image_rotation(&sandbox, &[], &request).unwrap(),
+            SandboxMaintenanceApplication::Complete(SandboxMaintenanceOutcome::NotEligible)
+        ));
+        assert!(sandbox
+            .request_runtime_update("image-v2".into(), false, NOW.into())
+            .unwrap());
+        let SandboxMaintenanceApplication::Persist { sandbox: next, .. } =
+            apply_image_rotation(&sandbox, &[], &request).unwrap()
+        else {
+            panic!("idle managed Sandbox must admit its exact queued update");
+        };
+        assert_eq!(next.profile, profile);
+        assert_eq!(next.lifecycle.home, home);
+        assert_eq!(next.admitted_runtime_update_target(), Some("image-v2"));
+        assert_eq!(
+            next.lifecycle.runtime_image_origin,
+            sandbox.lifecycle.runtime_image_origin
+        );
+        assert_eq!(
+            next.custom_runtime_image_for_binding().unwrap(),
+            Some(original.as_str())
+        );
+        let mut changed = sandbox.clone();
+        changed.lifecycle.runtime_image_origin = None;
+        assert!(sandbox
+            .validate_runtime_generation_successor(&changed)
+            .is_err());
+        sandbox.runtime.as_mut().unwrap().boot_id = None;
+        assert!(!sandbox.managed_desktop_runtime_confirmed());
+    }
 }

@@ -78,6 +78,7 @@ pub struct RuntimeUpdateFailureView {
 pub enum RuntimeUpdateImageOrigin {
     ManagedAgent,
     ManagedDesktop,
+    ManagedMachine,
     UserSelected,
     Unknown,
 }
@@ -85,7 +86,7 @@ pub enum RuntimeUpdateImageOrigin {
 impl SandboxRuntimeUpdateView {
     pub(super) fn new(sandbox: &Sandbox, service: &SandboxRuntimeUpdateService) -> Self {
         // One release for the whole view, so its fields always agree.
-        let latest_version = service.latest_version();
+        let latest_version = service.latest_version_for(sandbox).unwrap_or_default();
         let current_version = sandbox
             .retained_runtime_binding()
             .map(|runtime| runtime.runtime_version.clone());
@@ -96,6 +97,9 @@ impl SandboxRuntimeUpdateView {
         let image_origin = match sandbox.lifecycle.runtime_image_origin {
             Some(SandboxRuntimeImageOrigin::ManagedDesktop) => {
                 RuntimeUpdateImageOrigin::ManagedDesktop
+            }
+            Some(SandboxRuntimeImageOrigin::ManagedMachine) => {
+                RuntimeUpdateImageOrigin::ManagedMachine
             }
             Some(SandboxRuntimeImageOrigin::UserSelected) => RuntimeUpdateImageOrigin::UserSelected,
             None if sandbox.has_managed_runtime_image() => RuntimeUpdateImageOrigin::ManagedAgent,
@@ -134,7 +138,14 @@ impl SandboxRuntimeUpdateView {
         } else if !current_confirmed && pending.is_none() {
             Some("The current Desktop runtime could not be confirmed.".into())
         } else if !qualified && pending.is_none() {
-            Some("The latest Agent runtime has not been verified for Desktop.".into())
+            Some(
+                if image_origin == RuntimeUpdateImageOrigin::ManagedMachine {
+                    "A verified Machine runtime release is unavailable."
+                } else {
+                    "The latest Agent runtime has not been verified for Desktop."
+                }
+                .into(),
+            )
         } else if pending.is_none() && !can_update {
             runtime_update_lifecycle_reason(sandbox.status).map(str::to_owned)
         } else {

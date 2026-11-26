@@ -153,3 +153,42 @@ async fn inspection_drift_tracks_owner_prompt_and_installed_skill_changes() {
     let drift = super::super::inspection::profile_drift(&agent, &changed, &binding.profile_digest);
     assert!(drift.skills);
 }
+
+#[tokio::test]
+async fn desired_profile_drift_compares_the_scope_that_binding_admission_would_grant() {
+    let fixture = fixture();
+    let mut desired = profile("Keep this instruction");
+    desired["model"]["service"] = json!(
+        AgentProvider::default()
+            .connection_services()
+            .legacy_managed
+    );
+    desired["permission"]["service_scope"] = json!(["original-service"]);
+    let binding = fixture.ready_with_profile(desired.clone(), None).await;
+    let conversation = resource_access::ready_conversation(&fixture, &binding).await;
+
+    for scope in [None, Some(json!(["replacement-service"]))] {
+        let scope_changed = scope.is_some();
+        if let Some(scope) = scope {
+            desired["permission"]["service_scope"] = scope;
+        }
+        let digest = format!("sha256:{}", content_digest(&desired).unwrap());
+        let drift = fixture
+            .service
+            .desired_profile_drift(
+                &fixture.caller,
+                &binding.binding_id,
+                &conversation.conversation_id,
+                desired.clone(),
+                &digest,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(drift.profile_digest, digest);
+        assert_eq!(drift.service_scope, scope_changed);
+        assert!(!drift.prompt && !drift.skills && !drift.model);
+    }
+
+    assert_eq!(fixture.binding().await, binding);
+}

@@ -61,9 +61,21 @@ exec "$REAL_TAR" "$@"
                 work_products.write_bytes(random_source.randbytes(size))
                 os.utime(work_products, (modified, modified))
 
+            # A filesystem can charge separately allocated directory blocks
+            # to each group. Those blocks are not payload in a tar stream.
+            du = root / "du"
+            du.write_text('''#!/bin/bash
+case "$2" in
+    */release/incremental/*) "$REAL_DU" "$@" | awk '{print ($1 + 12) "\\t" $2}' ;;
+    *) exec "$REAL_DU" "$@" ;;
+esac
+''')
+            du.chmod(0o755)
+            environment = {**os.environ, "COPYFILE_DISABLE": "1", "PATH": f"{root}:{os.environ['PATH']}",
+                           "REAL_DU": shutil.which("du")}
             script = export_script(1024 * 1024, 40500, 100)
             subprocess.run(["bash", "-c", script, "export", str(registry), str(target), str(output)],
-                           env={**os.environ, "COPYFILE_DISABLE": "1"}, check=True)
+                           env=environment, check=True)
             self.assertEqual((output / "compacted").read_text().strip(), "3")
             with tarfile.open(output / "target.tar.gz") as archive:
                 selected = {Path(member.name).parts[2] for member in archive}
@@ -77,11 +89,13 @@ exec "$REAL_TAR" "$@"
             registry.mkdir()
             (registry / "package.crate").write_bytes(b"package")
             random_source = random.Random(3873)
-            mib = 1024 * 1024
-            for group in range(6):
+            group_bytes = 4 * 1024 * 1024
+            group_count = 6
+            compressed_limit = 5 * group_bytes // 2
+            for group in range(group_count):
                 state = target / "release" / "incremental" / f"crate{group}-seed" / "s-final"
                 state.mkdir(parents=True)
-                (state / "work-products.bin").write_bytes(random_source.randbytes(mib))
+                (state / "work-products.bin").write_bytes(random_source.randbytes(group_bytes))
 
             gzip = root / "gzip"
             gzip.write_text('''#!/bin/bash
@@ -103,13 +117,17 @@ exit "$status"
             self.assertIsNotNone(real_gzip)
             environment = {**os.environ, "COPYFILE_DISABLE": "1", "PATH": f"{root}:{os.environ['PATH']}",
                            "REAL_GZIP": real_gzip, "PROBE_TMP": directory}
-            script = export_script(12 * mib, 5 * mib // 2, 100)
+            script = export_script(12 * group_bytes, compressed_limit, 100)
             process = subprocess.run(["bash", "-c", script, "export", str(registry), str(target), str(output)],
                                      env=environment, capture_output=True, text=True, timeout=30)
             self.assertEqual(process.returncode, 0, process.stderr)
             input_sizes = [int(size) for size in (root / "bytes").read_text().splitlines()]
-            self.assertLess(max(input_sizes), 3 * mib)
-            self.assertLess(sum(input_sizes), 8 * mib)
+            # Two cutoffs and the final two groups account for roughly seven
+            # groups of input. Large groups leave room for pipe and gzip
+            # buffering within the eight-group bound on different hosts.
+            self.assertLess(max(input_sizes), group_count * group_bytes, input_sizes)
+            self.assertLess(sum(input_sizes), 8 * group_bytes, input_sizes)
+            self.assertLessEqual(sum(path.stat().st_size for path in output.glob("*.tar.gz")), compressed_limit)
             self.assertEqual((output / "compacted").read_text().strip(), "2")
             with tarfile.open(output / "target.tar.gz") as archive:
                 selected = {Path(member.name).parts[2] for member in archive}
