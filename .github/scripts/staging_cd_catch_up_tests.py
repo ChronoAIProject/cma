@@ -29,11 +29,11 @@ def instant(_seconds):
 
 
 def decide_raw(develop, controller=None, **when):
-    """Decide as the scheduled check does long after the head settled, unless `when` says otherwise."""
+    """Decide long after the head settled, unless `when` says otherwise."""
     # The synthetic runs must carry the identities the check reads.
     assert (fixture.WORKFLOW, fixture.BOT["login"]) == (catch_up.WORKFLOW, catch_up.BOT)
-    when = {"event": "schedule", "now": develop.later(60), **when}
-    return catch_up.decide(develop.server, develop.refs, controller or develop.controller, **when)
+    when = {"now": develop.later(60), **when}
+    return catch_up.decide(develop.server, develop.refs, controller or develop.controller, **when)[:3]
 
 
 def decide(develop, controller=None, **when):
@@ -66,7 +66,7 @@ class CatchUpTests(unittest.TestCase):
         self.assertEqual(decide(develop), ("run-active", None, []))
         develop.complete(801)  # Its runtime-omarchy build failed; no push follows.
         # A build left behind is retried straight after the run that completes last.
-        reason, run, lanes = decide(develop, event="workflow_run", now=develop.later(0))
+        reason, run, lanes = decide(develop, now=develop.later(0))
         self.assertEqual((reason, run["id"], lanes), ("rerun", 802, [("runtime-omarchy", "unfinalized-reservation")]))
         self.assertEqual(rerun(develop, run), 2)
         self.assertEqual(develop.posts, [802])
@@ -171,7 +171,7 @@ class CatchUpTests(unittest.TestCase):
         develop.complete(801, 802)
         # A job timeout cancels its run too, so the busy owner's lane is re-planned as before.
         develop.runs[802]["attempts"][-1]["conclusion"] = "cancelled"
-        reason, run, lanes = decide(develop, event="workflow_run", now=develop.later(0))
+        reason, run, lanes = decide(develop, now=develop.later(0))
         self.assertEqual((reason, run["id"], lanes), ("rerun", 802, [
             ("runtime-omarchy", "unfinalized-reservation"), ("web", "unproven-final")]))
 
@@ -181,8 +181,7 @@ class CatchUpTests(unittest.TestCase):
         develop.deploy(801, "web", "failed")
         develop.complete(801)
         develop.runs[801]["attempts"][-1]["conclusion"] = "cancelled"
-        for event in ("workflow_run", "schedule"):
-            self.assertEqual(decide(develop, event=event), ("cancelled", None, [("web", "unproven-final")]))
+        self.assertEqual(decide(develop), ("cancelled", None, [("web", "unproven-final")]))
         # A maintainer's re-run of it is a new attempt that may be caught up again.
         develop.start(801)
         develop.allocate(801)
@@ -190,35 +189,34 @@ class CatchUpTests(unittest.TestCase):
         self.assertEqual(decide(develop)[::2], ("rerun", [("web", "unproven-final")]))
         self.assertEqual(develop.posts, [])
 
-    def test_a_plan_stopped_at_its_gate_is_re_run_once_from_the_scheduled_check_after_staging_settles(self):
+    def test_a_plan_stopped_at_its_gate_is_re_run_once_after_staging_settles(self):
         develop = Develop()
         develop.push({"web"})
         develop.complete(801)
         attempt = develop.runs[801]["attempts"][-1]
         attempt.update(allocate=None, plan="stopped")
 
-        def check(event, minutes):
-            return catch_up.decide(develop.server, develop.refs, develop.controller, event=event,
-                                   now=develop.later(minutes))
-        # As for finals alone: from a completed staging run, or before every run settled, the outage may persist.
-        self.assertEqual(check("workflow_run", 10), ("plan-waiting", None, []))
-        self.assertEqual(check("schedule", 9), ("plan-waiting", None, []))
-        reason, run, lanes = check("schedule", 10)
+        def check(minutes):
+            return decide_raw(develop, now=develop.later(minutes))
+        # Let the transient failure clear before re-running the plan.
+        self.assertEqual(check(0), ("plan-waiting", None, []))
+        self.assertEqual(check(9), ("plan-waiting", None, []))
+        reason, run, lanes = check(10)
         self.assertEqual((reason, run["id"], lanes), ("plan-rerun", 801, []))
         # A plan that failed in its own step (a refusal or an error) waits for the next push.
         attempt["plan"] = "failed"
-        self.assertEqual(check("schedule", 10), ("head-unallocated", None, []))
+        self.assertEqual(check(10), ("head-unallocated", None, []))
         # A cancelled head is never re-run automatically.
         attempt.update(plan="stopped", conclusion="cancelled")
-        self.assertEqual(check("schedule", 10), ("cancelled", None, []))
+        self.assertEqual(check(10), ("cancelled", None, []))
         del attempt["conclusion"]
         # Once re-run by the check itself, a plan that stops again is exhausted: never a second time.
         attempt["actor"] = BOT
-        reason, run, lanes = check("schedule", 10)
+        reason, run, lanes = check(10)
         self.assertEqual((reason, run["id"], lanes), ("plan-exhausted", 801, []))
         attempt["actor"] = HUMAN
         attempt["updated"] = "not a time"
-        self.assertEqual(check("schedule", 10), ("plan-waiting", None, []))
+        self.assertEqual(check(10), ("plan-waiting", None, []))
         self.assertEqual(develop.posts, [])
 
     def test_a_bot_triggered_head_with_a_stopped_plan_is_never_re_run(self):
@@ -230,8 +228,7 @@ class CatchUpTests(unittest.TestCase):
         attempt.update(allocate=None, plan="stopped")
 
         def check():
-            return catch_up.decide(develop.server, develop.refs, develop.controller, event="schedule",
-                                   now=develop.later(10))
+            return decide_raw(develop, now=develop.later(10))
         self.assertEqual(check()[0], "plan-rerun")
         # The check's own attempt spent this head's automatic re-run: its stopped plan is exhausted,
         # and a lane still behind is reported with it.
@@ -242,37 +239,36 @@ class CatchUpTests(unittest.TestCase):
         self.assertNotIn(reason, catch_up.RERUNS)
         self.assertEqual(develop.posts, [])
 
-    def test_an_allocation_stopped_at_its_gate_is_re_run_once_from_the_scheduled_check_after_staging_settles(self):
+    def test_an_allocation_stopped_at_its_gate_is_re_run_once_after_staging_settles(self):
         develop = Develop()
         develop.push({"web"})
         develop.complete(801)
         attempt = develop.runs[801]["attempts"][-1]
         attempt["allocate"] = "stopped"
 
-        def check(event, minutes):
-            return catch_up.decide(develop.server, develop.refs, develop.controller, event=event,
-                                   now=develop.later(minutes))
-        # As for a stopped plan: from a completed staging run, or before every run settled, the outage may persist.
-        self.assertEqual(check("workflow_run", 10), ("allocation-waiting", None, []))
-        self.assertEqual(check("schedule", 9), ("allocation-waiting", None, []))
-        reason, run, lanes = check("schedule", 10)
+        def check(minutes):
+            return decide_raw(develop, now=develop.later(minutes))
+        # Let the transient failure clear before re-running the allocation.
+        self.assertEqual(check(0), ("allocation-waiting", None, []))
+        self.assertEqual(check(9), ("allocation-waiting", None, []))
+        reason, run, lanes = check(10)
         self.assertEqual((reason, run["id"], lanes), ("allocation-rerun", 801, []))
         self.assertIn(reason, catch_up.RERUNS)
         # A refusal that needs a person failed the allocation step itself: it waits for the next push.
         attempt["allocate"] = "failure"
-        self.assertEqual(check("schedule", 10), ("head-unallocated", None, []))
+        self.assertEqual(check(10), ("head-unallocated", None, []))
         # A cancelled head is never re-run automatically.
         attempt.update(allocate="stopped", conclusion="cancelled")
-        self.assertEqual(check("schedule", 10), ("cancelled", None, []))
+        self.assertEqual(check(10), ("cancelled", None, []))
         del attempt["conclusion"]
         # Once re-run by the check itself, an allocation that stops again is exhausted: never a second time.
         attempt["actor"] = BOT
-        self.assertEqual(check("schedule", 10)[::2], ("allocation-exhausted", []))
+        self.assertEqual(check(10)[::2], ("allocation-exhausted", []))
         # A maintainer's re-run earns one more, never at the attempt cap.
         attempt["actor"] = HUMAN
-        self.assertEqual(check("schedule", 10)[0], "allocation-rerun")
+        self.assertEqual(check(10)[0], "allocation-rerun")
         develop.runs[801]["attempts"].extend(dict(attempt) for _ in range(catch_up.ATTEMPTS - 1))
-        reason, run, lanes = check("schedule", 10)
+        reason, run, lanes = check(10)
         self.assertEqual((reason, run["run_attempt"], lanes), ("allocation-exhausted", catch_up.ATTEMPTS, []))
         self.assertEqual(develop.posts, [])
 
@@ -503,16 +499,16 @@ class UnprovenFinalTests(unittest.TestCase):
         self.assertEqual(decide(develop), ("head-caught-up", None, []))
         self.assertEqual(develop.posts, [801])
 
-    def test_a_deploy_failure_is_retried_only_on_schedule_after_its_head_settled(self):
+    def test_a_deploy_failure_is_retried_only_after_its_head_settled(self):
         develop = self.failed_deploy()
         develop.complete(801)
         behind = [("web", "unproven-final")]
-        # The run's own completion and an unsettled scheduled check leave the cause time to clear.
-        for event, minutes in (("workflow_run", 60), ("schedule", 0), ("schedule", 9)):
-            with self.subTest(event=event, minutes=minutes):
-                self.assertEqual(decide(develop, event=event, now=develop.later(minutes)),
+        # Completion and the earlier recheck leave the cause time to clear.
+        for minutes in (0, 9):
+            with self.subTest(minutes=minutes):
+                self.assertEqual(decide(develop, now=develop.later(minutes)),
                                  ("final-waiting", None, behind))
-        self.assertEqual(decide(develop, event="schedule", now=develop.later(10))[::2], ("rerun", behind))
+        self.assertEqual(decide(develop, now=develop.later(10))[::2], ("rerun", behind))
         develop.runs[801]["attempts"][-1]["updated"] = None
         self.assertEqual(decide(develop)[0], "final-waiting")
         self.assertEqual(develop.posts, [])
@@ -531,9 +527,9 @@ class UnprovenFinalTests(unittest.TestCase):
         develop.complete(801)
         behind = [("web", "unproven-final")]
         for minutes in (1, 9):
-            self.assertEqual(decide(develop, event="schedule", now=develop.later(minutes)),
+            self.assertEqual(decide(develop, now=develop.later(minutes)),
                              ("final-waiting", None, behind))
-        reason, run, lanes = decide(develop, event="schedule", now=develop.later(10))
+        reason, run, lanes = decide(develop, now=develop.later(10))
         self.assertEqual((reason, run["id"], lanes), ("rerun", 802, behind))
 
     def test_proven_or_superseded_final_never_re_runs(self):
@@ -643,7 +639,7 @@ class UnprovenFinalTests(unittest.TestCase):
         develop.deploy(802, "web", "failed")
         develop.complete(802, 801)
         # The build left behind re-runs at once and carries the final with it.
-        reason, run, lanes = decide(develop, event="workflow_run", now=develop.later(0))
+        reason, run, lanes = decide(develop, now=develop.later(0))
         self.assertEqual((reason, run["id"], lanes), ("rerun", 802, [
             ("runtime-omarchy", "unfinalized-reservation"), ("web", "unproven-final")]))
         # An unknown outcome never hides the reservation it cannot judge.
@@ -757,8 +753,9 @@ class EntryTests(unittest.TestCase):
 
     def run_main(self, decide=None, rerun=None, env=None, *, every=False):
         output = io.StringIO()
+        decision = (lambda *args, **kwargs: catch_up.Decision(*decide(*args, **kwargs))) if decide else None
         with patch.dict("os.environ", env or self.environment(), clear=True), \
-                patch.object(catch_up, "decide", side_effect=decide), \
+                patch.object(catch_up, "decide", side_effect=decision), \
                 patch.object(catch_up, "rerun", side_effect=rerun), contextlib.redirect_stdout(output):
             status = catch_up.main()
         lines = output.getvalue().splitlines()
@@ -789,12 +786,40 @@ class EntryTests(unittest.TestCase):
         self.assertEqual(self.run_main(lambda *_, **__: ("rerun", run, lanes), lambda *_: None, every=True),
                          (0, ["PASS catch-up", "CATCH-UP head-moved"]))
 
-    def test_the_check_decides_with_its_own_trigger(self):
+    def test_both_authorized_triggers_use_the_same_fresh_decision(self):
         for event in ("workflow_run", "schedule"):
             env = self.environment(event, COMPLETED if event == "workflow_run" else {"schedule": "3-59/10 * * * *"})
             decide = Mock(return_value=("nothing-behind", None, []))
             self.run_main(decide, env=env)
-            self.assertEqual(decide.call_args.kwargs, {"event": event})
+            self.assertEqual(decide.call_args.kwargs, {})
+
+    def test_completion_event_rechecks_and_reruns_a_stopped_plan_without_a_schedule(self):
+        develop = Develop()
+        develop.push({"web"})
+        develop.runs[801]["attempts"][-1].update(allocate=None, plan="stopped")
+        develop.complete(801)
+        env = self.environment()
+        output_path = Path(env["GITHUB_EVENT_PATH"]).with_name("output")
+        env["GITHUB_OUTPUT"] = str(output_path)
+
+        def run_at(minutes):
+            output = io.StringIO()
+            with patch.dict("os.environ", env, clear=True), \
+                    patch.object(catch_up, "GitHub", return_value=develop.server), \
+                    patch.object(catch_up, "advertised", side_effect=lambda **_: develop.refs()), \
+                    patch.object(catch_up, "controller_reader", return_value=develop.controller), \
+                    patch.object(catch_up.time, "time", return_value=develop.later(minutes)), \
+                    contextlib.redirect_stdout(output):
+                self.assertEqual(catch_up.main(), 0)
+            return output.getvalue().splitlines()[-1]
+
+        deadline = f"settle_until={int(develop.later(10))}\n"
+        self.assertEqual(run_at(9), "CATCH-UP plan-waiting")
+        self.assertEqual(output_path.read_text(), deadline)
+        self.assertEqual(develop.posts, [])
+        self.assertEqual(run_at(10), "CATCH-UP plan-rerun run=801 attempt=2")
+        self.assertEqual(develop.posts, [801])
+        self.assertEqual(output_path.read_text(), deadline)
 
     def test_a_second_stop_at_the_same_gate_warns_and_is_never_re_run(self):
         for stage in ("allocation", "plan"):

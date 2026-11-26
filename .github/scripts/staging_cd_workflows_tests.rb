@@ -837,29 +837,46 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal [{ 'cron' => '3-59/10 * * * *' }], events['schedule']
     assert_equal({}, check['permissions'])
     refute check.key?('concurrency')
-    assert_equal ['catch_up'], check['jobs'].keys
+    assert_equal %w[catch_up settle recheck], check['jobs'].keys
     job = check['jobs']['catch_up']
-    # Re-running staging needs actions: write; controller outcomes only deployment reads.
-    assert_equal({ 'contents' => 'read', 'actions' => 'write', 'deployments' => 'read' }, job['permissions'])
-    # At most one check runs and one waits; each decides from fresh state.
-    assert_equal({ 'group' => 'cma-staging-cd-catch-up', 'cancel-in-progress' => false }, job['concurrency'])
+    settle = check['jobs']['settle']
+    recheck = check['jobs']['recheck']
+    # A completion can request one delayed check, using a timer with no repository access.
+    assert_equal({ 'settle_until' => '${{ steps.check.outputs.settle_until }}' }, job['outputs'])
+    assert_equal 'check', job['steps'].last['id']
+    assert_equal 'catch_up', settle['needs']
+    assert_equal "github.event_name == 'workflow_run' && needs.catch_up.outputs.settle_until != ''", settle['if']
+    assert_equal({}, settle['permissions'])
+    assert_equal({ 'group' => 'cma-staging-cd-settle', 'cancel-in-progress' => true }, settle['concurrency'])
+    assert_equal 12, settle['timeout-minutes']
+    assert_equal 1, settle['steps'].size
+    refute settle['steps'].first.key?('uses')
+    assert_equal({ 'SETTLE_UNTIL' => '${{ needs.catch_up.outputs.settle_until }}' }, settle['steps'].first['env'])
+    assert_equal 'settle', recheck['needs']
+    refute recheck.key?('outputs')
+    refute recheck.key?('if') # A skipped or cancelled timer never calls a writer.
     %w[github.repository\ ==\ 'ChronoAIProject/cma' github.ref\ ==\ 'refs/heads/develop'
        github.event.workflow_run.event\ ==\ 'push' github.event.workflow_run.head_branch\ ==\ 'develop'
        github.event.workflow_run.head_repository.full_name\ ==\ github.repository].each do |guard|
       assert_includes job['if'], guard
     end
-    refute job.key?('environment')
-    refute job.to_s.include?('secrets.')
-    job['steps'].each do |step|
-      refute step.key?('continue-on-error')
-      assert_match(/\A[^@]+@[a-f0-9]{40}\z/, step['uses']) if step['uses']
-    end
-    assert_equal false, job['steps'].first.dig('with', 'persist-credentials')
-    assert_equal ['python3 -B .github/scripts/staging_cd_catch_up.py'], job['steps'].map { |step| step['run'] }.compact
     # The check judges finals by the same controller outcomes the allocator reads.
     allocate = staging.dig('jobs', 'allocate', 'steps').find { |step| step['id'] == 'allocate' }
-    assert_equal({ 'GH_TOKEN' => '${{ github.token }}',
-                   'CD_STAGING_ENVIRONMENT' => allocate.dig('env', 'CD_STAGING_ENVIRONMENT') }, job['steps'].last['env'])
+    [job, recheck].each do |writer|
+      assert_equal({ 'contents' => 'read', 'actions' => 'write', 'deployments' => 'read' }, writer['permissions'])
+      assert_equal({ 'group' => 'cma-staging-cd-catch-up', 'queue' => 'max',
+                     'cancel-in-progress' => false }, writer['concurrency'])
+      refute writer.key?('environment')
+      refute writer.to_s.include?('secrets.')
+      writer['steps'].each do |step|
+        refute step.key?('continue-on-error')
+        assert_match(/\A[^@]+@[a-f0-9]{40}\z/, step['uses']) if step['uses']
+      end
+      assert_equal false, writer['steps'].first.dig('with', 'persist-credentials')
+      assert_equal ['python3 -B .github/scripts/staging_cd_catch_up.py'], writer['steps'].map { |step| step['run'] }.compact
+      assert_equal({ 'GH_TOKEN' => '${{ github.token }}',
+                     'CD_STAGING_ENVIRONMENT' => allocate.dig('env', 'CD_STAGING_ENVIRONMENT') }, writer['steps'].last['env'])
+    end
   end
 
   def test_catch_up_reads_the_plan_job_and_its_transient_gate_by_their_exact_names
