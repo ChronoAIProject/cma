@@ -72,10 +72,17 @@ async fn retirement_capture_at_capacity_allows_ordinary_agent_stop() {
     let (transport, exchanges, server) = receiver().await;
     *retiring.backend.inspection_transport.lock().unwrap() = Some(transport.clone());
     *retiring.backend.close_transport.lock().unwrap() = Some(transport);
-    assert_eq!(
-        run_child_due(&worker, &child.id).await,
-        Err(SandboxStoreError::Conflict)
-    );
+    assert!(run_child_due(&worker, &child.id).await.unwrap());
+    let deferred = owned.get_agent(&child.id).await.unwrap().unwrap();
+    assert_eq!(deferred.status, AgentStatus::Ready);
+    assert_eq!(deferred.work.step, AgentWorkStep::CloseProcess);
+    assert_eq!(deferred.work.attempts, 1);
+    assert!(deferred.work.lease.is_none());
+    assert!(!deferred
+        .work
+        .receipts
+        .iter()
+        .any(|receipt| receipt.step == AgentWorkStep::CloseProcess));
     assert!(exchanges.lock().unwrap().is_empty());
     let row = client
         .database(&name)
