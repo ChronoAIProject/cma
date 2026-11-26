@@ -242,6 +242,9 @@ async fn activate_and_start_workers(
 
 fn start_workers(composition: ControlPlaneComposition, shutdown: &mut ShutdownCoordinator) {
     composition::activity::spawn(composition.activity_worker, shutdown);
+    if let Some(revocation) = composition.retirement_revocation {
+        shutdown.push(revocation.spawn(shutdown.subscribe()));
+    }
     shutdown.push(read_telemetry::spawn(shutdown.subscribe()));
     shutdown.push(
         composition

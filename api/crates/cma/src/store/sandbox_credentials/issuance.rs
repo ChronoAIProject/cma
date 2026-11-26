@@ -1,7 +1,10 @@
 //! One unresolved issuance barrier per Sandbox, retained across generation changes.
 use super::issuance_record::{decode, validate};
 use super::*;
-use crate::sandbox::{CredentialIssuance, IssuanceIdentity, IssuanceObservation, IssuanceState};
+use crate::sandbox::{
+    CredentialIssuance, IssuanceIdentity, IssuanceObservation, IssuanceState,
+    RetirementOwnerAuthority,
+};
 use crate::store::sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome};
 use layer2_core::sandbox::Sandbox;
 use mongodb::bson::{Bson, Document};
@@ -9,8 +12,22 @@ use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 
 pub(in crate::store) const COLLECTION: &str = "sandbox_credential_issuance";
+pub(super) const RETIREMENT_DISCOVERY_INDEX: &str = "retirement_credential_discovery_v2";
+
+pub(super) fn retirement_discovery_candidates() -> Document {
+    doc! {"document_schema_version":1_i64, "record.state":"unknown",
+    "retirement_custody.version":1_i64, "retirement_custody.state":"pending",
+    "retirement_custody.owner_authority":{"$exists":true},
+    "retirement_custody.late_provider_authority":{"$exists":true}}
+}
+
 pub(in crate::store) mod legacy;
+mod retirement;
+mod retirement_claim;
+mod retirement_effect;
+pub(in crate::store::sandbox_credentials) mod retirement_settlement;
 mod transactions;
+pub(super) use retirement::{retain_late_result, retain_retirement};
 
 fn document(intent: &CredentialIssuance) -> Result<Document, CredentialCustodyError> {
     validate(intent)?;
@@ -63,6 +80,7 @@ pub(super) async fn begin(
     store: &MongoSandboxCredentialStore,
     sandbox: &Sandbox,
     intent: &CredentialIssuance,
+    owner_authority: Option<&RetirementOwnerAuthority>,
 ) -> Result<bool, CredentialCustodyError> {
     validate(intent)?;
     let lease = sandbox.work.lease.as_ref().ok_or_else(corrupt)?;
@@ -120,9 +138,18 @@ pub(super) async fn begin(
         )
         .await
         .map_err(unavailable)?;
+        let mut retained = document(intent)?;
+        if let Some(authority) = owner_authority {
+            if retirement::owner_authority_matches(store, sandbox, authority, &mut session).await? {
+                retained.insert(
+                    "issuance_owner_authority",
+                    mongodb::bson::serialize_to_bson(authority).map_err(|_| corrupt())?,
+                );
+            }
+        }
         let result = store
             .intents
-            .replace_one(filter, document(intent)?)
+            .replace_one(filter, retained)
             .upsert(true)
             .session(&mut session)
             .await
@@ -162,6 +189,7 @@ pub(super) async fn accept(
             .intents
             .replace_one(
                 doc! {"_id":intent.sandbox_id.as_str(),
+                "retirement_custody":{"$exists":false},
                 "record":mongodb::bson::serialize_to_bson(intent).map_err(|_| corrupt())?},
                 document(&accepted)?,
             )

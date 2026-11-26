@@ -181,6 +181,27 @@ pub struct KeyIssuer {
     deployment: String,
 }
 
+/// Positive, exact-key deletion evidence from the provider's synchronous API.
+#[allow(
+    dead_code,
+    reason = "independent retirement dispatch awaits qualification"
+)]
+#[derive(Debug)]
+pub(crate) struct ConfirmedRetirementKeyRevocation {
+    provider_identity: String,
+    provider_key_id: String,
+}
+
+#[allow(
+    dead_code,
+    reason = "independent retirement dispatch awaits qualification"
+)]
+impl ConfirmedRetirementKeyRevocation {
+    pub(crate) fn matches(&self, provider_identity: &str, provider_key_id: &str) -> bool {
+        self.provider_identity == provider_identity && self.provider_key_id == provider_key_id
+    }
+}
+
 impl KeyIssuer {
     pub fn new(
         http: reqwest::Client,
@@ -245,6 +266,31 @@ impl KeyIssuer {
 
     /// Revoke a provider key using the authority of its owning account.
     pub async fn revoke(&self, id: &str, owner_token: &str) -> Result<(), KeyIssuerError> {
+        revoke_status(self.delete_key_status(id, owner_token).await?)
+    }
+
+    /// NyxID returns 200 after deleting the key. Other responses, including
+    /// 202 and 404 after a lost reply, do not prove this exact effect.
+    #[allow(
+        dead_code,
+        reason = "independent retirement dispatch awaits qualification"
+    )]
+    pub(crate) async fn revoke_retirement_key(
+        &self,
+        id: &str,
+        owner_token: &str,
+    ) -> Result<ConfirmedRetirementKeyRevocation, KeyIssuerError> {
+        let status = self.delete_key_status(id, owner_token).await?;
+        if status != 200 {
+            return Err(KeyIssuerError::Refused(status));
+        }
+        Ok(ConfirmedRetirementKeyRevocation {
+            provider_identity: self.provider_identity(),
+            provider_key_id: id.into(),
+        })
+    }
+
+    async fn delete_key_status(&self, id: &str, owner_token: &str) -> Result<u16, KeyIssuerError> {
         if !valid_provider_key_id(id) {
             return Err(KeyIssuerError::UnexpectedAuthority);
         }
@@ -258,7 +304,7 @@ impl KeyIssuer {
                 // Transport diagnostics can contain the provider key in the URL.
                 KeyIssuerError::Unavailable("key revocation request failed".into())
             })?;
-        revoke_status(response.status().as_u16())
+        Ok(response.status().as_u16())
     }
 
     /// List the platform catalogue as the owner who will use it.

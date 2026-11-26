@@ -82,3 +82,18 @@ fn repeat_reopen_admission_is_independent_and_defaults_off() {
     }
     assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "yes".into()))).is_err());
 }
+
+#[test]
+fn independent_retirement_revocation_is_separate_and_defaults_off() {
+    const KEY: &str = "CHRONO_NATIVE_RETIREMENT_REVOCATION_ENABLED";
+    const FINALITY: &str = "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED";
+    let flags =
+        FeatureFlags::from_lookup(&mut |key| Ok((key == FINALITY).then(|| "true".into()))).unwrap();
+    assert!(flags.native_retirement_finality_enabled);
+    assert!(!flags.native_retirement_revocation_enabled);
+    let flags =
+        FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "true".into()))).unwrap();
+    assert!(!flags.native_retirement_finality_enabled);
+    assert!(flags.native_retirement_revocation_enabled);
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "yes".into()))).is_err());
+}

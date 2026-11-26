@@ -34,14 +34,27 @@ pub(in crate::store) async fn required(
         None if marked => return Ok(true),
         None => {}
         Some(row) => {
-            let Ok(intent) = issuance_record::decode(row) else {
+            let Ok(intent) = issuance_record::decode(row.clone()) else {
                 return Ok(true);
             };
             if !marked
                 || intent.sandbox_id != sandbox.id
                 || intent.owner != sandbox.owner
                 || !sandbox.credential.source.is_managed()
-                || intent.state != IssuanceState::Accepted
+            {
+                return Ok(true);
+            }
+            if intent.state == IssuanceState::Unknown
+                && (sandbox.status != layer2_core::sandbox::SandboxStatus::Retired
+                    || sandbox.runtime.is_some()
+                    || sandbox.lifecycle.suspended_runtime.is_some()
+                    || sandbox
+                        .lifecycle
+                        .home
+                        .as_ref()
+                        .is_some_and(|home| !home.released)
+                    || !issuance::retirement_settlement::settled_for(&row, sandbox)
+                        .unwrap_or(false))
             {
                 return Ok(true);
             }

@@ -111,7 +111,9 @@ macro_rules! transaction {
 
 mod authority;
 mod records;
-use authority::valid_owner_authorization;
+pub(in crate::store) use authority::{
+    credential_scope_authorization_in_session, valid_owner_authorization,
+};
 pub(in crate::store) use records::{document, lease_filter, read};
 pub(crate) use records::{
     AgentAccessDecision, AgentAccessHotUpdate, AgentAccessLease, AgentAccessNotificationIntent,

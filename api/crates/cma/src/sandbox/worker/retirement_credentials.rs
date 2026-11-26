@@ -11,6 +11,27 @@ use super::{
 };
 
 impl SandboxWorker {
+    pub(super) async fn retain_initial_retirement_issuance(
+        &self,
+        sandbox: &Sandbox,
+        now: SystemTime,
+    ) -> Result<(), WorkerFailure> {
+        if self
+            .config
+            .retirement_finalizer
+            .as_ref()
+            .is_some_and(|finalizer| finalizer.admission_enabled())
+            && crate::sandbox::initial_retirement_issuance_candidate(sandbox)
+        {
+            self.dependencies
+                .credentials
+                .retain_retirement_issuance(sandbox, now)
+                .await
+                .map_err(credential_failure)?;
+        }
+        Ok(())
+    }
+
     /// A provider delete can collect the home before CMA observes its reply.
     /// Publish settlement under the existing claim before dispatching that effect.
     pub(super) async fn prepare_retirement_cleanup(

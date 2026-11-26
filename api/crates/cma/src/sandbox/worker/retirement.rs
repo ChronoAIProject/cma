@@ -23,6 +23,9 @@ impl SandboxWorker {
             .retirement_finalizer
             .as_ref()
             .filter(|_| NativeRetirementFinalizer::applies(&sandbox));
+        if let Err(failure) = self.retain_initial_retirement_issuance(&sandbox, now).await {
+            return self.retry_failure(sandbox, failure, now).await;
+        }
         if let Some(finalizer) = finalizer {
             if finalizer.holds_custody(&sandbox).await? {
                 return self
@@ -119,6 +122,9 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if let Err(failure) = self.retain_initial_retirement_issuance(&sandbox, now).await {
+            return self.retry_failure(sandbox, failure, now).await;
+        }
         if let Err(failure) = self.settle_retirement_credentials(&mut sandbox, now).await {
             return self.retry_failure(sandbox, failure, now).await;
         }

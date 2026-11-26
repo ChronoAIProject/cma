@@ -36,10 +36,62 @@ pub(crate) struct CredentialIssuance {
     pub state: IssuanceState,
 }
 
+/// Retained owner authorization for the independently discoverable retirement
+/// obligation. The selector contains no bearer material.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum RetirementOwnerAuthority {
+    Personal {
+        owner: SubjectId,
+        authorization: layer2_core::sandbox::agent_io::AgentAuthorizationRevision,
+    },
+    OwnerApi {
+        owner: SubjectId,
+        authorization: layer2_core::sandbox::agent_io::AgentAuthorizationRevision,
+    },
+}
+
+impl RetirementOwnerAuthority {
+    pub(crate) fn owner(&self) -> &SubjectId {
+        match self {
+            Self::Personal { owner, .. } | Self::OwnerApi { owner, .. } => owner,
+        }
+    }
+
+    pub(crate) fn authorization(
+        &self,
+    ) -> &layer2_core::sandbox::agent_io::AgentAuthorizationRevision {
+        match self {
+            Self::Personal { authorization, .. } | Self::OwnerApi { authorization, .. } => {
+                authorization
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum IssuanceObservation {
     MetadataOnly { matches: usize },
     Unavailable,
+}
+
+pub(crate) fn initial_retirement_issuance_candidate(sandbox: &Sandbox) -> bool {
+    use layer2_core::sandbox::{SandboxStatus, SandboxWorkStep};
+    sandbox.status == SandboxStatus::Retiring
+        && matches!(
+            sandbox.work.step,
+            SandboxWorkStep::StopAgents | SandboxWorkStep::RevokeRetirementCredentials
+        )
+        && sandbox
+            .runtime
+            .as_ref()
+            .is_some_and(|binding| binding.runtime_id.starts_with("agent-sandbox:"))
+        && sandbox.credential.source.is_managed()
+        && sandbox.credential.key_generation == 0
+        && !sandbox.credential.delivered
+        && sandbox.credential.current.is_none()
+        && sandbox.credential.pending.is_none()
+        && sandbox.credential.revoke_debt.is_empty()
 }
 
 impl ManagedSandboxCredentials {
@@ -103,7 +155,14 @@ impl ManagedSandboxCredentials {
             ));
         }
         let operation_id = format!("mint_{}", uuid::Uuid::new_v4().simple());
-        let token = self.owner_token(sandbox).await?;
+        let (token, owner_authority) = self
+            .tokens
+            .token_for_issuance(sandbox)
+            .await
+            .map_err(CredentialError::Unavailable)?
+            .ok_or_else(|| {
+                CredentialError::Security("the owner has no renewable NyxID authority".into())
+            })?;
         // All safe preparation failures occur before any durable intent. A
         // successor may repeat preparation, but cannot repeat a possible POST.
         let services = sandbox.credential.effective_reaches();
@@ -208,7 +267,7 @@ impl ManagedSandboxCredentials {
         };
         if !self
             .custody
-            .begin_issuance(sandbox, &intent)
+            .begin_issuance_with_owner_authority(sandbox, &intent, owner_authority.as_ref())
             .await
             .map_err(custody_error)?
         {
@@ -245,6 +304,17 @@ impl ManagedSandboxCredentials {
             Err(error) => {
                 tracing::warn!(sandbox_id = %sandbox.id, error = %error,
                     "credential result persistence requires exact reconciliation");
+                // A committed retirement marker owns this returned result.
+                // Preserve its provider authority for revoke-only work; never
+                // return delivery material from that branch.
+                if self
+                    .custody
+                    .retain_late_retirement_result(sandbox, &intent, &material)
+                    .await
+                    .is_ok_and(|retained| retained)
+                {
+                    return Err(CredentialError::Uncertain);
+                }
                 // This is read-only exact-result reconciliation. It never
                 // invokes mint or revokes a possibly committed accepted result.
                 let stored = self.material(&sandbox.id, generation).await?;

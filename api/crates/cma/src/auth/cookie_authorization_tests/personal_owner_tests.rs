@@ -227,3 +227,18 @@ async fn personal_owner_recovery_rejects_restricted_tokens_even_with_retained_cu
         assert_eq!(fixture.control.requests.load(Ordering::SeqCst), before);
     }
 }
+
+#[tokio::test]
+async fn retirement_owner_resolution_refuses_replacement_personal_login() {
+    use crate::sandbox::retirement_revocation::RetirementOwnerTokenSource;
+    use crate::sandbox::RetirementOwnerAuthority;
+    let fixture = Fixture::new().await;
+    fixture.seed().await;
+    let authority = RetirementOwnerAuthority::Personal {
+        owner: SubjectId::new("owner"),
+        authorization: admit(&fixture).await,
+    };
+    assert!(fixture.auth.exact_token(&authority).await.is_some());
+    fixture.seed().await;
+    assert!(fixture.auth.exact_token(&authority).await.is_none());
+}

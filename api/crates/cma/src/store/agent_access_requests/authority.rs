@@ -4,7 +4,7 @@ use futures_util::TryStreamExt;
 use layer2_core::sandbox::{Sandbox, SandboxStatus};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) fn valid_owner_authorization(value: &AgentAuthorizationRevision) -> bool {
+pub(in crate::store) fn valid_owner_authorization(value: &AgentAuthorizationRevision) -> bool {
     if value.policy_revision == 0
         || value.grant_revision.is_some()
         || value.replay_principal.is_some()
@@ -86,6 +86,39 @@ fn latest_consent(
     Ok(Some(latest.clone()))
 }
 
+fn approved_authorization(
+    records: Vec<AgentAccessRecord>,
+    sandbox: &Sandbox,
+) -> Result<Option<AgentAuthorizationRevision>, AgentAccessError> {
+    let Some(record) = latest_consent(records, sandbox)? else {
+        return Ok(None);
+    };
+    let Some(AgentAccessDecision::Approved { authorization, .. }) = record.decision else {
+        return Err(AgentAccessError::Forbidden);
+    };
+    Ok(Some(authorization))
+}
+
+pub(in crate::store) async fn credential_scope_authorization_in_session(
+    collection: &mongodb::Collection<mongodb::bson::Document>,
+    sandbox: &Sandbox,
+    session: &mut ClientSession,
+) -> Result<Option<AgentAuthorizationRevision>, AgentAccessError> {
+    if sandbox.credential.service_access_generation_floor() == 0 {
+        return Ok(None);
+    }
+    let mut cursor = collection
+        .find(scope_filter(sandbox)?)
+        .session(&mut *session)
+        .await
+        .map_err(|_| AgentAccessError::Unavailable)?;
+    let mut records = Vec::new();
+    while let Some(row) = cursor.next(&mut *session).await {
+        records.push(read(&row.map_err(|_| AgentAccessError::Unavailable)?)?);
+    }
+    approved_authorization(records, sandbox)
+}
+
 impl MongoSandboxStore {
     pub(crate) async fn credential_scope_authorization(
         &self,
@@ -103,13 +136,7 @@ impl MongoSandboxStore {
             .await
             .map_err(|_| AgentAccessError::Unavailable)?;
         let records = rows.iter().map(read).collect::<Result<Vec<_>, _>>()?;
-        let Some(record) = latest_consent(records, sandbox)? else {
-            return Ok(None); // Historical grants retain owner login custody.
-        };
-        let Some(AgentAccessDecision::Approved { authorization, .. }) = record.decision else {
-            return Err(AgentAccessError::Forbidden);
-        };
-        Ok(Some(authorization))
+        approved_authorization(records, sandbox)
     }
 }
 

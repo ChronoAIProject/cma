@@ -308,3 +308,30 @@ async fn mongo_owner_api_scope_admission_and_credential_custody_survive_restart(
     assert_eq!(store.get_sandbox(&after.id).await.unwrap(), Some(after));
     client.database(&database).drop().await.unwrap();
 }
+
+#[tokio::test]
+async fn retirement_owner_resolution_refuses_revoked_original_api_consent() {
+    use crate::sandbox::retirement_revocation::RetirementOwnerTokenSource;
+    use crate::sandbox::RetirementOwnerAuthority;
+    let fixture = ResourceFixture::with_owner("owner").await;
+    let credential = ordinary_token();
+    provider_expiry(&fixture, future_expiry()).await;
+    let auth = AuthState::with_store(
+        fixture.identity.auth.mode.clone(),
+        None,
+        Arc::new(MemoryAuthStore::default()),
+    );
+    let context = external_context(&fixture, &credential).await;
+    let authorization = auth
+        .owner_service_access_authority(&context, &credential)
+        .await
+        .unwrap();
+    let selector = RetirementOwnerAuthority::OwnerApi {
+        owner: context.caller.subject.clone(),
+        authorization,
+    };
+    assert!(auth.exact_token(&selector).await.is_some());
+    *fixture.identity.control.introspection.write().await =
+        Reply::json(json!({"active":false,"sub":"owner"}));
+    assert!(auth.exact_token(&selector).await.is_none());
+}

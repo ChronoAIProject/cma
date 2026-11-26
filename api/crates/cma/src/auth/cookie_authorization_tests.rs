@@ -344,3 +344,140 @@ mod cooldown_tests;
 mod live_evidence_tests;
 #[path = "cookie_authorization_tests/replica_verification_tests.rs"]
 mod replica_verification_tests;
+
+/// Production retained-owner resolvers with a disposable provider and exact
+/// durable login/API custody. Used by the retirement erasure admission test.
+pub(crate) struct RetirementErasureAuthorityFixture {
+    fixture: Fixture,
+    pub(crate) selector: crate::sandbox::RetirementOwnerAuthority,
+    due_subject: Option<SubjectAuthState>,
+    api_custody: Option<crate::auth::persistence::ApiBearerCustody>,
+    requests: usize,
+    refreshes: usize,
+}
+
+impl RetirementErasureAuthorityFixture {
+    pub(crate) async fn new(api: bool) -> Self {
+        use crate::auth::persistence::ApiBearerCustody;
+        use crate::sandbox::RetirementOwnerAuthority;
+        use base64::Engine as _;
+        use layer2_core::sandbox::agent_io::PersonalCommandAdmissionAuthority;
+        let fixture = Fixture::new().await;
+        let owner = SubjectId::new("owner");
+        let (selector, due_subject, api_custody) = if api {
+            let expiry = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 3600;
+            *fixture.control.introspection.write().await = Reply::json(
+                json!({"active":true,"sub":"owner","token_type":"access","exp":expiry,"permissions":["cma:sandbox:use"]}),
+            );
+            let token = format!(
+                "e30.{}.fixture-signature",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+                    serde_json::to_vec(&json!({"sub":"owner","token_type":"access","exp":1}))
+                        .unwrap()
+                )
+            );
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::AUTHORIZATION,
+                format!("Bearer {token}").parse().unwrap(),
+            );
+            let request = fixture
+                .auth
+                .resolve_request(&headers)
+                .await
+                .unwrap()
+                .unwrap();
+            let context = fixture.auth.resource_request_context(&request);
+            let authorization = fixture
+                .auth
+                .owner_service_access_authority(&context, &token)
+                .await
+                .unwrap();
+            let digest = ApiBearerCustody::identity(
+                &context.credential.issuer,
+                &owner,
+                &context.credential.credential_id,
+            )
+            .unwrap();
+            let record = fixture.store.api_bearer(&digest).await.unwrap().unwrap();
+            (
+                RetirementOwnerAuthority::OwnerApi {
+                    owner,
+                    authorization,
+                },
+                None,
+                Some(record),
+            )
+        } else {
+            let mut state = fixture.seed().await;
+            let authorization = fixture
+                .auth
+                .personal_command_authority(
+                    &layer2_core::Caller::new(
+                        owner.clone(),
+                        Authorization::new([Capability::UseOwnSandboxes]),
+                    ),
+                    "must-not-leak-access-token",
+                )
+                .await
+                .unwrap();
+            state.tokens.as_mut().unwrap().expires_at = SystemTime::UNIX_EPOCH;
+            state.revision += 1;
+            fixture.store.put_subject(state.clone()).await.unwrap();
+            (
+                RetirementOwnerAuthority::Personal {
+                    owner,
+                    authorization,
+                },
+                Some(state),
+                None,
+            )
+        };
+        let requests = fixture.control.requests.load(Ordering::SeqCst);
+        let refreshes = fixture.control.exchange_requests.load(Ordering::SeqCst);
+        Self {
+            fixture,
+            selector,
+            due_subject,
+            api_custody,
+            requests,
+            refreshes,
+        }
+    }
+
+    pub(crate) fn auth(&self) -> Arc<AuthState> {
+        self.fixture.auth.clone()
+    }
+
+    pub(crate) async fn assert_unchanged(&self) {
+        assert_eq!(
+            self.fixture.control.requests.load(Ordering::SeqCst),
+            self.requests
+        );
+        assert_eq!(
+            self.fixture
+                .control
+                .exchange_requests
+                .load(Ordering::SeqCst),
+            self.refreshes
+        );
+        if let Some(subject) = &self.due_subject {
+            self.fixture.assert_unchanged(subject).await;
+        }
+        if let Some(api) = &self.api_custody {
+            assert_eq!(
+                self.fixture
+                    .store
+                    .api_bearer(&api.id)
+                    .await
+                    .unwrap()
+                    .as_ref(),
+                Some(api)
+            );
+        }
+    }
+}

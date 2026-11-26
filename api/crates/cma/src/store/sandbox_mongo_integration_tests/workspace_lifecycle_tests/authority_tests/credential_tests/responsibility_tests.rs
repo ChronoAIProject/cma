@@ -136,6 +136,201 @@ async fn rejected_result_write_keeps_discoverable_responsibility_after_return() 
 }
 
 #[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a replica set"]
+async fn retirement_retains_exact_initial_issuance_for_revoke_only_custody() {
+    for (enabled, provenance_allowed, past_stop_agents) in [
+        (true, true, false),
+        (false, true, false),
+        (true, false, false),
+        (true, true, true),
+    ] {
+        let mut f = Fixture::new_with_runtime("retirement_revoke_only_custody", true, true).await;
+        let app = format!("retirement-result-rejected-{}", uuid::Uuid::new_v4());
+        f.use_custody_app(&app).await;
+        let issuing = f.issue(1);
+        let mint = f.prepare().await;
+        let intent = f.custody.issuance(&f.claim).await.unwrap().unwrap();
+        let before = reject_command(&f, &app, "insert").await;
+        accepted(mint);
+        assert!(matches!(
+            issuing.await.unwrap().unwrap(),
+            Err(CredentialError::Uncertain)
+        ));
+        finish_rejection(&f, before).await;
+        // The fault injector has its own client. Production composes both
+        // stores on one client so the shared publication fence can use the
+        // custody transaction's session.
+        f.custody = Arc::new(
+            MongoSandboxCredentialStore::open(&f.client, &f.name, "work-contract", &f.key)
+                .await
+                .unwrap(),
+        );
+        f.controller =
+            ManagedSandboxCredentials::new(f.issuer.clone(), Arc::new(Tokens), f.custody.clone());
+        let (_worker, _) = retirement_fixture::begin(&f).await;
+        if !provenance_allowed {
+            Kind::Sandbox
+                .set(
+                    &f.store,
+                    doc! {"channel_mint_reconciliation": {"fixture": true}},
+                )
+                .await;
+        }
+        if past_stop_agents {
+            let (previous, _) = retirement_fixture::native_custody_worker(&f, false, false);
+            assert!(previous
+                .run_one(&f.claim.id, SystemTime::now())
+                .await
+                .unwrap());
+            let row = f.store.get_sandbox(&f.claim.id).await.unwrap().unwrap();
+            assert_eq!(row.work.step, SandboxWorkStep::RevokeRetirementCredentials);
+        }
+        let (worker, controller) = retirement_fixture::native_custody_worker(&f, enabled, true);
+        let independent = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+        let records = independent
+            .database(&f.name)
+            .collection::<mongodb::bson::Document>("sandbox_credential_issuance");
+        let filter = doc! {"retirement_custody.state":"pending", "retirement_custody.issuance.operation_id": &intent.operation_id};
+        let mut previous = None;
+        for _ in 0..2 {
+            assert!(worker
+                .run_one(&f.claim.id, SystemTime::now())
+                .await
+                .unwrap());
+            let row = records.find_one(filter.clone()).await.unwrap();
+            if enabled && provenance_allowed {
+                let row = row.unwrap();
+                let marker = row.get_document("retirement_custody").unwrap();
+                // The provider result was lost before the marker existed.
+                assert!(!marker.contains_key("late_provider_authority"));
+                assert_eq!(
+                    marker.get_str("reason").unwrap(),
+                    "initial_issuance_unresolved"
+                );
+                let mut immutable = row.get_document("record").unwrap().clone();
+                immutable.remove("next_check_at");
+                assert_eq!(marker.get_document("issuance").unwrap(), &immutable);
+                if let Some(previous) = previous.as_ref() {
+                    assert_eq!(previous, marker);
+                }
+                previous = Some(marker.clone());
+            } else {
+                assert!(row.is_none());
+            }
+        }
+        if enabled && provenance_allowed && !past_stop_agents {
+            let (advance, _) = retirement_fixture::native_custody_worker(&f, true, false);
+            assert!(advance
+                .run_one(&f.claim.id, SystemTime::now())
+                .await
+                .unwrap());
+            assert!(advance
+                .run_one(&f.claim.id, SystemTime::now())
+                .await
+                .unwrap());
+            let row = records.find_one(filter.clone()).await.unwrap().unwrap();
+            assert_eq!(
+                row.get_document("retirement_custody").unwrap(),
+                previous.as_ref().unwrap()
+            );
+        }
+        let retiring = f.store.get_sandbox(&f.claim.id).await.unwrap().unwrap();
+        assert_eq!(retiring.status, SandboxStatus::Retiring);
+        assert_eq!(
+            retiring.work.step,
+            if past_stop_agents || (enabled && provenance_allowed) {
+                SandboxWorkStep::RevokeRetirementCredentials
+            } else {
+                SandboxWorkStep::StopAgents
+            }
+        );
+        assert_eq!(f.custody.issuance(&retiring).await.unwrap(), Some(intent));
+        assert!(f.custody.list(&retiring.id).await.unwrap().is_empty());
+        if provenance_allowed {
+            assert!(matches!(
+                controller.settle_revocations(&retiring).await,
+                Err(CredentialError::Uncertain)
+            ));
+        } else {
+            assert!(matches!(
+                controller.settle_revocations(&retiring).await,
+                Err(CredentialError::Unavailable(_))
+            ));
+        }
+        assert_eq!(f.peer.count_route("POST", "/api/v1/api-keys"), 1);
+        f.cleanup().await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn retirement_marker_fences_stale_claim_and_retains_late_mint_responsibility() {
+    let mut f = Fixture::new_with_runtime("retirement_marker_stale_claim", true, true).await;
+    let issuing = f.issue(1);
+    let mint = f.prepare().await;
+    let intent = f.custody.issuance(&f.claim).await.unwrap().unwrap();
+    let (_worker, _) = retirement_fixture::begin(&f).await;
+    let stale = f
+        .store
+        .claim_sandbox_work(&f.claim.id, "old-retirement", at(0), at(15))
+        .await
+        .unwrap()
+        .unwrap();
+    Kind::Sandbox
+        .set(
+            &f.store,
+            doc! {"work_lease_expires_at":at(-1),"record.work.lease.expires_at":at(-1)},
+        )
+        .await;
+    let successor = f
+        .store
+        .claim_sandbox_work(&f.claim.id, "new-retirement", at(0), at(15))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(stale.work.lease, successor.work.lease);
+    assert!(f
+        .controller
+        .retain_retirement_issuance(&stale, SystemTime::now())
+        .await
+        .is_err());
+    let independent = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let records = independent
+        .database(&f.name)
+        .collection::<mongodb::bson::Document>("sandbox_credential_issuance");
+    let filter = doc! {"retirement_custody.state":"pending", "retirement_custody.issuance.operation_id":&intent.operation_id};
+    assert!(records.find_one(filter.clone()).await.unwrap().is_none());
+    Kind::Sandbox
+        .set(
+            &f.store,
+            doc! {"work_lease_expires_at":at(-1),"record.work.lease.expires_at":at(-1)},
+        )
+        .await;
+    let (worker, _) = retirement_fixture::native_custody_worker(&f, true, true);
+    let (recorded, late) = tokio::join!(worker.run_one(&f.claim.id, SystemTime::now()), async {
+        accepted(mint);
+        issuing.await.unwrap()
+    },);
+    assert!(recorded.unwrap());
+    assert!(!matches!(late, Ok(Ok(_))));
+    let row = records.find_one(filter).await.unwrap().unwrap();
+    assert_eq!(
+        row.get_document("record")
+            .unwrap()
+            .get_str("state")
+            .unwrap(),
+        "unknown"
+    );
+    assert!(f.custody.list(&f.claim.id).await.unwrap().is_empty());
+    assert_eq!(f.peer.count_route("POST", "/api/v1/api-keys"), 1);
+    f.cleanup().await;
+}
+
+#[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn conflicting_retained_result_cannot_replace_the_inflight_key_obligation() {
     let mut f = Fixture::new("issuance_result_conflict").await;

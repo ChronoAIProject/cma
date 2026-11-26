@@ -36,7 +36,15 @@ impl SandboxCredentialCustody for MongoSandboxCredentialStore {
         sandbox: &layer2_core::sandbox::Sandbox,
         intent: &crate::sandbox::CredentialIssuance,
     ) -> Result<bool, CredentialCustodyError> {
-        issuance::begin(self, sandbox, intent).await
+        issuance::begin(self, sandbox, intent, None).await
+    }
+    async fn begin_issuance_with_owner_authority(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        intent: &crate::sandbox::CredentialIssuance,
+        authority: Option<&crate::sandbox::RetirementOwnerAuthority>,
+    ) -> Result<bool, CredentialCustodyError> {
+        issuance::begin(self, sandbox, intent, authority).await
     }
     async fn accept_issuance(
         &self,
@@ -54,6 +62,31 @@ impl SandboxCredentialCustody for MongoSandboxCredentialStore {
         _now: std::time::SystemTime,
     ) -> Result<(), CredentialCustodyError> {
         issuance::observe(self, sandbox, intent, observation).await
+    }
+
+    async fn retain_retirement_issuance(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        now: std::time::SystemTime,
+    ) -> Result<(), CredentialCustodyError> {
+        issuance::retain_retirement(self, sandbox, now).await
+    }
+
+    async fn settle_retirement_issuance(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        intent: &crate::sandbox::CredentialIssuance,
+    ) -> Result<bool, CredentialCustodyError> {
+        issuance::retirement_settlement::settle(self, sandbox, intent).await
+    }
+
+    async fn retain_late_retirement_result(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        intent: &crate::sandbox::CredentialIssuance,
+        material: &CredentialMaterial,
+    ) -> Result<bool, CredentialCustodyError> {
+        issuance::retain_late_result(self, sandbox, intent, material).await
     }
 
     async fn insert(&self, material: CredentialMaterial) -> Result<(), CredentialCustodyError> {

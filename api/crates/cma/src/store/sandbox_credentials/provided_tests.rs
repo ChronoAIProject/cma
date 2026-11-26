@@ -57,6 +57,10 @@ async fn serialization_store() -> MongoSandboxCredentialStore {
         client: client.clone(),
         sandboxes: majority_collection(&db, "sandboxes"),
         intents: majority_collection(&db, issuance::COLLECTION),
+        agent_access_requests: majority_collection(
+            &db,
+            crate::store::agent_access_requests::COLLECTION,
+        ),
         collection: majority_collection(&db, SANDBOX_CREDENTIALS),
         revocations: majority_collection(&db, SANDBOX_CREDENTIAL_REVOCATIONS),
         cipher: AuthCipher::new("test", &key).unwrap(),

@@ -278,3 +278,6 @@ fn unavailable() -> StoreError {
 #[cfg(test)]
 #[path = "cookie_authorization_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use tests::RetirementErasureAuthorityFixture;

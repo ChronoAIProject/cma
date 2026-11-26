@@ -125,6 +125,14 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
             "issuance custody is not supported".into(),
         ))
     }
+    async fn begin_issuance_with_owner_authority(
+        &self,
+        sandbox: &Sandbox,
+        intent: &super::CredentialIssuance,
+        _authority: Option<&super::RetirementOwnerAuthority>,
+    ) -> Result<bool, CredentialCustodyError> {
+        self.begin_issuance(sandbox, intent).await
+    }
     async fn accept_issuance(
         &self,
         _sandbox: &Sandbox,
@@ -144,6 +152,41 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
     ) -> Result<(), CredentialCustodyError> {
         Err(CredentialCustodyError::Unavailable(
             "issuance custody is not supported".into(),
+        ))
+    }
+
+    /// Record the original unresolved issuance for revoke-only reconciliation.
+    /// Recording custody never establishes provider settlement.
+    async fn retain_retirement_issuance(
+        &self,
+        _sandbox: &Sandbox,
+        _now: SystemTime,
+    ) -> Result<(), CredentialCustodyError> {
+        Err(CredentialCustodyError::Unavailable(
+            "retirement issuance custody is not supported".into(),
+        ))
+    }
+
+    /// Qualify the original initial-mint retirement obligation using the
+    /// separately committed provider receipt under the current lifecycle claim.
+    async fn settle_retirement_issuance(
+        &self,
+        _sandbox: &Sandbox,
+        _intent: &super::CredentialIssuance,
+    ) -> Result<bool, CredentialCustodyError> {
+        Ok(false)
+    }
+
+    /// Retain only the non-secret authority of a late mint in a committed
+    /// retirement obligation. True means the result cannot be delivered.
+    async fn retain_late_retirement_result(
+        &self,
+        _sandbox: &Sandbox,
+        _intent: &super::CredentialIssuance,
+        _material: &CredentialMaterial,
+    ) -> Result<bool, CredentialCustodyError> {
+        Err(CredentialCustodyError::Unavailable(
+            "late retirement custody is not supported".into(),
         ))
     }
 
@@ -197,6 +240,16 @@ pub(crate) trait OwnerTokenSource: Send + Sync {
     async fn token_for(&self, owner: &SubjectId) -> Result<Option<SecretValue>, String>;
     async fn token_for_sandbox(&self, sandbox: &Sandbox) -> Result<Option<SecretValue>, String> {
         self.token_for(&sandbox.owner).await
+    }
+
+    async fn token_for_issuance(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<Option<(SecretValue, Option<super::RetirementOwnerAuthority>)>, String> {
+        Ok(self
+            .token_for_sandbox(sandbox)
+            .await?
+            .map(|token| (token, None)))
     }
 }
 
@@ -273,5 +326,15 @@ pub(crate) trait SandboxCredentialController: Send + Sync {
         -> Result<(), CredentialError>;
     async fn settle_revocations(&self, _sandbox: &Sandbox) -> Result<(), CredentialError> {
         Ok(())
+    }
+
+    async fn retain_retirement_issuance(
+        &self,
+        _sandbox: &Sandbox,
+        _now: SystemTime,
+    ) -> Result<(), CredentialError> {
+        Err(CredentialError::Unavailable(
+            "retirement issuance custody is not supported".into(),
+        ))
     }
 }
