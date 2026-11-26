@@ -90,6 +90,35 @@ class StagingWorkflowTest < Minitest::Test
     assert File.file?(File.join(ROOT, 'scripts/omarchy_key_expiry.py'))
   end
 
+  def test_release_evidence_precedes_optional_cache_retention
+    steps = workflow('staging-release')['jobs']['publish']['steps']
+    index = ->(name) { steps.index { |step| step['name'] == name } }
+    publication = index.call('Build once, scan every layer, and publish exact bytes')
+    receipt = index.call('Retain only public publication receipts')
+    receipt_retry = index.call('Retry retaining only public publication receipts')
+    policy = index.call('Retain verified package decisions')
+    assert_operator publication, :<, receipt
+    assert_operator receipt, :<, receipt_retry
+    assert_operator receipt_retry, :<, policy
+    refute steps[publication].key?('continue-on-error')
+    refute steps[receipt_retry].key?('continue-on-error')
+    refute steps[policy].key?('continue-on-error')
+    assert_equal "always() && steps.receipts.outcome == 'failure'", steps[receipt_retry]['if']
+
+    ['Seal accepted layer archive', 'Retain sealed layer archive for admission',
+     'Retain complete layer detector evidence', 'Retain accepted Cargo mounts',
+     'Index the exact graph of the retained Cargo mounts'].each do |name|
+      assert_operator policy, :<, index.call(name)
+      assert_equal true, steps[index.call(name)]['continue-on-error'], name
+    end
+    ['Prepare component Cargo cache', 'Restore compatible Cargo mounts',
+     'Restore authenticated layer detector evidence'].each do |name|
+      assert_equal true, steps[index.call(name)]['continue-on-error'], name
+    end
+    assert_includes steps[index.call('Restore compatible Cargo mounts')]['if'], "steps.build-cache.outcome == 'success'"
+    assert_equal 2, steps[index.call('Retain complete layer detector evidence')]['timeout-minutes']
+  end
+
   # A setup step with no bound once held the staging queue for five hours: the
   # publish job allows 300 minutes for builds, and a stalled apt mirror used it all.
   def test_every_release_step_is_bounded_well_inside_its_job
@@ -719,6 +748,8 @@ class StagingWorkflowTest < Minitest::Test
   }.freeze
   # Optional steps whose failure only costs time; publication decides the outcome later.
   OPTIONAL = ['Expose cache runtime to the Buildx client', 'Check release ownership',
+              'Prepare component Cargo cache', 'Restore authenticated layer detector evidence',
+              'Retain complete layer detector evidence',
               'Restore compatible Cargo mounts', 'Retain accepted Cargo mounts',
               'Index the exact graph of the retained Cargo mounts',
               'Restore bounded layer archive', 'Validate restored layer archive',

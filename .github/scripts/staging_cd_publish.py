@@ -334,6 +334,7 @@ def main():
                 cache_metrics.append(metric)
                 with Path(env["GITHUB_OUTPUT"]).open("a") as status:
                     if accepted:
+                        status.write("build-cache-directory=" + str(cache.accepted) + "\n")
                         status.write("build-cache-key=" + cache.key.archive_key(env) + "\n")
                         component = env["CD_COMPONENT"]
                         artifact_name = cargo_artifact_name(component, cache.key.family)
