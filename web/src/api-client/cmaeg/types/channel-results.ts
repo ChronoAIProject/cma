@@ -10,6 +10,10 @@ import {
   type Output,
 } from '../../schema.js';
 import { ConformanceLevelSchema } from './primitives.js';
+import {
+  BindingProfileDriftSchema,
+  DesiredProfileDriftSchema,
+} from './channel-profile-revisions.js';
 
 export const ConversationInspectionSchema = object({
   binding_id: text,
@@ -19,6 +23,7 @@ export const ConversationInspectionSchema = object({
   agent_id: text,
   state: text,
   agent_status: optional(nullable(text)),
+  profile_drift: optional(nullable(BindingProfileDriftSchema)),
 });
 export type ConversationInspection = Output<typeof ConversationInspectionSchema>;
 
@@ -26,6 +31,8 @@ export const PartitionInspectionSchema = object({
   consumer_id: text,
   transport_conversation_id: text,
   mapping: ConversationInspectionSchema,
+  assigned_profile_digest: optional(nullable(text)),
+  desired_profile_drift: optional(nullable(DesiredProfileDriftSchema)),
 });
 export type PartitionInspection = Output<typeof PartitionInspectionSchema>;
 

@@ -52,7 +52,7 @@ describe('recorded progress polling', () => {
         await vi.advanceTimersByTimeAsync(60_000);
       });
       expect(client.requests.read).toHaveBeenCalledTimes(reads);
-      expect(client.requests.createOrResume).not.toHaveBeenCalled();
+      expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
       expect(client.requests.start).not.toHaveBeenCalled();
       expect(client.requests.cancel).not.toHaveBeenCalled();
       unmount();

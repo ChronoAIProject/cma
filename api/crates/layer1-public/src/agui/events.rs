@@ -119,11 +119,15 @@ fn project_with_chunks(entry: &AgentLogEntry, turn: u64, bounded: bool) -> Vec<A
             call_id,
             title,
             kind,
-            ..
-        } => vec![make(
-            "TOOL_CALL_START",
-            json!({"toolCallId": call_id, "toolCallName": title, "cma:toolKind": kind}),
-        )],
+            status,
+        } => {
+            let mut body =
+                json!({"toolCallId": call_id, "toolCallName": title, "cma:toolKind": kind});
+            if matches!(status.as_str(), "completed" | "failed") {
+                body["cma:status"] = json!(status);
+            }
+            vec![make("TOOL_CALL_START", body)]
+        }
         AgentLogKind::ToolCallUpdated {
             call_id,
             status,
@@ -304,5 +308,36 @@ mod observation_tests {
                 "description_is_setup_preview":true
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_start_preserves_terminal_status_and_the_nonterminal_wire_shape() {
+        for (status, terminal) in [
+            ("pending", false),
+            ("in_progress", false),
+            ("completed", true),
+            ("failed", true),
+        ] {
+            let entry: AgentLogEntry = serde_json::from_value(json!({
+                "agent_id":"agt_fixture", "seq":1, "appended_at":"2026-11-05T14:33:00Z",
+                "kind":{"type":"tool_call_started","call_id":"delivery",
+                    "title":"mcp.cma_access.describe_deliverable","kind":"execute","status":status}
+            }))
+            .unwrap();
+            let frames = project(&entry, 1);
+            assert_eq!(frames.len(), 1);
+            assert_eq!(frames[0].kind, "TOOL_CALL_START");
+            let mut expected = json!({"toolCallId":"delivery",
+                "toolCallName":"mcp.cma_access.describe_deliverable","cma:toolKind":"execute"});
+            if terminal {
+                expected["cma:status"] = json!(status);
+            }
+            assert_eq!(frames[0].body, expected, "{status}");
+        }
     }
 }

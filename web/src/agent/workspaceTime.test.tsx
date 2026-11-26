@@ -30,7 +30,7 @@ it('uses the same long-run units in sidebar badges while preserving short-run la
 });
 
 afterEach(() => vi.useRealTimers());
-it('renders compact hours in Thinking and days in the stopped-turn status', () => {
+it('renders compact hours in Thinking and days in the interrupted response status', () => {
   vi.useFakeTimers();
   const start = '2026-11-06T00:00:00Z';
   vi.setSystemTime(Date.parse(start) + 3_900_000);
@@ -55,7 +55,9 @@ it('renders compact hours in Thinking and days in the stopped-turn status', () =
       })}
     />,
   );
-  expect(screen.getByRole('status')).toHaveTextContent('Stopped after 2d 3h');
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Response interrupted after 2d 3h. Running Sandbox commands may continue.',
+  );
 });
 
 it.each([

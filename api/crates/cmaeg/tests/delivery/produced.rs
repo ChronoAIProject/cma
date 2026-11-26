@@ -420,6 +420,8 @@ async fn terminal_production_stays_with_its_consumer_and_response() {
                     turn: turn.clone(),
                     outcome,
                     answer_response_id: Some(response.into()),
+                    accepted_deadline: None,
+                    recovery: None,
                 })
                 .await
                 .unwrap();

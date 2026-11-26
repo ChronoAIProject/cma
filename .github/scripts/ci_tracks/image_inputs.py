@@ -11,12 +11,12 @@ Unknown files are retained. No blanket extension exclusion is used.
 import hashlib
 import json
 from pathlib import Path
-import re
 
 from deployable_manifest import CURRENT, validate_names
 from docker_inputs import ignored, matches, stage_sources
 from policy import closure
 from publication_inputs import contract_images
+from rust_build_inputs import inputs as reviewed_build_inputs
 from uncertainty import SelectionIntegrityError
 
 MANIFEST = '.github/scripts/deployables.json'
@@ -41,37 +41,60 @@ def recipes(root, fallback=None):
     return data
 
 
-def embedded_inputs(root, directories, tests):
+def embedded_inputs(root, directories, tests, build_scripts):
+    # Manifest-only consumers do not install the Rust syntax parser.
+    from rust_inputs import included_files
+
     embedded = set()
     opaque = set()
+    root = root.resolve()
     for directory in directories:
+        targets = build_scripts[directory].copy()
         if (root / directory / 'build.rs').exists():
-            # Build scripts are executable input programs. Until their reads
-            # are explicitly modeled, all package files can affect the image.
-            opaque.add(directory)
-        for file in (root / directory / 'src').rglob('*.rs'):
-            if file.relative_to(root).as_posix() in tests:
+            targets.add(f'{directory}/build.rs')
+        reviewed_consumers = set()
+        if targets:
+            reviewed = reviewed_build_inputs(root, directory, targets)
+            if reviewed is None:
+                # A build program can read the whole workspace, including
+                # files outside its package or Cargo's dependency closure.
+                opaque.add(directory)
+            else:
+                required, reviewed_consumers = reviewed
+                embedded.update(required)
+        source_root = root / directory / 'src'
+        for file in source_root.rglob('*.rs'):
+            relative = file.relative_to(root).as_posix()
+            if relative in tests or relative in reviewed_consumers:
                 continue
-            text = file.read_text()
-            for match in re.finditer(r'include(?:_str|_bytes)?!\s*\(\s*"([^"]+)"', text):
-                source = (file.parent / match[1]).resolve().relative_to(root.resolve()).as_posix()
-                embedded.add(source)
-            if re.search(r'include(?:_str|_bytes)?!\s*\(\s*[^"\s]', text):
+            try:
+                for macro, scope, path in included_files(file.read_bytes()):
+                    base = root / directory if scope == 'manifest' else file.parent
+                    target = (base / path).resolve()
+                    name = target.relative_to(root).as_posix()
+                    # An item include expands Rust code. Account for it only
+                    # when the same package's source scan also reads the file.
+                    if macro == b'include' and (not target.is_relative_to(source_root) or target.suffix != '.rs'
+                                                or name in tests or not target.is_file()):
+                        raise ValueError('item include is outside the scanned package sources')
+                    embedded.add(name)
+            except ValueError:
                 opaque.add(directory)
     return embedded, opaque
 
 
 def cargo_inputs(root, workspace, package, files, exclusions, workspace_exclusions, analysis=None, source_cache=None):
+    from rust_inputs import test_modules
+
     packages = closure({package}, workspace.production)
     directories = {directory for directory, name in workspace.directories.items() if name in packages}
-    from rust_inputs import test_modules
     # Runtime variants share source analysis. This cache belongs to one
     # immutable snapshot invocation; a later call must reread changed files.
     analysis = {} if analysis is None else analysis
     key = frozenset(directories)
     if key not in analysis:
         tests = test_modules(root, directories, source_cache)
-        embedded, opaque = embedded_inputs(root, directories, tests)
+        embedded, opaque = embedded_inputs(root, directories, tests, workspace.build_scripts)
         analysis[key] = tests, embedded, opaque
     tests, embedded, opaque = analysis[key]
     if opaque:

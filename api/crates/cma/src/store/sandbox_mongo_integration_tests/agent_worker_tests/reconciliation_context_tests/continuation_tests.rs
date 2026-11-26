@@ -4,6 +4,9 @@ use crate::sandbox::binding_lifecycle_test_support::ConnectionSweep;
 use std::time::Duration;
 use tokio::sync::Notify;
 
+#[path = "owner_page_tests.rs"]
+mod owner_page;
+
 #[derive(Default)]
 struct PrefixProbe {
     visits: AtomicU64,
