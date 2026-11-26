@@ -183,6 +183,7 @@ def run(script, shard=None):
     children = []
     interrupted = 0
     cleanup_failed = False
+    fixture_env = dict(os.environ, CMA_MONGO_COORDINATOR_SHARD=shard or "all")
     print(f"Mongo shard {shard or 'all'}: {len(isolated_tests)} isolated contracts, "
           f"partitions {partitions} of {count}", flush=True)
 
@@ -198,7 +199,7 @@ def run(script, shard=None):
         for option, _ in isolated_tests:
             if interrupted:
                 break
-            isolated = subprocess.Popen(["bash", str(script), option], start_new_session=True)
+            isolated = subprocess.Popen(["bash", str(script), option], env=fixture_env, start_new_session=True)
             children.append(isolated)
             while not interrupted and isolated.poll() is None:
                 time.sleep(0.1)
@@ -218,7 +219,7 @@ def run(script, shard=None):
             while not interrupted and active < CONCURRENT_FIXTURES and next_partition < len(partitions):
                 partition = f"count:{partitions[next_partition]}/{count}"
                 children.append(subprocess.Popen(
-                    ["bash", str(script), partition], start_new_session=True,
+                    ["bash", str(script), partition], env=fixture_env, start_new_session=True,
                 ))
                 next_partition += 1
                 active += 1
