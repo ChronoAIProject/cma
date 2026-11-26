@@ -182,7 +182,7 @@
       "feature": "Startup refusal boundaries",
       "requirement": "Reject changed authority/intent, preserve unknown outcome, do not claim retryable known-abort or repeat native effects.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Author-owned owner/parent/work-lease and unknown-outcome injection.",
+      "remaining": "The source controls cover a successor epoch after a known abort, changed Worktree schema and work lease, and commit attempts confined to one transaction after an unknown outcome. Startup refusal still needs these cases through the exact hosted Manager images.",
       "trigger": "During publication retry change owner epoch, parent identity, runtime, work step or lease; separately inject Unavailable/unknown commit",
       "required_assertions": []
     },
