@@ -107,6 +107,9 @@ jobs:
           show-progress: false
       - name: Prepare isolated deployment tools and controller requirements
         run: |
+          # Use one local budget for read-only setup in this step.
+          CD_STARTED_AT="$(PYTHONPATH=.github/scripts python3 -B -c 'from staging_cd_clock import timestamp; print(timestamp())')"
+          export CD_STARTED_AT
           python3 -B .github/scripts/staging_cd_tools.py install
           python3 -B .github/scripts/staging_cd_tools.py requirements
       - name: Capture authenticated Web release scope

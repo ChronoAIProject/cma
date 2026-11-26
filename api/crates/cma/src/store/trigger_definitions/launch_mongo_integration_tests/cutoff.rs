@@ -3,9 +3,15 @@ use crate::store::settings_barrier::test_support::{set_ceilings, Pause, Point};
 use layer2_core::{
     admission::AdmissionCeilings, trigger_domain::LaunchAdmissionPolicy, PlatformSettingsStore,
 };
+use std::time::SystemTime;
 
-fn candidate(trigger: &PublicTrigger, key: char, visitor: bool) -> LaunchAdmission {
-    let mut launch = launch(trigger, key, key);
+fn candidate(
+    trigger: &PublicTrigger,
+    key: char,
+    visitor: bool,
+    created_at: &str,
+) -> LaunchAdmission {
+    let mut launch = launch_at(trigger, key, key, created_at);
     if visitor {
         launch.authority = LaunchAuthorityClass::Visitor;
     }
@@ -33,8 +39,11 @@ async fn operator_cutoff_restarts_visitor_daily_charge_under_both_policies() {
             let mut settings = layer2_core::PlatformSettings::default();
             settings.limits.visitor_max_launches_per_day = 10;
             operator.replace(0, &settings).await.unwrap();
+            // Mongo expires visitor charges against its wall clock. Reuse one
+            // timestamp for both admissions so they share the same quota day.
+            let created_at = layer2_core::rfc3339_at(SystemTime::now());
             seed.store
-                .admit_launch(candidate(&trigger, 'a', true))
+                .admit_launch(candidate(&trigger, 'a', true, &created_at))
                 .await
                 .unwrap();
             let pause = Arc::new(Pause::default());
@@ -44,7 +53,7 @@ async fn operator_cutoff_restarts_visitor_daily_charge_under_both_policies() {
                     .await
                     .unwrap()
                     .with_launch_admission_policy(policy);
-            let request = candidate(&trigger, 'b', true);
+            let request = candidate(&trigger, 'b', true, &created_at);
             let replay = request.clone();
             let release = pause.arm(Point::Snapshot);
             let admitting = tokio::spawn(async move { store.admit_launch(request).await });
@@ -131,8 +140,9 @@ async fn operator_cutoff_restarts_new_launch_home_reservations_for_both_authorit
                     },
                 )
                 .await;
+                let created_at = layer2_core::rfc3339_at(SystemTime::now());
                 seed.store
-                    .admit_launch(candidate(&trigger, 'a', visitor))
+                    .admit_launch(candidate(&trigger, 'a', visitor, &created_at))
                     .await
                     .unwrap();
                 let pause = Arc::new(Pause::default());
@@ -145,7 +155,7 @@ async fn operator_cutoff_restarts_new_launch_home_reservations_for_both_authorit
                 .await
                 .unwrap()
                 .with_launch_admission_policy(policy);
-                let request = candidate(&trigger, 'b', visitor);
+                let request = candidate(&trigger, 'b', visitor, &created_at);
                 let release = pause.arm(Point::Owner);
                 let admitting = tokio::spawn(async move { store.admit_launch(request).await });
                 pause.wait().await;
@@ -190,6 +200,10 @@ async fn operator_cutoff_restarts_new_launch_home_reservations_for_both_authorit
                         .await
                         .unwrap()
                         .unwrap();
+                    assert!(
+                        day.get_datetime("expires_at").unwrap().to_system_time()
+                            > SystemTime::now()
+                    );
                     assert_eq!(
                         day.get_i64("used").unwrap(),
                         1 + i64::from(allowed),
@@ -246,7 +260,7 @@ async fn sandbox_and_launch_reservation_serialize_the_last_home_in_both_orders()
             NOW.into(),
         )
         .unwrap();
-        let request = candidate(&trigger, 'c', false);
+        let request = candidate(&trigger, 'c', false, NOW);
         let release = pause.arm(Point::Snapshot);
         if launch_wins {
             let pending = tokio::spawn(async move { sandboxes.admit_sandbox(home).await });

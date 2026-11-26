@@ -12,6 +12,7 @@ fn owner_edits_preserve_exact_managed_revision_and_owner_whitespace() {
         managed_v4(),
         managed_v5(),
         managed_v6(),
+        managed_v7(),
     ] {
         let owner = "  Keep citations.\n\nDo not change my formatting.\n";
         let original = compose_managed(Some(managed), owner);
@@ -62,6 +63,7 @@ fn owner_policy_uses_the_captured_revision_even_after_transport_refresh() {
     for (managed, prefix) in [
         (managed_v5(), GITHUB_PERMISSION_V1),
         (managed_v6(), CLARIFICATION_V1),
+        (managed_v7(), PERMISSION_REMEDIATION_V1),
     ] {
         let owner = format!("{prefix}\n\n  exact owner text\n");
         agent.profile.content.system_prompt = compose_managed(Some(managed), &owner);
@@ -83,27 +85,43 @@ fn new_admission_guidance_requires_explicit_activation() {
     const V4: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED";
     const V5: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V5_ENABLED";
     const V6: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V6_ENABLED";
-    for (v4, v5, v6, expected) in [
-        (None, None, None, managed_v3()),
-        (Some("false"), Some("false"), Some("false"), managed_v3()),
-        (Some("true"), Some("false"), None, managed_v4()),
-        (None, Some("true"), Some("false"), managed_v5()),
-        (Some("true"), Some("true"), None, managed_v5()),
-        (None, None, Some("true"), managed_v6()),
-        (Some("true"), Some("true"), Some("true"), managed_v6()),
+    const V7: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V7_ENABLED";
+    for (v4, v5, v6, v7, expected) in [
+        (None, None, None, None, managed_v3()),
+        (
+            Some("false"),
+            Some("false"),
+            Some("false"),
+            None,
+            managed_v3(),
+        ),
+        (Some("true"), Some("false"), None, None, managed_v4()),
+        (None, Some("true"), Some("false"), None, managed_v5()),
+        (Some("true"), Some("true"), None, None, managed_v5()),
+        (None, None, Some("true"), None, managed_v6()),
+        (
+            Some("true"),
+            Some("true"),
+            Some("true"),
+            Some("false"),
+            managed_v6(),
+        ),
+        (None, None, None, Some("true"), managed_v7()),
+        (None, None, Some("true"), Some("true"), managed_v7()),
     ] {
         let flags = crate::config::FeatureFlags::from_lookup(&mut |key| {
             Ok(match key {
                 V4 => v4.map(str::to_owned),
                 V5 => v5.map(str::to_owned),
                 V6 => v6.map(str::to_owned),
+                V7 => v7.map(str::to_owned),
                 _ => None,
             })
         })
         .unwrap();
         assert_eq!(configured_admission_instructions(&flags), expected);
     }
-    for flag in [V4, V5, V6] {
+    for flag in [V4, V5, V6, V7] {
         let error = crate::config::FeatureFlags::from_lookup(&mut |key| {
             Ok((key == flag).then(|| "TRUE".to_owned()))
         })
@@ -127,6 +145,40 @@ fn clarification_requires_a_question_even_when_part_of_the_task_can_proceed() {
     ] {
         assert!(CLARIFICATION_V1.contains(instruction));
     }
+}
+
+#[test]
+fn permission_remediation_gives_the_owner_an_exact_action_in_the_first_reply() {
+    let guidance = managed_v7();
+    assert_eq!(
+        guidance.strip_prefix(PERMISSION_REMEDIATION_V1),
+        Some(format!("\n\n{}", managed_v6()).as_str())
+    );
+    for required in [
+        "In the first reply reporting a verified permission gap",
+        "a verified link, a runnable command, or the actual console labels and steps",
+        "Name the smallest grant, who and what it affects, what task you can resume",
+        "the Agent key access dialog in this Agent's conversation",
+        "Review the proposed services and their Sandbox-wide scope",
+        "select the intended connection or complete its checks if prompted, then choose Approve",
+        "If the owner dismissed the dialog, choose Review access request to reopen it",
+        "including during a read-only check",
+        "open Service access, choose Manage on Sandbox",
+        "under Agent key scope on the Access tab",
+        "then choose Save scope",
+        "Keep the existing services selected",
+        "using the selected connection and the intended GitHub operation",
+        "after approval and CMA confirmation",
+        "A read-only check cannot confirm write permission",
+        "offer a working console or control-plane route",
+        "provide a redacted CMA feedback draft for owner review",
+    ] {
+        assert!(
+            PERMISSION_REMEDIATION_V1.contains(required),
+            "missing guidance: {required}"
+        );
+    }
+    assert!(guidance.len() <= 16 * 1024);
 }
 
 #[test]
@@ -155,6 +207,7 @@ fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() 
         managed_v4(),
         managed_v5(),
         managed_v6(),
+        managed_v7(),
     ] {
         for (sandbox, workspace) in [
             (None, None),
@@ -197,7 +250,14 @@ fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() 
             assert_eq!(prompt.contains(MEMORY_V1), instructions != GITHUB_API_V1);
             assert_eq!(
                 prompt.contains(DOCUMENTS_V1),
-                [managed_v3(), managed_v4(), managed_v5(), managed_v6()].contains(&instructions)
+                [
+                    managed_v3(),
+                    managed_v4(),
+                    managed_v5(),
+                    managed_v6(),
+                    managed_v7()
+                ]
+                .contains(&instructions)
             );
             assert_eq!(prompt.matches("CMA GitHub workflow:").count(), 1);
             let restored: LifecycleInput =
