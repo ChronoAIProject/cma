@@ -340,9 +340,7 @@ fn run_database_command(command: &str) {
             } else {
                 cmaeg::records::mongo::role(&database, command == "--print-migration-role")
             };
-            let role = if command.ends_with("migration-role")
-                && !command.contains("channel-create-fence")
-            {
+            let role = if command.ends_with("migration-role") {
                 cmaeg::migrations::migration_role(role, &database)
             } else {
                 role
@@ -355,21 +353,7 @@ fn run_database_command(command: &str) {
         let client = mongodb::Client::with_uri_str(uri)
             .await
             .map_err(|_| "Gateway database client configuration failed; details withheld")?;
-        let database = client.database(&database);
-        if command == "--migrate-channel-create-fence-floor" {
-            // The writer floor uses an independent validator-phase fence.
-            let issuer = std::env::var(cmaeg::CMAEG_NYXID_BASE_URL).map_err(|_| {
-                "CMAEG_NYXID_BASE_URL is required for the Channel create fence floor"
-            })?;
-            cmaeg::records::mongo::migrate_create_fence_floor(
-                &database,
-                issuer.trim_end_matches('/'),
-            )
-            .await
-            .map_err(|_| "Gateway Channel create fence floor migration failed; details withheld")?;
-        } else {
-            cmaeg::migrations::legacy(&database, command).await?;
-        }
+        cmaeg::migrations::legacy(&client.database(&database), command).await?;
         Ok(())
     }) {
         fail(error);

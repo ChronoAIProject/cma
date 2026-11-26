@@ -7,6 +7,7 @@ use mongodb::{
 
 pub const LEDGER: &str = "eg_migration_ledger";
 const BASE: &str = "gateway-base-v2";
+const CHANNEL_FLOOR: &str = "gateway-channel-create-fence-floor-v1";
 const MANIFESTS: &[Manifest] = &[
     Manifest {id:BASE, prerequisites:&[], schema_fingerprint:[0;32], definition:"browser-session expiry; sealed channel, connection and interaction validators; owner lookup and interaction expiry; schema v2 and channel guard v1"},
     Manifest {id:"gateway-replicas-v1", prerequisites:&[BASE], schema_fingerprint:[0;32], definition:"base v2; connection and interaction partial replica discovery indexes; replica marker v1"},
@@ -16,6 +17,7 @@ const MANIFESTS: &[Manifest] = &[
     Manifest {id:"gateway-worker-credentials-v1", prerequisites:&[BASE], schema_fingerprint:[0;32], definition:"worker use and cutover validators; no TTL or secondary indexes; marker v1"},
     Manifest {id:"gateway-thread-fences-v1", prerequisites:&[BASE], schema_fingerprint:[0;32], definition:"thread fence validator and owner ID index; marker v1"},
     Manifest {id:"gateway-media-continuations-v1", prerequisites:&[BASE], schema_fingerprint:[0;32], definition:"media continuation validator, owner ID and expiry indexes; marker v1"},
+    Manifest {id:CHANNEL_FLOOR, prerequisites:&[BASE], schema_fingerprint:[0;32], definition:"Channel writer-floor authority; guarded validator cutover; retained Channel revision backfill and marker v1"},
     Manifest {id:"gateway-whatsapp-forms-v1", prerequisites:&[BASE], schema_fingerprint:[0;32], definition:"WhatsApp form validator and owner ID index; marker v1"},
 ];
 async fn runner(db: &Database) -> Result<Runner> {
@@ -39,6 +41,7 @@ fn id(command: &str) -> Result<&'static str> {
         "--migrate-worker-credentials" => Ok("gateway-worker-credentials-v1"),
         "--migrate-thread-fences" => Ok("gateway-thread-fences-v1"),
         "--migrate-media-continuations" => Ok("gateway-media-continuations-v1"),
+        "--migrate-channel-create-fence-floor" => Ok(CHANNEL_FLOOR),
         "--migrate-whatsapp-forms" => Ok("gateway-whatsapp-forms-v1"),
         _ => Err("unknown legacy migration command"),
     }
@@ -77,30 +80,49 @@ async fn converge(db: &Database, manifest: Manifest) -> Result<()> {
         "gateway-media-continuations-v1" => mongo::migrate_media_continuations(db)
             .await
             .map_err(unavailable),
+        CHANNEL_FLOOR => {
+            let issuer = if cma_service_migrations::describing() {
+                "https://migration.invalid".to_owned()
+            } else {
+                channel_floor_issuer()?
+            };
+            mongo::migrate_create_fence_floor(db, &issuer)
+                .await
+                .map_err(|_| {
+                    "Gateway Channel create fence floor migration failed; details withheld"
+                })
+        }
         "gateway-whatsapp-forms-v1" => mongo::migrate_whatsapp_flows(db).await.map_err(unavailable),
         _ => Err("unknown Gateway migration"),
     }
 }
+fn channel_floor_issuer() -> Result<String> {
+    std::env::var(crate::CMAEG_NYXID_BASE_URL)
+        .map(|issuer| issuer.trim_end_matches('/').to_owned())
+        .map_err(|_| "CMAEG_NYXID_BASE_URL is required for the Channel create fence floor")
+}
+
+async fn inspect(db: &Database, manifest: Manifest) -> Result<bool> {
+    if manifest.id == CHANNEL_FLOOR {
+        return crate::records::mongo::check_create_fence_floor(db, &channel_floor_issuer()?)
+            .await
+            .map_err(|_| "Gateway Channel create fence floor inspection failed");
+    }
+    cma_service_migrations::inspect(converge(db, manifest)).await
+}
+
 pub async fn legacy(db: &Database, command: &str) -> Result<()> {
     let runner = runner(db).await?;
     let manifest = runner.manifest(id(command)?)?;
     runner
-        .legacy(
-            manifest,
-            || cma_service_migrations::inspect(converge(db, manifest)),
-            converge(db, manifest),
-        )
+        .legacy(manifest, || inspect(db, manifest), converge(db, manifest))
         .await
 }
 pub(crate) async fn legacy_startup(db: &Database, command: &str) -> Result<()> {
     let runner = runner(db).await?;
     let manifest = runner.manifest(id(command)?)?;
     runner
-        .legacy_startup(
-            manifest,
-            || cma_service_migrations::inspect(converge(db, manifest)),
-            converge(db, manifest),
-        )
+        .legacy_startup(manifest, || inspect(db, manifest), converge(db, manifest))
         .await
 }
 pub async fn cli(db: &Database, args: &[&str]) -> Result<()> {
@@ -110,12 +132,7 @@ pub async fn cli(db: &Database, args: &[&str]) -> Result<()> {
             let manifest = runner.manifest(id)?;
             println!(
                 "{}",
-                runner
-                    .plan(
-                        manifest,
-                        cma_service_migrations::inspect(converge(db, manifest)).await?
-                    )
-                    .await?
+                runner.plan(manifest, inspect(db, manifest).await?).await?
             );
         }
         ["--migration-status", id] => println!("{}", runner.status(runner.manifest(id)?).await?),
@@ -133,7 +150,7 @@ pub async fn cli(db: &Database, args: &[&str]) -> Result<()> {
                         manifest,
                         checksum,
                         release,
-                        || cma_service_migrations::inspect(converge(db, manifest)),
+                        || inspect(db, manifest),
                         || converge(db, manifest)
                     )
                     .await?

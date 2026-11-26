@@ -68,6 +68,8 @@ async fn migration_cli_reports_uncertain_abort_on_stderr_without_rust_log() {
 mod activity_history_backfill;
 #[path = "support/github_import.rs"]
 mod github_import;
+#[path = "support/migration_writer_floor.rs"]
+mod migration_writer_floor;
 #[path = "support/record_domains.rs"]
 mod record_domains;
 #[path = "support/shared_schema.rs"]
