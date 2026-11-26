@@ -297,6 +297,29 @@ fn checkpoint_exclusions_are_exact_sorted_disposable_alias_roots() {
 }
 
 #[test]
+fn checkpoint_archive_adds_only_the_new_generated_alias_siblings() {
+    let old = super::checkpoint_exclusions(&[AgentSlot::new("agent-a")]).unwrap();
+    let mut requested = old.clone();
+    requested.push("project/tmp/arg0".into());
+    requested.push(".cma/agents/agent-z/home/tmp/arg0-sibling".into());
+    assert_eq!(
+        super::checkpoint_archive_exclusions(&requested),
+        [
+            ".cma/agents/agent-a/home/tmp/arg0",
+            ".cma/agents/agent-a/home/tmp/arg0-linux",
+            ".cma/agents/agent-z/home/tmp/arg0-sibling",
+            ".codex/tmp/arg0",
+            ".codex/tmp/arg0-linux",
+            "project/tmp/arg0",
+        ]
+    );
+    assert_eq!(
+        old,
+        [".cma/agents/agent-a/home/tmp/arg0", ".codex/tmp/arg0"]
+    );
+}
+
+#[test]
 fn bridge_launch_rejects_non_normalized_or_misplaced_worktree_paths() {
     for cwd in [
         "home/cma/repo/.worktrees/wt-7",

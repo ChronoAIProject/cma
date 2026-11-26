@@ -11,7 +11,7 @@ const { bridgePath } = require('./persist_conversations.cjs');
 
 test('pinned native provider retains the exact scenario suggestion once across process reload', { timeout: 120000 }, async () => {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? '/usr/local/bin/codex';
-  assert.equal(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 0.147.0');
+  assert.match(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), /^codex-cli 0\.(147|165)\.0$/);
   const directory = mkdtempSync(join(tmpdir(), 'cma-suggestion-'));
   const home = join(directory, 'agent-home');
   mkdirSync(home);
@@ -77,6 +77,6 @@ test('pinned native provider retains the exact scenario suggestion once across p
     await bridge?.close();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

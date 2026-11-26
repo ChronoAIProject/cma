@@ -27,14 +27,32 @@ pub(crate) fn expected_home(slot: &crate::AgentSlot) -> String {
 }
 
 pub fn checkpoint_exclusions(agents: &[crate::AgentSlot]) -> crate::Result<Vec<String>> {
-    // The image's version checks also create aliases in the default home.
+    // Preserve the wire paths across runtime upgrades so admitted holds replay
+    // exactly. New runtimes expand these generated roots during archive capture.
     let mut paths = BTreeSet::from([".codex/tmp/arg0".to_string()]);
     for agent in agents {
         validate_slot(agent)?;
-        // Codex 0.147 creates disposable executable aliases here, not conversation data.
+        // The 0.147 root identifies the provider-owned executable alias directory.
         paths.insert(format!(".cma/agents/{}/home/tmp/arg0", agent.0));
     }
     Ok(paths.into_iter().collect())
+}
+
+/// Resolve the generated Codex helper roots at archive capture, without changing
+/// the persisted or in-flight checkpoint request. Codex 0.165 uses a sibling
+/// `arg0-linux` directory. Retain support for the exact 0.147 paths as well.
+pub fn checkpoint_archive_exclusions(exclusions: &[String]) -> Vec<String> {
+    let mut paths: BTreeSet<String> = exclusions.iter().cloned().collect();
+    for path in exclusions {
+        let agent_root = path
+            .strip_prefix(".cma/agents/")
+            .and_then(|path| path.strip_suffix("/home/tmp/arg0"))
+            .is_some_and(valid_component);
+        if path == ".codex/tmp/arg0" || agent_root {
+            paths.insert(format!("{path}-linux"));
+        }
+    }
+    paths.into_iter().collect()
 }
 
 /// Render files, links, and requested archives for one Codex home.
