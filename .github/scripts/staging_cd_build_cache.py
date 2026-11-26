@@ -114,7 +114,11 @@ class BuildCache:
                     (self.layer_root / "replay.json").unlink(missing_ok=True)
                     if pending.exists():
                         shutil.rmtree(pending)
-                    args += ["--cache-to", "type=local,mode=min,image-manifest=true,oci-mediatypes=true,ignore-error=true,dest=" + str(pending)]
+                    # AM's cargo-chef output is an intermediate stage, absent
+                    # from the final image layers. The sealed archive's byte
+                    # and admission bounds apply to either export mode.
+                    mode = "max" if self.component == "am" else "min"
+                    args += ["--cache-to", f"type=local,mode={mode},image-manifest=true,oci-mediatypes=true,ignore-error=true,dest=" + str(pending)]
                     self.layer_export_requested = True
                 except OSError:
                     # The ordinary build can continue with its available reads.
