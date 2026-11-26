@@ -56,6 +56,7 @@ const SOURCES: &[Source] = &[
     source!("service_connection_handoffs", "owner", Launches => "launch_id"),
     source!("trigger_definitions", "owner", Triggers => "_id"),
     source!("cma_document_artifacts", "owner_subject", Documents => "_id"),
+    source!("cma_document_artifacts", "audit_owner_subject", Documents => "_id"),
     source!("agent_profiles", "owner", AgentProfiles => "_id"),
     source!("workspace_profiles", "owner", WorkspaceProfiles => "_id"),
     source!("sandbox_profiles", "owner", SandboxProfiles => "_id"),
