@@ -378,11 +378,10 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         }),
         AdapterError::NativeClaimNotReady(reason) => {
             use layer3_adapter::agent_sandbox::NativeClaimGuardReason;
-            let detail = match reason {
-                NativeClaimGuardReason::Unschedulable => {
-                    "runtime pod could not be scheduled; original identity retained"
-                }
-                _ => "native claim is not ready; original identity retained",
+            let detail = if reason == NativeClaimGuardReason::Unschedulable {
+                "runtime pod could not be scheduled; original identity retained"
+            } else {
+                "native claim is not ready; original identity retained"
             };
             let mut failure = WorkerFailure::retryable(detail);
             failure.native_claim_pending = reason == NativeClaimGuardReason::Pending;
