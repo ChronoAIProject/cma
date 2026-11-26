@@ -23,6 +23,9 @@ use mongodb::{
     Client, Database,
 };
 
+#[path = "sharded_mongo_tests.rs"]
+mod sharded_mongo_tests;
+
 fn observation(binding: &Binding, timestamp: u64, value: f64) -> MeasuredObservation {
     let selection = Selection {
         cluster: binding.cluster.clone(),
@@ -454,5 +457,72 @@ async fn indexed_custody_matches_exhaustive_and_refuses_missing_projection_befor
             .unwrap(),
         correction
     );
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn concurrent_indexed_captures_converge_under_generation_root_contention() {
+    const WRITERS: usize = 16;
+    const SAMPLES: usize = 4;
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let client = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("measured_contention_{}", uuid::Uuid::new_v4().simple());
+    let database = client.database(&name);
+    let capture = MeasuredCapture::new(&database);
+    let indexed = IndexedCustody::new(&database, "a".repeat(64)).unwrap();
+    for collection in [
+        crate::store::migrations::measured_custody::COLLECTION,
+        PROJECTIONS,
+        MANIFESTS,
+    ] {
+        database.create_collection(collection).await.unwrap();
+    }
+    indexed.begin().await.unwrap();
+    assert_eq!(indexed.advance().await.unwrap(), (0, true));
+    assert_eq!(indexed.certify().await.unwrap().original_rows, 0);
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(WRITERS));
+    let mut tasks = Vec::new();
+    for worker in 0..WRITERS {
+        let peer = Client::with_uri_str(&uri).await.unwrap();
+        let peer_db = peer.database(&name);
+        let active = MeasuredCapture::new(&peer_db)
+            .with_indexed(IndexedCustody::new(&peer_db, "a".repeat(64)).unwrap());
+        let mut binding = fixture_binding(&format!("owner-{worker}"));
+        binding.id = format!("binding-{worker}");
+        binding.sandbox_id = format!("sbx_fixture_{worker}");
+        binding.pvc_uid = format!("pvc-{worker}");
+        binding.valid_from = 3500;
+        binding.observed_at = 3800;
+        let barrier = barrier.clone();
+        tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            for offset in 0..SAMPLES {
+                let sample = observation(&binding, 3_600_000 + offset as u64 * 1000, 20.0);
+                assert_eq!(active.capture(&sample).await.unwrap(), Capture::Inserted);
+            }
+            let last = observation(&binding, 3_600_000 + (SAMPLES - 1) as u64 * 1000, 20.0);
+            assert_eq!(active.capture(&last).await.unwrap(), Capture::Replay);
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap();
+    }
+    let expected = (WRITERS * SAMPLES) as u64;
+    assert_eq!(
+        capture.rows.count_documents(doc! {}).await.unwrap(),
+        expected
+    );
+    assert_eq!(
+        indexed.projections.count_documents(doc! {}).await.unwrap(),
+        expected
+    );
+    let mut snapshot = client.start_session().snapshot(true).await.unwrap();
+    let root = indexed
+        .root(&mut snapshot, true)
+        .await
+        .unwrap_or_else(|_| panic!("generation root missing"));
+    assert_eq!(root.rows, expected);
+    drop(snapshot);
     database.drop().await.unwrap();
 }

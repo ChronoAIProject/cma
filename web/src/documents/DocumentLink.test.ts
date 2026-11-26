@@ -31,7 +31,7 @@ function links(editor: Editor) {
 }
 const url = 'https://example.test/en/about/previous-releases';
 for (const mode of ['import', 'typing', 'paste'] as const) {
-  it.each([...'；，。！？、（）【】《》'])(
+  it.each([...'；，。！？、：（）【】《》〈〉「」『』'])(
     `${mode} ends a bare link at %s and retains the complete suffix`,
     (punctuation) => {
       const prefix = 'Node URL：';

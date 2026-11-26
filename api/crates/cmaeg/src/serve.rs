@@ -253,6 +253,7 @@ pub(crate) async fn serve(
     .with_profile_revisions(config.profile_revisions_enabled)
     .with_whatsapp_receipts(whatsapp_receipts)
     .with_telegram(telegram.clone())
+    .with_routing_notice_relay(state.outbound_relay.clone())
     .with_telegram_effects(telegram_effects || config.native_telegram_received_reactions_enabled)
     .with_interactions(interactions)
     .with_native_intake_config(&config)

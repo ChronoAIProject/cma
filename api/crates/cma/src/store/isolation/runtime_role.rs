@@ -12,6 +12,7 @@ pub(super) fn role_with_index_operation(
             !MEASURED_APPEND_ONLY.contains(name)
                 && **name != retained_consents::COLLECTION
                 && **name != MEASURED_MANIFESTS
+                && **name != USAGE_PROJECTIONS
         })
         .filter(|name| include_optional || !OPTIONAL_COLLECTIONS.contains(name))
         .map(|name| {
@@ -31,6 +32,7 @@ pub(super) fn role_with_index_operation(
         );
     }
     if include_optional {
+        grants.push(doc! {"resource":{"db":database,"collection":USAGE_PROJECTIONS},"actions":USAGE_PROJECTION_ACTIONS});
         // Detached legal receipts have no account or Sandbox selector. Their
         // writer can create the namespace and append receipts only.
         grants.push(doc! {"resource":{"db":database,"collection":retained_consents::COLLECTION},"actions":retained_consents::ACTIONS});

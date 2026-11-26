@@ -62,7 +62,11 @@ const SOURCES: &[Source] = &[
     source!("sandbox_usage_reports", "principal", Reports => "_id"),
 ];
 
-pub(super) async fn discover(db: &Database, contexts: &mut [Context]) -> Result<(), Error> {
+pub(super) async fn discover(
+    db: &Database,
+    contexts: &mut [Context],
+    usage_projections_present: bool,
+) -> Result<(), Error> {
     let subjects: Vec<_> = contexts
         .iter()
         .map(|context| context.subject.clone())
@@ -85,6 +89,9 @@ pub(super) async fn discover(db: &Database, contexts: &mut [Context]) -> Result<
             _ => {}
         }
         scan(db, contexts, source, filter, &[source.owner], false).await?;
+    }
+    if usage_projections_present {
+        discover_usage_projections(db, contexts).await?;
     }
     activity::protect_organizations(db, contexts).await?;
     // Actor attribution never grants personal ownership of organization data.
@@ -133,6 +140,38 @@ pub(super) async fn discover(db: &Database, contexts: &mut [Context]) -> Result<
         .await?;
     }
     Ok(())
+}
+
+pub(in crate::store::account_erasure) async fn discover_usage_projections(
+    db: &Database,
+    contexts: &mut [Context],
+) -> Result<bool, Error> {
+    let subjects: Vec<_> = contexts
+        .iter()
+        .map(|context| context.subject.clone())
+        .collect();
+    let report_count = |contexts: &[Context]| {
+        contexts
+            .iter()
+            .map(|context| context.ids(Set::Reports).len())
+            .sum::<usize>()
+    };
+    let before = report_count(contexts);
+    let source = Source {
+        collection: crate::store::migrations::usage_projections::COLLECTION,
+        owner: "contributor",
+        ids: &[(Set::Reports, "report_id")],
+    };
+    scan(
+        db,
+        contexts,
+        &source,
+        doc! {"kind":"contributor","contributor":{"$in":subjects}},
+        &["contributor"],
+        false,
+    )
+    .await?;
+    Ok(report_count(contexts) != before)
 }
 
 async fn scan(

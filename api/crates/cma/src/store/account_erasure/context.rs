@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[path = "history.rs"]
 mod history;
+pub(super) use history::discover_usage_projections;
 #[path = "context_inventory.rs"]
 mod inventory;
 const PAGE: i64 = 500;
@@ -362,7 +363,7 @@ pub(super) async fn load_cohort_with_receipt(
     if contexts.is_empty() {
         return Ok(contexts);
     }
-    history::discover(db, &mut contexts).await?;
+    history::discover(db, &mut contexts, !receipt.usage_projections_absent).await?;
     for context in &mut contexts {
         context
             .refresh(db)

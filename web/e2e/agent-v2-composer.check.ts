@@ -22,6 +22,7 @@ for (const theme of ['light', 'dark']) {
       const field = page.getByRole('textbox', { name: 'Message', exact: true });
       const queue = page.getByRole('button', { name: 'Queue message', exact: true });
       const stop = page.getByRole('button', { name: 'Stop response', exact: true });
+      const stopScope = page.getByText('Running Sandbox commands may continue.', { exact: true });
       await expect(queue).toHaveCount(0);
       await expect(stop).toBeEnabled();
       await field.fill('Continue with this after the active response');
@@ -43,10 +44,17 @@ for (const theme of ['light', 'dark']) {
           await Promise.all(frame.getAnimations().map((animation) => animation.finished));
         });
         const stopBox = await stop.boundingBox();
+        await expect(stopScope).toBeInViewport();
+        const scopeBox = await stopScope.boundingBox();
+        expect(scopeBox!.width).toBeGreaterThan(1);
+        expect(scopeBox!.x).toBeGreaterThanOrEqual(0);
+        expect(scopeBox!.x + scopeBox!.width).toBeLessThanOrEqual(width);
+        expect(scopeBox!.y + scopeBox!.height).toBeLessThanOrEqual(stopBox!.y);
         await field.fill('Continue with this after the active response');
         await expect(queue).toBeEnabled();
         expect(await queue.boundingBox()).toEqual(stopBox);
         await expect(stop).toHaveCount(0);
+        await expect(stopScope).toHaveCount(0);
         await expect
           .poll(() =>
             queue.evaluate((element) => {
