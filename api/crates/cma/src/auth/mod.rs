@@ -47,7 +47,7 @@ mod oauth_commands;
 pub mod organizations;
 mod permissions;
 pub mod persistence;
-pub mod profile;
+pub use cma_am_auth::profile;
 pub(crate) mod provider_http;
 mod provider_metadata;
 #[cfg(test)]
@@ -65,7 +65,7 @@ mod signup_options;
 mod silent_preference;
 #[cfg(test)]
 pub(crate) mod test_resources;
-mod token;
+use cma_am_auth::token;
 mod tokens;
 mod usage_reporting;
 mod verification_diagnostics;
