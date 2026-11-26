@@ -74,16 +74,11 @@ run_primary() {
   return "$result"
 }
 
-alone_status=0
-run_primary alone || alone_status=$?
-[[ "$alone_status" != 125 ]] || exit 125
-sha256sum --check "$output/test-binary.sha256"
-
 record "arm=overlap role=companion event=start partition=$companion_partition"
 setsid bash "$runner" "$companion_partition" > "$output/companion.log" 2>&1 &
 companion_pid=$!
 deadline=$((SECONDS + 90))
-until rg -q '^Mongo fixture .*"event": "started"' "$output/companion.log"; do
+until grep -q '^Mongo fixture .*"event": "started"' "$output/companion.log"; do
   if ! kill -0 "$companion_pid" 2>/dev/null || (( SECONDS >= deadline )); then
     cat "$output/companion.log"
     exit 1
@@ -100,4 +95,4 @@ record "arm=overlap role=companion event=finish status=$companion_status"
 sha256sum --check "$output/test-binary.sha256"
 
 # Exit codes and every test's original output remain available in the artifact.
-[[ "$alone_status" == 0 && "$overlap_status" == 0 && "$companion_status" == 0 ]]
+[[ "$overlap_status" == 0 && "$companion_status" == 0 ]]

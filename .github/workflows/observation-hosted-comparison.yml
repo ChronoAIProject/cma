@@ -36,9 +36,9 @@ jobs:
           cd api
           cargo nextest list --archive-file "$RUNNER_TEMP/backend-tests.tar.zst" \
             --extract-to "$PWD" --list-type binaries-only
-      - name: Run the two arms once
+      - name: Run the remaining overlap arm once
         run: bash .github/scripts/observation-hosted-comparison.sh "$RUNNER_TEMP/observation-comparison"
-      - name: Preserve both raw results and resource samples
+      - name: Preserve raw overlap results and resource samples
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
