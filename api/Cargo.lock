@@ -426,6 +426,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "cma-allocator-qualification",
+ "cma-am-agent-log",
  "cma-am-auth",
  "cma-am-mongo-primitives",
  "cma-am-reporting",
@@ -478,6 +479,19 @@ dependencies = [
 [[package]]
 name = "cma-allocator-qualification"
 version = "0.1.0"
+
+[[package]]
+name = "cma-am-agent-log"
+version = "0.1.0"
+dependencies = [
+ "cma-am-mongo-primitives",
+ "layer2-core",
+ "mongodb",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tracing",
+]
 
 [[package]]
 name = "cma-am-auth"

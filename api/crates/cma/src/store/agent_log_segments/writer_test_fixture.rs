@@ -123,7 +123,7 @@ impl Fixture {
         let mut next = self.agent.clone();
         next.revision += 1;
         next.conversation.last_seq += 1;
-        let batch = EncodedBatch::new(&self.head, &logs).unwrap();
+        let batch = writer_plan::encode_batch(&self.head, &logs).unwrap();
         let plan = writer_plan::plan(
             &self.head,
             self.leaves.clone(),

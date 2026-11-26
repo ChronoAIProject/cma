@@ -144,7 +144,7 @@ pub(super) async fn assemble(
         }
     };
     certify_queued_sources(store, scope, captured, &before, input.logs).await?;
-    let batch = EncodedBatch::new(&before, input.logs)?;
+    let batch = writer_plan::encode_batch(&before, input.logs)?;
     let plan = writer_plan::plan(
         &before,
         captured.active_leaf_digests().clone(),

@@ -5,7 +5,7 @@ use crate::store::agents::agent_replacement_fields;
 use crate::store::{agent_log::log_document, sandbox_mongo::MongoSandboxStore};
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::{
-    store::{AgentLogStore, AgentStore},
+    store::{AgentLogStore, AgentStore, SandboxStoreError},
     Agent, AgentLogEntry, AgentLogKind,
 };
 use mongodb::{

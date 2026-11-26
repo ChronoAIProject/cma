@@ -11,6 +11,7 @@ real-model-suggestion-samples = []
 [dependencies]
 cma-qualification = { path = "../cma-qualification", optional = true }
 cma-allocator-qualification = { path = "../cma-allocator-qualification" }
+cma-am-agent-log = { path = "../cma-am-agent-log" }
 cma-am-auth = { path = "../cma-am-auth" }
 cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
 cma-am-reporting = { path = "../cma-am-reporting" }

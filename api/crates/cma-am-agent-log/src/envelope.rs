@@ -4,7 +4,7 @@ use mongodb::bson::{Bson, Document};
 use super::{corrupt, digest, FORMAT};
 
 /// Accepts only the Agent document schema versions this reader understands.
-pub(in crate::store) fn require_agent_version(document: &Document) -> Result<(), String> {
+pub fn require_agent_version(document: &Document) -> Result<(), String> {
     match document.get("document_schema_version") {
         Some(Bson::Int64(1 | 2) | Bson::Int32(1 | 2)) => Ok(()),
         _ => Err("unsupported Agent document schema version".into()),
@@ -12,9 +12,7 @@ pub(in crate::store) fn require_agent_version(document: &Document) -> Result<(),
 }
 
 /// Minimal discriminator validation is also used by projected aggregate reads.
-pub(in crate::store) fn read_format(
-    document: &Document,
-) -> Result<Option<(&str, i64)>, SandboxStoreError> {
+pub fn read_format(document: &Document) -> Result<Option<(&str, i64)>, SandboxStoreError> {
     require_agent_version(document).map_err(SandboxStoreError::Corrupt)?;
     let version = match document.get("document_schema_version") {
         Some(Bson::Int64(v)) => *v,
@@ -54,7 +52,7 @@ pub(in crate::store) fn read_format(
 }
 
 /// Rejects a segmented document whose log incarnation belongs to another Agent.
-pub(in crate::store) fn validate_identity(
+pub fn validate_identity(
     document: &Document,
     agent: &layer2_core::sandbox::Agent,
 ) -> Result<(), SandboxStoreError> {

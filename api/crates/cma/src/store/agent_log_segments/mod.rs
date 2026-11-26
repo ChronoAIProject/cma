@@ -4,7 +4,6 @@ pub(in crate::store) mod admission;
 pub(in crate::store) mod audit;
 pub(in crate::store) mod audit_command;
 pub(in crate::store) mod capture;
-mod codec;
 #[cfg(test)]
 mod codec_tests;
 mod collections;
@@ -14,11 +13,10 @@ pub(in crate::store) use collections::SegmentCollections;
 pub(in crate::store) mod command;
 pub(in crate::store) mod command_evidence;
 pub(in crate::store) mod command_worker;
-mod digest;
+use cma_am_agent_log::digest;
 mod telemetry;
 pub(in crate::store) mod terminal;
 pub(in crate::store) use digest::{incarnation, incarnation_fields, valid_digest};
-mod envelope;
 pub(in crate::store) mod ordinary;
 pub(in crate::store) mod projection;
 pub(in crate::store) mod publication;
@@ -36,9 +34,10 @@ pub(in crate::store) mod writer_plan;
 pub(in crate::store) mod writer_projection;
 pub(in crate::store) mod writer_reconcile;
 
-pub(in crate::store) use codec::{Head, Seal};
-pub(in crate::store) use envelope::{read_format, require_agent_version, validate_identity};
-use layer2_core::sandbox::store::SandboxStoreError;
+pub(in crate::store) use cma_am_agent_log::{
+    read_format, require_agent_version, validate_identity,
+};
+pub(in crate::store) use cma_am_agent_log::{Head, Seal};
 pub(in crate::store) use reads::{
     read_head, retained_turn, verify_terminal_seal, visit_range, LogRange,
 };
@@ -61,25 +60,10 @@ pub(in crate::store) const COLLECTIONS: &[&str] = &[
     writer_admission::COLLECTION,
     RECOVERY_WORK,
 ];
-pub(in crate::store) const FORMAT: &str = "segmented_v1";
-pub(in crate::store) const READER: &str = "agent_log_segments_v1";
-pub(in crate::store) const MIGRATION: &str = "2026-11-05-am-log-segment-readers-v1";
-pub(in crate::store) const MAX_SEQUENCE: i64 = 9_007_199_254_740_991;
-pub(in crate::store) const MAX_ENTRIES: i64 = 10_128;
-pub(in crate::store) const MAX_BYTES: i64 = 65 * 1024 * 1024;
-const MAX_SEAL_BYTES: usize = 1024 * 1024;
-
-fn corrupt() -> SandboxStoreError {
-    SandboxStoreError::Corrupt("Agent log segment identity, format or integrity is invalid".into())
-}
-
-fn required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: serde::Deserialize<'de>,
-{
-    <Option<T> as serde::Deserialize>::deserialize(deserializer)
-}
+use cma_am_agent_log::{corrupt, required_nullable, MAX_SEAL_BYTES};
+pub(in crate::store) use cma_am_agent_log::{
+    FORMAT, MAX_BYTES, MAX_ENTRIES, MAX_SEQUENCE, MIGRATION, READER,
+};
 
 #[cfg(test)]
 pub(in crate::store) mod mongo_tests;
