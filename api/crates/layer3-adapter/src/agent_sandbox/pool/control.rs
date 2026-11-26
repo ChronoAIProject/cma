@@ -31,6 +31,15 @@ pub trait NativePoolControl: Send + Sync {
             "native pool drain is unavailable".into(),
         ))
     }
+    /// Request deletion of authoritatively unclaimed members through the
+    /// provider's guarded retirement protocol.
+    async fn request_spare_drain(
+        &self,
+        binding: &NativePoolBinding,
+        evidence: &NativePoolDrain,
+    ) -> Result<()> {
+        self.drain_pool(binding, evidence).await
+    }
     /// Called only after the durable admission barrier and guarded drain.
     /// False means controller drain or definition deletion is pending.
     async fn retire_pool(
@@ -128,6 +137,14 @@ impl NativePoolControl for AgentSandboxPools {
         evidence: &NativePoolDrain,
     ) -> Result<()> {
         self.drain_pool(binding, &evidence.homes, &evidence.claims)
+            .await
+    }
+    async fn request_spare_drain(
+        &self,
+        binding: &NativePoolBinding,
+        evidence: &NativePoolDrain,
+    ) -> Result<()> {
+        self.request_spare_drain(binding, &evidence.homes, &evidence.claims)
             .await
     }
     async fn retire_pool(
