@@ -165,7 +165,11 @@ it('explains an overdue retirement until the exact Sandbox reports retired', asy
   expect(screen.getByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
   expect(screen.getByText('Cleanup taking longer')).toBeVisible();
   expect(screen.getByText(/exceeded its expected deletion time/)).toBeVisible();
-  expect(screen.getByText(/still uses one Sandbox slot/)).toBeVisible();
+  expect(
+    screen.getByText(
+      'Check Environments for your current Sandbox capacity while deletion finishes.',
+    ),
+  ).toBeVisible();
   expect(restoreDeletion('owner')).toEqual({ ...initial, accepted: true });
   expect(screen.queryByRole('button', { name: 'Check request' })).not.toBeInTheDocument();
   readSandbox.mockResolvedValue(sandboxFixture('retired'));
