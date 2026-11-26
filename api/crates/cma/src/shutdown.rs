@@ -128,13 +128,7 @@ impl ShutdownCoordinator {
     }
 }
 
-pub(crate) async fn signalled(mut signal: watch::Receiver<bool>) {
-    while !*signal.borrow() {
-        if signal.changed().await.is_err() {
-            break;
-        }
-    }
-}
+pub(crate) use cma_am_auth::shutdown::signalled;
 
 fn report(result: Result<(), tokio::task::JoinError>) {
     if let Err(error) = result {

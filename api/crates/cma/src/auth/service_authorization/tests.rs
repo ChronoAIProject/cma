@@ -190,11 +190,7 @@ impl Fixture {
             unavailable: AtomicBool::new(false),
             redemptions: AtomicUsize::new(0),
         });
-        let replica = || {
-            let mut auth = auth(store.clone());
-            Arc::get_mut(&mut auth).unwrap().service_authorization = Some(grants.clone());
-            auth
-        };
+        let replica = || auth(store.clone()).with_fixture_grant_authority(grants.clone());
         let a = replica();
         let b = replica();
         let cookie = a

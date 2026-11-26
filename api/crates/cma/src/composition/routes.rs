@@ -226,7 +226,10 @@ pub(super) fn tools(
 ) -> Result<Router, String> {
     Ok(tools.merge(crate::auth::service_portal::router(
         auth.clone(),
-        config.gateway.as_ref(),
+        config
+            .gateway
+            .as_ref()
+            .map(|gateway| gateway.base_url.as_str()),
     )?))
 }
 

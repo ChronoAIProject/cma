@@ -21,7 +21,7 @@ fn endpoints(fixture: &Fixture, userinfo: bool) -> (&RwLock<Reply>, &RwLock<Repl
 }
 
 async fn assert_record_erased(fixture: &Fixture) {
-    assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
+    assert_eq!(fixture.auth.fixture_active_receipts(), 0);
 }
 
 #[tokio::test]
@@ -169,7 +169,7 @@ async fn userinfo_error_claims_without_introspection_are_also_rejected() {
     let (fixture, app, login) = warm().await;
     fixture
         .auth
-        .metadata
+        .fixture_metadata()
         .write()
         .await
         .as_mut()
@@ -316,7 +316,13 @@ async fn oversized_stream_is_rejected_before_deserialization_or_waiting_for_its_
             reply.stream_tail = Some((Duration::from_secs(10), Ok("{}".into())));
         }
         drop(reply);
-        let response = fixture.auth.http.get(endpoint).send().await.unwrap();
+        let response = fixture
+            .auth
+            .fixture_http()
+            .get(endpoint)
+            .send()
+            .await
+            .unwrap();
         assert_eq!(response.content_length().is_none(), chunked);
         let result = tokio::time::timeout(
             Duration::from_secs(2),
@@ -348,7 +354,7 @@ async fn reqwest_body_timeout_is_invalid_evidence_not_retryable_transport() {
     let result = crate::auth::identity_http::json(
         fixture
             .auth
-            .http
+            .fixture_http()
             .get(endpoint)
             .timeout(Duration::from_millis(100)),
         tokio::time::Instant::now() + Duration::from_secs(5),
@@ -380,7 +386,7 @@ async fn malformed_http_headers_are_not_connection_outages() {
             // response, rather than observe a connection reset from the fixture.
             tokio::time::sleep(Duration::from_secs(10)).await;
         });
-        let mut metadata = fixture.auth.metadata.write().await;
+        let mut metadata = fixture.auth.fixture_metadata().write().await;
         if userinfo {
             metadata.as_mut().unwrap().userinfo_endpoint = Some(endpoint);
         } else {

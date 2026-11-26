@@ -206,7 +206,7 @@ async fn repository_scope_check_is_opt_in_and_requires_the_callers_target() {
     );
     connections.repository_access = Some(Arc::new(
         crate::trigger::CmaServiceConnectionBroker::from_auth_config(
-            &auth.mode,
+            auth.fixture_mode(),
             None,
             auth.clone(),
         )
