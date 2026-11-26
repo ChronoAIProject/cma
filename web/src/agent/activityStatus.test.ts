@@ -32,7 +32,7 @@ it('withholds a completed label until history loads and preserves a failed read 
 it.each([
   ['turn_completed', 'completed'],
   ['turn_failed', 'failed'],
-  ['turn_interrupted', 'stopped'],
+  ['turn_interrupted', 'interrupted'],
 ] as const)(
   'displays %s from recorded activity and leaves the resource status alone',
   (type, expected) => {
@@ -75,6 +75,9 @@ it('does not override equally recent or newer resource evidence, lifecycle barri
   const sandbox = navigationFixture()[0]!.sandbox;
   expect(observedTaskStatus(summary, sandbox, task)).toBe('loading');
   expect(observedTaskStatus(summary, { ...sandbox, status: 'paused' }, task)).toBe('paused');
+  expect(observedTaskStatus({ ...summary, status: 'ready', taskStatus: 'stopped' }, sandbox)).toBe(
+    'interrupted',
+  );
   expect(observedTaskStatus({ ...summary, status: 'stopped' }, sandbox, task)).toBe('stopped');
   expect(
     observedTaskStatus({ ...summary, id: 'other-agent', taskStatus: 'completed' }, sandbox, task),

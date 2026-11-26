@@ -7,6 +7,7 @@ import { Presence } from '../ui/Presence';
 import { useThinkingPlacement } from './thinkingPlacement';
 import { useMemo } from 'react';
 import { thinkingProgressKey, hasVisibleTurnProgress } from './ThinkingProgress';
+import { RESPONSE_STOP_COMMAND_NOTICE } from './stopAgentCopy';
 
 /** Ephemeral turn status follows the reply in the conversation, never in stored history. */
 export function ActiveThinking({
@@ -25,7 +26,7 @@ export function ActiveThinking({
   );
   const last = conversation.latestTurnId;
   const lastTiming = last === undefined ? undefined : conversation.turnTiming?.[last];
-  const stoppedDuration = toolDuration(lastTiming?.startedAt, lastTiming?.finishedAt);
+  const interruptedDuration = toolDuration(lastTiming?.startedAt, lastTiming?.finishedAt);
   if (currentExternalApproval(conversation))
     return stopping ? <div role="status">Stopping…</div> : null;
   if (runId === undefined && last && conversation.turnOutcomes?.[last] === 'interrupted') {
@@ -33,9 +34,10 @@ export function ActiveThinking({
       <div className="workspace-stopped" role="status">
         <span aria-hidden="true">■</span>
         <span>
-          {stoppedDuration === undefined
-            ? 'Stopped'
-            : `Stopped after ${elapsedTime(stoppedDuration)}`}
+          {interruptedDuration === undefined
+            ? 'Response interrupted.'
+            : `Response interrupted after ${elapsedTime(interruptedDuration)}.`}{' '}
+          {RESPONSE_STOP_COMMAND_NOTICE}
         </span>
       </div>
     );
