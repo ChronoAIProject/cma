@@ -119,6 +119,7 @@ impl MongoSandboxStore {
             warm_runtime_version: None,
             managed_runtime_version: None,
             runtime_image_origin_enabled: false,
+            managed_machine_updates: Default::default(),
             desktop_verified_runtime_image: None,
             released_lanes: None,
             managed_machine_runtime_version: None,

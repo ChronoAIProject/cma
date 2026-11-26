@@ -114,7 +114,10 @@ where
                 .ok_or(SandboxStoreError::NotFound)?;
             command.managed_runtime_version = release
                 .as_ref()
-                .and_then(|release| self.managed_runtime_target(&current, &release.agent))
+                .and_then(|release| {
+                    self.managed_runtime_for_release(&current, release)
+                        .map(|(_, target)| target)
+                })
                 .map(str::to_owned);
             current.validate().map_err(|error| {
                 SandboxStoreError::Corrupt(format!("stored sandbox is invalid: {error}"))

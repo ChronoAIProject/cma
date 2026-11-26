@@ -142,6 +142,7 @@ pub(crate) mod pending_launch_homes;
 pub(crate) mod test_visibility;
 #[cfg(test)]
 pub(crate) use mongo_diagnostics::attach_readiness_fixture;
+mod managed_machine_origin;
 pub(crate) mod mongo_latency;
 pub(crate) mod mongo_read_telemetry;
 pub(crate) mod native_prepared;
