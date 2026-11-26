@@ -209,7 +209,7 @@ try {
           await caseContext.runCase('writer.agent_access_request_approval',
             () => accessRequest({...caseContext, user, outsider}, true));
         }
-        await userCases(caseContext);
+        await userCases({...caseContext, outsider});
         if (iteration === 1) {
           await caseContext.runCase('writer.competing_renames', () => competingRenames(caseContext));
           await caseContext.runCase('writer.shared_conversation_ingress', () => sharedIngressReceipt(caseContext));

@@ -9,6 +9,7 @@ import {NonOwnerRouter} from '../routing.mjs';
 test('a file download preserves the real request ID for non-owner attribution', async () => {
   let directory, bytes;
   const proofs = [];
+  const denied = [];
   const digest = data => createHash('sha256').update(data).digest('hex');
   const server = createServer((request, response) => {
     const url = new URL(request.url, 'http://loopback.test');
@@ -54,11 +55,18 @@ test('a file download preserves the real request ID for non-owner attribution', 
     },
   };
   try {
-    await userCases({record: {agentId: 'fixture-agent'}, api,
+    const outsider = {rawRequest: async (am, method, route, options) => {
+      assert.deepEqual(options.allowed, [403, 404]);
+      denied.push([am, method, new URL(route, 'http://loopback.test').pathname]);
+      return {status: 404};
+    }};
+    await userCases({record: {agentId: 'fixture-agent'}, api, outsider,
       runCase: (name, execute) => name === 'user.files_roundtrip' ? execute() : undefined});
     assert.equal(proofs.length, 1);
     assert.equal(proofs[0].verdict, 'PASS');
     assert.equal(proofs[0].request_id, 'fixture-file-download');
+    for (const am of ['a', 'b']) assert.deepEqual(denied.filter(row => row[0] === am).map(row => row[1]),
+      ['GET', 'GET', 'POST', 'DELETE']);
     assert.equal(directory, undefined);
   } finally {
     server.closeAllConnections();

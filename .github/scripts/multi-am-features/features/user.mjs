@@ -7,7 +7,7 @@ const encoded = text => Buffer.from(text).toString('base64');
 
 // Reuses the run17-created Agent, native home, provider and real authentication.
 // Every request on this API object is routed using the current live owner.
-export async function userCases({record: resource, api, runCase, recordFailure}) {
+export async function userCases({record: resource, api, outsider, runCase, recordFailure}) {
   const base = `/api/v1/agents/${resource.agentId}`;
   await runCase('user.files_roundtrip', async () => {
     const directory = `ci-${randomUUID()}`;
@@ -32,7 +32,15 @@ export async function userCases({record: resource, api, runCase, recordFailure})
         path: file, expected_sha256: before.sha256, content_base64: encoded(updated)}});
       await api.request('a', 'POST', base + '/files', {allowed: [409], body: {
         path: file, expected_sha256: before.sha256, content_base64: encoded('stale overwrite')}});
-      check((await read()).sha256 === hash(updated), 'stale_file_write_changed_content');
+      const query = '?path=' + encodeURIComponent(file);
+      for (const am of ['a', 'b']) {
+        await outsider.rawRequest(am, 'GET', base + '/files/content' + query, {allowed: [403, 404]});
+        await outsider.rawRequest(am, 'GET', base + '/files/download' + query, {allowed: [403, 404]});
+        await outsider.rawRequest(am, 'POST', base + '/files', {allowed: [403, 404], body: {
+          path: file, expected_sha256: hash(updated), content_base64: encoded('unauthorized overwrite')}});
+        await outsider.rawRequest(am, 'DELETE', base + '/files' + query, {allowed: [403, 404]});
+      }
+      check((await read()).sha256 === hash(updated), 'refused_file_write_changed_content');
       await api.router.dispatch(resource.agentId, async am => {
         const response = await fetch(api.url(am, base + '/files/download?path=' + encodeURIComponent(file)), {
           headers: api.headers(), redirect: 'error', signal: AbortSignal.timeout(30000)});
