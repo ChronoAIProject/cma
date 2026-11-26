@@ -316,10 +316,34 @@ class Fixture:
         if skillId not in ('two-am-before-restart', 'two-am-after-restart'):
             raise ValueError('fixture_skill_required')
         return self.mongo(
-            "const a=d.agents.findOne({_id:" + json.dumps(agentId) + "},{_id:0,'work.live_skills':1});"
+            "const a=d.agents.findOne({_id:" + json.dumps(agentId) + "},{_id:0,'record.work.live_skills':1});"
             "const id=" + json.dumps(skillId) + ";"
-            "print(JSON.stringify(a? a.work.live_skills.filter(row=>row.reference.id===id)"
+            "print(JSON.stringify(a? (a.record.work.live_skills||[]).filter(row=>row.reference.id===id)"
             ".map(row=>({status:row.status,version:row.material?.version})):null));")
+
+    def preparedReady(self):
+        return self.mongo(
+            "const rows=d.native_prepared_sandboxes.find({kind:'reservation',state:'ready',"
+            "machine:{$ne:true},'record.ownership':null},{_id:1}).limit(2).toArray();"
+            "print(JSON.stringify(rows.map(row=>row._id)));")
+
+    def preparedEvidence(self, agentId=None, sandboxId=None, operationId=None):
+        if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value)
+               for value in (agentId, sandboxId, operationId)):
+            raise ValueError('prepared_lineage_required')
+        return self.mongo(
+            "const a=d.agents.findOne({_id:" + json.dumps(agentId) + ",sandbox_id:" + json.dumps(sandboxId)
+            + "},{workspace_id:1,worktree_id:1,owner:1,status:1,'record.work.prepared_installation_digest':1});"
+            "const s=a&&d.sandboxes.findOne({_id:" + json.dumps(sandboxId)
+            + "},{document_schema_version:1});"
+            "const p=s&&d.native_prepared_sandboxes.findOne({_id:s._id,kind:'reservation',state:'claimed',"
+            "'record.ownership.owner':a.owner,'record.ownership.operation_id':" + json.dumps(operationId)
+            + "},{_id:1});"
+            "const w=a&&d.workspaces.findOne({_id:a.workspace_id},{document_schema_version:1});"
+            "const t=a&&d.worktrees.findOne({_id:a.worktree_id},{document_schema_version:1});"
+            "print(JSON.stringify({consumed:Boolean(p),agent_ready:a?.status==='ready',"
+            "installation_bound:/^[a-f0-9]{64}$/.test(a?.record?.work?.prepared_installation_digest||''),"
+            "schemas:[s,w,t].map(parent=>Number(parent?.document_schema_version||0))}));")
 
     def peerWriteEvidence(self, am=None, requestHash=None, epoch=None, operation=None):
         if (am not in ('a', 'b') or not isinstance(requestHash, str)
@@ -355,7 +379,7 @@ class Fixture:
                     name=self.path.strip('/')
                     allowed=['topology','runtimeFor','ownerOf','killAm','restoreAm','prepareTurn',
                              'releaseTurn','oracle','captureFailure','titleEffects','skillEffects',
-                             'drainOwner','restartDrained','peerWriteEvidence']
+                             'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

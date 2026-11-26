@@ -13,7 +13,7 @@ const lineage = (record, detail) => detail?.id === record.agentId && detail.sand
   && [detail.title, detail.owner_title, detail.worktree?.name, detail.sandbox?.name]
     .some(name => name === record.name || (record.writerTitle && name === record.writerTitle.title));
 
-export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook} = {}) {
+export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook, preparedHook} = {}) {
   const config = normalizeConfig(raw);
   check(config.adapter_module && config.output_dir && config.owner_id, 'config_missing');
   let runtimes = runtimeBindings(config);
@@ -57,11 +57,12 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     if (!lineage(record, r.body)) {const error = new Error('agent_lineage_mismatch'); error.response = r; throw error;}
     return r.body;
   }
-  async function create(am, desktop) {
+  async function create(am, desktop, overrides = {}) {
     const record = {name: 'e2e-slo-ws4-' + randomUUID(), key: randomUUID(), desktop, am}; records.push(record);
     const start = performance.now();
     record.createBody = {name: record.name, machine_included: desktop, desktop,
-      ...(desktop ? {initial_message: 'Report local readiness briefly without using tools or changing files.'} : {})};
+      ...(desktop ? {initial_message: 'Report local readiness briefly without using tools or changing files.'} : {}),
+      ...overrides};
     const receipt = await api.request(am, 'POST', '/api/v1/agents', {
       body: record.createBody, key: record.key, allowed: [202]});
     check(id(receipt.body?.id), 'lifecycle_receipt_invalid'); record.operationId = receipt.body.id;
@@ -384,6 +385,23 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       for (const am of ['a', 'b']) check(t.ams[am].image === config.expected_api_image, 'am_image_mismatch');
       return {coordination_enabled: true, shared_database: true, am_pod_uid_hashes: ['a', 'b'].map(am => hash(t.ams[am].pod_uid))};
     });
+    if (preparedHook) {
+      await preparedHook({adapter, create, openBoth, cleanup, step, complete: async (record, am) => {
+        const turn = await sendHeld(record, am, 'prepared-reply');
+        await adapter.releaseTurn({caseId: turn.caseId});
+        const response = await poll(() => readResponse(other(am), record, turn.stream.responseId), terminal,
+          {timeout: 90000, code: 'prepared_reply_timeout'});
+        check(response.status === 'completed' && JSON.stringify(response.output ?? []).includes(turn.marker),
+          'prepared_reply_missing');
+        const oracle = await poll(() => observeOracle(turn.caseId), value => value.active_streams === 0,
+          {timeout: 20000, code: 'prepared_provider_did_not_settle'});
+        assertOracle(oracle, turn.caseId, 1);
+        turn.stream.abort();
+        await turn.stream.done;
+      }});
+      result.verdict = 'LOCAL_PREPARED_TWO_AM_PASS';
+      return result;
+    }
     if (adoptionHook) {
       let record;
       await step('rollback_desktop_create_b_ready_a', async () => {record = await create('b', true); return {agent_sha256: hash(record.agentId)};});

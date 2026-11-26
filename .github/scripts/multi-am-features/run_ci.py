@@ -45,7 +45,7 @@ def run(args):
     infrastructure = Infrastructure(private)
     fixture = None
     result = {'schema': 'multi-am-ci-run-v1', 'source': args.revision,
-              'verdict': 'RUNNING', 'started_at': utc(), 'cleanup': None}
+              'fixture': args.fixture, 'verdict': 'RUNNING', 'started_at': utc(), 'cleanup': None}
     result['image_input'] = {'mode': 'frozen_release_packet' if release_packet else 'same_ci_invocation',
                             'packet_sha256': args.packet_sha256, 'platform': 'linux/amd64',
                             'execution': 'native_amd64_required'}
@@ -60,9 +60,16 @@ def run(args):
         tls_directory = prepare_tls(private / 'tls')
         result['stage'] = 'shared_cluster_and_images'
         ready = infrastructure.setup(args.artifacts, args.revision, args.run_id, args.attempt, release_packet)
+        result['image_input']['manifests'] = {
+            'api': ready['expected_api_image'].split('@', 1)[1],
+            'runtime': ready['runtime_images']['base'].split('@', 1)[1],
+            'runtime-omarchy': ready['runtime_images']['omarchy'].split('@', 1)[1],
+        }
         ready['tls_directory'] = str(tls_directory)
-        ready['desktop_admission_policy'] = install_desktop_policy(
-            infrastructure, ready['runtime_images']['omarchy'], ready['runtime_images']['base'])
+        ready['fixture'] = args.fixture
+        if args.fixture == 'features':
+            ready['desktop_admission_policy'] = install_desktop_policy(
+                infrastructure, ready['runtime_images']['omarchy'], ready['runtime_images']['base'])
         write(private / 'ready.private.json', ready)
         fixture = LocalFixture(ready, private)
         result['stage'] = 'two_am_initialization'
@@ -76,13 +83,18 @@ def run(args):
             'adapter_module': str(ROOT / 'owner/adapter.mjs'),
             'control_origin': fixture.serve(), 'control_token': fixture.control_token,
             'output_dir': str(private / 'journey'), 'matrix_output': str(private / 'matrix'),
-            'summary_dir': str(summary), 'run_id': ready['run_id']}
+            'summary_dir': str(summary), 'run_id': ready['run_id'], 'fixture': args.fixture}
         result['processes_ready_at'] = utc()
         result['stage'] = 'feature_journey'
-        code, output = fixture.client.command(['node', str(ROOT / 'suite.mjs')],
+        script = 'prepared_suite.mjs' if args.fixture == 'prepared' else 'suite.mjs'
+        code, output = fixture.client.command(['node', str(ROOT / script)],
                                                data=json.dumps(config), timeout=2400, check=False)
         (private / 'suite.private.log').write_text(output)
-        verdict = json.loads((summary / 'coverage.json').read_text())
+        result['suite_exit_code'] = code
+        coverage_file = summary / 'coverage.json'
+        if not coverage_file.is_file():
+            raise RuntimeError('suite_coverage_artifact_missing')
+        verdict = json.loads(coverage_file.read_text())
         result['verdict'] = 'PASS' if code == 0 and verdict['suite_verdict'] == 'PASS' else 'FAIL'
     except Exception as error:
         result['verdict'] = 'FAIL'
@@ -155,4 +167,5 @@ if __name__ == '__main__':
     parser.add_argument('--revision', required=True)
     parser.add_argument('--run-id')
     parser.add_argument('--attempt')
+    parser.add_argument('--fixture', choices=('features', 'prepared'), default='features')
     raise SystemExit(run(parser.parse_args()))

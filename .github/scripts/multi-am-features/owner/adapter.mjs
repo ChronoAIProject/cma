@@ -11,6 +11,6 @@ export function createAdapter(config) {
   }
   return Object.fromEntries(['topology','runtimeFor','prepareTurn','ownerOf','killAm',
     'releaseTurn','oracle','restoreAm','captureFailure','titleEffects','skillEffects',
-    'drainOwner','restartDrained','peerWriteEvidence'].map(name=>[name,(body)=>call(name,body)]));
+    'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence'].map(name=>[name,(body)=>call(name,body)]));
 }
 export default createAdapter;

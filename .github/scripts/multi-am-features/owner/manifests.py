@@ -100,6 +100,9 @@ def managers(secret, ready):
         separators=(',',':'))
     env['stringData']['CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED']='true'
     env['stringData'].update(CHRONO_USAGE_REPORT_VIEWS_ENABLED='true', CHRONO_USAGE_REPORT_WARMER_ENABLED='false', CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED='false')
+    prepared = ready.get('fixture') == 'prepared'
+    if prepared:
+        env['stringData']['CHRONO_NATIVE_PREPARED_TARGET'] = '1'
     if desktop:
         env['stringData']['CHRONO_MACHINE_SANDBOX_IMAGE']=desktop
         env['stringData']['CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE']=desktop
@@ -107,8 +110,9 @@ def managers(secret, ready):
             'mode':'accounts','accounts':['native-am-fixture-owner'],
             'capabilities':['task_home_admission','desktop_enable']},separators=(',',':'))
         # Inline Agent lifecycle uses one deployment capacity for either family.
-        env['stringData']['CHRONO_AGENT_MANAGER_SANDBOX_CPU']='2'
-        env['stringData']['CHRONO_AGENT_MANAGER_SANDBOX_MEMORY']='8Gi'
+        if not prepared:
+            env['stringData']['CHRONO_AGENT_MANAGER_SANDBOX_CPU']='2'
+            env['stringData']['CHRONO_AGENT_MANAGER_SANDBOX_MEMORY']='8Gi'
     public=old.service('am-public',8080)
     public['spec']['selector']={'ws4-public-am':'true'}
     result=[env,public]
