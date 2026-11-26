@@ -95,8 +95,34 @@ class PublicationDiagnosticTests(unittest.TestCase):
                  (b"copying blob: would require changing layer representation", ("digest_preservation", "unknown")))
         for stderr, expected in cases:
             with self.subTest(expected=expected):
-                self.assertEqual(ImageCommandRefusal(command, stderr).copy_failure, expected)
+                self.assertEqual(ImageCommandRefusal(command, stderr).copy_failure,
+                                 (*expected, "unknown", "none"))
         self.assertIsNone(ImageCommandRefusal(command[:2] + command[2:][::-1], b"StatusCode: 400").copy_failure)
+
+    def test_registry_copy_uses_only_fixed_fatal_reasons_and_progress_lines(self):
+        arguments = ["skopeo", "copy", "oci-archive:private", "docker://private"]
+        prefix = b"Getting image source signatures\nCopying blob sha256:" + b"a" * 64 + b"\n"
+        cases = (
+            (b"initializing source private: unpacking tarball: archive/tar: invalid tar header", b"",
+             ("source_read", "unknown", "archive_invalid", "none")),
+            (b"source image rejected: private issuer", b"Getting image source signatures\n",
+             ("unknown", "unknown", "source_policy", "signatures")),
+            (b"fatal: private error", prefix + b"private Writing manifest to image destination\n",
+             ("unknown", "unknown", "unknown", "layers")),
+            (b"copying config: private: no space left on device", prefix + b"Copying config sha256:" + b"b" * 64,
+             ("config_copy", "unknown", "insufficient_space", "config")),
+            (b"writing manifest: MANIFEST_BLOB_UNKNOWN: private", prefix + b"Writing manifest to image destination",
+             ("manifest_write", "unknown", "manifest_invalid", "manifest")),
+        )
+        for stderr, stdout, expected in cases:
+            with self.subTest(expected=expected), patch("staging_cd_build.subprocess.run",
+                    return_value=Mock(returncode=1, stdout=stdout, stderr=stderr)):
+                with self.assertRaises(ImageCommandRefusal) as caught:
+                    command(arguments)
+                self.assertEqual(caught.exception.copy_failure, expected)
+                self.assertEqual(str(caught.exception), "Image operation failed; captured output is private")
+        error = ImageCommandRefusal(arguments, b"", stdout=prefix, returncode=-9)
+        self.assertEqual(error.copy_failure, ("unknown", "unknown", "terminated_by_signal", "layers"))
 
     def test_copy_tool_version_omits_extra_output_and_survives_a_failed_probe(self):
         self.assertEqual(skopeo_version(Mock(return_value=b"skopeo version 1.13.3\n")), "1.13.3")

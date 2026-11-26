@@ -37,13 +37,33 @@ COPY_PHASES = (
     ("manifest_write", "writing manifest|uploading manifest"),
     ("config_copy", "copying (?:image )?config"),
     ("blob_copy", "copying (?:image )?(?:blob|layer)"),
-    ("source_read", "reading manifest|determining manifest mime type"),
+    ("source_read", "reading manifest|determining manifest mime type|initializing image from source|"
+                    "initializing source|reading blob|loading index|unpacking (?:the )?(?:archive|tarball)"),
     ("connect", "pinging container registry|getting bearer token"),
+)
+COPY_REASONS = (
+    ("source_policy", r"source image rejected|signature verification failed"),
+    ("archive_invalid", r"archive/tar:|invalid tar header|unsupported tar"),
+    ("manifest_invalid", r"\b(?:manifest[ _]invalid|manifest_blob_unknown)\b"),
+    ("digest_mismatch", r"digest (?:verification failed|mismatch|invalid)"),
+    ("blob_unknown", r"\bblob[ _]unknown\b"),
+    ("reference_invalid", r"invalid reference format|TAG_INVALID|NAME_INVALID"),
+    ("insufficient_space", r"no space left on device|disk quota exceeded"),
+    ("permission_denied", r"permission denied|operation not permitted"),
+    ("input_missing", r"no such file or directory"),
+    ("transport_incomplete", r"unexpected EOF|connection reset by peer|broken pipe"),
+    ("transport_timeout", r"i/o timeout|TLS handshake timeout|context deadline exceeded"),
+)
+COPY_MILESTONES = (
+    ("manifest", rb"Writing manifest to image destination"),
+    ("config", rb"Copying config sha256:[0-9a-f]{64}"),
+    ("layers", rb"Copying blob sha256:[0-9a-f]{64}"),
+    ("signatures", rb"Getting image source signatures"),
 )
 
 
 class ImageCommandRefusal(Refusal):
-    def __init__(self, args, stderr):
+    def __init__(self, args, stderr, *, stdout=b"", returncode=1):
         # Match only diagnostic tokens; never interpolate remote text or argv.
         registry = len(args) > 1 and args[0] == "skopeo" and args[1] in {"login", "copy", "inspect"}
         diagnostic = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else ""
@@ -67,7 +87,13 @@ class ImageCommandRefusal(Refusal):
             phase = next((name for name, pattern in COPY_PHASES
                           if re.search(pattern, diagnostic, re.IGNORECASE)), "unknown")
             http_status = statuses[0] if statuses and len(set(statuses)) == 1 else "unknown"
-            self.copy_failure = phase, http_status
+            reason = next((name for name, pattern in COPY_REASONS
+                           if re.search(pattern, diagnostic, re.IGNORECASE)),
+                          "terminated_by_signal" if returncode < 0 else "unknown")
+            lines = stdout.splitlines()
+            milestone = next((name for name, pattern in COPY_MILESTONES
+                              if any(re.fullmatch(pattern, line) for line in lines)), "none")
+            self.copy_failure = phase, http_status, reason, milestone
         super().__init__("Image operation failed; captured output is private")
 
 
@@ -158,9 +184,10 @@ def run_publication(operation, *, on_superseded=None, component=None, outcome=No
         report("publication", reason, subject="publication", stage=stage, site=diagnostics.site,
                component=component)
         if diagnostics.web_copy_failure is not None:
-            role, phase, http_status, version = diagnostics.web_copy_failure
+            role, phase, http_status, reason, milestone, version = diagnostics.web_copy_failure
             print(f"Web registry copy failed image_role={role} skopeo_phase={phase} "
-                  f"skopeo_version={version} http_status={http_status}", flush=True)
+                  f"skopeo_version={version} http_status={http_status} "
+                  f"skopeo_reason={reason} skopeo_milestone={milestone}", flush=True)
         if diagnostics.scan_evidence is not None:
             print("SCAN_EVIDENCE " + json.dumps(diagnostics.scan_evidence, sort_keys=True))
     return status
