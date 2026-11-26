@@ -120,6 +120,21 @@ impl<'session> TransactionScope<'session> {
         crate::store::budget::settle_runtime_loss(store, current, change, at, self.session).await
     }
 
+    pub(in crate::store) async fn settle_owner_stop_budget(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        current: &layer2_core::sandbox::Agent,
+        at: &str,
+    ) -> Result<(), TransactionLogError> {
+        use crate::store::agent_conversation_store::ApplyError;
+        crate::store::budget::settle_owner_stop(store, current, at, self.session)
+            .await
+            .map_err(|error| match error {
+                ApplyError::Driver(error) => TransactionLogError::Driver(error),
+                ApplyError::Domain(error) => TransactionLogError::Domain(error),
+            })
+    }
+
     /// Release consumes the scope. The caller may commit/abort and do normal
     /// outcome reconciliation; a later transaction requires a new scope/stamp.
     pub(in crate::store) fn release(self) -> &'session mut ClientSession {
