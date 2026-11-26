@@ -1,8 +1,47 @@
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual as equal} from 'node:util';
-import {assertOracle, assertResponse, check, hash, other, poll, terminal} from '../cma/core.mjs';
+import {assertOracle, assertOwner, assertResponse, check, hash, id, other, poll, terminal} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 import {requestPacer} from '../pacing.mjs';
+
+export async function verifyRecoveredReceipt({api, adapter, agentId, owner, turn, completed}) {
+  const ingress = other(owner.am);
+  const {commandId, responseId} = turn.stream;
+  check(id(commandId) && id(responseId), 'recovered_original_receipt_unbound');
+  const commandPath = '/api/v2/commands/' + commandId;
+  const responsePath = '/api/v2/responses/' + responseId;
+  const read = async (am, path) => (await api.rawRequest(am, 'GET', path)).body;
+  const command = await read(owner.am, commandPath);
+  check(command?.status === 'completed' && command.failure === null && command.receipt?.agent_id === agentId
+    && command.receipt.command_id === commandId && command.receipt.response_id === responseId,
+  'recovered_command_receipt_unbound');
+  const replay = await api.send(ingress, agentId, turn.input, turn.caseId);
+  try {
+    await replay.done;
+    check(replay.ingress_am === ingress && replay.commandId === commandId && replay.responseId === responseId
+      && replay.error === null && replay.events.filter(event => event.type === 'response.completed').length === 1,
+    'recovered_admission_replay_changed');
+    const refused = await api.request(ingress, 'POST', `/api/v2/agents/${agentId}/responses`, {
+      body: {input: turn.input + ' Changed.', stream: true}, key: turn.caseId, allowed: [409], direct: true,
+    });
+    check(refused.body?.code === 'idempotency_key_reused', 'recovered_admission_changed_intent_untyped');
+    for (const am of [ingress, owner.am]) {
+      check(equal(await read(am, commandPath), command), 'recovered_command_changed_after_replay');
+      check(equal(await read(am, responsePath), completed), 'recovered_response_changed_after_replay');
+    }
+    const current = assertOwner(await adapter.ownerOf({agentId}), agentId);
+    check(current.am === owner.am && current.epoch === owner.epoch && current.pod_uid === owner.pod_uid,
+      'recovered_admission_owner_changed');
+    assertOracle(await adapter.oracle({caseId: turn.caseId}), turn.caseId, 1);
+    const request = replay.timing?.request_id;
+    check(typeof request === 'string' && request.trim().length > 0 && request !== turn.stream.timing?.request_id,
+      'recovered_replay_request_identity_unbound');
+    return {ingress, command_sha256: hash(commandId), request_sha256: hash(request)};
+  } finally {
+    replay.abort();
+    await replay.done;
+  }
+}
 
 export async function sharedIngressReceipt({api, adapter, record, recordState, recordFailure}) {
   const {agentId} = record;

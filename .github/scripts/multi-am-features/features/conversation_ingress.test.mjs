@@ -4,7 +4,59 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {API} from '../cma/core.mjs';
 import {requestPacer} from '../pacing.mjs';
-import {sharedIngressReceipt} from './conversation_ingress.mjs';
+import {sharedIngressReceipt, verifyRecoveredReceipt} from './conversation_ingress.mjs';
+
+function recovered({replayedCommand = 'fixture-command', epoch = 3, effects = 1} = {}) {
+  const agentId = 'fixture-agent', commandId = 'fixture-command', responseId = 'fixture-response';
+  const owner = {am: 'b', epoch: 3, pod_uid: 'surviving-pod', agent_id: agentId};
+  const turn = {caseId: 'fixture-case', input: 'synthetic message',
+    stream: {commandId, responseId, timing: {request_id: 'original-request'}}};
+  const completed = {id: responseId, conversation: {id: agentId}, status: 'completed'};
+  const command = {status: 'completed', failure: null,
+    receipt: {agent_id: agentId, command_id: commandId, response_id: responseId}};
+  const read = [], closed = [];
+  const api = {
+    rawRequest: async (am, method, route) => {
+      assert.equal(method, 'GET');
+      read.push(am);
+      return {body: route.endsWith(commandId) ? command : completed};
+    },
+    send: async (am, agent, input, key) => {
+      assert.deepEqual([am, agent, input, key], ['a', agentId, turn.input, turn.caseId]);
+      return {ingress_am: am, commandId: replayedCommand, responseId, error: null,
+        events: [{type: 'response.completed'}], timing: {request_id: 'replay-request'},
+        done: Promise.resolve(), abort: () => closed.push(am)};
+    },
+    request: async (am, method, route, options) => {
+      assert.deepEqual([am, method, route, options.key], ['a', 'POST', `/api/v2/agents/${agentId}/responses`, turn.caseId]);
+      assert.deepEqual(options.allowed, [409]);
+      assert.equal(options.direct, true);
+      assert.equal(options.body.input, turn.input + ' Changed.');
+      return {body: {code: 'idempotency_key_reused'}};
+    },
+  };
+  const adapter = {ownerOf: async () => ({...owner, epoch}), oracle: async ({caseId}) => ({
+    case_id: caseId, request_count: effects, completed_effect_count: effects, active_streams: 0})};
+  return {api, adapter, agentId, owner, turn, completed, read, closed};
+}
+
+test('the restarted ingress replays the exact settled command without taking ownership', async () => {
+  const context = recovered();
+  const proof = await verifyRecoveredReceipt(context);
+  assert.equal(proof.ingress, 'a');
+  assert.match(proof.command_sha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(context.read, ['b', 'a', 'a', 'b', 'b']);
+  assert.deepEqual(context.closed, ['a']);
+});
+
+test('recovery replay fails on a second command, another owner epoch or a second native effect', async () => {
+  for (const [options, error] of [[{replayedCommand: 'foreign'}, /recovered_admission_replay_changed/],
+    [{epoch: 4}, /recovered_admission_owner_changed/], [{effects: 2}, /provider_request_count_mismatch/]]) {
+    const context = recovered(options);
+    await assert.rejects(verifyRecoveredReceipt(context), error);
+    assert.deepEqual(context.closed, ['a']);
+  }
+});
 
 async function fixture(t, {wrongRun = false, wrongReplay = false} = {}) {
   t.mock.method(requestPacer, 'wait', async () => {});

@@ -5,6 +5,7 @@ import {randomUUID} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
 import {API, check, hash, id, normalizeConfig, runtimeBindings, assertRuntimeBindings, poll, other, assertOwner, assertRecovery, assertResponse, assertOracle, observeServingDuringRestart, observeTwoAmServingHold, awaitInitialIdle, wait, terminal, lineage, safeError} from './core.mjs';
 import {NonOwnerRouter} from '../routing.mjs';
+import {verifyRecoveredReceipt} from '../features/conversation_ingress.mjs';
 import {desktopFrame, closeDesktop} from './desktop.mjs';
 import {cleanupFixture} from './cleanup.mjs';
 import {drainOwnerCase, neverReadyManagerCase, scaleManagerCase} from '../features/readiness.mjs';
@@ -162,7 +163,8 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     const caseId = 'ws4-' + kind + '-' + randomUUID(); const marker = 'WS4_' + randomUUID().replaceAll('-', '');
     await retainTurn('case_preparing', {case_id:caseId, kind, am, agent_id:record.agentId});
     await adapter.prepareTurn({caseId, kind, marker}); turns.push(caseId);
-    const stream = await api.send(am, record.agentId, 'Return the exact marker ' + marker + ' without tools or file changes.', caseId);
+    const input = 'Return the exact marker ' + marker + ' without tools or file changes.';
+    const stream = await api.send(am, record.agentId, input, caseId);
     await retainTurn('send_receipt', {case_id:caseId, response_id:stream.responseId});
     const path = `/api/v2/agents/${record.agentId}/responses/${stream.responseId}/controls`;
     const controls = await poll(async () => {
@@ -174,7 +176,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       check(value.case_id === caseId && value.request_count <= 1, 'provider_duplicate_or_case_mismatch');
       return value.request_count === 1 && value.active_streams === 1 && value.completed_effect_count === 0;
     }, {timeout: 60000, code: 'runtime_provider_request_missing'});
-    return {caseId, marker, stream, controls, path};
+    return {caseId, marker, input, stream, controls, path};
   }
   async function readResponse(am, record, responseId) {
     const {body} = await api.request(am, 'GET', `/api/v2/responses/${responseId}`); return assertResponse(body, record.agentId, responseId);
@@ -238,7 +240,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     assertRecovery(before, after, record.agentId);
     const held = await observeOracle(turn.caseId);
     check(held.request_count === 1 && held.completed_effect_count === 0 && held.active_streams === 1, 'runtime_turn_not_preserved');
-    await settleReply(record, survivor, turn);
+    const completed = await settleReply(record, survivor, turn);
     // Keep useful public reads on the surviving AM while its peer starts.
     // A successful restore alone cannot establish this concurrent-serving leg.
     const serving = await observeServingDuringRestart(restoreKilledAm, async () => {
@@ -247,7 +249,6 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       const transcript = await api.request(survivor, 'GET', `/api/v1/agents/${record.agentId}/transcript`);
       check(transcript.body && typeof transcript.body === 'object', 'survivor_transcript_missing_during_peer_startup');
     });
-    api.routingEnabled = true;
     const restoredTopology = await adapter.topology();
     assertRuntimeBindings(runtimes, restoredTopology);
     check(restoredTopology.ams[before.am].ready === true
@@ -257,10 +258,12 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     result.am_restart_while_peer_serves = {verdict:'PASS', restarted_am:before.am, serving_am:survivor,
       successful_detail_and_transcript_pairs:serving.servingSamples, elapsed_ms:serving.elapsed_ms,
       restored_pod_uid_sha256:hash(restoredTopology.ams[before.am].pod_uid), api_image:config.expected_api_image};
+    const replay = await verifyRecoveredReceipt({api, adapter, agentId: record.agentId, owner: after, turn, completed});
+    api.routingEnabled = true;
     await openBoth(record);
     return {killed_am: before.am, recovered_am: after.am, owner_epoch_before: before.epoch, owner_epoch_after: after.epoch,
       owner_container_exit_observed: true, response_sha256: hash(turn.stream.responseId), provider_requests: 1, provider_completions: 1,
-      unchanged_agent_and_response: true, second_am_restored: true};
+      unchanged_agent_and_response: true, second_am_restored: true, replay};
   }
   const cleanup = record => cleanupFixture({record, config, api, killedAm, result});
   async function desktop(record) {
@@ -333,6 +336,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       const oracle = await poll(() => observeOracle(turn.caseId), value => value.active_streams === 0,
         {timeout: 20000, code: 'retained_provider_did_not_settle'});
       assertOracle(oracle, turn.caseId, 1);
+      return response;
     } finally {
       turn.stream.abort();
       await turn.stream.done;
