@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { SandboxRuntimeUpdate as Update } from '../api/types';
+import type { SandboxDetail, SandboxRuntimeUpdate as Update } from '../api/types';
 import { agentClient } from '../test/agent';
 import { SandboxRuntimeUpdate } from './SandboxRuntimeUpdate';
 
@@ -17,7 +17,7 @@ const update: Update = {
   schedule: { timezone: 'Asia/Singapore', localTime: '02:00' },
 };
 
-function view(runtimeUpdate: Update, status: 'active' | 'retired' = 'active', stale = false) {
+function view(runtimeUpdate: Update, status: SandboxDetail['status'] = 'active', stale = false) {
   return render(
     <SandboxRuntimeUpdate
       client={agentClient()}
@@ -97,6 +97,32 @@ it('uses the observed older version for the managed Desktop update', () => {
   expect(screen.getByText('Runtime update available')).toBeVisible();
   expect(screen.getByText('registry.example/runtime:older')).toBeVisible();
   expect(screen.getByText('Managed Agent')).toBeVisible();
+});
+
+it.each(['managed_desktop', 'managed_machine'] as const)(
+  'recognizes a confirmed current version for a paused %s Sandbox',
+  (imageOrigin) => {
+    view(
+      {
+        ...update,
+        imageOrigin,
+        currentVersion: latestVersion,
+        currentVersionConfirmed: true,
+        preservesHome: true,
+        blockedReason: undefined,
+      },
+      'paused',
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('Runtime up to date');
+  },
+);
+
+it('keeps a paused runtime without confirmation unconfirmed', () => {
+  view(
+    { ...update, currentVersion: latestVersion, preservesHome: true, blockedReason: undefined },
+    'paused',
+  );
+  expect(screen.getByRole('status')).toHaveTextContent('Runtime version unconfirmed');
 });
 
 it.each([null, 'registry.example/runtime:last-seen'])(

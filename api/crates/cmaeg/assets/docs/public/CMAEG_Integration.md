@@ -98,8 +98,11 @@ capture interval, retention coverage, and no observed gaps. `legacy_partial`,
 coverage. An unreadable row advances the cursor without hiding the gap. Receipts
 already evicted by the recent view cannot be recovered. The history retention
 setting defaults to 7 rolling days; inspect `coverage.retained_from` rather than
-assuming a delayed weekly report is available. Export before the oldest receipt
-expires; the seven-day default cannot cover a combined two-week report.
+assuming a delayed weekly report is available. For a weekly schedule, configure
+enough history retention to cover the seven-day reporting range plus the time
+needed to start and finish the export. For example, eight days of retention
+allows up to one day for that delay. Check coverage on every page because
+receipts can reach the retention cutoff while the export is running.
 
 Each item has `history_event_id`, `activity`, detail coverage flags, and an optional
 `detail_cursor`. For a large summary, `activity` contains the small ingress receipt;

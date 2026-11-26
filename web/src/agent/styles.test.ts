@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 
 function sheet(name: string): CSSRuleList {
   const element = document.createElement('style');
@@ -51,12 +51,34 @@ describe('conversation geometry with readable labels', () => {
     expect(
       declaration(rules, '.agent-composer textarea::placeholder').getPropertyValue('color'),
     ).toBe('var(--dsw-alias-label-caption)');
+    const stopScope = "'stop-scope stop-scope stop-scope stop-scope'";
+    const settingsPanel = "'settings-panel settings-panel settings-panel settings-panel'";
+    const status = "'status status status status'";
     expect(
       declaration(rules, '.agent-composer__controls')
         .getPropertyValue('grid-template-areas')
         .replace(/\s+/g, ' '),
+    ).toBe([stopScope, "'attach steering settings send'", settingsPanel, status].join(' '));
+
+    const narrow = Array.from(rules)
+      .filter((rule) => rule instanceof CSSContainerRule)
+      .find((rule) => rule.conditionText === 'agent-conversation (max-width: 30rem)');
+    assert.isDefined(narrow, 'narrow conversation container rule');
+    expect(
+      declaration(narrow.cssRules, '.agent-composer__controls')
+        .getPropertyValue('grid-template-areas')
+        .replace(/\s+/g, ' '),
     ).toBe(
-      "'attach steering settings send' 'settings-panel settings-panel settings-panel settings-panel' 'status status status status'",
+      [
+        "'settings settings settings settings'",
+        stopScope,
+        "'attach steering . send'",
+        settingsPanel,
+        status,
+      ].join(' '),
+    );
+    expect(declaration(rules, '.agent-composer__stop-scope').getPropertyValue('grid-area')).toBe(
+      'stop-scope',
     );
   });
 

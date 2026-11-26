@@ -9,6 +9,8 @@ pub(crate) const COLLECTION: &str = "cma_document_artifacts";
 #[derive(Clone)]
 pub struct MongoDocumentStore {
     pub(super) rows: Collection<Document>,
+    generation_writes: bool,
+    storage_namespace: Option<String>,
     source_commits: bool,
 }
 impl MongoDocumentStore {
@@ -21,6 +23,8 @@ impl MongoDocumentStore {
             enabled,
         )
         .with_required_baseline(self.source_commits)
+        .with_generation_writes(self.generation_writes)
+        .with_storage_namespace(self.storage_namespace.clone())
     }
     pub(crate) fn with_source_commits(&self, enabled: bool) -> Self {
         Self {
@@ -28,9 +32,22 @@ impl MongoDocumentStore {
             ..self.clone()
         }
     }
+    pub(crate) fn with_generation_writes(mut self, enabled: bool) -> Self {
+        self.generation_writes = enabled;
+        self
+    }
+    pub(crate) fn with_storage_namespace(mut self, namespace: Option<String>) -> Self {
+        self.storage_namespace = namespace;
+        self
+    }
+    pub(super) fn configured_namespace(&self) -> Option<&str> {
+        self.storage_namespace.as_deref()
+    }
     pub fn new(database: Database) -> Self {
         Self {
             source_commits: false,
+            generation_writes: false,
+            storage_namespace: None,
             rows: database.collection_with_options(
                 COLLECTION,
                 mongodb::options::CollectionOptions::builder()
@@ -43,6 +60,7 @@ impl MongoDocumentStore {
     pub async fn ensure_indexes(&self) -> Result<(), DocumentError> {
         for keys in [
             doc! {"owner_subject": 1, "_id": 1},
+            doc! {"audit_owner_subject": 1, "_id": 1},
             doc! {"recipient_subjects": 1, "_id": 1},
         ] {
             self.rows
@@ -61,7 +79,23 @@ impl DocumentStore for MongoDocumentStore {
             .find_one(doc! {"_id": id})
             .await
             .map_err(|_| DocumentError::Unavailable)?;
-        value.as_ref().map(decode).transpose()
+        match value.as_ref() {
+            Some(value) if super::deletion::decode(value)?.is_some() => Ok(None),
+            _ => value.as_ref().map(decode).transpose(),
+        }
+    }
+    async fn tombstone(&self, id: &str) -> Result<Option<DocumentTombstone>, DocumentError> {
+        super::deletion::tombstone(self, id).await
+    }
+    async fn delete(
+        &self,
+        owner: &str,
+        tombstone: &DocumentTombstone,
+    ) -> Result<bool, DocumentError> {
+        if !self.source_commits {
+            return Err(DocumentError::Unavailable);
+        }
+        super::deletion::delete(self, owner, tombstone).await
     }
     async fn insert(&self, record: &StoredDocument) -> Result<bool, DocumentError> {
         match self.rows.insert_one(encode(record)?).await {
@@ -79,9 +113,9 @@ impl DocumentStore for MongoDocumentStore {
     async fn insert_source(
         &self,
         record: &StoredDocument,
-        source: &DocumentSourceReservation,
+        source: &DocumentSourceWrite,
     ) -> Result<bool, DocumentError> {
-        if !self.source_commits {
+        if !self.source_commits && source.fence.is_none() {
             return self.insert(record).await;
         }
         super::source_commit::publish(self, record, source, None).await
@@ -122,10 +156,10 @@ impl DocumentStore for MongoDocumentStore {
         &self,
         expected: u64,
         record: &StoredDocument,
-        source: &DocumentSourceReservation,
+        source: &DocumentSourceWrite,
         receipt_key: &str,
     ) -> Result<bool, DocumentError> {
-        if !self.source_commits {
+        if !self.source_commits && source.fence.is_none() {
             return self.compare_exchange(expected, record).await;
         }
         super::source_commit::publish(self, record, source, Some((expected, receipt_key))).await
