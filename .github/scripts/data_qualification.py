@@ -13,7 +13,7 @@ import sys
 
 from data_qualification_cases import check_key_recovery, check_quota, validate_inventory
 from data_qualification_privacy import check_consent, check_deletion, check_export
-from release_candidate_evidence import fields, hash_value, timestamp
+from release_candidate_evidence import has_exact_fields, hash_value, timestamp
 from release_candidate_packet import EvidenceFiles, decode, digest, outside_checkout, read_file, source_value
 from staging_cd_common import matches, require
 from staging_cd_receipts import canonical, sha256
@@ -29,12 +29,11 @@ SGT = timezone(timedelta(hours=8))
 
 
 def validate_candidate(value):
-    fields(value, {"source", "images", "configuration_sha256", "flags_sha256", "environment_sha256"},
-           "Candidate identity is malformed")
+    require(has_exact_fields(value, {"source", "images", "configuration_sha256", "flags_sha256", "environment_sha256"}), "Candidate identity is malformed")
     require(source_value(value["source"]) and
             all(hash_value(value[key]) for key in ("configuration_sha256", "flags_sha256", "environment_sha256")),
             "Candidate identity is malformed")
-    fields(value["images"], TARGETS, "Candidate image inventory differs")
+    require(has_exact_fields(value["images"], TARGETS), "Candidate image inventory differs")
     require(all(matches(r"sha256:[0-9a-f]{64}", image) for image in value["images"].values()),
             "Candidate image digest is malformed")
 
@@ -47,9 +46,9 @@ def reviewed_windows(scope):
     phase = scope["phase"]
     require(phase in ("initial", "frozen_recheck"), "Qualification phase differs")
     cutoffs = CUTOFFS if phase == "initial" else RECHECK_CUTOFFS
-    fields(scope["windows"], cutoffs, "Reviewed case windows differ")
+    require(has_exact_fields(scope["windows"], cutoffs), "Reviewed case windows differ")
     for case, window in scope["windows"].items():
-        fields(window, {"start", "end", "inputs"}, "Reviewed case window is malformed")
+        require(has_exact_fields(window, {"start", "end", "inputs"}), "Reviewed case window is malformed")
         require(isinstance(window["inputs"], dict) and bool(window["inputs"]), "Reviewed inputs are missing")
         start, end = timestamp(window["start"]), timestamp(window["end"])
         require(start < end <= deadline(cutoffs[case]), "Reviewed case window is late or invalid")
@@ -61,31 +60,31 @@ def reviewed_windows(scope):
 
 class Observations:
     def __init__(self, scope, index, files):
-        fields(index, {"schema", "scope_sha256", "cases", "initial_report"}, "Observation index is malformed")
+        require(has_exact_fields(index, {"schema", "scope_sha256", "cases", "initial_report"}), "Observation index is malformed")
         require(index["schema"] == "cma-data-observations-v1", "Observation schema differs")
-        fields(index["cases"], scope["windows"], "Reviewed case observations are required")
+        require(has_exact_fields(index["cases"], scope["windows"]), "Reviewed case observations are required")
         self.scope, self.index, self.files = scope, index, files
         self.seen_runs, self.seen_hashes = set(), set()
         self.results = {}
 
     def case(self, case, expected):
         refs = self.index["cases"][case]
-        fields(refs, expected, "Observed case inventory differs from reviewed denominator")
+        require(has_exact_fields(refs, expected), "Observed case inventory differs from reviewed denominator")
         inputs = self.scope["windows"][case]["inputs"]
-        fields(inputs, expected, "Reviewed inputs differ from case inventory")
+        require(has_exact_fields(inputs, expected), "Reviewed inputs differ from case inventory")
         result = {}
         for name, reference in refs.items():
             row = self.files.json(reference)
-            fields(row, {"case", "id", "candidate_sha256", "configuration_sha256", "flags_sha256",
+            require(has_exact_fields(row, {"case", "id", "candidate_sha256", "configuration_sha256", "flags_sha256",
                          "environment_sha256", "run_id", "input_sha256", "seed_sha256", "started_at", "finished_at", "samples",
-                         "attempt", "cancelled", "status", "mode", "data"}, "Case receipt is malformed")
+                         "attempt", "cancelled", "status", "mode", "data"}), "Case receipt is malformed")
             require(row["case"] == case and row["id"] == name
                     and row["candidate_sha256"] == sha256(self.scope["candidate"])
                     and all(row[key] == self.scope["candidate"][key]
                             for key in ("configuration_sha256", "flags_sha256", "environment_sha256")),
                     "Case receipt belongs to another candidate")
             definition = inputs[name]
-            fields(definition, {"input_sha256", "seed_sha256"}, "Reviewed execution input is malformed")
+            require(has_exact_fields(definition, {"input_sha256", "seed_sha256"}), "Reviewed execution input is malformed")
             require(all(hash_value(definition[key]) and row[key] == definition[key] for key in definition),
                     "Execution input or random seed differs")
             require(hash_value(row["run_id"]) and row["run_id"] not in self.seen_runs
@@ -110,8 +109,8 @@ def verify(scope_bytes, expected_scope_hash, index, files):
     require(hash_value(expected_scope_hash) and digest(scope_bytes) == expected_scope_hash,
             "Scope differs from the independently supplied hash")
     scope = decode(scope_bytes)
-    fields(scope, {"schema", "mode", "candidate", "policy", "inventory", "phase", "windows",
-                   "frozen_at", "initial_report_sha256"}, "Reviewed SU-DATA scope is malformed")
+    require(has_exact_fields(scope, {"schema", "mode", "candidate", "policy", "inventory", "phase", "windows",
+                   "frozen_at", "initial_report_sha256"}), "Reviewed SU-DATA scope is malformed")
     require(scope["schema"] == "cma-data-scope-v1" and scope["mode"] in ("synthetic", "isolated-staging"),
             "Reviewed SU-DATA scope is malformed")
     validate_candidate(scope["candidate"])
