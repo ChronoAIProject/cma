@@ -22,6 +22,7 @@ function verify(workflow, suite) {
     step?.includes(invocation),
     "Web must execute the LOCAL Agent v2 config",
   );
+  assert.match(step, /^\s*timeout-minutes: 8$/m);
   assert.doesNotMatch(step, /--grep|--project|--shard|continue-on-error|\|\|/);
   assert.match(
     workflow,

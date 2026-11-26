@@ -26,9 +26,8 @@ import {
   sameDeletionRequest,
 } from './deletionRecovery';
 import { Modal } from './ui/Modal';
-import { Button } from './ui/Button';
 import { DeletionConfirmation } from './DeletionConfirmation';
-import { DeletionStatusPanel } from './DeletionStatusPanel';
+import { DeletionStatusActions, DeletionStatusPanel } from './DeletionStatusPanel';
 import { transitionRefreshDelay } from './sandbox/lifecycle';
 import { readableError } from './vocabulary/errors';
 export function DeletionDialog({
@@ -472,28 +471,17 @@ export function DeletionDialog({
       dismissible={!sending}
       onClose={close}
       footer={
-        <>
-          <Button disabled={sending} onClick={close}>
-            {complete ? 'Done' : 'Close'}
-          </Button>
-          {!request.accepted && !complete ? (
-            <Button
-              variant="primary"
-              disabled={sending || blockedBeforeDelete(request) || !enabled}
-              onClick={() => void submit()}
-            >
-              {request.stop?.phase === 'requested' && !deleteMayHaveBeenSent(request)
-                ? 'Retry stop request'
-                : 'Check request'}
-            </Button>
-          ) : null}
-          {request.stop?.phase === 'blocked' && !request.accepted && !complete ? (
-            <Button onClick={abandon}>End this request</Button>
-          ) : null}
-          {(readError !== undefined || observation?.retirementFailed) && !complete ? (
-            <Button onClick={() => setRevision((value) => value + 1)}>Refresh status</Button>
-          ) : null}
-        </>
+        <DeletionStatusActions
+          request={request}
+          complete={complete}
+          sending={sending}
+          enabled={enabled}
+          canRefresh={readError !== undefined || observation?.retirementFailed === true}
+          onClose={close}
+          onRetry={() => void submit()}
+          onAbandon={abandon}
+          onRefresh={() => setRevision((value) => value + 1)}
+        />
       }
     >
       <DeletionStatusPanel

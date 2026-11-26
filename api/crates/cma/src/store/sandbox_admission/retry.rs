@@ -1,4 +1,6 @@
 //! Prepared health probes may briefly own capacity; no transaction waits for them.
+use crate::store::sandbox_events::read_event;
+use crate::store::sandboxes::read_sandbox;
 use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::time::Duration;
 
@@ -219,4 +221,53 @@ impl MongoSandboxStore {
         }
         self.warmup_changed.notify_one();
     }
+}
+
+async fn reconcile(
+    store: &MongoSandboxStore,
+    admission: &SandboxAdmission,
+    receipt: &AdmissionReceipt,
+) -> Result<Option<SandboxAdmissionResult>, SandboxStoreError> {
+    if let Some(current) = durable_replay(store, admission).await? {
+        return match receipt {
+            AdmissionReceipt::Created { sandbox, event, .. } if current.id == sandbox.id => {
+                let stored_event = store
+                    .sandbox_events
+                    .find_one(doc! { "_id": format!("{}:{:020}", event.sandbox_id, 1) })
+                    .await
+                    .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+                    .as_ref()
+                    .map(read_event)
+                    .transpose()?;
+                Ok((stored_event.as_ref() == Some(event))
+                    .then_some(SandboxAdmissionResult::Created(current)))
+            }
+            AdmissionReceipt::Created { .. } | AdmissionReceipt::Existing(_) => {
+                Ok(Some(SandboxAdmissionResult::Existing(current)))
+            }
+        };
+    }
+    let AdmissionReceipt::Created { sandbox, event, .. } = receipt else {
+        return Ok(None);
+    };
+    let stored_sandbox = store
+        .sandboxes
+        .find_one(doc! { "_id": sandbox.id.as_str() })
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        .as_ref()
+        .map(read_sandbox)
+        .transpose()?;
+    let stored_event = store
+        .sandbox_events
+        .find_one(doc! { "_id": format!("{}:{:020}", event.sandbox_id, 1) })
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        .as_ref()
+        .map(read_event)
+        .transpose()?;
+    Ok(
+        (stored_sandbox.as_ref() == Some(sandbox) && stored_event.as_ref() == Some(event))
+            .then(|| SandboxAdmissionResult::Created(sandbox.clone())),
+    )
 }
