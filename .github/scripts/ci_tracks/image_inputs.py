@@ -169,12 +169,12 @@ def changed_images(paths, snapshots):
     return changed_input_maps(paths, summaries)
 
 
-def changed_input_maps(paths, summaries):
+def changed_input_maps(paths, summaries, *, read_runtime_recipes=None):
     changed = set(paths)
     selected = {name for inputs, _ in summaries for name, files in inputs.items() if changed & files}
     before, after = summaries[0][1], summaries[-1][1]
     selected.update(name for name in NAMES if before[name] != after[name])
     # A lane is selected only by its own inputs. A publisher repair no longer
     # rebuilds current lanes; allocation retries any lane left behind.
-    selected.update(contract_images(changed))
+    selected.update(contract_images(changed, read_runtime_recipes))
     return sorted(selected)

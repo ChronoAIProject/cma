@@ -5,7 +5,7 @@ import unittest
 
 import batch_selection
 from image_inputs import changed_input_maps
-from publication_inputs import CONTRACT_FILES, CONTRACT_IMAGES
+from publication_inputs import CONTRACT_FILES, CONTRACT_IMAGES, RECIPE
 from selection_cache import SelectionCache
 import selection
 import test_batch_selection
@@ -93,6 +93,41 @@ class PublicationHistoryTests(unittest.TestCase):
     pin_recipes = test_batch_selection.BatchTests.pin_recipes
     git = test_batch_selection.BatchTests.git
     commit = test_batch_selection.BatchTests.commit
+
+    def test_runtime_packaging_changes_do_not_force_an_am_publication(self):
+        seed = (self.root / RECIPE).read_text()
+        labels = ('LABEL dev.chrono.cma.runtime-contract=3 '
+                  'dev.chrono.cma.runtime-bootstrap=1 dev.chrono.cma.home-layout=2\n')
+        self.write('.dockerignore', RECIPE + '\n')
+        self.write(RECIPE, seed + labels + 'ARG DEBIAN_SNAPSHOT=old\n')
+        self.pin_recipes()
+        baseline = self.commit()
+
+        recipe = seed + labels + 'ARG DEBIAN_SNAPSHOT=new\n'
+        self.write(RECIPE, recipe)
+        self.pin_recipes()
+        packaging = self.commit()
+        self.write(RECIPE, recipe.replace('runtime-contract=3', 'runtime-contract=4'))
+        self.pin_recipes()
+        transition = self.commit()
+        self.write(RECIPE, recipe + 'LABEL dev.chrono.cma.runtime-contract=5\n')
+        self.pin_recipes()
+        ambiguous = self.commit()
+
+        revisions = [packaging, transition, ambiguous]
+        expected = [sorted(CONTRACT_IMAGES - {'cma-agent-manager'}),
+                    sorted(CONTRACT_IMAGES), sorted(CONTRACT_IMAGES)]
+        cache = SelectionCache(self.root / 'cache', 'e' * 64)
+        batch = batch_selection.determine_many(self.root, revisions, cache)
+        for head, actual, deployables in zip(revisions, batch, expected):
+            push = selection.determine(self.root, {'after': head}, 'push')
+            event = {'pull_request': {'base': {'sha': baseline}, 'head': {'sha': head}}}
+            pull = selection.determine(self.root, event, 'pull_request')
+            self.assertEqual(push, actual)
+            self.assertEqual(pull['deployables'], deployables)
+            self.assertEqual(actual['deployables'], deployables)
+            baseline = head
+        self.assertEqual(batch_selection.determine_many(self.root, revisions, cache), batch)
 
     def test_add_rename_delete_policy_agrees_for_pr_push_batch_and_warm_cache(self):
         base = self.third
