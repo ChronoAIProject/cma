@@ -16,7 +16,8 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 OWNER = 'native-am-fixture-owner'
 ORGANIZATION = {'id': 'fixture-organization', 'your_role': 'member', 'display_name': 'Synthetic organization'}
 SERVICES = [{'id': 'fixture-llm', 'slug': 'chrono-llm-public', 'is_active': True},
-            {'id': 'fixture-ornn', 'slug': 'ornn-api', 'is_active': True}]
+            {'id': 'fixture-ornn', 'slug': 'ornn-api', 'is_active': True},
+            {'id': 'fixture-access', 'slug': 'fixture-access-service', 'is_active': True}]
 PERMISSIONS = ['cma:sandbox:create', 'cma:sandbox:use',
                'cma:sandbox:delete', 'cma:profile:manage', 'cma:bot:manage', 'cma:trigger:publish', 'cma:trigger:launch']
 ADMIN_PERMISSIONS = PERMISSIONS + ['cma:admin:sandboxes', 'cma:admin:events', 'cma:admin:activity', 'cma:admin:users', 'cma:admin:control', 'cma:admin:settings']

@@ -219,6 +219,8 @@ try {
             () => organizationShare({...caseContext, user, outsider}));
           await caseContext.runCase('writer.agent_access_request_denial',
             () => accessRequest({...caseContext, user, outsider}));
+          await caseContext.runCase('writer.agent_access_request_approval',
+            () => accessRequest({...caseContext, user, outsider}, true));
         }
         await userCases(caseContext);
         if (iteration === 1) {
