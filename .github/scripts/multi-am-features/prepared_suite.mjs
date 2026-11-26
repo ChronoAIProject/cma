@@ -29,14 +29,19 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         durable.installation_bound === true && durable.agent_ready === true && !consumed.has(record.sandboxId),
       'prepared_admission_consumption_not_observed');
       consumed.add(record.sandboxId);
-      check(durable.schemas?.length === 3 && durable.schemas.every(version =>
-        Number.isSafeInteger(version) && version > 0), 'prepared_parent_schemas_unbound');
+      const [sandbox, workspace, worktree] = durable.schemas ?? [];
+      check(durable.schemas?.length === 3 && [1, 3, 4].includes(sandbox) &&
+        [1, 3, 4].includes(workspace) && worktree === 1, 'prepared_parent_schemas_unbound');
+      check(durable.ready_fences?.length === 4 && durable.ready_fences.every(count => count === 1),
+        'prepared_open_ready_atomic_publication_unproven');
       const owner = assertOwner(await adapter.ownerOf({agentId: record.agentId}), record.agentId);
       await openBoth(record);
       await complete(record, other(owner.am));
       await cleanup(record);
       return {ingress, owner: owner.am, owner_epoch: owner.epoch, parent_schema_versions: durable.schemas,
-        prepared_reservation_sha256: hash(record.sandboxId), agent_sha256: hash(record.agentId)};
+        atomic_publication_fence_count: durable.ready_fences.filter(count => count === 1).length,
+        prepared_reservation_sha256: hash(record.sandboxId), agent_sha256: hash(record.agentId),
+        lifecycle_operation_sha256: hash(record.operationId)};
     });
   }
 }
@@ -52,9 +57,9 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
     schema: 'multi-am-prepared-coverage-v1', suite_verdict: verdict, source: config.expected_api_source,
     writer_coverage: coverage,
     steps: journey.steps.map(({name, verdict, elapsed_ms, parent_schema_versions, owner_epoch, ingress, owner,
-      prepared_reservation_sha256, agent_sha256}) => ({
+      atomic_publication_fence_count, prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256}) => ({
       name, verdict, elapsed_ms, parent_schema_versions, owner_epoch, ingress, owner,
-      prepared_reservation_sha256, agent_sha256,
+      atomic_publication_fence_count, prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256,
     })),
   }, null, 2) + '\n', {flag: 'wx', mode: 0o600});
   process.exitCode = verdict === 'PASS' ? 0 : 1;

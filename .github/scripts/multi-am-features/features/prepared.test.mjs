@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {preparedJourney} from '../prepared_suite.mjs';
 
-function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], repeatReservation = false} = {}) {
+function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], repeatReservation = false,
+  schemas = [4, 3, 1], readyFences = [1, 1, 1, 1]} = {}) {
   const actions = [];
   const records = [];
   const create = async (am, desktop, overrides) => {
@@ -19,7 +20,7 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
       assert.equal(agentId, 'fixture-agent');
       assert.equal(operationId, 'fixture-operation');
       return {agent_ready: true, consumed: !sandboxId.startsWith('cold-') && consumed,
-        installation_bound: true, schemas: [3, 4, 2]};
+        installation_bound: true, schemas, ready_fences: readyFences};
     },
     ownerOf: async () => ({agent_id: 'fixture-agent', am: 'b', epoch: 1,
       instance_id: 'fixture-manager', pod_uid: 'fixture-pod'}),
@@ -43,6 +44,21 @@ test('cold comparison and two ingress checks join the exact prepared reservation
     'create-b-cold-b', 'cleanup-cold-b',
     'create-b-candidate-b', 'open-both', 'reply-a', 'cleanup-candidate-b',
   ]);
+  assert.equal(context.results[1].atomic_publication_fence_count, 4);
+  assert.deepEqual(context.results[1].parent_schema_versions, [4, 3, 1]);
+});
+
+test('a Ready Agent cannot stand in for four committed publication fences and supported parents', async () => {
+  for (const readyFences of [[1, 1, 0, 1], [1, 1, 1, 2], [1, 1, 1]]) {
+    const context = fixture({readyFences});
+    await assert.rejects(preparedJourney(context), /prepared_open_ready_atomic_publication_unproven/);
+    assert(!context.actions.includes('open-both'));
+  }
+  for (const schemas of [[4, 3, 3], [4, 8, 1], [4, '3', 1]]) {
+    const context = fixture({schemas});
+    await assert.rejects(preparedJourney(context), /prepared_parent_schemas_unbound/);
+    assert(!context.actions.includes('open-both'));
+  }
 });
 
 test('the two ingresses must consume distinct reservations', async () => {

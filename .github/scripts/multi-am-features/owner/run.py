@@ -340,19 +340,8 @@ class Fixture:
         if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value)
                for value in (agentId, sandboxId, operationId)):
             raise ValueError('prepared_lineage_required')
-        return self.mongo(
-            "const a=d.agents.findOne({_id:" + json.dumps(agentId) + ",sandbox_id:" + json.dumps(sandboxId)
-            + "},{workspace_id:1,worktree_id:1,owner:1,status:1,'record.work.prepared_installation_digest':1});"
-            "const s=a&&d.sandboxes.findOne({_id:" + json.dumps(sandboxId)
-            + "},{document_schema_version:1});"
-            "const p=s&&d.native_prepared_sandboxes.findOne({_id:s._id,kind:'reservation',state:'claimed',"
-            "'record.ownership.owner':a.owner,'record.ownership.operation_id':" + json.dumps(operationId)
-            + "},{_id:1});"
-            "const w=a&&d.workspaces.findOne({_id:a.workspace_id},{document_schema_version:1});"
-            "const t=a&&d.worktrees.findOne({_id:a.worktree_id},{document_schema_version:1});"
-            "print(JSON.stringify({consumed:Boolean(p),agent_ready:a?.status==='ready',"
-            "installation_bound:/^[a-f0-9]{64}$/.test(a?.record?.work?.prepared_installation_digest||''),"
-            "schemas:[s,w,t].map(parent=>Number(parent?.document_schema_version||0))}));")
+        lineage = json.dumps({'agentId': agentId, 'sandboxId': sandboxId, 'operationId': operationId})
+        return self.mongo(f'const lineage = {lineage};\n' + (ROOT / 'prepared_evidence.js').read_text())
 
     def peerWriteEvidence(self, am=None, requestHash=None, epoch=None, operation=None):
         if (am not in ('a', 'b') or not isinstance(requestHash, str)
