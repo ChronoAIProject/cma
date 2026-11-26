@@ -73,6 +73,8 @@ pub enum AgentServiceError {
     CapabilityUnsupported { capability: RuntimeCapability },
     #[error("sandbox runtime does not support Agent restart")]
     RestartRuntimeUnsupported,
+    #[error("the stopped Agent still has an unresolved turn")]
+    RestartTurnUnsettled,
     #[error("agent limit reached: {live} of {limit}")]
     LimitReached { limit: u8, live: u8 },
     #[error("agent creation key is already bound to another request")]
@@ -118,6 +120,7 @@ impl AgentServiceError {
             Self::SandboxNotReady => "sandbox_not_ready",
             Self::CapabilityUnsupported { .. } => "agent_capability_unsupported",
             Self::RestartRuntimeUnsupported => "agent_restart_runtime_unsupported",
+            Self::RestartTurnUnsettled => "agent_restart_turn_unsettled",
             Self::LimitReached { .. } => "agent_limit_reached",
             Self::CreationConflict => "agent_creation_conflict",
             Self::StatusConflict { .. } => "agent_status_conflict",

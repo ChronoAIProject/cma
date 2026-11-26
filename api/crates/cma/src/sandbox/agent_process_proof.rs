@@ -12,6 +12,17 @@ pub(super) enum CloseProofPurpose {
     AdmitRestart,
 }
 
+pub(super) enum CloseProofError {
+    Unproved,
+    Adapter(AdapterError),
+}
+
+impl From<AdapterError> for CloseProofError {
+    fn from(error: AdapterError) -> Self {
+        Self::Adapter(error)
+    }
+}
+
 pub(super) async fn prove_closed(
     adapter: &dyn SandboxAdapter,
     agent: &Agent,
@@ -20,7 +31,7 @@ pub(super) async fn prove_closed(
     worktree: &Worktree,
     runtime: &RuntimeHandle,
     purpose: CloseProofPurpose,
-) -> layer3_adapter::Result<AgentRestartSource> {
+) -> Result<AgentRestartSource, CloseProofError> {
     if sandbox.id != agent.sandbox_id
         || sandbox.owner != agent.owner
         || sandbox.status != SandboxStatus::Active
@@ -37,16 +48,15 @@ pub(super) async fn prove_closed(
     {
         return Err(AdapterError::Rejected(
             "Agent lineage does not permit Close verification".into(),
-        ));
+        )
+        .into());
     }
     let conversation_id = agent
         .conversation
         .conversation_id
         .clone()
-        .ok_or_else(|| AdapterError::Rejected("Agent has no retained conversation".into()))?;
-    let (open, closed, request) = matching_receipts(agent).ok_or_else(|| {
-        AdapterError::Rejected("Agent has no exact completed Open and Close pair".into())
-    })?;
+        .ok_or(CloseProofError::Unproved)?;
+    let (open, closed, request) = matching_receipts(agent).ok_or(CloseProofError::Unproved)?;
     let native = adapter.runtime_recovery().ok_or_else(|| {
         AdapterError::Unsupported("native Agent Close proof is unavailable".into())
     })?;
@@ -60,7 +70,8 @@ pub(super) async fn prove_closed(
     {
         return Err(AdapterError::Rejected(
             "Agent runtime changed before Close verification".into(),
-        ));
+        )
+        .into());
     }
     let identity = match purpose {
         CloseProofPurpose::SettleStop => status.ready_process_identity()?,
@@ -72,7 +83,9 @@ pub(super) async fn prove_closed(
         open_request_sha256: open.request_sha256.clone(),
         worktree_path: worktree.path.clone(),
     };
-    native.prove_agent_process_closed(runtime, &proof).await?;
+    if !native.prove_agent_process_closed(runtime, &proof).await? {
+        return Err(CloseProofError::Unproved);
+    }
     Ok(AgentRestartSource {
         conversation_id,
         predecessor_open: open.clone(),
@@ -149,9 +162,16 @@ impl layer2_core::sandbox::AgentRestartObservation for RestartObservation {
         )
         .await
         .map_err(|error| match error {
-            AdapterError::Unsupported(_) => AgentServiceError::RestartRuntimeUnsupported,
-            AdapterError::Rejected(_) => AgentServiceError::ControlConflict,
-            other => AgentServiceError::Unavailable(other.to_string()),
+            CloseProofError::Unproved if agent.conversation.active_turn.is_some() => {
+                AgentServiceError::RestartTurnUnsettled
+            }
+            CloseProofError::Unproved | CloseProofError::Adapter(AdapterError::Rejected(_)) => {
+                AgentServiceError::ControlConflict
+            }
+            CloseProofError::Adapter(AdapterError::Unsupported(_)) => {
+                AgentServiceError::RestartRuntimeUnsupported
+            }
+            CloseProofError::Adapter(other) => AgentServiceError::Unavailable(other.to_string()),
         })
     }
 }

@@ -193,7 +193,7 @@ describe('Agent navigation during environment updates', () => {
     (taskStatus) => {
       render(tree({ items: items({ taskStatus }) }));
       const row = within(screen.getByRole('group', { name: 'Earlier' })).getByRole('treeitem');
-      expect(row).toHaveTextContent(taskStatus === 'failed' ? 'Failed' : 'Stopped');
+      expect(row).toHaveTextContent(taskStatus === 'failed' ? 'Failed' : 'Response interrupted');
       expect(row).toHaveTextContent('Runtime update failed');
       expect(screen.queryByRole('group', { name: 'Active' })).not.toBeInTheDocument();
     },

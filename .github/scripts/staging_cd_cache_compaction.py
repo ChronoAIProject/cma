@@ -19,7 +19,7 @@ registry_archive="$output/registry.tar.gz"
 target_archive="$output/target.tar.gz"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-mkfifo "$tmp/raw"
+mkfifo "$tmp/raw" "$tmp/members"
 
 archive_stream() {
     source=$1
@@ -31,11 +31,16 @@ archive_stream() {
     # Keep one extra byte as evidence of overflow and discard that stream.
     wc -c < "$tmp/raw" > "$tmp/raw-count" &
     counter=$!
+    # tar sends its creation listing to stderr when the archive is stdout.
+    # Count entries here instead of decompressing the completed archive again.
+    wc -l < "$tmp/members" > "$tmp/member-count" &
+    member_counter=$!
     status=0
-    tar -C "$source" -cf - "$@" |
+    tar -C "$source" -cvf - "$@" 2> "$tmp/members" |
         head -c "$((expanded_limit + 1))" | tee "$tmp/raw" |
         gzip -1 | head -c "$((compressed_limit + 1))" > "$archive" || status=$?
     wait "$counter"
+    wait "$member_counter"
     archive_compressed=$(wc -c < "$archive")
     archive_expanded=$(cat "$tmp/raw-count")
     archive_members=0
@@ -45,7 +50,7 @@ archive_stream() {
     fi
     # Within budget, any pipeline failure is a real transfer error.
     [ "$status" -eq 0 ] || return "$status"
-    archive_members=$(tar -tzf "$archive" | wc -l)
+    archive_members=$(cat "$tmp/member-count")
 }
 
 fits() {

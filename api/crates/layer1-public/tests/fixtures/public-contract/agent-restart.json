@@ -108,6 +108,33 @@
       "captures": {}
     },
     {
+      "id": "agent-restart-turn-unsettled",
+      "operation": "POST /api/v1/agents/{id}/restart",
+      "scenario": "owner_agent_restart_turn_unsettled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_restart_contract/restart",
+        "headers": {
+          "idempotency-key": "owner-restart"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-restart-turn-unsettled",
+          "title": "agent restart turn unsettled",
+          "status": 409,
+          "detail": "The stopped Agent still has an unsettled turn. Ask support to reconcile it before retrying Agent restart or updating this Sandbox.",
+          "code": "agent_restart_turn_unsettled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "agent-restart-forbidden",
       "operation": "POST /api/v1/agents/{id}/restart",
       "scenario": "owner_agent_restart_forbidden",

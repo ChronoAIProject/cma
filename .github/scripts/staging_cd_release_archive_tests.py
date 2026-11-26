@@ -52,6 +52,12 @@ class ArchiveHandoffTests(unittest.TestCase):
             self.assertIsNone(load(directory, identity).cache_day)
 
     def test_normal_release_consumes_the_prepared_archive_without_rebuilding(self):
+        self.check_prepared_release(overlap=True)
+
+    def test_low_disk_headroom_defers_export_until_verification_scratch_is_removed(self):
+        self.check_prepared_release(overlap=False)
+
+    def check_prepared_release(self, *, overlap):
         receipt = fixture_receipt(component="am")
         identity = receipt["identity"]
         reservation = identity.copy()
@@ -77,7 +83,23 @@ class ArchiveHandoffTests(unittest.TestCase):
             cache = Mock(key=CargoKey("cma-cd-cargo-v4-am-" + "e" * 64 + "-", "f" * 64), cache_day=producer_day,
                          namespace="a" * 32, restore_result="hit", export_headroom=None, export_retained_groups=None)
             cache.exports_layers.return_value = True
-            cache.export_mounts.return_value = True
+            cache.can_overlap_export.return_value = overlap
+            export_started = Mock()
+            verification_directories = []
+
+            def finish_export():
+                self.assertEqual(json.loads(Path(env["CD_RECEIPTS_PATH"]).read_text()), [receipt])
+                self.assertEqual(verification_directories[0].exists(), overlap)
+                return True
+
+            @contextlib.contextmanager
+            def background_export(_directory):
+                export_started()
+                self.assertFalse(Path(env["CD_RECEIPTS_PATH"]).exists())
+                yield finish_export
+
+            cache.background_export.side_effect = background_export
+            cache.export_mounts.side_effect = finish_export
             stack.enter_context(patch.object(staging_cd_produce, "BuildCache", return_value=cache))
             publisher_cache = stack.enter_context(patch.object(staging_cd_publish, "BuildCache", return_value=cache))
             stack.enter_context(patch.object(staging_cd_publish, "identity", return_value=(identity, None, None)))
@@ -90,7 +112,17 @@ class ArchiveHandoffTests(unittest.TestCase):
 
             producer_build = stack.enter_context(patch.object(staging_cd_produce, "build", side_effect=build))
             fallback = stack.enter_context(patch.object(staging_cd_publish, "build"))
-            publish = stack.enter_context(patch.object(staging_cd_publish, "publish", return_value=receipt))
+            def publish_then_return(*_args, **_kwargs):
+                verification_directories.append(_args[2])
+                export_started.assert_not_called()
+                _kwargs["on_verified_image"]()
+                if overlap:
+                    export_started.assert_called_once()
+                else:
+                    export_started.assert_not_called()
+                return receipt
+
+            publish = stack.enter_context(patch.object(staging_cd_publish, "publish", side_effect=publish_then_return))
             stack.enter_context(patch.object(staging_cd_produce.Path, "cwd", return_value=root))
             output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             self.assertEqual(staging_cd_produce.main(), 0)
@@ -102,7 +134,12 @@ class ArchiveHandoffTests(unittest.TestCase):
             self.assertIn("build-cache-index=graph-" + cache.key.prefix.removesuffix("-") + "\n",
                           (root / "output").read_text())
             publisher_cache.assert_called_once_with(root, ANY, ANY, "am", cache_day=producer_day)
-            cache.export_mounts.assert_called_once()
+            if overlap:
+                cache.background_export.assert_called_once()
+                cache.export_mounts.assert_not_called()
+            else:
+                cache.background_export.assert_not_called()
+                cache.export_mounts.assert_called_once()
             self.assertEqual(output.getvalue().count("CACHE-SAVE cache=build-layers component=am"), 1)
             self.assertIn("result=not-saved reason=read-only", output.getvalue())
             self.assertIn("::warning title=Build cache not saved", output.getvalue())

@@ -24,6 +24,17 @@ pub enum SseError {
     Truncated,
 }
 
+impl SseError {
+    pub(super) fn kind(&self) -> &'static str {
+        match self {
+            Self::FrameTooLarge => "frame_too_large",
+            Self::InvalidUtf8 => "invalid_utf8",
+            Self::Stream(_) => "transport",
+            Self::Truncated => "truncated",
+        }
+    }
+}
+
 impl fmt::Display for SseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

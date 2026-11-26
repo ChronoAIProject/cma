@@ -495,6 +495,24 @@ class CacheTests(unittest.TestCase):
             cache.main()
         self.assertEqual(output.read_text(), "ready=false\n")
 
+    def test_background_extract_uses_the_build_namespace_without_publisher_credentials(self):
+        context = self.root / "context"
+        output = self.root / "candidate"
+        with patch.dict(os.environ, {"BUILDX_BUILDER": "fixture-builder", "GH_TOKEN": "fixture-token",
+                                     "ACTIONS_RUNTIME_TOKEN": "fixture-runtime"}, clear=True), \
+                patch.object(cache.subprocess, "Popen") as popen:
+            process = cache.start_extract(output, context, namespace="a" * 32, max_content=1024, max_archive=512)
+        self.assertIs(process, popen.return_value)
+        command = popen.call_args.args[0]
+        self.assertIn("BUILDKIT_CACHE_MOUNT_NS=" + "a" * 32, command)
+        self.assertIn(f"type=local,dest={output}", command)
+        self.assertEqual(command[command.index("--file") + 1], str(context / "Dockerfile"))
+        self.assertEqual(command[-1], str(context))
+        self.assertIn("max_compressed=512", (context / "Dockerfile").read_text())
+        self.assertEqual(popen.call_args.kwargs["env"], {"BUILDX_BUILDER": "fixture-builder"})
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        self.assertIs(popen.call_args.kwargs["stderr"], subprocess.DEVNULL)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -90,6 +90,7 @@ jobs:
       - name: Prepare component Cargo cache
         timeout-minutes: 15
         if: inputs.component == 'am' || inputs.component == 'eg'
+        continue-on-error: true
         id: build-cache
         env:
           CD_COMPONENT: ${{ inputs.component }}
@@ -98,7 +99,7 @@ jobs:
       # The repository's Actions cache stays at its storage limit, so sealed
       # Cargo bundles travel as develop run artifacts from verified producers.
       - name: Restore compatible Cargo mounts
-        if: (inputs.component == 'am' || inputs.component == 'eg') && steps.ownership.outputs.superseded != 'true'
+        if: steps.build-cache.outcome == 'success' && steps.ownership.outputs.superseded != 'true'
         timeout-minutes: 10
         continue-on-error: true
         env:
@@ -110,6 +111,7 @@ jobs:
       - name: Restore authenticated layer detector evidence
         if: steps.ownership.outputs.superseded != 'true'
         timeout-minutes: 1
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ inputs.component }}
@@ -163,63 +165,8 @@ jobs:
           CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
           CD_LAYER_SCAN_CACHE: enabled
         run: python3 -B .github/scripts/staging_cd_publish.py
-      - name: Seal accepted layer archive
-        id: seal-layer-archive
-        if: success() && vars.CMA_BOUNDED_LAYER_CACHE == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && steps.publication.outputs.disposition == ''
-        continue-on-error: true
-        timeout-minutes: 5
-        run: |
-          rm -f "$RUNNER_TEMP/cma-layer-cache/archive.tar"
-          python3 -B .github/scripts/buildkit_cache_archive.py seal "$RUNNER_TEMP/cma-layer-cache/pending" "$RUNNER_TEMP/cma-layer-cache/archive.tar" --replay "$RUNNER_TEMP/cma-layer-cache/replay.json"
-      - name: Retain sealed layer archive for admission
-        id: layer-archive
-        if: steps.seal-layer-archive.outcome == 'success'
-        continue-on-error: true
-        timeout-minutes: 5
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: cma-layer-cache-${{ inputs.component }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/cma-layer-cache/archive.tar
-            ${{ runner.temp }}/cma-layer-cache/replay.json
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
-      - name: Retain complete layer detector evidence
-        timeout-minutes: 10
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: cma-layer-detector-${{ inputs.component }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/cma-layer-detector-output/cache.json
-          if-no-files-found: ignore
-          retention-days: 7
-      - name: Retain accepted Cargo mounts
-        id: cargo-bundle
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'
-        timeout-minutes: 10
-        continue-on-error: true
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: ${{ steps.publication.outputs.build-cache-artifact }}
-          path: ${{ steps.build-cache.outputs.directory }}
-          if-no-files-found: error
-          retention-days: 2
-          compression-level: 0
-          overwrite: true
-      - name: Index the exact graph of the retained Cargo mounts
-        if: steps.cargo-bundle.outcome == 'success'
-        timeout-minutes: 1
-        continue-on-error: true
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: ${{ steps.publication.outputs.build-cache-index }}
-          path: ${{ steps.build-cache.outputs.directory }}/manifest.json
-          if-no-files-found: error
-          retention-days: 2
-          overwrite: true
-      # Without these receipts finalization cannot run and a pushed version is
-      # burned. The upload is safe to repeat; only the repeat may fail the job.
+      # Finalization needs these receipts, so store them before retaining caches.
+      # The upload is safe to repeat; only the repeat may fail the job.
       - name: Retain only public publication receipts
         timeout-minutes: 10
         id: receipts
@@ -256,6 +203,62 @@ jobs:
           path: ${{ runner.temp }}/public-receipts/package-policy/*.json
           if-no-files-found: ignore
           retention-days: 90
+      - name: Seal accepted layer archive
+        id: seal-layer-archive
+        if: success() && vars.CMA_BOUNDED_LAYER_CACHE == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && steps.publication.outputs.disposition == ''
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          rm -f "$RUNNER_TEMP/cma-layer-cache/archive.tar"
+          python3 -B .github/scripts/buildkit_cache_archive.py seal "$RUNNER_TEMP/cma-layer-cache/pending" "$RUNNER_TEMP/cma-layer-cache/archive.tar" --replay "$RUNNER_TEMP/cma-layer-cache/replay.json"
+      - name: Retain sealed layer archive for admission
+        id: layer-archive
+        if: steps.seal-layer-archive.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: cma-layer-cache-${{ inputs.component }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/cma-layer-cache/archive.tar
+            ${{ runner.temp }}/cma-layer-cache/replay.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - name: Retain complete layer detector evidence
+        timeout-minutes: 2
+        continue-on-error: true
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.disposition == ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: cma-layer-detector-${{ inputs.component }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cma-layer-detector-output/cache.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Retain accepted Cargo mounts
+        id: cargo-bundle
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'
+        timeout-minutes: 10
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ steps.publication.outputs.build-cache-artifact }}
+          path: ${{ steps.publication.outputs.build-cache-directory }}
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
+          overwrite: true
+      - name: Index the exact graph of the retained Cargo mounts
+        if: steps.cargo-bundle.outcome == 'success'
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ steps.publication.outputs.build-cache-index }}
+          path: ${{ steps.publication.outputs.build-cache-directory }}/manifest.json
+          if-no-files-found: error
+          retention-days: 2
+          overwrite: true
   finalize:
     name: Finalize
     needs: publish
