@@ -89,6 +89,44 @@ class StagingWorkflowTest < Minitest::Test
       assert_includes condition, "fromJSON(needs.allocate.outputs.lanes)['am'] != 'am' ||"
       assert_includes condition, "needs.promote_am.result == 'success' &&"
       assert_includes condition, "fromJSON(needs.promote_am.outputs.component_result || '{}').components.am.state == 'controller-verified'"
+
+      runtime = lane.tr('_', '-')
+      successful_job = {result: 'success', outputs: {finalized: 'success'}}
+      verified_result = JSON.generate(components: {am: {state: 'controller-verified'}})
+      # Admission can obtain the exact AM resume proof under the lock while
+      # this independent Runtime lane has just published a new release.
+      resume = {admit: 'success', admit_disposition: 'already-verified', admitted: '["am"]'}
+      cases = [
+        ['new Runtime and resumed AM', 'am', 'success', resume, true],
+        ['fresh verified AM', 'am', 'success', {admit: 'success', component_result: verified_result}, true],
+        ['empty AM membership', 'am', 'success', resume.merge(admitted: '[]'), false],
+        ['overtaken AM', 'am', 'success', resume.merge(admit_disposition: 'superseded_by_newer_final'), false],
+        ['failed admission', 'am', 'success', resume.merge(admit: 'failure'), false],
+        ['failed promotion', 'am', 'failure', resume, false],
+        ['Runtime-only recovery', nil, 'skipped', {}, true]
+      ]
+      # GitHub's dereference of a missing property is empty. Use optional
+      # chaining for that dereference while running the workflow predicate.
+      expression = condition.sub('.components.am.state', '.components?.am?.state')
+      script = <<~JS
+        const fromJSON = JSON.parse;
+        const cancelled = () => false;
+        const cases = JSON.parse(process.argv[1]);
+        for (const [name, needs, expected] of cases) {
+          if (Boolean(#{expression}) !== expected) throw new Error(name);
+        }
+      JS
+      inputs = cases.map do |name, am, result, outputs, expected|
+        lanes = {runtime => runtime, 'am' => am}
+        needs = {
+          allocate: {result: 'success', outputs: {changed: 'true', lanes: JSON.generate(lanes)}},
+          infrastructure: successful_job, release => successful_job,
+          promote_am: {result: result, outputs: outputs}
+        }
+        [name, needs, expected]
+      end
+      output, status = Open3.capture2e('node', '-e', script, JSON.generate(inputs))
+      assert status.success?, output
     end
     refute_includes jobs.fetch('promote_contract').fetch('needs'), 'promote_am'
   end

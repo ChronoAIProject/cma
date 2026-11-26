@@ -368,8 +368,10 @@ jobs:
       needs.allocate.outputs.changed == 'true' && needs.release_runtime.result == 'success' &&
       needs.release_runtime.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime'] == 'runtime' &&
       (fromJSON(needs.allocate.outputs.lanes)['am'] != 'am' ||
-       (needs.promote_am.result == 'success' &&
-        fromJSON(needs.promote_am.outputs.component_result || '{}').components.am.state == 'controller-verified'))
+       (needs.promote_am.result == 'success' && needs.promote_am.outputs.admit == 'success' &&
+        (fromJSON(needs.promote_am.outputs.component_result || '{}').components.am.state == 'controller-verified' ||
+         (needs.promote_am.outputs.admit_disposition == 'already-verified' &&
+          needs.promote_am.outputs.admitted == '["am"]'))))
     concurrency:
       group: cma-staging-deploy-set
       queue: max
@@ -395,8 +397,10 @@ jobs:
       needs.allocate.outputs.changed == 'true' && needs.release_runtime_omarchy.result == 'success' &&
       needs.release_runtime_omarchy.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime-omarchy'] == 'runtime-omarchy' &&
       (fromJSON(needs.allocate.outputs.lanes)['am'] != 'am' ||
-       (needs.promote_am.result == 'success' &&
-        fromJSON(needs.promote_am.outputs.component_result || '{}').components.am.state == 'controller-verified'))
+       (needs.promote_am.result == 'success' && needs.promote_am.outputs.admit == 'success' &&
+        (fromJSON(needs.promote_am.outputs.component_result || '{}').components.am.state == 'controller-verified' ||
+         (needs.promote_am.outputs.admit_disposition == 'already-verified' &&
+          needs.promote_am.outputs.admitted == '["am"]'))))
     concurrency:
       group: cma-staging-deploy-set
       queue: max
