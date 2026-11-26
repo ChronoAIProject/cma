@@ -7,7 +7,7 @@ import {ExtendedAdminMatrix} from './features/admin_extended.mjs';
 import {ADMIN_PERMISSIONS} from './features/admin_matrix.mjs';
 import {userCases} from './features/user.mjs';
 import {documentCases} from './features/documents.mjs';
-import {configurationCases, heldConfigurationCases, assertWriterTitle,
+import {busyConfigurationCase, configurationCases, heldConfigurationCases, assertWriterTitle,
   verifyLifecycleReplay} from './features/agent_configuration.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
@@ -79,49 +79,17 @@ const matrix = new ExtendedAdminMatrix({fixture,
   }});
 const result = {schema: 'multi-am-features-v1', verdict: 'RUNNING', source: config.expected_api_source,
   production_acceptance: false, image: config.expected_api_image, started_at: new Date().toISOString()};
-try {
-  result.journey = await runJourney(config, {retirementHook: context => {
-    Object.assign(normal.ams, context.config.ams);
-    return retirementRetention({...context, user, outsider});
-  }, triggerHook: context => {
-    Object.assign(normal.ams, context.config.ams);
-    return triggerAlwaysOn({...context, user, admin, outsider});
-  }, queuedTurnHook: async context => {
-    const previousRecorder = context.api.router.record;
-    context.api.router.record = async proof => { observations.push(proof); await previousRecorder(proof); };
-    try {
-      for (let iteration = 1; iteration <= 3; iteration++) {
-        const first = observations.length;
-        const row = {case: 'writer.queued_edit_cancel', phase: context.phase, iteration,
-          verdict: 'RUNNING', states: []};
-        try {
-          await queuedCommandCase({...context, recordState: async (stage, state) => row.states.push({stage, state})});
-          row.verdict = 'PASS';
-        } catch (error) {
-          row.verdict = 'FAIL';
-          try { row.failures = [await retainFailure(config.matrix_output, 'primary', error,
-            {case: row.case, phase: row.phase, iteration})]; }
-          catch { row.evidence_failure = true; }
-          throw error;
-        } finally {
-          row.owner_proofs = observations.slice(first);
-          row.non_owner = row.owner_proofs.length > 0
-            && row.owner_proofs.every(proof => proof.verdict === 'PASS' && proof.owner !== proof.ingress);
-          await record(row);
-        }
-      }
-    } finally { context.api.router.record = previousRecorder; }
-  }, heldTurnHook: async context => {
-    const previousRecorder = context.api.router.record;
-    context.api.router.record = async proof => { observations.push(proof); await previousRecorder(proof); };
-    try {
-      for (let iteration = 1; iteration <= 3; iteration++) {
-        let activeRow;
-        await heldConfigurationCases({...context,
-          recordState: async (stage, state) => { (activeRow.states ??= []).push({stage, state}); },
-          runCase: async (name, operation) => {
+
+async function heldCases(context, exercise) {
+  const previousRecorder = context.api.router.record;
+  context.api.router.record = async proof => { observations.push(proof); await previousRecorder(proof); };
+  try {
+    for (let iteration = 1; iteration <= 3; iteration++) {
+      let activeRow;
+      await exercise({...context, recordState: async (stage, state) => activeRow.states.push({stage, state}),
+        runCase: async (name, operation) => {
           const start = performance.now(), first = observations.length;
-          const row = {case: name, phase: context.phase, iteration, verdict: 'RUNNING'};
+          const row = {case: name, phase: context.phase, iteration, verdict: 'RUNNING', states: []};
           activeRow = row;
           try { await operation(); row.verdict = 'PASS'; }
           catch (error) {
@@ -133,13 +101,26 @@ try {
           } finally {
             row.owner_proofs = observations.slice(first);
             row.non_owner = row.owner_proofs.length > 0
-              && row.owner_proofs.every(p => p.verdict === 'PASS' && p.owner !== p.ingress);
-            row.elapsed_ms = performance.now() - start; await record(row);
+              && row.owner_proofs.every(proof => proof.verdict === 'PASS' && proof.owner !== proof.ingress);
+            row.elapsed_ms = performance.now() - start;
+            await record(row);
           }
         }});
-      }
-    } finally { context.api.router.record = previousRecorder; }
-  }, featureHook: async context => {
+    }
+  } finally { context.api.router.record = previousRecorder; }
+}
+
+try {
+  result.journey = await runJourney(config, {retirementHook: context => {
+    Object.assign(normal.ams, context.config.ams);
+    return retirementRetention({...context, user, outsider});
+  }, triggerHook: context => {
+    Object.assign(normal.ams, context.config.ams);
+    return triggerAlwaysOn({...context, user, admin, outsider});
+  }, queuedTurnHook: context => heldCases(context, async held => {
+    if (context.phase === 'after_restart') await busyConfigurationCase(held);
+    await held.runCase('writer.queued_edit_cancel', () => queuedCommandCase(held));
+  }), heldTurnHook: context => heldCases(context, heldConfigurationCases), featureHook: async context => {
     phase = context.phase;
     // The same admin groups run before and after actual owner loss. Their public
     // mutations use CAS, peer readback, stale-revision refusal and restoration.

@@ -113,7 +113,8 @@ def am(secret, runtime, family='base', base_image=None):
         'CHRONO_SANDBOX_CPU': '1', 'CHRONO_SANDBOX_MEMORY': '2Gi',
         'CHRONO_UPSTREAM_BASE_URL': 'https://provider.native-am.invalid', 'CHRONO_UPSTREAM_WIRE_API': 'responses',
         'CHRONO_PLATFORM_BASE_URL': 'https://identity.native-am.invalid',
-        'RUST_LOG': 'info,cma::sandbox=debug,layer3_adapter::agent_sandbox=debug,cma::agent_manager::peer_write=debug',
+        'RUST_LOG': ('info,cma::sandbox=debug,layer3_adapter::agent_sandbox=debug,'
+                     'cma::agent_manager::peer_write=debug,layer2_core::sandbox::settings_dispatch=debug'),
     }
     if family == 'omarchy':
         if not base_image or base_image == runtime:

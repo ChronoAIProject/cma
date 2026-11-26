@@ -131,6 +131,29 @@ class OwnershipTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'peer_write_evidence_scope'):
             fixture.peerWriteEvidence('foreign', wanted, 3, 'settings')
 
+    def test_configuration_dispatch_observes_both_processes_and_counts_duplicates(self):
+        target = 'layer2_core::sandbox::settings_dispatch'
+        wanted = hashlib.sha256(b'owned-agent').hexdigest()
+        def entry(stage, sequence=3, digest=wanted, module=target):
+            return f'DEBUG {module}: dispatch agent_sha256={digest} sequence={sequence} stage="{stage}"'
+
+        logs = {'am-a-0': [entry('started'), entry('confirmed'), entry('started', sequence=4)],
+                'am-b-0': [entry('started', digest='a' * 64), entry('confirmed', module='other')]}
+        fixture = Fixture.__new__(Fixture)
+        def read(args, *, timeout):
+            self.assertEqual(args[0], 'logs')
+            self.assertEqual(args[2:], ['--since=3m', '--limit-bytes=1048576'])
+            self.assertEqual(timeout, 5)
+            return '\n'.join(logs[args[1]])
+
+        fixture.client = SimpleNamespace(k=read)
+        self.assertEqual(fixture.configurationDispatch('owned-agent', 3), {
+            'a': {'started': 1, 'confirmed': 1}, 'b': {'started': 0, 'confirmed': 0}})
+        logs['am-a-0'].append(entry('started'))
+        self.assertEqual(fixture.configurationDispatch('owned-agent', 3)['a']['started'], 2)
+        with self.assertRaisesRegex(ValueError, 'configuration_dispatch_lineage_required'):
+            fixture.configurationDispatch('owned-agent', True)
+
     def test_cleanup_refuses_unrelated_cluster_before_calling_docker(self):
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / 'cluster-state.private.json').write_text(json.dumps({'cluster': 'production'}))

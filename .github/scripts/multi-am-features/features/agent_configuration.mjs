@@ -15,12 +15,33 @@ const read = async (api, path) => (await api.request('a', 'GET', path)).body;
 const patch = (api, path, body, allowed = [200]) => api.request('a', 'PATCH', path,
   {body, key: randomUUID(), allowed});
 
+async function configurationReceipt(readLog, after) {
+  const {through, rows} = await readLog(after);
+  const [admitted, settled] = rows ?? [];
+  check(Number.isSafeInteger(through) && Number.isSafeInteger(after) && rows?.length === 2
+    && admitted?.state === 'dispatch_fenced' && settled?.state === 'execution_observed'
+    && Number.isSafeInteger(admitted.seq) && Number.isSafeInteger(settled.seq)
+    && admitted.seq > after && settled.seq > admitted.seq && settled.seq <= through
+    && admitted.sequence === admitted.seq && settled.sequence === admitted.sequence,
+  'configuration_admission_or_settlement_duplicated_or_missing');
+  return {admission: admitted.seq, settlement: settled.seq, through};
+}
+
+async function confirmConfigurationDispatch(adapter, agentId, owner, sequence) {
+  const observed = await adapter.configurationDispatch({agentId, sequence});
+  const peer = owner === 'a' ? 'b' : 'a';
+  check(['a', 'b'].includes(owner) && equal(observed[owner], {started: 1, confirmed: 1})
+    && equal(observed[peer], {started: 0, confirmed: 0}),
+  'configuration_dispatch_missing_duplicated_or_executed_off_owner');
+}
+
 // These use the real owner-routed public API. A 200 for an unchanged value is
 // insufficient: both the acknowledgement and a fresh read must show the change.
 export async function configurationCases({api, record: resource, runCase, recordFailure,
   recordState = async () => {}, adapter, conversationApi = api}) {
   const preferences = preferencesPath(resource), settings = settingsPath(resource);
   const probe = expected => probeConfiguration({api: conversationApi, adapter, record: resource}, expected);
+  const readLog = after => adapter.configurationLog({agentId: resource.agentId, after});
   await runCase('user.system_prompt_roundtrip', async () => {
     const before = await read(api, preferences);
     await recordState('prompt_before', before);
@@ -31,6 +52,8 @@ export async function configurationCases({api, record: resource, runCase, record
     const desired = 'Two-AM instructions ' + instructionMarker;
     check(before.system_prompt !== desired, 'prompt_change_required');
     await withRestoration(async () => {
+      const owner = await adapter.ownerOf({agentId: resource.agentId});
+      const {through} = await readLog(null);
       const updated = (await patch(api, preferences,
         {expected_revision: before.revision, system_prompt: desired})).body;
       check(updated.system_prompt === desired && updated.prompt_pending === false
@@ -43,6 +66,9 @@ export async function configurationCases({api, record: resource, runCase, record
         system_prompt: before.system_prompt}, [409]);
       check((await read(api, preferences)).system_prompt === desired, 'stale_prompt_changed_state');
       await probe({effort, instructions: instructionMarker});
+      const receipt = await configurationReceipt(readLog, through);
+      await confirmConfigurationDispatch(adapter, resource.agentId, owner?.am, receipt.admission);
+      await recordState('prompt_configure_receipt', receipt);
     }, async () => {
       const current = await read(api, preferences);
       if (current.system_prompt !== before.system_prompt) {
@@ -64,7 +90,10 @@ export async function configurationCases({api, record: resource, runCase, record
     const desired = changedSettings(before);
     await withRestoration(async () => {
       await probe({effort: before.reasoning_effort});
-      const updated = (await patch(api, settings, desired)).body;
+      const owner = await adapter.ownerOf({agentId: resource.agentId});
+      const {through} = await readLog(null);
+      const update = {body: desired, key: randomUUID()};
+      const updated = (await api.request('a', 'PATCH', settings, update)).body;
       check(equal(settingsBody(updated), desired) && updated.pending === false,
         'settings_update_not_confirmed');
       const seen = await read(api, settings);
@@ -75,6 +104,15 @@ export async function configurationCases({api, record: resource, runCase, record
         && afterPrompt.revision === prompt.revision, 'settings_changed_owner_prompt');
       await recordState('settings_changed', {settings: seen, preferences: afterPrompt});
       await probe({effort: desired.reasoning_effort});
+      const intent = await configurationReceipt(readLog, through);
+      for (const reply of [await api.request('a', 'PATCH', settings, update), await patch(api, settings, desired)]) {
+        check(equal(settingsBody(reply.body), desired) && reply.body.pending === false, 'settings_replay_unconfirmed');
+      }
+      const replayLog = await readLog(intent.through);
+      check(Number.isSafeInteger(replayLog.through) && replayLog.through >= intent.through
+        && replayLog.rows?.length === 0, 'settings_replay_log_changed_or_unreadable');
+      await confirmConfigurationDispatch(adapter, resource.agentId, owner?.am, intent.admission);
+      await recordState('settings_configure_receipt', intent);
     }, async () => {
       const current = await read(api, settings);
       if (!equal(settingsBody(current), settingsBody(before))) {
@@ -91,7 +129,7 @@ export async function configurationCases({api, record: resource, runCase, record
 
 // Called only after the held provider's real active-stream oracle is observed.
 // This exercises working-state admission, not a deterministic injected CAS race.
-export async function heldConfigurationCases({api, adapter, record: resource, runCase,
+export async function busyConfigurationCase({api, record: resource, runCase,
   recordState = async () => {}}) {
   const preferences = preferencesPath(resource), settings = settingsPath(resource);
   await runCase('writer.busy_configuration_refused', async () => {
@@ -109,6 +147,12 @@ export async function heldConfigurationCases({api, adapter, record: resource, ru
     check(equal(afterSettings, oldSettings), 'busy_settings_mutated');
     await recordState('busy_refused_unchanged', {preferences: after, settings: afterSettings});
   });
+}
+
+export async function heldConfigurationCases(context) {
+  await busyConfigurationCase(context);
+  const {api, adapter, record: resource, runCase, recordState = async () => {}} = context;
+  const preferences = preferencesPath(resource);
   await runCase('writer.held_rename', async () => {
     const before = await read(api, preferences), title = 'Owner move ' + randomUUID();
     check(before.title !== title, 'rename_change_required');

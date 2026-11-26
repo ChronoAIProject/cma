@@ -4,7 +4,8 @@ import {configurationCases, heldConfigurationCases, assertWriterTitle,
   verifyLifecycleReplay} from './agent_configuration.mjs';
 
 function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = false,
-  mutateOnRefusal = false, effect = [3], staleNativePrompt = false, staleNativeEffort = false} = {}) {
+  mutateOnRefusal = false, effect = [3], staleNativePrompt = false, staleNativeEffort = false,
+  duplicateConfiguration = false, replayWrites = false, dispatchManager = 'b', dispatches = 1} = {}) {
   let preferences = {title: 'Original', system_prompt: 'Original instructions',
     prompt_pending: false, prompt_supported: true, revision: 1};
   let settings = {model: 'fixture-model', reasoning_effort: 'high',
@@ -12,7 +13,13 @@ function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = 
   const original = structuredClone({preferences, settings}), calls = [], rows = [], failures = [];
   const replies = new Map();
   const record = {agentId: 'agent', name: 'Original'};
-  const probes = [];
+  const probes = [], log = [];
+  const configure = () => {
+    const sequence = log.length + 1;
+    log.push({seq: sequence, sequence, state: 'dispatch_fenced'},
+      {seq: sequence + 1, sequence, state: 'execution_observed'});
+    if (duplicateConfiguration) log.push({seq: sequence + 2, sequence, state: 'execution_observed'});
+  };
   const api = {request: async (am, method, path, options = {}) => {
     const {body, allowed = [200], key} = options;
     calls.push({am, method, path, ...structuredClone(options)});
@@ -28,10 +35,14 @@ function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = 
       return {status: 409, body: {code: 'conflict', settings_update_reason: 'stale_revision'}};
     }
     if (prompt) {
+      if (!falseAck && body.system_prompt !== undefined && body.system_prompt !== preferences.system_prompt) configure();
       if (!falseAck) preferences = {...preferences, revision: preferences.revision + 1,
         ...(body.title === undefined ? {system_prompt: body.system_prompt} : {title: body.title})};
       if (lostAck && preferences.revision === 2) throw Error('lost_ack');
-    } else settings = {...settings, ...body};
+    } else {
+      if (replayWrites || Object.keys(body).some(key => body[key] !== settings[key])) configure();
+      settings = {...settings, ...body};
+    }
     const response = {status: 200, body: structuredClone(prompt ? preferences : settings)};
     replies.set(key, response);
     return response;
@@ -59,6 +70,18 @@ function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = 
   };
   const adapter = {prepareTurn: async value => { armed = value; probes.push(value.configuration); },
     releaseTurn: async ({caseId}) => assert.equal(caseId, armed.caseId),
+    ownerOf: async () => ({am: 'b'}),
+    configurationDispatch: async ({agentId, sequence}) => {
+      assert.equal(agentId, record.agentId);
+      assert.ok(log.some(row => row.sequence === sequence && row.state === 'dispatch_fenced'));
+      const observations = {a: {started: 0, confirmed: 0}, b: {started: 0, confirmed: 0}};
+      observations[dispatchManager] = {started: dispatches, confirmed: 1};
+      return observations;
+    },
+    configurationLog: async ({agentId, after}) => {
+      assert.equal(agentId, record.agentId);
+      return {through: log.length, rows: after === null ? [] : log.slice(after)};
+    },
     oracle: async ({caseId}) => {
       assert.equal(caseId, armed.caseId);
       const {instructions, effort} = armed.configuration;
@@ -82,12 +105,29 @@ test('configuration round trips change real values, preserve prompt, refuse stal
   assert.equal(x.state().preferences.system_prompt, x.original.preferences.system_prompt);
   assert.deepEqual(x.state().settings, x.original.settings);
   const changed = x.calls.filter(row => row.method === 'PATCH');
-  assert.equal(changed.filter(row => row.body.permission_mode === 'guarded').length, 1);
+  const requestedChange = changed.filter(row => row.body.permission_mode === 'guarded');
+  assert.equal(requestedChange.length, 3);
+  assert.equal(requestedChange[0].key, requestedChange[1].key);
+  assert.notEqual(requestedChange[1].key, requestedChange[2].key);
   assert.equal(changed.filter(row => row.body.permission_mode === 'autonomous').length, 1);
   assert.ok(changed.some(row => row.allowed?.includes(409)));
-  assert.equal(new Set(changed.map(row => row.key)).size, changed.length);
   assert.match(x.probes[0].instructions, /^WS4_INSTRUCTIONS_[a-f0-9]{32}$/);
   assert.deepEqual(x.probes.map(probe => probe.effort), ['high', 'high', 'medium']);
+});
+
+test('configuration requires one durable admission and settlement and no second receipt on unchanged replay', async () => {
+  const duplicate = fixture({duplicateConfiguration: true});
+  await assert.rejects(configurationCases(duplicate), /configuration_admission_or_settlement_duplicated_or_missing/);
+  const replay = fixture({replayWrites: true});
+  await assert.rejects(configurationCases(replay), /settings_replay_log_changed_or_unreadable/);
+  assert.deepEqual(replay.state().settings, replay.original.settings);
+});
+
+test('a confirmed configuration requires exactly one dispatch on the owner process', async () => {
+  for (const options of [{dispatchManager: 'a'}, {dispatches: 2}]) {
+    await assert.rejects(configurationCases(fixture(options)),
+      /configuration_dispatch_missing_duplicated_or_executed_off_owner/);
+  }
 });
 
 test('durable API updates cannot pass when the native runtime keeps the previous configuration', async () => {

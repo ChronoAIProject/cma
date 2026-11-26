@@ -22,6 +22,7 @@ import urllib.parse
 import urllib.request
 
 from common import Client, utc, write
+from configuration_log import configuration_dispatch, configuration_log
 import manifests
 import legacy_manifests as old
 from login import login
@@ -41,6 +42,8 @@ def validate_runtime_sources(ready):
     return sources
 
 class Fixture:
+    configurationLog = configuration_log
+    configurationDispatch = configuration_dispatch
     def __init__(self, ready, output):
         self.ready=ready
         self.client=Client(ready,output)
@@ -413,7 +416,7 @@ class Fixture:
                              'releaseTurn','oracle','captureFailure','titleEffects','skillEffects',
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
                              'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
-                             'organizationMembership']
+                             'organizationMembership','configurationLog','configurationDispatch']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:
