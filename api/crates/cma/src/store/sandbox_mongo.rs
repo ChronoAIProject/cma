@@ -28,8 +28,6 @@ pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
 mod topology;
 pub(super) use topology::require_transaction_topology;
-#[cfg(test)]
-use topology::validate_transaction_server;
 
 pub(super) const TRANSACTION_ATTEMPTS: usize = 5;
 const RECONCILIATION_TIMEOUT: Duration = Duration::from_secs(30);
