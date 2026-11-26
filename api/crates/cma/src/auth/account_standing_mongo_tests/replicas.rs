@@ -181,7 +181,7 @@ async fn other_replica_acceptance_revokes_fresh_request_stream_frame_and_command
         .await
         .unwrap();
     assert!(
-        observing.state.read().unwrap().hashes.is_empty(),
+        observing.fixture_hashes_empty(),
         "replica B has not refreshed"
     );
     assert_eq!(

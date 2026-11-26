@@ -132,7 +132,7 @@ impl Fixture {
         let first = AuthState::with_store(mode.clone(), None, store.clone());
         let second = AuthState::with_store(mode, None, store.clone());
         for auth in [&first, &second] {
-            *auth.metadata.write().await = Some(ProviderMetadata {
+            *auth.fixture_metadata().write().await = Some(ProviderMetadata {
                 authorization_endpoint: format!("{base}/authorize"),
                 token_endpoint: format!("{base}/token"),
                 userinfo_endpoint: None,
@@ -204,7 +204,7 @@ async fn requirements_deadline_allows_admitted_refresh_to_settle_before_refusing
     let fixture = Fixture::with_store(vec![success(Some("fixture-rotated"))], store).await;
     let broker = Arc::new(
         CmaServiceConnectionBroker::from_auth_config(
-            &fixture.first.mode,
+            fixture.first.fixture_mode(),
             Some("https://nyxid.example.test"),
             fixture.first.clone(),
         )
@@ -417,7 +417,7 @@ async fn transport_failure_releases_only_its_claim_and_preserves_authority() {
     let fixture = Fixture::new(vec![success(None)]).await;
     fixture
         .first
-        .metadata
+        .fixture_metadata()
         .write()
         .await
         .as_mut()

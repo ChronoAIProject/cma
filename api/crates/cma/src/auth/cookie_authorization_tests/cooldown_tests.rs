@@ -83,8 +83,14 @@ async fn cookie_and_bearer_bursts_across_completed_flights_share_only_negative_b
         assert_throttled(read(&app, &login, index % 2 == 0, "/auth/session").await);
     }
     assert_eq!(fixture.control.requests.load(Ordering::SeqCst) - before, 2);
-    assert_eq!(fixture.auth.verification_slots.available_permits(), 64);
-    assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
+    assert_eq!(
+        fixture
+            .auth
+            .fixture_verification_slots()
+            .available_permits(),
+        64
+    );
+    assert_eq!(fixture.auth.fixture_active_receipts(), 0);
 }
 
 #[tokio::test]
@@ -110,7 +116,7 @@ async fn revoked_credential_never_reuses_prior_success_during_or_after_cooldown(
             read(&app, &login, bearer, "/auth/session").await.0,
             StatusCode::UNAUTHORIZED
         );
-        assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
+        assert_eq!(fixture.auth.fixture_active_receipts(), 0);
     }
 }
 

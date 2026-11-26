@@ -59,8 +59,9 @@ async fn start_servers(
     }
     let mut servers = Vec::new();
     for index in 0..2 {
-        let replica_auth = crate::auth::AuthState::in_memory(auth.mode.clone(), None);
-        *replica_auth.metadata.write().await = auth.metadata.read().await.clone();
+        let replica_auth = crate::auth::AuthState::in_memory(auth.fixture_mode().clone(), None);
+        *replica_auth.fixture_metadata().write().await =
+            auth.fixture_metadata().read().await.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = format!("http://{}", listener.local_addr().unwrap());
         let coordinator = OwnershipCoordinator::register(
@@ -324,7 +325,7 @@ async fn identity() -> (Arc<crate::auth::AuthState>, tokio::task::JoinHandle<()>
         },
         None,
     );
-    *auth.metadata.write().await = Some(serde_json::from_value(json!({
+    *auth.fixture_metadata().write().await = Some(serde_json::from_value(json!({
         "authorization_endpoint":format!("{base}/authorize"), "token_endpoint":format!("{base}/token"),
         "userinfo_endpoint":format!("{base}/userinfo"), "introspection_endpoint":format!("{base}/introspect"),
     })).unwrap());

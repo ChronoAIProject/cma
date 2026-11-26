@@ -1,7 +1,13 @@
 use super::*;
-use layer2_core::account_deletion::AccountDeletionStore;
+use crate::store::account_deletions::MongoAccountDeletionStore;
+use layer2_core::{
+    account_deletion::{AccountDeletionError, AccountDeletionStore, AccountStanding},
+    sandbox::agent_io::CommandAuthorizationError,
+    SubjectId,
+};
 use mongodb::{event::command::CommandEvent, event::EventHandler, options::ClientOptions, Client};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -120,8 +126,8 @@ async fn concurrent_frames_issue_independent_real_mongo_reads() {
             entered: tokio::sync::Notify::new(),
             release: tokio::sync::Semaphore::new(0),
         });
-        let gate = Arc::new(ErasingSnapshot::with_source(source.clone()));
-        gate.state.write().unwrap().refreshed_at = Some(Instant::now() - Duration::from_secs(11));
+        let gate = Arc::new(ErasingSnapshot::new(source.clone()));
+        gate.set_fixture_snapshot_age(Duration::from_secs(11));
         let barrier = Arc::new(tokio::sync::Barrier::new(FRAMES + 1));
         let started = Arc::new(AtomicUsize::new(0));
         let mut frames = tokio::task::JoinSet::new();
