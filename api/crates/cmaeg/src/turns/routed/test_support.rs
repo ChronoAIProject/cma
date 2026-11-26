@@ -278,7 +278,9 @@ pub fn recovery_frame(
                 matching_response_identity: true,
             }
         } else {
-            ResponsesEvent::InProgress
+            ResponsesEvent::InProgress {
+                native_agent_id: None,
+            }
         },
         raw: if terminal {
             json!({"type":"response.completed", "response_id":response, "sequence_number":sequence, "response":{"id":response}})

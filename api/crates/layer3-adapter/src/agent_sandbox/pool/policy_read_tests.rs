@@ -38,7 +38,7 @@ async fn policy_binding_starts_template_and_pool_reads_before_either_response() 
 }
 
 #[tokio::test]
-async fn policy_binding_keeps_template_error_precedence_over_faster_pool_failure() {
+async fn policy_binding_preserves_template_identity_and_pool_authority_errors() {
     for change in ["api", "uid", "spec", "deleting"] {
         let fixture = Fixture::new().await;
         let binding = fixture.client.configure(&spec(), 1).await.unwrap().binding;
@@ -95,7 +95,20 @@ async fn policy_binding_keeps_template_error_precedence_over_faster_pool_failure
             .unwrap()
             .unwrap()
             .unwrap_err();
-        assert_eq!(format!("{actual:?}"), format!("{expected:?}"), "{change}");
+        if change == "spec" {
+            assert!(matches!(
+                expected,
+                crate::AdapterError::NativePoolConfigurationDrift
+            ));
+            // The typed hold requires current pool authority. Surface a failed
+            // pool read even when the original template's spec has drifted.
+            assert_eq!(
+                format!("{actual:?}"),
+                "Rejected(\"Kubernetes rejected Sandbox operation (403)\")"
+            );
+        } else {
+            assert_eq!(format!("{actual:?}"), format!("{expected:?}"), "{change}");
+        }
         assert_eq!(reads.calls.lock().unwrap().len(), 2);
     }
 }

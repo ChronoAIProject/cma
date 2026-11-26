@@ -194,14 +194,15 @@ async fn observation_forwarded_cold_reconstruction_outlives_admission_deadline()
             .await
             .unwrap();
         let owner = usize::from(destination.authority.token.instance_id == "observation-1");
-        // Delay individual real Mongo reads, below their existing per-read bounds.
-        // Fifty or more verified pages necessarily take over three seconds. This
-        // must not spend the admission budget once capacity and custody are ready.
-        f.client
-            .database("admin")
+        // Delay only retained history reads. Admission, grant revalidation and
+        // membership refresh are separate from the cold replay under test.
+        let admin = f.client.database("admin");
+        let delayed_reads = 100_i32;
+        let configured = admin
             .run_command(doc! {
-                "configureFailPoint": "failCommand", "mode": {"times": 100},
-                "data": {"failCommands": ["find"], "blockConnection": true, "blockTimeMS": 80}
+                "configureFailPoint": "failCommand", "mode": {"times": delayed_reads},
+                "data": {"failCommands": ["find"], "namespace": format!("{}.agent_log", f.name),
+                         "blockConnection": true, "blockTimeMS": 80}
             })
             .await
             .unwrap();
@@ -219,23 +220,31 @@ async fn observation_forwarded_cold_reconstruction_outlives_admission_deadline()
                 .send(),
         )
         .await;
-        f.client
-            .database("admin")
+        let elapsed = started.elapsed();
+        let cleared = admin
             .run_command(doc! {
                 "configureFailPoint": "failCommand", "mode": "off"
             })
             .await
             .unwrap();
+        let count = |reply: &Document| {
+            reply
+                .get_i64("count")
+                .or_else(|_| reply.get_i32("count").map(i64::from))
+                .unwrap()
+        };
+        let blocked = count(&cleared) - count(&configured);
         let response = opened
             .expect("cold replay exceeded its existing transport bound")
             .unwrap();
         let status = response.status();
         if status != reqwest::StatusCode::OK {
             panic!(
-                "forwarded shared={shared} cold replay returned {status}: {}",
+                "forwarded shared={shared} cold replay returned {status} after {elapsed:?} with {blocked} delayed reads: {}",
                 response.text().await.unwrap()
             );
         }
+        assert_eq!(blocked, i64::from(delayed_reads));
         assert_eq!(response.headers()["content-type"], "text/event-stream");
         assert!(!response.headers().contains_key("x-cma-read-admission"));
         let log_reads = f.meter.stats.lock().unwrap().commands["log/agent_log/find"];
@@ -243,9 +252,9 @@ async fn observation_forwarded_cold_reconstruction_outlives_admission_deadline()
             log_reads >= 50,
             "cold reconstruction must actually read the 10k prefix"
         );
-        assert!(started.elapsed() > Duration::from_secs(3));
+        assert!(elapsed > Duration::from_secs(3));
         available(&replicas, &[99, 99]).await;
-        eprintln!("FORWARDED_COLD_REPLAY shared={shared} rows=10000 status={status} elapsed={:?} log_reads={log_reads} available_slots=[99,99] admission_deadline=3s", started.elapsed());
+        eprintln!("FORWARDED_COLD_REPLAY shared={shared} rows=10000 status={status} elapsed={elapsed:?} log_reads={log_reads} delayed_reads={blocked} available_slots=[99,99] admission_deadline=3s");
         drop(response);
         available(&replicas, &[100, 100]).await;
         drop(replicas);

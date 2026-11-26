@@ -34,6 +34,7 @@ pub(super) struct EventState {
     pub heartbeats: u8,
     pub tool_replied: bool,
     pub answer_attempted: bool,
+    pub accepted_deadline: Option<Instant>,
     pub terminal_at: Option<Instant>,
     pub terminal: bool,
 }
@@ -53,6 +54,7 @@ impl EventState {
             heartbeats: 0,
             tool_replied: false,
             answer_attempted: false,
+            accepted_deadline: None,
             terminal_at: Some(now),
             terminal: false,
         }

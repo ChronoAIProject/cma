@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{
     activity::{Change, ConsumerState},
+    delivery::gate::Ungated,
     turns::observer::ActivityObserver,
 };
 use cmaeg_core::ids::{EventId, RecordId};

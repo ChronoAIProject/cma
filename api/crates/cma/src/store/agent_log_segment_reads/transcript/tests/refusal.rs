@@ -10,7 +10,7 @@ async fn missing_foreign_stale_and_unsupported_projection_refuses_without_repair
         "unsupported",
         "active-source",
     ] {
-        let (_, db, store, agent, _) = fixture(2, false).await;
+        let (_, db, store, agent, entries) = fixture(2, false).await;
         let filter = doc! {"_id":agent.id.as_str()};
         match fault {
             "missing" => {
@@ -22,7 +22,12 @@ async fn missing_foreign_stale_and_unsupported_projection_refuses_without_repair
                     .unwrap();
             }
             "active-source" => {
-                store.agent_log.delete_one(doc! {"agent_id":agent.id.as_str(),"seq":agent.conversation.last_seq as i64}).await.unwrap();
+                let result = store
+                    .agent_log
+                    .delete_one(doc! {"agent_id":agent.id.as_str(),"seq":agent.conversation.last_seq as i64})
+                    .await
+                    .unwrap();
+                assert_eq!(result.deleted_count, 1);
             }
             _ => {
                 let field = match fault {
@@ -65,9 +70,22 @@ async fn missing_foreign_stale_and_unsupported_projection_refuses_without_repair
             store.agent_log_usage_projection(&agent).await.is_err(),
             "{fault}"
         );
+        let (after, limit) = if fault == "active-source" {
+            // An intact sealed page has its own proof. Probe the active row
+            // directly to verify that an intersecting page fails closed.
+            let sealed = store
+                .agent_log_page_projection(&agent, 0, 20)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(sealed, entries[..20]);
+            (agent.conversation.last_seq - 1, 1)
+        } else {
+            (0, 20)
+        };
         assert!(
             store
-                .agent_log_page_projection(&agent, 0, 20)
+                .agent_log_page_projection(&agent, after, limit)
                 .await
                 .is_err(),
             "{fault}"

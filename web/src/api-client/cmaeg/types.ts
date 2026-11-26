@@ -8,6 +8,7 @@ export * from './types/activities.js';
 export * from './types/channel-activity.js';
 export * from './types/activity-history.js';
 export * from './types/channels.js';
+export * from './types/channel-profile-revisions.js';
 export * from './types/record-management.js';
 export * from './types/relay.js';
 export * from './types/connections.js';
