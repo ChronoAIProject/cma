@@ -49,10 +49,6 @@ async fn apply_mutation(
             {
                 return Err(CommandLedgerError::Invalid.into());
             }
-            let agent = load_agent(store, &claim.agent_id, session).await?;
-            if !fence_parent(store, agent.as_ref(), session).await? {
-                return Err(CommandLedgerError::StaleClaim.into());
-            }
             command.work.lease.as_mut().unwrap().expires_at = expires_at.clone();
             lane.lease.as_mut().unwrap().expires_at = expires_at.clone();
         }
@@ -67,6 +63,10 @@ async fn apply_mutation(
         Change::Claim { .. } | Change::Reconcile(_) => unreachable!(),
     }
     command.revision = revision.checked_add(1).ok_or(CommandLedgerError::Corrupt)?;
+    let agent = load_agent(store, &claim.agent_id, session).await?;
+    if !fence_parent(store, agent.as_ref(), session).await? {
+        return Err(CommandLedgerError::StaleClaim.into());
+    }
     write(store, &command, revision, &lane, session).await?;
     Ok(Some(command))
 }
