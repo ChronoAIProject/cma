@@ -87,6 +87,8 @@ impl std::error::Error for RecordError {}
 pub struct RecordClient {
     database: Option<super::mongo::MongoRecords>,
     channel_mutation_custody: bool,
+    channel_create_issuer: Option<Arc<str>>,
+    channel_cancel_enabled: bool,
     client: Client,
     base_url: Url,
     /// Earlier CMA origins whose sealed record URLs still name records here.
@@ -134,6 +136,8 @@ impl RecordClient {
         Ok(Self {
             database: None,
             channel_mutation_custody: false,
+            channel_create_issuer: None,
+            channel_cancel_enabled: false,
             client,
             base_url,
             retained_origins: Arc::from([]),
@@ -156,6 +160,21 @@ impl RecordClient {
     }
     pub(crate) fn channel_mutation_custody(&self) -> bool {
         self.channel_mutation_custody
+    }
+
+    pub(crate) fn channel_creates_fenced(&self) -> bool {
+        self.channel_create_issuer.is_some()
+    }
+
+    pub(crate) fn channel_cancellation_enabled(&self) -> bool {
+        self.channel_cancel_enabled && self.channel_creates_fenced()
+    }
+
+    pub(crate) fn with_channel_create_fences(mut self, issuer: &str, receipts: bool) -> Self {
+        self.channel_create_issuer = Some(Arc::from(issuer));
+        self.channel_cancel_enabled = receipts;
+        self.channel_mutation_custody = true;
+        self
     }
     pub fn with_database(mut self, database: super::mongo::MongoRecords) -> Self {
         self.database = Some(database);
