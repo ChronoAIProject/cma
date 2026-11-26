@@ -3,9 +3,9 @@ use super::*;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn storage_activation_excludes_old_ready_environments_before_reconciliation() {
-    let (client, name, mut store, _, profile) = fixture(1).await;
-    reconcile(&store, &profile).await;
-    let old = make_ready(&store).await;
+    let (client, name, mut store, _, profile, clock) = fixture(1).await;
+    reconcile(&store, &profile, clock).await;
+    let old = make_ready(&store, clock).await;
     store.warm_home_policy = Some(layer3_adapter::HomeVolumePolicy {
         mode: Default::default(),
         storage_class: "cma-home-v1".into(),
@@ -14,7 +14,12 @@ async fn storage_activation_excludes_old_ready_environments_before_reconciliatio
         template_generation: "original-seed".into(),
     });
     let SandboxAdmissionResult::Created(fresh) = store
-        .admit_sandbox(admission("sbx_storage_cold", "launch-storage-cold", 1))
+        .admit_sandbox(admission(
+            "sbx_storage_cold",
+            "launch-storage-cold",
+            1,
+            clock,
+        ))
         .await
         .unwrap()
     else {
@@ -26,7 +31,7 @@ async fn storage_activation_excludes_old_ready_environments_before_reconciliatio
         store.warm_sandbox(&old).await.unwrap().unwrap().state,
         WarmSandboxState::Ready
     );
-    reconcile(&store, &profile).await;
+    reconcile(&store, &profile, clock).await;
     assert_eq!(
         store.warm_sandbox(&old).await.unwrap().unwrap().state,
         WarmSandboxState::Retiring

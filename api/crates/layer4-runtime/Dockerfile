@@ -25,7 +25,7 @@ ARG OMARCHY_CMA_BASE=runtime-tools
 #     output moved, from the signed indexes.
 #  4. Land it only with an independent review of both catalogs, which sets
 #     APPROVED_PACKAGE_EVIDENCE and APPROVED_OMARCHY_PACKAGE_EVIDENCE.
-ARG DEBIAN_SNAPSHOT=20261123T154646Z
+ARG DEBIAN_SNAPSHOT=20261124T215723Z
 # The Omarchy stages install Arch packages exactly as the Arch Linux Archive
 # indexed core, extra and multilib on this one date, so the same source
 # installs the same packages and rebuilds the OpenSSL CLI, wlroots, Aquamarine

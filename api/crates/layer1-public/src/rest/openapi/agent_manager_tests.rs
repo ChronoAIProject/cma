@@ -65,9 +65,23 @@ fn focused_contract_exposes_answer_bound_deliverables_without_implicit_publicati
 fn focused_contract_preserves_existing_operations_and_identities() {
     let full = full();
     let focused = document();
+    let paths = focused["paths"].as_object().unwrap();
+    let expected_paths: BTreeSet<_> = OPERATIONS.iter().map(|(path, _)| *path).collect();
+    assert_eq!(
+        paths.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+        expected_paths
+    );
+
     let mut ids = BTreeSet::new();
-    let mut operation_count = 0;
     for (path, methods) in OPERATIONS {
+        let item = paths[*path].as_object().unwrap();
+        let actual_methods: BTreeSet<_> = METHODS
+            .iter()
+            .copied()
+            .filter(|method| item.contains_key(*method))
+            .collect();
+        let expected_methods: BTreeSet<_> = methods.iter().copied().collect();
+        assert_eq!(actual_methods, expected_methods, "{path}");
         for method in *methods {
             assert_eq!(
                 focused["paths"][path][method], full["paths"][path][method],
@@ -78,11 +92,8 @@ fn focused_contract_preserves_existing_operations_and_identities() {
                     .as_str()
                     .unwrap()
             ));
-            operation_count += 1;
         }
     }
-    assert_eq!(focused["paths"].as_object().unwrap().len(), 92);
-    assert_eq!(operation_count, 107);
     assert_eq!(focused["servers"][0]["url"], "/");
     assert_eq!(focused["info"]["title"], "CMA Agent Manager API");
     assert!(focused["info"]["description"]

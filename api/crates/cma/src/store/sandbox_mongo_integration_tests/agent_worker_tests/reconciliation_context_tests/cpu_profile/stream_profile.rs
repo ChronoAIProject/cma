@@ -4,7 +4,7 @@ use layer2_core::sandbox::{
     AgentReadService, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
 
-struct NoExternalCalls;
+pub(super) struct NoExternalCalls;
 #[async_trait::async_trait]
 impl SandboxResourceReader for NoExternalCalls {
     async fn sandbox_resources(
