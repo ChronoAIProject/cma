@@ -5,6 +5,7 @@ import stat
 import sys
 
 import ci_outcome
+from cd_target import name as target_name
 from staging_cd_common import matches, require
 from staging_cd_receipts import canonical, sha256
 from staging_cd_set import document, private_document, release_set, validate_set
@@ -121,7 +122,7 @@ def report(env):
             "Component output differs from admitted selection")
     # Disabled members can be omitted, but the retained subset must reconstruct
     # the exact original private request hash and every public identity.
-    request = private_document(release_set({key: admitted[key] for key in rows}))
+    request = private_document(release_set({key: admitted[key] for key in rows}), target=target_name(env))
     validate(result, request, result.get("code"))
     return retain(result, env)
 

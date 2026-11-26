@@ -14,6 +14,8 @@ from staging_cd_targets import RUNTIME_TARGETS
 from staging_cd_versions import DEPLOYABLES, SEMVER
 
 MEDIA = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"
+WEB_AUXILIARY = r"asset-sha256-[0-9a-f]{64}"
+WEB_REPOSITORY = "ghcr.io/chronoaiproject/cma-web"
 RUNTIME_REPOSITORIES = frozenset("ghcr.io/chronoaiproject/" + DEPLOYABLES[key] for key in RUNTIME_TARGETS)
 RUNTIME_POINTER_TAGS = {"staging": "staging-current", "production": "production-current"}
 
@@ -81,7 +83,8 @@ class Registry:
         return token
 
     def manifest(self, repository, reference, *, absent=False, settle=False):
-        require(matches(SEMVER, reference) or matches(r"sha256:[0-9a-f]{64}", reference),
+        auxiliary = repository == WEB_REPOSITORY and matches(WEB_AUXILIARY, reference)
+        require(auxiliary or matches(SEMVER, reference) or matches(r"sha256:[0-9a-f]{64}", reference),
                 "Registry reference is not immutable")
         return self._manifest(repository, reference, absent=absent, settle=settle)
 
@@ -119,7 +122,8 @@ class Registry:
         data, headers = result
         digest = "sha256:" + hashlib.sha256(data).hexdigest()
         require(headers.get("Docker-Content-Digest") == digest
-                and (not reference.startswith("sha256:") or reference == digest),
+                and (not reference.startswith("sha256:") or reference == digest)
+                and (not reference.startswith("asset-sha256-") or reference == "asset-sha256-" + digest[7:]),
                 "Registry returned a different manifest digest")
         body = json.loads(data)
         require(isinstance(body, dict) and body.get("schemaVersion") == 2
