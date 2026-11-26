@@ -14,6 +14,7 @@ pub(super) fn protected_setup_failure(error: AdapterError, phase: &'static str) 
         guarded @ AdapterError::NativeClaimNotReady(_) => return guarded,
         AdapterError::Rejected(_)
         | AdapterError::SkillUpgradeRefused(_)
+        | AdapterError::AdmittedSandboxSpecDrift
         | AdapterError::NativePoolConfigurationDrift
         | AdapterError::DesktopFailed => AdapterError::Rejected,
         AdapterError::OperationIdentityConflict(_) => AdapterError::OperationIdentityConflict,

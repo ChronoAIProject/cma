@@ -55,6 +55,8 @@ use utoipa::OpenApi;
         http::management::list_channels,
         http::management::permission_catalog,
         http::creation::recover_channel,
+        http::creation::cancel_create_capability,
+        http::creation::cancel_create,
         http::record_management::read,
         http::record_management::retire,
         http::management::get_channel,

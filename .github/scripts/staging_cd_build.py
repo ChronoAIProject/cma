@@ -73,6 +73,8 @@ def identity(reservation, source):
         raise Refusal("Runtime Dockerfile must declare exactly one ARG DEBIAN_SNAPSHOT=YYYYMMDDTHHMMSSZ pin") from error
     arguments = dict(value["build_args"], CHRONO_BUILD=reservation["version"], CHRONO_BUILD_SHA=reservation["source"],
                      OS_SECURITY_REFRESH=os_refresh)
+    if reservation["component"] == "web" and "ARG VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED=false" in (source / value["dockerfile"]).read_text().splitlines():
+        arguments["VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED"] = "true"
     if reservation["component"] in {"runtime", "runtime-omarchy"}:
         arguments["SOURCE_DATE_EPOCH"] = "0"
     inputs = {"tree": reservation["tree"], "dockerfile": hashlib.sha256((source / value["dockerfile"]).read_bytes()).hexdigest(),
