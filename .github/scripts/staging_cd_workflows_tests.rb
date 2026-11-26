@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # These are authority/concurrency regressions, not snapshots of YAML layout.
 require 'minitest/autorun'
-require 'yaml'
+require_relative 'workflow-yaml'
 require 'json'
 require 'open3'
 
@@ -9,7 +9,7 @@ class StagingWorkflowTest < Minitest::Test
   ROOT = File.expand_path('..', __dir__)
 
   def workflow(name)
-    YAML.load_file(File.join(ROOT, 'workflows', name + '.yml'))
+    WorkflowYAML.load_file(File.join(ROOT, 'workflows', name + '.yml'))
   end
 
   def test_allocator_reads_controller_outcomes_and_only_the_controller_can_emit_the_proof
@@ -233,7 +233,7 @@ class StagingWorkflowTest < Minitest::Test
     calls = []
     Dir.glob(File.join(ROOT, 'workflows', '*.{yml,yaml}')).each do |file|
       name = File.basename(file, File.extname(file))
-      YAML.load_file(file)['jobs'].each do |id, job|
+      WorkflowYAML.load_file(file)['jobs'].each do |id, job|
         next unless [promote, writer].include?(job['uses'])
         if name == 'staging-promote' && %w[deploy redeploy].include?(id)
           # Jobs inside one reusable call share the caller's slot; a nested

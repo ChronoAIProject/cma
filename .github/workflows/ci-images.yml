@@ -106,9 +106,14 @@ jobs:
           fail-on-cache-miss: false
           enableCrossOsArchive: false
       -
+        # Restores into a fresh cache-mount namespace and publishes it only after
+        # validation and extraction succeed, within an internal budget below this
+        # step's bound. A failed or slow restore leaves the builds on a clean
+        # namespace, so the cache can only cost a cold build.
         name: "Inject API Cargo cache mounts"
         if: "steps.staging-image.outputs.adopted != 'true' && (matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success')"
-        timeout-minutes: 3
+        id: "api-cargo-cache-inject"
+        timeout-minutes: 5
         run: "python3 .github/scripts/api-cargo-cache.py inject"
       -
         name: "Set immutable image version"
@@ -158,6 +163,7 @@ jobs:
             RUNTIME_DESKTOP=0
             OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
             ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
+            ${{ matrix.component == 'api' && steps.api-cargo-cache-inject.outputs.namespace != '' && format('BUILDKIT_CACHE_MOUNT_NS={0}', steps.api-cargo-cache-inject.outputs.namespace) || '' }}
           cache-from: |
             type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}
             ${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}
@@ -179,6 +185,7 @@ jobs:
             RUNTIME_DESKTOP=0
             OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
             ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
+            ${{ matrix.component == 'api' && steps.api-cargo-cache-inject.outputs.namespace != '' && format('BUILDKIT_CACHE_MOUNT_NS={0}', steps.api-cargo-cache-inject.outputs.namespace) || '' }}
           cache-from: |
             type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}
             ${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}
@@ -186,7 +193,7 @@ jobs:
         name: "Extract API Cargo cache before pruning"
         if: "steps.staging-image.outputs.adopted != 'true' && (github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true')"
         id: "api-cargo-cache-export"
-        timeout-minutes: 3
+        timeout-minutes: 5
         run: "python3 .github/scripts/api-cargo-cache.py extract"
       -
         name: "Release build cache before image checks"

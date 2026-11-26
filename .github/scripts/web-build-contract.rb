@@ -1,12 +1,13 @@
 #!/usr/bin/env ruby
-require "yaml"
+require_relative "workflow-yaml"
 
 root = File.expand_path("../..", __dir__)
 
 def validate(ci, publish, dockerfile)
-  frontend = ci.fetch("jobs").fetch("frontend").fetch("steps")
-  compiled = frontend.find { |step| step["name"] == "Production build" }
-  raise "browser gate needs immutable bundle inputs" unless compiled && compiled["run"] == 'CHRONO_BUILD="git-${GITHUB_SHA:0:12}" npm run build' && compiled["env"] == { "CHRONO_BUILD_SHA" => "${{ github.sha }}", "CHRONO_BUILD_ARTIFACT" => "promotable" }
+  # Every Web job that serves the bundle builds its own, from the same inputs.
+  frontend = ci.fetch("jobs").fetch("frontend").values.flat_map { |job| job.fetch("steps") }
+  compiled = frontend.select { |step| step["name"] == "Production build" }
+  raise "browser gate needs immutable bundle inputs" unless !compiled.empty? && compiled.all? { |step| step["run"] == 'CHRONO_BUILD="git-${GITHUB_SHA:0:12}" npm run build' && step["env"] == { "CHRONO_BUILD_SHA" => "${{ github.sha }}", "CHRONO_BUILD_ARTIFACT" => "promotable" } }
   images = ci.fetch("jobs").fetch("images").fetch("steps")
   candidate = images.find { |step| step["id"] == "build-identity" }
   raise "candidate identity missing" unless candidate && candidate["run"] == 'echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"'
@@ -33,13 +34,18 @@ def validate(ci, publish, dockerfile)
 end
 
 ci = { "jobs" => {
-  "frontend" => YAML.load_file(File.join(root, ".github/workflows/ci-web.yml")).fetch("jobs").fetch("web"),
+  "frontend" => WorkflowYAML.load_file(File.join(root, ".github/workflows/ci-web.yml")).fetch("jobs"),
   "images" => YAML.load_file(File.join(root, ".github/workflows/ci-images.yml")).fetch("jobs").fetch("images")
 } }
 publish = YAML.load_file(File.join(root, ".github/workflows/publish.yml"))
 dockerfile = File.read(File.join(root, "web/Dockerfile"))
 validate(ci, publish, dockerfile)
 mutations = [
+  ->(c, _p, _d) {
+    steps = c.fetch("jobs").fetch("frontend").fetch("web-journeys").fetch("steps")
+    steps.find { |step| step["name"] == "Production build" }.fetch("env")["CHRONO_BUILD_ARTIFACT"] = "local"
+  },
+  ->(c, _p, _d) { c["jobs"]["frontend"].each_value { |job| job["steps"].reject! { |s| s["name"] == "Production build" } } },
   ->(c, _p, _d) { c["jobs"]["images"]["steps"].each { |s| s.dig("with", "build-args")&.gsub!("CHRONO_BUILD=", "OMITTED_BUILD=") } },
   ->(c, _p, _d) { c["jobs"]["images"]["steps"].reject! { |s| s["name"] == "Verify web bundle identity against image metadata" } },
   ->(_c, p, _d) { p["jobs"]["images"]["steps"] << { "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8" } },
