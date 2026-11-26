@@ -72,7 +72,7 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("sandbox_usage_report_control", Reference(ReferenceRule::DiagnosticBindings) => false),
     entry!("request_rate_limits", OwnerKey(RequestLimit) => true),
     entry!("visitor_launch_days", OwnerKey(VisitorDay) => false),
-    entry!("cma_document_artifacts", Owner(&["owner_subject"]) => true, Reference(ReferenceRule::Documents) => false),
+    entry!("cma_document_artifacts", Owner(&["owner_subject", "audit_owner_subject"]) => true, Reference(ReferenceRule::Documents) => false),
     entry!("cma_document_quotas", ObjectAccounting => false),
     entry!("native_warm_pool_targets", Global => true),
     entry!("released_runtimes", Global => true),

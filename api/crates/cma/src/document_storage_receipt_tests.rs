@@ -1,6 +1,7 @@
 use super::failure_tests::{authorize, client, key, operation};
 use super::*;
 use crate::dependency_test_support::{finish, Peer};
+use layer2_core::document_artifacts::{DocumentSourceFence, DocumentSourceReservation};
 use serde_json::json;
 
 #[derive(Clone, Default)]
@@ -19,6 +20,81 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogOutput {
     fn make_writer(&'a self) -> Self {
         self.clone()
     }
+}
+
+#[tokio::test]
+async fn recreating_a_source_sends_the_reserved_generation_and_explicit_opt_in() {
+    let mut peer = Peer::start().await;
+    let client = client(&peer);
+    let source = DocumentSourceReservation {
+        owner_hash: digest(b"owner"),
+        document_id: "doc_00000000000000000000000000000001".into(),
+        sha256: digest(b"fixture"),
+        bytes: 7,
+    };
+    let key = source.object_key();
+    let write = DocumentSourceWrite {
+        source,
+        fence: Some(DocumentSourceFence::new(3, digest(b"reservation")).unwrap()),
+    };
+    let task = tokio::spawn(async move { client.put_source(&write, b"fixture".to_vec()).await });
+    authorize(&mut peer).await;
+    let request = peer.next().await;
+    let query: std::collections::BTreeMap<_, _> =
+        url::form_urlencoded::parse(request.uri.query().unwrap().as_bytes())
+            .into_owned()
+            .collect();
+    assert_eq!(query["key"], key);
+    assert_eq!(query["mutationGeneration"], "3");
+    assert_eq!(query["allowRecreate"], "true");
+    assert!(request.uri.path().ends_with("/objects/fenced-v2"));
+    request.json(
+        json!({ "data": { "key":key, "contentLength":7, "generation":3,
+        "digest":digest(b"fixture"), "fenceVersion":2 } }),
+    );
+    finish(task).await.unwrap();
+}
+
+#[tokio::test]
+async fn first_generation_durable_permit_requires_framed_receipt() {
+    let mut peer = Peer::start().await;
+    let client = client(&peer);
+    let source = DocumentSourceReservation {
+        owner_hash: digest(b"owner"),
+        document_id: "doc_00000000000000000000000000000001".into(),
+        sha256: digest(b"fixture"),
+        bytes: 7,
+    };
+    let source_key = source.object_key();
+    let write = DocumentSourceWrite {
+        source,
+        fence: Some(DocumentSourceFence::new(1, digest(b"reservation")).unwrap()),
+    };
+    for version in [1, 2] {
+        let client = client.clone();
+        let write = write.clone();
+        let task =
+            tokio::spawn(async move { client.put_source(&write, b"fixture".to_vec()).await });
+        if version == 1 {
+            authorize(&mut peer).await;
+        }
+        let request = peer.next().await;
+        assert!(request.uri.path().ends_with("/objects/fenced-v2"));
+        request.json(json!({"data":{"key":source_key,"contentLength":7,"generation":1,"digest":digest(b"fixture"),"fenceVersion":version}}));
+        assert_eq!(
+            finish(task).await,
+            if version == 2 {
+                Ok(())
+            } else {
+                Err(DocumentError::Corrupt)
+            }
+        );
+    }
+    let task = operation(&client, true);
+    let request = peer.next().await;
+    assert!(request.uri.path().ends_with("/objects"));
+    request.json(json!({"data":{"key":key(),"contentLength":7,"generation":1,"digest":digest(b"fixture"),"fenceVersion":2}}));
+    assert_eq!(finish(task).await, Ok(vec![]));
 }
 
 #[tokio::test]
@@ -55,7 +131,7 @@ async fn receipt_mismatch_increments_metric_without_logging_key_or_source() {
             "length" => receipt["contentLength"] = json!(8),
             "generation" => receipt["generation"] = json!(2),
             "digest" => receipt["digest"] = json!("private-receipt-digest"),
-            "fence" => receipt["fenceVersion"] = json!(2),
+            "fence" => receipt["fenceVersion"] = json!(3),
             _ => unreachable!(),
         }
         peer.next().await.json(json!({"data":receipt}));
