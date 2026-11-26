@@ -37,6 +37,15 @@ export default defineConfig(({ command, mode }) => {
       __CHRONO_BUILD_SHA__: JSON.stringify(identity.revision),
       __CHRONO_BUILD_LOCAL__: JSON.stringify(identity.local),
       __CHRONO_WEB_REPLICA_RECOVERY_ENABLED__: JSON.stringify(recovery),
+      // Staging publishes the same immutable Web artifact used for promotion.
+      // Include the explicitly acknowledged recovery flow in that artifact.
+      ...(command === 'build' && !identity.local
+        ? {
+            'import.meta.env.VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED': JSON.stringify(
+              process.env.VITE_OUTBOUND_SEPARATE_MESSAGE_ENABLED ?? 'true',
+            ),
+          }
+        : {}),
     },
     test: {
       include:
