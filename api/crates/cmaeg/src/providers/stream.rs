@@ -28,8 +28,8 @@ pub(super) async fn forward_turn(
         };
         let frame = match frame {
             Ok(frame) => frame,
-            Err(_) => {
-                tracing::warn!("provider SSE parser stopped");
+            Err(error) => {
+                tracing::warn!(kind = error.kind(), "provider SSE parser stopped");
                 break;
             }
         };
@@ -68,7 +68,7 @@ pub(super) async fn forward_turn(
                         at: Instant::now(),
                     });
                 }
-                ResponsesEvent::InProgress => {
+                ResponsesEvent::InProgress { .. } => {
                     let Some(response_id) = response_id_from_frame(&frame)
                         .filter(|id| !id.is_empty() && id.len() <= 512)
                     else {

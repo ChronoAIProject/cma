@@ -192,6 +192,7 @@ impl RoutedTargetExecutor {
                 Ok(Err(ReattachError::Provider(_))) | Err(_) => continue,
             };
             journal.renew(lease).await?;
+            let mut renew_at = Instant::now() + self.renew_interval;
             // Retain the canonical association with the existing projection
             // writes only. A later snapshot or attempt cannot replace it.
             if let Some(association) = attached.snapshot.trace {
@@ -212,25 +213,29 @@ impl RoutedTargetExecutor {
                 journal.observe(&work.identity, change).await;
             }
             loop {
-                if started.elapsed() >= self.invocation_bound || observed >= self.frame_limit {
+                let now = Instant::now();
+                if now.duration_since(started) >= self.invocation_bound
+                    || observed >= self.frame_limit
+                {
                     return Ok(Disposition::Retry(RETRY));
                 }
+                // A busy stream must not postpone the heartbeat. Keep the exact
+                // lease guard on every frame and renew on the configured cadence.
+                if now >= renew_at {
+                    journal.renew(lease).await?;
+                    renew_at = Instant::now() + self.renew_interval;
+                }
                 let mut frame =
-                    match tokio::time::timeout(self.renew_interval, attached.stream.events.recv())
-                        .await
-                    {
+                    match tokio::time::timeout_at(renew_at, attached.stream.events.recv()).await {
                         Ok(Some(Ok(frame))) => frame,
                         Ok(Some(Err(_))) | Ok(None) => break,
-                        Err(_) => {
-                            journal.renew(lease).await?;
-                            continue;
-                        }
+                        Err(_) => continue,
                     };
                 observed += 1;
                 // Preserve the persisted diagnostic hash mode across a flag
                 // rollback, without regenerating IDs or requiring new headers.
                 projection.retain_trace_contract(&mut frame);
-                journal.renew(lease).await?;
+                journal.guard(lease).await?;
                 let effect = if let Some(effect) = projection.pending_effect(&frame)? {
                     effect
                 } else {
