@@ -13,7 +13,7 @@ const lineage = (record, detail) => detail?.id === record.agentId && detail.sand
   && [detail.title, detail.owner_title, detail.worktree?.name, detail.sandbox?.name]
     .some(name => name === record.name || (record.writerTitle && name === record.writerTitle.title));
 
-export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook, preparedHook} = {}) {
+export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook, preparedHook, triggerHook} = {}) {
   const config = normalizeConfig(raw);
   check(config.adapter_module && config.output_dir && config.owner_id, 'config_missing');
   let runtimes = runtimeBindings(config);
@@ -432,6 +432,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     await step('ready_autoscaler_two_three_two', () => scaleManagerCase({adapter, api, record: plain}));
     await step('never_ready_third_manager', () => neverReadyManagerCase({adapter, api, record: plain}));
     await step('plain_public_stop_retire', async () => {await cleanup(plain); return {retired: true};});
+    if (triggerHook) await step('trigger_origin_always_on_and_replay', () => triggerHook({adapter, config}));
     if (!runtimes.omarchy) {
       await step('await_omarchy_runtime_input', async () => {
         const ready = await poll(async () => {

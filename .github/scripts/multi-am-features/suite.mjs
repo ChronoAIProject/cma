@@ -18,6 +18,7 @@ import {queuedCommandCase} from './features/queued_commands.mjs';
 import {configurationDenials} from './features/configuration_denials.mjs';
 import {installSkillCase} from './features/skills.mjs';
 import {shareAgentArtifact} from './features/sharing.mjs';
+import {triggerAlwaysOn} from './features/trigger_always_on.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -74,7 +75,10 @@ const matrix = new ExtendedAdminMatrix({fixture,
 const result = {schema: 'multi-am-features-v1', verdict: 'RUNNING', source: config.expected_api_source,
   production_acceptance: false, image: config.expected_api_image, started_at: new Date().toISOString()};
 try {
-  result.journey = await runJourney(config, {queuedTurnHook: async context => {
+  result.journey = await runJourney(config, {triggerHook: context => {
+    Object.assign(normal.ams, context.config.ams);
+    return triggerAlwaysOn({...context, user, admin, outsider});
+  }, queuedTurnHook: async context => {
     const previousRecorder = context.api.router.record;
     context.api.router.record = async proof => { observations.push(proof); await previousRecorder(proof); };
     try {

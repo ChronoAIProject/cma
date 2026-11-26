@@ -205,7 +205,7 @@
       "feature": "Always-on and admission replay",
       "requirement": "Successful toggle never makes readers503; original immutable admission still replays to same identity; altered original payload is rejected. Preserve permissions, stale revision checks, owner relinquishment and provenance. Routing alone is insufficient to fix immutable fingerprint mismatch.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Trigger-origin creation, owner relinquishment and browser fixture.",
+      "remaining": "Hosted execution of the Trigger-origin case, plus owner relinquishment and browser fixture.",
       "trigger": "For lifecycle-origin AND trigger-origin Sandbox enable then revoke Always-on, read Sandbox/Agent and replay original creation admission; try changed original request",
       "required_assertions": [
         {
@@ -216,6 +216,12 @@
             "after_restart"
           ],
           "routing": "non_owner"
+        },
+        {
+          "case": "trigger_origin_always_on_and_replay",
+          "minimum_runs": 1,
+          "phases": [],
+          "routing": "journey"
         }
       ]
     },
