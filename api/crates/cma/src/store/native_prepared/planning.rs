@@ -46,6 +46,9 @@ impl MongoSandboxStore {
         machine: bool,
         release: &ReleasedRuntime,
     ) -> Result<(), SandboxStoreError> {
+        if self.default_pool_holds.lane(machine) {
+            return Ok(());
+        }
         if target > MAX_TARGET
             || (target > 0 && desired.is_none())
             || layer2_core::seconds_from_rfc3339(at).is_none()

@@ -46,6 +46,8 @@ mod create_cleanup_tests;
 mod lark_effect_gate_tests;
 
 #[cfg(test)]
+mod create_fence_tests;
+#[cfg(test)]
 mod mutation_audit_tests;
 #[cfg(test)]
 mod mutation_bounds_tests;

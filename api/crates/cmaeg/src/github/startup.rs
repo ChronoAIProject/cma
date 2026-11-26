@@ -21,7 +21,7 @@ pub(super) async fn initialize(database: Database, keys: Arc<MasterKeyRing>) -> 
                 &schema::migration_role(database.name()),
             )
             .map_err(|_| "startup_migration_permission_required")?;
-            schema::migrate(&database)
+            crate::migrations::legacy_startup(&database, "--migrate-automation")
                 .await
                 .map_err(|_| "startup_migration_failed")?;
         }
@@ -58,7 +58,7 @@ impl Initialization {
             };
             match crate::records::mongo::guard_migration_required(&records_database).await {
                 Ok(true) => {
-                    if crate::records::mongo::migrate(&records_database)
+                    if crate::migrations::legacy_startup(&records_database, "--migrate")
                         .await
                         .is_err()
                     {

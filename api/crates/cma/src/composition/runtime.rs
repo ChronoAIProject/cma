@@ -90,6 +90,7 @@ impl RuntimeServices {
                 .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
         )
         .with_target_fencing(config.agent_manager_replicas.is_some())
+        .with_default_pool_holds(stores.sandbox_model.default_pool_holds.clone())
         .with_empty_pool_startup(config.features.am_empty_warm_pool_startup)
         .with_released_runtime(stores.released_runtime.clone());
         let pointer = crate::runtime_pointer::RuntimePointerController::compose(

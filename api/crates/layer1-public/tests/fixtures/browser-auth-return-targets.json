@@ -241,8 +241,8 @@
   },
   {
     "target": "/agent-manager/share/shr_fixture",
-    "explicit": null,
-    "backend": false,
+    "explicit": "/agent-manager/share/shr_fixture",
+    "backend": true,
     "silent": null
   },
   {
@@ -439,6 +439,24 @@
   },
   {
     "target": "/agent-manager/share/shr_fixture#share=synthetic",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/agent-manager/share/shr_fixture?token=synthetic",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/agent-manager/share/shr_fixture?",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/agent-manager/share/shr_fixture%2Fextra",
     "explicit": null,
     "backend": false,
     "silent": null
