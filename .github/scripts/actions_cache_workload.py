@@ -10,7 +10,13 @@ from staging_cd_common import matches
 from staging_cd_github import GitHub
 from staging_cd_versions import DEPLOYABLES
 
-PROVEN_SUCCESS = frozenset({"plan", "allocate", "Report component outcomes"})
+# These control jobs do not produce hosted image caches. The plan may hand
+# off to a newer push before allocation, with reporting still succeeding.
+CONTROL_OUTCOMES = {
+    "plan": ("success",),
+    "allocate": ("success", "skipped"),
+    "Report component outcomes": ("success",),
+}
 PROVEN_SKIP = frozenset({
     "infrastructure", "Promote contract", "Signal verified image publication",
     *(f"Release {component}" for component in DEPLOYABLES),
@@ -35,12 +41,11 @@ def idle_attempt(inventory, run_id, attempt, source):
                 or type(job.get("run_attempt")) is not int or job["run_attempt"] != attempt
                 or job.get("head_sha") != source or job.get("status") != "completed"):
             return False
-        expected = "success" if name in PROVEN_SUCCESS else "skipped"
-        if job.get("conclusion") != expected:
+        if job.get("conclusion") not in CONTROL_OUTCOMES.get(name, ("skipped",)):
             return False
         names.add(name)
         ids.add(job_id)
-    return (PROVEN_SUCCESS | PROVEN_SKIP) <= names
+    return (CONTROL_OUTCOMES.keys() | PROVEN_SKIP) <= names
 
 
 def needs_maintenance(env, client=GitHub):
