@@ -90,23 +90,26 @@ impl AgentWorker {
                 workspace,
                 worktree,
             };
-            if workspace_can_bind(&parents) {
-                return self.bind_workspace(current, parents, at).await;
-            }
+            let ready = workspace_can_bind(&parents);
             let remaining = budget.saturating_sub(started.elapsed());
-            if remaining.is_zero() {
-                // The bounded observation already paced this expected wait. Keep
-                // it due so committed parent readiness can wake it.
-                return match self
-                    .defer_workspace(current.clone(), parents.clone(), at, false)
-                    .await
-                {
-                    Err(SandboxStoreError::Conflict) => {
-                        self.recover_workspace_wait(current, parents, now + started.elapsed())
-                            .await
-                    }
-                    result => result,
+            if ready || remaining.is_zero() {
+                let result = if ready {
+                    self.bind_workspace(current.clone(), parents.clone(), at)
+                        .await
+                } else {
+                    // The bounded observation already paced this expected wait.
+                    self.defer_workspace(current.clone(), parents.clone(), at, false)
+                        .await
                 };
+                let known_abort = match result {
+                    Ok(AgentWorkPublication::Published) => return Ok(()),
+                    Ok(AgentWorkPublication::KnownAborted) => true,
+                    Err(SandboxStoreError::Conflict) => false,
+                    Err(error) => return Err(error),
+                };
+                return self
+                    .recover_workspace_wait(current, parents, now + started.elapsed(), known_abort)
+                    .await;
             }
             tokio::select! {
                 _ = &mut changed => {},
@@ -121,9 +124,12 @@ impl AgentWorker {
         original: Agent,
         observed: PublicationParents,
         now: SystemTime,
+        mut known_abort: bool,
     ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
         let mut requeue_parent = observed.clone();
+        let mut tried_binding = workspace_can_bind(&observed);
+        let mut recovering = known_abort;
         // Credential delivery, Workspace readiness and Sandbox activation can
         // publish on different replicas while the original wait is requeued.
         for _ in 0..3 {
@@ -149,26 +155,50 @@ impl AgentWorker {
                 worktree,
             };
             // A bind can reuse this claim only under its original authority.
-            // The fallback below publishes only an effect-free lease release.
-            if workspace_can_bind(&parents) && observed.workspace_became_ready(&parents, &current) {
-                return self.bind_workspace(current, parents, at).await;
+            if !tried_binding
+                && workspace_can_bind(&parents)
+                && observed.workspace_became_ready(&parents, &current)
+            {
+                tried_binding = true;
+                match self.bind_workspace(current, parents.clone(), at).await {
+                    Ok(AgentWorkPublication::Published) => return Ok(()),
+                    Ok(AgentWorkPublication::KnownAborted) => known_abort = true,
+                    Err(SandboxStoreError::Conflict) => {}
+                    Err(error) => return Err(error),
+                }
+                recovering = true;
+                requeue_parent = parents;
+                continue;
             }
-            if !bootstrap_advanced(&requeue_parent, &parents, &current) {
+            let parent_advanced = parents.sandbox.revision > requeue_parent.sandbox.revision
+                || parents.workspace.revision > requeue_parent.workspace.revision;
+            if !same_bootstrap_lineage(&requeue_parent, &parents, &current)
+                || !(recovering || parent_advanced || current.revision > original.revision)
+            {
                 return Err(SandboxStoreError::Conflict);
             }
-            tracing::debug!(
-                agent_id = %current.id,
-                sandbox_revision = parents.sandbox.revision,
-                workspace_revision = parents.workspace.revision,
-                "Requeueing Agent startup after concurrent parent preparation"
-            );
+            let fence = claimed_fence(&current, &self.config.holder)?;
+            // Contention can abort this transaction without changing a parent
+            // revision. A fresh compatible snapshot can still release the claim.
+            recovering = true;
             match self
-                .defer_workspace(current, parents.clone(), at, false)
+                .defer_workspace(current, parents.clone(), at, known_abort)
                 .await
             {
-                Err(SandboxStoreError::Conflict) => requeue_parent = parents,
-                result => return result,
+                Ok(AgentWorkPublication::Published) => {
+                    tracing::info!(
+                        agent_id = %original.id,
+                        authority_fence = fence,
+                        known_abort,
+                        "Agent workspace wait claim released after publication conflict"
+                    );
+                    return Ok(());
+                }
+                Ok(AgentWorkPublication::KnownAborted) => known_abort = true,
+                Err(SandboxStoreError::Conflict) => {}
+                Err(error) => return Err(error),
             }
+            requeue_parent = parents;
         }
         Err(SandboxStoreError::Conflict)
     }
@@ -179,8 +209,8 @@ impl AgentWorker {
         parents: PublicationParents,
         now: SystemTime,
         publication_aborted: bool,
-    ) -> Result<(), SandboxStoreError> {
-        self.publish_lifecycle_work(
+    ) -> Result<AgentWorkPublication, SandboxStoreError> {
+        self.try_publish_lifecycle_work(
             agent,
             Some(parents),
             now,
@@ -224,7 +254,7 @@ impl AgentWorker {
         agent: Agent,
         parents: PublicationParents,
         now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<AgentWorkPublication, SandboxStoreError> {
         let Some(commit) = parents.workspace.resolved_commit.clone() else {
             return Err(SandboxStoreError::Conflict);
         };
@@ -241,36 +271,22 @@ impl AgentWorker {
             expected_revision,
             worktree,
         };
-        let started = tokio::time::Instant::now();
-        let outcome = self
-            .try_publish_lifecycle_work(
-                agent.clone(),
-                Some(parents.clone()),
-                now,
-                |agent, at, parents| {
-                    let worktree = worktree.clone();
-                    async move {
-                        let mutation = self.progress_mutation(
-                            agent,
-                            AgentWorkStep::AddWorktree,
-                            at,
-                            None,
-                            Vec::new(),
-                            Some(worktree),
-                            None,
-                        )?;
-                        self.commit_lifecycle_publication(mutation, parents).await
-                    }
-                },
-            )
-            .await?;
-        match outcome {
-            AgentWorkPublication::Published => Ok(()),
-            AgentWorkPublication::KnownAborted => {
-                self.defer_workspace(agent, parents, now + started.elapsed(), true)
-                    .await
+        self.try_publish_lifecycle_work(agent, Some(parents), now, |agent, at, parents| {
+            let worktree = worktree.clone();
+            async move {
+                let mutation = self.progress_mutation(
+                    agent,
+                    AgentWorkStep::AddWorktree,
+                    at,
+                    None,
+                    Vec::new(),
+                    Some(worktree),
+                    None,
+                )?;
+                self.commit_lifecycle_publication(mutation, parents).await
             }
-        }
+        })
+        .await
     }
 }
 
@@ -285,7 +301,7 @@ fn workspace_can_bind(parents: &PublicationParents) -> bool {
 
 // Only the original cold-start lineage can become due again on these fresh
 // observations. The next claim repeats all authority checks before binding.
-fn bootstrap_advanced(
+fn same_bootstrap_lineage(
     observed: &PublicationParents,
     current: &PublicationParents,
     agent: &Agent,
@@ -340,5 +356,4 @@ fn bootstrap_advanced(
         && current.worktree.base_commit.is_empty()
         && after.revision >= before.revision
         && workspace.revision >= observed.workspace.revision
-        && (after.revision > before.revision || workspace.revision > observed.workspace.revision)
 }
