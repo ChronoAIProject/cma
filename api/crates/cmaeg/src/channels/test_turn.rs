@@ -3,6 +3,7 @@ use super::management::{load, ManagementError, ManagementState};
 use crate::{
     auth::Creator,
     providers::{ProviderError, ResponsesEvent, TurnRequest, TurnStream},
+    turns::{outcomes::TurnOutcome, Projection},
 };
 use cmaeg_core::{
     channel::ConformanceLevel,
@@ -131,39 +132,138 @@ async fn complete(
         .accepted
         .await
         .map_err(|_| unavailable("test turn was not accepted"))?;
-    let mut first_text = String::new();
-    let mut remaining = 200;
-    let mut completed = false;
-    while let Some(event) = stream.events.recv().await {
-        match event {
-            ResponsesEvent::OutputTextDelta { delta, .. } => {
-                let piece: String = delta.chars().take(remaining).collect();
-                remaining -= piece.chars().count();
-                first_text.push_str(&piece);
-            }
-            ResponsesEvent::Completed { .. } => {
-                completed = true;
-                break;
-            }
-            ResponsesEvent::Failed { .. } | ResponsesEvent::Incomplete { .. } => {
-                return Err(unavailable("provider test did not complete"))
-            }
-            _ => {}
+    let mut projection = Projection::default();
+    while let Some(frame) = stream.events.recv_observed().await {
+        if let Some(first_text) = test_preview(
+            &mut projection,
+            frame.event,
+            frame.bound_to_accepted,
+            &accepted.response_id,
+        )? {
+            return Ok(TestResult {
+                accepted_after_ms: accepted
+                    .at
+                    .duration_since(stream.request_started)
+                    .as_millis() as u64,
+                first_text,
+                level,
+            });
         }
     }
-    if !completed {
-        return Err(unavailable("provider test stream ended before completion"));
+    Err(unavailable("provider test stream ended before completion"))
+}
+
+fn test_preview(
+    projection: &mut Projection,
+    event: ResponsesEvent,
+    bound_to_accepted: bool,
+    accepted_response: &str,
+) -> Result<Option<String>, ManagementError> {
+    if let ResponsesEvent::Completed {
+        response,
+        matching_response_identity,
+    } = &event
+    {
+        if !bound_to_accepted
+            || !matching_response_identity
+            || response.get("id").and_then(serde_json::Value::as_str) != Some(accepted_response)
+        {
+            return Err(unavailable("provider test response could not be verified"));
+        }
     }
-    Ok(TestResult {
-        accepted_after_ms: accepted
-            .at
-            .duration_since(stream.request_started)
-            .as_millis() as u64,
-        first_text,
-        level,
-    })
+    let outcome = projection
+        .event(event)
+        .map_err(|_| unavailable("provider test output could not be read"))?;
+    match outcome {
+        Some(TurnOutcome::Completed { final_text }) => Ok(Some(
+            final_text.unwrap_or_default().chars().take(200).collect(),
+        )),
+        Some(TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. }) => {
+            Err(unavailable("provider test did not complete"))
+        }
+        _ => Ok(None),
+    }
 }
 
 fn unavailable(message: &str) -> ManagementError {
     ManagementError::Provider(ProviderError::Unavailable(message.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn completed(id: &str, matching_response_identity: bool) -> ResponsesEvent {
+        ResponsesEvent::Completed {
+            response: json!({
+                "id": id,
+                "output": [{ "type": "message", "content": [
+                    { "type": "output_text", "text": "Channel test reply" }
+                ] }],
+            }),
+            matching_response_identity,
+        }
+    }
+
+    #[test]
+    fn completed_test_uses_final_output_even_without_text_deltas() {
+        let result = test_preview(
+            &mut Projection::default(),
+            completed("resp_test", true),
+            true,
+            "resp_test",
+        )
+        .unwrap();
+        assert_eq!(result.as_deref(), Some("Channel test reply"));
+    }
+
+    #[test]
+    fn test_refuses_completion_without_consistent_accepted_identity() {
+        for (id, matching, bound) in [
+            ("resp_other", true, true),
+            ("resp_test", false, true),
+            ("resp_test", true, false),
+        ] {
+            let result = test_preview(
+                &mut Projection::default(),
+                completed(id, matching),
+                bound,
+                "resp_test",
+            );
+            assert!(matches!(
+                result,
+                Err(ManagementError::Provider(ProviderError::Unavailable(reason)))
+                    if reason == "provider test response could not be verified"
+            ));
+        }
+    }
+
+    #[test]
+    fn test_uses_committed_text_and_caps_the_preview_by_character() {
+        let mut projection = Projection::default();
+        let result = test_preview(
+            &mut projection,
+            ResponsesEvent::OutputTextDone {
+                item_id: "message".into(),
+                text: "答".repeat(201),
+            },
+            true,
+            "resp_test",
+        )
+        .unwrap();
+        assert!(result.is_none());
+
+        let result = test_preview(
+            &mut projection,
+            ResponsesEvent::Completed {
+                response: json!({"id": "resp_test"}),
+                matching_response_identity: true,
+            },
+            true,
+            "resp_test",
+        )
+        .unwrap();
+        assert_eq!(result, Some("答".repeat(200)));
+    }
 }
