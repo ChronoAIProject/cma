@@ -44,14 +44,22 @@ impl AgentWorker {
             let changed = readiness.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
-            let at = now + started.elapsed();
             let Some(current) = self.dependencies.store.get_agent(&agent.id).await? else {
                 return Ok(());
             };
-            if !same_publication_claim(&agent, &current, &self.config.holder, at) {
+            if !same_publication_claim(
+                &agent,
+                &current,
+                &self.config.holder,
+                now + started.elapsed(),
+            ) {
                 return Ok(());
             }
             let (parent, workspace, worktree) = self.unstarted_lineage(&current).await?;
+            let at = now + started.elapsed();
+            if !same_publication_claim(&agent, &current, &self.config.holder, at) {
+                return Ok(());
+            }
             if matches!(
                 parent.status,
                 SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
@@ -75,24 +83,30 @@ impl AgentWorker {
                     )
                     .await;
             }
-            let ready = parent.status == SandboxStatus::Active
-                && parent.credential.delivered
-                && parent.lifecycle.operation.is_none()
-                && parent.lifecycle.checkpoint_capture.is_none()
-                && workspace.status == WorkspaceStatus::Ready;
             let parents = PublicationParents {
                 sandbox: parent,
                 workspace,
                 worktree,
             };
-            if ready {
+            if workspace_can_bind(&parents) {
                 return self.bind_workspace(current, parents, at).await;
             }
             let remaining = budget.saturating_sub(started.elapsed());
             if remaining.is_zero() {
                 // The bounded observation already paced this expected wait. Keep
                 // it due so committed parent readiness can wake it.
-                return self.defer_workspace(current, parents, at, false).await;
+                return match self
+                    .defer_workspace(current.clone(), parents.clone(), at, false)
+                    .await
+                {
+                    Err(SandboxStoreError::Conflict)
+                        if parents.workspace.status == WorkspaceStatus::Preparing =>
+                    {
+                        self.bind_newly_ready_workspace(current, parents, now + started.elapsed())
+                            .await
+                    }
+                    result => result,
+                };
             }
             tokio::select! {
                 _ = &mut changed => {},
@@ -100,6 +114,42 @@ impl AgentWorker {
                 _ = tokio::time::sleep(Duration::from_millis(250).min(remaining)) => {},
             }
         }
+    }
+
+    async fn bind_newly_ready_workspace(
+        &self,
+        original: Agent,
+        observed: PublicationParents,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let Some(current) = self.dependencies.store.get_agent(&original.id).await? else {
+            return Ok(());
+        };
+        if !same_publication_claim(
+            &original,
+            &current,
+            &self.config.holder,
+            now + started.elapsed(),
+        ) {
+            return Ok(());
+        }
+        let (sandbox, workspace, worktree) = self.unstarted_lineage(&current).await?;
+        let at = now + started.elapsed();
+        if !same_publication_claim(&original, &current, &self.config.holder, at) {
+            return Ok(());
+        }
+        let parents = PublicationParents {
+            sandbox,
+            workspace,
+            worktree,
+        };
+        // Only cross the readiness boundary under the original runtime and
+        // Workspace authority. The binding still fences all current parents.
+        if !workspace_can_bind(&parents) || !observed.workspace_became_ready(&parents, &current) {
+            return Err(SandboxStoreError::Conflict);
+        }
+        self.bind_workspace(current, parents, at).await
     }
 
     async fn defer_workspace(
@@ -201,4 +251,13 @@ impl AgentWorker {
             }
         }
     }
+}
+
+fn workspace_can_bind(parents: &PublicationParents) -> bool {
+    let sandbox = &parents.sandbox;
+    sandbox.status == SandboxStatus::Active
+        && sandbox.credential.delivered
+        && sandbox.lifecycle.operation.is_none()
+        && sandbox.lifecycle.checkpoint_capture.is_none()
+        && parents.workspace.status == WorkspaceStatus::Ready
 }
