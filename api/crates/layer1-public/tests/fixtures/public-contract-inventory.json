@@ -1244,6 +1244,7 @@
       "required_problems": [
         "agent_not_found",
         "agent_restart_runtime_unsupported",
+        "agent_restart_turn_unsettled",
         "forbidden",
         "invalid_idempotency_key",
         "missing_idempotency_key",
