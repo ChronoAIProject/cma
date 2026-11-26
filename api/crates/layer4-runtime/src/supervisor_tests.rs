@@ -222,10 +222,21 @@ async fn held_checkpoint_fences_mutations_and_replays_until_exact_resume() {
     )
     .unwrap();
 
+    #[cfg(unix)]
+    {
+        let aliases = agent_home.join("tmp/arg0-linux");
+        std::fs::create_dir_all(&aliases).unwrap();
+        for name in ["apply_patch", "applypatch", "codex-linux-sandbox"] {
+            std::os::unix::fs::symlink("/usr/local/bin/provider", aliases.join(name)).unwrap();
+        }
+    }
     let hold = CheckpointHoldRequest {
         checkpoint: CheckpointRequest {
             epoch: 31,
-            exclusions: vec![".cache".into()],
+            exclusions: layer3_adapter::codex::checkpoint_exclusions(&[AgentSlot::new(
+                "agent-held",
+            )])
+            .unwrap(),
         },
         writer_resume_token: "b".repeat(64),
     };
@@ -247,6 +258,18 @@ async fn held_checkpoint_fences_mutations_and_replays_until_exact_resume() {
         first
     );
 
+    let mut expanded_wire = hold.clone();
+    expanded_wire.checkpoint.exclusions =
+        layer3_adapter::codex::checkpoint_archive_exclusions(&hold.checkpoint.exclusions);
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::CheckpointForTeardown(expanded_wire))
+                .await
+        )
+        .code,
+        "checkpoint_hold_conflict"
+    );
     let mut conflict = hold.clone();
     conflict.checkpoint.epoch += 1;
     assert_eq!(
@@ -370,7 +393,10 @@ async fn held_checkpoint_fences_mutations_and_replays_until_exact_resume() {
         supervisor
             .dispatch(RequestFrame::Checkpoint(CheckpointRequest {
                 epoch: 32,
-                exclusions: Vec::new(),
+                exclusions: layer3_adapter::codex::checkpoint_exclusions(&[AgentSlot::new(
+                    "agent-held",
+                )])
+                .unwrap(),
             }))
             .await,
         ResponseFrame::Checkpoint(_)

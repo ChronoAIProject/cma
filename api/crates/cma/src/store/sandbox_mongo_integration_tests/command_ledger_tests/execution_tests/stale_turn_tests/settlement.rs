@@ -494,3 +494,5 @@ pub(in crate::store) async fn adopt(
         .unwrap();
     assert_eq!(row.get_i64("document_schema_version").unwrap(), 2);
 }
+
+mod recorder_checkpoint;

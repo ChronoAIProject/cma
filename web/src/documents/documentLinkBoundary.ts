@@ -1,6 +1,6 @@
 import { find } from 'linkifyjs';
 
-export const documentLinkDelimiter = /[\s；，。！？、（）【】《》]/u;
+export const documentLinkDelimiter = /[\s；，。！？、：（）【】《》〈〉「」『』]/u;
 
 export function bareLinkPrefix(text: string): string {
   const end = text.search(documentLinkDelimiter);

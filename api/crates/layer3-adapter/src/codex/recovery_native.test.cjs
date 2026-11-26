@@ -15,6 +15,15 @@ const nativeTarget = process.arch === 'arm64' ? 'codex-linux-arm64/vendor/aarch6
 const binary = process.env.CMA_CODEX_TEST_BINARY || '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/' + nativeTarget + '/bin/codex';
 const bridgeProgram = process.env.CMA_ACP_TEST_BRIDGE || require('./persist_conversations.cjs').bridgePath;
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
+function assertReviewedNative() {
+  assert(['cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40',
+    'e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2',
+    '19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37',
+    'c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5',
+    'b32ece31af06440da980b733fb8fefdd1f193439595fda84096f1caaceec543f',
+    'a45099154d7fb4a5ed8a56f40966a95deb938e508bab23e6985035c709e9a85a',
+    process.env.CMA_CODEX_TEST_NATIVE_SHA256].includes(sha(fs.readFileSync(binary))), 'native must match a reviewed producer pin');
+}
 const exists = path => fs.existsSync(path);
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { if (e.code === 'ESRCH') return false; throw e; } };
 async function until(predicate, label, deadlineMs = 30000) {
@@ -130,12 +139,7 @@ test('bridge-only SIGTERM gives pinned native stdio EOF, flushes interrupted tur
     '11c84d6c37f3b2e15020405a2301df3ed8c16ed2d9b05c3a3a43620bba78a7d4',
     'ddb625f66a5a14d94df3512a525c4a674a359e564602c09085769c8b61e2bca1',
     'e26bce27dbdcf4d665e081b4a81762542795e2af6453da2a2f050fab5110f484'].includes(sha(fs.readFileSync(bridgeProgram))), 'bridge must match reviewed source');
-  assert(['cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40',
-    'e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2',
-    '19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37',
-    'c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5',
-    'b32ece31af06440da980b733fb8fefdd1f193439595fda84096f1caaceec543f',
-    'a45099154d7fb4a5ed8a56f40966a95deb938e508bab23e6985035c709e9a85a'].includes(sha(fs.readFileSync(binary))), 'native must match a pinned 0.147.0 or 0.165.0 binary');
+  assertReviewedNative();
   const directory = fs.mkdtempSync(join(evidence, 'cma-graceful-eof-'));
   const home = join(directory, 'home'); fs.mkdirSync(home);
   const dirtyPath = join(directory, 'dirty.txt');
@@ -259,12 +263,7 @@ test('bridge-only SIGTERM gives pinned native stdio EOF, flushes interrupted tur
 
 test('cold load preserves a crashed previous process turn without restarting it or inventing a terminal event', { timeout: 180000 }, async () => {
   assert.match(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), /^codex-cli 0\.(147|165)\.0$/);
-  assert(['cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40',
-    'e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2',
-    '19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37',
-    'c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5',
-    'b32ece31af06440da980b733fb8fefdd1f193439595fda84096f1caaceec543f',
-    'a45099154d7fb4a5ed8a56f40966a95deb938e508bab23e6985035c709e9a85a'].includes(sha(fs.readFileSync(binary))));
+  assertReviewedNative();
   assert(['113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4',
     '4e3fbc3fb4850f57019f4ba955193363c25c1c044445f165e96d7a65dcf64888',
     '84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c',

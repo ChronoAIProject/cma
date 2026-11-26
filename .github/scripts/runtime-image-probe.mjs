@@ -341,6 +341,14 @@ export async function probe(onStage = () => {}) {
     native: '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex',
     acp: '/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js',
   })) artifacts[name] = sha256(readFileSync(path));
+  if (process.env.CMA_RUNTIME_NATIVE_PACKAGE_PROOF === '1') {
+    const vendor = '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl';
+    for (const [name, relative] of Object.entries({
+      codeModeHost: 'bin/codex-code-mode-host',
+      bwrap: 'codex-resources/bwrap',
+      rg: 'codex-path/rg',
+    })) artifacts[name] = sha256(readFileSync(vendor + '/' + relative));
+  }
   artifacts.codexVersion = installedCodexVersion('/home/cma');
   artifacts.acpVersion = JSON.parse(readFileSync('/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/package.json')).version;
   const ghVersion = execFileSync('/usr/local/bin/gh', ['--version'], { encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -394,6 +402,7 @@ export async function probe(onStage = () => {}) {
     ['/home/cma/.cma/provider/codex/auth.json', '{"fixture":"retained-auth-fixture"}'],
     [`${agentHome}/tmp/retained`, 'retained-other-temporary-content'],
     [`${agentHome}/tmp/arg0-sibling/retained`, 'retained-adjacent-content'],
+    [`${agentHome}/tmp/arg0-linux-sibling/retained`, 'retained-new-adjacent-content'],
   ];
   for (const [path, bytes] of retained) {
     mkdirSync(join(path, '..'), { recursive: true });
@@ -423,7 +432,7 @@ export async function probe(onStage = () => {}) {
   assert.equal((await control(rejectedHold)).code, 'checkpoint_symlink_escape');
   await waitForWriterProgress(counter);
   complete('escaping-helper-refused');
-  const hold = { t: 'checkpoint_for_teardown', checkpoint: { epoch: 1, exclusions: ['.cma/agents/ci-agent/home/tmp/arg0'] }, writer_resume_token: 'a'.repeat(64) };
+  const hold = { t: 'checkpoint_for_teardown', checkpoint: { epoch: 1, exclusions: ['.cma/agents/ci-agent/home/tmp/arg0', '.codex/tmp/arg0'] }, writer_resume_token: 'a'.repeat(64) };
   onStage('checkpoint-request');
   const receipt = await control(hold);
   assertCheckpointHoldReceipt(receipt, hold, onStage);

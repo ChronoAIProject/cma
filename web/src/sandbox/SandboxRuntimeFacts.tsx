@@ -51,11 +51,11 @@ export function runtimeLifecycleNotice(
       detail: 'This Sandbox is not eligible for automatic CMA runtime updates.',
       tone: 'neutral',
     };
+  const runtimeObserved =
+    status === 'active' || (status === 'paused' && update.currentVersionConfirmed === true);
   if (
     update.state === 'up_to_date' &&
-    (status !== 'active' ||
-      !update.currentVersion ||
-      update.currentVersion !== update.latestVersion)
+    (!runtimeObserved || !update.currentVersion || update.currentVersion !== update.latestVersion)
   )
     return {
       title: 'Runtime version unconfirmed',
