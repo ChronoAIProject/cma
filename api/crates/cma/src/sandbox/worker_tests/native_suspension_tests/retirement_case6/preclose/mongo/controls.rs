@@ -94,7 +94,8 @@ async fn retirement_capture_at_capacity_allows_ordinary_agent_stop() {
     assert_eq!(phase(&row), "offered");
 
     let (healthy, mut active, mut children, _) = active_siblings().await;
-    let mut control = children.remove(0);
+    active.name = "Healthy worker sandbox".into();
+    let mut control = children.pop().unwrap();
     let now = SystemTime::now();
     composed::seed_active(&healthy, &base, &mut active, &mut control, now).await;
     base.schedule_agent_stop(AgentStopRequest {
