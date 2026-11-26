@@ -68,6 +68,8 @@ pub enum AgentControlStoreError {
     Conflict,
     #[error("an exact native Agent Close observation is required")]
     RestartEvidenceRequired,
+    #[error("the stopped Agent's retained turn could not be settled")]
+    RestartTurnUnsettled,
     #[error("agent worktree recovery is not eligible")]
     WorktreeRecoveryConflict,
     #[error("agent limit reached: {live} of {limit}")]

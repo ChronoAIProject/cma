@@ -109,6 +109,7 @@ pub(super) fn control_error(error: AgentControlStoreError) -> AgentServiceError 
         AgentControlStoreError::Conflict | AgentControlStoreError::RestartEvidenceRequired => {
             AgentServiceError::ControlConflict
         }
+        AgentControlStoreError::RestartTurnUnsettled => AgentServiceError::RestartTurnUnsettled,
         AgentControlStoreError::WorktreeRecoveryConflict => {
             AgentServiceError::WorktreeRecoveryConflict
         }
