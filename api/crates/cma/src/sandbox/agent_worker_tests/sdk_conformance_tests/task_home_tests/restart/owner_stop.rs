@@ -21,6 +21,7 @@ async fn exercise_owner_stop_restart(historical: bool, segmented: bool) {
     use layer2_core::sandbox::store::{AgentLogPublicationIdentity, AgentStopRequest};
     use layer2_core::sandbox::{AgentRestartControl, AgentRestartService, AgentServiceError};
     use layer2_core::Caller;
+    use mongodb::bson::{doc, Document};
 
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let client = mongodb::Client::with_uri_str(uri).await.unwrap();
@@ -180,6 +181,22 @@ async fn exercise_owner_stop_restart(historical: bool, segmented: bool) {
         budget.assert_held(&store).await;
         *close_refusal.lock().unwrap() = None;
         let acceptance = restart.restart(&caller, &agent.id, key).await.unwrap();
+        if !segmented {
+            let row = database
+                .collection::<Document>("agents")
+                .find_one(doc! {"_id": agent.id.as_str()})
+                .await
+                .unwrap()
+                .unwrap();
+            let expected = i64::try_from(stopped.conversation.last_seq + 1).unwrap();
+            let conversation = row
+                .get_document("record")
+                .unwrap()
+                .get_document("conversation")
+                .unwrap();
+            assert_eq!(row.get_i64("last_seq").unwrap(), expected);
+            assert_eq!(conversation.get_i64("last_seq").unwrap(), expected);
+        }
         let starting = harness.stored(&agent.id).await;
         assert_eq!(starting.status, AgentStatus::Starting);
         assert_eq!(starting.work.step, AgentWorkStep::RestartConversation);

@@ -1,6 +1,8 @@
 //! Atomically publish the restart and any terminal event from the original Stop.
 
-use super::{store_error, unavailable, unknown_control, ApplyError, DOCUMENT_SCHEMA_VERSION};
+use super::{
+    signed, store_error, unavailable, unknown_control, ApplyError, DOCUMENT_SCHEMA_VERSION,
+};
 use crate::store::{
     agent_log::{log_id, read_entry},
     agent_log_integrity::{
@@ -116,6 +118,12 @@ pub(super) async fn record<'session>(
         )
         .map_err(domain_error)?;
         update.fields.insert(INTEGRITY_FIELD, prepared.integrity);
+        update.fields.insert(
+            "last_seq",
+            signed(input.next.conversation.last_seq, "agent log sequence")
+                .map_err(SandboxStoreError::Corrupt)
+                .map_err(domain_error)?,
+        );
         Some((entry, prepared.documents))
     } else {
         carry_integrity_for_revision(row, input.current, input.next, &mut update.fields)
