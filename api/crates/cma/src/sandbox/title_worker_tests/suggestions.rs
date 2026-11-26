@@ -68,7 +68,7 @@ async fn suggestions_use_the_scoped_platform_endpoint_with_the_real_request_cont
         platform_base_url: format!("http://{}", listener.local_addr().unwrap()),
     });
     let router = Router::new()
-        .route("/api/v1/proxy/s/chrono-llm/v1/responses", post(reply))
+        .route("/api/v1/proxy/s/chrono-llm/responses", post(reply))
         .with_state(calls.clone());
     let server = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
