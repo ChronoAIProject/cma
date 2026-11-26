@@ -120,6 +120,7 @@ impl MongoSandboxStore {
             managed_runtime_version: None,
             default_pool_holds: Default::default(),
             runtime_image_origin_enabled: false,
+            managed_machine_updates: Default::default(),
             desktop_verified_runtime_image: None,
             released_lanes: None,
             managed_machine_runtime_version: None,

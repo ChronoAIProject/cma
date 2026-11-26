@@ -35,11 +35,12 @@ pub(super) async fn apply(
             // for an already-satisfied command that only writes a receipt.
             resource_access::fence_lineage(store, &snapshot, session).await?;
             let release = store.released_runtime();
+            let runtime = store.managed_runtime_for_release(&snapshot.lineage.sandbox, &release);
             let plan = plan_sandbox_control(
                 record,
                 &snapshot.lineage.sandbox,
                 &at,
-                store.managed_runtime_target(&snapshot.lineage.sandbox, &release.agent),
+                runtime.map(|(_, target)| target),
             )?;
             let plan = if let SandboxControlPlan::Transition { sandbox, .. } = &plan {
                 if store
@@ -67,23 +68,20 @@ pub(super) async fn apply(
                         Some(proof.audit().map_err(|_| SandboxControlError::Conflict)?);
                 }
                 SandboxControlPlan::Transition { sandbox, event } => {
-                    if snapshot.lineage.sandbox.has_managed_runtime_image()
-                        && snapshot.lineage.sandbox.runtime_update_request()
-                            != sandbox.runtime_update_request()
+                    if snapshot.lineage.sandbox.runtime_update_request()
+                        != sandbox.runtime_update_request()
                     {
-                        store
-                            .fence_released_admission(
-                                &release,
-                                layer2_core::released_runtime::ReleasedLane::Agent,
-                                session,
-                            )
-                            .await
-                            .map_err(|error| match error {
-                                layer2_core::sandbox::SandboxStoreError::Conflict => {
-                                    SandboxControlError::Conflict
-                                }
-                                _ => SandboxControlError::Unavailable,
-                            })?;
+                        if let Some((lane, _)) = runtime {
+                            store
+                                .fence_released_admission(&release, lane, session)
+                                .await
+                                .map_err(|error| match error {
+                                    layer2_core::sandbox::SandboxStoreError::Conflict => {
+                                        SandboxControlError::Conflict
+                                    }
+                                    _ => SandboxControlError::Unavailable,
+                                })?;
+                        }
                     }
                     let fields = sandboxes::sandbox_replacement_fields(&sandbox)
                         .map_err(|_| SandboxControlError::Corrupt)?;
