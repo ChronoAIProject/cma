@@ -232,3 +232,35 @@ async fn failed_receiving_runtime_revocation_does_not_release_durable_owner() {
         authority.token
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn reconciliation_owner_page_rechecks_expiry_and_local_slots() {
+    let store = Arc::new(MemoryOwnershipStore::default());
+    let foreign = start(store.clone(), "foreign").await;
+    let first = AgentId("first".into());
+    let handoff = AgentId("handoff".into());
+    let expiring = AgentId("expiring".into());
+    foreign.acquire(&first).await.unwrap().unwrap();
+    let old = foreign.acquire(&handoff).await.unwrap().unwrap();
+    foreign.acquire(&expiring).await.unwrap().unwrap();
+    let settling = std::time::Duration::from_millis(50);
+    let lease = std::time::Duration::from_millis(DEFAULT_LEASE_MS);
+    tokio::time::advance(lease - settling).await;
+    let coordinator = start(store, "manager").await;
+    let mut owners = coordinator
+        .observe_foreign_reconciliation_owners([&first, &handoff, &expiring])
+        .await;
+    assert!(coordinator.defer_reconciliation_for_foreign_owner(&mut owners, &first));
+    assert!(!coordinator.defer_reconciliation_for_foreign_owner(&mut owners, &first));
+
+    foreign.begin_drain().await;
+    foreign.handoff(&old, async { Ok(()) }).await.unwrap();
+    let local = coordinator.acquire(&handoff).await.unwrap().unwrap();
+    assert!(local.token.epoch > old.token.epoch);
+    assert!(!coordinator.defer_reconciliation_for_foreign_owner(&mut owners, &handoff));
+
+    tokio::time::advance(settling).await;
+    assert!(!coordinator.defer_reconciliation_for_foreign_owner(&mut owners, &expiring));
+    let replacement = coordinator.acquire(&expiring).await.unwrap().unwrap();
+    assert_eq!(replacement.token.epoch, 2);
+}
