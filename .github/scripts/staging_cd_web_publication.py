@@ -6,6 +6,7 @@ import ci_retry
 from image_secret_gate import checksum, verified_staging_scan
 from staging_cd_build import command, inspect
 from staging_cd_common import require
+from staging_cd_publication_diagnostics import ImageCommandRefusal, skopeo_version
 from staging_cd_publish import push
 from staging_cd_receipts import published_receipt, validate_receipt
 from staging_cd_web_continuity import REPOSITORY, immutable_image, require_images
@@ -89,10 +90,19 @@ def publish(archive, identity, scope, directory, registry, credential, actor, *,
         receipt = published_receipt(identity, promote["digest"], promote["archive_sha256"], counts, **evidence)
         prepare = pair["prepare"]
         mark("registry_copy")
-        for stored in ((archive, digest, prepared), (prepare["archive"], prepare["digest"], prepare["archive_sha256"])):
-            copy_auxiliary(stored, registry, auth, runner, reservation_check, retry)
-        require(checksum(promote["archive"]) == receipt["archive"], "Promote Web archive differs from its scan")
-        push(promote["archive"], REPOSITORY, version, receipt["digest"], auth, registry, runner, reservation_check, retry)
+        role = "raw"
+        try:
+            copy_auxiliary((archive, digest, prepared), registry, auth, runner, reservation_check, retry)
+            role = "prepare"
+            copy_auxiliary((prepare["archive"], prepare["digest"], prepare["archive_sha256"]),
+                           registry, auth, runner, reservation_check, retry)
+            role = "promote"
+            require(checksum(promote["archive"]) == receipt["archive"], "Promote Web archive differs from its scan")
+            push(promote["archive"], REPOSITORY, version, receipt["digest"], auth, registry, runner, reservation_check, retry)
+        except ImageCommandRefusal as error:
+            if error.copy_failure is not None:
+                error.web_copy_failure = (role, *error.copy_failure, skopeo_version(runner))
+            raise
     finally:
         auth.unlink(missing_ok=True)
     require(checksum(promote["archive"]) == receipt["archive"], "Promote Web archive changed during publication")

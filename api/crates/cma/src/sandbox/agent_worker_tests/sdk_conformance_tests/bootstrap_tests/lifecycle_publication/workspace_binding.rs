@@ -241,6 +241,9 @@ async fn workspace_wait_requeue_rebuilds_after_a_concurrent_workspace_revision()
     fixture.cleanup().await;
 }
 
+#[path = "workspace_wait_contention.rs"]
+mod workspace_wait_contention;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing to a disposable replica set"]
 async fn wait_binding_rebuilds_after_a_concurrent_workspace_revision() {
