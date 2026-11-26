@@ -60,11 +60,9 @@ fn activated_history_cannot_become_legacy_when_either_latch_record_is_missing() 
         );
     }
     let keys = doc! {"sandbox_id":"sandbox"};
-    assert!(activation_pair(
-        Some(&with_keys(&latch, keys.clone())),
-        Some(&with_keys(&receipt, keys))
-    )
-    .is_err());
+    let extended_latch = changed(&latch, KEYS, keys.clone());
+    let extended_receipt = changed(&receipt, KEYS, keys);
+    assert!(activation_pair(Some(&extended_latch), Some(&extended_receipt)).is_err());
     receipt.insert("drain_evidence", "b".repeat(64));
     assert_eq!(
         activation_pair(Some(&latch), Some(&receipt)),
@@ -81,42 +79,45 @@ fn grant_pair_accepts_matching_versions_and_checks_both_envelopes() {
     let old = records::grant_document(&grant).unwrap();
     let receipt = records::grant_receipt(&grant);
     let keys = doc! {"sandbox_id":"sandbox","owner_subject":"owner","share_id":"share"};
-    let extended = with_keys(&old, keys.clone());
-    let extended_receipt = with_keys(&receipt, keys);
-    let mismatch = with_keys(&receipt, doc! {"sandbox_id":"other","share_id":"share"});
-    for (row, receipt, valid) in [
-        (Some(&old), Some(&receipt), true),
-        (Some(&extended), Some(&extended_receipt), true),
-        (Some(&extended), Some(&mismatch), false),
-        (Some(&old), Some(&extended_receipt), false),
-        (Some(&extended), Some(&receipt), false),
-        (Some(&extended), None, false),
-        (None, Some(&extended_receipt), false),
+    let extended = changed(&old, KEYS, keys.clone());
+    let extended_receipt = changed(&receipt, KEYS, keys.clone());
+    let origin = grant.key.origin.clone();
+    let valid = Ok(Some(grant));
+    let corrupt = Err(ExecutionError::Corrupt);
+    for (row, receipt, expected) in [
+        (Some(&old), Some(&receipt), &valid),
+        (Some(&extended), Some(&extended_receipt), &valid),
+        (Some(&old), Some(&extended_receipt), &corrupt),
+        (Some(&extended), Some(&receipt), &corrupt),
+        (Some(&extended), None, &corrupt),
+        (None, Some(&extended_receipt), &corrupt),
     ] {
-        let value = records::grant_pair(&grant.key.origin, row, receipt);
-        assert_eq!(
-            value.is_ok_and(|value| value.as_ref() == Some(&grant)),
-            valid
-        );
+        assert_eq!(&records::grant_pair(&origin, row, receipt), expected);
     }
-    let grant_actor = doc! {"sandbox_id":"sandbox","share_id":"share","actor_subject":"owner"};
-    assert!(records::read_grant(&with_keys(&old, grant_actor)).is_err());
+    for field in ["sandbox_id", "owner_subject", "share_id", "actor_subject"] {
+        let wrong_keys = changed(&keys, field, "other");
+        let wrong = changed(&receipt, KEYS, wrong_keys.clone());
+        let result = records::grant_pair(&origin, Some(&extended), Some(&wrong));
+        assert_eq!(result, corrupt, "{field}");
+        if matches!(field, "share_id" | "actor_subject") {
+            let wrong_control = changed(&old, KEYS, wrong_keys);
+            assert!(records::read_grant(&wrong_control).is_err(), "{field}");
+        }
+    }
 }
 
 #[test]
 fn member_and_effect_enforce_v1_attribution_for_each_authority() {
     use layer2_core::resource_access::{ResourceActor, ResourceOwner};
-    use layer2_core::SubjectId;
     use serde_json::json;
-    let subject = SubjectId::new("owner");
     let actor: ResourceActor =
-        fixture(json!({"kind":"api","subject":subject,"delegation_id":"synthetic-grant"}));
+        fixture(json!({"kind":"api","subject":"owner","delegation_id":"synthetic-grant"}));
     let actor = records::hash(&("resource-execution-actor-v1", actor)).unwrap();
-    let person = records::hash(&ResourceOwner::Person {
-        subject: subject.clone(),
-    })
-    .unwrap();
-    let organization = records::hash(&ResourceOwner::Organization { subject }).unwrap();
+    let owner_digest = |kind| {
+        let owner: ResourceOwner = fixture(json!({"kind":kind,"subject":"owner"}));
+        records::hash(&owner).unwrap()
+    };
+    let (person, organization) = (owner_digest("person"), owner_digest("organization"));
     let execution: wire::ExecutionKey = fixture(json!({
         "command_id":"command", "command_fingerprint":digest(), "dispatch_sequence":1,
         "prompt_id":"prompt", "turn_id":"turn", "agent_id":"agent", "attempt":1,
@@ -155,27 +156,39 @@ fn member_and_effect_enforce_v1_attribution_for_each_authority() {
         }));
         let member_row = records::member_document(&record).unwrap();
         let effect_row = records::effect_document(&effect).unwrap();
-        let reads = |keys: &Document| {
-            let member = records::read_member(&with_keys(&member_row, keys.clone()));
-            let effect = records::read_effect(&with_keys(&effect_row, keys.clone()));
-            (member.is_ok(), effect.is_ok())
-        };
         let mut keys = match role {
             "share" => doc! {"sandbox_id":"sandbox","share_id":"share"},
             "organization" => doc! {"sandbox_id":"sandbox"},
             _ => doc! {"sandbox_id":"sandbox","owner_subject":"owner"},
         };
-        let allow_missing = role == "binding";
-        assert_eq!(reads(&keys), (allow_missing, allow_missing), "{role}");
+        let reads = |keys: &Document| {
+            (
+                records::read_member(&changed(&member_row, KEYS, keys.clone())),
+                records::read_effect(&changed(&effect_row, KEYS, keys.clone())),
+            )
+        };
+        let valid = (Ok(record), Ok(effect));
+        let corrupt = (Err(ExecutionError::Corrupt), Err(ExecutionError::Corrupt));
+        let expected = if role == "binding" { &valid } else { &corrupt };
+        assert!(&reads(&keys) == expected, "{role}");
         keys.insert("actor_subject", "owner");
-        assert_eq!(reads(&keys), (true, true), "{role}");
+        assert!(reads(&keys) == valid, "{role}");
+        if role == "organization" {
+            let wrong = changed(&keys, "owner_subject", "owner");
+            assert!(records::read_effect(&changed(&effect_row, KEYS, wrong)).is_err());
+        }
         if role == "owner" {
             check_invalid_envelopes(&member_row, &keys);
-            keys.insert("actor_subject", "other");
-            assert_eq!(reads(&keys), (false, false));
+            assert!(reads(&changed(&keys, "actor_subject", "other")) == corrupt);
+            let extended = changed(&effect_row, KEYS, keys.clone());
+            assert!(records::read_effect(&changed(&extended, "registration", "wrong")).is_err());
         }
-        assert!(records::read_member(&member_row).unwrap() == record);
-        assert!(records::read_effect(&effect_row).unwrap() == effect);
+        assert!(
+            (
+                records::read_member(&member_row),
+                records::read_effect(&effect_row)
+            ) == valid
+        );
     }
 }
 
@@ -190,15 +203,13 @@ fn check_invalid_envelopes(row: &Document, keys: &Document) {
         {"sandbox_id":"sandbox","actor_subject":null}
     ]));
     for invalid in malformed {
-        assert!(records::read_member(&with_keys(row, invalid)).is_err());
+        assert!(records::read_member(&changed(row, KEYS, invalid)).is_err());
     }
-    let good = with_keys(row, keys.clone());
+    let good = changed(row, KEYS, keys.clone());
     for (field, wrong) in doc! {"_id":"other","ordinal":2_i64,"protocol":1_i64,
-    "extra":true,"registration":"wrong","record":format!(" {}", row.get_str("record").unwrap())}
+    "extra":true,"record":format!(" {}", row.get_str("record").unwrap())}
     {
-        let mut changed = good.clone();
-        changed.insert(field, wrong);
-        assert!(records::read_member(&changed).is_err());
+        assert!(records::read_member(&changed(&good, &field, wrong)).is_err());
     }
 }
 
@@ -223,16 +234,16 @@ fn revocation_checks_erasure_keys_against_the_exact_intent() {
     let old = records::operation_document(&operation).unwrap();
     assert!(records::read_operation(&old).unwrap() == operation);
     let keys = doc! {"sandbox_id":"sandbox","actor_subject":"owner","owner_subject":"owner","share_id":"share"};
-    assert!(records::read_operation(&with_keys(&old, keys.clone())).unwrap() == operation);
+    assert!(records::read_operation(&changed(&old, KEYS, keys.clone())).unwrap() == operation);
     for field in keys.keys() {
-        let mut changed = keys.clone();
-        changed.insert(field, "other");
-        assert!(records::read_operation(&with_keys(&old, changed)).is_err());
+        assert!(
+            records::read_operation(&changed(&old, KEYS, changed(&keys, field, "other"))).is_err()
+        );
     }
 }
-fn with_keys(row: &Document, keys: impl Into<mongodb::bson::Bson>) -> Document {
+fn changed(row: &Document, field: &str, value: impl Into<mongodb::bson::Bson>) -> Document {
     let mut row = row.clone();
-    row.insert(KEYS, keys);
+    row.insert(field, value);
     row
 }
 

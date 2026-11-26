@@ -1,5 +1,6 @@
 use super::*;
 use layer2_core::resource_access::{ResourceOwner, ResourceTarget};
+use layer2_core::SubjectId;
 use mongodb::bson;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
@@ -61,10 +62,8 @@ impl ErasureKeys {
             Independent { owner, .. } => owner,
         };
         if let Some(subject) = &self.owner_subject {
-            let person = ResourceOwner::Person {
-                subject: layer2_core::SubjectId::new(subject.as_str()),
-            };
-            if hash(&person)? != *owner {
+            let subject = SubjectId::new(subject.as_str());
+            if hash(&ResourceOwner::Person { subject })? != *owner {
                 return Err(ExecutionError::Corrupt);
             }
         }
@@ -73,26 +72,25 @@ impl ErasureKeys {
 }
 
 fn read_keys(document: &Document, mut expected: Document) -> ExecutionResult<Option<ErasureKeys>> {
-    let mut keys = None;
-    if let Some(value) = document.get(ERASURE_KEYS) {
-        let fields = value.as_document().ok_or(ExecutionError::Corrupt)?;
-        // Bound the four scalar fields before decoding the extension.
-        if fields.len() > 4
-            || fields.iter().any(|(name, value)| {
-                name.len() > 13 || value.as_str().is_none_or(|text| text.len() > 128)
-            })
-        {
-            return Err(ExecutionError::Corrupt);
-        }
-        keys = Some(
-            bson::deserialize_from_document(fields.clone()).map_err(|_| ExecutionError::Corrupt)?,
-        );
-        expected.insert(ERASURE_KEYS, value.clone());
+    let fields = match document.get(ERASURE_KEYS) {
+        None if expected == *document => return Ok(None),
+        Some(bson::Bson::Document(fields)) => fields,
+        _ => return Err(ExecutionError::Corrupt),
+    };
+    if fields.len() > 4
+        || fields.iter().any(|(name, value)| {
+            name.len() > 13 || value.as_str().is_none_or(|text| text.len() > 128)
+        })
+    {
+        return Err(ExecutionError::Corrupt);
     }
-    expected
-        .eq(document)
-        .then_some(keys)
-        .ok_or(ExecutionError::Corrupt)
+    expected.insert(ERASURE_KEYS, fields.clone());
+    if expected != *document {
+        return Err(ExecutionError::Corrupt);
+    }
+    bson::deserialize_from_document(fields.clone())
+        .map(Some)
+        .map_err(|_| ExecutionError::Corrupt)
 }
 
 pub(super) fn grant_document(value: &GrantControlV1) -> ExecutionResult<Document> {
@@ -102,7 +100,7 @@ pub(super) fn grant_document(value: &GrantControlV1) -> ExecutionResult<Document
     Ok(document)
 }
 pub(super) fn read_grant(document: &Document) -> ExecutionResult<GrantControlV1> {
-    let value: GrantControlV1 = decode(document)?;
+    let value = decode(document)?;
     let keys = read_keys(document, grant_document(&value)?)?;
     if keys.is_some_and(|keys| {
         keys.actor_subject.is_some() || keys.share_id.as_ref() != Some(&value.key.share_id)
@@ -130,15 +128,14 @@ pub(super) fn grant_pair(
     match (control, receipt) {
         (None, None) => Ok(None),
         (Some(control), Some(receipt)) => {
-            let value = read_grant(control)?;
-            let mut expected = grant_receipt(&value);
-            if let Some(keys) = control.get(ERASURE_KEYS) {
-                expected.insert(ERASURE_KEYS, keys.clone());
-            }
-            if value.key.origin != *origin || expected != *receipt {
+            let keys = control.get(ERASURE_KEYS);
+            let control = read_grant(control)?;
+            let mut expected = grant_receipt(&control);
+            expected.extend(keys.map(|keys| (ERASURE_KEYS.to_owned(), keys.clone())));
+            if control.key.origin != *origin || expected != *receipt {
                 return Err(ExecutionError::Corrupt);
             }
-            Ok(Some(value))
+            Ok(Some(control))
         }
         _ => Err(ExecutionError::Corrupt),
     }
@@ -183,10 +180,7 @@ pub(super) fn read_operation(document: &Document) -> ExecutionResult<RevocationO
     let value = decode(document)?;
     if let Some(keys) = read_keys(document, operation_document(&value)?)? {
         let intent = &value.intent;
-        let actor = intent
-            .actor
-            .ordinary_subject()
-            .map(|subject| subject.as_str());
+        let actor = intent.actor.ordinary_subject().map(SubjectId::as_str);
         let owner = match &intent.owner {
             ResourceOwner::Person { subject } => Some(subject.as_str()),
             ResourceOwner::Organization { .. } => None,
