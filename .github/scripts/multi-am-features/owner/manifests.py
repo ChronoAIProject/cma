@@ -110,9 +110,12 @@ def managers(secret, ready):
     if desktop:
         env['stringData']['CHRONO_MACHINE_SANDBOX_IMAGE']=desktop
         env['stringData']['CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE']=desktop
+        capabilities = ['task_home_admission', 'desktop_enable']
+        if not prepared:
+            capabilities.append('suggested_followup_admission')
         env['stringData']['CHRONO_TASK_EXPERIENCE_POLICY']=json.dumps({
             'mode':'accounts','accounts':['native-am-fixture-owner'],
-            'capabilities':['task_home_admission','desktop_enable']},separators=(',',':'))
+            'capabilities':capabilities},separators=(',',':'))
         # Inline Agent lifecycle uses one deployment capacity for either family.
         if not prepared:
             env['stringData']['CHRONO_AGENT_MANAGER_SANDBOX_CPU']='2'

@@ -16,6 +16,7 @@ PREFIX = '/api/v1/proxy/s/chrono-storage-service/api/buckets/cma-ci-documents/ob
 LIMIT = 2 * 1024 * 1024
 SKILL_PATH = re.compile(r'/api/v1/proxy/s/ornn-api/api/v1/skills/'
                         r'(two-am-(?:before|after)-restart)(/versions/1\.0/download)?')
+SUGGESTIONS_PATH = '/api/v1/proxy/s/chrono-llm-public/v1/responses'
 
 
 def skill_archive(skill):
@@ -66,6 +67,8 @@ class Storage(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             body = self.body()
+            if self.path == SUGGESTIONS_PATH:
+                return self.suggestions(body)
             if self.path == '/oauth/token':
                 form = parse_qs(body.decode(), strict_parsing=True)
                 if (form.get('grant_type') != ['client_credentials']
@@ -114,20 +117,48 @@ class Storage(BaseHTTPRequestHandler):
         except ValueError:
             return self.reply(400, {'error': 'invalid_request'})
 
+    def check_grant(self, scope):
+        connection = http.client.HTTPConnection('identity', 8080, timeout=3)
+        try:
+            connection.request('GET', f'/fixture/{scope}-grant',
+                               headers={'Authorization': self.headers.get('Authorization', '')})
+            return 200 if connection.getresponse().status == 200 else 401
+        except (OSError, http.client.HTTPException):
+            return 503
+        finally:
+            connection.close()
+
+    def suggestions(self, body):
+        if len(body) > 20 * 1024 or self.headers.get('Content-Type') != 'application/json':
+            return self.reply(400, {'error': 'invalid_suggestion_request'})
+        request = json.loads(body)
+        if (not isinstance(request, dict) or request.get('stream') is not False
+                or not isinstance(request.get('text'), dict)
+                or not isinstance(request['text'].get('format'), dict)
+                or request['text']['format'].get('name') != 'contextual_suggestions'):
+            return self.reply(404, {'error': 'unsupported_route'})
+        grant = self.check_grant('llm')
+        if grant != 200:
+            return self.reply(grant, {'error': 'fixture_model_grant_unavailable'})
+        connection = http.client.HTTPSConnection('provider.localhost.direct', 8080, timeout=45)
+        try:
+            connection.request('POST', '/v1/responses', body, {'Content-Type': 'application/json'})
+            response = connection.getresponse()
+            result = response.read(24 * 1024 + 1)
+            if response.getheader('Content-Type') != 'application/json' or len(result) > 24 * 1024:
+                return self.reply(502, {'error': 'invalid_suggestion_result'})
+            return self.reply(response.status, result)
+        except (OSError, http.client.HTTPException):
+            return self.reply(503, {'error': 'fixture_model_unavailable'})
+        finally:
+            connection.close()
+
     def skill(self, skill, download, query):
         if query != ('' if download else 'version=1.0'):
             return self.reply(404, {'error': 'unknown_skill_version'})
-        connection = http.client.HTTPConnection('identity', 8080, timeout=3)
-        try:
-            connection.request('GET', '/fixture/ornn-grant',
-                               headers={'Authorization': self.headers.get('Authorization', '')})
-            response = connection.getresponse()
-            if response.status != 200:
-                return self.reply(401, {'error': 'unauthorized'})
-        except (OSError, http.client.HTTPException):
-            return self.reply(503, {'error': 'fixture_authority_unavailable'})
-        finally:
-            connection.close()
+        grant = self.check_grant('ornn')
+        if grant != 200:
+            return self.reply(grant, {'error': 'fixture_authority_unavailable' if grant == 503 else 'unauthorized'})
         material = skill_archive(skill)
         if download:
             return self.reply(200, material, 'application/zip')

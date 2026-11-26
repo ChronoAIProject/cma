@@ -322,13 +322,17 @@ class Fixture:
     def prepareTurn(self, caseId=None, marker=None, **extra):
         self.provider_observation('prepare_turn',input={'case_id':caseId,'marker':marker,**extra})
         value=self.provider('POST','/__ws4/arm',{'case_id':caseId,'marker':marker,
+            'suggestions': extra.get('suggestions', False),
             **({'access_request': extra['accessRequest']} if 'accessRequest' in extra else {})})
         self.provider_observation('prepare_turn_result',snapshot=value)
         return value
 
-    def releaseTurn(self, caseId=None, **_):
-        self.provider_observation('release_turn',case_id=caseId)
-        value=self.provider('POST','/__ws4/release',{'case_id':caseId})
+    def releaseTurn(self, caseId=None, suggestion=False):
+        if type(suggestion) is not bool:
+            raise ValueError('release_gate_required')
+        self.provider_observation('release_turn',case_id=caseId,suggestion=suggestion)
+        route = '/__ws4/release-suggestion' if suggestion else '/__ws4/release'
+        value=self.provider('POST',route,{'case_id':caseId})
         self.provider_observation('release_turn_result',snapshot=value)
         return value
 

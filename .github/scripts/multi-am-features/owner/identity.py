@@ -114,10 +114,11 @@ class Identity(BaseHTTPRequestHandler):
         return None
 
     def do_GET(self):
-        if self.path == '/fixture/ornn-grant':
+        if self.path in ('/fixture/ornn-grant', '/fixture/llm-grant'):
+            service = 'fixture-ornn' if self.path == '/fixture/ornn-grant' else 'fixture-llm'
             auth = self.headers.get('Authorization', '')
             with self.lock:
-                granted = any('fixture-ornn' in value.get('service_ids', ())
+                granted = any(service in value.get('service_ids', ())
                               and hmac.compare_digest(auth, 'Bearer ' + value['credential'])
                               for value in self.keys.values())
             return self.reply(200 if granted else 401, {'granted': granted})

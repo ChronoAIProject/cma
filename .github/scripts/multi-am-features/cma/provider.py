@@ -29,7 +29,7 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def arm(case_id, marker, access_request=None):
+def arm(case_id, marker, access_request=None, suggestions=False):
     global ACTIVE
     if not isinstance(case_id, str) or not 1 <= len(case_id) <= 128:
         raise ValueError('case_id_invalid')
@@ -38,12 +38,18 @@ def arm(case_id, marker, access_request=None):
     if access_request is not None and (not isinstance(access_request, str)
                                        or not re.fullmatch(r'[a-f0-9-]{36}', access_request)):
         raise ValueError('fixture_access_request_key_invalid')
+    if type(suggestions) is not bool or (suggestions and access_request is not None):
+        raise ValueError('fixture_suggestion_case_invalid')
+    if suggestions and not re.fullmatch(r'WS4_SUGGEST_[a-f0-9]{32}', marker):
+        raise ValueError('fixture_suggestion_marker_invalid')
     with LOCK:
         if case_id in CASES:
             raise ValueError('case_already_exists')
         CASES[case_id] = {'marker': marker, 'release': threading.Event(), 'access_request': access_request,
                          'access_call_id': 'call_' + digest(case_id)[:24], 'access_tool_calls': 0,
                          'access_receipt': None,
+                         'suggestions': suggestions, 'suggestion_release': threading.Event(),
+                         'suggestion_requests': 0, 'suggestion_responses': 0,
                          'request_count': 0, 'completed_effect_count': 0,
                          'disconnect_count': 0, 'active_streams': 0,
                          'request_hashes': [], 'response_hashes': [], 'events': []}
@@ -57,6 +63,8 @@ def snapshot(case_id):
                 **{key: case[key] for key in ('request_count', 'completed_effect_count',
                     'disconnect_count', 'active_streams', 'request_hashes', 'response_hashes', 'events')},
                 'access_tool_calls': case['access_tool_calls'], 'access_receipt': case['access_receipt'],
+                'suggestion_requests': case['suggestion_requests'], 'suggestion_responses': case['suggestion_responses'],
+                'suggestion_released': case['suggestion_release'].is_set(),
                 'released': case['release'].is_set(),
                 'synthetic_effect': 'one_consent_proposal' if case['access_request'] else 'one_text_completion'}
 
@@ -205,10 +213,11 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 case_id = body['case_id']
                 if path == '/__ws4/arm':
-                    arm(case_id, body['marker'], body.get('access_request'))
-                elif path == '/__ws4/release':
+                    arm(case_id, body['marker'], body.get('access_request'), body.get('suggestions', False))
+                elif path in ('/__ws4/release', '/__ws4/release-suggestion'):
                     with LOCK:
-                        CASES[case_id]['release'].set()
+                        gate = 'release' if path == '/__ws4/release' else 'suggestion_release'
+                        CASES[case_id][gate].set()
                 else:
                     return self.reply(404, {'error': 'route_unknown'})
                 return self.reply(200, snapshot(case_id))
@@ -218,6 +227,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(404, {'error': 'route_unknown'})
         if not self.authorized_model():
             return self.reply(401, {'error': 'unauthorized'})
+        text = body.get('text')
+        format_spec = text.get('format') if isinstance(text, dict) else None
+        if (body.get('stream') is False and isinstance(format_spec, dict)
+                and format_spec.get('name') == 'contextual_suggestions'):
+            return self.suggestion(body)
         if body.get('stream') is not True:
             return self.reply(400, {'error': 'stream_required'})
         encoded = json.dumps(body.get('input'), sort_keys=True)
@@ -298,6 +312,39 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 case['active_streams'] -= 1
             self.close_connection = True
+
+    def suggestion(self, body):
+        messages = body.get('input')
+        if not isinstance(messages, list) or len(messages) != 1 or not isinstance(messages[0], dict):
+            return self.reply(400, {'error': 'invalid_suggestion_input'})
+        try:
+            answer = json.loads(messages[0].get('content', '')).get('answer')
+        except (TypeError, ValueError, AttributeError):
+            return self.reply(400, {'error': 'invalid_suggestion_context'})
+        if not isinstance(answer, str):
+            return self.reply(400, {'error': 'invalid_suggestion_answer'})
+        marker = re.search(r'\bWS4_SUGGEST_[a-f0-9]{32}\b', answer)
+        items = []
+        if marker:
+            with LOCK:
+                case = next((case for case in CASES.values()
+                             if case['suggestions'] and case['marker'] == marker[0]), None)
+                if case:
+                    case['suggestion_requests'] += 1
+                    duplicate = case['suggestion_requests'] != 1
+            if not case:
+                return self.reply(409, {'error': 'no_matching_suggestion_case'})
+            if duplicate:
+                return self.reply(409, {'error': 'duplicate_suggestion_generation'})
+            if not case['suggestion_release'].wait(40):
+                return self.reply(504, {'error': 'suggestion_barrier_timeout'})
+            items.append({'text': 'Explain the fixture result in one sentence.', 'evidence': marker[0]})
+            with LOCK:
+                case['suggestion_responses'] += 1
+        content = {'type': 'output_text', 'text': json.dumps({'suggestions': items})}
+        return self.reply(200, {'status': 'completed', 'model': body.get('model', 'ws4-local'),
+            'output': [{'type': 'message', 'role': 'assistant', 'content': [content]}],
+            'usage': {'input_tokens': 1, 'output_tokens': 1}})
 
 
 if __name__ == '__main__':

@@ -102,9 +102,19 @@ class IndependentActorTests(unittest.TestCase):
         self.assertEqual(status, 200)
         credential = created['full_key']
         self.assertEqual(self.request('GET', '/fixture/ornn-grant', token=credential), (200, {'granted': True}))
+        self.assertEqual(self.request('GET', '/fixture/llm-grant', token=credential)[0], 401)
         self.assertEqual(self.request('GET', '/fixture/ornn-grant', token=token)[0], 401)
         self.assertEqual(self.request('DELETE', endpoint + '/' + created['id'], token=token)[0], 200)
         self.assertEqual(self.request('GET', '/fixture/ornn-grant', token=credential)[0], 401)
+        selected = ['fixture-llm']
+        body.update(allowed_service_ids=selected, scope_plan_digest=scope_plan(selected)['normalized_grant_digest'])
+        status, created = self.request('POST', endpoint, token=token, data=body)
+        self.assertEqual(status, 200)
+        model_key = created['full_key']
+        self.assertEqual(self.request('GET', '/fixture/llm-grant', token=model_key), (200, {'granted': True}))
+        self.assertEqual(self.request('GET', '/fixture/ornn-grant', token=model_key)[0], 401)
+        self.assertEqual(self.request('DELETE', endpoint + '/' + created['id'], token=token)[0], 200)
+        self.assertEqual(self.request('GET', '/fixture/llm-grant', token=model_key)[0], 401)
 
 
 class LoginRedirectTests(unittest.TestCase):

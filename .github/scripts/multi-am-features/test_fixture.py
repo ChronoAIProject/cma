@@ -185,6 +185,15 @@ class OwnershipTests(unittest.TestCase):
             {'principal': 'native-am-fixture-owner', 'admin': False, 'sandbox_id': None},
             {'principal': 'native-am-fixture-admin', 'admin': True, 'sandbox_id': None},
         ])
+        policy = json.loads(environment['CHRONO_TASK_EXPERIENCE_POLICY'])
+        self.assertEqual(policy['mode'], 'accounts')
+        self.assertEqual(policy['accounts'], ['native-am-fixture-owner'])
+        self.assertIn('suggested_followup_admission', policy['capabilities'])
+        prepared = synthetic_configmaps(manifests.managers(legacy_manifests.credentials(),
+                                                            {**ready, 'fixture': 'prepared'}))
+        prepared_environment = next(x['data'] for x in prepared if x['kind'] == 'ConfigMap')
+        self.assertNotIn('suggested_followup_admission',
+                         json.loads(prepared_environment['CHRONO_TASK_EXPERIENCE_POLICY'])['capabilities'])
         managers = [x for x in objects if x['kind'] == 'StatefulSet']
         self.assertEqual({x['metadata']['name'] for x in managers}, {'am-a', 'am-b'})
         for manager in managers:

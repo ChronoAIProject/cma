@@ -7,10 +7,11 @@ import secrets
 import sys
 import threading
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'owner'))
-from storage import PREFIX, Storage
+from storage import PREFIX, SUGGESTIONS_PATH, Storage
 
 
 class StorageBoundaryTests(unittest.TestCase):
@@ -30,10 +31,13 @@ class StorageBoundaryTests(unittest.TestCase):
         self.thread.join(timeout=5)
         self.assertFalse(self.thread.is_alive())
 
-    def request(self, method, path, body=None, authenticated=True):
+    def request(self, method, path, body=None, authenticated=True, json_body=False):
         connection = http.client.HTTPConnection(*self.server.server_address, timeout=5)
         try:
             headers = {'Authorization': 'Bearer ' + self.handler.config['access']} if authenticated else {}
+            if json_body:
+                headers['Content-Type'] = 'application/json'
+                body = json.dumps(body)
             connection.request(method, path, body=body, headers=headers)
             response = connection.getresponse()
             return response.status, response.read()
@@ -78,6 +82,27 @@ class StorageBoundaryTests(unittest.TestCase):
         self.assertEqual(self.request('POST', PREFIX.replace('cma-ci-documents', 'another-bucket') + '?' + urlencode(query), body)[0], 404)
         self.assertEqual(self.request('GET', PREFIX + '/download?' + urlencode({'key': '../foreign'}))[0], 400)
         self.assertEqual(self.request('GET', PREFIX + '/download?' + urlencode({'key': key}))[0], 404)
+
+    def test_model_route_requires_exact_shape_and_current_scoped_grant(self):
+        body = {'stream': False, 'text': {'format': {'name': 'contextual_suggestions'}}}
+        with patch.object(self.handler, 'check_grant', return_value=401) as grants, \
+             patch('storage.http.client.HTTPSConnection') as connect:
+            self.assertEqual(self.request('POST', SUGGESTIONS_PATH, {**body, 'stream': True}, json_body=True)[0], 404)
+            grants.assert_not_called()
+            self.assertEqual(self.request('POST', SUGGESTIONS_PATH, body, json_body=True)[0], 401)
+            grants.assert_called_once_with('llm')
+            connect.assert_not_called()
+            grants.return_value = 200
+            peer = connect.return_value
+            response = peer.getresponse.return_value
+            response.status = 200
+            response.read.return_value = b'{}'
+            response.getheader.return_value = 'application/json'
+            self.assertEqual(self.request('POST', SUGGESTIONS_PATH, body, json_body=True), (200, b'{}'))
+            connect.assert_called_once_with('provider.localhost.direct', 8080, timeout=45)
+            peer.request.assert_called_once_with('POST', '/v1/responses', json.dumps(body).encode(),
+                                                 {'Content-Type': 'application/json'})
+            peer.close.assert_called_once_with()
 
 
 if __name__ == '__main__':
