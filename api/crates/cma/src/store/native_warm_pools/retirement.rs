@@ -39,6 +39,24 @@ pub(super) fn release_order(machine: bool) -> Document {
     order
 }
 
+pub(super) async fn machine_selection_ambiguous(
+    store: &MongoNativeWarmPools,
+    selected: &PoolTarget,
+) -> Result<bool, WarmPoolError> {
+    let Some(at) = selected.machine_plan_activated_at else {
+        return Ok(true);
+    };
+    let mut scope = release_scope(store, true);
+    scope.extend(doc! {"activated_at": selected.activated_at,
+    "machine_plan_activated_at": at, "_id": {"$ne": &selected.id}});
+    Ok(store
+        .targets
+        .find_one(scope)
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)?
+        .is_some())
+}
+
 async fn authorized(
     store: &MongoNativeWarmPools,
     target: &PoolTarget,

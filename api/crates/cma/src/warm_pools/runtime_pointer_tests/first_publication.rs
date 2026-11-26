@@ -26,15 +26,16 @@ async fn first_pointer_publication_orders_fixed_activation_after_target_selectio
             .unwrap();
         let pointer =
             bind_controller(&original, |_| panic!("startup only reads MongoDB"), true).await;
+        let retained_replica = fixture.replica().await;
         let legacy_store = crate::store::MongoSandboxStore::open(
-            original.database.client(),
-            original.database.name(),
+            retained_replica.database.client(),
+            retained_replica.database.name(),
         )
         .await
         .unwrap()
         .with_managed_runtime_version(agent.spec.image.uri.clone());
         let legacy = lifecycle::Lifecycle::with_store(
-            &original,
+            &retained_replica,
             pointer.controller.release.clone(),
             agent.spec.image.uri.clone(),
             image(Lane::Machine, '1'),
@@ -155,10 +156,30 @@ async fn first_pointer_publication_refuses_a_writer_lost_after_target_selection(
     assert!(fixture
         .database
         .collection::<Document>("native_warm_pool_targets")
-        .find_one(doc! {"_id": target.id, "durable_release_authority": true})
+        .find_one(doc! {"_id": &target.id, "durable_release_authority": true})
         .await
         .unwrap()
         .is_none());
+    drop(pointer);
+    for release in ['b', 'c'] {
+        let fixed = fixture.replica_pinned_to(release).await;
+        let pin = image(Lane::Agent, release);
+        let pins =
+            PinnedReleasedRuntime::new(pin.clone(), Some(image(Lane::Machine, '1'))).snapshot();
+        assert!(
+            StoreReleasedRuntime::open(&fixed.database, DEPLOYMENT, pins, false)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let next = fixed.pools.candidate_target(&pin, &target).unwrap();
+        let staged = fixed.store.insert(next).await.unwrap();
+        let written = legacy_activate(&fixed.database, &staged.id)
+            .await
+            .expect("abandoned publication must allow successive fixed-pin releases");
+        assert_eq!(written.modified_count, 1);
+        fixed.store.verify_bootstrap(false, &pin).await.unwrap();
+    }
     fixture.database.drop().await.unwrap();
 }
 
@@ -184,20 +205,7 @@ async fn first_publication_orders_the_pre_fence_replica_activation_write() {
             .await;
         let staged = older.pools.candidate_target(&pin, &original).unwrap();
         let staged = older.store.insert(staged).await.unwrap();
-        let rows = older
-            .database
-            .collection::<Document>("native_warm_pool_targets");
-        // The prior fixed-pin startup has passed open(), inserted its target and
-        // found no release timestamp to inherit. Its next operation is this write.
-        let activate = || {
-            rows.update_one(
-                doc! {"_id": &staged.id, "plan.deployment":DEPLOYMENT,
-                "document_schema_version":{"$in":[1_i64,2_i64]},
-                "activated_at":mongodb::bson::Bson::Null,
-                "retiring":{"$ne":true}, "retired":{"$ne":true}},
-                doc! {"$currentDate":{"activated_at":true}},
-            )
-        };
+        // The fixed-pin replica already passed open() and inserted its unactivated row.
         let pointer =
             bind_controller(&publisher, |_| panic!("bootstrap reads MongoDB"), true).await;
         pointer.controller.register_boot().await.unwrap();
@@ -205,7 +213,13 @@ async fn first_publication_orders_the_pre_fence_replica_activation_write() {
         let legacy_write = async {
             selected.await.unwrap();
             if fixed_first {
-                assert_eq!(activate().await.unwrap().modified_count, 1);
+                assert_eq!(
+                    legacy_activate(&older.database, &staged.id)
+                        .await
+                        .unwrap()
+                        .modified_count,
+                    1
+                );
             }
             resume.send(()).unwrap();
         };
@@ -227,7 +241,9 @@ async fn first_publication_orders_the_pre_fence_replica_activation_write() {
             assert!(pointer.pools.default_held(false));
         } else {
             assert_eq!(lane.unwrap().active.image, original.plan.spec.image.uri);
-            let rejected = activate().await.unwrap_err();
+            let rejected = legacy_activate(&older.database, &staged.id)
+                .await
+                .unwrap_err();
             assert!(crate::store::is_duplicate_key(&rejected), "{rejected}");
         }
         assert_eq!(
@@ -243,4 +259,16 @@ async fn first_publication_orders_the_pre_fence_replica_activation_write() {
         );
         fixture.database.drop().await.unwrap();
     }
+}
+
+async fn legacy_activate(
+    database: &Database,
+    id: &str,
+) -> mongodb::error::Result<mongodb::results::UpdateResult> {
+    // The original writer has found no activation timestamp for this image.
+    database.collection::<Document>("native_warm_pool_targets").update_one(
+        doc! {"_id":id,"plan.deployment":DEPLOYMENT,"document_schema_version":{"$in":[1_i64,2_i64]},
+              "activated_at":mongodb::bson::Bson::Null,"retiring":{"$ne":true},"retired":{"$ne":true}},
+        doc! {"$currentDate":{"activated_at":true}},
+    ).await
 }

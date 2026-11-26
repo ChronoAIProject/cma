@@ -62,6 +62,23 @@ impl MongoNativeWarmPools {
         let image = &target.plan.spec.image.uri;
         if target.machine {
             retirement::machine_selection::activate(self, &target).await?;
+            let selected = self.find(id).await?.ok_or(WarmPoolError::Conflict)?;
+            let mut filter = retirement::release_scope(self, true);
+            filter.insert("activated_at", doc! {"$type":"date"});
+            let latest = self
+                .targets
+                .find_one(filter)
+                .sort(retirement::release_order(true))
+                .await
+                .map_err(|_| WarmPoolError::Unavailable)?
+                .ok_or(WarmPoolError::Conflict)?;
+            if latest.id != selected.id
+                || selected.retired
+                || selected.retiring
+                || retirement::machine_selection_ambiguous(self, &selected).await?
+            {
+                return Err(WarmPoolError::Conflict);
+            }
             return self.verify_bootstrap(true, image).await;
         }
         if target.activated_at.is_some() {
