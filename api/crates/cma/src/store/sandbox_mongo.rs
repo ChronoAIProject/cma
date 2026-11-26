@@ -8,6 +8,7 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 
 mod handles;
+mod open_reply_loss;
 mod records;
 pub(super) use records::{
     i64_field_matches, nullable, read_record, record_bson, require_version, signed,

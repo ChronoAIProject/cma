@@ -2,7 +2,7 @@ use super::acp::{
     ingress::identity, Bridge, CALL_DEADLINE, RETAINED_HISTORY_IDLE_DEADLINE, SIGN_IN_DEADLINE,
 };
 use super::update_relay::UpdateRelay;
-use super::HostedAgentOpenSettings;
+use super::{HostedAgentOpenSettings, HostedOpenReplyLoss};
 use crate::ingress_budget::diagnostic::text;
 use crate::AdapterError;
 
@@ -22,12 +22,13 @@ impl Bridge {
         cwd: String,
         settings: HostedAgentOpenSettings,
         updates: &UpdateRelay,
+        open_reply_loss: Option<&dyn HostedOpenReplyLoss>,
     ) -> crate::Result<()> {
         let protected = settings.channel_tool.is_some()
             || settings.provider_tool.is_some()
             || settings.access_tool.is_some();
         let mut phase = "settings_validation";
-        self.handshake_inner(resume, cwd, settings, updates, &mut phase)
+        self.handshake_inner(resume, cwd, settings, updates, open_reply_loss, &mut phase)
             .await
             .map_err(|error| {
                 if protected {
@@ -44,6 +45,7 @@ impl Bridge {
         cwd: String,
         settings: HostedAgentOpenSettings,
         updates: &UpdateRelay,
+        open_reply_loss: Option<&dyn HostedOpenReplyLoss>,
         phase: &mut &'static str,
     ) -> crate::Result<()> {
         validate_settings(&cwd, &settings)?;
@@ -271,6 +273,16 @@ impl Bridge {
                     .await?;
                 let conversation =
                     super::acp_session_identity::read(&started, self.json_pools.is_some())?;
+                if let (Some(claim), Some(protocol)) = (open_reply_loss, settings.open_completion) {
+                    self.drop_proven_open_reply(
+                        claim,
+                        protocol,
+                        &conversation,
+                        &cwd,
+                        &tool_servers,
+                    )
+                    .await?;
+                }
                 timing
                     .subphase(
                         "fresh_new",

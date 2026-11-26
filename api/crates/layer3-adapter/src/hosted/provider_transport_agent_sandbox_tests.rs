@@ -197,3 +197,31 @@ async fn native_and_retained_constructors_pin_json_policy_over_renderer_preferen
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn open_reply_loss_matches_only_the_configured_bound_sandbox() {
+    struct Claim;
+
+    #[async_trait::async_trait]
+    impl crate::hosted::HostedOpenReplyLoss for Claim {
+        async fn claim(&self) -> bool {
+            unreachable!("selecting a target must not consume the claim")
+        }
+    }
+
+    let api = listener().await;
+    let transport = native_transport(api.local_addr().unwrap());
+    let target = RuntimeHandle::new("target-runtime");
+    let other = RuntimeHandle::new("other-runtime");
+    transport.bind_sandbox(&target, "target").await.unwrap();
+    transport.bind_sandbox(&other, "target-2").await.unwrap();
+
+    assert!(transport.open_reply_loss_for(&target).await.is_none());
+    let transport = transport.with_open_reply_loss("target".into(), Arc::new(Claim));
+    assert!(transport.open_reply_loss_for(&target).await.is_some());
+    assert!(transport.open_reply_loss_for(&other).await.is_none());
+    assert!(transport
+        .open_reply_loss_for(&RuntimeHandle::new("unbound-runtime"))
+        .await
+        .is_none());
+}
