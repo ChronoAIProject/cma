@@ -1,12 +1,15 @@
 """Dispatch queue time, cold setup and retries all consume the original clock."""
+import re
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import yaml
 
-from staging_cd_clock import (ADMISSION_SECONDS, PRODUCTION_WATCHDOG_SECONDS, WATCHDOG_SECONDS, controller_seconds,
-                              dispatch_started, elapsed, remaining, timestamp)
+from staging_cd_clock import (ADMISSION_SECONDS, BOOTSTRAP_ADMISSION_SECONDS, BOOTSTRAP_TOTAL_SECONDS,
+                              PRODUCTION_WATCHDOG_SECONDS, STAGING_AM_RELEASE_TOTAL_SECONDS,
+                              TERMINATION_GRACE_SECONDS, WATCHDOG_SECONDS, controller_seconds, dispatch_started,
+                              elapsed, remaining, timestamp)
 from staging_cd_common import Refusal
 
 
@@ -64,10 +67,17 @@ class ClockTests(unittest.TestCase):
         # Setup before the clock starts and cleanup after it need at least one
         # admission window beyond the watchdog, so a total cannot outgrow its job.
         workflows = Path(__file__).resolve().parent.parent / "workflows"
-        for name, watchdog in (("staging-deploy", WATCHDOG_SECONDS), ("prod-deploy", PRODUCTION_WATCHDOG_SECONDS)):
-            with self.subTest(workflow=name):
-                job = yaml.safe_load((workflows / f"{name}.yml").read_text(encoding="utf-8"))["jobs"]["deploy"]
-                self.assertGreater(job["timeout-minutes"] * 60, watchdog + ADMISSION_SECONDS)
+        staging = yaml.safe_load((workflows / "staging-deploy.yml").read_text(encoding="utf-8"))["jobs"]["deploy"]
+        timeout = re.fullmatch(r"\$\{\{ inputs\.mode == 'release' && (\d+) \|\| (\d+) \}\}",
+                               staging["timeout-minutes"])
+        self.assertIsNotNone(timeout)
+        release_minutes, bootstrap_minutes = map(int, timeout.groups())
+        watchdog = STAGING_AM_RELEASE_TOTAL_SECONDS + TERMINATION_GRACE_SECONDS
+        self.assertGreater(release_minutes * 60, max(watchdog, WATCHDOG_SECONDS) + ADMISSION_SECONDS)
+        self.assertGreater(bootstrap_minutes * 60,
+                           BOOTSTRAP_TOTAL_SECONDS + TERMINATION_GRACE_SECONDS + BOOTSTRAP_ADMISSION_SECONDS)
+        production = yaml.safe_load((workflows / "prod-deploy.yml").read_text(encoding="utf-8"))["jobs"]["deploy"]
+        self.assertGreater(production["timeout-minutes"] * 60, PRODUCTION_WATCHDOG_SECONDS + ADMISSION_SECONDS)
 
 
 if __name__ == "__main__":
