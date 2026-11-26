@@ -1,11 +1,11 @@
 //! Stable refusal mapping for durable admission storage errors.
-use super::{AdmissionError, Problem, ProblemCode};
+use super::{AdmissionError, Problem, ProblemCode, TARGET_UNKNOWN};
 use crate::ingress::routing_plan::PlanError;
 use cmaeg_core::routing::RouteError;
 
 pub(super) fn routing_problem(error: PlanError) -> Problem {
     let detail = match error {
-        PlanError::Routing(RouteError::TargetUnknown(_)) => "target_unknown",
+        PlanError::Routing(RouteError::TargetUnknown(_)) => TARGET_UNKNOWN,
         _ => "routing_admission_refused",
     };
     Problem::new(ProblemCode::AdmissionRefused, 403, detail)

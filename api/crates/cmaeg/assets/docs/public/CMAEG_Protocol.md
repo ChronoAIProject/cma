@@ -1271,6 +1271,12 @@ webhooks). `agent_events` limits hand-offs: `max_hops` (default 2),
 `per_consumer_per_minute` (default 10) and `per_channel_per_minute`
 (default 30).
 
+A Telegram relay callback with an unknown explicit `/to` target receives
+the `target_unknown` refusal and creates no Consumer turn. If
+`addressing.unknown_target_notice` is enabled, the gateway attempts a short
+notice in the originating conversation using the callback's single-use reply
+token. Channel Activity records the refusal against the original event.
+
 | Limit | Value |
 | --- | --- |
 | Consumers | `default` plus at most 7 |
