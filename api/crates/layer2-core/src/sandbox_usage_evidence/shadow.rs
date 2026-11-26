@@ -1,45 +1,55 @@
 //! Evaluate one aligned interval of a shadow report without external effects.
 
 use crate::sandbox_metrics::{
-    measured_evidence::{batch::MetricCoverage, coverage::ExactQuantity},
+    measured_evidence::coverage::{ExactQuantity, MeasurementStatus},
     Metric,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Identifier(String);
+impl Identifier {
+    pub fn new(value: &str) -> Result<Self, Conflict> {
+        if value.trim().is_empty() {
+            return Err(Conflict);
+        }
+        Ok(Self(value.to_owned()))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Interval {
-    pub issuer: String,
-    pub owner: String,
-    pub sandbox: String,
-    /// Runtime identity for CPU/RAM and persistent home identity for disk.
-    pub resource: String,
-    pub generation: String,
+    pub issuer: Identifier,
+    pub owner: Identifier,
+    pub sandbox: Identifier,
+    /// Runtime or retained home identity.
+    pub resource: Identifier,
+    pub generation: Identifier,
     pub metric: Metric,
     pub from_ms: u64,
     pub to_ms: u64,
-    pub window: String,
+    pub window: Identifier,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Key {
     pub interval: Interval,
-    /// Digest of the complete cohort manifest and selector.
-    pub cohort_digest: String,
+    pub cohort_digest: Identifier,
     pub revision: u64,
 }
 
-/// A remote cursor proof projected onto the target prefix after chain
-/// verification. A cursor that has merely advanced past it is insufficient.
+/// Remote cursor proofs attest this exact prefix after verification of the chain.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Prefix {
-    pub contract: String,
-    pub scope: String,
-    pub destination: String,
-    pub stream: String,
+    pub contract: Identifier,
+    pub scope: Identifier,
+    pub destination: Identifier,
+    pub stream: Identifier,
     pub cutoff_ms: u64,
     pub sequence: u64,
-    pub digest: String,
+    pub digest: Identifier,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,14 +61,13 @@ pub struct Delivery {
     pub source_matches: bool,
 }
 
-/// The read port supplies the window proof after checking the contract and
-/// rate version. Its digest binds reserve, settlement, release and remaining.
+/// A verified window proof whose digest binds reserve, settlement, release and remaining.
 #[derive(Debug, Serialize)]
 pub struct Funding {
     pub interval: Interval,
-    pub contract: String,
-    pub rate_version: String,
-    pub digest: String,
+    pub contract: Identifier,
+    pub rate_version: Identifier,
+    pub digest: Identifier,
     pub upper_bound: ExactQuantity,
     pub balances_match: bool,
 }
@@ -66,14 +75,15 @@ pub struct Funding {
 #[derive(Debug, Serialize)]
 pub struct Input {
     pub key: Key,
-    pub predecessor_digest: Option<String>,
+    pub predecessor_digest: Option<Identifier>,
     pub cutoff_ms: u64,
     /// Quantities use core-seconds for CPU and byte-milliseconds for RAM/disk.
     pub allocation: ExactQuantity,
     pub measured: Option<ExactQuantity>,
-    pub coverage: MetricCoverage,
-    pub measured_revision: String,
-    pub allocation_watermark: String,
+    /// Measurement status is uniform across the interval.
+    pub status: MeasurementStatus,
+    pub measured_revision: Option<Identifier>,
+    pub allocation_watermark: Option<Identifier>,
     pub delivery: Option<Delivery>,
     pub funding: Option<Funding>,
 }
@@ -104,8 +114,7 @@ pub struct Snapshot {
 }
 
 pub trait EvidenceReader {
-    /// Returns the effective evidence revision as of the cutoff after verifying
-    /// source scope, interval alignment, units and correction lineage.
+    /// Selects the effective revision at the cutoff with verified scope, units and lineage.
     fn read(&self, key: &Key) -> Result<Input, Conflict>;
 }
 
@@ -115,56 +124,46 @@ pub trait SnapshotWriter {
 }
 
 pub fn evaluate(input: &Input) -> Result<Snapshot, Conflict> {
-    let interval = &input.key.interval;
+    let key = &input.key;
+    let interval = &key.interval;
     if interval.from_ms >= interval.to_ms
         || interval.to_ms > input.cutoff_ms
-        || input.key.revision == 0
-        || (input.key.revision == 1) != input.predecessor_digest.is_none()
-        || input.key.cohort_digest.is_empty()
+        || key.revision == 0
+        || (key.revision == 1) != input.predecessor_digest.is_none()
     {
         return Err(Conflict);
     }
-
-    let decision = compare(input)?;
     let bytes = serde_json::to_vec(&("shadow-interval-v1", input)).map_err(|_| Conflict)?;
     Ok(Snapshot {
-        key: input.key.clone(),
+        key: key.clone(),
         digest: format!("{:x}", Sha256::digest(bytes)),
-        decision,
+        decision: compare(input)?,
     })
 }
 
 fn compare(input: &Input) -> Result<Decision, Conflict> {
     use Decision::{Blocked, Fail, Matched};
+    use MeasurementStatus::*;
     let cap = input.allocation.checked_ratio().ok_or(Conflict)?;
     let measured = input
         .measured
         .as_ref()
         .map(|quantity| quantity.checked_ratio().ok_or(Conflict))
         .transpose()?;
-    let c = &input.coverage;
-    let covered = u128::from(c.measured_ms) + u128::from(c.estimated_ms);
-    let duration = u128::from(input.key.interval.to_ms - input.key.interval.from_ms);
-    if covered > u128::from(c.expected_ms)
-        || u128::from(c.expected_ms) > duration
-        || (covered > 0) != measured.is_some()
-        || covered
-            + u128::from(c.pending_ms)
-            + u128::from(c.unmapped_ms)
-            + u128::from(c.not_running_ms)
-            + u128::from(c.not_allocated_ms)
-            != duration
-    {
-        return Err(Conflict);
+    let inactive = match input.key.interval.metric {
+        Metric::Disk => NotAllocated,
+        Metric::Cpu | Metric::Memory => NotRunning,
+    };
+    match input.status {
+        Measured | Estimated if measured.is_some() => {}
+        Pending | Unmapped if measured.is_none() => {}
+        status if status == inactive && measured.is_none() && cap.numer().bits() == 0 => {}
+        _ => return Err(Conflict),
     }
     if measured.as_ref().is_some_and(|quantity| quantity > &cap) {
         return Ok(Fail);
     }
-    let Some(funding) = input.funding.as_ref().filter(|proof| {
-        [&proof.contract, &proof.rate_version, &proof.digest]
-            .into_iter()
-            .all(|value| !value.is_empty())
-    }) else {
+    let Some(funding) = &input.funding else {
         return Ok(Blocked(MissingEvidence::Funding));
     };
     if funding.interval != input.key.interval {
@@ -174,26 +173,25 @@ fn compare(input: &Input) -> Result<Decision, Conflict> {
     if !funding.balances_match || measured.is_some_and(|quantity| quantity > upper) {
         return Ok(Fail);
     }
-    if covered != u128::from(c.expected_ms)
-        || c.pending_ms.max(c.unmapped_ms) > 0
-        || input.measured_revision.is_empty()
-        || input.allocation_watermark.is_empty()
+    if matches!(input.status, Pending | Unmapped)
+        || input.measured_revision.is_none()
+        || input.allocation_watermark.is_none()
     {
         return Ok(Blocked(MissingEvidence::Measurement));
     }
-    match &input.delivery {
-        Some(delivery)
-            if delivery.source_matches
-                && (input.key.interval.to_ms..=input.cutoff_ms)
-                    .contains(&delivery.outbox.cutoff_ms)
-                && [&delivery.receipt, &delivery.custody, &delivery.validated]
-                    .into_iter()
-                    .all(|proof| proof.as_ref() == Some(&delivery.outbox)) =>
+    if let Some(delivery) = &input.delivery {
+        let prefix = Some(&delivery.outbox);
+        if delivery.source_matches
+            && delivery.outbox.sequence > 0
+            && (input.key.interval.to_ms..=input.cutoff_ms).contains(&delivery.outbox.cutoff_ms)
+            && delivery.receipt.as_ref() == prefix
+            && delivery.custody.as_ref() == prefix
+            && delivery.validated.as_ref() == prefix
         {
-            Ok(Matched)
+            return Ok(Matched);
         }
-        _ => Ok(Blocked(MissingEvidence::Delivery)),
     }
+    Ok(Blocked(MissingEvidence::Delivery))
 }
 
 #[cfg(test)]
