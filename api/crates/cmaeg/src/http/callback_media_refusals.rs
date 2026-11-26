@@ -54,36 +54,31 @@ pub(super) fn receipt(
         return None;
     }
     let received = time::OffsetDateTime::now_utc();
-    let row = crate::activity::ChannelActivity {
-        event_id: format!(
+    let mut row = crate::activity::ChannelActivity::metadata(
+        format!(
             "telegram:relay-refusal:{:x}",
             Sha256::digest(event.as_str().as_bytes())
         ),
-        source_refusal: None,
-        quoted_context: None,
-        kind: Some("message".into()),
-        event_type: None,
-        source_occurred_at: None,
-        source: SourceKind::NyxidRelay {
+        SourceKind::NyxidRelay {
             platform: Platform::Telegram,
             route_id: payload.conversation.id.clone(),
         },
-        actor: Actor {
+        Actor {
             id: "redacted".into(),
             display_name: None,
             kind: ActorKind::Unknown,
         },
-        conversation: ActivityConversation {
+        ActivityConversation {
             id: "redacted".into(),
             kind,
             thread_id: None,
         },
-        occurred_at: payload.timestamp.clone(),
-        received_at: received
+        payload.timestamp.clone(),
+        received
             .format(&time::format_description::well_known::Rfc3339)
             .ok()?,
-        consumers: Vec::new(),
-    };
+    );
+    row.kind = Some("message".into());
     Some(Receipt {
         owner: channel.definition.owner.subject.clone(),
         row,

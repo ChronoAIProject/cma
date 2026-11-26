@@ -146,22 +146,15 @@ impl ActivityObserver for ObservedActivity {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(3), write).await;
             // An acknowledgement can be lost after the commit. Verify the exact
             // retained receipt, including its outcome, before confirming refusal.
-            let page = tokio::time::timeout(
+            let confirmed = tokio::time::timeout(
                 std::time::Duration::from_secs(3),
-                self.store.latest(owner, record.as_str()),
+                self.store
+                    .confirms_receipt(owner, record.as_str(), &receipt),
             )
             .await
             .map_err(|_| ())?
             .map_err(|_| ())?;
-            page.items
-                .iter()
-                .any(|row| {
-                    row.event_id == receipt.event_id
-                        && row.source_refusal == receipt.source_refusal
-                        && row.consumers.is_empty()
-                })
-                .then_some(())
-                .ok_or(())
+            confirmed.then_some(()).ok_or(())
         })
     }
     fn launched(

@@ -235,7 +235,7 @@ impl Fixture {
             state.master_keys.clone(),
         ));
         let observer = Arc::new(cmaeg::activity::ObservedActivity::new(
-            store,
+            store.clone(),
             state.activity.clone(),
         ));
         let state = state.with_activity_observer(observer);

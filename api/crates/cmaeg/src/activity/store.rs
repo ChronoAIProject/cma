@@ -185,17 +185,17 @@ impl ActivityStore {
         };
         let row = ChannelActivity {
             quoted_context: super::model::QuotedContextSummary::from_activity(activity),
-            event_id: activity.event_id.to_string(),
-            source_refusal: None,
             kind: Some(kind.into()),
             event_type,
             source_occurred_at,
-            source: activity.source.clone(),
-            actor,
-            conversation,
-            occurred_at: activity.occurred_at.clone(),
-            received_at,
-            consumers: Vec::new(),
+            ..ChannelActivity::metadata(
+                activity.event_id.to_string(),
+                activity.source.clone(),
+                actor,
+                conversation,
+                activity.occurred_at.clone(),
+                received_at,
+            )
         };
         self.persist_receipt(owner, record, row, received).await
     }

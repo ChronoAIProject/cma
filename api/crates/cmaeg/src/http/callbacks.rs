@@ -222,7 +222,10 @@ async fn admit_callback(
     let receipt = media_event_id
         .as_ref()
         .and_then(|event| media_refusals::receipt(&channel, &verified.payload, event));
-    let refuse = async |reason| {
+    let refuse = |reason| {
+        media_refusals::refuse(state, &record, channel_id, media_event_id.as_ref(), reason)
+    };
+    let refuse_media = async |reason| {
         if let Some(receipt) = &receipt {
             if receipt.persist(state, &record, reason).await.is_err() {
                 return problem(
@@ -232,7 +235,7 @@ async fn admit_callback(
                 );
             }
         }
-        media_refusals::refuse(state, &record, channel_id, media_event_id.as_ref(), reason)
+        refuse(reason)
     };
     let reject = |error| authenticated_invalid(state, &record, SOURCE, error);
     let observation = if state.relay_telegram_member_joins_enabled {
@@ -243,13 +246,13 @@ async fn admit_callback(
     .unwrap_or_else(|| observe(source, &verified.payload, state.media_enabled));
     let mut facts = match observation {
         Ok(Observation::Message(facts)) => facts,
-        Ok(Observation::Refused(reason)) => return Err(refuse(reason).await),
+        Ok(Observation::Refused(reason)) => return Err(refuse_media(reason).await),
         Err(error) => return Err(reject(error)),
     };
     if crate::interactions::lark::supported(platform) {
         if let Some(callback) = &facts.callback {
             let Some(store) = &state.interactions else {
-                return Err(refuse(Refusal::InteractiveActionUnsupported).await);
+                return Err(refuse(Refusal::InteractiveActionUnsupported));
             };
             let kind = match store
                 .lark_context(
@@ -265,7 +268,7 @@ async fn admit_callback(
             {
                 Ok(kind) => kind,
                 Err(crate::interactions::Error::Denied) => {
-                    return Err(refuse(Refusal::InteractionExpiredOrInvalid).await)
+                    return Err(refuse(Refusal::InteractionExpiredOrInvalid))
                 }
                 Err(crate::interactions::Error::Unavailable) => {
                     return Err(problem(
@@ -341,10 +344,10 @@ async fn admit_callback(
             addressed: facts.addressed(admission),
         },
     ) {
-        return Err(refuse(reason).await);
+        return Err(refuse(reason));
     }
     if channel.definition.partition.key == PartitionKey::Thread && facts.thread_id.is_none() {
-        return Err(refuse(Refusal::ThreadEvidenceUnavailable).await);
+        return Err(refuse(Refusal::ThreadEvidenceUnavailable));
     }
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     if verified.reply_expires_at <= now || verified.callback_deadline <= now {
@@ -363,7 +366,7 @@ async fn admit_callback(
     ) {
         Ok(Built::Launch(request)) => *request,
         // A 202 refusal, because NyxID never retries a rejected callback.
-        Ok(Built::Refused(reason)) => return Err(refuse(reason).await),
+        Ok(Built::Refused(reason)) => return Err(refuse_media(reason).await),
         Err(reason) => {
             state.activity.refused(&record, SOURCE, None, reason);
             return Err(problem(
