@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { jobRunning } from "./ci-web-jobs.mjs";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const workflow = read("../workflows/ci-web.yml");
@@ -17,7 +18,8 @@ const suites = [
   "connection-pending-reentry.check.ts",
 ];
 
-function verify(job, suite, inherited) {
+function verify(workflow, suite, inherited) {
+  const job = jobRunning(workflow, "Local compiled connection journeys");
   const step = job
     .split('name: "Local compiled connection journeys"')[1]
     ?.split("\n      -")[0];
@@ -30,7 +32,7 @@ function verify(job, suite, inherited) {
     step,
     /--grep|--project|--shard|--retries|--list|--pass-with-no-tests|continue-on-error|\bif:|CMA_E2E_BROWSER_PATH|\|\|/,
   );
-  const guards = job
+  const guards = jobRunning(workflow, "Local browser guard mechanics")
     .split('name: "Local browser guard mechanics"')[1]
     ?.split("\n      -")[0];
   assert.match(

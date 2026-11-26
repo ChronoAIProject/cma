@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { ensureVideoEncoder } from './install-contract-video.mjs';
+import { jobWith } from './ci-web-jobs.mjs';
 
 test('a cached encoder is probed without downloading a browser or encoder', async () => {
   let probes = 0;
@@ -67,14 +68,21 @@ test('Web CI prepares the encoder unconditionally before recorded design contrac
   const workflow = yaml.load(
     readFileSync(new URL('../workflows/ci-web.yml', import.meta.url), 'utf8'),
   );
-  const steps = workflow.jobs.web.steps;
-  const preparation = steps.filter((step) =>
-    step.run?.includes('node ../.github/scripts/install-contract-video.mjs'),
-  );
+  const prepares = (step) =>
+    step.run?.includes('node ../.github/scripts/install-contract-video.mjs');
+  // Each browser job prepares its own encoder; every copy is unconditional.
+  for (const job of Object.values(workflow.jobs)) {
+    const copies = job.steps.filter(prepares);
+    assert.ok(copies.length <= 1);
+    for (const copy of copies) {
+      assert.equal(copy.if, undefined);
+      assert.equal(copy['continue-on-error'], undefined);
+      assert.ok(copy.run.includes('node --test ../.github/scripts/install-contract-video.test.mjs'));
+    }
+  }
+  const steps = jobWith(workflow, (entry) => entry.id === 'p1_design', 'the recorded design contracts').steps;
+  const preparation = steps.filter(prepares);
   assert.equal(preparation.length, 1);
   const step = preparation[0];
-  assert.equal(step.if, undefined);
-  assert.equal(step['continue-on-error'], undefined);
-  assert.ok(step.run.includes('node --test ../.github/scripts/install-contract-video.test.mjs'));
   assert.ok(steps.indexOf(step) < steps.findIndex((entry) => entry.id === 'p1_design'));
 });
