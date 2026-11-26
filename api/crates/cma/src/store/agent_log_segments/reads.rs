@@ -1,4 +1,3 @@
-use layer2_core::ids::AgentId;
 use layer2_core::sandbox::{store::SandboxStoreError, AgentLogEntry, AgentLogKind};
 use mongodb::{
     bson::{doc, Binary, Document, RawDocumentBuf},
@@ -6,10 +5,7 @@ use mongodb::{
     ClientSession, Database,
 };
 
-use super::{
-    corrupt, digest, read_format, Head, Seal, AUDITS, HEADS, MAX_BYTES, MAX_ENTRIES, MAX_SEQUENCE,
-    SEGMENTS,
-};
+use super::{corrupt, read_format, Head, Seal, AUDITS, HEADS, MAX_SEQUENCE, SEGMENTS};
 use crate::store::{
     agent_log::{log_id, read_entry},
     agent_log_integrity::{TransactionLogError, QUARANTINE_FIELD},
@@ -196,66 +192,23 @@ async fn scan_rows<F>(
 where
     F: FnMut(AgentLogEntry) -> std::result::Result<(), SandboxStoreError> + Send,
 {
-    let (start, end) = (*range.start(), *range.end());
-    if start > end || end - start + 1 > MAX_ENTRIES {
-        return Err(corrupt().into());
-    }
+    let rows = cma_am_agent_log::retained::RetainedRows::new(head, range, proof)?;
     let collection = majority_collection::<RawDocumentBuf>(db, AGENT_LOG);
     let mut read = crate::store::mongo_read_telemetry::Read::find(collection.name());
-    let find = collection
-        .find(doc! {"agent_id":&head.agent_id,"seq":{"$gte":start,"$lte":end}})
-        .sort(doc! {"seq":1})
-        .hint(mongodb::options::Hint::Name("agent_log_sequence".into()))
-        .limit(MAX_ENTRIES + 1)
-        // Bound the driver batch by 64 rows and Mongo's 16-MiB reply ceiling.
-        // One-row batches make a full active tail require 10,128 round trips.
-        .batch_size(64);
-    let find = if snapshot {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
-    };
-    let mut cursor = find
-        .session(&mut *session)
-        .await
-        .map_err(TransactionLogError::Driver)?;
-    let mut expected = start;
-    let mut bytes = 0_i64;
-    while let Some(raw) = read
-        .next_in_session(&mut cursor, session)
-        .await
-        .map_err(TransactionLogError::Driver)?
-    {
-        let entry = read_entry(&Document::try_from(&raw).map_err(|_| corrupt())?)?;
-        if entry.agent_id != AgentId(head.agent_id.clone())
-            || i64::try_from(entry.seq).ok() != Some(expected)
-            || expected > end
-        {
-            return Err(SandboxStoreError::SequenceConflict.into());
-        }
-        if (expected == 1) != matches!(entry.kind, AgentLogKind::Created { .. }) {
-            return Err(corrupt().into());
-        }
-        let size = i64::try_from(raw.as_bytes().len()).map_err(|_| corrupt())?;
-        if size > 16 * 1024 * 1024 {
-            return Err(corrupt().into());
-        }
-        bytes = bytes
-            .checked_add(size)
-            .filter(|n| *n <= MAX_BYTES)
-            .ok_or_else(corrupt)?;
-        if let Some((leaves, first)) = proof {
-            let actual = digest::leaf(&head.agent_id, &head.incarnation, expected, raw.as_bytes());
-            digest::check_leaf(leaves, expected - first, &actual)?;
-        }
-        visit(entry)?;
-        expected += 1;
+    let result = rows
+        .scan(
+            &collection,
+            session,
+            snapshot,
+            crate::store::sandbox_mongo::DOCUMENT_SCHEMA_VERSION,
+            &mut |bytes| read.document(bytes),
+            visit,
+        )
+        .await;
+    if result.is_ok() {
+        read.complete();
     }
-    if expected != end + 1 {
-        return Err(SandboxStoreError::SequenceConflict.into());
-    }
-    read.complete();
-    Ok(bytes)
+    result
 }
 
 fn database(store: &MongoSandboxStore) -> Database {

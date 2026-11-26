@@ -4,8 +4,11 @@ pub mod capacity;
 mod codec;
 pub mod digest;
 mod envelope;
+mod error;
+pub use error::TransactionLogError;
 pub mod legacy;
 pub mod publication;
+pub mod retained;
 pub mod writer_plan;
 
 pub use codec::{Head, Seal};
