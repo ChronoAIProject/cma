@@ -2,5 +2,6 @@
 
 pub mod http {
     pub mod docs;
+    pub mod management;
     pub mod problems;
 }
