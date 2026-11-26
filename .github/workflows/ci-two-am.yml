@@ -98,7 +98,6 @@ jobs:
           npm test
           python3 -B -m unittest discover -p 'test_*.py'
       - name: Build the checked-out Web and install Chromium
-        if: matrix.fixture == 'prepared'
         timeout-minutes: 12
         working-directory: web
         env:

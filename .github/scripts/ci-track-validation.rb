@@ -294,6 +294,13 @@ def validate(documents, actions)
   two_am_permissions = {'contents' => 'read', 'actions' => 'read'}
   require_check(two_am['permissions'] == two_am_permissions &&
     two_am.fetch('on', two_am[true]).keys == ['workflow_call'], 'two-AM fixture must remain a read-only reusable workflow')
+  feature_steps = two_am.fetch('jobs').fetch('features').fetch('steps')
+  browser_build = feature_steps.find { |step| step['working-directory'] == 'web' }
+  require_check(browser_build && !browser_build.key?('if') && !browser_build.key?('continue-on-error') &&
+    browser_build.dig('env', 'CHRONO_BUILD_SHA') == '${{ github.sha }}' &&
+    browser_build.fetch('run', '').lines.map(&:strip) == ['npm ci --no-audit --no-fund', 'npm run build',
+      'npm exec -- playwright install --with-deps chromium'],
+    'both two-AM fixtures must build the checked-out Web and install Chromium')
   startup = two_am.fetch('jobs').fetch('startup-controls')
   startup_steps = startup.fetch('steps')
   require_check(!startup.key?('if') && !startup.key?('continue-on-error') &&

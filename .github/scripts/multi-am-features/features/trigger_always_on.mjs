@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual as equal} from 'node:util';
 import {assertOwner, check, hash, id, other, poll} from '../cma/core.mjs';
 import {retainFailure, withRestoration} from '../failure.mjs';
+import {observeAlwaysOnOffInBrowser, relinquishAlwaysOnInBrowser} from './sandbox_always_on_browser.mjs';
 
 export async function triggerAlwaysOn(context) {
   const {admin, config} = context;
@@ -32,7 +33,7 @@ export async function triggerAlwaysOn(context) {
   return result;
 }
 
-async function exerciseTrigger({adapter, user, admin, outsider, config}) {
+async function exerciseTrigger({adapter, user, admin, outsider, config, browser}) {
   const triggerKey = randomUUID();
   const content = {
     presentation: {title: 'Two Manager Trigger ' + triggerKey, description: 'Synthetic Trigger journey',
@@ -91,6 +92,10 @@ async function exerciseTrigger({adapter, user, admin, outsider, config}) {
         const {body: view} = await user.request(am, 'GET', agentPath);
         check(view.id === agent.id && view.sandbox?.id === sandbox.id && ['ready', 'working'].includes(view.status),
           'trigger_agent_read_failed_after_always_on');
+        const {body: provenance} = await user.request(am, 'GET', agentPath + '/provenance');
+        check(provenance?.agent_id === agent.id && provenance.creation_origin === 'trigger'
+          && provenance.details?.trigger?.trigger_id === trigger.id
+          && provenance.details.trigger.launch_id === launch.id, 'trigger_agent_provenance_changed');
         const current = await readSandbox(am);
         check(current.id === sandbox.id && current.profile.always_on === desired, 'trigger_sandbox_always_on_not_visible');
       }
@@ -137,18 +142,26 @@ async function exerciseTrigger({adapter, user, admin, outsider, config}) {
       const stillEnabled = await readSandbox(currentOwner.am);
       check(stillEnabled.profile.always_on === true && stillEnabled.revision === enabled.revision,
         'trigger_refused_relinquishment_mutated_approval');
-      const intent = {body: {always_on: false, expected_revision: enabled.revision}, key: randomUUID()};
-      const {body: released} = await user.request(ingress, 'POST', ownerPath, intent);
+      const {intent, receipt: released, read, mutation} = await relinquishAlwaysOnInBrowser(browser, ingress,
+        sandbox.id, enabled.revision);
       check(released?.id === sandbox.id && released.always_on === false && released.revision === enabled.revision + 1,
         'trigger_owner_relinquishment_unconfirmed');
-      const {body: replayed} = await user.request(currentOwner.am, 'POST', ownerPath, intent);
+      const {body: replayed, timing} = await user.request(currentOwner.am, 'POST', ownerPath, intent);
       check(equal(replayed, released), 'trigger_owner_relinquishment_replay_changed');
+      check(typeof timing?.request_id === 'string' && timing.request_id.trim().length > 0,
+        'trigger_owner_relinquishment_replay_unbound');
       for (const am of [ingress, currentOwner.am]) {
         const current = await readSandbox(am);
         check(current.profile.always_on === false && current.revision === released.revision,
           'trigger_owner_relinquishment_peer_state_changed');
       }
-      relinquishment = {ingress, owner: currentOwner.am, epoch: currentOwner.epoch,
+      const peerRead = await observeAlwaysOnOffInBrowser(browser, currentOwner.am, sandbox.id, released.revision);
+      const requests = {approved_read: read, relinquishment: mutation, replay: hash(timing.request_id), peer_read: peerRead};
+      check(new Set(Object.values(requests)).size === 4, 'trigger_owner_relinquishment_request_id_reused');
+      const settledOwner = assertOwner(await adapter.ownerOf({agentId: agent.id}), agent.id);
+      check(settledOwner.am === currentOwner.am && settledOwner.epoch === currentOwner.epoch
+        && settledOwner.pod_uid === currentOwner.pod_uid, 'trigger_owner_changed_during_browser_relinquishment');
+      relinquishment = {ingress, owner: currentOwner.am, epoch: currentOwner.epoch, request_sha256: requests,
         receipt_sha256: hash(JSON.stringify(released)), revisions_advanced: released.revision - enabled.revision};
     }, async () => {
       const current = await readSandbox(owner.am);

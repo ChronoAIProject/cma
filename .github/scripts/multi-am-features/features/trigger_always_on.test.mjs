@@ -65,7 +65,7 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
         assert.equal(options.key, ownerKey);
         assert.equal(options.body.expected_revision, revision - 1);
         calls.push('owner-relinquishment-replay');
-        return {status: 200, body: ownerReceipt};
+        return {status: 200, body: ownerReceipt, timing: {request_id: 'fixture-replay'}};
       }
       assert.equal(am, 'b');
       assert.equal(options.body.expected_revision, revision);
@@ -100,6 +100,8 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
       return {status: 202, body: admitted};
     }
     if (path.endsWith(launch)) return {body: admitted};
+    if (path.endsWith('/provenance')) return {body: {agent_id: agent, creation_origin: 'trigger',
+      details: {trigger: {trigger_id: trigger, launch_id: launch}}}};
     if (path.startsWith('/api/v1/agents?')) return {body: {items: []}};
     if (path.endsWith('/stop')) {
       agentState = 'stopped'; calls.push('stop-agent');
@@ -119,7 +121,48 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
     if (path.startsWith('/api/v1/sandboxes/')) calls.push('foreign-relinquishment-refused');
     return {status: options.allowed[0]};
   }};
-  const result = await triggerAlwaysOn({adapter, user, admin, outsider,
+  const sandboxRoute = '/sandboxes/' + sandbox;
+  const relinquishmentPath = '/api/v1' + sandboxRoute + '/always-on';
+  const browser = {forIngress: async (am, run) => {
+    let href, request, method = 'GET';
+    const origin = 'http://127.0.0.1:12345';
+    const page = {
+      goto: async path => { href = origin + path; },
+      url: () => href,
+      waitForEvent: async (name, {predicate}) => {
+        assert.equal(name, 'requestfinished');
+        const request = {method: () => 'GET', url: () => origin + '/api/v1' + sandboxRoute,
+          response: async () => ({status: () => 200, headerValue: async () => 'GET-' + am,
+            json: async () => ({id: sandbox, revision, always_on: alwaysOn})})};
+        assert(predicate(request));
+        return request;
+      },
+      getByText: text => ({waitFor: async () => assert.match(text, alwaysOn ? /administrator approved/ : /Always on is off/)}),
+      getByRole: (role, {name}) => {
+        assert.equal(role, 'button');
+        assert.equal(name, 'Turn off Always on');
+        method = 'POST';
+        return {
+          click: async () => { await request; },
+          waitFor: async ({state}) => { assert.equal(state, 'hidden'); assert.equal(alwaysOn, false); },
+        };
+      },
+      waitForResponse: predicate => {
+        const body = {always_on: false, expected_revision: revision}, key = 'fixture-browser-intent';
+        const responseMethod = method;
+        const value = {request: () => ({method: () => responseMethod, postDataJSON: () => body,
+          headerValue: async () => key}),
+        status: () => 200, url: () => origin + (responseMethod === 'POST' ? relinquishmentPath : '/api/v1' + sandboxRoute),
+        headerValue: async () => responseMethod + '-' + am,
+        json: async () => responseMethod === 'POST' ? (await request).body : {id: sandbox, revision, always_on: alwaysOn}};
+        assert(predicate(value));
+        if (responseMethod === 'POST') request = user.request(am, 'POST', relinquishmentPath, {body, key});
+        return Promise.resolve(value);
+      },
+    };
+    return run({page, origin});
+  }};
+  const result = await triggerAlwaysOn({adapter, user, admin, outsider, browser,
     config: {owner_id: subject, public_origin: 'https://fixture.example'}});
   assert.deepEqual(calls, ['enable-triggers', 'create', 'start', 'enable', 'replay-create', 'replay-start',
     'owner-self-approval-refused', 'stale-owner-relinquishment-refused', 'foreign-relinquishment-refused',
@@ -128,4 +171,5 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
     'restore-triggers']);
   assert.equal(result.owner_relinquishment.ingress, 'b');
   assert.equal(result.owner_relinquishment.revisions_advanced, 1);
+  assert.equal(new Set(Object.values(result.owner_relinquishment.request_sha256)).size, 4);
 });

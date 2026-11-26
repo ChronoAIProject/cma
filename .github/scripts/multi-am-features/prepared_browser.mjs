@@ -47,9 +47,9 @@ export async function openPreparedBrowser(config) {
           ? route.continue() : route.abort('blockedbyclient'));
         await context.addCookies([{name: 'cma_session', value: config.browser_session_cookie, url: origin,
           httpOnly: true, secure: true, sameSite: 'Lax'}]);
-        const page = await context.newPage();
-        await page.goto('/', {waitUntil: 'domcontentloaded', timeout: 20000});
-        const session = await page.evaluate(async () => {
+        const sessionPage = await context.newPage();
+        await sessionPage.goto('/', {waitUntil: 'domcontentloaded', timeout: 20000});
+        const session = await sessionPage.evaluate(async () => {
           const response = await fetch('/auth/session', {credentials: 'same-origin', redirect: 'error'});
           if (!response.ok) return null;
           const value = await response.json();
@@ -59,6 +59,9 @@ export async function openPreparedBrowser(config) {
           'prepared_browser_identity_unbound');
         const info = await context.request.get('/build-info.json', {maxRedirects: 0, timeout: 5000});
         check(info.ok() && (await info.json()).revision === config.expected_api_source, 'prepared_browser_source_mismatch');
+        // The home page can prefetch an Agent or Sandbox before the test opens it.
+        await sessionPage.close();
+        const page = await context.newPage();
         return await run(new PreparedAgentPage(page, origin));
       } finally {
         try { await context?.close(); }

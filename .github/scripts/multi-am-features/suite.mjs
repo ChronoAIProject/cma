@@ -11,7 +11,8 @@ import {busyConfigurationCase, configurationCases, heldConfigurationCases, asser
   verifyLifecycleReplay} from './features/agent_configuration.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
-import {retainFailure} from './failure.mjs';
+import {retainFailure, withRestoration} from './failure.mjs';
+import {openPreparedBrowser} from './prepared_browser.mjs';
 import {NonOwnerRouter} from './routing.mjs';
 import {writerCoverage} from './writer_coverage.mjs';
 import {queuedCommandCase} from './features/queued_commands.mjs';
@@ -116,9 +117,15 @@ try {
   result.journey = await runJourney(config, {retirementHook: context => {
     Object.assign(normal.ams, context.config.ams);
     return retirementRetention({...context, user, outsider});
-  }, triggerHook: context => {
+  }, triggerHook: async context => {
     Object.assign(normal.ams, context.config.ams);
-    return triggerAlwaysOn({...context, user, admin, outsider});
+    const browser = await openPreparedBrowser({...config, am_origins: context.config.ams});
+    let outcome;
+    await withRestoration(async () => {
+      outcome = await triggerAlwaysOn({...context, user, admin, outsider, browser});
+    }, () => browser.close(), (stage, error) => retainFailure(config.output_dir, stage, error,
+      {case: 'trigger_always_on_browser'}));
+    return outcome;
   }, queuedTurnHook: context => heldCases(context, async held => {
     if (context.phase === 'after_restart') await busyConfigurationCase(held);
     await held.runCase('writer.queued_edit_cancel', () => queuedCommandCase(held));
@@ -252,12 +259,14 @@ try {
   result.finished_at = new Date().toISOString();
   await writeFile(join(config.matrix_output, 'result.private.json'), JSON.stringify(result, null, 2), {mode: 0o600});
   const revival = result.journey?.steps.find(s => s.name === 'ownerless_pause_revive_open' && s.verdict === 'PASS');
+  const trigger = result.journey?.steps.find(s => s.name === 'trigger_origin_always_on_and_replay' && s.verdict === 'PASS');
   // This allowlist is the only suite content eligible for CI artifact upload.
   await writeFile(join(config.summary_dir, 'coverage.json'), JSON.stringify({
     ...result.coverage, suite_verdict: result.verdict, source: result.source,
     writer_coverage: result.writer_coverage,
     case_count: rows.length, non_owner_request_count: observations.length,
     owner_restart_pass: result.journey?.steps.some(s => s.name === 'actual_owner_kill_and_recovery' && s.verdict === 'PASS') === true,
+    trigger_owner_relinquishment: trigger?.owner_relinquishment ?? null,
     ownerless_revival: revival ? {ingress: revival.ingress, replay_ingress: revival.replay_ingress,
       prior_owner_epoch: revival.prior_owner_epoch, owner_epoch: revival.owner_epoch,
       durable_admissions: revival.durable_admissions, durable_completions: revival.durable_completions,
