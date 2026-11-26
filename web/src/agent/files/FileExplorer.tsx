@@ -22,6 +22,7 @@ import { FileExplorerFrame, FileLocation } from './FileExplorerFrame';
 import { FileToolbar } from './FileToolbar';
 import { FileRail } from './FileRail';
 import { FilePreview, textContent } from './FilePreview';
+import { useDownloadInterruption } from './useDownloadInterruption';
 import './AgentFiles.css';
 
 export function FileExplorer({
@@ -30,6 +31,7 @@ export function FileExplorer({
   readOnly,
   onClose,
   onAccessChanged,
+  beginDownload,
   panel = false,
   embedded = false,
   active = true,
@@ -48,6 +50,7 @@ export function FileExplorer({
   readonly readOnly: boolean;
   readonly onClose: () => void;
   readonly onAccessChanged?: (downloadMessage?: string) => void;
+  readonly beginDownload?: () => (message: string) => void;
 }) {
   const knownDirectory =
     suppliedDirectory === undefined
@@ -77,6 +80,7 @@ export function FileExplorer({
     listingFailure.current = undefined;
     setErrorState(message);
   }, []);
+  const beginInterruptionNotice = useDownloadInterruption(setError, beginDownload);
   const [notice, setNotice] = useState<string>();
   const [create, setCreate] = useState<'file' | 'directory'>();
   const [name, setName] = useState('');
@@ -220,9 +224,6 @@ export function FileExplorer({
       setBusy(false);
     }
   };
-  const refresh = async (path: string, signal: AbortSignal) => {
-    await load(path, signal);
-  };
   const save = () => {
     if (blocked || !selected || !content || draft === undefined || !dirty) return;
     const pending = { file: selected, original: content, draft };
@@ -245,13 +246,14 @@ export function FileExplorer({
         content_base64: encoded,
       });
       setNotice('File saved.');
-      await refresh(pending.file.path.split('/').slice(0, -1).join('/'), signal);
+      await load(pending.file.path.split('/').slice(0, -1).join('/'), signal);
     });
   };
   const download = () => {
     if (!selected) return;
     const file = selected;
     void run(async (signal) => {
+      const reportInterruption = beginInterruptionNotice();
       setDownloading(true);
       setNotice(undefined);
       try {
@@ -260,7 +262,7 @@ export function FileExplorer({
         saveAgentDownload(blob, file.name);
       } finally {
         setDownloading(false);
-        if (signal.aborted) setError('Download was interrupted. Try downloading the file again.');
+        if (signal.aborted) reportInterruption();
       }
     }, true);
   };
@@ -292,7 +294,7 @@ export function FileExplorer({
             );
           }
           setNotice('Deleted.');
-          await refresh(parent, signal);
+          await load(parent, signal);
         });
       },
     });
@@ -311,7 +313,7 @@ export function FileExplorer({
       if (signal.aborted) return;
       setCreate(undefined);
       setName('');
-      await refresh(directory, signal);
+      await load(directory, signal);
       if (signal.aborted) return;
       if (!folder)
         await openFile({ path, name, kind: 'file', hidden: name.startsWith('.'), size_bytes: 0 });
@@ -339,7 +341,7 @@ export function FileExplorer({
           },
           { signal },
         );
-        await refresh(directory, signal);
+        await load(directory, signal);
       }
       if (!signal.aborted)
         setNotice(`${files.length} file${files.length === 1 ? '' : 's'} uploaded.`);
@@ -373,7 +375,7 @@ export function FileExplorer({
         denied={denied}
         onRefresh={() => {
           const signal = lifetime.current?.signal;
-          if (signal) void refresh(directory, signal);
+          if (signal) void load(directory, signal);
         }}
         onCreate={(kind) =>
           guardDraft(() => {

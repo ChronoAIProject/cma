@@ -142,3 +142,76 @@ it('requires a new personal classification after an authentication epoch changes
   });
   await waitFor(() => expect(view.result.current.agentAccess.personalReady).toBe(true));
 });
+
+it.each(['client', 'agent', 'viewer', 'epoch'] as const)(
+  'isolates download notices across a %s change and return to the original scope',
+  async (changed) => {
+    const h = harness();
+    const sdk = createClient({
+      fetch: async () => new Response(null, { status: 404 }),
+    });
+    const original = {
+      client: { ...h.client, resourceViews: sdk },
+      agent: 'agt_1',
+      viewer: 'alice',
+      epoch: 7,
+    };
+    const replacement = { client: { ...original.client }, agent: 'agt_2', viewer: 'bob', epoch: 8 };
+    const view = renderHook(
+      ({ client, agent, viewer, epoch }) => useConsoleAgentAccess(client, agent, viewer, epoch),
+      { initialProps: original },
+    );
+    await waitFor(() => expect(view.result.current.agentAccess.state.status).toBe('error'));
+    const first = view.result.current.fileDownload.sidePanel;
+    act(() => first.beginFileDownload()('First interruption'));
+    expect(view.result.current.fileDownload.message).toBe('First interruption');
+    const dismissFirst = view.result.current.fileDownload.dismiss;
+    let finishFirst!: ReturnType<typeof first.beginFileDownload>;
+    act(() => {
+      finishFirst = first.beginFileDownload();
+    });
+    view.rerender({ ...original, [changed]: replacement[changed] });
+    expect(view.result.current.fileDownload.message).toBeUndefined();
+    await waitFor(() => expect(view.result.current.agentAccess.state.status).toBe('error'));
+    act(() => view.result.current.fileDownload.sidePanel.beginFileDownload()('New interruption'));
+    act(() => {
+      first.beginFileDownload()('Stale attempt');
+      finishFirst('Stale interruption');
+      first.onAccessChanged('Stale refusal');
+      dismissFirst();
+    });
+    expect(view.result.current.fileDownload.message).toBe('New interruption');
+    view.rerender(original);
+    await waitFor(() => expect(view.result.current.agentAccess.state.status).toBe('error'));
+    act(() => finishFirst('Late interruption after returning'));
+    expect(view.result.current.fileDownload.message).toBeUndefined();
+  },
+);
+
+it('ignores a late interruption from an older download in the same scope', async () => {
+  const h = harness();
+  const fetch = vi.fn(async () => new Response(null, { status: 404 }));
+  const client = { ...h.client, resourceViews: createClient({ fetch }) };
+  const view = renderHook(() => useConsoleAgentAccess(client, 'agt_1', 'alice'));
+  await waitFor(() => expect(view.result.current.agentAccess.state.status).toBe('error'));
+  const requests = fetch.mock.calls.length;
+  const { beginFileDownload } = view.result.current.fileDownload.sidePanel;
+  act(() => beginFileDownload()('Prior result'));
+  const dismissPrior = view.result.current.fileDownload.dismiss;
+  let finishFirst!: ReturnType<typeof beginFileDownload>;
+  let finishSecond!: ReturnType<typeof beginFileDownload>;
+  act(() => {
+    finishFirst = beginFileDownload();
+    finishSecond = beginFileDownload();
+  });
+  expect(view.result.current.fileDownload.message).toBeUndefined();
+  act(() => finishFirst('Late first interruption'));
+  expect(view.result.current.fileDownload.message).toBeUndefined();
+  act(() => finishSecond('Second interruption'));
+  act(dismissPrior);
+  expect(view.result.current.fileDownload.message).toBe('Second interruption');
+  act(view.result.current.fileDownload.dismiss);
+  act(() => finishSecond('Late second interruption'));
+  expect(view.result.current.fileDownload.message).toBeUndefined();
+  expect(fetch).toHaveBeenCalledTimes(requests);
+});
