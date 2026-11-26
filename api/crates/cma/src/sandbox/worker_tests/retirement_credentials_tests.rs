@@ -150,7 +150,7 @@ async fn unavailable_or_untrusted_retirement_census_retains_authority_and_paces_
 
 #[tokio::test]
 async fn permanent_revocation_outage_finishes_retry_budget_and_retains_custody() {
-    use layer2_core::sandbox::admin::{SandboxRetirement, StoredSandboxRetirement};
+    use layer2_core::sandbox::{SandboxRetirement, StoredSandboxRetirement};
     use layer2_core::sandbox::work_retry::WORK_RETRY_BUDGET;
 
     let h = Harness::new(Vec::new(), 0, Duration::ZERO).await;
