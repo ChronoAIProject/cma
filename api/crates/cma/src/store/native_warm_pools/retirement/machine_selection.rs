@@ -108,15 +108,16 @@ pub(super) async fn selection_fence(
     store: &MongoNativeWarmPools,
     session: &mut ClientSession,
 ) -> mongodb::error::Result<()> {
-    let coordination = majority_collection::<Document>(
-        &store.database,
-        crate::store::released_runtimes::COLLECTION,
-    );
-    let key = format!("{}:machine-plan-selection", store.deployment);
+    // Fixed-pin deployments can lack the optional released_runtimes grant.
+    // Use a separate versioned settings record, leaving the platform singleton
+    // and its operator-controlled revision independent of pool selections.
+    let coordination =
+        majority_collection::<Document>(&store.database, crate::store::settings::SETTINGS);
+    let key = format!("machine_plan_selection:{}", store.deployment);
     coordination
         .update_one(
             doc! {"_id":key, "deployment":&store.deployment,
-            "document_schema_version":1_i64},
+            "document_schema_version":crate::store::schema::DOCUMENT_SCHEMA_VERSION},
             doc! {"$inc":{"selection_fence":1_i64}},
         )
         .upsert(true)
@@ -198,6 +199,85 @@ async fn select_once(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an authenticated disposable replica set"]
+    async fn fixed_pin_machine_selection_works_without_released_runtime_grant() {
+        use mongodb::options::{ClientOptions, Credential};
+
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+        let client = mongodb::Client::with_uri_str(&uri).await.unwrap();
+        let name = format!("cma_selection_{}", uuid::Uuid::new_v4().simple());
+        let database = client.database(&name);
+        let mut role = crate::store::isolation::role(&name);
+        role.get_array_mut("privileges").unwrap().retain(|grant| {
+            let collection = grant
+                .as_document()
+                .unwrap()
+                .get_document("resource")
+                .unwrap()
+                .get_str("collection")
+                .unwrap();
+            collection != crate::store::released_runtimes::COLLECTION
+        });
+        database.run_command(role).await.unwrap();
+        let password = uuid::Uuid::new_v4().simple().to_string();
+        database
+            .run_command(doc! {"createUser":"fixed-pin-runtime","pwd":&password,
+            "roles":[{"role":"cma_am_runtime","db":&name}]})
+            .await
+            .unwrap();
+        let mut options = ClientOptions::parse(&uri).await.unwrap();
+        options.credential = Some(
+            Credential::builder()
+                .username("fixed-pin-runtime".to_owned())
+                .password(password)
+                .source(name.clone())
+                .build(),
+        );
+        let runtime = mongodb::Client::with_options(options)
+            .unwrap()
+            .database(&name);
+        let denial = runtime
+            .collection::<Document>(crate::store::released_runtimes::COLLECTION)
+            .find_one(doc! {})
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(denial.kind.as_ref(), mongodb::error::ErrorKind::Command(command) if command.code == 13)
+        );
+
+        let store = MongoNativeWarmPools::open(&runtime, "test").await.unwrap();
+        let mut candidate = crate::warm_pools::tests::target();
+        candidate.machine = true;
+        candidate.document_schema_version = 2;
+        assert!(crate::store::released_runtimes::StoreReleasedRuntime::open(
+            &runtime,
+            "test",
+            layer3_adapter::ReleasedRuntime {
+                revision: 0,
+                agent: "registry.example/runtime@sha256:fixed".into(),
+                machine: Some(candidate.plan.spec.image.uri.clone()),
+                lane_revisions: None,
+            },
+            false
+        )
+        .await
+        .unwrap()
+        .is_none());
+        store.insert(candidate.clone()).await.unwrap();
+        store.activate(&candidate.id).await.unwrap();
+        let selected = store.find(&candidate.id).await.unwrap().unwrap();
+        assert!(selected.activated_at.is_some());
+        assert!(selected.machine_plan_activated_at.is_some());
+        crate::store::schema::verify_existing_collections(
+            &runtime,
+            &[crate::store::settings::SETTINGS],
+        )
+        .await
+        .unwrap();
+        database.drop().await.unwrap();
+    }
 
     #[tokio::test]
     #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]

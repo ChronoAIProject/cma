@@ -4,7 +4,7 @@ use super::*;
 pub(super) async fn initialize(database: &Database) -> Result<(), StoreError> {
     crate::store::schema::ensure_collections(
         database,
-        &[COLLECTION, crate::store::released_runtimes::COLLECTION],
+        &[COLLECTION, crate::store::settings::SETTINGS],
     )
     .await?;
     let unknown = doc! {"$or":[

@@ -221,6 +221,20 @@ async fn existing_machine_pointer_holds_only_a_superseded_same_image_size() {
     assert!(matches!(outcome, WarmPoolStartup::Ready));
     assert!(pointer.pools.default_held(true));
     assert!(!pointer.pools.default_held(false));
+    let routing = crate::store::runtime_routing::MongoRuntimeRouting::open_with_default_pool_holds(
+        &fixture.database,
+        DEPLOYMENT,
+        true,
+        pointer.pools.default_holds.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(routing
+        .require_allocation_image(&image(Lane::Machine, '1'))
+        .is_err());
+    assert!(routing
+        .require_allocation_image(&image(Lane::Agent, 'a'))
+        .is_ok());
     assert_eq!(
         pointer.durable_release(Lane::Machine).await.active,
         image(Lane::Machine, '1')
