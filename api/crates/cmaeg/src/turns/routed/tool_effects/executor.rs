@@ -179,6 +179,17 @@ impl Handler {
                     .delayed_pending_expired(token, root.retained_until)
                     .await?
                 {
+                    if root.answer.is_some() {
+                        return self
+                            .refuse_accepted_answer(
+                                &store,
+                                &mut root,
+                                (plan, target),
+                                token,
+                                "delayed_reply_guard_wait_expired",
+                            )
+                            .await;
+                    }
                     return self
                         .settle(
                             &store,
@@ -197,6 +208,17 @@ impl Handler {
                 return self.settle(&store, &mut root, token, receipt).await
             }
             Ok(Admission::Unknown) => {
+                if root.answer.is_some() {
+                    return self
+                        .refuse_accepted_answer(
+                            &store,
+                            &mut root,
+                            (plan, target),
+                            token,
+                            "delayed_reply_guard_uncertain",
+                        )
+                        .await;
+                }
                 return self
                     .settle(
                         &store,
@@ -206,7 +228,7 @@ impl Handler {
                             reason: "delayed_reply_guard_uncertain".into(),
                         }),
                     )
-                    .await
+                    .await;
             }
             Err(ExecutionError::OperationLimit) => {
                 if root.answer.is_some() {

@@ -4,6 +4,8 @@ mod executor;
 mod gate;
 mod model;
 #[cfg(test)]
+mod mongo_answer_receipt_tests;
+#[cfg(test)]
 mod mongo_arbitration_tests;
 #[cfg(test)]
 mod mongo_failure_tests;
@@ -139,7 +141,15 @@ impl RoutedToolReplies {
         }
         self.authorize_delayed(caller, capability, &plan, target, answer.as_ref())
             .await?;
-        if answer.is_none() {
+        if let Some(answer) = &answer {
+            if let Some(receipt) = self
+                .journal
+                .admit_delayed_answer_payload(&plan, target, answer, &message)
+                .await?
+            {
+                return Ok(Some(receipt));
+            }
+        } else {
             let legacy = crate::tools::reply_targets::receipts::Store::new(
                 self.journal.records.clone(),
                 self.journal.keys.clone(),

@@ -291,6 +291,11 @@ impl ReplyStore {
     ) -> Result<Admission, ExecutionError> {
         let mut record = self.load(plan, target).await?;
         let operations = OperationStore(self.0.clone());
+        if let Some(answer) = answer {
+            self.0
+                .bind_answer_payload(&self.1, &record, &operation, &content_hash, answer)
+                .await?;
+        }
         if answer.is_some() || record.operation_keys.contains(&operation) {
             if let Some(receipt) = operations
                 .lookup(&record, &operation, &content_hash)

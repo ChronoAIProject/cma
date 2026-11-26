@@ -50,6 +50,9 @@ impl ReplyStore {
         reason: &str,
     ) -> Result<IntentReceipt, ExecutionError> {
         let record = self.load(plan, target).await?;
+        self.0
+            .bind_answer_payload(&self.1, &record, operation, content_hash, answer)
+            .await?;
         let operations = OperationStore(self.0.clone());
         if let Some(receipt) = operations.lookup(&record, operation, content_hash).await? {
             return Ok(receipt);

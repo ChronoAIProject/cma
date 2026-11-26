@@ -4,6 +4,7 @@
 //! an uncertain start only when its provider proves exact-body idempotency;
 //! otherwise it retains Unknown. Platform delivery remains a separate effect.
 mod adapter;
+mod answer_binding;
 mod answer_dispatch;
 mod answer_identity;
 mod answer_receipt;

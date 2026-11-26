@@ -12,6 +12,74 @@ use serde_json::json;
 use std::sync::atomic::Ordering;
 
 #[tokio::test]
+async fn conflicting_first_bindings_cannot_make_the_winning_answer_unreadable() {
+    let setup = Setup::new(supported()).await;
+    let target = setup.target();
+    let store = ReplyStore(setup.journal().clone(), None);
+    let stream = AcceptedAnswerIdentity {
+        response_id: "resp_1".into(),
+        item_id: "stream_item".into(),
+    };
+    let delayed = AcceptedAnswerIdentity {
+        item_id: "different_item".into(),
+        ..stream.clone()
+    };
+    let ReplayEffect::Reply(message) = effect() else {
+        unreachable!()
+    };
+    let (operation, stream_digest) = stream.operation(target, &message).unwrap();
+    let (_, delayed_digest) = delayed.operation(target, &message).unwrap();
+    let (prepare, refusal) = tokio::join!(
+        store.admit_keyed_answer(
+            &setup.plan,
+            target,
+            (operation.clone(), stream_digest.clone(), Some(&stream))
+        ),
+        store.refuse_delayed_answer(
+            &setup.plan,
+            target,
+            &operation,
+            &delayed_digest,
+            &delayed,
+            "reply_operation_limit",
+        ),
+    );
+    let (winner, digest, expected) = match (prepare, refusal) {
+        (Ok(Admission::Claimed(claim)), Err(ExecutionError::IdempotencyConflict)) => {
+            let expected = DeliveryOutcome::Confirmed {
+                platform_message_id: Some("fixture-message".into()),
+            };
+            store
+                .finish(&claim, &receipt_for(expected.clone()))
+                .await
+                .unwrap();
+            (stream, stream_digest, expected)
+        }
+        (Err(ExecutionError::IdempotencyConflict), Ok(receipt)) => {
+            assert!(matches!(receipt.delivery, DeliveryOutcome::Rejected { .. }));
+            (delayed, delayed_digest, receipt.delivery)
+        }
+        _ => panic!("one binding must win and the other must conflict"),
+    };
+    let record = store.load(&setup.plan, target).await.unwrap();
+    assert!(
+        super::super::tool_operation::OperationStore(setup.journal().clone())
+            .answer(&record, &winner)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let Admission::Replay(receipt) = store
+        .admit_delayed_answer(&setup.plan, target, operation, digest, &winner)
+        .await
+        .unwrap()
+    else {
+        panic!("winner must remain replayable")
+    };
+    assert_eq!(receipt.delivery, expected);
+}
+
+#[tokio::test]
 async fn interrupted_prepare_preserves_dispatch_evidence_in_both_alias_orders() {
     for (frame_first, prepare_wrote) in [(false, false), (true, false), (false, true), (true, true)]
     {
