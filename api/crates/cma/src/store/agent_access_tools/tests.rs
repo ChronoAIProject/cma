@@ -6,7 +6,7 @@ use layer2_core::sandbox::store::*;
 use layer2_core::sandbox::*;
 use layer2_core::SubjectId;
 
-pub(super) fn key(byte: u8) -> AuthEncryptionKey {
+pub(in crate::store) fn key(byte: u8) -> AuthEncryptionKey {
     AuthEncryptionKey::from_base64(&base64::engine::general_purpose::STANDARD.encode([byte; 32]))
         .unwrap()
 }
@@ -80,7 +80,7 @@ fn snapshot() -> AgentProvenanceSnapshot {
     }
 }
 
-pub(super) fn request(snapshot: &AgentProvenanceSnapshot) -> AgentOpenRequest {
+pub(in crate::store) fn request(snapshot: &AgentProvenanceSnapshot) -> AgentOpenRequest {
     let agent = snapshot.resource.lineage.agent.as_ref().unwrap();
     AgentOpenRequest::new(
         format!("agent:{}:open:v1", agent.id),
@@ -609,7 +609,13 @@ async fn mongo_agent_access_tools_pending_discovery_has_no_conversation_authorit
         .await
         .unwrap()
         .unwrap();
-    assert!(source.read(&document).ok().unwrap().conversation.is_none());
+    assert!(source
+        .records
+        .read(&document)
+        .ok()
+        .unwrap()
+        .conversation
+        .is_none());
     client.database(&database).drop().await.unwrap();
 }
 #[tokio::test]

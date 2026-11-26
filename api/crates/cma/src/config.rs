@@ -12,6 +12,7 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 mod access_migration;
 mod access_origins;
+pub(crate) use access_origins::retained as parse_agent_access_retained_origins;
 mod access_snapshot;
 mod activity;
 mod lifecycle_failure;

@@ -1,3 +1,4 @@
+use super::super::agent_access_tools::AccessRecordAuthority;
 use super::{Observation, Result, Snapshot};
 use crate::config::AgentAccessMigration;
 use layer2_core::sandbox::{Agent, AgentOperationIntent, AgentStatus, Sandbox, SandboxStatus};
@@ -8,7 +9,10 @@ pub(super) enum Cohort {
         deployment: String,
         allocate_native: bool,
     },
-    Endpoints(AgentAccessMigration),
+    Endpoints {
+        migration: AgentAccessMigration,
+        authority: AccessRecordAuthority,
+    },
 }
 
 const ROUTES: &str = "runtime_backend_routes";
@@ -16,13 +20,15 @@ const AGENTS: &str = "agents";
 const SANDBOXES: &str = "sandboxes";
 const ACCESS: &str = "agent_access_tools";
 
-pub(super) const SOURCES: [&str; 4] = [ROUTES, AGENTS, SANDBOXES, ACCESS];
+const PROVENANCE: &str = "agent_creation_provenance";
+
+pub(super) const SOURCES: [&str; 5] = [ROUTES, AGENTS, SANDBOXES, ACCESS, PROVENANCE];
 
 impl Cohort {
     pub(super) fn name(&self) -> &'static str {
         match self {
             Self::Routing { .. } => "runtime_routing",
-            Self::Endpoints(_) => "retained_agent_endpoints",
+            Self::Endpoints { .. } => "retained_agent_endpoints",
         }
     }
 
@@ -34,11 +40,15 @@ impl Cohort {
             } => {
                 layer3_adapter::provider_request_digest(&(self.name(), deployment, allocate_native))
             }
-            Self::Endpoints(migration) => layer3_adapter::provider_request_digest(&(
+            Self::Endpoints {
+                migration,
+                authority,
+            } => layer3_adapter::provider_request_digest(&(
                 self.name(),
                 migration.revision,
                 &migration.origin,
                 &migration.agents,
+                authority.namespace_scope(),
             )),
         };
         result.map_err(|_| "backfill cohort identity unavailable")
@@ -47,29 +57,26 @@ impl Cohort {
     pub(super) fn source(&self) -> &'static str {
         match self {
             Self::Routing { .. } => SANDBOXES,
-            Self::Endpoints(_) => AGENTS,
+            Self::Endpoints { .. } => AGENTS,
         }
     }
 
     pub(super) fn selected_count(&self) -> i64 {
         match self {
-            Self::Endpoints(migration) if migration.agents.as_slice() != ["*"] => {
+            Self::Endpoints { migration, .. } if migration.agents.as_slice() != ["*"] => {
                 i64::try_from(migration.agents.len()).expect("configured cohort is bounded")
             }
             _ => 0,
         }
     }
 
-    pub(super) fn restrict(&self, selection: &mut Document) -> Result<()> {
-        if let Self::Endpoints(migration) = self {
+    pub(super) fn selection(&self) -> Document {
+        if let Self::Endpoints { migration, .. } = self {
             if migration.agents.as_slice() != ["*"] {
-                selection
-                    .get_document_mut("_id")
-                    .map_err(|_| super::INVALID)?
-                    .insert("$in", migration.agents.as_slice());
+                return doc! {"_id": {"$in": migration.agents.as_slice()}};
             }
         }
-        Ok(())
+        doc! {}
     }
 
     pub(super) async fn observe(
@@ -87,11 +94,14 @@ impl Cohort {
                 };
                 routing(snapshot, deployment, *allocate_native, &sandbox).await
             }
-            Self::Endpoints(migration) => {
+            Self::Endpoints {
+                migration,
+                authority,
+            } => {
                 let Ok(agent) = super::super::agents::read_agent(row) else {
                     return Ok(Observation::Error);
                 };
-                endpoint(snapshot, migration, &agent).await
+                endpoint(snapshot, migration, authority, &agent).await
             }
         }
     }
@@ -104,7 +114,7 @@ impl Cohort {
             Self::Routing { deployment, .. } => {
                 routing_initialized(snapshot, deployment).await.map(Some)
             }
-            Self::Endpoints(_) => Ok(None),
+            Self::Endpoints { .. } => Ok(None),
         }
     }
 }
@@ -174,6 +184,7 @@ async fn routing(
 async fn endpoint(
     snapshot: &Snapshot<'_>,
     migration: &AgentAccessMigration,
+    authority: &AccessRecordAuthority,
     agent: &Agent,
 ) -> Result<Observation> {
     if agent.status == AgentStatus::Deleted {
@@ -217,53 +228,40 @@ async fn endpoint(
     {
         return Ok(Observation::Pending);
     }
-    let runtime = super::super::sandbox_mongo::record_bson(runtime).map_err(|_| super::INVALID)?;
-    let filter = doc! {
-        "agent_id": agent.id.as_str(),
-        "record.scope.creation.agent_id": agent.id.as_str(),
-        "record.scope.creation.agent_created_at": &agent.created_at,
-        "record.scope.creation.sandbox_id": agent.sandbox_id.as_str(),
-        "record.scope.creation.sandbox_created_at": &sandbox.created_at,
-        "record.scope.creation.workspace_id": agent.workspace_id.as_str(),
-        "record.scope.creation.worktree_id": agent.worktree_id.as_str(),
-        "record.scope.creation.creation_fingerprint": &agent.creation_fingerprint,
-        "record.scope.runtime": runtime,
-        "record.conversation": conversation_id,
-    };
-    let records = snapshot
-        .find(
-            ACCESS,
-            filter,
-            2,
-            doc! {
-                "projection": {"record.transport_origin": 1, "document_schema_version": 1}
-            },
-        )
-        .await?;
-    if records.len() > 1 {
-        return Ok(Observation::Error);
-    }
-    let Some(record) = records.first() else {
+    let Some(provenance) = snapshot
+        .one(PROVENANCE, doc! {"_id": agent.id.as_str()})
+        .await?
+    else {
         return Ok(Observation::Pending);
     };
-    if record.get_i64("document_schema_version").ok() != Some(1) {
-        return Ok(Observation::Error);
-    }
-    let target = url::Url::parse(&migration.origin).map_err(|_| super::INVALID)?;
-    let recorded = record
-        .get_document("record")
-        .ok()
-        .and_then(|body| body.get_str("transport_origin").ok())
-        .map(url::Url::parse)
-        .transpose();
-    let Ok(recorded) = recorded else {
+    let Ok(creation) = super::super::agent_provenance::read(&provenance) else {
         return Ok(Observation::Error);
     };
-    let confirmed = recorded.as_ref() == Some(&target)
-        && conversation.managed_guidance_revision >= migration.revision;
-    Ok(if confirmed {
-        Observation::Changed
-    } else {
-        Observation::Pending
-    })
+    if creation.validate_against(agent, &sandbox).is_err() {
+        return Ok(Observation::Error);
+    }
+
+    let filter = authority
+        .lookup_filter(&creation, runtime)
+        .ok_or(super::INVALID)?;
+    let records = snapshot.find(ACCESS, filter, 2, doc! {}).await?;
+    let record = match records.as_slice() {
+        [record] => record,
+        [] => return Ok(Observation::Pending),
+        _ => return Ok(Observation::Error),
+    };
+    let target = url::Url::parse(&migration.origin).map_err(|_| super::INVALID)?;
+    match authority.confirmed_transport(
+        record,
+        &creation,
+        runtime,
+        conversation_id,
+        target.as_str(),
+    ) {
+        Some(true) if conversation.managed_guidance_revision >= migration.revision => {
+            Ok(Observation::Changed)
+        }
+        Some(_) => Ok(Observation::Pending),
+        None => Ok(Observation::Error),
+    }
 }

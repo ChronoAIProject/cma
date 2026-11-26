@@ -76,20 +76,20 @@ async fn execute(arguments: &[String]) -> Result<Value> {
     .map_err(|_| "backfill progress authority required")?;
     match (action.as_str(), rest) {
         ("status", [_]) => Ok(current(&database, &id).await?.public_view()),
-        ("start", [_, kind]) => start(&database, &id, &cohort(kind)?).await,
+        ("start", [_, kind]) => start(&database, &id, &cohort(kind, &database_name)?).await,
         ("step", [_, kind, revision]) => {
             let revision = revision
                 .parse::<i64>()
                 .ok()
                 .filter(|value| *value >= 0)
                 .ok_or("invalid checkpoint revision")?;
-            step(&database, &id, &cohort(kind)?, revision).await
+            step(&database, &id, &cohort(kind, &database_name)?, revision).await
         }
         _ => Err("unsupported backfill progress command"),
     }
 }
 
-fn cohort(kind: &str) -> Result<Cohort> {
+fn cohort(kind: &str, database_name: &str) -> Result<Cohort> {
     let mut lookup = |name: &str| match std::env::var(name) {
         Ok(value) => Ok(Some(value)),
         Err(std::env::VarError::NotPresent) => Ok(None),
@@ -113,7 +113,31 @@ fn cohort(kind: &str) -> Result<Cohort> {
             let migration = crate::config::parse_agent_access_migration(&mut lookup)
                 .map_err(|_| "invalid access transport migration cohort")?
                 .ok_or("active access transport migration cohort required")?;
-            Ok(Cohort::Endpoints(migration))
+            let public_origin = lookup("CHRONO_SERVER_PUBLIC_URL")
+                .map_err(|_| "invalid Agent access origin")?
+                .ok_or("Agent access origin is required")?;
+            let origin =
+                url::Url::parse(&public_origin).map_err(|_| "invalid Agent access origin")?;
+            if origin.as_str().trim_end_matches('/') != migration.origin.trim_end_matches('/') {
+                return Err("endpoint migration origin must match the Agent access origin");
+            }
+            let retained = crate::config::parse_agent_access_retained_origins(&mut lookup)
+                .map_err(|_| "invalid retained Agent access origins")?;
+            let encoded_key = std::env::var("CHRONO_AUTH_ENCRYPTION_KEY")
+                .map_err(|_| "Agent access signing authority is required")?;
+            let key = crate::store::AuthEncryptionKey::from_base64(&encoded_key)
+                .map_err(|_| "invalid Agent access signing authority")?;
+            let authority = super::super::agent_access_tools::AccessRecordAuthority::new(
+                database_name,
+                &public_origin,
+                &retained,
+                &key,
+            )
+            .map_err(|_| "invalid Agent access signing authority")?;
+            Ok(Cohort::Endpoints {
+                migration,
+                authority,
+            })
         }
         _ => Err("unsupported backfill cohort"),
     }

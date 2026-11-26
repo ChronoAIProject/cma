@@ -20,15 +20,18 @@ impl<'a> Snapshot<'a> {
         &self,
         collection: &str,
         filter: Document,
+        cursor: Option<&Document>,
         limit: i64,
     ) -> Result<Vec<Document>> {
-        self.find(
-            collection,
-            filter,
-            limit,
-            doc! {"sort": {"_id": 1}, "hint": {"_id": 1}},
-        )
-        .await
+        let mut options = doc! {"sort": {"_id": 1}, "hint": {"_id": 1}};
+        // MongoDB comparison predicates bracket by BSON type. The index bound
+        // visits all types, including malformed identities that must count.
+        // The previous row still matches the same filter at this snapshot.
+        if let Some(cursor) = cursor {
+            options.insert("min", cursor.clone());
+            options.insert("skip", 1_i64);
+        }
+        self.find(collection, filter, limit, options).await
     }
 
     pub(super) async fn one(&self, collection: &str, filter: Document) -> Result<Option<Document>> {

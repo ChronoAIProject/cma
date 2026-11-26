@@ -14,7 +14,7 @@ impl MongoAgentAccessToolSource {
             .session(&mut *session)
             .await?
             .ok_or(Error::Refused)?;
-        let record = self.read(&document)?;
+        let record = self.records.read(&document)?;
         let snapshot = super::super::agent_provenance::read_snapshot(
             &self.store,
             &record.scope.creation.agent_id,
@@ -106,7 +106,8 @@ impl MongoAgentAccessToolSource {
             if previous.is_none() {
                 return Ok(None);
             }
-            self.read(&previous.expect("existing enrollment was checked"))?;
+            self.records
+                .read(&previous.expect("existing enrollment was checked"))?;
         }
         let scope = validation::scope(&snapshot, runtime)?;
         validation::request(&snapshot, request, fence)?;
@@ -253,7 +254,7 @@ impl MongoAgentAccessToolSource {
             .session(&mut *session)
             .await?
             .ok_or(Error::Refused)?;
-        let record = self.read(&document)?;
+        let record = self.records.read(&document)?;
         let snapshot = super::super::agent_provenance::read_snapshot(
             &self.store,
             &record.scope.creation.agent_id,

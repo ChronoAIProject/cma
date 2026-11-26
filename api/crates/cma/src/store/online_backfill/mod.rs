@@ -87,7 +87,7 @@ struct Scan {
     started_at: DateTime,
     revision: i64,
     snapshot_time: Timestamp,
-    cursor: Option<String>,
+    cursor: Option<Document>,
     counts: Counts,
     unobserved: i64,
     finished_at: Option<DateTime>,
@@ -135,7 +135,10 @@ fn decode(document: Document) -> Result<Scan> {
         || !scan.counts.valid()
         || scan.unobserved < 0
         || scan.snapshot_time.time == 0
-        || scan.cursor.as_ref().is_some_and(String::is_empty)
+        || scan
+            .cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.len() != 1 || !cursor.contains_key("_id"))
         || (scan.finished_at.is_some() && scan.cursor.is_some())
         || (scan.routing_initialized.is_some() && scan.finished_at.is_none())
         || (scan.completion_proved
@@ -268,22 +271,23 @@ async fn advance(
     if scan.revision != expected_revision {
         return Err("backfill checkpoint revision does not match");
     }
-    let cursor = scan.cursor.as_deref().unwrap_or("");
-    let mut selection = doc! {"_id": {"$type": "string", "$gt": cursor}};
-    cohort.restrict(&mut selection)?;
     // A stable ID bound still permits insertion or deletion behind the cursor.
     // Pin both the membership and the migration evidence to the same cut.
     let snapshot = Snapshot::new(database, scan.snapshot_time);
-    let page = snapshot.page(cohort.source(), selection, PAGE_SIZE).await?;
-    let mut last = cursor;
+    let page = snapshot
+        .page(
+            cohort.source(),
+            cohort.selection(),
+            scan.cursor.as_ref(),
+            PAGE_SIZE,
+        )
+        .await?;
     for source_row in &page {
-        let id = source_row.get_str("_id").map_err(|_| INVALID)?;
-        if id <= last {
-            return Err(INVALID);
-        }
-        scan.counts
-            .observe(cohort.observe(&snapshot, source_row).await?)?;
-        last = id;
+        let observation = match source_row.get_str("_id") {
+            Ok(id) if !id.is_empty() => cohort.observe(&snapshot, source_row).await?,
+            _ => Observation::Error,
+        };
+        scan.counts.observe(observation)?;
     }
     if page.is_empty() {
         scan.cursor = None;
@@ -295,7 +299,8 @@ async fn advance(
             && scan.unobserved == 0
             && scan.routing_initialized != Some(false);
     } else {
-        scan.cursor = Some(last.to_owned());
+        let last_id = page.last().and_then(|row| row.get("_id")).ok_or(INVALID)?;
+        scan.cursor = Some(doc! {"_id": last_id});
     }
     let previous_revision = scan.revision;
     scan.revision = scan.revision.checked_add(1).ok_or(INVALID)?;
