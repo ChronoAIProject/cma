@@ -176,16 +176,20 @@ impl HostedBackend for AgentSandboxBackend {
         }
         Ok(unavailable)
     }
-    async fn retire_unreachable(
+    async fn retire_verified(
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
         home: &HomeVolumeAttachment,
-        receiver: &RetirementPod,
+        receiver: Option<&RetirementPod>,
     ) -> Result<()> {
-        self.client
-            .retire_verified(handle, request, home, Some(receiver))
-            .await?;
+        if let Some(receiver) = receiver {
+            self.client
+                .retire_verified(handle, request, home, Some(receiver))
+                .await?;
+        } else {
+            self.client.retire_suspended(handle, request, home).await?;
+        }
         self.forget_assignment(handle);
         self.transport.retire(handle).await
     }
@@ -212,7 +216,14 @@ impl HostedBackend for AgentSandboxBackend {
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
+        for_retirement: bool,
     ) -> Result<()> {
+        if for_retirement {
+            return self
+                .client
+                .verify_retirement_suspension(handle, request)
+                .await;
+        }
         self.client.verify_suspended(handle, request).await
     }
     fn retained_startup_policy(&self) -> Option<&dyn super::HostedRetainedStartupPolicy> {
