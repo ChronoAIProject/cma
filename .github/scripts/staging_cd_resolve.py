@@ -10,7 +10,7 @@ from staging_cd_registry import Registry
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_runtime import SKIPPED, run_private
 from staging_cd_targets import RUNTIME_TARGETS, TARGETS
-from staging_cd_versions import DEPLOYABLES, version_tuple
+from staging_cd_versions import DEPLOYABLES, require_publishable_release, version_tuple
 from staging_cd_watermark import record_withheld
 
 
@@ -51,6 +51,7 @@ def resolve(component, version, tags, registry, history):
         if tag["target"] != newest["target"]:
             raise ObsoleteSource("Superseded runtime source cannot be promoted")
     receipt = tag["receipt"]
+    require_publishable_release(receipt["identity"])
     require(registry.exists(receipt["repository"], receipt["digest"]) is True,
             "Published digest is not publicly available")
     version_manifest = registry.manifest(receipt["repository"], receipt["identity"]["version"])
@@ -88,8 +89,9 @@ def main():
         run_created,
         timestamp,
     )
-    from staging_cd_component_admission import automatic_admission, overtaken_admission
-    from staging_cd_set import OVERTAKEN, OvertakenByNewerFinal, dispatch_set, document, verify_set
+    from staging_cd_component_admission import automatic_admission, overtaken_admission, verified_resume
+    from staging_cd_promotion import available_proofs
+    from staging_cd_set import ALREADY_VERIFIED, OVERTAKEN, OvertakenByNewerFinal, dispatch_set, document, verify_set
     env = os.environ
     overtaken = []
     def operation(_masker):
@@ -111,7 +113,14 @@ def main():
                 check_lane(env["CD_PROMOTION_LANE"], matrix, value, failures)
             output(env, "admitted", canonical(sorted(value["receipts"]) if value else []))
             output(env, "failures", canonical(failures))
-            output(env, "changed", "true" if value else "false")
+            # The caller holds the shared promotion lock here. A writer that
+            # was still active during allocation may now have an exact proof.
+            already_verified = verified_resume(matrix, value, failures, api,
+                                               lambda: available_proofs(env.get("GH_TOKEN"), env["CD_STAGING_ENVIRONMENT"]))
+            output(env, "changed", "true" if value and not already_verified else "false")
+            if already_verified:
+                output(env, "disposition", ALREADY_VERIFIED)
+                print("SKIP deployment reason=already-verified: a prior staging deployment verified this exact set")
             overtaken.extend(overtaken_admission(matrix, value, failures, api))
             if overtaken:
                 # Deploy nothing; each newer final's own run promotes it.
@@ -123,7 +132,7 @@ def main():
             started = timestamp() if value else None
             selected = set(failures) | (set(value["receipts"]) if value else set())
             write_admission(env, selected, value, failures, started)
-            if value is None:
+            if value is None or already_verified:
                 return True
             publication_started = run_created(env, api.request)
             mode = "release"

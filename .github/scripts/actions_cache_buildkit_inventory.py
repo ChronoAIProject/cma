@@ -4,16 +4,18 @@ import json
 import os
 import re
 import sys
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from actions_cache_retention import DEVELOP
+from actions_cache_retention import DEVELOP, Entry
 from actions_cache_sweep import Actions
+from staging_cd_build_cache import CI_SCOPES, SCOPES
 
 
 CACHE_VERSION = hashlib.sha256(b"|go-actionscache-1.0").hexdigest()
@@ -24,7 +26,12 @@ DIGEST = r"sha256:[a-f0-9]{64}"
 BLOB = re.compile("buildkit-blob-1-(" + DIGEST + ")")
 RESULTS_LOOKUP = "/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL"
 MAX_INDEXES = 1000
+MAX_INDEX_RETIREMENTS = 8
 MAX_INDEX_BYTES = 1024 * 1024
+DEVELOP_SCOPE = hashlib.sha256(DEVELOP.encode()).hexdigest()[:8]
+MANAGED_INDEX_STEMS = frozenset(
+    f"index-{scope}-1-{DEVELOP_SCOPE}" for scope in CI_SCOPES.union(SCOPES.values())
+)
 
 
 class ProofError(ValueError):
@@ -160,7 +167,89 @@ def develop_blobs(api):
     return entries
 
 
-def observe(api, reader, revision, now):
+def superseded_indexes(pinned, references, stable_keys, cutoff):
+    groups = defaultdict(list)
+    for row in pinned.values():
+        stem, _, generation = row.key.rpartition("#")
+        if stem in MANAGED_INDEX_STEMS:
+            groups[stem].append((int(generation), row))
+    retired = []
+    for group in groups.values():
+        if len(group) < 3:
+            continue
+        ordered = sorted(group, key=lambda item: (item[1].created, item[1].id))
+        generations = [generation for generation, _ in ordered]
+        if generations != sorted(generations):
+            # A reset or out-of-order upload makes the lookup order ambiguous.
+            continue
+        keep = [references[row.id] for _, row in ordered[-2:]]
+        if not all(keys and keys <= stable_keys for keys in keep):
+            continue
+        retired.extend(row for _, row in ordered[:-2] if row.created <= cutoff)
+    return tuple(sorted(retired, key=lambda row: (row.created, row.id)))
+
+
+def retirement_batch(aged, references, superseded, *, target=None):
+    """Prioritize reference sets that can make the most aged bytes unreachable."""
+    order = {row.id: index for index, row in enumerate(superseded)}
+    aged_bytes = Counter()
+    for row in aged:
+        aged_bytes[row.key] += row.size
+    owners = defaultdict(set)
+    for index_id, keys in references.items():
+        for key in keys & aged_bytes.keys():
+            owners[key].add(index_id)
+
+    # A blob only contributes once the batch removes all of its references.
+    # Any surviving, unmanaged or newer index excludes it from this calculation.
+    weights = Counter()
+    for key, ids in owners.items():
+        if ids <= order.keys():
+            weights[frozenset(ids)] += aged_bytes[key]
+
+    selected = set()
+    projected = 0
+    while len(selected) < MAX_INDEX_RETIREMENTS and (target is None or projected < target):
+        remaining = Counter()
+        for group, size in weights.items():
+            missing = group - selected
+            if missing:
+                remaining[missing] += size
+        if not remaining:
+            break
+
+        slots = MAX_INDEX_RETIREMENTS - len(selected)
+        # Prefer a set we can finish now. If none fits, advance one set across
+        # multiple independent observations instead of scattering removals.
+        fitting = [group for group in remaining if len(group) <= slots]
+        if not fitting and selected:
+            break
+
+        def priority(group):
+            count, size = len(group), remaining[group]
+            enough = target is not None and count <= slots and size >= target - projected
+            order_score = tuple(-index for index in sorted(order[member] for member in group))
+            return enough, -count if enough else size // count, size, order_score
+
+        best = max(fitting or remaining, key=priority)
+        selected.update(sorted(best, key=order.__getitem__)[:slots])
+        projected = sum(size for group, size in weights.items() if group <= selected)
+    return tuple(row for row in superseded if row.id in selected), projected, weights.total()
+
+
+@dataclass(frozen=True)
+class Observation:
+    pinned: dict[int, Entry]
+    candidates: tuple[Entry, ...]
+    superseded: tuple[Entry, ...]
+    retirement_batch: tuple[Entry, ...]
+    projected_newly_unreachable_bytes: int
+    projected_candidate_bytes: int
+    observed_blob_bytes: int
+    reachable_layer_count: int
+
+
+def observe(api, reader, revision, now, *, retirement_target=None):
     with observing("develop-before"):
         api.require_live_policy(revision)
     # The exact index key/version must be unique across all refs. Only blob
@@ -171,7 +260,7 @@ def observe(api, reader, revision, now):
         before = develop_blobs(api)
     with observing("index-content"):
         with ThreadPoolExecutor(max_workers=8) as pool:
-            reachable = set().union(*pool.map(lambda row: reader(row.key, row.size), pinned.values()))
+            references = dict(zip(pinned, pool.map(lambda row: reader(row.key, row.size), pinned.values())))
     with observing("blobs-after"):
         after = develop_blobs(api)
     with observing("indexes-after"):
@@ -180,19 +269,32 @@ def observe(api, reader, revision, now):
     with observing("develop-after"):
         api.require_live_policy(revision)
     cutoff = now - timedelta(hours=24)
-    candidates = sorted((entry for entry in after.values() if entry.version == CACHE_VERSION
-                         and entry.key not in reachable and entry.accessed <= cutoff and entry.created <= cutoff
-                         and before.get(entry.id) == entry), key=lambda entry: (-entry.size, entry.id))
-    return pinned, candidates, sum(entry.size for entry in after.values()), len(reachable)
+    stable = [row for row in after.values() if row.size and row.version == CACHE_VERSION and row.id in before
+              and replace(row, accessed=before[row.id].accessed) == before[row.id]]
+    aged = [row for row in stable if row.accessed <= cutoff and row.created <= cutoff and row == before[row.id]]
+    reachable = set().union(*references.values())
+    candidates = tuple(sorted((row for row in aged if row.key not in reachable),
+                              key=lambda row: (-row.size, row.id)))
+    superseded = superseded_indexes(pinned, references, {row.key for row in stable}, cutoff)
+    batch, newly_unreachable, all_newly_unreachable = retirement_batch(
+        aged, references, superseded, target=retirement_target,
+    )
+    projected = sum(row.size for row in candidates) + all_newly_unreachable
+    return Observation(pinned, candidates, superseded, batch, newly_unreachable, projected,
+                       sum(row.size for row in after.values()), len(reachable))
 
 
 def snapshot(api, reader, revision, now):
-    pinned, candidates, observed_bytes, reachable_count = observe(api, reader, revision, now)
-    return {"develop": revision, "observed_at": now.isoformat(), "index_count": len(pinned),
-            "reachable_layer_count": reachable_count,
-            "observed_develop_blob_bytes": observed_bytes,
-            "candidate_bytes": sum(entry.size for entry in candidates),
-            "candidates": [asdict(entry) for entry in candidates]}
+    observation = observe(api, reader, revision, now)
+    return {"develop": revision, "observed_at": now.isoformat(), "index_count": len(observation.pinned),
+            "reachable_layer_count": observation.reachable_layer_count,
+            "observed_develop_blob_bytes": observation.observed_blob_bytes,
+            "candidate_bytes": sum(entry.size for entry in observation.candidates),
+            "candidates": [asdict(entry) for entry in observation.candidates],
+            "superseded_index_count": len(observation.superseded),
+            "next_index_batch_count": len(observation.retirement_batch),
+            "projected_newly_unreachable_bytes": observation.projected_newly_unreachable_bytes,
+            "projected_candidate_bytes_after_index_retirement": observation.projected_candidate_bytes}
 
 
 def client(env):
@@ -209,7 +311,9 @@ def main(path, env):
     api, reader = client(env)
     result = snapshot(api, reader, env["GITHUB_SHA"], datetime.now(timezone.utc))
     Path(path).write_text(json.dumps(result, default=str) + "\n")
-    print(f"BuildKit indexes={result['index_count']} candidate_bytes={result['candidate_bytes']}")
+    print(f"BuildKit indexes={result['index_count']} candidate_bytes={result['candidate_bytes']} "
+          f"superseded_indexes={result['superseded_index_count']} "
+          f"projected_candidate_bytes={result['projected_candidate_bytes_after_index_retirement']}")
 
 
 if __name__ == "__main__":

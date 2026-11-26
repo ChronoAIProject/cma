@@ -62,6 +62,37 @@ class BuildKitCacheInventory(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "indexes changed"):
             snapshot(api, lambda key, size: set(), "a" * 40, CLOCK)
 
+    def test_retirement_projection_preserves_cross_scope_and_two_latest_references(self):
+        old, spare, current = (index(value) for value in (8, 9, 10))
+        elsewhere = replace(index(11), key=INDEX.replace("cma-runtime", "unmanaged") + "11")
+        old_only, warm, backup, shared = (blob(i, letter) for i, letter in enumerate("abcd", start=20))
+        rows = [old, spare, current, elsewhere, old_only, warm, backup, shared]
+        refs = {old.key: {old_only.key, shared.key}, spare.key: {backup.key},
+                current.key: {warm.key}, elsewhere.key: {shared.key}}
+        api = inventory(rows, rows)
+        result = snapshot(api, lambda key, _: refs[key], "a" * 40, CLOCK + timedelta(hours=48))
+        self.assertEqual(result["candidate_bytes"], 0)
+        self.assertEqual(result["superseded_index_count"], 1)
+        self.assertEqual(result["projected_candidate_bytes_after_index_retirement"], old_only.size)
+        self.assertEqual(result["next_index_batch_count"], 1)
+        self.assertEqual(result["projected_newly_unreachable_bytes"], old_only.size)
+        api.delete.assert_not_called()
+
+    def test_unordered_or_incomplete_replacements_hold_the_scope(self):
+        old, spare, current = (index(value) for value in (8, 9, 10))
+        old_only, warm = blob(20, "a"), blob(21, "b")
+        refs = {old.key: {old_only.key}, spare.key: {warm.key}, current.key: {warm.key}}
+        for last, replacement_blobs in (
+            (current, []),
+            (replace(current, created=old.created - timedelta(seconds=1)), [warm]),
+        ):
+            with self.subTest(last=last, replacement_blobs=replacement_blobs):
+                rows = [old, spare, last, old_only, *replacement_blobs]
+                result = snapshot(inventory(rows, rows), lambda key, _: refs[key],
+                                  "a" * 40, CLOCK + timedelta(hours=48))
+                self.assertEqual(result["superseded_index_count"], 0)
+                self.assertEqual(result["projected_candidate_bytes_after_index_retirement"], 0)
+
     def test_exact_key_and_download_origin_are_required(self):
         key = INDEX + "1"
         with patch("actions_cache_buildkit_inventory.read_json",

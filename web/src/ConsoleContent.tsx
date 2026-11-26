@@ -32,7 +32,7 @@ import { useResourceActions } from './ResourceActions';
 import { Button } from './ui/Button';
 import { consoleLinks } from './ConsoleLinks';
 import { ShellCommandMenu } from './shell/ShellCommandMenu';
-import { ConsoleActionError, NotFoundView, UnavailableView } from './ConsoleViews';
+import { ConsoleNotices, NotFoundView, UnavailableView } from './ConsoleViews';
 import { ConsoleLanding } from './ConsoleLanding';
 import { consoleCreationAccess } from './ConsoleCreationAccess';
 import { useDocumentTitle } from './ui/useDocumentTitle';
@@ -103,6 +103,7 @@ export function ConsoleContent({
     accessUncertain: agentAccessUncertain,
     shared,
     personalAgentId,
+    fileDownload,
   } = useConsoleAgentAccess(client, selectedAgent, user.id, authEpoch);
   const accessUncertain = useIdentityUncertain() || agentAccessUncertain;
   const selectedRetired =
@@ -376,7 +377,7 @@ export function ConsoleContent({
               conversation={ready?.conversation}
               observation={computerObservation}
               onClose={() => setPanel(undefined)}
-              onAccessChanged={agentAccess.reload}
+              onAccessChanged={fileDownload.onAccessChanged}
               publicationScope={artifactPublicationScope}
               historyLoading={ready?.historyLoading || !!ready?.historyUnavailable}
               controlReady={agent.controlBaselineReady}
@@ -489,7 +490,7 @@ export function ConsoleContent({
                 View deletion status
               </Button>
             ) : null}
-            <ConsoleActionError error={actions.error} />
+            <ConsoleNotices error={actions.error} fileDownload={fileDownload} />
             {content}
           </main>
         }

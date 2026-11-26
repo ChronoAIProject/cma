@@ -9,7 +9,10 @@ from deployables import known_components
 
 from staging_cd_common import Refusal, matches, require
 from staging_cd_receipts import canonical, final_tag_oid, final_tag_text, validate_receipt
-from staging_cd_versions import BASE_VERSION, DEPLOYABLES, LEVELS, bump, version_tuple
+from staging_cd_versions import (
+    DEPLOYABLES, LEVELS, bump, require_publishable_release, require_publishable_source,
+    source_is_retired, version_floor, version_tuple,
+)
 
 KNOWN_DEPLOYABLES = known_components()
 FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump", "run_id", "run_attempt"}
@@ -68,7 +71,8 @@ def outcome_ref(component, version):
 
 def next_reservation(component, source, tree, pr, level, run_id, attempt, finals, pending):
     require(component in DEPLOYABLES, "Unknown reservation component")
-    versions = [BASE_VERSION]
+    require_publishable_source(component, source)
+    versions = [version_floor(component)]
     for tag in finals:
         prefix = DEPLOYABLES[component] + "/v"
         if tag["name"].startswith(prefix):
@@ -172,6 +176,7 @@ class Reservations:
     def insert(self, value):
         validate_reservation(value)
         require(value["component"] in DEPLOYABLES, "Retired images cannot reserve versions")
+        require_publishable_release(value)
         # An annotated reservation records the owning run, so a later planner
         # can distinguish an active build from a burned failed run. The push
         # itself is ordinary insert-only git push, never force/lease/update.
@@ -210,6 +215,7 @@ class Reservations:
         """
         validate_reservation(value)
         component = value["component"]
+        require_publishable_release(value)
         pending, finals = self.list(component), self.api.tags(component)
         if value not in pending:
             # Pruning removes a reservation only once a final at or after its
@@ -259,6 +265,7 @@ class Reservations:
         self.mark("cleanup_verify")
         component = receipt["identity"]["component"]
         require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
+        require_publishable_release(receipt["identity"])
         observed = self.api.tags(component)
         finals = [tag for tag in observed if tag["name"] == receipt["tag"]]
         require(len(finals) == 1 and finals[0]["receipt"] == receipt and finals[0]["oid"] == expected_oid,
@@ -316,7 +323,7 @@ class Reservations:
         for value, oid in sorted(self.inventory(component, rows), key=lambda entry: version_tuple(entry[0]["version"])):
             if removed == PRUNE_LIMIT:
                 break
-            if value["run_id"] == identity["run_id"]:
+            if value["run_id"] == identity["run_id"] or source_is_retired(component, value["source"]):
                 continue
             if value["source"] in history.positions:
                 fenced = any(self.supersedes(final, value, history) for final in finals)
@@ -348,6 +355,7 @@ class Reservations:
         validate_receipt(receipt)
         component = receipt["identity"]["component"]
         require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
+        require_publishable_release(receipt["identity"])
         self.mark("registry_verify")
         require(verify_digest(receipt["repository"], receipt["digest"]) is True,
                 "Final version requires the verified published digest")

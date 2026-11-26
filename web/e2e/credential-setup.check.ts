@@ -1,3 +1,4 @@
+import { verifiedEntryHeaders } from './public-entry-binding.fixture';
 import { test, expect, type Page } from '@playwright/test';
 import type { Launch, TriggerPreview } from '@cma/client';
 import { LocalStartup, recorded } from './agent-startup-fixtures';
@@ -32,7 +33,7 @@ for (const surface of ['sandbox', 'landing', 'review'] as const) {
       surface === 'sandbox'
         ? '/api/v1/sandboxes'
         : surface === 'landing'
-          ? '/api/v1/triggers/public/pub_credential/launches'
+          ? '/api/v2/triggers/public/pub_credential/launches'
           : `/api/v1/launches/${launch.id}/start`;
     const commands: { key?: string; body: unknown; bytes: string | null }[] = [];
     const loginReturns: string[] = [];
@@ -51,8 +52,14 @@ for (const surface of ['sandbox', 'landing', 'review'] as const) {
       const request = route.request();
       const url = new URL(request.url());
       if (url.origin !== baseURL) return route.fallback();
+      const proof = verifiedEntryHeaders(request, sessionSubject);
       const reply = (body: unknown, status = 200) =>
-        route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+        route.fulfill({
+          status,
+          headers: proof,
+          contentType: 'application/json',
+          body: JSON.stringify(body),
+        });
       if (url.pathname === '/auth/session' && request.method() === 'GET')
         return reply({
           authenticated: true,
