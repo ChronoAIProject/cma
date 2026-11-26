@@ -191,6 +191,8 @@
   {"operation":"GET /api/v1/agents/{id}/retained-output","positive":"retained-agent-transcript","negative":"retained-shared-agent-revoked-transcript","proof":"probe"},
   {"operation":"GET /api/v2/responses/{response_id}/retained-output","positive":"responses-v2-retained-output-success","negative":"responses-v2-retained-output-foreign","proof":"contract"},
   {"operation":"POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets","positive":"binding-reset-reserved","negative":"binding-reset-foreign","proof":"binding-contract"},
+  {"operation":"POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-drift","positive":"binding-drift-provisioning","negative":"binding-drift-forbidden","proof":"binding-contract"},
+  {"operation":"POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-transfers","positive":"binding-profile-transfer-reserved","negative":"binding-profile-transfer-forbidden","proof":"binding-contract"},
   {"operation":"GET /api/v1/sandboxes/capacity","positive":"sandbox-capacity","negative":"sandbox-capacity-forbidden","proof":"filtered-inventory"},
   {"operation":"POST /api/v1/usage/metrics/initial/reports","positive":"initial-owner-create-ready","negative":"initial-owner-create-forbidden","proof":"contract"},
   {"operation":"POST /api/v1/usage/metrics/initial/view","positive":"initial-owner-latest-ready","negative":"initial-owner-latest-forbidden","proof":"contract"},
