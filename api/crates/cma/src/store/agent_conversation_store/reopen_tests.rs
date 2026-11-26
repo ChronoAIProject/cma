@@ -1,7 +1,6 @@
 use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::{database, fixture};
 use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
-use layer2_core::released_runtime::{ReleasedLane, ReleasedLaneRecord};
 use layer2_core::sandbox::store::{
     AgentConversationStore, AgentLogStore, AgentReopenGuard, AgentStore, ReopenRefusalFence,
     SandboxLifecycleAgentMutation, SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore,
@@ -15,11 +14,13 @@ use layer2_core::sandbox::{
     SandboxWorkStep, TypedFailure,
 };
 use layer3_adapter::{
-    CheckpointReceipt, ConversationSnapshot, ConversationUpdate, ReleasedLaneRevisions,
-    ReleasedRuntime, RuntimeOutputReceipt, RuntimeOutputSource, WriterState,
+    CheckpointReceipt, ConversationSnapshot, ConversationUpdate, ReleasedRuntime,
+    RuntimeOutputReceipt, RuntimeOutputSource, WriterState,
 };
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+#[path = "reopen_machine_tests.rs"]
+mod machine;
 #[path = "reopen_owner_tests.rs"]
 mod ownership;
 
@@ -37,58 +38,11 @@ async fn runtime_update_reopen_refusal_mongo_fences_checkpoint_owner_and_claim()
     run_case(2, true, false).await;
 }
 
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn machine_reopen_refusal_parks_only_at_the_current_machine_revision() {
-    run_case(2, true, true).await;
-}
-
-#[tokio::test]
-#[ignore = "requires a disposable local MongoDB replica set"]
-async fn runtime_update_reopen_http_requires_the_callers_checkpoint_and_owner_fence() {
-    crate::sandbox::exercise_runtime_update_reopen_http().await;
-}
-
 async fn run_case(count: usize, park: bool, machine: bool) {
     let (client, name, mut store) = database().await;
     let (mut parent, mut agent) = fixture(&store, "sbx_reopen_output").await;
     let released = if machine {
-        let database = client.database(&name);
-        let lanes = crate::store::released_runtimes::MongoReleasedRuntimes::open(
-            &database,
-            "reopen-fixture",
-        );
-        lanes.initialize().await.unwrap();
-        let agent_image = format!("registry.example/agent@sha256:{}", "a".repeat(64));
-        let machine_image = format!("registry.example/machine@sha256:{}", "b".repeat(64));
-        let at = layer2_core::now_rfc3339();
-        for (lane, image) in [
-            (ReleasedLane::Agent, &agent_image),
-            (ReleasedLane::Machine, &machine_image),
-        ] {
-            lanes
-                .bootstrap(ReleasedLaneRecord::bootstrap(lane, image.clone(), &at).unwrap())
-                .await
-                .unwrap();
-        }
-        store.released_lanes = Some(lanes);
-        parent.origin = layer2_core::sandbox::SandboxOrigin::Lifecycle {
-            operation_id: "prepared-machine".into(),
-        };
-        parent.profile.content.runtime_image = Some("image-v1".into());
-        parent.profile.digest =
-            layer2_core::profiles::content_digest(&parent.profile.content).unwrap();
-        parent.lifecycle.runtime_image_origin =
-            Some(layer2_core::sandbox::SandboxRuntimeImageOrigin::ManagedMachine);
-        Some(ReleasedRuntime {
-            revision: 1,
-            agent: agent_image,
-            machine: Some(machine_image),
-            lane_revisions: Some(ReleasedLaneRevisions {
-                agent: 1,
-                machine: Some(1),
-            }),
-        })
+        Some(machine::setup_release(&client.database(&name), &mut store, &mut parent).await)
     } else {
         None
     };
@@ -527,19 +481,7 @@ async fn prove_refusal_fences(
         *parent
     );
     fence.owner = Some(successor);
-    if let Some(released) = &fence.released {
-        let mut stale = fence.clone();
-        stale.released.as_mut().unwrap().lane_revisions = Some(ReleasedLaneRevisions {
-            machine: Some(0),
-            ..released.lane_revisions.unwrap()
-        });
-        assert_eq!(
-            store
-                .park_sandbox_reopen_refusal(mutation.clone(), stale)
-                .await,
-            Err(SandboxStoreError::Conflict)
-        );
-    }
+    machine::assert_stale_release_refused(store, &mutation, &fence).await;
     // A fresh reader sees the same checkpoint and can park under its new epoch.
     store
         .park_sandbox_reopen_refusal(mutation, fence)
