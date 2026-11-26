@@ -92,6 +92,7 @@ jobs:
       always() && !cancelled() && needs.admit.result == 'success' &&
       needs.admit.outputs.changed == 'true'
     permissions:
+      id-token: write
       contents: read
       actions: read
     uses: ./.github/workflows/staging-deploy.yml
@@ -155,6 +156,7 @@ jobs:
       always() && !cancelled() && needs.readmit.result == 'success' &&
       needs.readmit.outputs.changed == 'true'
     permissions:
+      id-token: write
       contents: read
       actions: read
     uses: ./.github/workflows/staging-deploy.yml

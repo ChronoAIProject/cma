@@ -282,6 +282,9 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 1, keyed.length
     assert_equal '${{ secrets.CD_NYXID_CLIENT_ID }}', keyed.first['env']['CD_NYXID_CLIENT_ID']
     assert_equal '${{ secrets.CD_NYXID_CLIENT_SECRET }}', keyed.first['env']['CD_NYXID_CLIENT_SECRET']
+    pointer_credentials = deploy['steps'].select { |step| step.fetch('env', {}).key?('CD_RUNTIME_POINTER_TOKEN') }
+    assert_equal keyed, pointer_credentials
+    assert_equal '${{ secrets.CD_RUNTIME_POINTER_TOKEN }}', keyed.first['env']['CD_RUNTIME_POINTER_TOKEN']
     refute deploy.to_s.include?('NYXID_CHRONO_CD_KEY')
     assert_equal '"$RUNNER_TEMP/cma-deploy-tools/venv/bin/python" -B .github/scripts/staging_cd_invoke.py', keyed.first['run']
     setup = deploy['steps'].find { |step| step['run'] == 'python3 -B .github/scripts/staging_cd_tools.py install' }
@@ -316,7 +319,8 @@ class StagingWorkflowTest < Minitest::Test
       config = workflow(name)
       assert_equal keys.to_h { |key| [key, {'required' => true}] }, (config['on'] || config[true])['workflow_call']['secrets']
       reads = config.fetch('jobs').to_s.scan(/secrets\.([A-Za-z0-9_]+)/).flatten.uniq.sort
-      assert_equal keys.sort, reads
+      permitted = name == 'staging-deploy' ? keys + ['CD_RUNTIME_POINTER_TOKEN'] : keys
+      assert_equal permitted.sort, reads
     end
     %w[staging-cd staging-promote redeploy-staging].each do |name|
       workflow(name)['jobs'].each_value do |job|

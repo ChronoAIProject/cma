@@ -309,6 +309,7 @@ jobs:
       CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     permissions:
+      id-token: write
       contents: read
       actions: read
       deployments: read
@@ -330,6 +331,7 @@ jobs:
       CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     permissions:
+      id-token: write
       contents: read
       actions: read
       deployments: read
@@ -351,6 +353,7 @@ jobs:
       CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     permissions:
+      id-token: write
       contents: read
       actions: read
       deployments: read
@@ -382,6 +385,7 @@ jobs:
       CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     permissions:
+      id-token: write
       contents: read
       actions: read
       deployments: read
@@ -411,6 +415,7 @@ jobs:
       CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     permissions:
+      id-token: write
       contents: read
       actions: read
       deployments: read
@@ -440,6 +445,7 @@ jobs:
       CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     permissions:
+      id-token: write
       contents: read
       actions: read
       deployments: read
