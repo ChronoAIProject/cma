@@ -139,6 +139,9 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(=records::mongo::replica_schema::tests::replica_migration_recovers_after_second_index_conflict)'
 
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and (test(~channels::create_fence_tests::) or test(~records::mongo::create_fences::tests::))'
+
 # Explicit selection keeps replica delivery tests environmental in normal unit
 # runs while requiring their real authenticated Mongo execution in this gate.
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \

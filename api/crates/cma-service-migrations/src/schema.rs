@@ -4,6 +4,12 @@ use futures_util::TryStreamExt;
 use mongodb::{options::IndexOptions, IndexModel};
 use std::cell::{Cell, RefCell};
 
+#[path = "schema_collections.rs"]
+mod collections;
+pub use collections::{
+    collection, collection_with_guarded_replacement, collection_with_predecessors,
+};
+
 tokio::task_local! { static INSPECTION: Cell<bool>; }
 tokio::task_local! { static DEFINITION: RefCell<Sha256>; }
 
@@ -48,117 +54,6 @@ pub async fn inspect(future: impl std::future::Future<Output = Result<()>>) -> R
 }
 fn invalid(message: &'static str) -> mongodb::error::Error {
     mongodb::error::Error::custom(message)
-}
-
-/// Collection creation and validator replacement share the exact same definition.
-pub async fn collection(
-    db: &Database,
-    name: &str,
-    validator: Document,
-    create: bool,
-) -> mongodb::error::Result<()> {
-    collection_with_predecessors(db, name, validator, create, Vec::new()).await
-}
-
-pub async fn collection_with_predecessors(
-    db: &Database,
-    name: &str,
-    validator: Document,
-    create: bool,
-    predecessors: Vec<Document>,
-) -> mongodb::error::Result<()> {
-    if describing() {
-        return record(
-            doc! {"schema_collection":name,"validator":validator,"create":create,"predecessors":predecessors,"validationLevel":"strict","validationAction":"error"},
-        );
-    }
-    if inspecting() || effects::active() {
-        match collection_state(db, name, &validator, &predecessors).await? {
-            CollectionState::Current => return Ok(()),
-            CollectionState::Absent if !create && !inspecting() => {
-                return Err(invalid("required migration collection is absent"))
-            }
-            CollectionState::Absent | CollectionState::Predecessor if inspecting() => {
-                missing();
-                return Ok(());
-            }
-            _ => {}
-        }
-    }
-    if create {
-        let result = command(db, doc! {"create":name,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await;
-        match result {
-            Ok(_) => return verify_collection(db, name, &validator).await,
-            Err(error) if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command) if command.code == 48) =>
-                {}
-            Err(error) => return Err(error),
-        }
-    }
-    if effects::active() {
-        match collection_state(db, name, &validator, &predecessors).await? {
-            CollectionState::Current => return Ok(()),
-            CollectionState::Predecessor => {}
-            CollectionState::Absent => {
-                return Err(invalid("required migration collection is absent"))
-            }
-        }
-    }
-    command(db, doc! {"collMod":name,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await?;
-    verify_collection(db, name, &validator).await
-}
-
-async fn verify_collection(
-    db: &Database,
-    name: &str,
-    validator: &Document,
-) -> mongodb::error::Result<()> {
-    if effects::active() {
-        if collection_state(db, name, validator, &[]).await? != CollectionState::Current {
-            return Err(invalid("migration collection postcondition unavailable"));
-        }
-        effects::check_fence().await?;
-    }
-    Ok(())
-}
-#[derive(PartialEq)]
-enum CollectionState {
-    Absent,
-    Current,
-    Predecessor,
-}
-async fn collection_state(
-    db: &Database,
-    name: &str,
-    validator: &Document,
-    predecessors: &[Document],
-) -> mongodb::error::Result<CollectionState> {
-    let mut cursor = tokio::time::timeout(IO, async {
-        db.list_collections().filter(doc! {"name":name}).await
-    })
-    .await
-    .map_err(|_| invalid("migration collection catalog unavailable"))??;
-    let Some(info) = cursor.try_next().await? else {
-        return Ok(CollectionState::Absent);
-    };
-    if !matches!(
-        info.collection_type,
-        mongodb::results::CollectionType::Collection
-    ) || info.info.read_only
-    {
-        return Err(invalid("unsupported migration collection type"));
-    }
-    let options = mongodb::bson::serialize_to_document(&info.options)
-        .map_err(mongodb::error::Error::custom)?;
-    if options.get_str("validationLevel").unwrap_or("strict") != "strict"
-        || options.get_str("validationAction").unwrap_or("error") != "error"
-    {
-        return Err(invalid("migration validation mode drift"));
-    }
-    match options.get_document("validator").ok() {
-        Some(actual) if actual == validator => Ok(CollectionState::Current),
-        Some(actual) if predecessors.contains(actual) => Ok(CollectionState::Predecessor),
-        _ => Err(invalid("unrecognized migration validator")),
-    }
 }
 
 fn matches(expected: &IndexModel, present: &IndexModel) -> bool {

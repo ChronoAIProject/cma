@@ -7,7 +7,6 @@ use super::{
 use crate::transaction_terminal::GuardedTerminal as _;
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
-    options::{Acknowledgment, ReadConcern, WriteConcern},
     ClientSession,
 };
 use serde::{Deserialize, Serialize};
@@ -94,10 +93,7 @@ impl MongoRecords {
             .await
             .map_err(|error| observed_error(observation, error))?;
         observation.phase(Phase::TransactionStart);
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+        crate::transaction_start::start_write(&self.db, &mut session, None)
             .await
             .map_err(|error| observed_error(observation, error))?;
         let mut versions = Vec::with_capacity(writes.len());

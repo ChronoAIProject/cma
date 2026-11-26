@@ -3,6 +3,18 @@ use mongodb::bson::{doc, Document};
 
 pub(super) fn marker_predecessors() -> Vec<Document> {
     vec![
+        // v42, before the dedicated Channel creation writer floor.
+        doc! {
+            "$jsonSchema":{"bsonType":"object","additionalProperties":false,
+                "required":["_id","version"],"properties":{
+                    "_id":{"bsonType":"string"},"version":{"enum":[1,2,3,4,5,6]}}},
+            "$or":[{"_id":"schema","version":2},{"_id":"replicas","version":1},
+                {"_id":"thread_fences","version":1},{"_id":"whatsapp_forms","version":1},
+                {"_id":"media_continuations","version":1},{"_id":"worker_credentials","version":1},
+                {"_id":"worker_tracking_cutover","version":1},
+                {"_id":"github_channel_guard","version":1},
+                {"_id":"github_integrations","version":{"$in":[1,2,3,4,5,6]}}]
+        },
         // 803bc792508
         doc! {
             "$jsonSchema":{"bsonType":"object","additionalProperties":false,

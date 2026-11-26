@@ -31,7 +31,7 @@ pub async fn create(
     mut request: ChannelCreateRequest,
 ) -> Result<CreatedChannel, ManagementError> {
     custom_attachments_allowed(state, &request.sources)?;
-    crate::connections::binding::expand_create(state, creator, &mut request).await?;
+    let claim = crate::connections::binding::expand_create(state, creator, &mut request).await?;
     validate_create_request(&request).map_err(ManagementError::Invalid)?;
     if request.profile.metadata.owner.subject != creator.subject {
         return Err(ManagementError::Invalid(ValidationError::new(
@@ -60,12 +60,14 @@ pub async fn create(
     }) {
         return Err(ManagementError::Invalid(ValidationError::new("/record_id", "native Lark, Discord or WhatsApp creation requires a stable canonical UUID v4 record_id for recoverable activation")));
     }
-    if state.records.channel_mutation_custody() && request.record_id.is_none() {
+    if (state.records.channel_mutation_custody() || state.records.channel_creates_fenced())
+        && request.record_id.is_none()
+    {
         request.record_id =
             Some(RecordId::new(Uuid::new_v4().to_string()).map_err(ManagementError::Invalid)?);
     }
     if let Some(record_id) = request.record_id.clone() {
-        return super::creation::create(state, creator, request, record_id).await;
+        return super::creation::create(state, creator, request, record_id, claim.as_ref()).await;
     }
     let provider = request.provider.slug.clone();
     let record_id = RecordId::new(Uuid::new_v4().to_string()).map_err(ManagementError::Invalid)?;

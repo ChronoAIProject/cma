@@ -1,5 +1,7 @@
 //! Reviewed query definitions; adding a query never changes the operation engine.
-use super::super::{activity_page_index, agent_owner_index, steps::Step, Result};
+use super::super::{
+    activity_audit_index, activity_page_index, agent_owner_index, steps::Step, Result,
+};
 use mongodb::bson::{doc, Document};
 use serde_json::{json, Value};
 
@@ -90,7 +92,13 @@ pub(super) fn agents_owner() -> Query {
 }
 
 pub(super) fn all() -> Vec<Query> {
-    let mut queries = vec![activity()];
+    let mut audit = activity();
+    audit.name = "activity-audit-first-page";
+    audit.filter = activity_audit_index::filter();
+    audit.qualification = "audit-first predicate over retained Activity records";
+    audit.index = activity_audit_index::index();
+    audit.step = Some(Step::ActivityAudit);
+    let mut queries = vec![activity(), audit];
     queries.extend(super::candidates::usage());
     queries.push(agents_owner());
     queries.extend(super::candidates::claims());

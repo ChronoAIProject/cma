@@ -12,6 +12,31 @@ async fn fixture() -> Database {
         uuid::Uuid::new_v4().simple()
     ))
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable replica-set MongoDB fixture"]
+async fn gateway_base_migration_preserves_the_channel_creation_writer_floor() {
+    let db = fixture().await;
+    let issuer = "https://issuer.example";
+    legacy(&db, "--migrate").await.unwrap();
+    crate::records::mongo::migrate_create_fence_floor(&db, issuer)
+        .await
+        .unwrap();
+    assert!(crate::records::mongo::check_create_fence_floor(&db, issuer)
+        .await
+        .unwrap());
+
+    let runner = runner(&db).await.unwrap();
+    let manifest = runner.manifest(BASE).unwrap();
+    assert!(cma_service_migrations::inspect(converge(&db, manifest))
+        .await
+        .unwrap());
+    legacy(&db, "--migrate").await.unwrap();
+    assert!(crate::records::mongo::check_create_fence_floor(&db, issuer)
+        .await
+        .unwrap());
+    db.drop().await.unwrap();
+}
 #[tokio::test]
 #[ignore = "requires authenticated disposable replica-set MongoDB fixture"]
 async fn wrong_console_kind_refuses_adoption_using_runtime_verifier() {

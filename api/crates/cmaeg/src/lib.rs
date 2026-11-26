@@ -37,6 +37,7 @@ mod service_auth;
 pub mod telegram;
 pub mod telemetry;
 pub mod tools;
+mod transaction_start;
 mod transaction_terminal;
 pub mod turns;
 pub mod whatsapp;

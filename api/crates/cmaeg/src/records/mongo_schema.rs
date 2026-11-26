@@ -1,5 +1,6 @@
 #[path = "mongo_schema_predecessors.rs"]
 mod predecessors;
+use super::{create_fences::CREATE_FENCES, create_fences_floor};
 use super::{
     failure, COLLECTIONS, CONNECTIONS, INTERACTIONS, MEDIA_CONTINUATIONS, MIGRATIONS, RECORDS,
     SESSIONS, THREAD_FENCES, WHATSAPP_FLOWS,
@@ -73,9 +74,11 @@ pub async fn verify_with_authority(
             let collection = resource.get_str("collection").map_err(|_| invalid())?;
             if resource.len() != 2
                 || resource.get_str("db").ok() != Some(db.name())
-                || (!COLLECTIONS.contains(&collection)
+                || (!collection.is_empty()
+                    && !COLLECTIONS.contains(&collection)
                     && !crate::activity::history::schema::COLLECTIONS.contains(&collection)
                     && ![
+                        CREATE_FENCES,
                         THREAD_FENCES,
                         WHATSAPP_FLOWS,
                         "eg_automation_records",
@@ -90,15 +93,21 @@ pub async fn verify_with_authority(
             }
             for action in grant.get_array("actions").map_err(|_| invalid())? {
                 let action = action.as_str().ok_or_else(&invalid)?;
-                let allowed = if crate::activity::history::schema::COLLECTIONS.contains(&collection)
-                {
+                let allowed = if collection.is_empty() {
+                    &["listCollections"][..]
+                } else if crate::activity::history::schema::COLLECTIONS.contains(&collection) {
                     crate::activity::history::schema::runtime_actions(collection)
                 } else if collection == USES {
                     &["find", "insert", "listIndexes"][..]
                 } else if collection == CUTOVERS {
                     &["find", "listIndexes"][..]
-                } else if [THREAD_FENCES, WHATSAPP_FLOWS, "eg_automation_records"]
-                    .contains(&collection)
+                } else if [
+                    CREATE_FENCES,
+                    THREAD_FENCES,
+                    WHATSAPP_FLOWS,
+                    "eg_automation_records",
+                ]
+                .contains(&collection)
                 {
                     &["find", "insert", "update", "listIndexes"][..]
                 } else if collection != MIGRATIONS {
@@ -185,9 +194,34 @@ pub(crate) fn migration_validator() -> Document {
             {"_id":"media_continuations","version":1},{"_id":"worker_credentials","version":1},
             {"_id":"worker_tracking_cutover","version":1},
             {"_id":"github_channel_guard","version":1},
+            {"_id":"channel_create_fences","version":1},
+            {"_id":create_fences_floor::VALIDATOR_CHANGE,"version":{"$in":[1,2,3]}},
             {"_id":"github_integrations","version":{"$in":[1,2,3,4,5,6]}}]
     }
 }
+pub(super) fn record_validator(protected: bool) -> Document {
+    let mut record_validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","blob","version","schema_version"],"properties":{
+    "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0}}}};
+    record_validator
+        .get_document_mut("$jsonSchema")
+        .unwrap()
+        .get_document_mut("properties")
+        .unwrap()
+        .insert("replica", super::replica_schema::projection_schema());
+    if protected {
+        let schema = record_validator.get_document_mut("$jsonSchema").unwrap();
+        schema
+            .get_array_mut("required")
+            .unwrap()
+            .push("guard_revision".into());
+        schema
+            .get_document_mut("properties")
+            .unwrap()
+            .insert("guard_revision", doc! {"bsonType":"long","minimum":1});
+    }
+    record_validator
+}
+
 pub async fn migrate(db: &Database) -> Result<(), RecordError> {
     cma_service_migrations::marker(
         db,
@@ -205,15 +239,8 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
     cma_service_auth::browser::migrate(db, SESSIONS)
         .await
         .map_err(failure)?;
-    let mut record_validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","blob","version","schema_version"],"properties":{
-    "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0}}}};
-    record_validator
-        .get_document_mut("$jsonSchema")
-        .unwrap()
-        .get_document_mut("properties")
-        .unwrap()
-        .insert("replica", super::replica_schema::projection_schema());
-    let mut interaction_validator = record_validator.clone();
+    let ordinary = record_validator(false);
+    let mut interaction_validator = ordinary.clone();
     let interaction_schema = interaction_validator
         .get_document_mut("$jsonSchema")
         .unwrap();
@@ -226,10 +253,9 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
         .unwrap()
         .insert("expires_at", doc! {"bsonType":"date"});
     for (name, validator) in [
-        (RECORDS, record_validator.clone()),
-        (CONNECTIONS, record_validator),
-        (INTERACTIONS, interaction_validator),
         (MIGRATIONS, migration_validator()),
+        (CONNECTIONS, ordinary.clone()),
+        (INTERACTIONS, interaction_validator),
     ] {
         let predecessors = if name == MIGRATIONS {
             predecessors::marker_predecessors()
@@ -246,6 +272,23 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
         .await
         .map_err(failure)?;
     }
+    let predecessors = predecessors::record_predecessors(&ordinary);
+    let protected = record_validator(true);
+    cma_service_migrations::collection_with_guarded_replacement(
+        db,
+        RECORDS,
+        ordinary,
+        true,
+        predecessors,
+        Some(&protected),
+        |validator| async move {
+            create_fences_floor::upgrade_legacy_validator(db, validator)
+                .await
+                .map_err(mongodb::error::Error::custom)
+        },
+    )
+    .await
+    .map_err(failure)?;
     for name in [RECORDS, CONNECTIONS, INTERACTIONS] {
         cma_service_migrations::indexes(
             db,

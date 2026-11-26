@@ -17,8 +17,9 @@ mod startup;
 mod transaction;
 pub use effects::{command, effect};
 pub use schema::{
-    absent, collection, collection_with_predecessors, describe, describing, exact_indexes, indexes,
-    inspect, inspecting, marker, marker_history, marker_int32, marker_with_fields, update,
+    absent, collection, collection_with_guarded_replacement, collection_with_predecessors,
+    describe, describing, exact_indexes, indexes, inspect, inspecting, marker, marker_history,
+    marker_int32, marker_with_fields, update,
 };
 
 pub type Result<T> = std::result::Result<T, &'static str>;
