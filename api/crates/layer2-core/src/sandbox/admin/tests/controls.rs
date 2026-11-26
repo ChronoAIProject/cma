@@ -11,6 +11,12 @@ async fn stopped_retirement_retries_only_at_the_current_revision_and_original_st
         SandboxStatus::Active,
         "v2",
     );
+    let original_revision = parent.revision;
+    fixture
+        .sandboxes
+        .create_sandbox(parent.clone())
+        .await
+        .unwrap();
     let at = "2026-11-26T00:00:00Z";
     parent.begin_retirement(at.into()).unwrap();
     parent
@@ -24,7 +30,7 @@ async fn stopped_retirement_retries_only_at_the_current_revision_and_original_st
     parent.work.stop_retirement("worker", fence).unwrap();
     fixture
         .sandboxes
-        .create_sandbox(parent.clone())
+        .save_sandbox(original_revision, parent.clone())
         .await
         .unwrap();
     let operator = caller([Capability::ControlAnySandbox]);
