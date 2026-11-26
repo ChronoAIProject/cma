@@ -80,6 +80,14 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
 contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma-image-manager) and kind(test) and (binary(=mongo_isolation) or binary(=browser_session))'
 
+# Migration contracts require isolated credentials, real DDL and a replica set.
+contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma-service-migrations) and kind(lib)'
+contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma-image-manager) and kind(lib) and test(~migrations::tests::)'
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~migrations::)'
+
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_forms_storage)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
