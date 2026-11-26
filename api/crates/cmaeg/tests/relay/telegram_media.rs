@@ -147,7 +147,11 @@ async fn captioned_relay_photo_is_correlated_on_refusal_and_delivered_when_enabl
     let mut photo = telegram_photo();
     caption(&mut photo, "Describe the text in this fixture image.");
     let (body, token) = photo.signed();
-    let response = callbacks::router(off.state.clone().with_activity_observer(observer.clone()))
+    let observed = Arc::new(cmaeg::activity::ObservedActivity::new(
+        off.activity.clone(),
+        observer.clone(),
+    ));
+    let response = callbacks::router(off.state.clone().with_activity_observer(observed))
         .oneshot(off.local_request(Body::from(body), &token))
         .await
         .unwrap();
@@ -179,6 +183,106 @@ async fn captioned_relay_photo_is_correlated_on_refusal_and_delivered_when_enabl
     );
     accept(&off, &Envelope::new(), "adjacent plain text").await;
     assert_eq!(last(&off).0, "hello");
+}
+
+#[tokio::test]
+async fn authenticated_media_refusal_persists_once_without_consumers() {
+    use cmaeg::{http::management_router, providers::ProviderClient};
+    use std::{
+        sync::{atomic::Ordering, Arc},
+        time::Duration,
+    };
+
+    let identity = crate::fake_nyxid::FakeNyxid::start().await;
+    let (owner, _) = identity.oauth.issue_tokens("user-1");
+    let (other, _) = identity.oauth.issue_tokens("other-owner");
+    let fixture = Fixture::new(|_| {}, Default::default()).await;
+    let provider = ProviderClient::new(
+        Default::default(),
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+        1,
+    )
+    .unwrap();
+    let manager = crate::management_fixture::state(
+        Arc::new(provider),
+        fixture.records.clone(),
+        fixture.state.master_keys.clone(),
+        &fixture.record_origin,
+        &identity.base_url,
+    );
+    let (base, server) = serve(management_router(manager)).await;
+    let url = format!("{base}/v1/channels/{}/activity", fixture.id);
+    let get = || async {
+        fixture
+            .client
+            .get(&url)
+            .bearer_auth(&owner)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()
+    };
+    let mut photo = telegram_photo();
+    caption(&mut photo, "fixture caption to omit");
+    for status in [503, 504] {
+        fixture
+            .backend
+            .interaction_write_status
+            .store(status, Ordering::SeqCst);
+        assert_eq!(fixture.send(&photo).await.status(), 503);
+        assert_eq!(get().await["items"], json!([]));
+    }
+    fixture
+        .backend
+        .interaction_write_status
+        .store(200, Ordering::SeqCst);
+    fixture
+        .backend
+        .interaction_lose_response
+        .store(true, Ordering::SeqCst);
+    refusal(&fixture, &photo, "attachment_unsupported").await;
+    let page = get().await;
+    refusal(&fixture, &photo, "attachment_unsupported").await;
+    assert_eq!(get().await, page);
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(page["items"][0]["source_refusal"], "attachment_unsupported");
+    assert_eq!(page["items"][0]["consumers"], json!([]));
+    assert!(!page.to_string().contains("fixture caption to omit"));
+    assert!(fixture.recorder.requests.lock().unwrap().is_empty());
+    let stream_url = format!("{url}/stream");
+    for cursor in [None, page["cursor"].as_str()] {
+        let mut get = fixture.client.get(&stream_url).bearer_auth(&owner);
+        if let Some(cursor) = cursor {
+            get = get.header("last-event-id", cursor);
+        }
+        let mut response = get.send().await.unwrap().error_for_status().unwrap();
+        let frame = tokio::time::timeout(Duration::from_secs(2), response.chunk())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let text = String::from_utf8_lossy(&frame);
+        assert!(text.contains("\"source_refusal\":\"attachment_unsupported\""));
+    }
+    for url in [&url, &stream_url] {
+        assert_eq!(
+            fixture
+                .client
+                .get(url)
+                .bearer_auth(&other)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+    }
+    server.abort();
 }
 
 #[tokio::test]

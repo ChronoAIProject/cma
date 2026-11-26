@@ -119,6 +119,9 @@ async fn record(State(state): State<Backend>) -> Response {
 pub struct Fixture {
     pub platform: String,
     pub state: IngressState,
+    pub records: Arc<RecordClient>,
+    pub record_origin: String,
+    pub activity: Arc<cmaeg::activity::ActivityStore>,
     pub backend: Backend,
     pub recorder: Arc<Recorder>,
     pub id: ChannelId,
@@ -219,18 +222,31 @@ impl Fixture {
         let id = pointer.seal_id(&keys).unwrap();
         *backend.blob.lock().unwrap() =
             seal_blob(&keys, definition.to_blob_json().to_string().as_bytes()).unwrap();
-        let resolver = ChannelResolver::new(records, keys.clone(), ChannelCacheConfig::default());
+        let resolver =
+            ChannelResolver::new(records.clone(), keys.clone(), ChannelCacheConfig::default());
         let recorder = Arc::new(Recorder::default());
         let state = configure(
             IngressState::new(resolver, keys, config, recorder.clone())
                 .unwrap()
                 .with_media_enabled(media_enabled),
         );
+        let store = Arc::new(cmaeg::activity::ActivityStore::new(
+            (*records).clone(),
+            state.master_keys.clone(),
+        ));
+        let observer = Arc::new(cmaeg::activity::ObservedActivity::new(
+            store,
+            state.activity.clone(),
+        ));
+        let state = state.with_activity_observer(observer);
         let (gateway, app) = serve(callbacks::router(state.clone())).await;
         Self {
             platform: platform.to_owned(),
             url: format!("{gateway}/v1/callbacks/{id}"),
             state,
+            records,
+            record_origin: base,
+            activity: store,
             backend,
             recorder,
             id,
@@ -264,7 +280,7 @@ impl Fixture {
         self.request(body, &token).send().await.unwrap()
     }
 }
-async fn serve(router: Router) -> (String, JoinHandle<()>) {
+pub async fn serve(router: Router) -> (String, JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     (

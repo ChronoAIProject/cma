@@ -186,6 +186,7 @@ impl ActivityStore {
         let row = ChannelActivity {
             quoted_context: super::model::QuotedContextSummary::from_activity(activity),
             event_id: activity.event_id.to_string(),
+            source_refusal: None,
             kind: Some(kind.into()),
             event_type,
             source_occurred_at,
