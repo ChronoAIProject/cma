@@ -18,7 +18,7 @@ pub(super) async fn build(
     if checksum != step.checksum() {
         return Err("Query index manifest checksum mismatch");
     }
-    let source = option_env!("CHRONO_BUILD_SHA").unwrap_or("development");
+    let source = crate::build_stamp().1.unwrap_or("development");
     let identity = ledger::Identity::new(source, image)?;
     let (client, database, mode) = open_database().await?;
     super::authority::verify(&database, mode, &[query.collection], true).await?;

@@ -21,7 +21,7 @@ import time
 import zipfile
 
 import ci_retry
-from staging_cd_build_cargo_keys import CARGO_NAMESPACE
+from staging_cd_build_cargo_keys import CARGO_NAMESPACE, CargoKey
 
 REPO = "ChronoAIProject/cma"
 WORKFLOW = ".github/workflows/staging-cd.yml"
@@ -71,11 +71,10 @@ def artifact_name(component, family=None):
     return family.removesuffix("-")
 
 
-def index_name(component, family, prefix):
-    artifact_name(component, family)
-    require(isinstance(prefix, str) and re.fullmatch(re.escape(family) + r"[0-9a-f]{64}-", prefix),
-            "prefix")
-    return "graph-" + prefix.removesuffix("-")
+def index_name(component, family, graph):
+    name = artifact_name(component, family)
+    require(isinstance(graph, str) and re.fullmatch(r"[0-9a-f]{64}", graph), "graph")
+    return f"graph-{name}-{graph}"
 
 
 def context(env):
@@ -175,7 +174,7 @@ def file_digest(path):
     return "sha256:" + value.hexdigest()
 
 
-def unpack(archive_path, artifact, destination, family, *, exact_prefix=None):
+def unpack(archive_path, artifact, destination, family, *, exact_graph=None):
     item = archive_path.lstat()
     require(stat.S_ISREG(item.st_mode) and item.st_size <= MAX_ARTIFACT_BYTES, "archive")
     require(file_digest(archive_path) == artifact["digest"], "digest")
@@ -189,15 +188,22 @@ def unpack(archive_path, artifact, destination, family, *, exact_prefix=None):
                     and 0 < member.file_size <= MAX_ARTIFACT_BYTES, "members")
             total += member.file_size
         require(total <= MAX_ARTIFACT_BYTES, "members")
-        # The name is only a lookup hint. Check the sealed bundle's own prefix
-        # before extracting its large mounts or returning it to the build.
+        # Check the sealed identity before extracting the archive mounts.
         manifest = archive.getinfo("manifest.json")
         require(manifest.file_size < 4096, "manifest")
         metadata = json.loads(archive.read(manifest))
         prefix = metadata.get("prefix") if isinstance(metadata, dict) else None
         require(isinstance(prefix, str) and re.fullmatch(re.escape(family) + r"[0-9a-f]{64}-", prefix),
                 "family")
-        require(exact_prefix is None or prefix == exact_prefix, "prefix")
+        if exact_graph is not None:
+            format_id = metadata.get("format")
+            require(type(format_id) is int and format_id in (1, 2), "graph")
+            source = ""
+            if format_id == 2:
+                source = metadata.get("source")
+                require(metadata.get("graph") == exact_graph and isinstance(source, str)
+                        and re.fullmatch(r"[0-9a-f]{40}", source), "graph")
+            require(prefix == CargoKey(family, exact_graph, source).prefix, "graph")
         destination.mkdir(mode=0o700)
         for member in members:
             with archive.open(member) as source, (destination / member.filename).open("xb") as target:
@@ -223,8 +229,8 @@ def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develo
     component = env["CD_COMPONENT"]
     family = env.get("CD_CARGO_CACHE_FAMILY", "")
     names = (artifact_name(component, family), artifact_name(component))
-    prefix = env.get("CD_CARGO_CACHE_PREFIX")
-    index = index_name(component, family, prefix) if prefix else None
+    graph = env.get("CD_CARGO_CACHE_GRAPH")
+    index = index_name(component, family, graph) if graph else None
     require(not destination.exists() and not destination.is_symlink(), "destination")
     destination.parent.mkdir(mode=0o700, exist_ok=True)
     require(destination.parent.is_dir() and not destination.parent.is_symlink(), "destination")
@@ -280,7 +286,7 @@ def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develo
 
     def exact_matches():
         # The small index's name is a discovery hint. The bulk artifact still
-        # has to come from that same successful Publish attempt and seal this prefix.
+        # has to come from that same successful Publish attempt and seal this dependency graph.
         if index is None:
             return
         try:
@@ -309,10 +315,10 @@ def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develo
 
     download = destination.parent / "artifact.zip"
 
-    def restore_bundle(artifact, producer, *, exact_prefix=None):
+    def restore_bundle(artifact, producer, *, exact_graph=None):
         try:
             read(f"repos/{REPO}/actions/artifacts/{artifact['id']}/zip", DOWNLOAD_SECONDS, download)
-            unpack(download, artifact, destination, family, exact_prefix=exact_prefix)
+            unpack(download, artifact, destination, family, exact_graph=exact_graph)
         except FAILURES:
             discard(destination)
             raise
@@ -325,7 +331,7 @@ def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develo
     for artifact, producer in exact_matches():
         tried_exact.add(artifact["id"])
         try:
-            return {**restore_bundle(artifact, producer, exact_prefix=prefix), "selection": "exact-graph"}
+            return {**restore_bundle(artifact, producer, exact_graph=graph), "selection": "exact-graph"}
         except FAILURES:
             continue
 

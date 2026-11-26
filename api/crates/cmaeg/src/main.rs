@@ -176,7 +176,13 @@ fn serve() {
             std::process::exit(1);
         }
     };
-    if let Err(error) = runtime.block_on(cmaeg::run()) {
+    // Keep the immutable release stamp in the executable so a version-only
+    // rebuild can reuse the gateway library.
+    let build = cmaeg::http::readiness::ReleaseBuild::from_stamp(
+        option_env!("CHRONO_BUILD_SHA"),
+        option_env!("CHRONO_BUILD"),
+    );
+    if let Err(error) = runtime.block_on(cmaeg::run(build)) {
         tracing::error!(%error, "CMAEG stopped");
         std::process::exit(1);
     }

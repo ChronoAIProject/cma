@@ -36,7 +36,7 @@ def compiler_recipe(path):
             if name == "build":
                 # The trim and runtime self-tests follow this copy. They do not
                 # compile Rust, and the archive validator checks the trim result.
-                output = re.search(r"(?m)^\s*&& cp /build/target/release/(cma|cmaeg) /out/\1$", stage)
+                output = re.search(r"(?m)^\s*&& cp /build/target/release/(cma|cmaeg) /out/\1(?: \\)?$", stage)
                 if not output:
                     return recipe
                 stage = stage[:output.end()]
@@ -57,10 +57,12 @@ def compiler_recipe(path):
 class CargoKey:
     family: str
     graph: str
+    source: str = ""
 
     @property
     def prefix(self):
-        return self.family + self.graph + "-"
+        generation = digest({"graph": self.graph, "source": self.source}) if self.source else self.graph
+        return self.family + generation + "-"
 
     def archive_key(self, env):
         return self.prefix + env["GITHUB_RUN_ID"] + "-" + env["GITHUB_RUN_ATTEMPT"]

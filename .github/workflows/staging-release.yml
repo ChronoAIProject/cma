@@ -106,7 +106,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ inputs.component }}
           CD_CARGO_CACHE_FAMILY: ${{ steps.build-cache.outputs.family }}
-          CD_CARGO_CACHE_PREFIX: ${{ steps.build-cache.outputs.prefix }}
+          CD_CARGO_CACHE_GRAPH: ${{ steps.build-cache.outputs.graph }}
         run: python3 -B .github/scripts/staging_cd_cargo_artifact.py
       - name: Restore authenticated layer detector evidence
         if: steps.ownership.outputs.superseded != 'true'

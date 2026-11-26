@@ -19,6 +19,9 @@ from staging_cd_cache_compaction import export_script
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY = "ChronoAIProject/cma"
 FORMAT = 1
+WORKSPACE_FORMAT = 2
+WORKSPACE_SEED = (".cma-workspace-seed.json",)
+WORKSPACE_SEED_MAX = 8 * 1024**2
 # The same Alpine 3.22 index already used by the API image, pinned for this helper.
 BRIDGE_IMAGE = "alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8"
 MOUNTS = {"registry": "cma-api-registry", "target": "cma-api-target-amd64"}
@@ -122,6 +125,68 @@ def validate_incremental_member(member, path):
                 "incompatible incremental hard link")
 
 
+class WorkspaceArchive:
+    """Bind protected workspace outputs to the receipt made in the build mount."""
+
+    def __init__(self):
+        self.files = {}
+        self.seed = None
+
+    def add(self, archive, member, path):
+        if path == WORKSPACE_SEED:
+            require(self.seed is None and member.isfile() and member.size <= WORKSPACE_SEED_MAX,
+                    "invalid workspace receipt member")
+            self.seed = json.load(archive.extractfile(member))
+            return
+        if not member.isdir() and path in ((".rustc_info.json",), ("CACHEDIR.TAG",)):
+            require(member.isfile(), "invalid cache bookkeeping")
+            return
+        allowed = ("deps", "build", ".fingerprint", "incremental")
+        require((member.isdir() and path in ((), ("release",))) or
+                (path[:1] == ("release",) and len(path) >= 2 and path[1] in allowed),
+                "unexpected workspace cache path")
+        if member.isdir():
+            return
+        relative = "/".join(path)
+        require(relative not in self.files, "duplicate workspace archive member")
+        if path[1] == "deps":
+            require(len(path) == 3 and PurePosixPath(path[2]).suffix in (".rlib", ".rmeta", ".d"),
+                    "invalid workspace library object")
+        if member.islnk():
+            link = archive_path(member.linkname).as_posix()
+            require(link in self.files, "workspace hard link does not refer to a prior output")
+            checksum = self.files[link][1]
+        else:
+            checksum = stream_digest(archive.extractfile(member))
+        self.files[relative] = [member.mode & 0o777, checksum]
+
+    def validate(self, manifest):
+        seed = self.seed
+        require(isinstance(seed, dict) and set(seed) == {"compiler", "files", "outputs", "producer"},
+                "workspace receipt missing or malformed")
+        require(all(isinstance(value, dict) for value in seed.values()), "workspace receipt fields are invalid")
+        require(seed.get("outputs") == self.files and self.files, "workspace receipt inventory differs")
+        source = seed["producer"].get("CHRONO_BUILD_SHA")
+        name = seed["compiler"].get("binary")
+        service = {"cma": "am", "cmaeg": "eg"}.get(name)
+        require(isinstance(source, str) and re.fullmatch(r"[0-9a-f]{40}", source) and service and
+                manifest["prefix"].startswith(f"cma-cd-cargo-v4-{service}-") and
+                source == manifest.get("source"), "workspace seed identity differs")
+        graph = manifest.get("graph")
+        require(isinstance(graph, str) and re.fullmatch(r"[0-9a-f]{64}", graph),
+                "workspace graph identity is invalid")
+        generation = hashlib.sha256(json.dumps({"graph": graph, "source": source}, sort_keys=True).encode()).hexdigest()
+        require(manifest["prefix"].endswith("-" + generation + "-"), "workspace generation differs")
+
+
+def stream_digest(source):
+    checksum = hashlib.sha256()
+    with source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            checksum.update(block)
+    return checksum.hexdigest()
+
+
 def validate_bundle(directory, prefix, *, family=None, max_archive=None, max_content=None):
     require(directory.is_dir() and not directory.is_symlink(), "cache bundle absent")
     require({path.name for path in directory.iterdir()} == {"manifest.json", "registry.tar.gz", "target.tar.gz"},
@@ -137,7 +202,10 @@ def validate_bundle(directory, prefix, *, family=None, max_archive=None, max_con
         allowed = re.escape(family) + r"[0-9a-f]{64}-" if family else None
         require(allowed and isinstance(stored, str) and re.fullmatch(allowed, stored)
                 and re.fullmatch(allowed, prefix), "incompatible cache bundle")
-    require(manifest.get("format") == FORMAT, "incompatible cache format")
+    format_id = manifest.get("format")
+    require(format_id == FORMAT or (format_id == WORKSPACE_FORMAT and family is not None
+                                    and prefix.startswith("cma-cd-cargo-v4-")),
+            "incompatible cache format")
     archives = manifest.get("archives")
     require(isinstance(archives, dict) and set(archives) == set(MOUNTS), "missing cache mount")
     size = sum((directory / f"{name}.tar.gz").lstat().st_size for name in MOUNTS)
@@ -153,6 +221,7 @@ def validate_bundle(directory, prefix, *, family=None, max_archive=None, max_con
         files = 0
         regular_members = set()
         target_links = set()
+        workspace = WorkspaceArchive() if format_id == WORKSPACE_FORMAT and name == "target" else None
         with tarfile.open(path, "r|gz") as archive:
             for member in archive:
                 require(member.size >= 0, "negative archive member size")
@@ -160,8 +229,6 @@ def validate_bundle(directory, prefix, *, family=None, max_archive=None, max_con
                 content += member.size
                 require(count <= MAX_MEMBERS and content <= expanded, "expanded cache exceeds bounds")
                 member_path = archive_path(member.name)
-                if family is not None and name == "target":
-                    validate_incremental_member(member, member_path.parts)
                 require(member.isdir() or member.isfile() or member.islnk(), "cache contains a special file or symlink")
                 files += int(member.isfile())
                 if family is not None and name == "target":
@@ -171,12 +238,19 @@ def validate_bundle(directory, prefix, *, family=None, max_archive=None, max_con
                         target_links.add(archive_path(member.linkname))
                 if member.islnk():
                     archive_path(member.linkname)
+                if workspace is not None:
+                    workspace.add(archive, member, member_path.parts)
+                elif family is not None and name == "target":
+                    validate_incremental_member(member, member_path.parts)
         require(target_links <= regular_members, "cache hard link target is absent")
+        if workspace is not None:
+            workspace.validate(manifest)
         require(files > 0, "empty mount cannot replace a warm cache")
     return manifest
 
 
-def dockerfile(operation, max_content=None, *, compact_registry=False, max_archive=None):
+def dockerfile(operation, max_content=None, *, compact_registry=False, max_archive=None,
+               incremental_only=False):
     names = ("target",) if operation == "inject-target" else tuple(MOUNTS)
     mounts = " ".join(f"--mount=type=cache,id={MOUNTS[name]},target=/cache/{name},sharing=locked"
                       for name in names)
@@ -192,12 +266,14 @@ def dockerfile(operation, max_content=None, *, compact_registry=False, max_archi
         return (header + f"RUN --network=none {mounts} {archives} "
                 + f'set -eu; test -n "$CMA_CACHE_TRANSFER"; {commands}\n')
     require(operation == "extract", "unknown cache transfer")
+    target = "./release/incremental" if incremental_only else "."
     bound_kib = (MAX_CONTENT_BYTES if max_content is None else max_content) // 1024
     if compact_registry:
         script = export_script(
             MAX_CONTENT_BYTES if max_content is None else max_content,
             MAX_ARCHIVE_BYTES if max_archive is None else max_archive,
             MAX_MEMBERS,
+            incremental_only=incremental_only,
         )
         return (header + f"RUN --network=none {mounts} <<'CACHE_EXPORT'\n"
                 + 'set -eu\nset -- /cache/registry /cache/target /out\n'
@@ -205,10 +281,10 @@ def dockerfile(operation, max_content=None, *, compact_registry=False, max_archi
                 + "CACHE_EXPORT\nFROM scratch\nCOPY --from=transfer /out/ /\n")
     return header + f"RUN --network=none {mounts} " + (
         'set -euo pipefail; test -n "$CMA_CACHE_TRANSFER"; mkdir /out; '
-        "total=$(du -sk /cache/registry /cache/target | awk '{n += $1} END {print n}'); skip_src=; "
+        f"total=$(du -sk /cache/registry /cache/target/{target} | awk '{{n += $1}} END {{print n}}'); "
         f'if [ "$total" -gt {bound_kib} ]; then touch /out/oversize; exit 0; fi; '
-        "tar -C /cache/registry -cf - $skip_src . | gzip -1 > /out/registry.tar.gz; "
-        "tar -C /cache/target -cf - . | gzip -1 > /out/target.tar.gz\n"
+        "tar -C /cache/registry -cf - . | gzip -1 > /out/registry.tar.gz; "
+        f"tar -C /cache/target -cf - {target} | gzip -1 > /out/target.tar.gz\n"
         "FROM scratch\nCOPY --from=transfer /out/ /\n")
 
 
@@ -225,7 +301,7 @@ def transfer_command(builder, namespace):
 
 
 def transfer(operation, directory, builder=None, *, namespace=None, timeout=150, max_content=None,
-             compact_registry=False, max_archive=None):
+             compact_registry=False, max_archive=None, incremental_only=False):
     command, env = transfer_command(builder, namespace)
     if operation in ("inject", "inject-target"):
         command += ["--output", "type=cacheonly", "--file", "-", str(directory)]
@@ -234,8 +310,9 @@ def transfer(operation, directory, builder=None, *, namespace=None, timeout=150,
     else:
         with tempfile.TemporaryDirectory(prefix="cma-cache-context-") as empty:
             command += ["--output", f"type=local,dest={directory}", "--file", "-", empty]
-            subprocess.run(command, input=dockerfile(operation, max_content, compact_registry=compact_registry, max_archive=max_archive),
-                           text=True, check=True, timeout=timeout, env=env)
+            recipe = dockerfile(operation, max_content, compact_registry=compact_registry,
+                                max_archive=max_archive, incremental_only=incremental_only)
+            subprocess.run(command, input=recipe, text=True, check=True, timeout=timeout, env=env)
 
 
 def start_extract(directory, context, *, namespace, max_content, max_archive):
@@ -249,12 +326,14 @@ def start_extract(directory, context, *, namespace, max_content, max_archive):
                             stderr=subprocess.DEVNULL, start_new_session=True)
 
 
-def seal(directory, prefix, *, family=None, max_archive=None, max_content=None):
+def seal(directory, prefix, *, family=None, max_archive=None, max_content=None, source=None, graph=None):
     require(not (directory / "oversize").exists(), "expanded cache exceeds its bound")
     require(not (directory / "oversize-compressed").exists(), "compressed cache exceeds its bound")
     require(not (directory / "empty").exists(), "empty mount cannot replace a warm cache")
     manifest = {"format": FORMAT, "prefix": prefix,
                 "archives": {name: digest(directory / f"{name}.tar.gz") for name in MOUNTS}}
+    if source is not None:
+        manifest.update(format=WORKSPACE_FORMAT, source=source, graph=graph)
     (directory / "manifest.json").write_text(json.dumps(manifest))
     validate_bundle(directory, prefix, family=family, max_archive=max_archive, max_content=max_content)
 
@@ -276,7 +355,7 @@ def run(operation, directory):
         if bundle.exists():
             require(not bundle.is_symlink(), "cache directory cannot be a symlink")
             shutil.rmtree(bundle)
-        transfer("extract", bundle)
+        transfer("extract", bundle, incremental_only=True)
         seal(bundle, prefix)
         emit("ready", "true")
 

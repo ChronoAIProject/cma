@@ -216,7 +216,12 @@ class CacheTests(unittest.TestCase):
         self.assertIn(f"max_compressed={cache.MAX_ARCHIVE_BYTES}", compact)
         self.assertIn('archive_stream "$registry" "$registry_archive" "$max_expanded" "$max_compressed"', compact)
         self.assertIn('archive_stream "$target" "$target_archive" "$remaining_expanded" "$remaining_compressed"', compact)
+        self.assertIn("target_entry=.\n", compact)
+        self.assertIn('"$((max_compressed - registry_compressed))" "$target_entry"', compact)
         self.assertNotIn("rm -rf /cache", compact)
+        legacy = cache.dockerfile("extract", bound, compact_registry=True, incremental_only=True)
+        self.assertIn("--exclude=./src", legacy)
+        self.assertIn("target_entry=./release/incremental\n", legacy)
 
     def test_am_compaction_restores_complete_groups_and_cross_group_links(self):
         import os
@@ -432,40 +437,39 @@ class CacheTests(unittest.TestCase):
         self.assertIn('id=cma-api-target-${TARGETARCH},target=/build/target,sharing=locked', definition)
         self.assertEqual(cache.MOUNTS["target"], "cma-api-target-amd64")
 
-    def test_cache_trim_keeps_the_newest_completed_session_of_every_crate(self):
-        # Each recipe cleans every workspace crate before building, so a crate
-        # whose incremental state the trim drops is compiled from scratch.
-        crates = ("cma-0", "cmaeg-0", "layer1_public-0", "layer2_core-0", "layer3_adapter-0",
-                  "cma_service_auth-0", "build_script_build-0")
-        for recipe in ("api/crates/cma/Dockerfile", "api/crates/cmaeg/Dockerfile"):
-            with self.subTest(recipe=recipe):
-                definition = (cache.ROOT / recipe).read_text()
-                script = definition.split("<<'CACHE_TRIM'\n", 1)[1].split("\nCACHE_TRIM\n", 1)[0]
-                work = self.root / Path(recipe).parent.name
-                release = work / "target/release"
-                for name in ("cma", "deps/libdependency.rlib", ".fingerprint/dependency/lib",
-                             "build/layer3-adapter-0/out/runtime_versions.rs"):
-                    (release / name).parent.mkdir(parents=True, exist_ok=True)
-                    (release / name).write_bytes(b"final or dependency output")
-                (work / "target/.rustc_info.json").write_text("{}")
+    def test_workspace_trim_keeps_proved_libraries_and_the_newest_service_session(self):
+        spec = importlib.util.spec_from_file_location(
+            "workspace_cache", cache.ROOT / "api/build_support/workspace_cache.py")
+        workspace = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(workspace)
+        crates = ("cma", "cmaeg", "layer2-core")
+        for service in ("cma", "cmaeg"):
+            with self.subTest(service=service):
+                target = self.root / service / "target"
+                release = target / "release"
+                retained = ("deps/liblayer2_core-a.rlib", ".fingerprint/layer2-core-a/lib")
+                dropped = (service, "deps/libregistry_dep-a.rlib", ".fingerprint/registry-dep-a/lib")
+                for name in (*retained, *dropped):
+                    output = release / name
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_bytes(b"synthetic Cargo output")
                 incremental = release / "incremental"
                 for crate in crates:
-                    # Glob order differs from age, so only modification times select.
-                    for stamp, session in ((1000, "s-z-preceding"), (2000, "s-a-newest")):
-                        products = incremental / crate / session / "work-products.bin"
+                    parent = incremental / (crate.replace("-", "_") + "-0")
+                    # File time, rather than session name, selects the newest completed work.
+                    for stamp, session in ((1000, "s-z-aaa-preceding"), (2000, "s-a-bbb-newest")):
+                        products = parent / session / "work-products.bin"
                         products.parent.mkdir(parents=True)
-                        products.write_bytes(b"compiler session")
+                        products.write_bytes(b"synthetic compiler session")
                         os.utime(products, (stamp, stamp))
-                    (incremental / crate / "s-a-newest.lock").write_bytes(b"")
-                    (incremental / crate / "s-m-interrupted-working").mkdir()
-                subprocess.run(["sh", "-c", script], cwd=work, check=True)
-                self.assertEqual([path.name for path in release.iterdir()], ["incremental"])
-                self.assertEqual(sorted(path.name for path in incremental.iterdir()), sorted(crates))
-                for crate in crates:
-                    self.assertEqual(sorted(path.name for path in (incremental / crate).iterdir()),
-                                     ["s-a-newest", "s-a-newest.lock"], crate)
-                    self.assertTrue((incremental / crate / "s-a-newest/work-products.bin").is_file(), crate)
-                self.assertTrue((work / "target/.rustc_info.json").is_file())
+                        (parent / (session.rsplit("-", 1)[0] + ".lock")).touch()
+                    (parent / "s-m-interrupted-working").mkdir()
+                workspace.trim(target, {service, "layer2-core"}, service)
+                self.assertTrue(all((release / name).is_file() for name in retained))
+                self.assertTrue(all(not (release / name).exists() for name in dropped))
+                self.assertEqual([path.name for path in incremental.iterdir()], [service + "-0"])
+                self.assertEqual({path.name for path in (incremental / (service + "-0")).iterdir()},
+                                 {"s-a-bbb-newest", "s-a-bbb.lock"})
 
     def test_transfer_always_executes_and_uses_only_expected_mount_ids(self):
         nonces = []

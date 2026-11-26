@@ -222,11 +222,12 @@ def record_cache_export(cache, accepted, env, metrics):
     outputs = {}
     if accepted:
         component = env["CD_COMPONENT"]
+        key = cache.export_key
         outputs.update({
             "build-cache-directory": str(cache.accepted),
-            "build-cache-key": cache.key.archive_key(env),
-            "build-cache-artifact": cargo_artifact_name(component, cache.key.family),
-            "build-cache-index": cargo_index_name(component, cache.key.family, cache.key.prefix),
+            "build-cache-key": key.archive_key(env),
+            "build-cache-artifact": cargo_artifact_name(component, key.family),
+            "build-cache-index": cargo_index_name(component, key.family, key.graph),
         })
     outputs["build-cache-ready"] = "true" if accepted else "false"
     try:
@@ -314,7 +315,7 @@ def main():
                             reused_prepared.append(True)
                             if prepared.cache_day is not None:
                                 cache = BuildCache(root, env, source, reservation["component"],
-                                                   cache_day=prepared.cache_day)
+                                                   revision=reservation["source"], cache_day=prepared.cache_day)
                                 cache.namespace = prepared.cache_namespace
                         else:
                             archive = try_reuse(release, directory, api, env.get("GH_TOKEN"),
@@ -323,7 +324,8 @@ def main():
                     if archive is None:
                         if env.get("CD_BUILD_CACHE") == "enabled":
                             diagnostics.mark("cache_restore")
-                            cache = BuildCache(root, env, source, reservation["component"])
+                            cache = BuildCache(root, env, source, reservation["component"],
+                                               revision=reservation["source"])
                             with timings.stage("cache-restore"):
                                 cache.restore()
                             cache_metrics.append({"operation": "restore", "result": cache.restore_result})

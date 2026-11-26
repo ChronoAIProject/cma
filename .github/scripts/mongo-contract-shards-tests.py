@@ -143,8 +143,8 @@ class ShardTests(unittest.TestCase):
                           for _, name in PARTITIONS["ISOLATED_TESTS"]})
             cases.update({f"synthetic::contract_{i}": {"ignored": True, "filter-match": {"status": "matches"}}
                           for i in range(ordinary)})
-            metadata = {"rust-suites": {"cma::bin/cma": {"package-name": "cma", "binary-name": "cma",
-                                                        "kind": "bin", "testcases": cases}}}
+            metadata = {"rust-suites": {"cma": {"package-name": "cma", "binary-name": "cma",
+                                                        "kind": "lib", "testcases": cases}}}
             completed = subprocess.CompletedProcess([], 0, json.dumps(metadata))
             with patch.object(subprocess, "run", return_value=completed), redirect_stdout(io.StringIO()):
                 count, costs = PARTITIONS["partition_plan"](ROOT / "mongo-contract-tests.sh")
