@@ -60,7 +60,9 @@ pub(in crate::store) const COLLECTIONS: &[&str] = &[
     writer_admission::COLLECTION,
     RECOVERY_WORK,
 ];
-use cma_am_agent_log::{corrupt, required_nullable, MAX_SEAL_BYTES};
+#[cfg(test)]
+use cma_am_agent_log::MAX_SEAL_BYTES;
+use cma_am_agent_log::{corrupt, required_nullable};
 pub(in crate::store) use cma_am_agent_log::{
     FORMAT, MAX_BYTES, MAX_ENTRIES, MAX_SEQUENCE, MIGRATION, READER,
 };
