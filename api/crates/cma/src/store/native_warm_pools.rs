@@ -75,6 +75,8 @@ fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         || target.revision < 1
         || target.applied_revision < 0
         || target.applied_revision > target.revision
+        || (target.machine_plan_activated_at.is_some()
+            && (!target.machine || target.activated_at.is_none()))
         || (target.retired && !target.retiring)
         || (target.retiring && target.target_replicas != 0)
         || target.target_replicas > 1000
@@ -147,6 +149,21 @@ impl PoolTargetStore for MongoNativeWarmPools {
         if let Some(exact) = exact.map(validate).transpose()? {
             if exact.machine != machine || exact.retiring || exact.retired {
                 return Ok(true);
+            }
+            if machine && exact.activated_at.is_some() {
+                let mut scope = retirement::release_scope(self, true);
+                scope.insert("activated_at", doc! {"$type": "date"});
+                let latest = self
+                    .targets
+                    .find_one(scope)
+                    .sort(retirement::release_order(true))
+                    .await
+                    .map_err(|_| WarmPoolError::Unavailable)?;
+                if latest.is_some_and(|row| {
+                    row.machine_plan_activated_at.is_some() && row.id != exact.id
+                }) {
+                    return Ok(true);
+                }
             }
         }
         match self.verify_bootstrap(machine, &plan.spec.image.uri).await {
