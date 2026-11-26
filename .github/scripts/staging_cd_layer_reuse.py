@@ -95,16 +95,19 @@ def prove(root, archive, replay, env, *, builder=build):
     return fingerprint
 
 
-def main(env):
+def main(env, *, candidate=False):
     parent = Path(env["RUNNER_TEMP"]) / "cma-layer-cache"
-    fingerprint = prove(parent / "verified", parent / "archive.tar", parent / "replay.json", env)
+    fingerprint = prove(parent / ("validated" if candidate else "verified"), parent / "archive.tar", parent / "replay.json", env)
     with Path(env["GITHUB_OUTPUT"]).open("a") as output:
         output.write(f"archive_digest={fingerprint}\n")
 
 
 if __name__ == "__main__":
     try:
-        main(os.environ)
+        import argparse
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("--candidate", action="store_true")
+        main(os.environ, candidate=parser.parse_args().candidate)
     except Exception as error:
         print(f"Layer reuse proof withheld ({type(error).__name__})", file=sys.stderr)
         sys.exit(1)

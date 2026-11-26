@@ -221,7 +221,12 @@ def main(env, mode):
     require((reservation["component"], reservation["run_id"], reservation["run_attempt"])
             == (component, run["id"], run["run_attempt"]), "Layer candidate replay differs")
     with archive.open("rb") as stream:
-        require(digest(stream) == value["archive_digest"], "Layer candidate archive differs")
+        fingerprint = digest(stream)
+    require(fingerprint == value["archive_digest"], "Layer candidate archive differs")
+    if component == "am":
+        require(value.get("kind") == "am-dependencies"
+                and env.get("LAYER_REUSE_ARCHIVE_DIGEST") == fingerprint,
+                "AM candidate must prove dependency reuse before reservation")
     result = reserve(api, ledger, key, archive, env["GITHUB_SHA"], replay_bytes=replay.stat().st_size)
     with Path(env["GITHUB_OUTPUT"]).open("a") as output:
         output.write(f"key={key}\nallowed={str(result['allowed']).lower()}\n")

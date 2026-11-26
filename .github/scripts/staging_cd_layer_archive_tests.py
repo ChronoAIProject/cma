@@ -278,6 +278,15 @@ class ProducerTests(unittest.TestCase):
         self.assertTrue(writer['continue-on-error'])
         self.assertTrue(any(s.get('name') == 'Reconstruct and seal qualified AM dependency stage'
                             for s in writer['steps']))
+        steps = writer['steps']
+        candidate = next(s for s in steps if s.get('id') == 'verify-am-candidate')
+        reserve_step = next(s for s in steps if s.get('id') == 'reserve-layer-archive')
+        self.assertEqual(candidate['if'], "matrix.component == 'am' && steps.layer-candidate.outputs.artifact != ''")
+        self.assertIn('--candidate', candidate['run'])
+        self.assertLess(steps.index(candidate), steps.index(reserve_step))
+        self.assertIn("matrix.component != 'am' || steps.verify-am-candidate.outcome == 'success'", reserve_step['if'])
+        self.assertEqual(reserve_step['env']['LAYER_REUSE_ARCHIVE_DIGEST'],
+                         "${{ steps.verify-am-candidate.outputs.archive_digest }}")
         save = writer['steps'][-1]
         self.assertTrue(save['uses'].startswith('actions/cache/save@'))
         self.assertEqual(save['if'], "steps.reserve-layer-archive.outputs.allowed == 'true'")
@@ -285,6 +294,11 @@ class ProducerTests(unittest.TestCase):
         self.assertEqual(reader['needs'], 'retain_layers')
         self.assertEqual(reader['cache-mode'], 'read')
         self.assertEqual(reader['concurrency'], writer['concurrency'])
+        replay_condition = "steps.verify-archive.outcome == 'success' && (matrix.component == 'am' || vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true')"
+        replay = next(s for s in reader['steps'] if s.get('id') == 'verify-reuse')
+        setup = next(s for s in reader['steps'] if s.get('name') == 'Set up the actual BuildKit importer')
+        self.assertEqual(replay['if'], replay_condition)
+        self.assertEqual(setup['if'], replay_condition)
         self.assertEqual(reader['steps'][-1]['if'],
                          "steps.verify-reuse.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'")
         for step in publisher['steps']:

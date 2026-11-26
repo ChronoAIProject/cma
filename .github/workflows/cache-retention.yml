@@ -174,7 +174,7 @@ jobs:
         component: [am, eg, web, runtime, runtime-omarchy]
     cache-mode: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 65
+    timeout-minutes: 150
     continue-on-error: true
     permissions:
       contents: write
@@ -243,8 +243,25 @@ jobs:
         if: steps.layer-candidate.outputs.artifact != ''
         timeout-minutes: 5
         run: python3 -B .github/scripts/buildkit_cache_archive.py restore "$RUNNER_TEMP/cma-layer-cache/validated" "$RUNNER_TEMP/cma-layer-cache/archive.tar"
+      - name: Prepare clean AM dependency importer
+        id: am-replay-builder
+        if: matrix.component == 'am' && steps.layer-candidate.outputs.artifact != ''
+        timeout-minutes: 3
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+        with:
+          cache-binary: false
+      - name: Prove AM dependency hit before cache admission
+        id: verify-am-candidate
+        if: matrix.component == 'am' && steps.layer-candidate.outputs.artifact != ''
+        timeout-minutes: 75
+        env:
+          CD_COMPONENT: am
+          CD_LAYER_ARCHIVE_CACHE: enabled
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
+          BUILDX_BUILDER: ${{ steps.am-replay-builder.outputs.name }}
+        run: python3 -B .github/scripts/staging_cd_layer_reuse.py --candidate
       - name: Reserve full archive charge
-        if: steps.layer-candidate.outputs.artifact != ''
+        if: steps.layer-candidate.outputs.artifact != '' && (matrix.component != 'am' || steps.verify-am-candidate.outcome == 'success')
         id: reserve-layer-archive
         timeout-minutes: 3
         env:
@@ -252,6 +269,7 @@ jobs:
           CD_COMPONENT: ${{ matrix.component }}
           CD_LAYER_ARCHIVE_CACHE: enabled
           CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
+          LAYER_REUSE_ARCHIVE_DIGEST: ${{ steps.verify-am-candidate.outputs.archive_digest }}
         run: python3 -B .github/scripts/actions_layer_admission.py reserve
       - name: Save admitted layer archive
         if: steps.reserve-layer-archive.outputs.allowed == 'true'
@@ -309,14 +327,14 @@ jobs:
         timeout-minutes: 5
         run: python3 -B .github/scripts/buildkit_cache_archive.py restore "$RUNNER_TEMP/cma-layer-cache/verified" "$RUNNER_TEMP/cma-layer-cache/archive.tar"
       - name: Set up the actual BuildKit importer
-        if: steps.verify-archive.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
+        if: steps.verify-archive.outcome == 'success' && (matrix.component == 'am' || vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true')
         timeout-minutes: 3
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
         with:
           cache-binary: false
       - name: Prove reuse from the exact restored archive
         id: verify-reuse
-        if: steps.verify-archive.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
+        if: steps.verify-archive.outcome == 'success' && (matrix.component == 'am' || vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true')
         timeout-minutes: 75
         env:
           GH_TOKEN: ${{ github.token }}
