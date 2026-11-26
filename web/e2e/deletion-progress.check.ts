@@ -177,8 +177,9 @@ for (const restored of [false, true]) {
       },
       restored ? [other, uncertain] : [other],
     );
+    const agentPath = `/api/v1/agents/${boundary.agent.id}`;
     const deletes: { path: string; key?: string; body: string | null }[] = [];
-    await page.route(`**/api/v1/agents/${boundary.agent.id}`, (route) => {
+    await page.route(`**${agentPath}`, (route) => {
       const request = route.request();
       if (request.method() !== 'DELETE') return route.fallback();
       deletes.push({
@@ -194,12 +195,18 @@ for (const restored of [false, true]) {
           .filter((key) => key.startsWith('cma:deletion-requests:local-owner:'))
           .map((key) => JSON.parse(localStorage.getItem(key)!)),
       );
+    // Set the clock before navigation so jumping to the anchor cannot advance an in-flight read.
+    const anchor = Date.now();
+    await page.clock.install({ time: anchor - 60_000 });
+    await page.clock.pauseAt(anchor);
     await page.goto(`/agents/${boundary.agent.id}`);
+    const moreActions = page.getByRole('button', { name: 'More Agent actions', exact: true });
+    await expect(moreActions).toBeVisible();
     let submit;
     if (restored) {
       submit = page.getByRole('button', { name: 'Check request', exact: true });
     } else {
-      await page.getByRole('button', { name: 'More Agent actions', exact: true }).click();
+      await moreActions.click();
       await page.getByRole('menuitem', { name: /^Delete task/ }).click();
       const confirmation = page.getByRole('dialog', { name: 'Delete Agent', exact: true });
       await confirmation.getByRole('checkbox').check();
@@ -207,14 +214,20 @@ for (const restored of [false, true]) {
     }
     await expect(submit).toBeEnabled();
     expect(deletes).toEqual([]);
-    const anchor = Date.now();
-    await page.clock.install({ time: anchor - 60_000 });
-    await page.clock.pauseAt(anchor);
-    await submit.press('Enter');
+    const [acceptance] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === 'DELETE' &&
+          new URL(response.url()).pathname === agentPath,
+      ),
+      submit.press('Enter'),
+    ]);
+    expect(acceptance.status()).toBe(202);
     const summary = page.getByRole('region', { name: 'Deletion request', exact: true });
     if (restored) {
+      await expect(page.getByRole('dialog', { name: 'Deleting Agent', exact: true })).toBeHidden();
       await expect(summary).toHaveCount(0);
-      await page.getByRole('button', { name: 'More Agent actions', exact: true }).press('Enter');
+      await moreActions.press('Enter');
       await page
         .getByRole('menuitem', { name: 'View deletion status', exact: true })
         .press('Enter');
@@ -247,9 +260,7 @@ for (const restored of [false, true]) {
       })
       .toBe(true);
     expect(await receipts()).toEqual([other]);
-    expect(deletes).toEqual([
-      { path: `/api/v1/agents/${boundary.agent.id}`, key: original.key, body: null },
-    ]);
+    expect(deletes).toEqual([{ path: agentPath, key: original.key, body: null }]);
     expect(boundary.writes).toEqual([]);
     expect(boundary.unexpected).toEqual([]);
     expect(boundary.errors).toEqual([]);
