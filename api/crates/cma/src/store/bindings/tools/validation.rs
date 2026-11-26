@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::agent_tool_open;
 use layer2_core::sandbox::binding::{BindingConversationState, BindingState, BindingWork};
 use layer2_core::sandbox::store::AgentProvenanceSnapshot;
 use layer2_core::sandbox::{Agent, AgentCreationOrigin, RuntimeBinding};
@@ -48,7 +49,9 @@ pub(super) fn validate(
     let (mut scope, proxy) = identity(snapshot, binding, conversation, runtime)?;
     let lineage = &snapshot.resource.lineage;
     let agent = lineage.agent.as_ref().ok_or_else(refused)?;
-    if !crate::store::agent_tool_open::matches(lineage, request) || !valid_fence(agent, fence) {
+    if !agent_tool_open::matches(lineage, request)
+        || !agent_tool_open::valid_fence(agent, request, fence)
+    {
         return Err(refused());
     }
     scope.request_sha256 = request.request_sha256.clone();
@@ -161,21 +164,6 @@ pub(super) fn identity(
     };
     proxy.validate()?;
     Ok((scope, proxy))
-}
-
-fn valid_fence(agent: &Agent, fence: u64) -> bool {
-    fence > 0
-        && agent
-            .work
-            .lease
-            .as_ref()
-            .map_or(agent.work.next_fence == fence, |lease| {
-                lease.fence == fence
-                    && layer2_core::seconds_from_rfc3339(&lease.expires_at).is_some_and(|expiry| {
-                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(expiry)
-                            > std::time::SystemTime::now()
-                    })
-            })
 }
 
 fn worktree_may_open(agent: &Agent, tree: &layer2_core::sandbox::Worktree) -> bool {

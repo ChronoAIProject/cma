@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::agent_tool_open::valid_fence;
 use layer2_core::sandbox::store::AgentProvenanceSnapshot;
 use layer2_core::sandbox::{Agent, AgentStatus, AgentWorkStep, Sandbox, WorktreeStatus};
 
@@ -64,7 +65,7 @@ pub(super) fn request(
         .agent
         .as_ref()
         .ok_or(Error::Refused)?;
-    if !valid_fence(agent, fence) {
+    if !valid_fence(agent, request, fence) {
         return Err(Error::Refused);
     }
     Ok(())
@@ -89,7 +90,7 @@ pub(super) fn retained_request(
         && agent.work.lease.is_none()
         && agent.work.step == AgentWorkStep::None
         && fence.checked_add(1) == Some(agent.work.next_fence);
-    if !valid_fence(agent, fence) && !completed {
+    if !valid_fence(agent, request, fence) && !completed {
         return Err(Error::Refused);
     }
     Ok(())
@@ -114,21 +115,6 @@ pub(super) fn new_agent(agent: &Agent) -> bool {
         && agent.ready_at.is_none()
         && agent.conversation.conversation_id.is_none()
         && agent.work.step == AgentWorkStep::OpenConversation
-}
-
-fn valid_fence(agent: &Agent, fence: u64) -> bool {
-    fence > 0
-        && agent
-            .work
-            .lease
-            .as_ref()
-            .map_or(agent.work.next_fence == fence, |lease| {
-                lease.fence == fence
-                    && layer2_core::seconds_from_rfc3339(&lease.expires_at).is_some_and(|expiry| {
-                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(expiry)
-                            > std::time::SystemTime::now()
-                    })
-            })
 }
 
 fn parent_may_open(sandbox: &Sandbox) -> bool {

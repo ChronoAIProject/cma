@@ -1,6 +1,6 @@
 //! Validate tool attachment against the original or durably dispatched Agent Open.
 use layer2_core::resource_access::ResourceLineage;
-use layer2_core::sandbox::{AgentStatus, AgentWorkStep, SandboxStatus, WorktreeStatus};
+use layer2_core::sandbox::{Agent, AgentStatus, AgentWorkStep, SandboxStatus, WorktreeStatus};
 use layer3_adapter::{AgentOpenRequest, AgentProcessAction};
 
 pub(super) fn matches(lineage: &ResourceLineage, request: &AgentOpenRequest) -> bool {
@@ -88,4 +88,18 @@ pub(super) fn published(lineage: &ResourceLineage, request: &AgentOpenRequest) -
             .runtime
             .as_ref()
             .and_then(|runtime| runtime.provision_generation)
+}
+
+pub(super) fn valid_fence(agent: &Agent, request: &AgentOpenRequest, fence: u64) -> bool {
+    fence > 0
+        && agent.work.lease.as_ref().map_or(
+            request.restart_runtime.is_none() && agent.work.next_fence == fence,
+            |lease| {
+                lease.fence == fence
+                    && layer2_core::seconds_from_rfc3339(&lease.expires_at).is_some_and(|expiry| {
+                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(expiry)
+                            > std::time::SystemTime::now()
+                    })
+            },
+        )
 }
