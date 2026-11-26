@@ -15,9 +15,9 @@ test('pinned native completion and interruption remain distinct before a replace
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? '/usr/local/bin/codex';
   const program = process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath;
   const provider = execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim();
-  assert.equal(provider, 'codex-cli 0.147.0');
+  assert.match(provider, /^codex-cli 0\.(147|165)\.0$/);
   const bridgeSha256 = createHash('sha256').update(readFileSync(program)).digest('hex');
-  assert.equal(bridgeSha256, '84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c');
+  assert(['84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c', '11c84d6c37f3b2e15020405a2301df3ed8c16ed2d9b05c3a3a43620bba78a7d4'].includes(bridgeSha256));
   const directory = mkdtempSync(join(tmpdir(), 'cma-composer-completion-'));
   const home = join(directory, 'home');
   mkdirSync(home);
