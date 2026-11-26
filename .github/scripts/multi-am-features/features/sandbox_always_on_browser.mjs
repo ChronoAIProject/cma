@@ -1,4 +1,5 @@
-import {check, hash, id} from '../cma/core.mjs';
+import {isDeepStrictEqual as equal} from 'node:util';
+import {assertOwner, check, hash, id, other} from '../cma/core.mjs';
 
 const onText = 'An administrator approved Always on, so automatic pause skips this Sandbox.';
 const offText = 'Always on is off. Only an administrator can approve an exception.';
@@ -61,4 +62,24 @@ export function observeAlwaysOnOffInBrowser(browser, ingress, sandboxId, revisio
     await tab.page.getByRole('button', buttonName).waitFor({state: 'hidden', timeout: 15000});
     return read;
   });
+}
+
+export async function relinquishAndReplayAlwaysOn({browser, user, adapter, agentId, sandboxId, revision}) {
+  const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
+  const ingress = other(owner.am);
+  const {intent, receipt, read, mutation} = await relinquishAlwaysOnInBrowser(browser, ingress, sandboxId, revision);
+  check(receipt?.id === sandboxId && receipt.always_on === false && receipt.revision === revision + 1,
+    'owner_relinquishment_unconfirmed');
+  const {body: replayed, timing} = await user.request(owner.am, 'POST', `/api/v1/sandboxes/${sandboxId}/always-on`, intent);
+  check(equal(replayed, receipt), 'owner_relinquishment_replay_changed');
+  check(typeof timing?.request_id === 'string' && timing.request_id.trim().length > 0,
+    'owner_relinquishment_replay_unbound');
+  const peerRead = await observeAlwaysOnOffInBrowser(browser, owner.am, sandboxId, receipt.revision);
+  const requests = {approved_read: read, relinquishment: mutation, replay: hash(timing.request_id), peer_read: peerRead};
+  check(new Set(Object.values(requests)).size === 4, 'owner_relinquishment_request_id_reused');
+  const after = assertOwner(await adapter.ownerOf({agentId}), agentId);
+  check(after.am === owner.am && after.epoch === owner.epoch && after.pod_uid === owner.pod_uid,
+    'owner_changed_during_browser_relinquishment');
+  return {ingress, owner: owner.am, epoch: owner.epoch, request_sha256: requests,
+    receipt_sha256: hash(JSON.stringify(receipt)), revisions_advanced: receipt.revision - revision};
 }

@@ -1,8 +1,7 @@
 import {randomUUID} from 'node:crypto';
-import {isDeepStrictEqual as equal} from 'node:util';
 import {assertOwner, check, hash, id, other, poll} from '../cma/core.mjs';
 import {retainFailure, withRestoration} from '../failure.mjs';
-import {observeAlwaysOnOffInBrowser, relinquishAlwaysOnInBrowser} from './sandbox_always_on_browser.mjs';
+import {relinquishAndReplayAlwaysOn} from './sandbox_always_on_browser.mjs';
 
 export async function triggerAlwaysOn(context) {
   const {admin, config} = context;
@@ -142,27 +141,13 @@ async function exerciseTrigger({adapter, user, admin, outsider, config, browser}
       const stillEnabled = await readSandbox(currentOwner.am);
       check(stillEnabled.profile.always_on === true && stillEnabled.revision === enabled.revision,
         'trigger_refused_relinquishment_mutated_approval');
-      const {intent, receipt: released, read, mutation} = await relinquishAlwaysOnInBrowser(browser, ingress,
-        sandbox.id, enabled.revision);
-      check(released?.id === sandbox.id && released.always_on === false && released.revision === enabled.revision + 1,
-        'trigger_owner_relinquishment_unconfirmed');
-      const {body: replayed, timing} = await user.request(currentOwner.am, 'POST', ownerPath, intent);
-      check(equal(replayed, released), 'trigger_owner_relinquishment_replay_changed');
-      check(typeof timing?.request_id === 'string' && timing.request_id.trim().length > 0,
-        'trigger_owner_relinquishment_replay_unbound');
+      relinquishment = await relinquishAndReplayAlwaysOn({browser, user, adapter, agentId: agent.id,
+        sandboxId: sandbox.id, revision: enabled.revision});
       for (const am of [ingress, currentOwner.am]) {
         const current = await readSandbox(am);
-        check(current.profile.always_on === false && current.revision === released.revision,
+        check(current.profile.always_on === false && current.revision === enabled.revision + 1,
           'trigger_owner_relinquishment_peer_state_changed');
       }
-      const peerRead = await observeAlwaysOnOffInBrowser(browser, currentOwner.am, sandbox.id, released.revision);
-      const requests = {approved_read: read, relinquishment: mutation, replay: hash(timing.request_id), peer_read: peerRead};
-      check(new Set(Object.values(requests)).size === 4, 'trigger_owner_relinquishment_request_id_reused');
-      const settledOwner = assertOwner(await adapter.ownerOf({agentId: agent.id}), agent.id);
-      check(settledOwner.am === currentOwner.am && settledOwner.epoch === currentOwner.epoch
-        && settledOwner.pod_uid === currentOwner.pod_uid, 'trigger_owner_changed_during_browser_relinquishment');
-      relinquishment = {ingress, owner: currentOwner.am, epoch: currentOwner.epoch, request_sha256: requests,
-        receipt_sha256: hash(JSON.stringify(released)), revisions_advanced: released.revision - enabled.revision};
     }, async () => {
       const current = await readSandbox(owner.am);
       if (current.profile.always_on === true) await set(peer, false, current.revision);

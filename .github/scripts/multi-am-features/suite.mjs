@@ -13,6 +13,7 @@ import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
 import {retainFailure, withRestoration} from './failure.mjs';
 import {openPreparedBrowser} from './prepared_browser.mjs';
+import {relinquishAndReplayAlwaysOn} from './features/sandbox_always_on_browser.mjs';
 import {NonOwnerRouter} from './routing.mjs';
 import {writerCoverage} from './writer_coverage.mjs';
 import {queuedCommandCase} from './features/queued_commands.mjs';
@@ -66,11 +67,11 @@ const matrix = new ExtendedAdminMatrix({fixture,
   onFailure: (stage, error, row) => retainFailure(config.matrix_output, stage, error,
     {case: 'admin.' + row?.feature, phase, iteration: row?.iteration}),
   request: (role, ...args) => (role === 'admin' ? admin : user).request(...args),
-  record: row => {
+  record: async row => {
     const scoped = row.feature === 'sandbox_always_on_cross_am';
     const ids = row.requests.map(request => request.request_id).filter(Boolean);
     const proofs = adminOwnerProofs.filter(proof => ids.includes(proof.request_id));
-    return record({case: 'admin.' + row.feature, verdict: row.verdict,
+    await record({case: 'admin.' + row.feature, verdict: row.verdict,
     phase, iteration: row.iteration, elapsed_ms: row.elapsed_ms, error_code: row.error_code,
     primary_error_code: row.primary_error_code, restoration_error_code: row.restoration_error_code,
     failures: row.failures,
@@ -79,9 +80,22 @@ const matrix = new ExtendedAdminMatrix({fixture,
       && proofs.every(proof => proof.verdict === 'PASS' && proof.owner !== proof.ingress),
     routing: scoped ? 'agent_bound_sandbox_non_owner' : 'global_admin_has_no_agent_owner',
     requests: row.requests, owner_proofs: proofs});
+    if (row.owner_relinquishment) {
+      const proof = row.owner_relinquishment;
+      await record({case: 'writer.lifecycle_owner_relinquishment_browser', verdict: row.verdict, phase,
+        iteration: row.iteration, ams: [proof.ingress, proof.owner], real_browser: true, owner_relinquishment: proof});
+    }
   }});
 const result = {schema: 'multi-am-features-v1', verdict: 'RUNNING', source: config.expected_api_source,
   production_acceptance: false, image: config.expected_api_image, started_at: new Date().toISOString()};
+
+async function withBrowser(am_origins, run, name) {
+  const browser = await openPreparedBrowser({...config, am_origins});
+  let outcome;
+  await withRestoration(async () => { outcome = await run(browser); }, () => browser.close(),
+    (stage, error) => retainFailure(config.output_dir, stage, error, {case: name}));
+  return outcome;
+}
 
 async function heldCases(context, exercise, repetitions = 3) {
   const previousRecorder = context.api.router.record;
@@ -117,15 +131,10 @@ try {
   result.journey = await runJourney(config, {retirementHook: context => {
     Object.assign(normal.ams, context.config.ams);
     return retirementRetention({...context, user, outsider});
-  }, triggerHook: async context => {
+  }, triggerHook: context => {
     Object.assign(normal.ams, context.config.ams);
-    const browser = await openPreparedBrowser({...config, am_origins: context.config.ams});
-    let outcome;
-    await withRestoration(async () => {
-      outcome = await triggerAlwaysOn({...context, user, admin, outsider, browser});
-    }, () => browser.close(), (stage, error) => retainFailure(config.output_dir, stage, error,
-      {case: 'trigger_always_on_browser'}));
-    return outcome;
+    return withBrowser(context.config.ams, browser => triggerAlwaysOn({...context, user, admin, outsider, browser}),
+      'trigger_always_on_browser');
   }, queuedTurnHook: context => heldCases(context, async held => {
     if (context.phase === 'after_restart') await busyConfigurationCase(held);
     await held.runCase('writer.queued_edit_cancel', () => queuedCommandCase(held));
@@ -229,6 +238,10 @@ try {
           runCase: (name, operation) => caseContext.runCase(name.replace('user.', 'admin.'), operation)});
         await matrix.sandboxAlwaysOn(iteration, {
           created_by_run: config.run_id, sandbox_id: context.record.sandboxId,
+          verifyBrowserRelinquishment: iteration === 1 ? revision => withBrowser(context.config.ams,
+            browser => relinquishAndReplayAlwaysOn({browser, user, revision, adapter: context.adapter,
+              agentId: context.record.agentId, sandboxId: context.record.sandboxId}),
+            'lifecycle_always_on_browser') : undefined,
           verifyAdmission: async stage => {
             for (const am of ['a', 'b']) {
               const detail = (await context.api.rawRequest(am, 'GET',
@@ -267,6 +280,8 @@ try {
     case_count: rows.length, non_owner_request_count: observations.length,
     owner_restart_pass: result.journey?.steps.some(s => s.name === 'actual_owner_kill_and_recovery' && s.verdict === 'PASS') === true,
     trigger_owner_relinquishment: trigger?.owner_relinquishment ?? null,
+    lifecycle_owner_relinquishments: rows.filter(row => row.case === 'writer.lifecycle_owner_relinquishment_browser'
+      && row.verdict === 'PASS').map(row => ({phase: row.phase, ...row.owner_relinquishment})),
     ownerless_revival: revival ? {ingress: revival.ingress, replay_ingress: revival.replay_ingress,
       prior_owner_epoch: revival.prior_owner_epoch, owner_epoch: revival.owner_epoch,
       durable_admissions: revival.durable_admissions, durable_completions: revival.durable_completions,

@@ -94,8 +94,14 @@ function alwaysOnServer({badAck=false,unavailableAfterWrite=false,loseAck=false}
     return {status:200,body:{id:state.id,revision:state.revision,
       profile:{id:'profile_fixture',revision:1},...(badAck?{}:{always_on:state.profile.always_on})}};
   }});
-  return {rows,requests,state:()=>state,run:()=>matrix.sandboxAlwaysOn(1,{
-    created_by_run:fixture().run_id,sandbox_id:state.id})};
+  return {rows,requests,state:()=>state,run:callback=>matrix.sandboxAlwaysOn(1,{
+    created_by_run:fixture().run_id,sandbox_id:state.id,
+    verifyBrowserRelinquishment: callback && (async revision => {
+      assert.equal(state.profile.always_on, true);
+      assert.equal(state.revision, revision);
+      state = {...state, revision: state.revision + 1, profile: {always_on: false}};
+      return callback(revision);
+    })})};
 }
 
 test('always-on uses the POST SandboxView and GET aggregate contracts with peer restoration',async()=>{
@@ -103,6 +109,18 @@ test('always-on uses the POST SandboxView and GET aggregate contracts with peer 
   assert.equal(x.rows[0].verdict,'PASS');assert.equal(x.state().profile.always_on,false);
   assert.ok(x.requests.some(r=>r.am==='b'&&r.method==='POST'&&r.body.expected_revision===1));
   assert.equal(x.requests.at(-2).body.expected_revision,2);
+});
+
+test('lifecycle browser relinquishment settles the approval without another admin write', async () => {
+  const fixture = alwaysOnServer();
+  const proof = {owner: 'a', ingress: 'b', revisions_advanced: 1};
+  await fixture.run(revision => {
+    assert.equal(revision, 2);
+    return proof;
+  });
+  assert.deepEqual(fixture.rows[0].owner_relinquishment, proof);
+  assert.equal(fixture.state().profile.always_on, false);
+  assert.equal(fixture.requests.filter(request => request.method === 'POST').length, 2);
 });
 
 test('acknowledged always-on mutation followed by product 503 remains a failing read',async()=>{

@@ -182,6 +182,10 @@ export class AdminMatrix {
         await this.call(peer,'POST',`${path}/always-on`,{always_on:old,expected_revision:before.revision},[409]);
         const events=await this.call(peer,'GET',`${path}/events?limit=50`);
         check(Array.isArray(events) && events.every(e=>e.sandbox_id===fixture.sandbox_id),'sandbox_event_identity');
+        if (fixture.verifyBrowserRelinquishment) {
+          check(!old && desired && revision(current.revision), 'browser_relinquishment_requires_fresh_approval');
+          this.current.owner_relinquishment = await fixture.verifyBrowserRelinquishment(current.revision);
+        }
       }, async () => {
         const current=(await this.call(peer,'GET',path)).sandbox;
         if((current.profile.always_on===true)!==old)

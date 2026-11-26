@@ -237,6 +237,13 @@
           "minimum_runs": 1,
           "phases": [],
           "routing": "journey"
+        },
+        {
+          "case": "writer.lifecycle_owner_relinquishment_browser",
+          "minimum_runs": 1,
+          "phases": ["before_restart", "after_restart"],
+          "routing": "both",
+          "browser": true
         }
       ]
     },

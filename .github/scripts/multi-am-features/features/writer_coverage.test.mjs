@@ -73,3 +73,15 @@ test('prepared coverage requires the scoped abort, both ingress steps and a comp
   journey.steps.pop();
   assert.deepEqual(evaluate().groups.map(row => row.verdict), ['NOT_RUN', 'NOT_RUN']);
 });
+
+test('lifecycle Always on coverage requires browser execution on both sides of restart', async () => {
+  const registry = JSON.parse(await readFile(new URL('../writer-regressions.json', import.meta.url)));
+  const caseName = 'writer.lifecycle_owner_relinquishment_browser';
+  const evaluate = rows => writerCoverage(registry, rows, undefined, 'features').groups
+    .find(group => group.id === 'SW09').assertions.find(assertion => assertion.case === caseName).verdict;
+  const rows = ['before_restart', 'after_restart'].map(phase => ({case: caseName, phase, iteration: 1,
+    ams: ['a', 'b'], real_browser: true, verdict: 'PASS'}));
+  assert.equal(evaluate(rows), 'PASS');
+  assert.equal(evaluate(rows.slice(0, 1)), 'FAIL');
+  assert.equal(evaluate([rows[0], {...rows[1], real_browser: false}]), 'FAIL');
+});
