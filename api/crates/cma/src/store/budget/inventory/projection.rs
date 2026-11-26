@@ -4,8 +4,7 @@ use mongodb::bson::Document;
 use serde_json::json;
 
 pub(super) fn turn(document: &Document) -> Result<super::super::TurnRecord> {
-    let saved: super::super::TurnRecord =
-        crate::store::sandbox_mongo::read_record(document).map_err(|_| INVALID)?;
+    let saved = super::super::certification::read(document).map_err(|_| INVALID)?;
     let sequence = saved
         .turn_sequence
         .filter(|value| *value > 0)
