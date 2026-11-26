@@ -70,6 +70,11 @@ impl ReplyStore {
                         || attempt.content_hash.as_ref().is_some_and(|hash| {
                             !valid_hash(hash) || !record.operation_keys.contains(&attempt.operation)
                         })
+                        || attempt.answer.as_ref().is_some_and(|answer| {
+                            attempt.content_hash.is_none()
+                                || answer.operation_id(&record.target).ok().as_deref()
+                                    != Some(attempt.operation.as_str())
+                        })
                 })
         {
             return Err(ExecutionError::Corrupt);

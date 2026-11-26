@@ -2394,8 +2394,9 @@ committed item. Emit the primary commitment only through the marked
 through `replyAcceptedAnswerToTarget`. Use the existing tools for working
 acknowledgements, actions, media and supplemental messages.
 
-The original routed target and accepted response select one opaque delivery ID.
-The first admission binds the committed item and outbound message to that ID.
+The original routed target has one opaque primary-answer delivery ID.
+The first admission binds its accepted response, committed item and outbound
+message to that ID.
 An exact repeat reconciles the existing operation. A changed item or payload
 returns an idempotency conflict. A pending delayed submission returns
 `409 routed_reply_in_progress` with `Retry-After`. Retain the original sealed

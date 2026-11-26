@@ -50,8 +50,8 @@ impl AcceptedAnswerIdentity {
         }))
     }
 
-    /// A different item or payload for the same response must conflict with
-    /// the saved slot. Including either in the slot ID would allow a second send.
+    /// One routed target has one primary answer. Its response, item and message
+    /// bind the slot without letting conflicting input allocate another row.
     pub(super) fn operation(
         &self,
         target: &StoredTarget,
@@ -69,12 +69,15 @@ impl AcceptedAnswerIdentity {
         Ok(storage::hash(&storage::bytes(&(
             "accepted-answer-delivery-v1",
             target_id,
-            &self.response_id,
         ))?))
     }
 
     pub(super) fn content_hash(&self, message: &OutboundMessage) -> Result<String, ExecutionError> {
-        Ok(storage::hash(&storage::bytes(&(&self.item_id, message))?))
+        Ok(storage::hash(&storage::bytes(&(
+            &self.response_id,
+            &self.item_id,
+            message,
+        ))?))
     }
 }
 
@@ -157,87 +160,5 @@ impl FrameOperation {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        delivery::{durable::receipt_for, intents::DeliveryOutcome},
-        turns::routed::{
-            delivery_tests::effect,
-            test_support::{supported, Setup},
-        },
-    };
-
-    #[tokio::test]
-    async fn accepted_answer_aliases_share_the_saved_operation_in_both_orders() {
-        for frame_first in [false, true] {
-            let setup = Setup::new(supported()).await;
-            let store = ReplyStore(setup.journal().clone(), None);
-            let answer = AcceptedAnswerIdentity {
-                response_id: "resp_1".into(),
-                item_id: "primary_item".into(),
-            };
-            let ReplayEffect::Reply(message) = effect() else {
-                panic!("expected an outbound reply");
-            };
-            let key = answer.operation(setup.target(), &message).unwrap();
-            let frame = FrameOperation {
-                id: key.0.clone(),
-                payload: Some((key.1.clone(), answer.clone())),
-            };
-            let late = || {
-                store.admit_delayed_answer(
-                    &setup.plan,
-                    setup.target(),
-                    key.0.clone(),
-                    key.1.clone(),
-                    &answer,
-                )
-            };
-            let stream = || frame.admit(&store, &setup.plan, setup.target());
-            let first = if frame_first {
-                stream().await
-            } else {
-                late().await
-            };
-            let Admission::Claimed(claim) = first.unwrap() else {
-                panic!("the first alias must own delivery");
-            };
-            let second = if frame_first {
-                late().await
-            } else {
-                stream().await
-            };
-            assert!(matches!(second.unwrap(), Admission::Pending));
-            let changed = AcceptedAnswerIdentity {
-                item_id: "different_item".into(),
-                ..answer.clone()
-            };
-            let changed_key = changed.operation(setup.target(), &message).unwrap();
-            assert_eq!(key.0, changed_key.0);
-            assert_ne!(key.1, changed_key.1);
-            assert!(matches!(
-                store
-                    .admit_keyed_answer(
-                        &setup.plan,
-                        setup.target(),
-                        (changed_key.0, changed_key.1, Some(&changed))
-                    )
-                    .await,
-                Err(ExecutionError::IdempotencyConflict)
-            ));
-            let outcome = DeliveryOutcome::Confirmed {
-                platform_message_id: Some("fixture-message".into()),
-            };
-            store
-                .finish(&claim, &receipt_for(outcome.clone()))
-                .await
-                .unwrap();
-            for retry in [late().await, stream().await] {
-                let Admission::Replay(receipt) = retry.unwrap() else {
-                    panic!("both aliases must reconcile to the saved receipt");
-                };
-                assert_eq!(receipt.delivery, outcome);
-            }
-        }
-    }
-}
+#[path = "answer_identity_tests.rs"]
+mod tests;

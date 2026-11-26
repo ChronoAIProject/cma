@@ -112,9 +112,18 @@ impl Handler {
             .await;
         let current = match current {
             Ok(current) => current,
-            Err(ExecutionError::Expired) if root.answer.is_some() => {
+            Err(
+                error @ (ExecutionError::Expired
+                | ExecutionError::AuthorityChanged
+                | ExecutionError::Abandoned),
+            ) if root.answer.is_some() => {
+                let reason = match error {
+                    ExecutionError::Expired => "accepted_answer_target_expired",
+                    ExecutionError::AuthorityChanged => "delayed_reply_authority_refused",
+                    _ => "unknown_abandoned",
+                };
                 return self
-                    .expire_accepted_answer(&store, &mut root, plan, target, token)
+                    .refuse_accepted_answer(&store, &mut root, (plan, target), token, reason)
                     .await;
             }
             Err(
@@ -200,6 +209,17 @@ impl Handler {
                     .await
             }
             Err(ExecutionError::OperationLimit) => {
+                if root.answer.is_some() {
+                    return self
+                        .refuse_accepted_answer(
+                            &store,
+                            &mut root,
+                            (plan, target),
+                            token,
+                            "reply_operation_limit",
+                        )
+                        .await;
+                }
                 return self
                     .settle(
                         &store,
@@ -209,7 +229,7 @@ impl Handler {
                             reason: "reply_operation_limit".into(),
                         }),
                     )
-                    .await
+                    .await;
             }
             Err(error) => return Err(error),
             Ok(_) => return Err(ExecutionError::Corrupt),
@@ -261,44 +281,30 @@ impl Handler {
         })
         .await
     }
-    async fn expire_accepted_answer(
+    async fn refuse_accepted_answer(
         &self,
         store: &Store,
         root: &mut Root,
-        plan: &AdmittedPlan,
-        target: &StoredTarget,
+        (plan, target): (&AdmittedPlan, &StoredTarget),
         token: &PartitionLease,
+        reason: &str,
     ) -> Result<EffectDisposition, ExecutionError> {
-        use super::super::answer_dispatch::AnswerDispatch;
         let answer = root.answer.as_ref().ok_or(ExecutionError::Corrupt)?;
         let replies = ReplyStore(self.0.journal.clone(), Some(token.clone()));
-        let admission = replies
-            .admit_delayed_answer(
+        let receipt = match replies
+            .refuse_delayed_answer(
                 plan,
                 target,
-                root.operation.clone(),
-                root.content_hash.clone(),
+                &root.operation,
+                &root.content_hash,
                 answer,
+                reason,
             )
-            .await?;
-        let receipt = match admission {
-            Admission::Claimed(claim) => {
-                let receipt = receipt_for(DeliveryOutcome::Rejected {
-                    reason: "accepted_answer_target_expired".into(),
-                });
-                replies
-                    .finish_observed(&claim, &receipt, AnswerDispatch::NotDispatched)
-                    .await?;
-                receipt
-            }
-            Admission::Replay(receipt) => receipt,
-            Admission::Pending => return Ok(EffectDisposition::Retry),
-            Admission::Unknown => {
-                replies
-                    .recover_delayed(plan, target, &root.operation, &root.content_hash, None)
-                    .await?
-            }
-            _ => return Err(ExecutionError::Corrupt),
+            .await
+        {
+            Ok(receipt) => receipt,
+            Err(ExecutionError::Busy) => return Ok(EffectDisposition::Retry),
+            Err(error) => return Err(error),
         };
         self.settle(store, root, token, receipt).await
     }

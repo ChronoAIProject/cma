@@ -41,6 +41,8 @@ pub(super) struct Attempt {
     pub(super) operation: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) answer: Option<AcceptedAnswerIdentity>,
     pub(super) until: i64,
     pub(super) receipt: Option<StoredReceipt>,
 }
@@ -227,6 +229,7 @@ impl ReplyStore {
             claim: uuid::Uuid::new_v4().to_string(),
             operation,
             content_hash: None,
+            answer: None,
             until: (self.0.clock)() + 30,
             receipt: None,
         });
@@ -287,22 +290,35 @@ impl ReplyStore {
         allow_closed: bool,
     ) -> Result<Admission, ExecutionError> {
         let mut record = self.load(plan, target).await?;
-        if record.operation_keys.contains(&operation) {
-            if let Some(receipt) = OperationStore(self.0.clone())
+        let operations = OperationStore(self.0.clone());
+        if answer.is_some() || record.operation_keys.contains(&operation) {
+            if let Some(receipt) = operations
                 .lookup(&record, &operation, &content_hash)
                 .await?
             {
                 return Ok(Admission::Replay(receipt));
             }
+        }
+        if record.operation_keys.contains(&operation) {
             let attempt = record.keyed_attempt(&operation)?;
-            if attempt.content_hash.as_ref() != Some(&content_hash) {
+            if attempt.content_hash.as_ref() != Some(&content_hash)
+                || attempt.answer.as_ref() != answer
+            {
                 return Err(ExecutionError::IdempotencyConflict);
             }
-            return Ok(if attempt.until > (self.0.clock)() {
-                Admission::Pending
-            } else {
-                Admission::Unknown
-            });
+            if attempt.until > (self.0.clock)() {
+                return Ok(Admission::Pending);
+            }
+            if let Some(receipt) = operations.recover_answer(&self.1, &record, attempt).await? {
+                return Ok(Admission::Replay(
+                    self.0
+                        .receipts(&operation, &record.owner, record.retained_until)
+                        .load(&receipt)
+                        .await
+                        .map_err(|_| ExecutionError::Unavailable)?,
+                ));
+            }
+            return Ok(Admission::Unknown);
         }
         if let Some(receipt) = self.exact_confirmation(&record, &operation, true).await? {
             return Ok(Admission::Replay(receipt));
@@ -328,6 +344,7 @@ impl ReplyStore {
             claim: uuid::Uuid::new_v4().to_string(),
             operation: operation.clone(),
             content_hash: Some(content_hash),
+            answer: answer.cloned(),
             until: (self.0.clock)() + 30,
             receipt: None,
         };
@@ -351,8 +368,8 @@ impl ReplyStore {
             .await?;
         // Only the CAS winner creates a retained key record; failed competing
         // admissions cannot consume records outside the 64-operation bound.
-        OperationStore(self.0.clone())
-            .prepare(&self.1, &record, record.keyed_attempt(&operation)?, answer)
+        operations
+            .prepare(&self.1, &record, record.keyed_attempt(&operation)?)
             .await?;
         Ok(Admission::Claimed(Box::new(ReplyClaim {
             record,

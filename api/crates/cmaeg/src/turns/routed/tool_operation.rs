@@ -7,6 +7,7 @@ use super::{
     tool_reply_store::{Attempt, Record},
     AcceptedAnswerIdentity, ExecutionError, Journal,
 };
+use crate::delivery::{durable::receipt_for, intents::DeliveryOutcome};
 use crate::delivery::{intents::IntentReceipt, retained_receipt::StoredReceipt};
 use crate::replicas::partition::PartitionLease;
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,8 @@ struct Operation {
     answer: Option<AcceptedAnswerIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     answer_settlement: Option<AnswerSettlement>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    closed_without_prepare: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -37,6 +40,13 @@ struct Operation {
 struct AnswerSettlement {
     dispatch: AnswerDispatch,
     settled_at: i64,
+}
+
+impl Operation {
+    fn matches_attempt(&self, attempt: &Attempt) -> bool {
+        self.answer == attempt.answer
+            && (self.claim == attempt.claim || self.closed_without_prepare)
+    }
 }
 #[derive(Clone)]
 pub(super) struct OperationStore(pub Journal);
@@ -50,13 +60,24 @@ impl OperationStore {
         let Some(hash) = attempt.content_hash.as_deref() else {
             return Ok(None);
         };
-        let Some(entry) = self.read(record, &attempt.operation, Some(hash)).await? else {
-            return Ok(None);
-        };
-        if entry.answer.is_none() {
+        if attempt.answer.is_none() {
             return Ok(None);
         }
-        if entry.claim != attempt.claim {
+        let Some(entry) = self.read(record, &attempt.operation, Some(hash)).await? else {
+            if attempt.until > (self.0.clock)() {
+                return Err(ExecutionError::Busy);
+            }
+            let receipt = self
+                .close_unprepared(
+                    partition,
+                    record,
+                    attempt,
+                    "accepted_answer_reservation_interrupted",
+                )
+                .await?;
+            return Ok(Some(receipt));
+        };
+        if !entry.matches_attempt(attempt) {
             return Err(ExecutionError::Corrupt);
         }
         if let Some(receipt) = entry.receipt {
@@ -117,13 +138,68 @@ impl OperationStore {
         partition: &Option<PartitionLease>,
         record: &Record,
         attempt: &Attempt,
-        answer: Option<&AcceptedAnswerIdentity>,
     ) -> Result<(), ExecutionError> {
+        let entry = Self::entry(record, attempt)?;
+        self.write(partition, &entry, None).await
+    }
+
+    pub async fn close_unprepared(
+        &self,
+        partition: &Option<PartitionLease>,
+        record: &Record,
+        attempt: &Attempt,
+        reason: &str,
+    ) -> Result<StoredReceipt, ExecutionError> {
+        let mut entry = Self::entry(record, attempt)?;
+        if entry.answer.is_none() {
+            return Err(ExecutionError::Invalid);
+        }
+        let receipt: StoredReceipt = receipt_for(DeliveryOutcome::Rejected {
+            reason: reason.into(),
+        })
+        .into();
+        entry.receipt = Some(receipt.clone());
+        entry.answer_settlement = Some(AnswerSettlement {
+            dispatch: AnswerDispatch::NotDispatched,
+            settled_at: (self.0.clock)(),
+        });
+        entry.closed_without_prepare = true;
+        // The same create-only record is required before a worker gains a
+        // dispatch claim. If preparation won the race, do not assert no send.
+        match self.write(partition, &entry, None).await {
+            Ok(()) => Ok(receipt),
+            Err(
+                error @ (ExecutionError::Busy
+                | ExecutionError::LostLease
+                | ExecutionError::Uncertain
+                | ExecutionError::Unavailable),
+            ) => {
+                let Some(winner) = self
+                    .read(record, &entry.operation, Some(&entry.content_hash))
+                    .await?
+                else {
+                    return Err(error);
+                };
+                if winner.answer != entry.answer {
+                    return Err(ExecutionError::IdempotencyConflict);
+                }
+                winner.receipt.ok_or(ExecutionError::Busy)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn entry(record: &Record, attempt: &Attempt) -> Result<Operation, ExecutionError> {
+        if let Some(answer) = &attempt.answer {
+            if answer.operation_id(&record.target)? != attempt.operation {
+                return Err(ExecutionError::Invalid);
+            }
+        }
         let content_hash = attempt
             .content_hash
             .as_ref()
             .ok_or(ExecutionError::Invalid)?;
-        let entry = Operation {
+        Ok(Operation {
             kind: KIND.into(),
             id: id(record, &attempt.operation),
             target: record.target.clone(),
@@ -135,17 +211,26 @@ impl OperationStore {
             content_hash: content_hash.clone(),
             claim: attempt.claim.clone(),
             receipt: None,
-            answer: answer.cloned(),
+            answer: attempt.answer.clone(),
             answer_settlement: None,
-        };
+            closed_without_prepare: false,
+        })
+    }
+
+    async fn write(
+        &self,
+        partition: &Option<PartitionLease>,
+        entry: &Operation,
+        previous: Option<u64>,
+    ) -> Result<(), ExecutionError> {
         self.0
             .write_fenced(
                 partition,
                 &entry.id,
                 &entry.owner,
                 entry.retained_until,
-                &entry,
-                None,
+                entry,
+                previous,
             )
             .await?;
         Ok(())
@@ -171,7 +256,7 @@ impl OperationStore {
             )
             .await?
             .ok_or(ExecutionError::Corrupt)?;
-        if entry.claim != attempt.claim {
+        if !entry.matches_attempt(attempt) {
             return Err(ExecutionError::LostLease);
         }
         if let Some(saved) = &entry.receipt {
@@ -186,17 +271,7 @@ impl OperationStore {
             dispatch,
             settled_at: (self.0.clock)(),
         });
-        self.0
-            .write_fenced(
-                partition,
-                &entry.id,
-                &entry.owner,
-                entry.retained_until,
-                &entry,
-                Some(1),
-            )
-            .await?;
-        Ok(())
+        self.write(partition, &entry, Some(1)).await
     }
     pub async fn reconcile(
         &self,
@@ -212,7 +287,7 @@ impl OperationStore {
         else {
             return Ok(None);
         };
-        if entry.claim != attempt.claim {
+        if !entry.matches_attempt(attempt) {
             return Err(ExecutionError::Corrupt);
         }
         Ok(entry.receipt)
@@ -270,7 +345,19 @@ impl OperationStore {
             || entry.answer_settlement.as_ref().is_some_and(|settlement| {
                 settlement.settled_at <= 0 || settlement.settled_at >= record.retained_until
             })
-            || version != if entry.receipt.is_some() { 2 } else { 1 }
+            || version
+                != if entry.receipt.is_some() && !entry.closed_without_prepare {
+                    2
+                } else {
+                    1
+                }
+            || (entry.closed_without_prepare
+                && (!matches!(entry.answer_settlement.as_ref(), Some(settlement)
+                        if settlement.dispatch == AnswerDispatch::NotDispatched)
+                    || !matches!(
+                        entry.receipt.as_deref().map(|receipt| &receipt.delivery),
+                        Some(DeliveryOutcome::Rejected { .. })
+                    )))
             || entry.receipt.as_ref().is_some_and(|receipt| {
                 storage::bytes(receipt).map_or(true, |b| b.len() > 16 * 1024)
             })
