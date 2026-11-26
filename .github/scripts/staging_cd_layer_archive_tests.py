@@ -225,8 +225,12 @@ class ProducerTests(unittest.TestCase):
         self.assertEqual(reader['needs'], 'retain_layers')
         self.assertEqual(reader['cache-mode'], 'read')
         self.assertEqual(reader['concurrency'], writer['concurrency'])
+        proof = next(s for s in reader['steps'] if s.get('id') == 'verify-reuse')
+        self.assertEqual(proof['if'],
+                         "steps.verify-archive.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'")
         self.assertEqual(reader['steps'][-1]['if'],
-                         "steps.verify-reuse.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'")
+                         "steps.verify-reuse.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true' && "
+                         "vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true'")
         for step in publisher['steps']:
             if step.get('id') in ('producer', 'publication'):
                 self.assertEqual(step['env']['CD_LAYER_ARCHIVE_RESTORED'], "${{ steps.layer-validate.outcome == 'success' }}")

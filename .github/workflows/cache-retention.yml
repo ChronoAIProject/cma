@@ -133,6 +133,7 @@ jobs:
       observed_bytes_to_admit: ${{ steps.recovery.outputs.observed_bytes_to_admit }}
     if: >-
       always() && !cancelled() &&
+      vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true' &&
       (needs.staging_activity.result != 'success' || needs.staging_activity.outputs.needed != 'false') &&
       github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
       github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
@@ -313,7 +314,9 @@ jobs:
           CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
         run: python3 -B .github/scripts/staging_cd_layer_reuse.py
       - name: Retire verified compatible archive predecessors
-        if: steps.verify-reuse.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
+        if: >-
+          steps.verify-reuse.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true' &&
+          vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true'
         timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
