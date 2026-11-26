@@ -1,23 +1,23 @@
-use super::restart_receipt as receipts;
 use super::*;
+use super::{restart_publication, restart_receipt as receipts};
 use crate::store::{
     agent_control_lineage::fence_restart_lineage,
     agent_control_receipt::{
-        consume_restart_predecessor, matches_restart_predecessor, owner_stop_operation,
-        STOP_RECEIPT_FIELD,
+        consume_restart_predecessor, has_owner_stop_receipt, matches_restart_predecessor,
+        owner_stop_operation, STOP_RECEIPT_FIELD,
     },
     agent_log_integrity::{AppendCapacity, TransactionLogError},
     agent_log_segments::{
         publication::{self, PublicationIdentity},
         transaction_scope::TransactionScope,
-        writer_commit::{self, AggregateUpdate, PublicationInput, Recorded},
+        writer_commit::{AggregateUpdate, PublicationInput},
     },
     sandbox_mongo::{is_duplicate_key, record_bson},
     work_publication::FenceError,
 };
 use layer2_core::sandbox::{
     store::{AgentRestartAcceptance, AgentRestartRequest, AgentRestartSource},
-    AgentStatus, AgentWorkStep, SandboxStatus, WorkspaceStatus,
+    AgentLogEntry, AgentLogKind, AgentStatus, AgentWorkStep, SandboxStatus, WorkspaceStatus,
 };
 use layer3_adapter::{AgentCloseRequest, AgentProcessAction, AgentSlot};
 use mongodb::{
@@ -90,7 +90,14 @@ async fn apply(
     store: &MongoSandboxStore,
     request: &AgentRestartRequest,
     mut scope: TransactionScope<'_>,
-) -> Result<(AgentRestartAcceptance, Option<Recorded>, bool), ApplyError> {
+) -> Result<
+    (
+        AgentRestartAcceptance,
+        Option<restart_publication::RecordedRestart>,
+        bool,
+    ),
+    ApplyError,
+> {
     let current = scope.control_snapshot(store, &request.target).await?;
     let records = receipts::records(store);
     if let Some(row) = scope
@@ -108,7 +115,8 @@ async fn apply(
             AgentControlStoreError::RestartEvidenceRequired,
         ));
     }
-    let (mut next, acceptance) = plan(&current, request).map_err(ApplyError::Domain)?;
+    let (mut next, acceptance, interruption) =
+        plan(&current, request).map_err(ApplyError::Domain)?;
     // New command reservations update the Agent in the same transaction as the
     // lane order. The Agent CAS forces either admission to retry on overlap.
     let command_order = scope
@@ -158,7 +166,7 @@ async fn apply(
     let sequence = signed(current.agent.conversation.last_seq, "Agent log sequence")
         .map_err(AgentControlStoreError::Corrupt)
         .map_err(ApplyError::Domain)?;
-    let mut filter = doc! {
+    let filter = doc! {
         "_id": current.agent.id.as_str(),
         "revision": revision,
         "status": "stopped",
@@ -195,52 +203,37 @@ async fn apply(
     )
     .map_err(store_error)
     .map_err(ApplyError::Domain)?;
-    let publication = if crate::store::agent_log_segments::read_format(row)
-        .map_err(store_error)
-        .map_err(ApplyError::Domain)?
-        .is_some()
-    {
-        let identity = PublicationIdentity {
-            key: acceptance.operation_id.clone(),
-            fingerprint: Binary {
-                subtype: BinarySubtype::Generic,
-                bytes: request.claim.fingerprint().to_vec(),
-            },
-            appended_at: acceptance.accepted_at.clone(),
-        };
-        let publication = writer_commit::publish_existing(
-            store,
-            &mut scope,
-            PublicationInput {
-                operation: &identity,
-                current: &current.agent,
-                next: &next,
-                logs: &[],
-                capacity: AppendCapacity::Normal,
-                result_digest: publication::result_digest(&acceptance)
-                    .map_err(store_error)
-                    .map_err(ApplyError::Domain)?,
-            },
-            AggregateUpdate { filter, fields },
-        )
-        .await
-        .map_err(log_error)?;
-        Some(publication)
-    } else {
-        filter.insert("document_schema_version", DOCUMENT_SCHEMA_VERSION);
-        carry_integrity_for_revision(row, &current.agent, &next, &mut fields)
-            .map_err(store_error)
-            .map_err(ApplyError::Domain)?;
-        let applied = scope
-            .update_one(&store.agents, filter, doc! {"$set":fields})
-            .await
-            .map_err(ApplyError::Driver)?;
-        if applied.matched_count != 1 {
-            return Err(ApplyError::Domain(AgentControlStoreError::Conflict));
-        }
-        None
+    let identity = PublicationIdentity {
+        key: acceptance.operation_id.clone(),
+        fingerprint: Binary {
+            subtype: BinarySubtype::Generic,
+            bytes: request.claim.fingerprint().to_vec(),
+        },
+        appended_at: acceptance.accepted_at.clone(),
     };
-    let session = scope.release();
+    let log = interruption.map(|kind| AgentLogEntry {
+        agent_id: next.id.clone(),
+        seq: next.conversation.last_seq,
+        appended_at: acceptance.accepted_at.clone(),
+        kind,
+    });
+    let (publication, session) = restart_publication::record(
+        store,
+        scope,
+        row,
+        PublicationInput {
+            operation: &identity,
+            current: &current.agent,
+            next: &next,
+            logs: log.as_slice(),
+            capacity: AppendCapacity::Normal,
+            result_digest: publication::result_digest(&acceptance)
+                .map_err(store_error)
+                .map_err(ApplyError::Domain)?,
+        },
+        AggregateUpdate { filter, fields },
+    )
+    .await?;
     // Keep the existing parent write-conflict fence shared with Agent creation.
     fence_restart_lineage(store, &current, &acceptance.operation_id, session).await?;
     let removed = store
@@ -270,7 +263,7 @@ async fn apply(
 fn plan(
     current: &ControlSnapshot,
     request: &AgentRestartRequest,
-) -> Result<(Agent, AgentRestartAcceptance), AgentControlStoreError> {
+) -> Result<(Agent, AgentRestartAcceptance, Option<AgentLogKind>), AgentControlStoreError> {
     let source = request
         .observed_process
         .as_ref()
@@ -330,9 +323,19 @@ fn plan(
     {
         return Err(AgentControlStoreError::Conflict);
     }
-    let next = agent
-        .admit_owner_restart(&current.worktree, request.requested_at.clone())
-        .map_err(|_| AgentControlStoreError::Conflict)?;
+    let has_stopped_turn = agent.conversation.active_turn.is_some();
+    if has_stopped_turn && !has_owner_stop_receipt(&current.row, agent) {
+        return Err(AgentControlStoreError::RestartTurnUnsettled);
+    }
+    let (next, interruption) = agent
+        .plan_owner_restart(&current.worktree, request.requested_at.clone())
+        .map_err(|_| {
+            if has_stopped_turn {
+                AgentControlStoreError::RestartTurnUnsettled
+            } else {
+                AgentControlStoreError::Conflict
+            }
+        })?;
     let acceptance = AgentRestartAcceptance {
         operation_id: receipts::operation_id(&request.claim),
         agent_id: agent.id.clone(),
@@ -345,7 +348,7 @@ fn plan(
             .ok_or(AgentControlStoreError::Conflict)?
             .to_owned(),
     };
-    Ok((next, acceptance))
+    Ok((next, acceptance, interruption))
 }
 
 fn validate_replay(
@@ -414,7 +417,7 @@ async fn reconcile(
     store: &MongoSandboxStore,
     request: &AgentRestartRequest,
     acceptance: AgentRestartAcceptance,
-    publication: Option<Recorded>,
+    publication: Option<restart_publication::RecordedRestart>,
     at: Timestamp,
 ) -> Result<AgentRestartAcceptance, AgentControlStoreError> {
     let mut session = store
@@ -445,13 +448,7 @@ async fn reconcile(
         ));
     }
     if let Some(publication) = publication {
-        if !publication
-            .matches(store, &mut session)
-            .await
-            .map_err(store_error)?
-        {
-            return Err(unknown_control("segmented restart publication is absent"));
-        }
+        publication.verify(store, &mut session).await?;
     }
     Ok(recorded)
 }

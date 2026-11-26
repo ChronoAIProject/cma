@@ -78,6 +78,8 @@ pub(crate) mod bots;
 mod bots_mongo_integration_tests;
 mod budget;
 pub(crate) use budget::inventory as turn_budget_inventory;
+#[cfg(test)]
+pub(crate) mod budget_test_fixture;
 mod channel_storage_retention;
 mod checkpoint_capture;
 mod checkpoint_objects;

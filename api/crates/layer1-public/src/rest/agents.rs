@@ -308,7 +308,7 @@ pub(crate) async fn read(
                 && lineage.sandbox.status == layer2_core::sandbox::SandboxStatus::Active
                 && lineage
                     .agent
-                    .admit_owner_restart(&lineage.worktree, layer2_core::now_rfc3339())
+                    .plan_owner_restart(&lineage.worktree, layer2_core::now_rfc3339())
                     .is_ok();
             let mut view =
                 AgentView::from_lineage(*lineage, None).with_sandbox_profile_readability(readable);

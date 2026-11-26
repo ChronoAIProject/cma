@@ -7,7 +7,9 @@ use layer2_core::{
 };
 use serde_json::json;
 
-struct Restart;
+struct Restart {
+    refusal: Option<AgentServiceError>,
+}
 
 #[async_trait::async_trait]
 impl AgentRestartControl for Restart {
@@ -24,6 +26,9 @@ impl AgentRestartControl for Restart {
             return Err(AgentServiceError::NotFound);
         }
         assert_eq!(key, "owner-restart");
+        if let Some(refusal) = &self.refusal {
+            return Err(refusal.clone());
+        }
         let at = "2026-09-05T00:00:00Z";
         Ok(serde_json::from_value(json!({
             "operation_id": "restart-fixture",
@@ -59,7 +64,13 @@ pub(super) async fn scenario(name: &str) -> Option<super::Scenario> {
     let state = if mode == "disabled" {
         fixture.state
     } else {
-        fixture.state.with_owner_agent_restart(Arc::new(Restart))
+        fixture.state.with_owner_agent_restart(Arc::new(Restart {
+            refusal: match mode {
+                "runtime_unsupported" => Some(AgentServiceError::RestartRuntimeUnsupported),
+                "turn_unsettled" => Some(AgentServiceError::RestartTurnUnsettled),
+                _ => None,
+            },
+        }))
     };
     Some(super::Scenario {
         router: agent_router(state),

@@ -23,6 +23,7 @@ const CONTROL_ATTEMPTS: usize = 8;
 pub(super) mod restart;
 pub(super) mod restart_cancel;
 pub(super) mod restart_dispatch;
+mod restart_publication;
 mod restart_receipt;
 pub(super) mod restart_teardown;
 mod segmented;

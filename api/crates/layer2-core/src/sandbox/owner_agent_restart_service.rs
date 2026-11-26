@@ -9,7 +9,7 @@ use super::super::{
         AgentControlStoreError, AgentControlTarget, AgentRestartAcceptance, AgentRestartRequest,
         AgentRestartSource, AgentServiceStore,
     },
-    Agent, AgentServiceError, AgentStatus, Sandbox, Workspace, Worktree,
+    Agent, AgentServiceError, AgentStatus, AgentStopReason, Sandbox, Workspace, Worktree,
 };
 use super::support::{control_error, store_error};
 use crate::{
@@ -114,13 +114,23 @@ impl AgentRestartControl for AgentRestartService {
         let worktree = worktree
             .map_err(store_error)?
             .ok_or(AgentServiceError::NotFound)?;
+        let has_stopped_turn = agent.stop_reason == Some(AgentStopReason::Owner)
+            && agent.conversation.active_turn.is_some();
+        let classify_unsupported = |error| {
+            if has_stopped_turn && error == AgentServiceError::RestartRuntimeUnsupported {
+                AgentServiceError::RestartTurnUnsettled
+            } else {
+                error
+            }
+        };
         agent
-            .admit_owner_restart(&worktree, request.requested_at.clone())
+            .plan_owner_restart(&worktree, request.requested_at.clone())
             .map_err(|_| AgentServiceError::ControlConflict)?;
         request.observed_process = Some(
             self.observation
                 .prove_closed(&agent, &sandbox, &workspace, &worktree)
-                .await?,
+                .await
+                .map_err(classify_unsupported)?,
         );
         request.requested_at = now_rfc3339();
         self.store
