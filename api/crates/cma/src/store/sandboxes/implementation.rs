@@ -122,6 +122,14 @@ impl SandboxStore for MongoSandboxStore {
         self.desktop_verified_runtime_image.as_deref() == Some(target)
     }
 
+    fn managed_runtime_target<'a>(&self, sandbox: &Sandbox, target: &'a str) -> Option<&'a str> {
+        (!target.is_empty()
+            && !self.default_pool_holds.image(target)
+            && (!sandbox.has_managed_desktop_image()
+                || self.desktop_runtime_target_is_qualified(target)))
+        .then_some(target)
+    }
+
     async fn unpublished_runtime_recovery_snapshot(
         &self,
         id: &SandboxId,

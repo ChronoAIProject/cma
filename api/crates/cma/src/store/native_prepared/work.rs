@@ -34,6 +34,15 @@ impl MongoSandboxStore {
         if layer2_core::seconds_from_rfc3339(at).is_none() || until <= at {
             return Err(SandboxStoreError::Conflict);
         }
+        let lane_filter = match (
+            self.default_pool_holds.lane(false),
+            self.default_pool_holds.lane(true),
+        ) {
+            (true, true) => return Ok(None),
+            (true, false) => doc! {"machine": true},
+            (false, true) => doc! {"machine": {"$ne": true}},
+            (false, false) => Document::new(),
+        };
         let mut states = vec![doc! {"state":{"$in":["preparing","installing","retiring"]}}];
         for (machine, allowed) in [false, true].into_iter().zip(ready_classes) {
             if allowed {
@@ -46,17 +55,19 @@ impl MongoSandboxStore {
             }
         }
         let token = uuid::Uuid::new_v4().to_string();
+        let mut eligible = doc! {"kind":"reservation","$or":states,
+        "lease_until":{"$lte":at,"$regex":CANONICAL_TIME},
+        "check_after":{"$lte":at,"$regex":CANONICAL_TIME},
+        "$expr":{"$and":[
+            server_due("lease_until"),server_due("check_after"),
+            {"$gt":[until_date,"$$NOW"]},
+        ]}};
+        eligible.extend(lane_filter);
         // Keep indexed caller bounds as discovery hints, but an ahead caller
         // cannot steal server-live work or run a future scheduled probe.
         self.native_prepared
             .find_one_and_update(
-                doc! {"kind":"reservation","$or":states,
-                "lease_until":{"$lte":at,"$regex":CANONICAL_TIME},
-                "check_after":{"$lte":at,"$regex":CANONICAL_TIME},
-                "$expr":{"$and":[
-                    server_due("lease_until"),server_due("check_after"),
-                    {"$gt":[until_date,"$$NOW"]},
-                ]}},
+                eligible,
                 doc! {"$set":{"lease_token":&token,"lease_until":until}},
             )
             .sort(doc! {"check_after":1,"_id":1})
