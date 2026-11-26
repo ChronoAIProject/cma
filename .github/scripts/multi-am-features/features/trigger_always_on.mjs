@@ -2,7 +2,36 @@ import {randomUUID} from 'node:crypto';
 import {assertOwner, check, hash, id, other, poll} from '../cma/core.mjs';
 import {retainFailure, withRestoration} from '../failure.mjs';
 
-export async function triggerAlwaysOn({adapter, user, admin, outsider, config}) {
+export async function triggerAlwaysOn(context) {
+  const {admin, config} = context;
+  const path = '/api/v1/admin/settings';
+  const read = async am => (await admin.request(am, 'GET', path)).body;
+  const before = await read('a');
+  const original = before.settings.triggers;
+  check(typeof original.enabled === 'boolean' && typeof original.orchestration_paused === 'boolean',
+    'trigger_platform_policy_missing');
+  const intended = {enabled: true, orchestration_paused: false};
+  const matches = (value, expected) => value.enabled === expected.enabled &&
+    value.orchestration_paused === expected.orchestration_paused;
+  const set = (am, expected_revision, triggers) => admin.request(am, 'PATCH', path,
+    {body: {expected_revision, triggers}});
+  let result;
+  await withRestoration(async () => {
+    if (!matches(original, intended)) await set('a', before.revision, intended);
+    check(matches((await read('b')).settings.triggers, intended), 'trigger_platform_policy_unavailable');
+    result = await exerciseTrigger(context);
+  }, async () => {
+    const current = await read('b');
+    if (!matches(current.settings.triggers, original)) {
+      check(matches(current.settings.triggers, intended), 'trigger_platform_policy_changed_by_another_writer');
+      await set('b', current.revision, original);
+    }
+    check(matches((await read('a')).settings.triggers, original), 'trigger_platform_policy_restore_failed');
+  }, (stage, error) => retainFailure(config.output_dir, stage, error, {case: 'trigger_platform_policy'}));
+  return result;
+}
+
+async function exerciseTrigger({adapter, user, admin, outsider, config}) {
   const triggerKey = randomUUID();
   const content = {
     presentation: {title: 'Two Manager Trigger ' + triggerKey, description: 'Synthetic Trigger journey',

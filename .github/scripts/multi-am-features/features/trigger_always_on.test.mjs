@@ -11,12 +11,21 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
     agent: {state: 'created', id: agent}, sandbox: {state: 'created', id: sandbox},
   }};
   let alwaysOn = false, revision = 1, agentState = 'ready', sandboxState = 'active';
+  let triggers = {enabled: false, orchestration_paused: false};
   let createKey, startKey;
   const adapter = {ownerOf: async input => {
     assert.equal(input.agentId, agent);
     return {am: 'a', agent_id: agent, epoch: 3, pod_uid: 'manager-a'};
   }};
   const admin = {request: async (am, method, path, options) => {
+    if (path === '/api/v1/admin/settings') {
+      if (method === 'PATCH') {
+        assert.equal(options.body.expected_revision, 1);
+        triggers = options.body.triggers;
+        calls.push(triggers.enabled ? 'enable-triggers' : 'restore-triggers');
+      }
+      return {body: {revision: 1, settings: {triggers}}};
+    }
     if (path === '/api/v1/triggers') return {body: {id: trigger, draft_version: 1}};
     if (path.endsWith('/publish')) return {body: {public_id: 'fixture-public'}};
     if (path.endsWith('/retire')) {
@@ -81,6 +90,7 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
   }};
   await triggerAlwaysOn({adapter, user, admin, outsider,
     config: {owner_id: subject, public_origin: 'https://fixture.example'}});
-  assert.deepEqual(calls, ['create', 'start', 'enable', 'replay-create', 'replay-start',
-    'revoke', 'replay-create', 'replay-start', 'stop-agent', 'delete-agent', 'retire-sandbox', 'retire-trigger']);
+  assert.deepEqual(calls, ['enable-triggers', 'create', 'start', 'enable', 'replay-create', 'replay-start',
+    'revoke', 'replay-create', 'replay-start', 'stop-agent', 'delete-agent', 'retire-sandbox', 'retire-trigger',
+    'restore-triggers']);
 });
