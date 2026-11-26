@@ -89,7 +89,7 @@ fn corpora() -> Vec<Corpus> {
         112
     );
     assert_eq!(privacy_additions, 12);
-    assert_eq!(lifecycle_additions, 4);
+    assert_eq!(lifecycle_additions, 8);
     assert_eq!(agent_list_privacy_additions, 8);
     corpora
 }

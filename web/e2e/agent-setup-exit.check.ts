@@ -196,7 +196,9 @@ for (const scenario of [
     if (detailFirst) await page.clock.pauseAt(new Date(Date.now() + 500));
     await reopen.press('Enter');
     const progress = page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true });
-    await expect(progress).toContainText('still uses one Sandbox slot');
+    await expect(progress).toContainText(
+      'Check Environments for your current Sandbox capacity while deletion finishes.',
+    );
     await expect(progress.getByText('Last status read:')).toBeVisible();
     expect(deletes).toHaveLength(scenario.uncertain ? 2 : 1);
     await expect(page.getByRole('dialog', { name: 'Sandbox deleted', exact: true })).toHaveCount(0);
