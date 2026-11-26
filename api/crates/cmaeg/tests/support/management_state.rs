@@ -1,17 +1,28 @@
 use cmaeg::{
-    auth::CreatorAuthenticator, channels::management::ManagementState, providers::ProviderClient,
+    auth::CreatorAuthenticator,
+    channels::management::ManagementState,
+    providers::{ProviderClient, ProviderRegistry},
     records::RecordClient,
 };
 use cmaeg_core::seal::MasterKeyRing;
 use std::sync::Arc;
 
 pub fn state(
-    providers: Arc<ProviderClient>,
+    registry: ProviderRegistry,
     records: Arc<RecordClient>,
     master_keys: Arc<MasterKeyRing>,
     cma_base_url: &str,
     nyxid_base_url: &str,
 ) -> ManagementState {
+    let providers = Arc::new(
+        ProviderClient::new(
+            registry,
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(2),
+            8,
+        )
+        .unwrap(),
+    );
     ManagementState::new(
         providers,
         records,

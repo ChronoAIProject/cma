@@ -82,18 +82,9 @@ fn management_state(
     nyxid: &FakeNyxid,
     ring: cmaeg_core::seal::MasterKeyRing,
 ) -> ManagementState {
-    let providers = Arc::new(
-        ProviderClient::new(
-            registry(provider.base_url()),
-            std::time::Duration::from_secs(1),
-            std::time::Duration::from_secs(2),
-            8,
-        )
-        .unwrap(),
-    );
     let records = Arc::new(RecordClient::new(&cma.base_url, "cma-service").unwrap());
     management_fixture::state(
-        providers,
+        registry(provider.base_url()),
         records,
         Arc::new(ring),
         &cma.base_url,

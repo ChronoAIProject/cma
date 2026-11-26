@@ -43,6 +43,31 @@ pub struct ChannelActivity {
     pub consumers: Vec<ActivityConsumer>,
 }
 
+impl ChannelActivity {
+    pub(crate) fn metadata(
+        event_id: String,
+        source: SourceKind,
+        actor: Actor,
+        conversation: ActivityConversation,
+        occurred_at: String,
+        received_at: String,
+    ) -> Self {
+        Self {
+            event_id,
+            source,
+            actor,
+            conversation,
+            occurred_at,
+            received_at,
+            quoted_context: None,
+            kind: None,
+            event_type: None,
+            source_occurred_at: None,
+            consumers: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct QuotedContextSummary {
     pub relation: cmaeg_core::activity::QuoteRelation,
