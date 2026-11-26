@@ -405,6 +405,8 @@ pub struct InMemorySandboxStore {
     #[cfg(test)]
     artifact_body_reads: Arc<std::sync::atomic::AtomicUsize>,
     managed_runtime_version: Option<String>,
+    #[cfg(test)]
+    managed_machine_runtime_version: Option<String>,
     state: Arc<Mutex<State>>,
     profiles: crate::profiles::InMemoryProfileStore,
 }

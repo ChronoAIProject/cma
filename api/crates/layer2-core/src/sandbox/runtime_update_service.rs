@@ -6,7 +6,7 @@ use super::{
     Sandbox, SandboxImageRotationPhase, SandboxLifecycleOperation, SandboxRevivePhase,
     SandboxStatus, SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoveryVerifier,
 };
-use crate::{Caller, Capability, SandboxId, SubjectId};
+use crate::{released_runtime::ReleasedLane, Caller, Capability, SandboxId, SubjectId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SandboxRuntimeUpdateError {
@@ -40,8 +40,7 @@ impl SandboxRuntimeUpdateService {
         )
     }
 
-    /// The latest managed runtime is the source's agent-lane release, read
-    /// once per decision so one request never mixes two releases.
+    /// Capture the source once per decision so one request never mixes two releases.
     pub fn with_released(
         store: Arc<dyn SandboxStore>,
         released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
@@ -68,7 +67,7 @@ impl SandboxRuntimeUpdateService {
     pub fn latest_version_for(&self, sandbox: &Sandbox) -> Option<String> {
         sandbox
             .managed_runtime_lane()
-            .unwrap_or(crate::released_runtime::ReleasedLane::Agent)
+            .unwrap_or(ReleasedLane::Agent)
             .version_in(&self.released.snapshot())
             .map(str::to_owned)
     }
@@ -274,9 +273,8 @@ impl SandboxRuntimeUpdateService {
                 return Err(SandboxRuntimeUpdateError::NotAvailable);
             }
             if sandbox.unpublished_recovery_candidate() {
-                // A reopen stalled on a superseded pinned runtime cannot succeed there:
-                // the current manager refuses that runtime. Retrying it would park the
-                // Sandbox in the same place again, so recover onto the latest (#2257).
+                // Agent reopens can recover on the current release after a
+                // terminal refusal of the pinned release (#2257).
                 let target = if self.target_is_qualified(&sandbox, latest)
                     && recover_on_latest(&sandbox, target_version, latest)
                 {
@@ -361,9 +359,10 @@ impl Sandbox {
     }
 }
 
-/// Stalled at reopening conversations on an unpublished runtime, which recovery rebuilds.
+/// Agent recovery can rebuild a reopen stalled on a superseded release.
 fn recover_on_latest(sandbox: &Sandbox, requested: &str, latest: &str) -> bool {
-    requested != latest
+    sandbox.managed_runtime_lane() == Some(ReleasedLane::Agent)
+        && requested != latest
         && matches!(
             sandbox.lifecycle.operation,
             Some(SandboxLifecycleOperation::ImageRotation {

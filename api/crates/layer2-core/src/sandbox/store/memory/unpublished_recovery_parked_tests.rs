@@ -1,14 +1,24 @@
 use super::*;
 use crate::sandbox::{
     SandboxImageRotationPhase, SandboxLifecycleOperation, SandboxRotationIdentity,
+    SandboxRuntimeImageOrigin,
 };
 
-fn parked() -> (Arc<InMemorySandboxStore>, SandboxId) {
-    let (store, id) = fixture();
+fn parked(machine_target: Option<&str>) -> (Arc<InMemorySandboxStore>, SandboxId) {
+    let (mut store, id) = fixture();
+    store.managed_machine_runtime_version = machine_target.map(str::to_owned);
     {
         let mut state = store.lock();
         let agents = state.agents.values().cloned().collect::<Vec<_>>();
         let row = state.sandboxes.get_mut(&id).unwrap();
+        if machine_target.is_some() {
+            row.origin = SandboxOrigin::Lifecycle {
+                operation_id: "machine-creation".into(),
+            };
+            row.profile.content.runtime_image = Some("image-v1".into());
+            row.profile.digest = crate::profiles::content_digest(&row.profile.content).unwrap();
+            row.lifecycle.runtime_image_origin = Some(SandboxRuntimeImageOrigin::ManagedMachine);
+        }
         row.status = SandboxStatus::Active;
         row.failure = None;
         row.request_runtime_update("image-v2".into(), false, NOW.into())
@@ -46,7 +56,7 @@ fn parked() -> (Arc<InMemorySandboxStore>, SandboxId) {
 async fn consumed_parked_retry_requires_explicit_consent_and_exact_current_proof() {
     for operator in [false, true] {
         for refusal in [false, true] {
-            let (store, id) = parked();
+            let (store, id) = parked(None);
             let before = store
                 .unpublished_runtime_recovery_snapshot(&id)
                 .await
@@ -125,7 +135,7 @@ async fn consumed_parked_retry_requires_explicit_consent_and_exact_current_proof
 async fn retrying_a_reopen_parked_on_a_superseded_target_recovers_onto_the_latest_runtime() {
     // #2257: the owner's Retry sends the pinned target after the latest runtime moved on.
     for operator in [false, true] {
-        let (store, id) = parked();
+        let (store, id) = parked(None);
         let before = store
             .unpublished_runtime_recovery_snapshot(&id)
             .await
@@ -136,6 +146,7 @@ async fn retrying_a_reopen_parked_on_a_superseded_target_recovers_onto_the_lates
         );
         let service = SandboxRuntimeUpdateService::new(store.clone(), "image-v3".into())
             .with_unpublished_recovery(Arc::new(VerifyOriginalProcesses));
+        assert!(service.retry_uses_latest(&before.sandbox, "image-v2", "image-v3"));
         let caller = crate::Caller {
             subject: before.sandbox.owner.clone(),
             authorization: crate::Authorization::new([if operator {
@@ -166,9 +177,34 @@ async fn retrying_a_reopen_parked_on_a_superseded_target_recovers_onto_the_lates
 }
 
 #[tokio::test]
+async fn retrying_a_machine_reopen_keeps_the_admitted_target_after_a_release() {
+    let (store, id) = parked(Some("image-v3"));
+    let before = store.get_sandbox(&id).await.unwrap().unwrap();
+    let released = Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+        "unrelated-agent-release".into(),
+        Some("image-v3".into()),
+    ));
+    let service = SandboxRuntimeUpdateService::with_released(store.clone(), released)
+        .with_unpublished_recovery(Arc::new(VerifyOriginalProcesses));
+    assert!(service.target_is_qualified(&before, "image-v3"));
+    assert!(!service.retry_uses_latest(&before, "image-v2", "image-v3"));
+    let caller = crate::Caller {
+        subject: before.owner.clone(),
+        authorization: crate::Authorization::new([crate::Capability::UseOwnSandboxes]),
+    };
+    let after = service.request(&caller, &id, "image-v2").await.unwrap();
+    assert_eq!(after.admitted_runtime_update_target(), Some("image-v2"));
+    assert_eq!(
+        after.runtime_update_request().unwrap().target_version,
+        "image-v2"
+    );
+    assert_eq!(after.lifecycle.home, before.lifecycle.home);
+}
+
+#[tokio::test]
 async fn retrying_a_parked_update_before_reopen_keeps_its_pinned_target() {
     // Only a stalled reopen moves off a superseded target; other parked phases retry as pinned.
-    let (store, id) = parked();
+    let (store, id) = parked(None);
     {
         let mut state = store.lock();
         let row = state.sandboxes.get_mut(&id).unwrap();
