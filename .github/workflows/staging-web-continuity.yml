@@ -92,6 +92,7 @@ jobs:
       queue: max
       cancel-in-progress: false
     permissions:
+      id-token: write
       contents: write
       pull-requests: read
       actions: read

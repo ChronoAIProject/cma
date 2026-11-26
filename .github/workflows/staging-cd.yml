@@ -237,6 +237,7 @@ jobs:
       fromJSON(needs.allocate.outputs.lanes)['web'] == 'web' &&
       fromJSON(needs.allocate.outputs.publications)['web'] != ''
     permissions:
+      id-token: write
       contents: write
       pull-requests: read
       actions: read

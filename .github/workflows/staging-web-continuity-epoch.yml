@@ -146,6 +146,7 @@ jobs:
     needs: release
     if: needs.release.outputs.finalized == 'success'
     permissions:
+      id-token: write
       contents: read
       actions: read
       deployments: read
