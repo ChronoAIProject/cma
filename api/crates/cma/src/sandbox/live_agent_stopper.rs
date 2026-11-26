@@ -215,6 +215,7 @@ fn control_store_failure(
         AgentControlStoreError::NotFound
         | AgentControlStoreError::StatusConflict { .. }
         | AgentControlStoreError::RestartEvidenceRequired
+        | AgentControlStoreError::RestartTurnUnsettled
         | AgentControlStoreError::StopReasonConflict
         | AgentControlStoreError::WorktreeRecoveryConflict
         | AgentControlStoreError::LimitReached { .. }
