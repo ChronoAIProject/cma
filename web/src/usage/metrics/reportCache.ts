@@ -2,6 +2,7 @@ import type { UsageInitialData, UsageInitialProjection, UsageMetricReport } from
 import type { MetricsClient, Selection } from './model';
 import type { MetricsFailure } from './failure';
 import type { UsageRetryState } from './retry';
+import { clearDisabledViews } from './viewCapability';
 
 export type CommittedUsageReport = UsageMetricReport & {
   /** Optional fields supplied by the cached-report API when available. */
@@ -69,6 +70,7 @@ export function reportKey(selection: Selection, admin: boolean, owner: string): 
 }
 
 export function clearReportOwner(api: MetricsClient, owner: string, failure?: MetricsFailure) {
+  clearDisabledViews(api, owner);
   const entries = reportCache.get(api);
   if (!entries) return;
   for (const [key, entry] of entries) {

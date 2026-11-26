@@ -198,3 +198,41 @@ it.each(['7d', '30d'] as const)(
     expect(api.report).not.toHaveBeenCalled();
   },
 );
+
+it('does not create or poll unselected ranges after a foreground compatibility fallback', async () => {
+  const api = metricsClient();
+  const latest = vi.fn().mockRejectedValue(new ApiError(501, 'Disabled', 'report_view_disabled'));
+  Object.assign(api, { latest });
+  const selected = renderHook(() => useUsageReport(api, defaultSelection, false, true, owner));
+  await flush();
+  expect(selected.result.current.report?.report_id).toBe('report-one');
+
+  renderHook(() => useWarmUsageRanges(api, defaultSelection, false, owner, true));
+  await flush();
+  expect(latest).toHaveBeenCalledTimes(1);
+  expect(api.create).toHaveBeenCalledTimes(1);
+  expect(api.report).not.toHaveBeenCalled();
+});
+
+it('keeps an exact ready refresh when the next view replica declines', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, 'random').mockReturnValue(0);
+  const api = metricsClient();
+  const latest = vi
+    .fn()
+    .mockResolvedValueOnce({
+      ...ready('old-snapshot', false),
+      refresh: { state: 'pending', report_id: 'completed-refresh', retry_after_seconds: 2 },
+    })
+    .mockRejectedValueOnce(new ApiError(501, 'Disabled', 'report_view_disabled'));
+  Object.assign(api, { latest });
+  api.report.mockResolvedValue(reportFixture(false, 'completed-refresh'));
+  const selected = renderHook(() => useUsageReport(api, defaultSelection, false, true, owner));
+  await flush();
+  expect(selected.result.current.report?.report_id).toBe('old-snapshot');
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(api.report).toHaveBeenCalledWith('completed-refresh', expect.anything());
+  expect(latest).toHaveBeenCalledTimes(2);
+  expect(api.create).not.toHaveBeenCalled();
+  expect(selected.result.current.report?.report_id).toBe('completed-refresh');
+});

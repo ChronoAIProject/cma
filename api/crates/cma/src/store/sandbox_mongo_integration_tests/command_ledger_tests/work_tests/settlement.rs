@@ -2,6 +2,195 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn held_queued_command_timeout_preserves_its_original_receipt() {
+    let (client, name) = database("hold_queued_timeout").await;
+    let (store, agent, parent) = fixture(&name, &client).await;
+    let admitted = record(
+        store
+            .reserve_command(live_request(&agent, &parent, "timeout"))
+            .await
+            .unwrap(),
+    );
+    let id = &admitted.receipt.envelope.command_id;
+    let filter = doc! { "_id": id.as_str() };
+    let command = store
+        .agent_commands
+        .find_one(filter.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let parent_filter = doc! { "_id": parent.id.as_str() };
+    store
+        .sandboxes
+        .update_one(
+            parent_filter.clone(),
+            doc! { "$set": { "ledger_maintenance": null } },
+        )
+        .await
+        .unwrap();
+    let held_parent = store
+        .sandboxes
+        .find_one(parent_filter.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        store
+            .reject_unclaimed_command(
+                id,
+                admitted.revision,
+                CommandFailureCode::QueueTimeout,
+                admitted.queue_deadline.clone()
+            )
+            .await,
+        Err(CommandLedgerError::StaleClaim)
+    );
+    assert_eq!(
+        store.agent_commands.find_one(filter).await.unwrap(),
+        Some(command)
+    );
+    assert_eq!(
+        store
+            .sandboxes
+            .find_one(parent_filter.clone())
+            .await
+            .unwrap(),
+        Some(held_parent)
+    );
+    store
+        .sandboxes
+        .update_one(
+            parent_filter,
+            doc! { "$unset": { "ledger_maintenance": "" } },
+        )
+        .await
+        .unwrap();
+    store
+        .reject_unclaimed_command(
+            id,
+            admitted.revision,
+            CommandFailureCode::QueueTimeout,
+            admitted.queue_deadline.clone(),
+        )
+        .await
+        .unwrap();
+    let refused = store.get_command(id).await.unwrap().unwrap();
+    assert_eq!(refused.status, AgentResponseStatus::Failed);
+    assert_eq!(refused.receipt, admitted.receipt);
+    assert_eq!(refused.revision, admitted.revision + 1);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn sandbox_maintenance_preserves_claimed_command_settlement() {
+    let (client, name) = database("hold_command_settlement").await;
+    let (store, agent, parent) = fixture(&name, &client).await;
+    let admitted = record(
+        store
+            .reserve_command(live_request(&agent, &parent, "settlement"))
+            .await
+            .unwrap(),
+    );
+    let now = layer2_core::now_rfc3339();
+    let held_claim = store
+        .claim_next_command(claim_request(&agent, "original", &now))
+        .await
+        .unwrap()
+        .unwrap();
+    let claim = &held_claim.work.lease.as_ref().unwrap().claim;
+    let command_filter = doc! { "_id": claim.command_id.as_str() };
+    let command = store
+        .agent_commands
+        .find_one(command_filter.clone())
+        .await
+        .unwrap();
+    let lane_filter = doc! { "_id": agent.id.as_str() };
+    let lane = store
+        .agent_command_orders
+        .find_one(lane_filter.clone())
+        .await
+        .unwrap();
+    let replica = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let parents = replica
+        .database(&name)
+        .collection::<mongodb::bson::Document>("sandboxes");
+    let parent_filter = doc! { "_id": parent.id.as_str() };
+    for hold in [
+        doc! { "phase": "requested" }.into(),
+        mongodb::bson::Bson::Null,
+    ] {
+        parents
+            .update_one(
+                parent_filter.clone(),
+                doc! { "$set": { "ledger_maintenance": hold } },
+            )
+            .write_concern(mongodb::options::WriteConcern::majority())
+            .await
+            .unwrap();
+        let held_parent = parents.find_one(parent_filter.clone()).await.unwrap();
+        assert_eq!(
+            store.release_command_claim(claim, now.clone()).await,
+            Err(CommandLedgerError::StaleClaim)
+        );
+        assert_eq!(
+            store
+                .reject_command(claim, CommandFailureCode::AuthorityRevoked, now.clone())
+                .await,
+            Err(CommandLedgerError::StaleClaim)
+        );
+        assert_eq!(
+            store
+                .agent_commands
+                .find_one(command_filter.clone())
+                .await
+                .unwrap(),
+            command
+        );
+        assert_eq!(
+            store
+                .agent_command_orders
+                .find_one(lane_filter.clone())
+                .await
+                .unwrap(),
+            lane
+        );
+        assert_eq!(
+            parents.find_one(parent_filter.clone()).await.unwrap(),
+            held_parent
+        );
+    }
+    parents
+        .update_one(
+            parent_filter,
+            doc! { "$unset": { "ledger_maintenance": "" } },
+        )
+        .await
+        .unwrap();
+    store
+        .release_command_claim(claim, now.clone())
+        .await
+        .unwrap();
+    let again = store
+        .claim_next_command(claim_request(&agent, "successor", &now))
+        .await
+        .unwrap()
+        .unwrap();
+    let next = &again.work.lease.as_ref().unwrap().claim;
+    assert!(next.fence > claim.fence);
+    let rejected = store
+        .reject_command(next, CommandFailureCode::AuthorityRevoked, now)
+        .await
+        .unwrap();
+    assert_eq!(rejected.status, AgentResponseStatus::Failed);
+    assert_eq!(rejected.receipt, admitted.receipt);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn old_reservation_rows_gain_leases_without_rewriting_acceptance_facts() {
     let (client, name) = database("command_old_row").await;
     let (store, agent, parent) = fixture(&name, &client).await;

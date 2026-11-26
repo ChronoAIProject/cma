@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 #[path = "mongo_admission_index.rs"]
 mod admission_index;
+#[path = "mongo_create_fences.rs"]
+mod create_fences;
 #[path = "mongo_guarded_admission.rs"]
 mod guarded_admission;
 #[path = "mongo_replica_observation.rs"]
@@ -20,6 +22,12 @@ mod replica_retry;
 mod replicas;
 #[path = "mongo_versions.rs"]
 mod versions;
+pub(crate) use create_fences::{CancelCreate, CreateConnectionClaim, CreateFenceIdentity};
+#[path = "mongo_create_fences_floor.rs"]
+mod create_fences_floor;
+pub(crate) use create_fences_floor::verify as check_create_fence_floor;
+pub(crate) use create_fences_floor::verify_runtime as verify_create_fence_floor;
+pub use create_fences_floor::{migrate as migrate_create_fence_floor, role as create_fence_role};
 pub(crate) use replicas::{
     LeaseCondition, ReplicaGuard, ReplicaKind, ReplicaProjection, ReplicaWrite,
 };
