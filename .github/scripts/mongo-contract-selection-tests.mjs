@@ -97,6 +97,20 @@ done
 }
 const expression = args => args[args.indexOf('-E') + 1];
 
+test('ordinary Mongo runs Desktop selection ordering while the grant contract requires authentication', () => {
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const invocations = captureInvocations(source, ['all', 'ordinary']);
+  const prefix = 'store::native_warm_pools::retirement::machine_selection::tests::';
+  const name = prefix + 'fixed_pin_machine_selection_works_without_released_runtime_grant';
+  const exceptions = JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8'));
+  assert.equal(exceptions[name]?.kind, 'fixture');
+  for (const [mode, args] of Object.entries(invocations)) {
+    const select = filterset(expression(args));
+    assert.equal(select(name), false, mode);
+    assert.equal(select(prefix + 'late_lower_id_target_cannot_bypass_the_stable_selection_fence'), true, mode);
+  }
+});
+
 export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, observationTest, fixturePredicate, ordinaryPredicate, qualificationPredicate}) {
   test('selection proof parses old and isolated owner and audit predicates', () => {
     const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');

@@ -127,6 +127,10 @@
     "kind": "fixture",
     "reason": "Requires authenticated disposable service Mongo fixture."
   },
+  "store::native_warm_pools::retirement::machine_selection::tests::fixed_pin_machine_selection_works_without_released_runtime_grant": {
+    "kind": "fixture",
+    "reason": "Requires enforced release-collection authorization on a disposable replica set. The authenticated image-manager-mongo-contract.sh am runner selects this exact test."
+  },
   "store::sandbox_mongo_integration_tests::command_ledger_tests::execution_tests::stale_turn_tests::native_stop_trace::native_stop_trace_recorder_ack_matches_a_fresh_checkpoint": {
     "kind": "fixture",
     "reason": "Run explicitly on a disposable replica set with the isolated native ACP capture at CMA_NATIVE_STOP_TRACE and the authenticated Supervisor observation at CMA_NATIVE_STOP_ACK_EVIDENCE."
