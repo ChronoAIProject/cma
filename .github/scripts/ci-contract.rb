@@ -203,7 +203,8 @@ module CIContract
     end
     publications = %w[web am eg runtime runtime_omarchy].map { |component| "release_#{component}" }
     allowed = %w[publish:images staging-release:publish omarchy-package-bundle:bundle staging-cd:protected_web
-      staging-web-continuity:protected staging-web-continuity-epoch:release] + publications.map { |id| "staging-cd:#{id}" }
+      staging-web-continuity:protected staging-web-continuity-epoch:release staging-cd:release_journey_probe] +
+      publications.map { |id| "staging-cd:#{id}" }
     require!(grants.sort == allowed.sort,
       "only the reviewed release entry points may grant package write")
     omarchy_package_bundle_authority(inputs.fetch("omarchy-package-bundle"))
@@ -215,11 +216,27 @@ module CIContract
       require!(staging.dig("jobs", id, "uses") == "./.github/workflows/staging-release.yml",
         "staging package authority must delegate to the reviewed publisher")
     end
+    check_journey_publication_authority(staging.fetch("jobs").fetch("release_journey_probe"))
     check_web_publication_authority(inputs)
     writer = inputs.fetch("staging-release").fetch("jobs").fetch("publish")
     require!(writer["permissions"] == { "contents" => "read", "pull-requests" => "read", "actions" => "read", "packages" => "write" } &&
       writer["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'",
       "staging publisher authority changed")
+  end
+
+  def self.check_journey_publication_authority(job)
+    require!(job["permissions"] == { "contents" => "read", "packages" => "write" } &&
+      job["if"] == "github.repository == 'ChronoAIProject/cma' && github.event_name == 'push' && github.ref == 'refs/heads/develop'" &&
+      !job.key?("uses") && !job.key?("env") && !job.key?("environment") && !job.key?("secrets"),
+      "journey publisher authority changed")
+    steps = job.fetch("steps")
+    publication = steps.find { |row| row["id"] == "publish" }
+    require!(publication && publication["env"] == { "GH_TOKEN" => "${{ github.token }}" } &&
+      publication["run"] == "python3 -B .github/scripts/staging_cd_journey_probe.py publish" &&
+      publication["if"] == "steps.select.outputs.changed == 'true'" &&
+      !publication.key?("continue-on-error") &&
+      steps.none? { |row| row != publication && row["env"].to_s.include?("github.token") },
+      "journey registry credential must go only to the reviewed publisher")
   end
 
   def self.check_web_publication_authority(inputs)

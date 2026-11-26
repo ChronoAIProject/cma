@@ -364,7 +364,7 @@ repository. Infrastructure lives outside GitHub. The ignored `infra/`, `sdk/`
 and `docs/` root paths must stay untracked.
 
 Build recipes live only at `web/Dockerfile`, `api/crates/cma/Dockerfile`,
-`api/crates/cmaeg/Dockerfile`, and
+`api/crates/cmaeg/Dockerfile`, `api/crates/cma-journey-probe/Dockerfile`, and
 `api/crates/layer4-runtime/Dockerfile`. Their build context remains the repository
 root. Use build arguments for environment-specific image inputs; never encode
 private registry or project identities in a recipe. Synthetic deployment data

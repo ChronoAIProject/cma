@@ -4,6 +4,8 @@ require 'minitest/autorun'
 require_relative 'workflow-yaml'
 require 'json'
 require 'open3'
+require 'fileutils'
+require 'tmpdir'
 
 class StagingWorkflowTest < Minitest::Test
   ROOT = File.expand_path('..', __dir__)
@@ -609,6 +611,78 @@ class StagingWorkflowTest < Minitest::Test
       job['uses'] = './.github/workflows/staging-promote.yml'
       assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
       job['uses'] = original
+    end
+  end
+
+  def test_journey_publication_is_independent_of_cma_promotion
+    jobs = workflow('staging-cd').fetch('jobs')
+    job = jobs.fetch('release_journey_probe')
+    refute job.key?('needs')
+    refute job.key?('environment')
+    jobs.each_value { |row| refute_includes Array(row['needs']), 'release_journey_probe' }
+    steps = job.fetch('steps')
+    select = steps.find { |row| row['id'] == 'select' }
+    assert_includes select.fetch('run'), 'api/crates/cma-journey-probe'
+    build = steps.find { |row| row['run'].to_s.end_with?('staging_cd_journey_probe.py build') }
+    publish = steps.find { |row| row['id'] == 'publish' }
+    assert_operator steps.index(build), :<, steps.index(publish)
+    refute build.key?('env')
+    assert_equal "steps.select.outputs.changed == 'true'", build['if']
+    receipt = steps.find { |row| row['name'] == 'Retain journey publication evidence' }
+    assert_includes receipt.dig('with', 'path'), '/journey-image/publication.json'
+  end
+
+  def test_journey_publication_authority_stays_with_the_scanned_publisher
+    require_relative 'ci-contract'
+    inputs = CIContract.load_inputs
+    job = inputs['staging-cd']['jobs']['release_journey_probe']
+    publish = job['steps'].find { |row| row['id'] == 'publish' }
+    run = publish['run']
+    publish['run'] = 'docker push image'
+    assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
+    publish['run'] = run
+    job['permissions']['id-token'] = 'write'
+    assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
+  end
+
+  def test_journey_selector_rebuilds_for_recipe_and_shared_identity_changes
+    steps = workflow('staging-cd').dig('jobs', 'release_journey_probe', 'steps')
+    selector = steps.find { |row| row['id'] == 'select' }.fetch('run')
+    Dir.mktmpdir('journey-selector-') do |root|
+      git = lambda do |*args|
+        output, status = Open3.capture2e('git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                                        '-c', 'commit.gpgsign=false', *args, chdir: root)
+        assert status.success?, output
+        output.strip
+      end
+      checkout = File.join(root, '.github', 'scripts')
+      FileUtils.mkdir_p(checkout)
+      receipt = File.join(checkout, 'staging_cd_receipts.py')
+      File.write(receipt, "IDENTITY_LABEL = 'fixture.before'\n")
+      recipe = File.join(root, 'api', 'crates', 'cma-journey-probe', 'Dockerfile')
+      FileUtils.mkdir_p(File.dirname(recipe))
+      File.write(recipe, "FROM scratch AS journey-probe\n")
+      git.call('init', '-q')
+      git.call('add', '.')
+      git.call('commit', '-qm', 'Baseline')
+
+      changes = {
+        File.join(root, 'README.md') => ['unrelated change', false],
+        receipt => ["IDENTITY_LABEL = 'fixture.after'\n", true],
+        recipe => ["FROM scratch AS journey-probe\nUSER 10001:10001\n", true]
+      }
+      changes.each do |path, (content, selected)|
+        before = git.call('rev-parse', 'HEAD')
+        File.write(path, content)
+        git.call('add', '.')
+        git.call('commit', '-qm', 'Isolated change')
+        github_output = File.join(root, 'selector-output')
+        env = { 'PREVIOUS_SHA' => before, 'GITHUB_SHA' => git.call('rev-parse', 'HEAD'), 'GITHUB_OUTPUT' => github_output }
+        output, status = Open3.capture2e(env, 'bash', '-ec', selector, chdir: root)
+        assert status.success?, output
+        assert_equal "changed=#{selected}\n", File.read(github_output)
+        File.delete(github_output)
+      end
     end
   end
 
