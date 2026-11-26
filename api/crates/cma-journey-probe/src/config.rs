@@ -169,11 +169,26 @@ impl Config {
                 return Err("invalid public endpoint");
             }
         }
-        if [&self.issuer, &self.cma, &self.gateway]
+        if [&self.issuer, &self.cma]
             .into_iter()
             .any(|u| u.path() != "/")
         {
             return Err("expected service origin");
+        }
+        let gateway_prefix = self
+            .gateway
+            .path()
+            .strip_suffix('/')
+            .unwrap_or(self.gateway.path());
+        if !gateway_prefix.is_empty()
+            && !gateway_prefix[1..].split('/').all(|segment| {
+                !segment.is_empty()
+                    && segment
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            })
+        {
+            return Err("invalid Gateway API base path");
         }
         let r = &self.reference;
         if ![&r.agent, &r.sandbox, &r.run, &r.event, &r.consumer]
@@ -221,6 +236,11 @@ impl Config {
                 || !ingress.insert(&gw.ingress)
                 || !secure_url(&gw.ingress)
                 || gw.ingress.origin() != self.gateway.origin()
+                || !gw
+                    .ingress
+                    .path()
+                    .strip_prefix(gateway_prefix)
+                    .is_some_and(|path| path.starts_with('/'))
                 || gw.ingress.query().is_some()
                 || !secure_url(&gw.source)
                 || gw.source.query().is_some()
