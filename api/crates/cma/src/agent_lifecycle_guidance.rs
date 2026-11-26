@@ -58,10 +58,22 @@ fn managed_v6() -> &'static str {
     INSTRUCTIONS.get_or_init(|| format!("{CLARIFICATION_V1}\n\n{}", managed_v5()))
 }
 
+const PERMISSION_REMEDIATION_V1: &str = "CMA permission remediation (v1):\n\
+In the first reply reporting a verified permission gap, give the owner the exact supported action they can take now: a verified link, a runnable command, or the actual console labels and steps. Name the smallest grant, who and what it affects, what task you can resume, and how you will verify the exact service or operation after approval and CMA confirmation. A tool name alone is not an owner action. Never claim a grant or successful verification before you observe it.\n\
+For a missing NyxID service, when authorized to propose access and CMA confirms it created an approval request, direct the owner to this Agent's conversation, Review access request, then Approve after checking the proposed services. If there is no request to review, including during a read-only check, give the manual owner path: in Agent details, open Service access, choose Manage on Sandbox, add the specific service under Agent key scope on the Access tab, complete any prompted connection check, then choose Save scope. Keep the existing services selected. This updates the Sandbox key shared by its Agents. For api-github, say that this grants CMA service access and leaves the selected GitHub OAuth grant as it was. Verify access using the selected connection and the intended GitHub operation. A read-only check cannot confirm write permission.\n\
+For an upstream OAuth gap, verify the exact permissions path and the requested scope for the selected connection. If no supported path is available, say so in the same reply and offer a working console or control-plane route where available. With no authorized handoff, provide a redacted CMA feedback draft for owner review.";
+
+fn managed_v7() -> &'static str {
+    static INSTRUCTIONS: OnceLock<String> = OnceLock::new();
+    INSTRUCTIONS.get_or_init(|| format!("{PERMISSION_REMEDIATION_V1}\n\n{}", managed_v6()))
+}
+
 pub(crate) fn configured_admission_instructions(
     flags: &crate::config::FeatureFlags,
 ) -> &'static str {
-    if flags.session_guidance_v6 {
+    if flags.session_guidance_v7 {
+        managed_v7()
+    } else if flags.session_guidance_v6 {
         managed_v6()
     } else {
         admission_instructions(flags.session_guidance_v4, flags.session_guidance_v5)
@@ -82,6 +94,7 @@ pub(super) fn admission_instructions(v4_enabled: bool, v5_enabled: bool) -> &'st
 /// Similar owner-authored text is never treated as platform instructions.
 pub(crate) fn split_managed(prompt: &str) -> (Option<&'static str>, &str) {
     for managed in [
+        managed_v7(),
         managed_v6(),
         managed_v5(),
         managed_v4(),
@@ -128,7 +141,9 @@ impl layer2_core::sandbox::AgentInstructionPolicy for ManagedInstructionPolicy {
     fn pinned_managed_guidance(&self, agent: &layer2_core::sandbox::Agent) -> Option<&'static str> {
         split_managed(&agent.profile.content.system_prompt)
             .0
-            .filter(|managed| [managed_v4(), managed_v5(), managed_v6()].contains(managed))
+            .filter(|managed| {
+                [managed_v4(), managed_v5(), managed_v6(), managed_v7()].contains(managed)
+            })
     }
 }
 
