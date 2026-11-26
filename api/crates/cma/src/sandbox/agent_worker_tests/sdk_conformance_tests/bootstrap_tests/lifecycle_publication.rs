@@ -35,6 +35,7 @@ struct RecoveryRead {
 struct Trace {
     workspace_advance: Mutex<Option<WorkspaceAdvance>>,
     publish_ready_workspace: Mutex<Option<Workspace>>,
+    deliver_initial_credential: Mutex<Option<layer2_core::SandboxId>>,
     recovery_read: Mutex<Option<RecoveryRead>>,
     repair_after_abort: Mutex<Option<AgentId>>,
     intervention: Mutex<Option<Intervention>>,
@@ -119,38 +120,7 @@ impl Fixture {
                     }
                 }
                 if event.command.get_bool("startTransaction").ok() == Some(true) {
-                    let transaction = callback.bodies.fetch_add(1, Ordering::SeqCst) + 1;
-                    let ready = callback.publish_ready_workspace.lock().unwrap().take();
-                    if let Some(mut ready) = ready {
-                        tokio::task::block_in_place(|| {
-                            tokio::runtime::Handle::current().block_on(async {
-                                let current =
-                                    observer.get_workspace(&ready.id).await.unwrap().unwrap();
-                                ready.revision = current.revision + 1;
-                                ready.next_worktree_number = current.next_worktree_number;
-                                observer
-                                    .save_workspace(current.revision, ready)
-                                    .await
-                                    .unwrap();
-                            });
-                        });
-                    }
-                    let advance = {
-                        let mut pending = callback.workspace_advance.lock().unwrap();
-                        pending.take_if(|advance| advance.transaction == transaction)
-                    };
-                    if let Some(advance) = advance {
-                        tokio::task::block_in_place(|| {
-                            tokio::runtime::Handle::current().block_on(async {
-                                let mut workspace =
-                                    observer.get_workspace(&advance.id).await.unwrap().unwrap();
-                                let revision = workspace.revision;
-                                workspace.revision += 1;
-                                workspace.next_worktree_number += 1;
-                                observer.save_workspace(revision, workspace).await.unwrap();
-                            });
-                        });
-                    }
+                    parent_interleaving::advance(&callback, &observer);
                 }
                 if event.command_name == "commitTransaction" {
                     callback.commits.fetch_add(1, Ordering::SeqCst);
@@ -492,6 +462,9 @@ async fn failure_publication_uses_one_native_result_after_abort_or_unknown_ack()
 
 #[path = "lifecycle_publication/native_failure_tests.rs"]
 mod native_failure;
+
+#[path = "lifecycle_publication/parent_interleaving.rs"]
+mod parent_interleaving;
 
 #[path = "lifecycle_publication/workspace_binding.rs"]
 mod workspace_binding;
