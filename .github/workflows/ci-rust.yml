@@ -335,7 +335,7 @@ jobs:
         name: "Authenticated Mongo startup regressions"
         if: "inputs.track == 'eg'"
         working-directory: "."
-        run: "node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/image-manager-mongo-contract.test.mjs"
+        run: "node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/authenticated-mongo-contract.test.mjs"
       -
         name: "Gateway sealed-record migration regressions"
         if: "inputs.track == 'eg'"
@@ -359,7 +359,7 @@ jobs:
         name: "Gateway authenticated Mongo contracts"
         if: "inputs.track == 'eg'"
         working-directory: "."
-        run: "bash .github/scripts/image-manager-mongo-contract.sh eg"
+        run: "bash .github/scripts/authenticated-mongo-contract.sh eg"
   mongo:
     name: "Mongo contracts"
     if: "always()"
@@ -376,7 +376,7 @@ jobs:
           NEEDS: "${{ toJSON(needs) }}"
         run: "python3 -B .github/scripts/mongo-contract-gate.py"
   isolation:
-    name: "Image Manager Mongo isolation"
+    name: "Authenticated Mongo contracts"
     runs-on: "ubuntu-latest"
     timeout-minutes: 30
     # The shared archive restore lists and downloads this run's artifact.
@@ -402,7 +402,7 @@ jobs:
       -
         name: "Authenticated Mongo startup regressions"
         working-directory: "."
-        run: "node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/image-manager-mongo-contract.test.mjs"
+        run: "node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/authenticated-mongo-contract.test.mjs"
       -
         name: "Prepare consumer browser fixture"
         working-directory: "."
@@ -414,8 +414,8 @@ jobs:
         working-directory: "."
         run: "node .github/scripts/install-contract-browser.mjs"
       -
-        name: "Image Manager authenticated Mongo isolation"
-        run: "bash ../.github/scripts/image-manager-mongo-contract.sh am"
+        name: "Run authenticated Mongo contracts"
+        run: "bash ../.github/scripts/authenticated-mongo-contract.sh am"
     if: "inputs.track == 'am'"
   result:
     name: "Rust track result"

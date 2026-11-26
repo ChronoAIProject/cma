@@ -52,7 +52,7 @@ function EventGatewayBody({
   active = true,
 }: EventGatewayProps) {
   const channels = usePage<ChannelListItem>('event-gateway', '/v1/channels', denied);
-  const canCreate = can(session, 'event-gateway', 'channels:create');
+  const canCreate = can(session, 'channels:create');
   const [recovered, setRecovered] = useState(() =>
     canCreate ? readNewChannelDraft(session.subject) : undefined,
   );

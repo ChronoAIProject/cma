@@ -3,14 +3,8 @@ import { isBotRoute } from '../BotManagement';
 import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
 import { Menu, type MenuEntry } from '../ui/Menu';
-import {
-  IconAgentPresetOutline16,
-  IconBrowseOutline16,
-  IconChevronDownOutline14,
-  IconCodeOutline16,
-} from '../ui/icons';
+import { IconAgentPresetOutline16, IconChevronDownOutline14, IconCodeOutline16 } from '../ui/icons';
 import './Services.css';
-import { useImageManagerAvailability } from './ImageManagerRetirement';
 
 type Service = 'agent_manager' | 'event_gateway';
 
@@ -39,7 +33,6 @@ export function ServiceMenu({
   readonly collapsed?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const imageManager = useImageManagerAvailability();
   const current = serviceFor(route);
   const items: MenuEntry[] = [
     {
@@ -55,15 +48,6 @@ export function ServiceMenu({
       href: routePath({ kind: 'event_gateway' }),
     },
   ];
-  if (imageManager !== 'retired') {
-    items.push({
-      id: 'image_manager',
-      label: 'Image Manager',
-      icon: <IconBrowseOutline16 />,
-      disabled: true,
-      reason: 'Coming soon. Image Manager is not available yet.',
-    });
-  }
   return (
     <Menu
       open={open}

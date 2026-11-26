@@ -5,7 +5,7 @@ use cmaeg_core::seal::seal_connection;
 #[tokio::test]
 #[ignore = "requires a disposable Mongo replica set"]
 async fn creator_cancellation_and_initial_reservation_share_a_permanent_fence() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let first = mongodb::Client::with_uri_str(&uri).await.unwrap();
     let second = mongodb::Client::with_uri_str(&uri).await.unwrap();
     let db_name = format!("create_fence_{}", uuid::Uuid::new_v4().simple());
@@ -247,7 +247,7 @@ async fn creator_cancellation_and_initial_reservation_share_a_permanent_fence() 
 #[tokio::test]
 #[ignore = "requires a disposable Mongo replica set"]
 async fn create_fence_upgrades_populated_channel_records_from_the_old_validator() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let client = mongodb::Client::with_uri_str(&uri).await.unwrap();
     let db = client.database(&format!(
         "old_channel_validator_{}",

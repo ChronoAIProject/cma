@@ -483,10 +483,30 @@ version = "0.1.0"
 name = "cma-am-auth"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "bson",
+ "cma-service-auth",
+ "futures-util",
+ "http-body",
+ "http-body-util",
+ "httpdate",
+ "layer1-public",
  "layer2-core",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
  "uuid",
  "zeroize",
 ]
@@ -515,33 +535,6 @@ dependencies = [
  "sha2 0.10.9",
  "tokio",
  "tracing",
- "uuid",
-]
-
-[[package]]
-name = "cma-image-manager"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "base64 0.22.1",
- "cma-service-auth",
- "cma-service-migrations",
- "futures-util",
- "meteroid-utoipa",
- "meteroid-utoipa-axum",
- "mongodb",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.21",
- "time",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "url",
  "uuid",
 ]
 

@@ -15,6 +15,8 @@ from staging_cd_versions import DEPLOYABLES
 CONTROL_OUTCOMES = {
     "plan": ("success",),
     "allocate": ("success", "skipped"),
+    # Builds use the job's local BuildKit cache and publish only image evidence.
+    "Publish journey probe": ("success",),
     "Report component outcomes": ("success",),
 }
 PROVEN_SKIP = frozenset({

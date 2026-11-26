@@ -609,6 +609,15 @@
             "max_agents_per_workspace": 4
           },
           "lifecycle": {
+            "result": {
+              "state": "in_progress",
+              "continuing": true,
+              "owner_slot_released": false,
+              "actions": [
+                "observe"
+              ],
+              "retry_after_seconds": 5
+            },
             "pause": {
               "allowed": false,
               "reason": "not_active"
@@ -834,7 +843,12 @@
           "detail": "The owner has reached the live resource limit.",
           "code": "sandbox_limit_reached",
           "limit": 1,
-          "live": 1
+          "live": 1,
+          "quota_usage": {
+            "active": 1,
+            "retiring_charged": 0,
+            "retiring_released": 0
+          }
         },
         "bodyKind": "json"
       },

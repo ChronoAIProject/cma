@@ -56,6 +56,26 @@ class PublicationDiagnosticTests(unittest.TestCase):
                 self.assertEqual(self.observe(operation),
                                  (1, f'FAIL publication\nFAIL publication stage=build reason={reason}\n'))
 
+    def test_registry_failure_outcome_keeps_only_operation_and_explicit_status(self):
+        cases = (("login", [], b"unauthorized private", ("login", "unknown")),
+                 ("copy", ["docker://private", "oci-archive:private"], b"status code 401 private", ("pull", "401")),
+                 ("copy", ["docker://private", "oci-archive:private"],
+                  b"invalid status code from registry 403 (Forbidden)", ("pull", "403")),
+                 ("copy", ["docker://private", "oci-archive:private"],
+                  b"invalid status code from registry 401 (Unauthorized)", ("pull", "401")),
+                 ("copy", ["docker://private", "oci-archive:private"], b"StatusCode: 401, private", ("pull", "401")),
+                 ("copy", ["docker://private", "oci-archive:private"], b"private offset 403", None),
+                 ("copy", ["oci-archive:private", "docker://private"], b"response status: 403 private", ("push", "403")))
+        for command, arguments, stderr, expected in cases:
+            outcome = {}
+            def operation(_masker, diagnostics):
+                diagnostics.mark("registry_preflight")
+                raise ImageCommandRefusal(["skopeo", command, *arguments], stderr)
+            with self.subTest(command=command), contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(run_publication(operation, outcome=outcome), 1)
+                self.assertEqual(outcome.get("registry_failure"), expected)
+                self.assertNotIn("private", output.getvalue())
+
     def test_http_reads_distinguish_denial_from_other_failures(self):
         for status, reason in [(401, 'registry_denied'), (403, 'registry_denied'), (503, 'registry_read_failed')]:
             with self.subTest(status=status):

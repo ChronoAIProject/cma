@@ -64,7 +64,7 @@ impl Process {
         nyxid: &str,
         env: &[(&str, &str)],
     ) -> Self {
-        let database = if std::env::var_os("CMA_IM_TEST_MONGODB_URI").is_some() {
+        let database = if std::env::var_os("CMA_AUTHENTICATED_TEST_MONGODB_URI").is_some() {
             Some(Arc::new(
                 database::DatabaseFixture::new(std::path::Path::new(env!("CARGO_BIN_EXE_cmaeg")))
                     .await,

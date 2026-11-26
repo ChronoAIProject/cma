@@ -34,17 +34,11 @@ pub(super) async fn fence(
             }
         }
     };
-    // An ordinary wait is immediately due. A requeue after a confirmed abort may be delayed.
-    let workspace_wait_requeue = mutation.agent.work.step == AgentWorkStep::WaitForWorkspace
-        && mutation.agent.work.ready_at >= mutation.appended_at
-        && mutation.agent.work.lease.is_none()
-        && mutation.agent_logs.is_empty()
-        && mutation.worktree.is_none()
-        && mutation.sandbox_event.is_none();
     let refresh_workspace_wait = agent.work.step == AgentWorkStep::WaitForWorkspace
         && agent.has_no_runtime_effects()
         && parents.lineage == AgentWorkPublicationLineage::Authorized
-        && (mutation.agent.work.step == AgentWorkStep::AddWorktree || workspace_wait_requeue);
+        && (mutation.agent.work.step == AgentWorkStep::AddWorktree
+            || persistence::is_effect_free_workspace_wait_requeue(mutation));
     for (collection, id, revision, owner, refresh) in [
         (
             &store.sandboxes,

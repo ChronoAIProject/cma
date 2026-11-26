@@ -256,7 +256,7 @@ mod mongo_tests {
     #[tokio::test]
     #[ignore = "requires authenticated disposable replica-set MongoDB fixture"]
     async fn legacy_gateway_command_and_nested_replica_refuse_after_cutover() {
-        let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+        let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
         let client = mongodb::Client::with_uri_str(uri).await.unwrap();
         let db = client.database(&format!(
             "gateway_migration_fixture_{}",

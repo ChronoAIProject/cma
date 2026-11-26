@@ -17,9 +17,6 @@ test('LOCAL consumer dashboard uses real CMA, Gateway and Mongo for creation, te
       },
     }),
   );
-  await page.route('**/api/image-manager/v1/images?scope=all', (route) =>
-    route.fulfill({ json: { items: [] } }),
-  );
   await page.route('**/api/v1/bots**', async (route) => {
     const url = new URL(route.request().url());
     const upstream = await route.fetch({
@@ -47,7 +44,6 @@ test('LOCAL consumer dashboard uses real CMA, Gateway and Mongo for creation, te
     .click();
   await wizard.getByRole('button', { name: 'Continue', exact: true }).click();
   await expect(wizard.getByRole('heading', { name: 'Configure the Agent inline' })).toBeVisible();
-  await expect(wizard.getByRole('radio', { name: /System default image/ })).toBeChecked();
   await wizard.getByLabel('Model', { exact: true }).fill('gpt-5');
   await wizard.getByRole('button', { name: 'Reasoning effort', exact: true }).click();
   await page
@@ -68,6 +64,8 @@ test('LOCAL consumer dashboard uses real CMA, Gateway and Mongo for creation, te
     .click();
   await wizard.getByLabel('Acknowledgement delay (seconds)', { exact: true }).fill('0');
   await wizard.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(wizard.getByRole('heading', { name: 'Review and create' })).toBeVisible();
+  await expect(wizard.getByText('System default image', { exact: true })).toBeVisible();
   const creation = page.waitForRequest(
     (request) => request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/bots',
   );
@@ -83,6 +81,7 @@ test('LOCAL consumer dashboard uses real CMA, Gateway and Mongo for creation, te
       permissions: { services: [] },
     },
   });
+  expect(body).not.toHaveProperty('image');
   expect(body).not.toHaveProperty('profile');
   const detail = page.getByRole('region', { name: consumerName, exact: true });
   await expect(detail.getByRole('heading', { name: consumerName, exact: true })).toBeVisible();

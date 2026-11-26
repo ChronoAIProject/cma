@@ -25,6 +25,7 @@ export interface ReadyAgent {
   readonly sandboxEvents?: readonly SandboxEvent[];
   readonly historyLoading?: boolean;
   readonly historyUnavailable?: boolean;
+  readonly workspaceUnavailable?: boolean;
   readonly historyRetryAt?: number;
   /** A complete transcript provides the durable baseline for background live replay. */
   readonly replayReady?: boolean;

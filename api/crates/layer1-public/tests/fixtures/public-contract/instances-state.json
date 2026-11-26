@@ -770,6 +770,15 @@
             "max_agents_per_workspace": 4
           },
           "lifecycle": {
+            "result": {
+              "state": "in_progress",
+              "continuing": true,
+              "owner_slot_released": false,
+              "actions": [
+                "observe"
+              ],
+              "retry_after_seconds": 5
+            },
             "pause": {
               "allowed": false,
               "reason": "not_active"

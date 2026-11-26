@@ -11,7 +11,7 @@ impl ReplyStore {
             match &attempt.receipt {
                 None if attempt.until > now => result = Some(ToolReplyStatus::Pending),
                 None => return Some(ToolReplyStatus::Unknown),
-                Some(receipt) if matches!(receipt.delivery, DeliveryOutcome::Unknown { .. }) => {
+                Some(receipt) if receipt.requires_reconciliation() => {
                     return Some(ToolReplyStatus::Unknown);
                 }
                 _ => {}
@@ -19,7 +19,7 @@ impl ReplyStore {
         }
         result
     }
-    pub(super) async fn load(
+    pub(in crate::turns::routed) async fn load(
         &self,
         plan: &AdmittedPlan,
         target: &StoredTarget,
@@ -70,11 +70,23 @@ impl ReplyStore {
                         || attempt.content_hash.as_ref().is_some_and(|hash| {
                             !valid_hash(hash) || !record.operation_keys.contains(&attempt.operation)
                         })
+                        || attempt.answer.as_ref().is_some_and(|answer| {
+                            attempt.content_hash.is_none()
+                                || answer.operation_id(&record.target).ok().as_deref()
+                                    != Some(attempt.operation.as_str())
+                        })
                 })
         {
             return Err(ExecutionError::Corrupt);
         }
         record.version = version;
+        if let Some(attempt) = &record.automatic {
+            if attempt.content_hash.is_some() && attempt.receipt.is_none() {
+                let operation = OperationStore(self.0.clone());
+                let receipt = operation.reconcile(&record, attempt).await?;
+                record.automatic.as_mut().unwrap().receipt = receipt;
+            }
+        }
         if let Some(attempt) = &record.tool {
             if attempt.content_hash.is_some() && attempt.receipt.is_none() {
                 if let Some(receipt) = OperationStore(self.0.clone())

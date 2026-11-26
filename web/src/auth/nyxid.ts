@@ -157,7 +157,6 @@ export function silentReturnTarget(location: {
     case 'home':
     case 'agent_manager':
     case 'event_gateway':
-    case 'image_manager':
     case 'agent':
     case 'sandbox':
     case 'bots':

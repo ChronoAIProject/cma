@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const source = readFileSync(new URL('./authenticated-mongo-readiness.js', import.meta.url), 'utf8');
-const expected = {_id: 'cma-im-contract', members: [{_id: 0, host: '127.0.0.1:27017'}]};
+const expected = {_id: 'cma-authenticated-contract', members: [{_id: 0, host: '127.0.0.1:27017'}]};
 class Exit extends Error {
   constructor(code) { super('probe exited'); this.code = code; }
 }
@@ -12,7 +12,7 @@ class Exit extends Error {
 function fixture(overrides = {}) {
   const state = {
     finalProcess: true, authenticated: true, config: null, primary: false,
-    replicationOptions: {replSet: 'cma-im-contract'},
+    replicationOptions: {replSet: 'cma-authenticated-contract'},
     initializationCalls: 0, throwNotInitialized: false, loseInitializeReply: false,
     ...overrides,
   };
@@ -43,7 +43,7 @@ function fixture(overrides = {}) {
       if (state.loseInitializeReply) throw new Error('connection lost after initialization');
       return {ok: 1};
     },
-    async hello() { return {isWritablePrimary: state.primary, setName: 'cma-im-contract'}; },
+    async hello() { return {isWritablePrimary: state.primary, setName: 'cma-authenticated-contract'}; },
   };
   return {state, async probe() {
     try {
@@ -80,9 +80,9 @@ test('final process initializes once and becomes ready only after primary electi
 
 test('CLI and config replica options are accepted, but missing or conflicting names never initialize', async () => {
   for (const replicationOptions of [
-    {replSet: 'cma-im-contract'},
-    {replSetName: 'cma-im-contract'},
-    {replSet: 'cma-im-contract', replSetName: 'cma-im-contract'},
+    {replSet: 'cma-authenticated-contract'},
+    {replSetName: 'cma-authenticated-contract'},
+    {replSet: 'cma-authenticated-contract', replSetName: 'cma-authenticated-contract'},
   ]) {
     const f = fixture({replicationOptions, primary: true});
     assert.equal(await f.probe(), 0);
@@ -90,9 +90,9 @@ test('CLI and config replica options are accepted, but missing or conflicting na
   }
   for (const replicationOptions of [
     {}, {replSet: 'foreign'}, {replSetName: 'foreign'},
-    {replSet: 'cma-im-contract', replSetName: 'foreign'},
-    {replSet: 'foreign', replSetName: 'cma-im-contract'},
-    {replSet: 'cma-im-contract/foreign:27017'},
+    {replSet: 'cma-authenticated-contract', replSetName: 'foreign'},
+    {replSet: 'foreign', replSetName: 'cma-authenticated-contract'},
+    {replSet: 'cma-authenticated-contract/foreign:27017'},
   ]) {
     const f = fixture({replicationOptions, primary: true});
     assert.equal(await f.probe(), 1);
