@@ -12,12 +12,10 @@ use super::sandbox_mongo::{
 mod admission;
 mod execution;
 mod projection;
-pub(in crate::store) mod refusal;
 mod replay;
 pub(in crate::store) use admission::attach;
 pub(in crate::store) use execution::{proof, proof_in_session, ready_for_claim, require_mutation};
 pub(in crate::store) use projection::project_terminal;
-pub(in crate::store) use refusal::reject_unclaimed;
 pub(in crate::store) const COLLECTION: &str = "trigger_first_message_bindings";
 pub(in crate::store) const FIELD: &str = "trigger_first_message_binding";
 
