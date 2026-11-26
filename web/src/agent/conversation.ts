@@ -126,6 +126,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         ...next,
         approvals: upsert(next.approvals, {
           id,
+          runId: next.activeRunId,
           reason: text(kind.action) ?? 'confirmation',
           message: text(kind.detail),
         }),
@@ -252,12 +253,13 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
   }
 }
 
-function approvalFrom(value: unknown): ApprovalRequest | undefined {
+function approvalFrom(value: unknown, runId?: string): ApprovalRequest | undefined {
   const item = object(value);
   const id = text(item?.id);
   if (item === undefined || id === undefined) return undefined;
   return {
     id,
+    runId,
     reason: text(item.reason) ?? 'confirmation',
     message: text(item.message),
   };
@@ -291,7 +293,7 @@ function patchState(
         ? state
         : { ...state, approvals: upsert(state.approvals, { ...current, decision: 'resolved' }) };
     }
-    const approval = approvalFrom(item.value);
+    const approval = approvalFrom(item.value, runId);
     if (
       approval &&
       state.approvals.some((current) => current.id === approval.id && current.source === 'external')
@@ -436,7 +438,7 @@ function foldLive(
     const outcome = object(event.outcome);
     const interrupts = Array.isArray(outcome?.interrupts) ? outcome.interrupts : [];
     const approvals = interrupts
-      .map(approvalFrom)
+      .map((value) => approvalFrom(value, event.runId))
       .filter((approval): approval is ApprovalRequest => approval !== undefined)
       .reduce(
         (items, approval) =>
