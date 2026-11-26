@@ -100,6 +100,58 @@ fn unknown_allocation_does_not_become_zero_expected_activity() {
     assert_eq!(p.excluded_count, 1);
     assert_eq!(p.reason.as_deref(), Some("no_measurement"));
 }
+
+#[test]
+fn uniform_missing_buckets_match_the_general_completion() {
+    let range = Range { from: 5, to: 125 };
+    let sparse = BTreeMap::from([(
+        60,
+        series::Bucket {
+            from: 60,
+            to: 120,
+            covered_seconds: 30.,
+            display_integral: 90.,
+            expected_seconds: 45.,
+            min: Some(2.),
+            max: Some(5.),
+            ..Default::default()
+        },
+    )]);
+    let out_of_range = allocation::Expectation {
+        from: 180,
+        to: 240,
+        running: Some(true),
+        home: None,
+    };
+    for (running, home) in [
+        (Some(true), None),
+        (Some(false), Some(true)),
+        (None, Some(false)),
+    ] {
+        let covering = allocation::Expectation {
+            from: 0,
+            to: 150,
+            running,
+            home,
+        };
+        for metric in [Metric::Cpu, Metric::Memory, Metric::Disk] {
+            let uniform =
+                series::complete(&sparse, std::slice::from_ref(&covering), metric, range, 60);
+            let general = series::complete(
+                &sparse,
+                &[covering.clone(), out_of_range.clone()],
+                metric,
+                range,
+                60,
+            );
+            assert_eq!(
+                serde_json::to_vec(&uniform).unwrap(),
+                serde_json::to_vec(&general).unwrap()
+            );
+        }
+    }
+}
+
 #[test]
 fn unaligned_seven_days_default_to_valid_epoch_buckets() {
     let input = ReportInput {
