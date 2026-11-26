@@ -17,7 +17,8 @@ enum AttemptState {
     Pending,
     Confirmed,
     Unknown,
-    Partial,
+    Rejected,
+    RejectedAfterParts,
     UnknownParts,
 }
 #[derive(Clone, Copy, Debug)]
@@ -48,10 +49,10 @@ async fn combined_row(
                 let mut saved = match state {
                     AttemptState::Confirmed => receipt(),
                     AttemptState::Unknown | AttemptState::UnknownParts => receipt_for(DeliveryOutcome::Unknown { reason: "fixture_receipt_lost".into() }),
-                    AttemptState::Partial => receipt_for(DeliveryOutcome::Rejected { reason: "fixture_later_part_rejected".into() }),
+                    AttemptState::Rejected | AttemptState::RejectedAfterParts => receipt_for(DeliveryOutcome::Rejected { reason: "fixture_part_rejected".into() }),
                     _ => unreachable!(),
                 };
-                if matches!(state, AttemptState::Partial | AttemptState::UnknownParts) {
+                if matches!(state, AttemptState::RejectedAfterParts | AttemptState::UnknownParts) {
                     let reference: MessageRefPayload = serde_json::from_value(serde_json::json!({
                         "channel_id":h.event().channel_id,"event_id":h.event().event_id,
                         "consumer":h.event().consumer,"platform_message_id":"800","route_id":"telegram:77:42"
@@ -111,7 +112,10 @@ async fn combined_row(
         let correct = match (&expected, &result) {
             (Expected::Send, Ok(Some(r))) => matches!(r.delivery, DeliveryOutcome::Confirmed { .. }) && sent == 1,
             (Expected::Wait, Err(ExecutionError::Busy)) => sent == 0,
-            (Expected::Uncertain, Ok(Some(r))) => matches!(r.delivery, DeliveryOutcome::Unknown { .. }) && sent == 0,
+            (Expected::Uncertain, Ok(Some(r))) => matches!(
+                &r.delivery,
+                DeliveryOutcome::Unknown { reason } if reason == "delayed_reply_guard_uncertain"
+            ) && sent == 0,
             _ => false,
         };
         assert!(correct, "PR B arbitration: closed={closed}, automatic={automatic}, state={state:?}, expected={expected:?}, sends={sent}, observed={result:?}");
@@ -161,11 +165,11 @@ case!(
     Uncertain
 );
 case!(
-    a05_open_auto_rejected_parts_allow_distinct_occurrence_once,
+    a05_open_auto_rejected_after_parts_is_uncertain,
     false,
     true,
-    Partial,
-    Send
+    RejectedAfterParts,
+    Uncertain
 );
 case!(a06_open_tool_none_sends_once, false, false, None, Send);
 case!(
@@ -190,11 +194,11 @@ case!(
     Uncertain
 );
 case!(
-    a10_open_tool_rejected_parts_allow_distinct_occurrence_once,
+    a10_open_tool_rejected_after_parts_is_uncertain,
     false,
     false,
-    Partial,
-    Send
+    RejectedAfterParts,
+    Uncertain
 );
 case!(a11_closed_auto_none_sends_once, true, true, None, Send);
 case!(
@@ -219,11 +223,11 @@ case!(
     Uncertain
 );
 case!(
-    a15_closed_auto_rejected_parts_allow_distinct_occurrence_once,
+    a15_closed_auto_rejected_after_parts_is_uncertain,
     true,
     true,
-    Partial,
-    Send
+    RejectedAfterParts,
+    Uncertain
 );
 case!(a16_closed_tool_none_sends_once, true, false, None, Send);
 case!(
@@ -248,11 +252,11 @@ case!(
     Uncertain
 );
 case!(
-    a20_closed_tool_rejected_parts_allow_distinct_occurrence_once,
+    a20_closed_tool_rejected_after_parts_is_uncertain,
     true,
     false,
-    Partial,
-    Send
+    RejectedAfterParts,
+    Uncertain
 );
 
 case!(
@@ -282,6 +286,34 @@ case!(
     false,
     UnknownParts,
     Uncertain
+);
+case!(
+    a25_open_auto_rejected_sends_once,
+    false,
+    true,
+    Rejected,
+    Send
+);
+case!(
+    a26_open_tool_rejected_sends_once,
+    false,
+    false,
+    Rejected,
+    Send
+);
+case!(
+    a27_closed_auto_rejected_sends_once,
+    true,
+    true,
+    Rejected,
+    Send
+);
+case!(
+    a28_closed_tool_rejected_sends_once,
+    true,
+    false,
+    Rejected,
+    Send
 );
 
 #[tokio::test]
