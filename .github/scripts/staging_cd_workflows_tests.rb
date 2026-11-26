@@ -282,6 +282,10 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 'cma-staging-deploy-set', protected_job.dig('concurrency', 'group')
     assert_equal '${{ needs.raw.outputs.artifact }}', protected_job.dig('with', 'archive')
     assert epoch.fetch('jobs').values.none? { |job| job.key?('concurrency') }
+    setup_step = observer.fetch('steps').find { |step| step['run']&.include?('staging_cd_tools.py install') }
+    setup = setup_step.fetch('run')
+    assert_match(/CD_STARTED_AT="\$\(.*from staging_cd_clock import timestamp.*\)"\nexport CD_STARTED_AT\n.*staging_cd_tools\.py install\n.*staging_cd_tools\.py requirements\n/, setup)
+    refute_includes setup, 'GITHUB_ENV'
     scope_step = observer.fetch('steps').find { |step| step['id'] == 'preimage' }
     assert_includes scope_step.fetch('run'), 'staging_cd_web_preimage.py'
     credential_steps = observer.fetch('steps').select { |step| step.dig('env', 'CD_NYXID_CLIENT_ID') }
