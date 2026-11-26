@@ -23,7 +23,7 @@ impl RuntimeRecovery for CodexAdapter {
         &self,
         handle: &crate::RuntimeHandle,
         proof: &crate::wire::AgentProcessCloseProof,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         self.hosted.prove_agent_process_closed(handle, proof).await
     }
 

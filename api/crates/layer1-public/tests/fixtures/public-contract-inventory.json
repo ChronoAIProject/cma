@@ -1243,6 +1243,8 @@
       "source": "api/crates/layer1-public/src/rest/owner_agent_restart.rs# Owner restart returns the retained Agent and Worktree IDs and the exact admission receipt.",
       "required_problems": [
         "agent_not_found",
+        "agent_restart_runtime_unsupported",
+        "agent_restart_turn_unsettled",
         "forbidden",
         "invalid_idempotency_key",
         "missing_idempotency_key",
