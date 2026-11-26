@@ -31,7 +31,7 @@ mod global_admission;
 mod http_connections;
 mod provider_tool_relay;
 mod public_owner_sandbox_limit;
-pub(crate) use access_migration::AgentAccessMigration;
+pub(crate) use access_migration::{parse as parse_agent_access_migration, AgentAccessMigration};
 #[cfg(test)]
 pub(crate) use anonymous_public::AnonymousPublicConfig;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
@@ -49,6 +49,7 @@ mod rate_limits;
 pub use rate_limits::RateLimitConfig;
 mod relay_capacity;
 mod runtime;
+pub(crate) use runtime::deployment_id_from_lookup;
 mod runtime_capacity;
 mod runtime_migration;
 mod shell_settings;

@@ -285,8 +285,8 @@ async fn run() {
         }
         return;
     }
-    if store::provenance_progress::is_command(&arguments) {
-        match store::provenance_progress::command(&arguments).await {
+    if let Some(result) = store::backfill_progress_command(&arguments).await {
+        match result {
             Ok(result) => println!("{result}"),
             Err(message) => {
                 eprintln!("{message}");

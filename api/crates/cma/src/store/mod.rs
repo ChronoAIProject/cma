@@ -98,6 +98,7 @@ mod encryption;
 mod execution_sections;
 pub(crate) mod legal_consents;
 mod media_uploads;
+mod online_backfill;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
 mod retained_consents;
@@ -105,6 +106,19 @@ mod segment_response;
 mod transaction_scope;
 pub(crate) mod transaction_terminal;
 pub(crate) use segment_response::emit as emit_response_reads;
+
+pub(crate) async fn backfill_progress_command(
+    arguments: &[String],
+) -> Option<Result<serde_json::Value, &'static str>> {
+    if online_backfill::is_command(arguments) {
+        Some(online_backfill::command(arguments).await)
+    } else if provenance_progress::is_command(arguments) {
+        Some(provenance_progress::command(arguments).await)
+    } else {
+        None
+    }
+}
+
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
 #[cfg(test)]
