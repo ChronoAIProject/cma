@@ -220,15 +220,21 @@ export class API {
     }
     return response;
   }
-  async send(am, agentId, input, key) {
+  async send(am, agentId, input, key, protocol = 'agent-responses') {
     await requestPacer.wait(this.config.bearer, 'POST');
     const value = this.router && this.routingEnabled
-      ? await this.router.dispatch(agentId, ingress => this.rawSend(ingress, agentId, input, key))
-      : await this.rawSend(am, agentId, input, key);
+      ? await this.router.dispatch(agentId, ingress => this.rawSend(ingress, agentId, input, key, protocol))
+      : await this.rawSend(am, agentId, input, key, protocol);
     this.responseAgents.set(value.responseId, agentId);
     return value;
   }
-  async rawSend(am, agentId, input, key) {
+  async rawSend(am, agentId, input, key, protocol = 'agent-responses') {
+    const agui = protocol === 'agui';
+    const root = protocol === 'root-responses';
+    check(agui || root || protocol === 'agent-responses', 'unknown_conversation_ingress');
+    const route = agui ? '/api/v1/agui/run' : root ? '/api/v2/responses' : '/api/v2/agents/{id}/responses';
+    const payload = agui ? {threadId: agentId, messages: [{role: 'user', content: input}]}
+      : {input, stream: true, ...(root ? {conversation: agentId} : {})};
     const abort = new AbortController(); const timer = setTimeout(() => abort.abort(), 240000);
     const handle = {ingress_am: am, abort: () => abort.abort(), error: null, events: [], done: null}; this.streams.add(handle);
     const start = performance.now();
@@ -237,15 +243,17 @@ export class API {
     handle.done = (async () => {
       let seen = false;
       try {
-        const response = await fetch(this.url(am, `/api/v2/agents/${agentId}/responses`), {
+        const response = await fetch(this.url(am, route.replace('{id}', agentId)), {
           method: 'POST', headers: this.headers({'Content-Type': 'application/json', 'Idempotency-Key': key}),
-          body: JSON.stringify({input, stream: true}), signal: abort.signal, redirect: 'error'});
-        handle.timing = {am, method: 'POST', route: '/api/v2/agents/{id}/responses',
+          body: JSON.stringify(payload), signal: abort.signal, redirect: 'error'});
+        handle.timing = {am, method: 'POST', route,
           status: response.status, header_ms: performance.now() - start,
           request_id: response.headers.get('x-request-id')};
         this.observe(handle.timing);
         check(response.status === 200 || response.status === 202, 'send_status_' + response.status);
         check((response.headers.get('content-type') ?? '').includes('text/event-stream'), 'send_not_sse');
+        handle.commandId = response.headers.get('x-cma-command-id');
+        const responseHeader = response.headers.get('x-cma-response-id');
         const decoder = new TextDecoder(); let buffer = ''; let bytes = 0;
         for await (const chunk of response.body) {
           bytes += chunk.length; check(bytes < 8 * 1024 * 1024, 'sse_byte_limit'); buffer += decoder.decode(chunk, {stream: true});
@@ -256,14 +264,28 @@ export class API {
             const data = frame.split('\n').filter(x => x.startsWith('data:')).map(x => x.slice(5).trimStart()).join('\n');
             if (!data || data === '[DONE]') continue;
             const event = JSON.parse(data);
-            if (event.type === 'response.created') {
-              const responseId = assertCreated(event, agentId); check(!seen, 'duplicate_created_frame'); seen = true;
+            if (event.type === (agui ? 'RUN_STARTED' : 'response.created')) {
+              check(!seen, 'duplicate_created_frame');
+              if (agui) {
+                check(event.threadId === agentId && typeof event.runId === 'string'
+                  && /^[1-9][0-9]*$/.test(event.runId) && Number.isSafeInteger(Number(event.runId))
+                  && id(responseHeader) && id(handle.commandId), 'agui_run_receipt_invalid');
+                handle.runId = event.runId;
+              }
+              const responseId = agui ? responseHeader : assertCreated(event, agentId);
+              if (root) check(id(handle.commandId) && responseHeader === responseId, 'root_response_receipt_invalid');
+              seen = true;
               handle.responseId = responseId; handle.first_event_ms = performance.now() - start; settle(handle);
+            }
+            if (agui && event.type === 'RUN_FINISHED') {
+              check(seen && event.threadId === agentId && event.runId === handle.runId,
+                'agui_completion_receipt_invalid');
+              handle.runOutcome = event.outcome?.type;
             }
             handle.events.push({type: event.type, sequence_number: event.sequence_number});
           }
         }
-        check(seen, 'missing_response_created');
+        check(seen, agui ? 'missing_agui_run_started' : 'missing_response_created');
       } catch (error) { handle.error = error.message; if (!seen) fail(error); }
       finally { clearTimeout(timer); this.streams.delete(handle); }
     })();

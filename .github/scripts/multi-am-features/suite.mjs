@@ -23,6 +23,7 @@ import {accessRequest} from './features/access_request.mjs';
 import {retirementRetention} from './features/retirement_retention.mjs';
 import {triggerAlwaysOn} from './features/trigger_always_on.mjs';
 import {suggestionsCase} from './features/suggestions.mjs';
+import {sharedIngressReceipt} from './features/conversation_ingress.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -221,6 +222,7 @@ try {
         }
         await userCases(caseContext);
         if (iteration === 1) {
+          await caseContext.runCase('writer.shared_conversation_ingress', () => sharedIngressReceipt(caseContext));
           await caseContext.runCase('writer.suggestions_publish_once', () => suggestionsCase(caseContext, false));
           await caseContext.runCase('writer.suggestions_expire_after_rename', () => suggestionsCase(caseContext, true));
         }
