@@ -919,6 +919,8 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels/{channel_id}/activity/history/events/{event_id}/details` | Required detail `cursor`; opaque history event ID | 200 sealed-generation detail parts and optional `next_cursor` | 400 invalid cursor; 404 absent or other owner; 410 expired export; 503 unavailable |
 | `GET /v1/channels/{channel_id}/partition` | Required `partition_key`; optional `consumer_id` (default `default`) | 200 retained CMA conversation mapping and current Agent status | 400 unsupported affinity; 404 absent/hidden channel or mapping |
 | `POST /v1/channels/{channel_id}/partition/resets` | Required `Idempotency-Key` and owner reset body below | 200 reserved successor receipt; no-store | 409 disabled, ineligible target, changed mapping or reused key; uncertain failures require exact retry |
+| `POST /v1/channels/{channel_id}/profile-revisions/baseline` | Channel owner's `expected_version` | 200 profile revision receipt; no-store | Stale version or incomplete baseline evidence is refused |
+| `PUT /v1/channels/{channel_id}/profile-revisions` | Channel owner's `expected_version`, complete `profile` and `agent_key` | 200 profile revision receipt; no-store | Stale version or unqualified profile publication is refused |
 | `PUT /v1/channels/{channel_id}` | Complete create policy plus required `expected_version`; optional credential patch | 200 channel response with incremented version | 409 stale version |
 | `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version; 409 `provider_rejected` when the provider refuses to release the binding |
 | `POST /v1/channels/{channel_id}/test` | No body | 200 `{"accepted_after_ms":42,"first_text":"...","level":"l1"}` | Provider refusal, timeout or no usable result |
@@ -3898,6 +3900,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `GET /v1/channels/{channel_id}/partition` | `inspectChannelPartition` |
 | `POST /v1/channels/{channel_id}/partition/resets` | `resetChannelPartition` |
+| `POST /v1/channels/{channel_id}/profile-revisions/baseline` | `baselineChannelProfileRevisions` |
+| `PUT /v1/channels/{channel_id}/profile-revisions` | `publishChannelProfileRevision` |
 | `GET /v1/channels/{channel_id}/activity` | `getChannelActivity` |
 | `GET /v1/channels/{channel_id}/activity/history` | `getChannelActivityHistory` |
 | `GET /v1/channels/{channel_id}/activity/history/events/{event_id}/details` | `getChannelActivityHistoryDetails` |

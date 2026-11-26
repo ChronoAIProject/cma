@@ -1,12 +1,12 @@
 use super::{
-    execution_receipt::{self, ExecutionReceiptVerifier},
+    execution_receipt,
     outcomes::{DeliveryCommand, TurnOutcome},
     projection::Projection,
 };
 use crate::{
     delivery::router::DeliverySink,
     ingress::launch::{LaunchOutcome, LaunchRequest},
-    providers::TurnStream,
+    providers::{ProviderClient, TurnStream},
     telemetry::turn_trace::{scope, BoundOperation, Outcome, Stage},
 };
 use cmaeg_core::problem::{Problem, ProblemCode};
@@ -18,10 +18,10 @@ use tokio::sync::oneshot;
 pub(super) async fn consume(
     mut stream: TurnStream,
     turn: Arc<LaunchRequest>,
-    provider: &str,
     delivery: &dyn DeliverySink,
     activity: &dyn super::observer::ActivityObserver,
-    execution_verifier: Option<&dyn ExecutionReceiptVerifier>,
+    providers: &ProviderClient,
+    recovery_authority: Option<&Arc<super::RecoveryAuthority>>,
     admitted: &mut Option<oneshot::Sender<LaunchOutcome>>,
 ) -> Result<&'static str, &'static str> {
     // No provider acceptance observed yet.
@@ -30,8 +30,17 @@ pub(super) async fn consume(
     // closes it, while any terminal answer it sent remains queued as an event.
     let mut acceptance_open = true;
     let mut accepted_response = None;
+    let mut native_agent_id = None;
     let mut projection = Projection::default();
     let mut trace = None;
+    let provider = &turn
+        .channel
+        .definition
+        .consumer(turn.consumer.as_ref())
+        .ok_or("provider_unavailable")?
+        .provider
+        .slug;
+    let execution_verifier = providers.execution_verifiers.verifier(provider.as_str());
     loop {
         tokio::select! {
             biased;
@@ -43,20 +52,52 @@ pub(super) async fn consume(
                 acceptance_pending = false;
                 adopt_trace(&stream, &turn, &mut trace);
                 metrics::histogram!(crate::telemetry::names::PROVIDER_ACCEPT,
-                    crate::telemetry::names::PROVIDER => provider.to_owned())
+                    crate::telemetry::names::PROVIDER => provider.as_str().to_owned())
                     .record(accepted.at.saturating_duration_since(stream.request_started).as_secs_f64());
                 tracing::info!(metric="cmaeg_provider_accept_seconds",duration_seconds=accepted.at.saturating_duration_since(stream.request_started).as_secs_f64(),"provider accepted turn");
                 if let Some(sender) = admitted.take() {let _ = sender.send(LaunchOutcome::Accepted {response_id:accepted.response_id.clone()});}
                 accepted_response = Some(accepted.response_id.clone());
-                send(delivery,&turn,TurnOutcome::Accepted {response_id:accepted.response_id,thread_reply:accepted.thread_reply}, None).await?;
+                delivery.submit(DeliveryCommand::StreamOutcome {
+                    turn: turn.clone(),
+                    outcome: TurnOutcome::Accepted {
+                        response_id: accepted.response_id,
+                        thread_reply: accepted.thread_reply,
+                    },
+                    accepted_deadline: recovery_authority.map(|authority| authority.deadline),
+                    answer_response_id: None,
+                    recovery: None,
+                }).await.map_err(|_| "delivery_unavailable")?;
             }
             observed = stream.events.recv_observed() => {
-                let Some(observed) = observed else {return Err("stream_lost");};
+                let (event, bound_to_accepted, recovery_gate) = match observed {
+                    Some(observed) => (observed.event, observed.bound_to_accepted, None),
+                    None => {
+                        let response_id = accepted_response.as_deref().ok_or("stream_lost")?;
+                        let recovery = stream.recovery.take().ok_or("stream_lost")?;
+                        let authority = recovery_authority.ok_or("stream_lost")?;
+                        let event = recovery
+                            .terminal(providers, provider, response_id, native_agent_id.take(), authority)
+                            .await?
+                            .ok_or("stream_lost")?;
+                        // The verified snapshot supplies the whole terminal payload.
+                        projection = Projection::default();
+                        (event, true, Some(authority.clone()))
+                    }
+                };
                 adopt_trace(&stream, &turn, &mut trace);
-                let event = observed.event;
+                if let crate::providers::ResponsesEvent::InProgress {
+                    native_agent_id: Some(agent_id),
+                } = &event {
+                    if bound_to_accepted {
+                        native_agent_id.get_or_insert_with(|| agent_id.clone());
+                    }
+                }
                 if let crate::providers::ResponsesEvent::Created {
                     response_id, native_agent_id: Some(agent_id), ..
                 } = &event {
+                    if bound_to_accepted {
+                        native_agent_id.get_or_insert_with(|| agent_id.clone());
+                    }
                     let mut change = crate::activity::Change::state(
                         turn.consumer.as_ref().map_or("default", |id| id.as_str()),
                         crate::activity::ConsumerState::Accepted, Some(response_id.clone()),
@@ -66,19 +107,19 @@ pub(super) async fn consume(
                         &turn.activity.event_id, change).await;
                 }
                 let execution = execution_receipt::observe(
-                    execution_verifier, &turn, provider, accepted_response.as_deref(), &event,
+                    execution_verifier, &turn, provider.as_str(), accepted_response.as_deref(), &event,
                 );
                 if let Some(outcome) = projection.event(event)? {
                     let terminal = outcome.terminal();
                     let kind = outcome.kind();
-                    let answer_response_id = if observed.bound_to_accepted
+                    let answer_response_id = if bound_to_accepted
                         && matches!(outcome, TurnOutcome::MessageCommitted { .. } | TurnOutcome::Completed { .. })
                     {
                         accepted_response.clone()
                     } else {
                         None
                     };
-                    let delivery = send(delivery,&turn,outcome, answer_response_id).await;
+                    let delivery = send(delivery,&turn,outcome, answer_response_id, recovery_gate).await;
                     if terminal && acceptance_pending {
                         // The provider answered without a response identity.
                         // Once delivery holds that answer the event is handled:
@@ -122,12 +163,15 @@ async fn send(
     turn: &Arc<LaunchRequest>,
     outcome: TurnOutcome,
     answer_response_id: Option<String>,
+    recovery: Option<Arc<super::RecoveryAuthority>>,
 ) -> Result<(), &'static str> {
     delivery
         .submit(DeliveryCommand::StreamOutcome {
             turn: turn.clone(),
             outcome,
             answer_response_id,
+            accepted_deadline: None,
+            recovery,
         })
         .await
         .map_err(|_| "delivery_unavailable")
