@@ -8,6 +8,7 @@ from syntax import RUST, descendants, parse, string_value
 MAX_CACHED_SOURCE_BYTES = 64 * 1024
 INCLUDE_MACROS = {b'include', b'include_str', b'include_bytes'}
 COMMENTS = {'line_comment', 'block_comment'}
+LINT_ATTRIBUTES = {b'allow', b'expect', b'warn', b'deny', b'forbid'}
 
 
 def tokens(node):
@@ -61,6 +62,18 @@ def included_files(data):
     return result
 
 
+def conditional_lint_only(attr):
+    tree = attr.child_by_field_name('arguments')
+    if tree is None:
+        return False
+    args = arguments(tree)
+    # A single built-in lint attribute cannot gate or redirect a module.
+    return (len(args) >= 4 and args[-3].type == ','
+            and sum(item.type == ',' for item in args) == 1
+            and args[-2].type == 'identifier' and args[-2].text in LINT_ATTRIBUTES
+            and args[-1].type == 'token_tree' and args[-1].children[0].type == '(')
+
+
 def attributes(items):
     gated, path, ambiguous = False, None, False
     for item in items:
@@ -76,7 +89,7 @@ def attributes(items):
                 path = string_value(attr.named_children[-1])
             except ValueError:
                 ambiguous = True
-        elif name == 'cfg_attr':
+        elif name == 'cfg_attr' and not conditional_lint_only(attr):
             ambiguous = True
     return gated and not ambiguous, path, ambiguous
 
