@@ -2,6 +2,13 @@ import {createHash, randomBytes, randomUUID} from 'node:crypto';
 import {assertOwner, check, other} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 
+async function competingRequests(...requests) {
+  const results = await Promise.allSettled(requests);
+  const failure = results.find(result => result.status === 'rejected');
+  if (failure) throw failure.reason;
+  return results.map(result => result.value.body);
+}
+
 export async function shareAgentArtifact({adapter, user, outsider, record, recordFailure}) {
   const {agentId} = record;
   const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
@@ -13,18 +20,22 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
   const data = Buffer.from('Synthetic share and artifact regression\n');
   const artifactInput = {name: `fixture-${randomUUID()}.txt`, media_type: 'text/plain',
     content_base64: data.toString('base64')};
-  const artifactKey = randomUUID();
-  const {body: artifact} = await user.request(ingress, 'POST', artifacts,
-    {body: artifactInput, key: artifactKey, allowed: [201]});
+  const artifactIntent = {body: artifactInput, key: randomUUID(), allowed: [201]};
+  // The two controlled requests bypass ordinary pacing so they can overlap.
+  const [artifact, contender] = await competingRequests(
+    user.rawRequest(ingress, 'POST', artifacts, artifactIntent),
+    user.rawRequest(owner.am, 'POST', artifacts, artifactIntent),
+  );
   check(artifact.agent_id === agentId && typeof artifact.id === 'string' &&
     artifact.size_bytes === data.length && artifact.sha256 === createHash('sha256').update(data).digest('hex'),
   'artifact_admission_identity');
+  check(contender.id === artifact.id && contender.created_at === artifact.created_at &&
+    contender.sha256 === artifact.sha256, 'artifact_concurrent_receipt_diverged');
   const artifactPath = artifacts + '/' + encodeURIComponent(artifact.id);
-  const {body: replay} = await user.request(owner.am, 'POST', artifacts,
-    {body: artifactInput, key: artifactKey, allowed: [201]});
+  const {body: replay} = await user.request(owner.am, 'POST', artifacts, artifactIntent);
   check(replay.id === artifact.id && replay.created_at === artifact.created_at, 'artifact_replay_changed_receipt');
   await user.request(owner.am, 'POST', artifacts,
-    {body: {...artifactInput, name: 'changed.txt'}, key: artifactKey, allowed: [409]});
+    {...artifactIntent, body: {...artifactInput, name: 'changed.txt'}, allowed: [409]});
   await outsider.request(ingress, 'GET', access, {allowed: [404]});
 
   const token = randomBytes(32).toString('hex');
@@ -40,8 +51,10 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
     await outsider.request(owner.am, 'POST', redeem, {
       body: {token: randomBytes(32).toString('hex')}, allowed: [404],
     });
-    const {body: accepted} = await outsider.request(owner.am, 'POST', redeem, {body: {token}});
-    const {body: repeated} = await outsider.request(ingress, 'POST', redeem, {body: {token}});
+    const [accepted, repeated] = await competingRequests(
+      outsider.rawRequest(owner.am, 'POST', redeem, {body: {token}}),
+      outsider.rawRequest(ingress, 'POST', redeem, {body: {token}}),
+    );
     check(accepted.id === link.id && repeated.id === link.id && accepted.accepted_count === 1 &&
       repeated.accepted_count === 1 && repeated.revision === accepted.revision, 'share_redemption_replayed_twice');
     for (const am of [owner.am, ingress]) {
@@ -66,6 +79,7 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
     await publicationDenied(owner.am);
   }, recordFailure);
   const {body: listing} = await user.request(owner.am, 'GET', artifacts);
-  check(listing.items.filter(row => row.id === artifact.id && row.name === artifactInput.name).length === 1,
+  const matches = listing.items.filter(row => row.id === artifact.id || row.name === artifactInput.name);
+  check(matches.length === 1 && matches[0].id === artifact.id && matches[0].sha256 === artifact.sha256,
     'artifact_effect_missing_or_duplicated');
 }
