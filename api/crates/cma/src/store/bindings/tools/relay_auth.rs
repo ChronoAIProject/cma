@@ -57,6 +57,12 @@ impl MongoProviderToolSource {
             // Native discovery can follow confirm_open before the worker
             // publishes Ready. A confirmed receipt proves the native identity;
             // actual tool effects additionally require published agent state.
+            let restart_open = record.request.restart_runtime.is_some();
+            let generation_matches = if restart_open {
+                crate::store::agent_tool_open::matches(lineage, &record.request)
+            } else {
+                agent.conversation.runtime_generation == record.scope.runtime.provision_generation
+            };
             let allowed = if setup {
                 (published || agent.status == AgentStatus::Starting)
                     && agent
@@ -64,17 +70,12 @@ impl MongoProviderToolSource {
                         .conversation_id
                         .as_ref()
                         .is_none_or(|id| Some(id) == record.conversation.as_ref())
-                    && agent
-                        .conversation
-                        .runtime_generation
-                        .is_none_or(|generation| {
-                            Some(generation) == record.scope.runtime.provision_generation
-                        })
+                    && (generation_matches
+                        || !restart_open && agent.conversation.runtime_generation.is_none())
             } else {
                 published
                     && agent.conversation.conversation_id == record.conversation
-                    && agent.conversation.runtime_generation
-                        == record.scope.runtime.provision_generation
+                    && generation_matches
             };
             if !allowed
                 || record
