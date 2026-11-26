@@ -161,25 +161,6 @@ impl MongoNativeWarmPools {
         Ok(())
     }
 
-    pub(crate) async fn latest_activated_image(
-        &self,
-        machine: bool,
-    ) -> Result<Option<String>, WarmPoolError> {
-        let mut scope = retirement::release_scope(self, machine);
-        scope.insert("activated_at", doc! {"$type": "date"});
-        let latest = self
-            .targets
-            .find_one(scope)
-            .sort(doc! {"activated_at": -1})
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?;
-        Ok(latest
-            .map(validate)
-            .transpose()?
-            .filter(|row| !row.retiring && !row.retired)
-            .map(|row| row.plan.spec.image.uri))
-    }
-
     pub(crate) async fn prepare_candidate(
         &self,
         mut target: PoolTarget,

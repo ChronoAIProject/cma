@@ -74,7 +74,7 @@ async fn first_pointer_startup_holds_ambiguous_pool_authority_without_bootstrapp
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
-async fn first_pointer_startup_recovers_a_release_activated_after_preflight() {
+async fn first_pointer_startup_rechecks_a_release_activated_after_preflight() {
     for published in [false, true] {
         let fixture = Fixture::new().await;
         let stale = fixture.replica().await;
@@ -130,7 +130,23 @@ async fn first_pointer_startup_recovers_a_release_activated_after_preflight() {
         })
         .await
         .unwrap();
-        assert!(matches!(outcome.unwrap(), WarmPoolStartup::Ready));
+        let outcome = outcome.unwrap();
+        if !published {
+            assert!(matches!(outcome, WarmPoolStartup::ConfigurationDrift));
+            assert!(pointer.pools.default_held(false));
+            assert!(!pointer.pools.default_held(true));
+            assert!(pointer
+                .controller
+                .release
+                .lanes
+                .load(ReleasedLane::Agent)
+                .await
+                .unwrap()
+                .is_none());
+            fixture.database.drop().await.unwrap();
+            continue;
+        }
+        assert!(matches!(outcome, WarmPoolStartup::Ready));
         assert_eq!(
             pointer.durable_release(Lane::Agent).await.active,
             image(Lane::Agent, 'b')
