@@ -365,7 +365,8 @@ def main():
                                                       env.get("GH_TOKEN"), env.get("GITHUB_ACTOR"), source=source,
                                                       reservation_check=current, prepared_checksum=prepared_checksum,
                                                       max_files=int(env["CD_WEB_RETENTION_FILE_LIMIT"]),
-                                                      max_bytes=int(env["CD_WEB_RETENTION_BYTE_LIMIT"]))
+                                                      max_bytes=int(env["CD_WEB_RETENTION_BYTE_LIMIT"]),
+                                                      mark=diagnostics.mark)
                             else:
                                 receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
                                                   env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
