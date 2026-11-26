@@ -68,6 +68,7 @@ pub(super) fn adapter_outcome(error: &AdapterError) -> &'static str {
             "authority_unavailable"
         }
         AdapterError::Rejected(_)
+        | AdapterError::AdmittedSandboxSpecDrift
         | AdapterError::NativePoolConfigurationDrift
         | AdapterError::DesktopFailed
         | AdapterError::SkillUpgradeRefused(_)

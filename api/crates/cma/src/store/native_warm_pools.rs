@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use layer1_public::rest::admin::warm_pools::{ResizeWarmPoolBody, WarmPoolError};
 use layer2_core::StoreError;
-use layer3_adapter::agent_sandbox::{NativePoolBinding, NativePoolDrain};
+use layer3_adapter::agent_sandbox::{NativePoolBinding, NativePoolConfiguration, NativePoolDrain};
 use mongodb::{
     bson::{doc, DateTime, Document},
     options::{IndexOptions, ReturnDocument},
@@ -131,6 +131,29 @@ impl PoolTargetStore for MongoNativeWarmPools {
     }
     async fn activate(&self, id: &str) -> Result<(), WarmPoolError> {
         retirement::activate(self, id).await
+    }
+    async fn default_pin_conflicts(
+        &self,
+        plan: &NativePoolConfiguration,
+        machine: bool,
+    ) -> Result<bool, WarmPoolError> {
+        let mut scope = self.scope();
+        scope.insert("plan.config_sha256", &plan.config_sha256);
+        let exact = self
+            .targets
+            .find_one(scope)
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?;
+        if let Some(exact) = exact.map(validate).transpose()? {
+            if exact.machine != machine || exact.retiring || exact.retired {
+                return Ok(true);
+            }
+        }
+        match self.verify_bootstrap(machine, &plan.spec.image.uri).await {
+            Ok(()) => Ok(false),
+            Err(WarmPoolError::Conflict) => Ok(true),
+            Err(error) => Err(error),
+        }
     }
     async fn retirement_homes(
         &self,

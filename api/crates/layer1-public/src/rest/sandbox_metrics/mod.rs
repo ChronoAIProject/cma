@@ -196,6 +196,10 @@ fn invalid() -> Response {
             .into(),
     ))
 }
+/// Identifies the typed disabled-view response inside the server middleware.
+#[derive(Clone, Copy)]
+pub struct UsageReportViewDisabled;
+
 fn problem(error: MetricsError) -> Response {
     let (status, code) = match &error {
         MetricsError::ViewDisabled => (StatusCode::NOT_IMPLEMENTED, "report_view_disabled"),
@@ -210,6 +214,9 @@ fn problem(error: MetricsError) -> Response {
         status,
         super::problem_document(status, code, &error.to_string(), code),
     );
+    if matches!(error, MetricsError::ViewDisabled) {
+        response.extensions_mut().insert(UsageReportViewDisabled);
+    }
     if matches!(
         status,
         StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE

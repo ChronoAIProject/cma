@@ -218,20 +218,67 @@ done
 docker exec "$contract_name" mongosh --quiet --eval \
   'rs.initiate({_id:"cma_ci",members:[{_id:0,host:"localhost:27017"}]})' >/dev/null
 readiness_deadline=$((SECONDS + 60))
-until docker exec "$contract_name" mongosh --quiet --eval \
-  'if (!db.hello().isWritablePrimary) quit(1)' >/dev/null 2>&1; do
+until mongo_server=$(docker exec "$contract_name" mongosh --quiet --eval \
+  'const hello = db.hello(); if (!hello.isWritablePrimary) quit(1); print(hello.topologyVersion.processId.toHexString(), hello.localTime.getTime())' 2>/dev/null); do
   (( SECONDS < readiness_deadline )) || exit 1
   sleep 0.25
 done
+[[ "$mongo_server" =~ ^([0-9a-f]{24})\ ([0-9]{10,16})$ ]] || exit 1
+mongo_process=${BASH_REMATCH[1]}
+mongo_unix_ms=${BASH_REMATCH[2]}
 endpoint=$(docker port "$contract_name" 27017/tcp)
 [[ "$endpoint" =~ ^127\.0\.0\.1:[0-9]+$ ]] || exit 1
 export CHRONO_TEST_MONGODB_URI="mongodb://${endpoint}/?directConnection=true&replicaSet=cma_ci"
 export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
+partition_name=${partition:-$selection}
+shard=${CMA_MONGO_COORDINATOR_SHARD:-standalone}
+[[ "$shard" =~ ^([1-8]/8|all|isolated|standalone)$ ]] || shard=standalone
+python3 -B - "$repo_root" "$contract_suffix" "$mongo_process" "$mongo_unix_ms" "$partition_name" "$shard" "$mongo_cpus" <<'PY'
+from hashlib import sha256
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+
+root, fixture, process, mongo_time, partition, shard, cpus = sys.argv[1:]
+host_time = time.time_ns() // 1_000_000
+revision = clean = metadata = host_load = None
+try:
+    commit = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=root,
+                            capture_output=True, text=True, check=True, timeout=5).stdout.strip()
+    if re.fullmatch(r"[0-9a-f]{40}", commit):
+        revision = commit
+        tracked = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root,
+                                 capture_output=True, check=True, timeout=5)
+        clean = not tracked.stdout
+except (OSError, subprocess.SubprocessError):
+    pass
+try:
+    if os.environ.get("CMA_NEXTEST_REUSE") == "1":
+        metadata = sha256((Path(root) / "api/target/nextest/binaries-metadata.json").read_bytes()).hexdigest()
+    host_load = [round(value, 2) for value in os.getloadavg()]
+except OSError:
+    pass
+print("Mongo fixture " + json.dumps({
+    "event": "started", "fixture": fixture, "partition": partition, "shard": shard,
+    "checkout_sha": revision, "tracked_checkout_clean": clean, "archive_metadata_sha256": metadata,
+    "mongo_process": process, "mongo_unix_ms": int(mongo_time), "mongo_cpus": cpus,
+    "host_load": host_load, "host_unix_ms": host_time,
+}), flush=True)
+PY
+test_started=$SECONDS
+test_status=0
 cd "$repo_root/api"
 if [[ "$selection" == 'availability' ]]; then
-  nextest_contracts run --test-threads 1 --no-fail-fast --no-capture
+  nextest_contracts run --test-threads 1 --no-fail-fast --no-capture || test_status=$?
 elif [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'organization-inventory' || "$selection" == 'agent-list-contracts' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'request-limits' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' || "$selection" == 'bson-ceiling' || "$selection" == 'first-response' || "$selection" == 'history' || "$selection" == 'observation-budget' ]]; then
-  nextest_contracts run --test-threads 1 --no-fail-fast --success-output final
+  nextest_contracts run --test-threads 1 --no-fail-fast --success-output final || test_status=$?
 else
-  nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition"
+  nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition" || test_status=$?
 fi
+printf 'Mongo fixture {"event":"finished","fixture":"%s","partition":"%s","status":%d,"elapsed_seconds":%d}\n' \
+  "$contract_suffix" "$partition_name" "$test_status" "$((SECONDS - test_started))"
+exit "$test_status"

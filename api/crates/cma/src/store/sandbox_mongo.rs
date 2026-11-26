@@ -167,6 +167,7 @@ pub struct MongoSandboxStore {
     pub(super) native_prepared: Collection<Document>,
     pub(super) warm_runtime_version: Option<String>,
     pub(super) managed_runtime_version: Option<String>,
+    pub(crate) default_pool_holds: std::sync::Arc<crate::warm_pools::DefaultPoolHolds>,
     pub(crate) runtime_image_origin_enabled: bool,
     pub(crate) desktop_verified_runtime_image: Option<String>,
     pub(super) managed_machine_runtime_version: Option<String>,
@@ -220,10 +221,11 @@ impl MongoSandboxStore {
 
     /// The current agent-lane release for new managed work.
     pub(crate) fn managed_agent_release(&self) -> Option<String> {
-        match &self.released {
+        let release = match &self.released {
             Some(released) => Some(released.snapshot().agent),
             None => self.managed_runtime_version.clone(),
-        }
+        };
+        release.filter(|image| !self.default_pool_holds.image(image))
     }
 
     pub(super) fn managed_agent_release_for(
