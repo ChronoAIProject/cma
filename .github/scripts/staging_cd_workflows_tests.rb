@@ -157,7 +157,7 @@ class StagingWorkflowTest < Minitest::Test
     deploy = workflow('staging-deploy')['jobs']['deploy']
     refute deploy.key?('concurrency'), 'a nested acquisition of the caller lock deadlocks the writer'
     assert_equal 'chrono-ai-staging', deploy['environment']
-    assert_equal 20, deploy['timeout-minutes']
+    assert_equal "${{ inputs.mode == 'release' && 50 || 20 }}", deploy['timeout-minutes']
     assert_equal 'release', automatic['with']['mode']
     verification = deploy['steps'].index { |step| step.dig('env', 'CD_RESOLVE_MODE') == 'verify' }
     writer = deploy['steps'].index { |step| step['run'].to_s.include?('staging_cd_invoke.py') }
