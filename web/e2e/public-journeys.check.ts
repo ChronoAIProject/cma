@@ -11,6 +11,7 @@ for (const role of ['owner', 'secondOwner'] as const) {
     const { harness, boundary } = await publisherFixture(page, baseURL!, role);
     const result = await publishCurrentTrigger(harness, page, role);
     expect(result.revision.content.target.inline).toEqual(result.target);
+    expect(result.target.image).toBeUndefined();
     expect(result.revision.content.target.agent_profile.id).toBe(`generated-agent-${role}`);
     expect(result.document.draft.target).toEqual(result.revision.content.target);
     expect(result.target.workspace?.repository?.ref).toBe('b'.repeat(40));
@@ -18,16 +19,6 @@ for (const role of ['owner', 'secondOwner'] as const) {
     expect(boundary.errors).toEqual([]);
   });
 }
-test('LOCAL lifecycle bootstrap publisher retains the managed default image', async ({
-  page,
-  baseURL,
-}) => {
-  const { harness, boundary } = await publisherFixture(page, baseURL!, 'owner');
-  const result = await publishCurrentTrigger(harness, page, 'owner', true);
-  expect(result.revision.content.target.inline?.image).toBeUndefined();
-  expect(boundary.unexpected).toEqual([]);
-  expect(boundary.errors).toEqual([]);
-});
 
 import { taskFixture } from './public-task.fixture';
 import {
@@ -35,9 +26,7 @@ import {
   openWorkspacesTab,
   workspaceAgentButton,
 } from './lifecycle-creation';
-import { assertContextualTask, assertInlineRequest } from './public-journey-contracts';
-import { currentTriggerTarget } from './current-trigger-target';
-import { publicApiPath } from './public-api-path';
+import { assertContextualTask } from './public-journey-contracts';
 
 test('LOCAL current contextual task driver resolves the operation and verifies the first answer', async ({
   page,
@@ -91,67 +80,4 @@ test('LOCAL compiled publications produce evidence accepted by the final auditor
     }
   }
   auditSyntheticPublications(publications);
-});
-
-test('LOCAL model input keeps focus when image resolution completes before typing', async ({
-  page,
-  baseURL,
-}) => {
-  const { harness, boundary } = await publisherFixture(page, baseURL!, 'secondOwner');
-  let releaseImage!: () => void;
-  const imageGate = new Promise<void>((resolve) => {
-    releaseImage = resolve;
-  });
-  await page.route('**/images/image-secondOwner/versions', async (route) => {
-    await imageGate;
-    await route.fallback();
-  });
-  try {
-    await page.goto('/triggers/manage');
-    const image = page.getByRole('button', { name: 'Image', exact: true });
-    await image.click();
-    await page
-      .getByRole('menuitemradio', { name: 'Image secondOwner (Public)', exact: true })
-      .click();
-    const model = page.getByLabel('Model', { exact: true });
-    await expect(model).toBeEnabled();
-    await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
-    await expect(page.getByRole('button', { name: 'Save draft', exact: true })).toBeDisabled();
-    await model.focus();
-    await expect(model).toBeFocused();
-    releaseImage();
-    await expect(image).toBeEnabled();
-    await expect(model).toBeFocused();
-    await page.keyboard.insertText('fixture-model');
-    await expect(model).toHaveValue('fixture-model');
-    await expect(model).toBeFocused();
-    await page
-      .getByLabel('Agent key scope services (comma separated)', { exact: true })
-      .fill('model');
-    await page
-      .getByLabel('GitHub repository (optional)', { exact: true })
-      .fill(harness.fixture.publicJourneys.repository.url);
-    await page
-      .getByLabel('GitHub repository ref', { exact: true })
-      .fill(harness.fixture.publicJourneys.repository.reference);
-    await page.getByRole('button', { name: 'Next', exact: true }).click();
-    await page.getByRole('button', { name: 'Next', exact: true }).click();
-    await page.locator('#trigger-title').fill('Preserved model selection');
-    const creation = page.waitForResponse(
-      (response) =>
-        response.request().method() === 'POST' &&
-        publicApiPath(new URL(response.url()).pathname) === '/api/v1/triggers',
-    );
-    await page.getByRole('button', { name: 'Save draft', exact: true }).click();
-    const response = await creation;
-    expect(response.status()).toBe(201);
-    assertInlineRequest(
-      response.request().postDataJSON().content.target,
-      currentTriggerTarget(harness.fixture, 'secondOwner'),
-    );
-    expect(boundary.unexpected).toEqual([]);
-    expect(boundary.errors).toEqual([]);
-  } finally {
-    releaseImage();
-  }
 });

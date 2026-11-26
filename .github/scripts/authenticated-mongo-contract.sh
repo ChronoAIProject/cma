@@ -5,7 +5,7 @@ set -euo pipefail
 # contracts must prove actual credential and collection authorization failures.
 script_directory=$(dirname -- "${BASH_SOURCE[0]}")
 repo_root=$(CDPATH='' cd -- "${script_directory}/../.." && pwd -P)
-unset CMA_IM_TEST_MONGODB_URI CHRONO_TEST_MONGODB_URI CHRONO_TEST_MONGODB_FAILPOINT_URI
+unset CMA_AUTHENTICATED_TEST_MONGODB_URI CHRONO_TEST_MONGODB_URI CHRONO_TEST_MONGODB_FAILPOINT_URI
 # shellcheck source=.github/scripts/backend-nextest.sh
 source "$script_directory/backend-nextest.sh"
 # Select product groups before creating a fixture. The default preserves the
@@ -26,8 +26,8 @@ readonly contract_label="dev.chrono.cma.im-contract=${contract_suffix}"
 export MONGO_INITDB_ROOT_USERNAME=contract-admin
 MONGO_INITDB_ROOT_PASSWORD=$(openssl rand -hex 24)
 export MONGO_INITDB_ROOT_PASSWORD
-CMA_IM_REPLICA_KEY=$(openssl rand -hex 64)
-export CMA_IM_REPLICA_KEY
+CMA_AUTHENTICATED_REPLICA_KEY=$(openssl rand -hex 64)
+export CMA_AUTHENTICATED_REPLICA_KEY
 
 cleanup() {
   local status=$? owner
@@ -50,8 +50,8 @@ bash "$repo_root/.github/scripts/pull-pinned-image.sh" "$mongo_image"
 docker run --detach --name "$contract_name" --label "$contract_label" \
   --publish 127.0.0.1::27017 --memory 2g --memory-swap 2g --cpus 2 --pids-limit 256 \
   --tmpfs /data/db:rw,size=1073741824 --tmpfs /data/configdb:rw,size=16777216 \
-  --env MONGO_INITDB_ROOT_USERNAME --env MONGO_INITDB_ROOT_PASSWORD --env CMA_IM_REPLICA_KEY \
-  --entrypoint sh "$mongo_image" -c 'umask 077; printf "%s" "$CMA_IM_REPLICA_KEY" > /tmp/replica-key; chown mongodb:mongodb /tmp/replica-key; exec docker-entrypoint.sh mongod --replSet cma-im-contract --keyFile /tmp/replica-key --wiredTigerCacheSizeGB 0.25 --setParameter enableTestCommands=1' >/dev/null
+  --env MONGO_INITDB_ROOT_USERNAME --env MONGO_INITDB_ROOT_PASSWORD --env CMA_AUTHENTICATED_REPLICA_KEY \
+  --entrypoint sh "$mongo_image" -c 'umask 077; printf "%s" "$CMA_AUTHENTICATED_REPLICA_KEY" > /tmp/replica-key; chown mongodb:mongodb /tmp/replica-key; exec docker-entrypoint.sh mongod --replSet cma-authenticated-contract --keyFile /tmp/replica-key --wiredTigerCacheSizeGB 0.25 --setParameter enableTestCommands=1' >/dev/null
 readiness_script=$(cat "$script_directory/authenticated-mongo-readiness.js")
 for attempt in $(seq 1 60); do
   if docker exec "$contract_name" mongosh --quiet \
@@ -69,7 +69,7 @@ for attempt in $(seq 1 60); do
 done
 endpoint=$(docker port "$contract_name" 27017/tcp)
 [[ "$endpoint" =~ ^127\.0\.0\.1:[0-9]+$ ]] || exit 1
-export CMA_IM_TEST_MONGODB_URI="mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@${endpoint}/admin?directConnection=true"
+export CMA_AUTHENTICATED_TEST_MONGODB_URI="mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@${endpoint}/admin?directConnection=true"
 cd "$repo_root/api"
 # Shared Console authority uses this authenticated disposable replica set.
 # Serial execution isolates its appName-scoped acknowledgement-loss failpoint.
@@ -77,14 +77,10 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~console::session_backend::)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=console) and test(~shared_)'
-contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
-  -E 'package(=cma-image-manager) and kind(test) and (binary(=mongo_isolation) or binary(=browser_session))'
 
 # Migration contracts require isolated credentials, real DDL and a replica set.
 contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma-service-migrations) and kind(lib)'
-contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
-  -E 'package(=cma-image-manager) and kind(lib) and test(~migrations::tests::)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~migrations::)'
 
@@ -171,12 +167,12 @@ contract_nextest am run -E 'package(=cma) and test(~gateway::tests::)' \
   --run-ignored only --test-threads 1
 
 # Verified sender input must survive real binding policy updates and ledger replay.
-CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
+CHRONO_TEST_MONGODB_URI="$CMA_AUTHENTICATED_TEST_MONGODB_URI" \
   contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and test(~sender_context_tests::)'
 
 # The gateway reset journey also opens M1's store on this authenticated fixture.
-CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
+CHRONO_TEST_MONGODB_URI="$CMA_AUTHENTICATED_TEST_MONGODB_URI" \
   contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and (test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors) or test(=store::bindings::reset_tests::gateway_reset_tests::profile_reset_receipt_replays_after_a_later_channel_revision))'
 
@@ -184,11 +180,11 @@ contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure)'
 
 # Fixed-pin retirement verifies a denial using the restricted runtime role.
-CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
+CHRONO_TEST_MONGODB_URI="$CMA_AUTHENTICATED_TEST_MONGODB_URI" \
   contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and test(=store::native_warm_pools::retirement::machine_selection::tests::fixed_pin_machine_selection_works_without_released_runtime_grant)'
 
-CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
+CHRONO_TEST_MONGODB_URI="$CMA_AUTHENTICATED_TEST_MONGODB_URI" \
   CMA_TEST_CMA_EXECUTABLE="${CARGO_TARGET_DIR:-$PWD/target}/debug/cma" \
   contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and test(=store::agent_log_segments::active_proof::prepare::tests::active_proof_operator_cli_uses_generated_isolated_role)'

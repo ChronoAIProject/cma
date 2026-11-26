@@ -5,15 +5,15 @@ import re
 
 # cma-journey-probe is a standalone public-journey runner. It is in no image, and
 # its tests reuse Agent Manager wire fixtures, so the AM track owns it.
-AM = frozenset({"cma", "cma-image-manager", "cma-allocator-qualification"})
-AM_OPTIONAL = frozenset({"cma-journey-probe"})
+AM = frozenset({"cma", "cma-allocator-qualification"})
+# The retiree can appear in the comparison base, but never enters a current test suite.
+AM_OPTIONAL = frozenset({"cma-journey-probe", "cma-image-manager"})
 EG = frozenset({"cmaeg"})
 SHARED = frozenset({"layer1-public", "layer2-core", "layer3-adapter",
                     "layer4-runtime", "cma-service-auth", "cmaeg-core"})
 TRACKS = frozenset({"am", "eg", "web"})
 BUILD_OWNERS = {
     "api/crates/cma/Dockerfile": {"am"},
-    "api/crates/cma-image-manager/Dockerfile": {"am"},
     "api/crates/layer4-runtime/Dockerfile": {"am"},
     "api/crates/cmaeg/Dockerfile": {"eg"},
 }

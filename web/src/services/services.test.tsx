@@ -19,7 +19,7 @@ describe('independent CMA service navigation', () => {
       const session = {
         authenticated: true,
         subject: 'owner',
-        permissions: ['cma-im:admin'],
+        permissions: ['cma-eg:admin'],
         expires_at: Math.floor(Date.now() / 1000) + 3600,
       };
       let failWrite!: (error: Error) => void;
@@ -43,27 +43,27 @@ describe('independent CMA service navigation', () => {
       );
       const done = vi.fn();
       render(
-        <ServicePage service="image-manager">
+        <ServicePage service="event-gateway">
           {(_, denied) => (
             <WriteForm
-              service="image-manager"
-              path="/v1/images"
-              label="Create image"
-              fields={[{ name: 'name', label: 'Image name', required: true }]}
+              service="event-gateway"
+              path="/v1/channels"
+              label="Create channel"
+              fields={[{ name: 'name', label: 'Channel name', required: true }]}
               denied={denied}
               onDone={done}
             />
           )}
         </ServicePage>,
       );
-      const input = await screen.findByLabelText('Image name');
-      fireEvent.change(input, { target: { value: 'retained image' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Create image' }));
+      const input = await screen.findByLabelText('Channel name');
+      fireEvent.change(input, { target: { value: 'retained channel' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Create channel' }));
       await waitFor(() => expect(writes).toHaveLength(1));
       fireEvent.focus(window);
       await screen.findByText('Session refresh interrupted');
-      expect(screen.getByLabelText('Image name')).toBe(input);
-      expect(input).toHaveValue('retained image');
+      expect(screen.getByLabelText('Channel name')).toBe(input);
+      expect(input).toHaveValue('retained channel');
       expect(screen.getByRole('button', { name: 'Submitting…' })).toBeDisabled();
       await act(async () => {
         failWrite(new TypeError('Write response interrupted'));
@@ -71,7 +71,7 @@ describe('independent CMA service navigation', () => {
       expect(await screen.findByRole('button', { name: 'Retry same request' })).toBeEnabled();
       fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
       await waitFor(() => expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull());
-      expect(screen.getByLabelText('Image name')).toBe(input);
+      expect(screen.getByLabelText('Channel name')).toBe(input);
       fireEvent.click(screen.getByRole('button', { name: 'Retry same request' }));
       await waitFor(() => expect(done).toHaveBeenCalledOnce());
       expect(writes[1]?.body).toBe(writes[0]?.body);
@@ -83,7 +83,7 @@ describe('independent CMA service navigation', () => {
     const session = {
       authenticated: true,
       subject: 'owner',
-      permissions: ['cma-im:admin'],
+      permissions: ['cma-eg:admin'],
       expires_at: Math.floor(Date.now() / 1000) + 3600,
     };
     let finishCheck!: (response: Response) => void;
@@ -96,7 +96,7 @@ describe('independent CMA service navigation', () => {
       .mockReturnValueOnce(pendingCheck);
     vi.stubGlobal('fetch', fetcher);
     render(
-      <ServicePage service="image-manager">
+      <ServicePage service="event-gateway">
         {(_, denied) => <button onClick={() => denied()}>Simulate denied write</button>}
       </ServicePage>,
     );
@@ -122,15 +122,12 @@ describe('independent CMA service navigation', () => {
     );
     await screen.findByRole('button', { name: /account menu/i });
     fireEvent.click(screen.getByRole('button', { name: /^Service: / }));
-    expect(screen.getByRole('menuitemradio', { name: /^Image Manager/ })).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
+    expect(screen.queryByRole('menuitemradio', { name: /^Image Manager/ })).not.toBeInTheDocument();
     expect(screen.queryByText('Create an image')).not.toBeInTheDocument();
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it('uses enabled service URLs, preserves modified clicks and exposes a disabled Image Manager', () => {
+  it('uses enabled service URLs, and preserves modified clicks', () => {
     const navigate = vi.fn();
     render(<ServiceMenu route={{ kind: 'event_gateway' }} onNavigate={navigate} />);
     fireEvent.click(screen.getByRole('button', { name: 'Service: Event Gateway' }));
@@ -142,12 +139,7 @@ describe('independent CMA service navigation', () => {
       'href',
       '/event-gateway',
     );
-    const image = screen.getByRole('menuitemradio', { name: /^Image Manager/ });
-    expect(image).toHaveAttribute('aria-disabled', 'true');
-    expect(image).not.toHaveAttribute('href');
-    expect(image).toHaveTextContent('Coming soon. Image Manager is not available yet.');
-    fireEvent.click(image);
-    expect(navigate).not.toHaveBeenCalled();
+    expect(screen.queryByRole('menuitemradio', { name: /^Image Manager/ })).not.toBeInTheDocument();
     const agent = screen.getByRole('menuitemradio', { name: 'Agent Manager' });
     expect(agent).toHaveAttribute('href', '/agent-manager');
     fireEvent.click(agent, { ctrlKey: true });
@@ -175,7 +167,7 @@ describe('independent CMA service navigation', () => {
     expect(screen.queryByText('private channels')).toBeNull();
     expect(fetcher.mock.calls[0]?.[0]).toBe('/api/event-gateway/auth/session');
   });
-  it('retries an uncertain image write with its original body and key', async () => {
+  it('retries an uncertain channel write with its original body and key', async () => {
     const done = vi.fn();
     const fetcher = vi
       .fn()
@@ -184,19 +176,19 @@ describe('independent CMA service navigation', () => {
     vi.stubGlobal('fetch', fetcher);
     render(
       <WriteForm
-        service="image-manager"
-        path="/v1/images"
-        label="Create image"
-        fields={[{ name: 'name', label: 'Image name', required: true }]}
+        service="event-gateway"
+        path="/v1/channels"
+        label="Create channel"
+        fields={[{ name: 'name', label: 'Channel name', required: true }]}
         denied={vi.fn()}
         onDone={done}
       />,
     );
-    fireEvent.change(screen.getByLabelText('Image name'), { target: { value: 'my-image' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create image' }));
+    fireEvent.change(screen.getByLabelText('Channel name'), { target: { value: 'my-channel' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create channel' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Retry same request' }));
     await waitFor(() => expect(done).toHaveBeenCalledOnce());
-    expect(fetcher.mock.calls[0]?.[0]).toBe('/api/image-manager/v1/images');
+    expect(fetcher.mock.calls[0]?.[0]).toBe('/api/event-gateway/v1/channels');
     expect(fetcher.mock.calls[1]?.[1].body).toBe(fetcher.mock.calls[0]?.[1].body);
     expect(fetcher.mock.calls[1]?.[1].headers['Idempotency-Key']).toBe(
       fetcher.mock.calls[0]?.[1].headers['Idempotency-Key'],

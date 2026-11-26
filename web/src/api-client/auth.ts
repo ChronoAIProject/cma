@@ -139,7 +139,7 @@ function validateReturnTarget(value: string): void {
   const query = split < 0 ? undefined : value.slice(split + 1);
   const id = '[A-Za-z0-9_.~-]+';
   const workflow = new RegExp(
-    `^/(?:agent-manager|event-gateway|image-manager|bots(?:/${id})?|auth/bot-father/link/${id}/complete|t/${id}(?:/${id})?|triggers/manage(?:/${id}(?:/embed)?)?|agents/${id}|sandboxes/${id}|(?:profiles|marketplace)(?:/(?:agent|workspace|sandbox)/${id})?)$`,
+    `^/(?:agent-manager|event-gateway|bots(?:/${id})?|auth/bot-father/link/${id}/complete|t/${id}(?:/${id})?|triggers/manage(?:/${id}(?:/embed)?)?|agents/${id}|sandboxes/${id}|(?:profiles|marketplace)(?:/(?:agent|workspace|sandbox)/${id})?)$`,
   );
   const keys = new Set<string>();
   let validQuery = true;

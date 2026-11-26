@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn shared_schema_requires_opt_in_and_migration_and_preserves_foreign_collections() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_eg_shared_{}", uuid::Uuid::new_v4().simple());
     let result = exercise(&uri, &admin.database(&name)).await;

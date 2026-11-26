@@ -15,7 +15,7 @@ use mongodb::{
 use std::sync::Arc;
 
 async fn database() -> (Client, Database, String) {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI")
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI")
         .expect("owned authenticated Mongo replica set required");
     let admin = Client::with_uri_str(&uri)
         .await

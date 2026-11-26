@@ -65,7 +65,7 @@ fn router(
 #[tokio::test]
 #[ignore = "requires a disposable Mongo replica set"]
 async fn authenticated_cancel_receipt_fences_a_regular_create_across_gateways() {
-    let mongo_uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let mongo_uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let first = mongodb::Client::with_uri_str(&mongo_uri).await.unwrap();
     let second = mongodb::Client::with_uri_str(&mongo_uri).await.unwrap();
     let name = format!("create_receipt_{}", uuid::Uuid::new_v4().simple());

@@ -59,7 +59,7 @@ export function auditSyntheticPublications(
   const proof = {
     schema: 'cma-public-journey-v1',
     execution: 'configured_remote_origin',
-    scope: 'current_image_inline',
+    scope: 'managed_default_inline',
     run,
     visitor,
     publications: proofs,
