@@ -8,6 +8,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use cmaeg::{
+    activity::{ActivityStore, ObservedActivity},
     channels::resolver::ChannelResolver,
     http::callbacks,
     ingress::{
@@ -121,7 +122,7 @@ pub struct Fixture {
     pub state: IngressState,
     pub records: Arc<RecordClient>,
     pub record_origin: String,
-    pub activity: Arc<cmaeg::activity::ActivityStore>,
+    pub activity: Arc<ActivityStore>,
     pub backend: Backend,
     pub recorder: Arc<Recorder>,
     pub id: ChannelId,
@@ -230,14 +231,11 @@ impl Fixture {
                 .unwrap()
                 .with_media_enabled(media_enabled),
         );
-        let store = Arc::new(cmaeg::activity::ActivityStore::new(
+        let store = Arc::new(ActivityStore::new(
             (*records).clone(),
             state.master_keys.clone(),
         ));
-        let observer = Arc::new(cmaeg::activity::ObservedActivity::new(
-            store.clone(),
-            state.activity.clone(),
-        ));
+        let observer = Arc::new(ObservedActivity::new(store.clone(), state.activity.clone()));
         let state = state.with_activity_observer(observer);
         let (gateway, app) = serve(callbacks::router(state.clone())).await;
         Self {
