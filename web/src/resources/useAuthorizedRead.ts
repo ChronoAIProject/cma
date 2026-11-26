@@ -6,6 +6,7 @@ import { readableError } from '../vocabulary/errors';
 export interface AuthorizedValue<Value> {
   readonly value: Value;
   readonly revalidateAt?: string | null;
+  readonly refreshAt?: string | null;
 }
 export type AuthorizedRead<Value> =
   | { readonly status: 'loading' }
@@ -58,6 +59,7 @@ export function useAuthorizedRead<Value>(
       retry.current = { scope: retryScope, failures: 0, at: 0 };
     let active = true;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let observationRefresh: ReturnType<typeof setTimeout> | undefined;
     let pending: AbortController | undefined;
     let expiration: ReturnType<typeof setTimeout> | undefined;
     // Wall-clock authority deadline of the published value. Background tabs may
@@ -97,6 +99,7 @@ export function useAuthorizedRead<Value>(
     const load = async () => {
       if (!active || pending !== undefined || document.visibilityState === 'hidden') return;
       clearTimeout(retryTimer);
+      clearTimeout(observationRefresh);
       if (retry.current.at > Date.now()) {
         retryTimer = setTimeout(() => void load(), retry.current.at - Date.now());
         return;
@@ -138,6 +141,12 @@ export function useAuthorizedRead<Value>(
           clear();
           void load();
         }, deadline - Date.now());
+        if (result.refreshAt != null) {
+          // The observation can refresh while the current access remains valid.
+          const delay = Math.max(250, Date.parse(result.refreshAt) - Date.now());
+          if (Date.now() + delay < deadline)
+            observationRefresh = setTimeout(() => void load(), delay);
+        }
         retry.current = { scope: retryScope, failures: 0, at: 0 };
         publish({ status: 'ready', value: result.value });
       } catch (error) {
@@ -195,6 +204,7 @@ export function useAuthorizedRead<Value>(
       clearTimeout(expiration);
       clearInterval(refresh);
       clearTimeout(retryTimer);
+      clearTimeout(observationRefresh);
       document.removeEventListener('visibilitychange', foreground);
       window.removeEventListener('focus', foreground);
     };

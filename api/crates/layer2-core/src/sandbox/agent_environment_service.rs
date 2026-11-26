@@ -81,6 +81,8 @@ impl AgentFileService {
             policy_revision: authorized.snapshot.fence().policy_revision,
             runtime_incarnation: AgentEnvironment::incarnation(agent_id, sandbox),
             revalidate_at: revalidate_at.map(crate::rfc3339_at),
+            // Older clients treat both observation and access deadlines as expiry.
+            access_revalidate_at: authorized.decision.revalidate_at.map(crate::rfc3339_at),
             files: EnvironmentFeature {
                 state,
                 reason,

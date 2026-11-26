@@ -27,7 +27,13 @@ export function useAgentEnvironment(
               signal.throwIfAborted();
               if (value.agent_id !== scope.agentId)
                 throw new Error('Agent environment identity changed.');
-              return { value, revalidateAt: value.revalidate_at };
+              return value.access_revalidate_at === undefined
+                ? { value, revalidateAt: value.revalidate_at }
+                : {
+                    value,
+                    revalidateAt: value.access_revalidate_at,
+                    refreshAt: value.revalidate_at,
+                  };
             } catch (error) {
               if (error instanceof ApiError && error.status === 404) return { value: undefined };
               throw error;

@@ -34,6 +34,8 @@ pub(crate) struct EnvironmentView {
     policy_revision: u64,
     runtime_incarnation: Option<String>,
     revalidate_at: Option<String>,
+    /// Expiry of the current access decision, independent of observation retries.
+    access_revalidate_at: Option<String>,
     files: FeatureView,
     operation_output: FeatureView,
     browser: FeatureView,
@@ -48,6 +50,7 @@ impl From<AgentEnvironment> for EnvironmentView {
             policy_revision: value.policy_revision,
             runtime_incarnation: value.runtime_incarnation,
             revalidate_at: value.revalidate_at,
+            access_revalidate_at: value.access_revalidate_at,
             files: value.files.into(),
             operation_output: value.operation_output.into(),
             browser: value.browser.into(),

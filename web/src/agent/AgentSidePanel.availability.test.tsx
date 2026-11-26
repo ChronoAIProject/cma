@@ -4,6 +4,7 @@ import { ApiError, createClient } from '@cma/client';
 import { AgentSidePanel, type AgentPanel } from './AgentSidePanel';
 import { CmaClientProvider } from '../api/context';
 import type { ReadOptions } from '../api/client';
+import type { AgentFilesClient } from '../api/agentFiles';
 import { agentClient, AGENT_DETAIL } from '../test/agent';
 import { ArtifactPublicationScope } from '../resources/artifactRecovery';
 import type { AgentEnvironment } from '@cma/client';
@@ -35,7 +36,7 @@ const available = { ...unavailable, state: 'available' as const, writable: true 
 function files(read: (agentId: string, options?: ReadOptions) => Promise<AgentEnvironment>) {
   return {
     environment: vi.fn(read),
-    list: vi.fn(async () => []),
+    list: vi.fn<AgentFilesClient['list']>(async () => []),
     read: vi.fn(),
     download: vi.fn(),
     write: vi.fn(),
@@ -81,6 +82,76 @@ function panel(
   );
 }
 const currentTab = () => within(screen.getByRole('tabpanel'));
+
+it('keeps a shared file download active while an advisory Browser observation refreshes', async () => {
+  vi.useFakeTimers();
+  const createdAt = new Date().toISOString();
+  const refreshAt = new Date(Date.now() + 2_000).toISOString();
+  const expiresAt = new Date(Date.now() + 5_000).toISOString();
+  const observed = {
+    ...environment,
+    files: { ...available, writable: false },
+    revalidate_at: refreshAt,
+    access_revalidate_at: expiresAt,
+    browser: {
+      ...unavailable,
+      state: 'temporarily_unavailable' as const,
+      reason: 'observation_pending',
+    },
+  };
+  const fileClient = files(
+    vi
+      .fn()
+      .mockResolvedValueOnce(observed)
+      .mockImplementation(() => new Promise(() => {})),
+  );
+  fileClient.list.mockResolvedValue([
+    { path: 'shared.txt', name: 'shared.txt', kind: 'file', hidden: false, size_bytes: 0 },
+  ]);
+  fileClient.read.mockResolvedValue({
+    path: 'shared.txt',
+    size_bytes: 0,
+    sha256: 'a'.repeat(64),
+    content_base64: '',
+  });
+  const download = vi.fn<AgentFilesClient['download']>(() => new Promise(() => {}));
+  const resourceViews = createClient({
+    baseUrl: 'https://fixture.invalid',
+    fetch: async (request) =>
+      String(request).includes('/resource-access/')
+        ? Response.json({
+            capabilities: ['view_details', 'view_files'],
+            policy_revision: 1,
+            revalidate_at: null,
+            owner: { kind: 'person', is_current_person: false },
+          })
+        : Response.json({
+            access: 'shared',
+            id: 'agt_1',
+            title: 'Shared Agent',
+            status: 'ready',
+            created_at: createdAt,
+            updated_at: createdAt,
+          }),
+  });
+  render(panel(agentClient({ files: { ...fileClient, download }, resourceViews }), 'files', true));
+  await act(async () => {});
+  expect(fileClient.list).toHaveBeenCalledTimes(1);
+  fireEvent.click(currentTab().getByRole('button', { name: 'shared.txt' }));
+  await act(async () => {});
+  fireEvent.click(currentTab().getByRole('button', { name: 'Download file' }));
+  expect(download).toHaveBeenCalledTimes(1);
+  const downloadSignal = download.mock.calls[0]?.[2]?.signal;
+
+  await act(async () => vi.advanceTimersByTimeAsync(2_000));
+  expect(fileClient.environment).toHaveBeenCalledTimes(2);
+  expect(currentTab().getByText('Downloading file…')).toBeVisible();
+  expect(downloadSignal?.aborted).toBe(false);
+
+  await act(async () => vi.advanceTimersByTimeAsync(3_000));
+  expect(currentTab().getByText('Checking file access…')).toBeVisible();
+  expect(downloadSignal?.aborted).toBe(true);
+});
 
 it.each([
   ['files', 'Checking file access…'],

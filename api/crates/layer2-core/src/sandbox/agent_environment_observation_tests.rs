@@ -68,6 +68,10 @@ async fn environment_pending_is_immediate_and_same_key_observers_share_one_probe
         assert_eq!(value["browser"]["reason"], "observation_pending");
         assert_eq!(value["control"]["writable"], false);
         assert!(value["revalidate_at"].as_str().is_some());
+        assert_eq!(
+            value.get("access_revalidate_at"),
+            Some(&serde_json::Value::Null)
+        );
     }
     assert_eq!(start.elapsed(), Duration::ZERO);
     tokio::task::yield_now().await;
@@ -231,6 +235,8 @@ async fn request_bound_expiry_cancels_observer_without_renewing_authority() {
     let value = read(&files, &owner, &agent().id).await;
     assert_eq!(value["control"]["state"], "forbidden");
     assert_eq!(value["files"]["state"], "forbidden");
+    assert_eq!(value["access_revalidate_at"], value["revalidate_at"]);
+    assert!(value["access_revalidate_at"].as_str().is_some());
     tokio::task::yield_now().await;
     assert_eq!(probe.active.load(Ordering::SeqCst), 1);
     tokio::time::advance(Duration::from_millis(60)).await;
