@@ -18,7 +18,7 @@ CONTROL_OUTCOMES = {
     "Report component outcomes": ("success",),
 }
 PROVEN_SKIP = frozenset({
-    "infrastructure", "Promote contract", "Signal verified image publication",
+    "infrastructure", "Publish protected Web", "Promote contract", "Signal verified image publication",
     *(f"Release {component}" for component in DEPLOYABLES),
     *(f"Promote {component}" for component in DEPLOYABLES),
 })

@@ -209,7 +209,9 @@ jobs:
   release_web:
     name: Release web
     needs: [allocate, infrastructure]
-    if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['web'] != ''
+    if: >-
+      vars.CMA_STAGING_WEB_CONTINUITY != 'true' && needs.allocate.outputs.changed == 'true' &&
+      fromJSON(needs.allocate.outputs.publications)['web'] != ''
     # Each release_* job runs one release of its component at a time. Newer
     # pushes queue behind the running build, which finishes; a queued job that
     # a newer reservation already owns skips in seconds, so the newest source
@@ -227,6 +229,30 @@ jobs:
     with:
       component: web
       tasks: ${{ fromJSON(needs.allocate.outputs.publications)['web'] }}
+  protected_web:
+    name: Publish protected Web
+    needs: [allocate, infrastructure]
+    if: >-
+      vars.CMA_STAGING_WEB_CONTINUITY == 'true' && needs.allocate.outputs.changed == 'true' &&
+      fromJSON(needs.allocate.outputs.lanes)['web'] == 'web' &&
+      fromJSON(needs.allocate.outputs.publications)['web'] != ''
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: read
+      packages: write
+      deployments: read
+    uses: ./.github/workflows/staging-web-continuity.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+    with:
+      tasks: ${{ fromJSON(needs.allocate.outputs.publications)['web'] }}
+      publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['web']) }}
+      infra_ref: ${{ needs.infrastructure.outputs.revision }}
+      file_limit: ${{ fromJSON(vars.CMA_STAGING_WEB_CONTINUITY_FILE_LIMIT || '0') }}
+      byte_limit: ${{ fromJSON(vars.CMA_STAGING_WEB_CONTINUITY_BYTE_LIMIT || '0') }}
   release_am:
     name: Release am
     needs: [allocate, infrastructure]
@@ -298,7 +324,9 @@ jobs:
   promote_web:
     name: Promote web
     needs: [allocate, infrastructure, release_web]
-    if: needs.allocate.outputs.changed == 'true' && needs.release_web.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['web'] == 'web'
+    if: >-
+      vars.CMA_STAGING_WEB_CONTINUITY != 'true' && needs.allocate.outputs.changed == 'true' &&
+      needs.release_web.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['web'] == 'web'
     concurrency:
       group: cma-staging-deploy-set
       queue: max
@@ -455,7 +483,7 @@ jobs:
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
   publication_signal:
     name: Signal verified image publication
-    needs: [allocate, release_web, release_am, release_eg, release_runtime, release_runtime_omarchy]
+    needs: [allocate, release_web, protected_web, release_am, release_eg, release_runtime, release_runtime_omarchy]
     if: >-
       ${{ !cancelled() && vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true' &&
           needs.allocate.result == 'success' && needs.allocate.outputs.changed == 'true' }}
@@ -473,12 +501,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CD_PUBLICATION_MATRIX: ${{ needs.allocate.outputs.matrix }}
-          CD_PUBLISH_WEB: ${{ needs.release_web.result }}
+          CD_PUBLISH_WEB: ${{ vars.CMA_STAGING_WEB_CONTINUITY == 'true' && (needs.protected_web.outputs.publish_result || needs.protected_web.result) || needs.release_web.result }}
           CD_PUBLISH_AM: ${{ needs.release_am.result }}
           CD_PUBLISH_EG: ${{ needs.release_eg.result }}
           CD_PUBLISH_RUNTIME: ${{ needs.release_runtime.result }}
           CD_PUBLISH_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.result }}
-          CD_FINALIZED_WEB: ${{ needs.release_web.outputs.finalized }}
+          CD_FINALIZED_WEB: ${{ fromJSON(vars.CMA_STAGING_WEB_CONTINUITY == 'true' && toJSON(needs.protected_web.outputs.finalized) || toJSON(needs.release_web.outputs.finalized)) }}
           CD_FINALIZED_AM: ${{ needs.release_am.outputs.finalized }}
           CD_FINALIZED_EG: ${{ needs.release_eg.outputs.finalized }}
           CD_FINALIZED_RUNTIME: ${{ needs.release_runtime.outputs.finalized }}
@@ -501,7 +529,7 @@ jobs:
     outputs:
       release_outcome: ${{ steps.outcome.outputs.release_outcome }}
     needs: [plan, allocate, infrastructure,
-            release_web, release_am, release_eg, release_runtime, release_runtime_omarchy,
+            release_web, protected_web, release_am, release_eg, release_runtime, release_runtime_omarchy,
             promote_web, promote_am, promote_eg, promote_runtime, promote_runtime_omarchy, promote_contract]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
@@ -526,22 +554,22 @@ jobs:
           CD_ALLOCATION_RESULT: ${{ needs.allocate.result }}
           CD_INFRASTRUCTURE_RESULT: ${{ needs.infrastructure.result }}
           CD_LANES: ${{ needs.allocate.outputs.lanes }}
-          CD_PUBLISH_WEB: ${{ needs.release_web.result }}
+          CD_PUBLISH_WEB: ${{ vars.CMA_STAGING_WEB_CONTINUITY == 'true' && (needs.protected_web.outputs.publish_result || needs.protected_web.result) || needs.release_web.result }}
           CD_PUBLISH_AM: ${{ needs.release_am.result }}
           CD_PUBLISH_EG: ${{ needs.release_eg.result }}
           CD_PUBLISH_RUNTIME: ${{ needs.release_runtime.result }}
           CD_PUBLISH_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.result }}
-          CD_DISPOSITION_WEB: ${{ needs.release_web.outputs.disposition }}
+          CD_DISPOSITION_WEB: ${{ fromJSON(vars.CMA_STAGING_WEB_CONTINUITY == 'true' && toJSON(needs.protected_web.outputs.disposition) || toJSON(needs.release_web.outputs.disposition)) }}
           CD_DISPOSITION_AM: ${{ needs.release_am.outputs.disposition }}
           CD_DISPOSITION_EG: ${{ needs.release_eg.outputs.disposition }}
           CD_DISPOSITION_RUNTIME: ${{ needs.release_runtime.outputs.disposition }}
           CD_DISPOSITION_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.outputs.disposition }}
-          CD_FINALIZED_WEB: ${{ needs.release_web.outputs.finalized }}
+          CD_FINALIZED_WEB: ${{ fromJSON(vars.CMA_STAGING_WEB_CONTINUITY == 'true' && toJSON(needs.protected_web.outputs.finalized) || toJSON(needs.release_web.outputs.finalized)) }}
           CD_FINALIZED_AM: ${{ needs.release_am.outputs.finalized }}
           CD_FINALIZED_EG: ${{ needs.release_eg.outputs.finalized }}
           CD_FINALIZED_RUNTIME: ${{ needs.release_runtime.outputs.finalized }}
           CD_FINALIZED_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.outputs.finalized }}
-          CD_PROMOTE_WEB: ${{ toJSON(needs.promote_web) }}
+          CD_PROMOTE_WEB: ${{ vars.CMA_STAGING_WEB_CONTINUITY == 'true' && (needs.protected_web.outputs.promotion || '{"result":"skipped","outputs":{}}') || toJSON(needs.promote_web) }}
           CD_PROMOTE_AM: ${{ toJSON(needs.promote_am) }}
           CD_PROMOTE_EG: ${{ toJSON(needs.promote_eg) }}
           CD_PROMOTE_RUNTIME: ${{ toJSON(needs.promote_runtime) }}

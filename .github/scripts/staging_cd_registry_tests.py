@@ -55,6 +55,24 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             registry.token("ghcr.io/chronoaiproject/cma-web")
 
+    def test_web_asset_tag_must_name_its_own_content_and_repository(self):
+        manifest = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "config": {"digest": "sha256:" + "a" * 64}, "layers": []}
+        raw = json.dumps(manifest).encode()
+        digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+        auxiliary = "asset-sha256-" + digest[7:]
+        opener = Mock()
+        token = self.response({"token": "fixture"})
+        response = self.response(raw, {"Docker-Content-Digest": digest})
+        opener.open.side_effect = [token, response, token, response]
+        registry = Registry(opener)
+        self.assertEqual(registry.manifest("ghcr.io/chronoaiproject/cma-web", auxiliary), (digest, manifest))
+        with self.assertRaisesRegex(Refusal, "different manifest digest"):
+            registry.manifest("ghcr.io/chronoaiproject/cma-web", "asset-sha256-" + "b" * 64)
+        with self.assertRaisesRegex(Refusal, "reference is not immutable"):
+            registry.manifest("ghcr.io/chronoaiproject/cma-agent-manager", auxiliary)
+        self.assertEqual(opener.open.call_count, 4)
+
     def test_runtime_pointer_reads_are_limited_to_the_two_runtime_repositories(self):
         repository = "ghcr.io/chronoaiproject/cma-runtime"
         opener = Mock()
