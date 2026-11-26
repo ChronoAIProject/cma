@@ -365,7 +365,7 @@ export function AgentSidePanel({
               readOnly={!mayWrite}
               onClose={onClose}
               onAccessChanged={accessChanged}
-              beginDownload={shared ? beginFileDownload : undefined}
+              beginDownload={shared && computerOpen ? beginFileDownload : undefined}
             />
           ) : filesOpen ? (
             <aside className="agent-files-panel" aria-label="Agent files">
