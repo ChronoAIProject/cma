@@ -174,6 +174,15 @@ class Fixture:
             + ",instance_id:{$type:'string'},$expr:{$gt:['$expires_at','$$NOW']}},{_id:1});"
             "print(JSON.stringify(row!==null));")
 
+    def lifecycleSnapshot(self, sandboxId=None, agentIds=None):
+        if not isinstance(agentIds, list) or len(agentIds) != 2 or any(
+            not isinstance(value, str) or not re.fullmatch(r'[-A-Za-z0-9_]{1,160}', value)
+            for value in [sandboxId, *agentIds]
+        ) or agentIds[0] == agentIds[1]:
+            raise ValueError('lifecycle_snapshot_lineage_required')
+        sample = json.dumps({'sandboxId': sandboxId, 'agentIds': agentIds})
+        return self.mongo(f'const lifecycleSample = {sample};\n' + (ROOT / 'lifecycle_snapshot.js').read_text())
+
     def runtimeFor(self, agentId=None, agent_id=None, **_):
         identity=agentId or agent_id
         live=next((a for a in ['a','b'] if a not in self.killed),None)
@@ -386,7 +395,7 @@ class Fixture:
                     allowed=['topology','runtimeFor','ownerOf','killAm','restoreAm','prepareTurn',
                              'releaseTurn','oracle','captureFailure','titleEffects','skillEffects',
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
-                             'observeScale','observeNeverReady','liveOwnerLease']
+                             'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

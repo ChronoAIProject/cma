@@ -3,11 +3,12 @@ import {pathToFileURL} from 'node:url';
 import {resolve, join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
-import {API, check, hash, id, normalizeConfig, runtimeBindings, assertRuntimeBindings, poll, other, assertOwner, assertRecovery, assertResponse, assertOracle, observeServingDuringRestart, observeTwoAmServingHold, awaitInitialIdle, wait, terminal, lineage} from './core.mjs';
+import {API, check, hash, id, normalizeConfig, runtimeBindings, assertRuntimeBindings, poll, other, assertOwner, assertRecovery, assertResponse, assertOracle, observeServingDuringRestart, observeTwoAmServingHold, awaitInitialIdle, wait, terminal, lineage, safeError} from './core.mjs';
 import {NonOwnerRouter} from '../routing.mjs';
 import {desktopFrame, closeDesktop} from './desktop.mjs';
+import {cleanupFixture} from './cleanup.mjs';
 import {drainOwnerCase, neverReadyManagerCase, scaleManagerCase} from '../features/readiness.mjs';
-import {ownerlessRevival} from '../features/ownerless_revival.mjs';
+import {retainedLifecycle} from '../features/lifecycle_atomicity.mjs';
 
 export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook, preparedHook, triggerHook} = {}) {
   const config = normalizeConfig(raw);
@@ -54,7 +55,9 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     return r.body;
   }
   async function create(am, desktop, overrides = {}) {
-    const record = {name: 'e2e-slo-ws4-' + randomUUID(), key: randomUUID(), desktop, am}; records.push(record);
+    const record = {name: 'e2e-slo-ws4-' + randomUUID(), key: randomUUID(), desktop, am,
+      sharedSandbox: Boolean(overrides.workspace_id)};
+    records.push(record);
     const start = performance.now();
     record.createBody = {name: record.name, machine_included: desktop, desktop,
       ...(desktop ? {initial_message: 'Report local readiness briefly without using tools or changing files.'} : {}),
@@ -98,6 +101,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     }
     check(lineage(record, ready) && (desktop ? ready.desktop === true : ready.desktop !== true), 'created_lineage_variant_mismatch');
     record.ready = true;
+    record.workspaceId = ready.workspace?.id;
     const runtime = await adapter.runtimeFor({agentId: record.agentId});
     const family = desktop ? 'omarchy' : 'base';
     check(runtime.agent_id === record.agentId || runtime.agent_sha256 === hash(record.agentId), 'runtime_agent_mismatch');
@@ -250,64 +254,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       owner_container_exit_observed: true, response_sha256: hash(turn.stream.responseId), provider_requests: 1, provider_completions: 1,
       unchanged_agent_and_response: true, second_am_restored: true};
   }
-  async function cleanup(record) {
-    if (!record.agentId || record.deleted) return;
-    check(record.ready && record.sandboxId, 'cleanup_create_lineage_incomplete');
-    const am = killedAm ? other(killedAm) : other(record.am);
-    const receiptPath = join(config.output_dir, 'cleanup-' + hash(record.agentId) + '-' + randomUUID() + '.private.json');
-    const journal = {am, agent_id:record.agentId, sandbox_id:record.sandboxId, started_at:new Date().toISOString(), mutations:[], last_reads:{}};
-    const persist = () => writeFile(receiptPath, JSON.stringify(journal,null,2)+'\n', {mode:0o600});
-    async function cleanupRequest(target, method, path, options) {
-      try {
-        const response = await api.request(target, method, path, options);
-        const entry = {at:new Date().toISOString(), method, path, ...response};
-        if (method === 'GET') journal.last_reads[path] = entry;
-        else {journal.mutations.push(entry); await persist();}
-        return response;
-      } catch(error) {
-        journal.request_error = {at:new Date().toISOString(), method, path, error:safeError(error), response:error.response ?? null};
-        await persist(); throw error;
-      }
-    }
-    async function cleanupDetail() {
-      const response = await cleanupRequest(am, 'GET', `/api/v1/agents/${record.agentId}`);
-      check(lineage(record, response.body), 'agent_lineage_mismatch'); return response.body;
-    }
-    try {
-      const current = await cleanupDetail();
-      const op = await cleanupRequest(am, 'GET', `/api/v1/agent-lifecycle/${record.operationId}`);
-      check(op.body.id === record.operationId && op.body.agent_id === record.agentId, 'cleanup_lifecycle_mismatch');
-      if (!['stopped', 'deleted'].includes(current.status)) {
-        await cleanupRequest(am, 'POST', `/api/v1/agents/${record.agentId}/stop`, {body: {}, key: record.key + '-stop', allowed: [200, 202, 204]});
-        await poll(() => cleanupDetail(), value => value.status === 'stopped', {timeout: 180000, code: 'agent_stop_timeout'});
-      }
-      await cleanupRequest(am, 'DELETE', `/api/v1/agents/${record.agentId}`, {key: record.key + '-delete', allowed: [200, 202, 204]});
-      await poll(() => cleanupRequest(am, 'GET', `/api/v1/agents/${record.agentId}`, {allowed: [200, 404]}), value => value.status === 404 || value.body?.status === 'deleted', {timeout: 180000});
-      const sandbox = await cleanupRequest(am, 'GET', `/api/v1/sandboxes/${record.sandboxId}`);
-      check(sandbox.body?.id === record.sandboxId && sandbox.body.owner === config.owner_id, 'sandbox_owner_mismatch');
-      const suffix = ' sandbox ' + record.operationId;
-      check(sandbox.body.name === record.name.slice(0, Math.max(0, 64 - suffix.length)) + suffix, 'sandbox_operation_name_mismatch');
-      let cursor; const seen = new Set();
-      do {
-        const query = new URLSearchParams({limit: '200', ...(cursor ? {cursor} : {})});
-        const page = await cleanupRequest(am, 'GET', '/api/v1/agents?' + query);
-        check(Array.isArray(page.body?.items), 'agent_inventory_missing');
-        check(!page.body.items.some(x => x.sandbox_id === record.sandboxId && x.status !== 'deleted'), 'sandbox_has_live_agent');
-        cursor = page.body.next; if (cursor) {check(typeof cursor === 'string' && !seen.has(cursor) && seen.size < 20, 'inventory_incomplete'); seen.add(cursor);}
-      } while (cursor);
-      await cleanupRequest(am, 'DELETE', `/api/v1/sandboxes/${record.sandboxId}`, {key: record.key + '-retire', allowed: [200, 202, 204]});
-      await poll(() => cleanupRequest(am, 'GET', `/api/v1/sandboxes/${record.sandboxId}`, {allowed: [200, 404]}), value => value.status === 404 || value.body?.status === 'retired', {timeout: 300000, code: 'sandbox_retire_timeout'});
-      record.deleted = true; result.cleanup.push({agent_sha256: hash(record.agentId), sandbox_sha256: hash(record.sandboxId), public_stop_delete_retire: 'PASS', am});
-    } catch(error) {
-      journal.failure = safeError(error); throw error;
-    } finally {
-      journal.finished_at = new Date().toISOString(); await persist();
-      (result.cleanup_evidence ??= []).push({am, agent_sha256:hash(record.agentId), native_response_path:receiptPath,
-        delete_status:journal.mutations.find(x => x.method === 'DELETE' && x.path === `/api/v1/agents/${record.agentId}`)?.status ?? null,
-        last_agent_status:journal.last_reads[`/api/v1/agents/${record.agentId}`]?.body?.status ?? null,
-        failure:journal.failure ?? null});
-    }
-  }
+  const cleanup = record => cleanupFixture({record, config, api, killedAm, result});
   async function desktop(record) {
     let socket;
     try {
@@ -433,12 +380,12 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     await step('owner_drain_and_readiness', () => drainOwnerCase({adapter, api, record: plain, config}));
     await step('ready_autoscaler_two_three_two', () => scaleManagerCase({adapter, api, record: plain}));
     await step('never_ready_third_manager', () => neverReadyManagerCase({adapter, api, record: plain}));
-    await step('ownerless_pause_revive_open', () => ownerlessRevival({adapter, api, record: plain, openBoth, complete,
+    await retainedLifecycle({adapter, api, record: plain, create, cleanup, openBoth, complete, step,
       restartOwner: async owner => {
         const kill = await adapter.killAm({agentId: plain.agentId, owner}); killedAm = owner.am;
         check(kill.killed_am === killedAm && kill.actual_container_exited === true, 'revival_owner_exit_unproven');
         await restoreKilledAm();
-      }}));
+      }});
     await step('plain_public_stop_retire', async () => {await cleanup(plain); return {retired: true};});
     if (triggerHook) await step('trigger_origin_always_on_and_replay', () => triggerHook({adapter, config}));
     if (!runtimes.omarchy) {
@@ -483,14 +430,13 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     await api.close();
     for (const caseId of turns) {try {await adapter.releaseTurn({caseId});} catch {result.cleanup.push({provider_release: 'FAILED', case_id: caseId});}}
     if (killedAm) {try {await restoreKilledAm();} catch {result.cleanup.push({am_restore: 'FAILED'});}}
-    for (const record of records) {try {await cleanup(record);} catch (error) {result.cleanup.push({agent_sha256: record.agentId ? hash(record.agentId) : null, public_cleanup: 'FAILED', reason: safeError(error)});}}
+    for (const record of records.toReversed()) {try {await cleanup(record);} catch (error) {result.cleanup.push({agent_sha256: record.agentId ? hash(record.agentId) : null, public_cleanup: 'FAILED', reason: safeError(error)});}}
     if (result.verdict.endsWith('_PASS') && result.cleanup.some(x => Object.values(x).includes('FAILED'))) result.verdict = 'FAIL_CLEANUP';
     result.finished_at = new Date().toISOString(); result.infrastructure_release = 'OWNED_BY_SOLE_LAUNCHER'; await save();
   }
   return result;
 }
 export const withDesktopAdoption = (config, hook) => runJourney(config, {adoptionHook: hook});
-function safeError(error) { return /^[a-zA-Z0-9_]+$/.test(error?.message ?? '') ? error.message : 'transport_or_adapter_error'; }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {check(process.argv.length === 3, 'private_config_path_required'); const result = await runJourney(JSON.parse(await readFile(process.argv[2], 'utf8'))); console.log(JSON.stringify({verdict: result.verdict, failure: result.failure ?? null})); process.exitCode = result.verdict === 'LOCAL_TWO_AM_JOURNEY_PASS' ? 0 : 1;}
   catch (error) {console.error(safeError(error)); process.exitCode = 1;}

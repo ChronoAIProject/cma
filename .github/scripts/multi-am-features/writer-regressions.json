@@ -186,9 +186,12 @@
       "feature": "Connection recovery, runtime-loss reconciliation and sandbox lifecycle",
       "requirement": "Background path re-reads/rebuilds plan after known CAS conflict within a finite budget, preserving exact parent/Agent/log/ownership fences and all-or-none transition. No endless identical scheduler error or partially advanced hierarchy.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Deterministic background/multi-Agent transaction barriers and atomicity assertions.",
+      "remaining": "Deterministic background contention and runtime-loss barriers, plus hosted execution of the shared Sandbox pause and revival.",
       "trigger": "Two AM workers race an Agent log/metadata mutation with connection repair or atomic multi-Agent sandbox transition",
-      "required_assertions": []
+      "required_assertions": [
+        {"case": "two_agent_pause_all_or_none", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "two_agent_revival_restores_both", "minimum_runs": 1, "phases": [], "routing": "journey"}
+      ]
     },
     {
       "id": "SW08",

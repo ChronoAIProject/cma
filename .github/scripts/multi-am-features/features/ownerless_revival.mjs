@@ -2,7 +2,8 @@ import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {assertOwner, check, hash, id, other, poll} from '../cma/core.mjs';
 
-export async function ownerlessRevival({api, adapter, record, restartOwner, openBoth, complete, waitFor = poll}) {
+export async function ownerlessRevival({api, adapter, record, restartOwner, openBoth, complete, pauseObservation,
+  waitFor = poll}) {
   const {agentId, sandboxId} = record;
   check(id(agentId) && id(sandboxId), 'revival_lineage_invalid');
   const path = `/api/v1/sandboxes/${sandboxId}`;
@@ -40,6 +41,7 @@ export async function ownerlessRevival({api, adapter, record, restartOwner, open
     return receipt;
   };
   await admit(ingress, 'pause', randomUUID(), 'pausing');
+  if (pauseObservation) await pauseObservation();
   await waitFor(() => readAgent(priorOwner.am), value => value.status === 'paused' &&
     value.sandbox.status === 'paused', {timeout: 240000, code: 'revival_pause_missing'});
   // A paused Agent is still a live resource. Withdraw any retained authority

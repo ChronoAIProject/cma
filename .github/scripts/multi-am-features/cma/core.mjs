@@ -7,6 +7,7 @@ export const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 export function check(value, code) { if (!value) throw new Error(code); }
 export const id = x => typeof x === 'string' && /^[-a-zA-Z0-9_]{1,160}$/.test(x);
 export const other = am => am === 'a' ? 'b' : 'a';
+export function safeError(error) { return /^[a-zA-Z0-9_]+$/.test(error?.message ?? '') ? error.message : 'transport_or_adapter_error'; }
 export const terminal = value => ['completed', 'failed', 'incomplete', 'cancelled'].includes(value.status);
 export const lineage = (record, detail) => detail?.id === record.agentId && detail.sandbox?.id === record.sandboxId
   && [detail.title, detail.owner_title, detail.worktree?.name, detail.sandbox?.name]
