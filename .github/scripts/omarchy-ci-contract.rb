@@ -44,14 +44,14 @@ module OmarchyCIContract
         python3 .github/scripts/omarchy-browser-input-tests.py
         node --test .github/scripts/omarchy-browser-page.test.cjs
       SH
-      { "uses" => "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+      { "uses" => "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
         "with" => { "cache-binary" => "${{ #{DEVELOP_PUSH} }}" } },
       { "name" => "Set immutable Omarchy image version", "id" => "identity",
         "run" => 'echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"' },
       { "name" => "Identify pinned Omarchy dependency cache", "id" => "cache",
         "run" => 'python3 .github/scripts/omarchy-cache-key.py "$RUNNER_TEMP/omarchy-evidence/cache-inputs.json" >> "$GITHUB_OUTPUT"' },
       { "name" => "Restore complete Omarchy layer cache", "id" => "omarchy-cache-restore",
-        "uses" => "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830", "timeout-minutes" => 5,
+        "uses" => "actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25", "timeout-minutes" => 5,
         "continue-on-error" => true, "with" => { "path" => CACHE_PATH, "key" => CACHE_KEY, "fail-on-cache-miss" => false } },
       { "name" => "Discard incomplete Omarchy cache restore", "if" => CACHE_MISS,
         "run" => 'rm -rf "$RUNNER_TEMP/omarchy-layer-cache"' },
@@ -94,7 +94,7 @@ module OmarchyCIContract
       { "name" => "Verify Omarchy production temporary directory", "env" => { "CMA_OMARCHY_TEST_IMAGE_TMP" => "1" },
         "run" => 'node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/image-tmp"' },
       { "name" => "Restore Trivy databases", "if" => "github.event_name != 'push' || github.ref != 'refs/heads/develop'",
-        "uses" => "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
+        "uses" => "actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25",
         "with" => { "path" => "${{ github.workspace }}/.cache/trivy", "key" => "cache-trivy-readonly", "restore-keys" => "cache-trivy-" } },
       { "name" => "Scan tested Omarchy image", "uses" => "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
         "with" => { "cache" => "${{ #{DEVELOP_PUSH} }}", "image-ref" => "cma-runtime-omarchy:ci", "format" => "json",
@@ -121,7 +121,7 @@ module OmarchyCIContract
           "path" => "${{ runner.temp }}/ci-native-image/", "if-no-files-found" => "error",
           "compression-level" => 0, "retention-days" => 1 } },
       { "name" => "Save qualified Omarchy layer cache", "if" => "success() && #{CACHE_WRITE}",
-        "uses" => "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830", "timeout-minutes" => 5,
+        "uses" => "actions/cache/save@caa296126883cff596d87d8935842f9db880ef25", "timeout-minutes" => 5,
         "continue-on-error" => true, "with" => { "path" => CACHE_PATH, "key" => CACHE_KEY } },
     ]
     contract.require!(row["steps"] == expected,

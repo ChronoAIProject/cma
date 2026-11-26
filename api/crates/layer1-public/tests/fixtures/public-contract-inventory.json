@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 335,
+  "openapi_operations": 339,
   "operations": {
     "POST /api/v1/admin/sandboxes/{id}/runtime-migration": {
       "classification": "openapi",
@@ -3645,6 +3645,21 @@
         "temporarily_unavailable"
       ]
     },
+    "GET /api/v1/cmaeg/bindings/{binding_id}/conversations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/inspection.rs# Read-only conversation assignment catalog under binding manager authority.",
+      "required_problems": ["not_authenticated", "forbidden", "binding_not_found"]
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-drift": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/inspection.rs# Owner profile drift inspection preserves a provisioning unknown result.",
+      "required_problems": ["not_authenticated", "forbidden", "binding_not_found"]
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-transfers": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/reset.rs# Explicit profile transfer records the original and successor binding receipt.",
+      "required_problems": ["not_authenticated", "forbidden", "invalid_binding", "binding_not_found", "binding_not_ready", "binding_unavailable"]
+    },
     "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/bindings/inspection.rs# Read-only mapping inspection uses binding management authority.",
@@ -4507,6 +4522,14 @@
         "reporting_budget_exceeded",
         "usage_unavailable",
         "report_expired"
+      ]
+    },
+    "POST /api/v2/triggers/public/{public_id}/launches": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launch_subject.rs# Bound admission adds a mandatory subject condition before the existing engine.",
+      "required_problems": [
+        "command_subject_condition_invalid",
+        "command_subject_mismatch"
       ]
     }
   },

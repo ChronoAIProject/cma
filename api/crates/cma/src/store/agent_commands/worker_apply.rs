@@ -49,10 +49,6 @@ async fn apply_mutation(
             {
                 return Err(CommandLedgerError::Invalid.into());
             }
-            let agent = load_agent(store, &claim.agent_id, session).await?;
-            if !fence_parent(store, agent.as_ref(), session).await? {
-                return Err(CommandLedgerError::StaleClaim.into());
-            }
             command.work.lease.as_mut().unwrap().expires_at = expires_at.clone();
             lane.lease.as_mut().unwrap().expires_at = expires_at.clone();
         }
@@ -67,6 +63,10 @@ async fn apply_mutation(
         Change::Claim { .. } | Change::Reconcile(_) => unreachable!(),
     }
     command.revision = revision.checked_add(1).ok_or(CommandLedgerError::Corrupt)?;
+    let agent = load_agent(store, &claim.agent_id, session).await?;
+    if !fence_parent(store, agent.as_ref(), session).await? {
+        return Err(CommandLedgerError::StaleClaim.into());
+    }
     write(store, &command, revision, &lane, session).await?;
     Ok(Some(command))
 }
@@ -173,7 +173,7 @@ async fn claim_next(
     Ok(None)
 }
 
-async fn load_agent(
+pub(super) async fn load_agent(
     store: &MongoSandboxStore,
     id: &AgentId,
     session: &mut ClientSession,
@@ -189,37 +189,44 @@ async fn load_agent(
         .map_err(|_| CommandLedgerError::Corrupt.into())
 }
 
-async fn fence_parent(
+pub(super) async fn fence_parent(
     store: &MongoSandboxStore,
     agent: Option<&Agent>,
     session: &mut ClientSession,
 ) -> Result<bool, ApplyError> {
     // An orphan command remains claimable for terminal refusal.
     let Some(agent) = agent else { return Ok(true) };
-    let id = agent.sandbox_id.as_str();
+    if write_parent_fence(store, agent, session).await? {
+        return Ok(true);
+    }
+    Ok(store
+        .sandboxes
+        .find_one(doc! { "_id": agent.sandbox_id.as_str() })
+        .projection(doc! { "_id": 1 })
+        .session(session)
+        .await?
+        .is_none())
+}
+
+pub(super) async fn write_parent_fence(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    session: &mut ClientSession,
+) -> Result<bool, ApplyError> {
     let updated = crate::store::work_lease_update::with_fence(
         &store.sandboxes,
         doc! {
-            "_id": id,
+            "_id": agent.sandbox_id.as_str(),
             "document_schema_version": crate::store::work_schema::versions(),
             "owner": agent.owner.as_str(),
             "record.owner": agent.owner.as_str(),
         },
         None,
         "agent_command_worker_fence",
-        &mut *session,
+        session,
     )
     .await?;
-    if updated.matched_count == 1 {
-        return Ok(true);
-    }
-    Ok(store
-        .sandboxes
-        .find_one(doc! { "_id": id })
-        .projection(doc! { "_id": 1 })
-        .session(session)
-        .await?
-        .is_none())
+    Ok(updated.matched_count == 1)
 }
 
 pub(in crate::store) async fn write(

@@ -201,18 +201,20 @@ jobs:
         run: "bash ../.github/scripts/backend-nextest.sh run -E 'package(=layer4-runtime) and test(=supervisor::mutation_tests::workspace_reconciliation_tests::real_linux_writer_boundary_reconciles_target_and_resumes_live_sibling)' --run-ignored only --test-threads 1"
         if: "inputs.track == 'am'"
       -
-        name: "Enforce the production budgets (one retry)"
-        run: |
-          bash ../.github/scripts/backend-nextest.sh run --run-ignored only -E 'package(=cmaeg) and test(~latency_budget)' --success-output final || \
-            bash ../.github/scripts/backend-nextest.sh run --run-ignored only -E 'package(=cmaeg) and test(~latency_budget)' --success-output final
+        name: "Gateway latency runner regressions"
+        run: "ruby ../.github/scripts/eg-latency-check-tests.rb"
         if: "inputs.track == 'eg'"
       -
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        name: "Enforce Gateway latency budgets"
+        run: "python3 -B ../.github/scripts/eg-latency-check.py"
+        if: "inputs.track == 'eg'"
+      -
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         if: "always() && inputs.track == 'eg'"
         with:
-          name: "cmaeg-latency"
-          path: "api/target/cmaeg-latency.txt"
-          if-no-files-found: "warn"
+          name: "cmaeg-latency-${{ github.run_id }}-${{ github.run_attempt }}"
+          path: "api/target/cmaeg-latency-results/"
+          if-no-files-found: "error"
   mongo-harness:
     name: "Mongo harness regressions"
     if: "inputs.track == 'am'"
@@ -298,7 +300,7 @@ jobs:
       # write the tracking issue.
       - name: "Retain the flaky test record for the tracking issue"
         if: "always() && steps.flaky-report.outputs.upload == 'true'"
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: "${{ steps.flaky-retry.outputs.artifact }}"
           path: "${{ steps.flaky-retry.outputs.report-dir }}/flaky-tests.json"

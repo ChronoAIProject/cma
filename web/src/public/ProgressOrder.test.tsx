@@ -49,7 +49,7 @@ it.each(['success', 'failure'] as const)(
     }
     expect(client.requests.start).not.toHaveBeenCalled();
     expect(client.requests.cancel).not.toHaveBeenCalled();
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
     unmount();
   },
 );

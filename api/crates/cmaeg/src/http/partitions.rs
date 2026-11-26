@@ -32,6 +32,10 @@ pub struct PartitionInspection {
     pub consumer_id: String,
     pub transport_conversation_id: String,
     pub mapping: ConversationInspection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_profile_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desired_profile_drift: Option<crate::providers::DesiredProfileDrift>,
 }
 
 #[utoipa::path(get, path = "/v1/channels/{channel_id}/partition", operation_id = "inspectChannelPartition",
@@ -112,7 +116,41 @@ async fn read(
         consumer.id,
         &query.partition_key,
     );
-    let credential = consumer.credential.ok_or_else(|| {
+    let revised = loaded.definition.secrets.profile_revisions.is_some() && consumer.id.is_default();
+    let assigned = if revised {
+        let channel = state
+            .resolver
+            .resolve_current(channel_id.as_str())
+            .await
+            .map_err(|_| {
+                ManagementError::Provider(ProviderError::Unavailable(
+                    "partition assignment unavailable".into(),
+                ))
+            })?;
+        if channel.version != loaded.record.version {
+            return Err(ManagementError::Conflict {
+                expected: loaded.record.version,
+                actual: Some(channel.version),
+            });
+        }
+        Some(
+            crate::channels::profile_assignment::execution_channel(
+                &state.resolver,
+                channel,
+                consumer.id,
+                &conversation,
+            )
+            .await
+            .map_err(|_| ManagementError::NotFound)?,
+        )
+    } else {
+        None
+    };
+    let selected = assigned
+        .as_ref()
+        .and_then(|channel| channel.consumer(Some(consumer.id)))
+        .unwrap_or(consumer);
+    let credential = selected.credential.ok_or_else(|| {
         ManagementError::Provider(ProviderError::Unavailable(
             "provider credential unavailable".into(),
         ))
@@ -120,13 +158,29 @@ async fn read(
     let mapping = state
         .providers
         .inspect_conversation(
-            &consumer.provider.slug,
-            &consumer.provider.binding_id,
+            &selected.provider.slug,
+            &selected.provider.binding_id,
             &conversation,
             credential,
         )
         .await
         .map_err(ManagementError::Provider)?;
+    let desired_profile_drift = if revised {
+        state
+            .providers
+            .desired_profile_drift(
+                &selected.provider.slug,
+                &selected.provider.binding_id,
+                &conversation,
+                credential,
+                consumer.profile,
+            )
+            .await
+            .map_err(ManagementError::Provider)?
+    } else {
+        None
+    };
+    let assigned_profile_digest = revised.then(|| selected.profile_digest.to_owned());
     let current = management::load(state, creator, &channel_id).await?;
     if current.record.version != loaded.record.version {
         return Err(ManagementError::Conflict {
@@ -138,6 +192,8 @@ async fn read(
         consumer_id: consumer.id.to_string(),
         transport_conversation_id: conversation.to_string(),
         mapping,
+        assigned_profile_digest,
+        desired_profile_drift,
     })
 }
 

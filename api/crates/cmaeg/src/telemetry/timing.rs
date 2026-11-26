@@ -51,10 +51,18 @@ struct Inner {
     media: AtomicU8,
     restore: Mutex<Duration>,
     verify: Mutex<Duration>,
+    provider_start: Option<super::provider_start::Attempt>,
 }
 impl IngressTiming {
     pub fn new(source: &'static str) -> Self {
+        Self::with_provider_start(source, None)
+    }
+    pub(crate) fn with_provider_start(
+        source: &'static str,
+        provider_start: Option<super::provider_start::Attempt>,
+    ) -> Self {
         Self(Arc::new(Inner {
+            provider_start,
             source,
             request_span: tracing::Span::current(),
             started: Instant::now(),
@@ -89,6 +97,9 @@ impl IngressTiming {
     /// Called after a successful socket write containing this request's first byte.
     pub fn written(&self, at: Instant) {
         if self.0.written.set(at).is_ok() {
+            if let Some(attempt) = &self.0.provider_start {
+                attempt.written(at);
+            }
             if let Some(received) = self.0.received.get() {
                 let seconds = at.saturating_duration_since(*received).as_secs_f64();
                 let media = self.media().as_str();

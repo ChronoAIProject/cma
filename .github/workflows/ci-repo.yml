@@ -72,6 +72,9 @@ jobs:
         name: "Synthetic home restore evidence regressions"
         run: "node --test .github/scripts/home-backup/*.test.mjs"
       -
+        name: "Desktop qualification runner regressions"
+        run: "node --test .github/scripts/desktop-replica-contract.test.mjs .github/scripts/desktop-replica-results.test.mjs"
+      -
         name: "Audit exception policy regressions"
         run: "node --test .github/scripts/audit-policy.test.mjs"
       -

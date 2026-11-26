@@ -20,6 +20,24 @@ impl ToolsState {
             .resolve(event.channel_id.as_str())
             .await
             .map_err(|error| error.problem())?;
+        let channel = if channel.definition.secrets.profile_revisions.is_some() {
+            let fresh = self
+                .resolver
+                .resolve_current(event.channel_id.as_str())
+                .await
+                .map_err(|error| error.problem())?;
+            crate::channels::profile_assignment::event_channel(
+                &self.resolver,
+                fresh,
+                &event.event_id,
+                event.consumer.as_ref(),
+                Some(&event.conversation_id),
+            )
+            .await
+            .map_err(|error| error.problem())?
+        } else {
+            channel
+        };
         let matched = owner(caller, &channel, event.consumer.as_ref(), tool)?;
         if event.record_id != channel.pointer.record_id {
             return Err(invalid("event channel does not match its record"));
@@ -57,6 +75,24 @@ impl ToolsState {
             self.resolver.resolve(message.channel_id.as_str()).await
         }
         .map_err(|error| error.problem())?;
+        let channel = if channel.definition.secrets.profile_revisions.is_some() {
+            let fresh = self
+                .resolver
+                .resolve_current(message.channel_id.as_str())
+                .await
+                .map_err(|error| error.problem())?;
+            crate::channels::profile_assignment::event_channel(
+                &self.resolver,
+                fresh,
+                &message.event_id,
+                message.consumer.as_ref(),
+                None,
+            )
+            .await
+            .map_err(|error| error.problem())?
+        } else {
+            channel
+        };
         let matched = owner(caller, &channel, message.consumer.as_ref(), tool)?;
         if tool == "updateMessage" {
             crate::telemetry::turn_trace::ingress::authorized();

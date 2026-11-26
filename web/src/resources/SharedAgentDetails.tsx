@@ -25,7 +25,7 @@ export function SharedAgentDetails({
   readonly workingDirectory?: string;
   readonly open: boolean;
   readonly onClose: () => void;
-  readonly onAccessChanged?: () => void;
+  readonly onAccessChanged?: (downloadMessage?: string) => void;
   readonly publicationScope?: ArtifactPublicationScope;
 }) {
   const client = useCmaClient().resourceViews;

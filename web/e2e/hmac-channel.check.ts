@@ -50,6 +50,10 @@ for (const width of [390, 1440]) {
     const body = JSON.parse(writes[0]!.body!);
     expect(body.sources[0]).toEqual({ type: 'custom', auth: { type: 'hmac', key_id: 'events' } });
     expect(body.partition.key).toBe('event_subject');
+    expect(body.profile.environment).toEqual({
+      size: { cpu_cores: 1, memory_gib: 2 },
+      workspace: { type: 'directory', name: 'workspace' },
+    });
     expect(body.credentials.hmac_secrets).toEqual([{ key_id: 'events', secret }]);
     expect(body.credentials).not.toHaveProperty('replace_hmac');
     await page.getByRole('button', { name: 'Retry same request', exact: true }).click();

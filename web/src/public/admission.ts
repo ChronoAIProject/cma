@@ -28,6 +28,7 @@ export function isUnsettledCommand(error: unknown): boolean {
   return (
     !(error instanceof ApiError) ||
     error.isRetryable ||
+    error.code === 'command_subject_mismatch' ||
     error.code === 'idempotency_in_flight' ||
     error.code === 'idempotency_recovery_required'
   );
@@ -52,8 +53,9 @@ export function admit(client: PublicClient, intent: BrowserIntent, owner: string
       intent.submitted ? new AdmissionRecoveryError() : new Error(publicCopy.expired),
     );
   writeIntent({ ...intent, owner, submitted: true, wireBody: JSON.stringify(intent.body) });
-  const result = client.requests.createOrResume(intent.publicId, intent.body, {
+  const result = client.requests.createOrResumeBound(intent.publicId, intent.body, {
     idempotencyKey: intent.key,
+    expectedSubject: owner,
   });
   pending.set(slot, { identity, result });
   void result.catch(() => {

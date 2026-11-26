@@ -4,7 +4,7 @@ use cmaeg_core::ids::{BindingId, ConversationId, ProviderSlug};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ConversationReset {
     #[schema(min_length = 1, max_length = 128)]
     pub binding_id: String,
@@ -116,7 +116,9 @@ impl ProviderClient {
     }
 }
 
-async fn bounded_body(mut response: reqwest::Response) -> Result<Vec<u8>, ProviderError> {
+pub(super) async fn bounded_body(
+    mut response: reqwest::Response,
+) -> Result<Vec<u8>, ProviderError> {
     let mut bytes = Vec::new();
     while let Some(chunk) = response
         .chunk()
@@ -132,7 +134,7 @@ async fn bounded_body(mut response: reqwest::Response) -> Result<Vec<u8>, Provid
     }
     Ok(bytes)
 }
-fn reset_response_error(
+pub(super) fn reset_response_error(
     status: reqwest::StatusCode,
     retry_after: Option<std::time::Duration>,
     bytes: &[u8],

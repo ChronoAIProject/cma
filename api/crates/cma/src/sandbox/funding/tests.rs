@@ -14,6 +14,7 @@ mod missing_http_tests;
 mod missing_tests;
 pub(crate) mod pilot;
 mod pilot_http;
+mod runtime_controls;
 use fixture::sandbox;
 
 fn at(n: u64) -> SystemTime {
@@ -30,13 +31,20 @@ struct MemoryState {
     sandbox: Mutex<Option<Sandbox>>,
     writes: Mutex<Vec<SandboxBillingState>>,
     fail_save: AtomicBool,
+    load_barrier: Mutex<Option<Arc<tokio::sync::Barrier>>>,
     fail_adoption: AtomicBool,
     lose_adoption_ack: AtomicBool,
 }
 #[async_trait]
 impl FundingStateStore for MemoryState {
     async fn load(&self, id: &SandboxId) -> Result<Option<SandboxBillingState>, FundingError> {
-        Ok(self.values.lock().unwrap().get(id.as_str()).cloned())
+        let state = self.values.lock().unwrap().get(id.as_str()).cloned();
+        let barrier = self.load_barrier.lock().unwrap().take();
+        if let Some(barrier) = barrier {
+            barrier.wait().await;
+            barrier.wait().await;
+        }
+        Ok(state)
     }
     async fn save(&self, state: &mut SandboxBillingState) -> Result<(), FundingError> {
         if self.fail_save.swap(false, Ordering::SeqCst) {
@@ -96,14 +104,19 @@ struct Control {
 }
 #[async_trait]
 impl FundingControl for Control {
-    async fn deadline(&self, _: &Sandbox, until: u64) -> Result<(), FundingError> {
+    async fn deadline(&self, runtime: FundedRuntime<'_>) -> Result<(), FundingError> {
         if self.fail_deadline.load(Ordering::SeqCst) {
             return Err(transient());
         }
-        self.deadlines.lock().unwrap().push(until);
+        self.deadlines.lock().unwrap().push(runtime.until());
         Ok(())
     }
-    async fn pause(&self, _: &Sandbox, detail: &str, _: SystemTime) -> Result<(), FundingError> {
+    async fn pause(
+        &self,
+        _: FundingRuntime<'_>,
+        detail: &str,
+        _: SystemTime,
+    ) -> Result<(), FundingError> {
         self.pauses.lock().unwrap().push(detail.into());
         Ok(())
     }

@@ -84,13 +84,40 @@ impl SandboxReconciler {
                     return Ok(false);
                 }
                 Err(SandboxStoreError::Unavailable(_))
-                    if self.startup_native_home_hold_enabled
-                        && failure == Some(transient::StartupFailure::NativeHomeIdentity) =>
+                    if matches!(
+                        failure,
+                        Some(
+                            transient::StartupFailure::NativePoolConfigurationDrift
+                                | transient::StartupFailure::AdmittedSandboxSpecDrift
+                        )
+                    ) || (failure
+                        == Some(transient::StartupFailure::NativePoolDefinitionAbsent)
+                        && sandbox.runtime.is_some()
+                        && sandbox
+                            .lifecycle
+                            .home
+                            .as_ref()
+                            .and_then(|home| home.native_pool.as_ref())
+                            .is_some_and(|pool| pool.claim.is_some()))
+                        || (self.startup_native_home_hold_enabled
+                            && failure == Some(transient::StartupFailure::NativeHomeIdentity)) =>
                 {
                     let sandbox_hash =
                         format!("{:x}", Sha256::digest(sandbox.id.as_str().as_bytes()));
-                    tracing::warn!(target: "cma_startup", parent: None, attempt, sandbox_hash,
-                        "Sandbox native home identity refused during startup binding; deferred to background reconciliation");
+                    let reason = match failure {
+                        Some(transient::StartupFailure::NativePoolConfigurationDrift) => {
+                            "native_pool_configuration_drift"
+                        }
+                        Some(transient::StartupFailure::AdmittedSandboxSpecDrift) => {
+                            "admitted_sandbox_spec_drift"
+                        }
+                        Some(transient::StartupFailure::NativePoolDefinitionAbsent) => {
+                            "native_pool_definition_absent"
+                        }
+                        _ => "native_home_identity_refused",
+                    };
+                    tracing::warn!(target: "cma_startup", parent: None, attempt, sandbox_hash, reason,
+                        "Sandbox native binding deferred to background reconciliation");
                     hold.refused();
                     return Ok(false);
                 }

@@ -184,6 +184,8 @@ impl Recording {
                 turn: turn.clone(),
                 outcome,
                 answer_response_id: None,
+                accepted_deadline: None,
+                recovery: None,
             })
             .await
             .unwrap();

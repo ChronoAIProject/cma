@@ -44,6 +44,7 @@ on:
 permissions:
   contents: read
   actions: read
+  deployments: read
 
 jobs:
   admit:
@@ -53,6 +54,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     outputs:
       status: ${{ job.status }}
       release_set: ${{ steps.set.outputs.release_set }}
@@ -71,12 +73,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CD_RESOLVE_MODE: automatic
+          CD_STAGING_ENVIRONMENT: chrono-ai-staging
           CD_PROMOTION_LANE: ${{ inputs.lane }}
           CD_PUBLICATION_MATRIX: ${{ inputs.publication_matrix }}
         run: python3 -B .github/scripts/staging_cd_resolve.py
       - name: Retain public component admission evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: staging-admission-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.lane }}
           path: ${{ runner.temp }}/public-admission/admission.json
@@ -114,6 +117,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     outputs:
       status: ${{ job.status }}
       release_set: ${{ steps.set.outputs.release_set }}
@@ -132,12 +136,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CD_RESOLVE_MODE: automatic
+          CD_STAGING_ENVIRONMENT: chrono-ai-staging
           CD_PROMOTION_LANE: ${{ inputs.lane }}
           CD_PUBLICATION_MATRIX: ${{ inputs.publication_matrix }}
         run: python3 -B .github/scripts/staging_cd_resolve.py
       - name: Retain public component admission evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: staging-admission-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.lane }}-retry
           path: ${{ runner.temp }}/public-admission/admission.json

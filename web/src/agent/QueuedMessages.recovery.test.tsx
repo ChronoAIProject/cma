@@ -115,3 +115,23 @@ it('keeps an unapplied edit copyable without locking the current queue row', asy
   expect(recover).not.toHaveBeenCalled();
   copy.mockRestore();
 });
+
+it('refuses saved draft copy and dismissal when the current owner guard closes', async () => {
+  const user = userEvent.setup();
+  const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+  const dismiss = vi.fn();
+  let current = true;
+  render(
+    <UnappliedQueuedEdits
+      drafts={[{ key: 'key', text }]}
+      onDismiss={dismiss}
+      canUse={() => current}
+    />,
+  );
+  current = false;
+  await user.click(screen.getByRole('button', { name: 'Copy edit' }));
+  await user.click(screen.getByRole('button', { name: 'Dismiss draft' }));
+  expect(copy).not.toHaveBeenCalled();
+  expect(dismiss).not.toHaveBeenCalled();
+  copy.mockRestore();
+});

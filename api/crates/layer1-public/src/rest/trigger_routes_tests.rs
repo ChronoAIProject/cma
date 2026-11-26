@@ -11,6 +11,7 @@ mod service_connection_routes;
 mod trigger_routes;
 
 mod launch_initiation;
+mod launch_subject;
 
 mod inline_image_routes;
 

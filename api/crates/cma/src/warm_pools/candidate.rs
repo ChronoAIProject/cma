@@ -29,7 +29,7 @@ impl NativeWarmPools {
         )
         .await
         {
-            return result;
+            return result.map(|_| true);
         }
         self.store.finish(&target, false).await?;
         Ok(false)

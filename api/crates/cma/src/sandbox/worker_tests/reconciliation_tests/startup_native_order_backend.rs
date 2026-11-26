@@ -156,7 +156,7 @@ pub(super) struct Homes {
 #[async_trait::async_trait]
 impl HomeVolumeStore for Homes {
     async fn inventory(&self) -> layer3_adapter::Result<Vec<HomeVolumeAttachment>> {
-        assert_eq!(self.control.other_settled.load(Ordering::SeqCst), 8);
+        self.control.assert_siblings_settled();
         assert!(self.control.cleanup.load(Ordering::SeqCst) > 0);
         self.control.record("HOME_PHASE", "");
         self.inner.inventory().await

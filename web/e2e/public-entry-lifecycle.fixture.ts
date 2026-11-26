@@ -1,3 +1,4 @@
+import { verifiedEntryHeaders } from './public-entry-binding.fixture';
 import { expect, type Page, type Request } from '@playwright/test';
 import type { Launch, TriggerPreview } from '@cma/client';
 import { LocalStartup, recorded } from './agent-startup-fixtures';
@@ -72,8 +73,14 @@ export async function entryFixture(
     const request = route.request();
     const url = new URL(request.url());
     if (url.origin !== baseURL) return route.fallback();
+    const proof = verifiedEntryHeaders(request, subject);
     const reply = (body: unknown, status = 200) =>
-      route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+      route.fulfill({
+        status,
+        headers: proof,
+        contentType: 'application/json',
+        body: JSON.stringify(body),
+      });
     if (url.pathname === '/auth/session') {
       const returned = subject;
       const paused = holdSession;
@@ -100,7 +107,7 @@ export async function entryFixture(
       return;
     }
     if (
-      url.pathname === '/api/v1/triggers/public/public_contract/launches' &&
+      url.pathname === '/api/v2/triggers/public/public_contract/launches' &&
       request.method() === 'POST'
     ) {
       posts.push({

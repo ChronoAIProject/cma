@@ -8,7 +8,10 @@ use layer1_public::rest::admin::warm_pools::{
 };
 use layer2_core::{Caller, Capability};
 use layer3_adapter::{
-    agent_sandbox::{NativePoolBinding, NativePoolConfiguration, NativePoolSpec, NativePoolStatus},
+    agent_sandbox::{
+        NativePoolBinding, NativePoolConfiguration, NativePoolDrain, NativePoolSpec,
+        NativePoolStatus,
+    },
     HomeVolumePolicy, RuntimeImage, SandboxAdapter,
 };
 use serde::{Deserialize, Serialize};
@@ -17,11 +20,13 @@ use sha2::{Digest, Sha256};
 mod candidate;
 mod current;
 mod defaults;
+mod holds;
+pub(crate) use holds::DefaultPoolHolds;
 mod released;
 mod retirement;
 pub(crate) mod startup;
 mod supervision;
-mod telemetry;
+pub(crate) mod telemetry;
 mod view;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -81,6 +86,13 @@ pub(crate) trait PoolTargetStore: Send + Sync {
     async fn activate(&self, _id: &str) -> Result<(), WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
+    async fn default_pin_conflicts(
+        &self,
+        _plan: &NativePoolConfiguration,
+        _machine: bool,
+    ) -> Result<bool, WarmPoolError> {
+        Ok(false)
+    }
     async fn retirement_homes(
         &self,
         _target: &PoolTarget,
@@ -92,7 +104,7 @@ pub(crate) trait PoolTargetStore: Send + Sync {
         &self,
         _target: &PoolTarget,
         _image: &str,
-    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
     async fn begin_retirement(&self, _target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
@@ -159,6 +171,7 @@ pub(crate) struct NativeWarmPools {
     machine_target: u32,
     target_fencing: bool,
     allow_empty_startup: bool,
+    default_holds: Arc<DefaultPoolHolds>,
 }
 
 impl NativeWarmPools {
@@ -182,6 +195,7 @@ impl NativeWarmPools {
             machine_target,
             target_fencing: false,
             allow_empty_startup: false,
+            default_holds: Arc::default(),
         })
         .with_target_fencing(false)
     }
@@ -190,25 +204,6 @@ impl NativeWarmPools {
     pub(crate) fn with_target_fencing(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
         Arc::make_mut(&mut self).target_fencing = enabled;
         self
-    }
-
-    async fn reconcile_one(&self) -> Result<bool, WarmPoolError> {
-        let Some(provider) = self.adapter.native_pools() else {
-            return Ok(false);
-        };
-        let Some(target) = self.store.claim().await? else {
-            return Ok(false);
-        };
-        if target.retiring {
-            return self.retire_claimed(provider, target).await;
-        }
-        if !self.current_plan(&target)? {
-            if !self.store.candidate_protected(&target).await? {
-                return self.retire_claimed(provider, target).await;
-            }
-            return self.reconcile_candidate(provider, target).await;
-        }
-        reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing).await
     }
 }
 
@@ -287,6 +282,9 @@ impl WarmPoolAdministration for NativeWarmPools {
         if let Some(existing) = self.store.find(&id).await? {
             return replay(existing, &body).map(|target| target.view(None, true));
         }
+        if self.default_holds.lane(false) {
+            return Err(WarmPoolError::Conflict);
+        }
         let provider = self
             .adapter
             .native_pools()
@@ -339,17 +337,17 @@ impl WarmPoolAdministration for NativeWarmPools {
         }
         // Only a resize of the current machine plan is the operator's desired
         // machine count; zeroing superseded capacity merely drains it.
+        let target = self.store.find(id).await?.ok_or(WarmPoolError::NotFound)?;
+        if self.default_holds.lane(target.machine) {
+            return Err(WarmPoolError::Conflict);
+        }
         let operator_choice = if body.target_replicas > 0 {
-            let target = self.store.find(id).await?.ok_or(WarmPoolError::NotFound)?;
             if !self.current_plan(&target)? {
                 return Err(WarmPoolError::Conflict);
             }
             target.machine
         } else {
-            match self.store.find(id).await? {
-                Some(target) => target.machine && matches!(self.current_plan(&target), Ok(true)),
-                None => false,
-            }
+            target.machine && matches!(self.current_plan(&target), Ok(true))
         };
         let target = self.store.resize(id, &body, operator_choice).await?;
         Ok(target.view(None, true))
@@ -410,7 +408,25 @@ async fn reconcile_one(
     let Some(target) = store.claim().await? else {
         return Ok(false);
     };
-    reconcile_claimed(store, provider, target, false).await
+    reconcile_claimed(store, provider, target, false)
+        .await
+        .map(|_| true)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PoolApply {
+    Settled,
+    ConfigurationDrift,
+    Failed,
+}
+
+fn provider_apply_error(error: layer3_adapter::AdapterError) -> WarmPoolError {
+    match error {
+        layer3_adapter::AdapterError::NativePoolConfigurationDrift => {
+            WarmPoolError::ProviderConfigurationDrift
+        }
+        _ => WarmPoolError::Unavailable,
+    }
 }
 
 async fn reconcile_claimed(
@@ -418,7 +434,7 @@ async fn reconcile_claimed(
     provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
     mut target: PoolTarget,
     target_fencing: bool,
-) -> Result<bool, WarmPoolError> {
+) -> Result<PoolApply, WarmPoolError> {
     if target.retiring {
         return Err(WarmPoolError::Conflict);
     }
@@ -447,14 +463,20 @@ async fn reconcile_claimed(
         } else {
             provider.resize(binding, target.target_replicas).await
         }
-        .map_err(|_| WarmPoolError::Unavailable)?;
+        .map_err(provider_apply_error)?;
         Ok::<(), WarmPoolError>(())
     };
-    let success = matches!(
-        tokio::time::timeout(Duration::from_secs(30), result).await,
-        Ok(Ok(()))
-    );
+    let result = tokio::time::timeout(Duration::from_secs(30), result).await;
+    let success = matches!(result, Ok(Ok(())));
     store.finish(&target, success).await?;
     telemetry::applied(&target, success);
-    Ok(true)
+    Ok(
+        if matches!(result, Ok(Err(WarmPoolError::ProviderConfigurationDrift))) {
+            PoolApply::ConfigurationDrift
+        } else if success {
+            PoolApply::Settled
+        } else {
+            PoolApply::Failed
+        },
+    )
 }

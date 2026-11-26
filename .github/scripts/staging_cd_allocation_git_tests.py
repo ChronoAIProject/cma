@@ -10,6 +10,8 @@ from staging_cd_allocation_io import AllocationIO
 from staging_cd_allocation_snapshot import AllocationConflict, AllocationSnapshot, SnapshotAPI
 from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
+from staging_cd_history import DevelopHistory
+from staging_cd_receipts import canonical
 from staging_cd_reservations import next_reservation, pending_name
 from staging_cd_resolve import ObsoleteSource, verify
 from staging_cd_versions import DEPLOYABLES
@@ -87,6 +89,46 @@ class AllocationGitTests(unittest.TestCase):
             self.assertFalse(any("cma-allocation-outcome/" in arg for arg in push))
             self.assertNotIn("--force", push)
         self.assertEqual(self.store.list(), values)
+
+    def test_only_first_parent_advancement_marks_the_push_superseded(self):
+        f = self.fixture
+        newer = f.git("commit-tree", f.tree, "-p", f.source, data="Second develop push\n")
+        f.git("update-ref", "HEAD", f.source)
+        with self.assertRaisesRegex(Refusal, "Develop history has not reached the push"):
+            self.store.load(event_source=newer)
+        self.assertFalse(self.store.loaded)
+        self.assertFalse(any(args[1] == "push" for args in self.calls))
+
+        planner = f.root / "planner"
+        f.git("clone", "--quiet", "--depth=1", "--branch", "develop", f.remote.as_uri(), str(planner))
+        self.assertEqual(f.git("-C", str(planner), "rev-parse", "--is-shallow-repository"), "true")
+        f.git("push", str(f.remote), newer + ":refs/heads/develop")
+        bounded = DevelopHistory.from_head(newer, root=planner, runner=f.runner, depth=2)
+        self.assertIn(f.source, bounded.positions)
+        self.assertEqual(f.git("-C", str(planner), "rev-parse", "HEAD"), f.source)
+        old = AllocationSnapshot(f.api, "fixture", f.work, AllocationIO(self.runner))
+        self.assertFalse(old.load(event_source=f.source))
+        self.assertIs(self.store.load(event_source=newer), self.store)
+
+    def test_live_ref_oids_reuse_local_tags_and_fetch_only_missing_objects(self):
+        f = self.fixture
+        first = f.reservation()
+        self.assertTrue(f.publisher.insert(first))
+        latest = f.reservation(2)
+        name = pending_name(latest)
+        tag = (f"object {latest['source']}\ntype commit\ntag {name}\n"
+               "tagger Fixture <fixture@example.invalid> 0 +0000\n\n")
+        live = f.git("mktag", data=tag + canonical(latest) + "\n", remote=True)
+        f.git("update-ref", "refs/tags/" + name, live, remote=True)
+        stale = f.git("mktag", data=tag + canonical(dict(latest, run_id=3)) + "\n")
+        f.git("update-ref", "refs/tags/" + name, stale)
+
+        f.api.request = Mock(wraps=self.request)
+        self.store.load()
+        self.assertEqual(self.store.list("web"), [first, latest])
+        tag_reads = [call.args[0] for call in f.api.request.call_args_list
+                     if call.args[0].startswith("git/tags/")]
+        self.assertEqual(tag_reads, ["git/tags/" + live])
 
     def test_different_bumps_cannot_claim_the_same_predecessor(self):
         patch = self.plan_two()[0]
