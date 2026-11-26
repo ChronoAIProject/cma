@@ -40,12 +40,21 @@ impl WorkspaceWorkerStore for MongoSandboxStore {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
+        let filter = crate::store::work_schema::query(doc! {
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "work_pending": true,
+            "work_ready_at": { "$lte": now },
+            "$or": [
+                { "work_lease_expires_at": Bson::Null },
+                { "work_lease_expires_at": { "$lte": now } },
+            ],
+        });
         if self
             .empty_discovery
             .empty(
                 super::empty_discovery::Kind::Workspaces,
                 &self.workspaces,
-                doc! {"work_pending":true},
+                filter.clone(),
             )
             .await
         {
@@ -53,15 +62,7 @@ impl WorkspaceWorkerStore for MongoSandboxStore {
         }
         let mut cursor = self
             .workspaces
-            .find(crate::store::work_schema::query(doc! {
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "work_pending": true,
-                "work_ready_at": { "$lte": now },
-                "$or": [
-                    { "work_lease_expires_at": Bson::Null },
-                    { "work_lease_expires_at": { "$lte": now } },
-                ],
-            }))
+            .find(filter)
             .projection(doc! { "_id": 1 })
             .sort(doc! { "work_ready_at": 1, "_id": 1 })
             .limit(i64::from(limit))
