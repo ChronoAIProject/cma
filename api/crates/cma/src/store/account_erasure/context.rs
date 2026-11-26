@@ -7,7 +7,6 @@ use mongodb::{
     Database,
 };
 use std::collections::{BTreeMap, BTreeSet};
-
 #[path = "history.rs"]
 mod history;
 pub(super) use history::discover_usage_projections;
