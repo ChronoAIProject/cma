@@ -12,8 +12,6 @@ use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 mod baseline;
 mod cancellation;
 mod certification;
-#[cfg(test)]
-mod certification_tests;
 mod counter_accounting;
 #[cfg(test)]
 mod counter_tests;

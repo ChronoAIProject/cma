@@ -4,7 +4,8 @@ use mongodb::bson::Document;
 use serde_json::json;
 
 pub(super) fn turn(document: &Document) -> Result<super::super::TurnRecord> {
-    let saved = super::super::certification::read(document).map_err(|_| INVALID)?;
+    let saved: super::super::TurnRecord =
+        crate::store::sandbox_mongo::read_record(document).map_err(|_| INVALID)?;
     let sequence = saved
         .turn_sequence
         .filter(|value| *value > 0)
@@ -18,6 +19,12 @@ pub(super) fn turn(document: &Document) -> Result<super::super::TurnRecord> {
             != Some(format!("turn:{}:{sequence}", saved.agent_id).as_str())
         || saved.reservation.policy.validate().is_err()
         || saved.period_shard.is_some() && saved.period_start.is_none()
+        || match &saved.certification {
+            Some(proof) => !proof.valid(&saved, valid_id),
+            None => document
+                .get_document("record")
+                .is_ok_and(super::super::certification::present),
+        }
     {
         return Err(INVALID);
     }
