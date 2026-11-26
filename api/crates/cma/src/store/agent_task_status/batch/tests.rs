@@ -151,9 +151,12 @@ async fn task_status_batch_matches_sequential_evidence_and_bounds_round_trips() 
     start_transaction(&mut session).await.unwrap();
     trace.lock().unwrap().clear();
     let started = std::time::Instant::now();
-    let actual = read_many_with_turns(&store, &agents, &mut session)
+    let actual: HashMap<_, _> = read_batch(&store, &agents, &mut session, false)
         .await
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .map(|(id, evidence)| (id, evidence.observation))
+        .collect();
     let after_ms = started.elapsed().as_secs_f64() * 1000.0;
     let after = trace.lock().unwrap().clone();
     assert_eq!(actual, expected);

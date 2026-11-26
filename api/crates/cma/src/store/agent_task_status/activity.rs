@@ -1,18 +1,12 @@
-use std::collections::HashMap;
-
-use layer2_core::{
-    sandbox::task_activity::{TaskActivityEvidence, TASK_ACTIVITY_TYPES},
-    AgentId,
-};
+use layer2_core::sandbox::task_activity::{TaskActivityEvidence, TASK_ACTIVITY_TYPES};
+use layer2_core::sandbox::{store::SandboxStoreError, Agent};
 use mongodb::bson::{Bson, Document};
 
-use super::*;
 use crate::store::{
     agent_log::log_id,
-    sandbox_mongo::{i64_field_matches, read_record},
+    sandbox_mongo::{i64_field_matches, read_record, signed},
 };
-
-const BATCH_SIZE: usize = 100;
+use mongodb::bson::doc;
 
 fn projection() -> Document {
     doc! {"$project": {"_id": 1, "document_schema_version": 1, "agent_id": 1, "seq": 1,
@@ -33,55 +27,21 @@ fn lookup(types: &[&str], name: &str) -> Document {
     }}
 }
 
-fn pipeline(agents: &[Agent]) -> Vec<Document> {
-    vec![
-        doc! {"$match": {"_id": {"$in": agents.iter().map(|agent| agent.id.as_str()).collect::<Vec<_>>()}}},
-        doc! {"$project": {"_id": 1, "last_seq": 1}},
+pub(super) fn lookups() -> [Document; 3] {
+    [
         lookup(TASK_ACTIVITY_TYPES, "activity"),
-        lookup(&["conversation_gap"], "gap"),
-        lookup(&["turn_started"], "start"),
+        lookup(&["conversation_gap"], "activity_gap"),
+        lookup(&["turn_started"], "activity_start"),
     ]
 }
 
-pub(in crate::store) async fn read_many(
-    store: &MongoSandboxStore,
-    agents: &[Agent],
-    session: &mut ClientSession,
-) -> Result<HashMap<AgentId, String>, SandboxStoreError> {
-    let mut activity = HashMap::new();
-    for batch in agents.chunks(BATCH_SIZE) {
-        let mut remaining: HashMap<_, _> = batch
-            .iter()
-            .map(|agent| (agent.id.as_str(), agent))
-            .collect();
-        let mut cursor = store
-            .agents
-            .aggregate(pipeline(batch))
-            .max_time(std::time::Duration::from_secs(10))
-            .session(&mut *session)
-            .await
-            .map_err(unavailable)?;
-        while cursor.advance(&mut *session).await.map_err(unavailable)? {
-            let row: Document = cursor.deserialize_current().map_err(unavailable)?;
-            let id = row.get_str("_id").map_err(|_| corrupt())?;
-            let agent = remaining.remove(id).ok_or_else(corrupt)?;
-            if !i64_field_matches(
-                &row,
-                "last_seq",
-                signed(agent.conversation.last_seq, "last sequence")
-                    .map_err(SandboxStoreError::Corrupt)?,
-            ) {
-                continue;
-            }
-            if let Some(at) = decode(agent, &row) {
-                activity.insert(agent.id.clone(), at);
-            }
-        }
-        if !remaining.is_empty() {
-            return Err(corrupt());
-        }
+pub(super) fn read(agent: &Agent, row: &Document) -> Result<Option<String>, SandboxStoreError> {
+    let head =
+        signed(agent.conversation.last_seq, "last sequence").map_err(SandboxStoreError::Corrupt)?;
+    if !i64_field_matches(row, "last_seq", head) {
+        return Ok(None);
     }
-    Ok(activity)
+    Ok(decode(agent, row))
 }
 
 fn evidence(row: &Document, field: &str) -> Option<Option<TaskActivityEvidence>> {
@@ -104,18 +64,11 @@ fn evidence(row: &Document, field: &str) -> Option<Option<TaskActivityEvidence>>
 
 fn decode(agent: &Agent, row: &Document) -> Option<String> {
     let entry = evidence(row, "activity")??;
-    let gap = evidence(row, "gap")?;
-    let start = evidence(row, "start")?;
+    let gap = evidence(row, "activity_gap")?;
+    let start = evidence(row, "activity_start")?;
     entry
         .timestamp(agent, start.as_ref(), gap.as_ref())
         .map(str::to_owned)
-}
-
-fn corrupt() -> SandboxStoreError {
-    SandboxStoreError::Corrupt("task activity batch identity is invalid".into())
-}
-fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
-    SandboxStoreError::Unavailable(error.to_string())
 }
 
 #[cfg(test)]

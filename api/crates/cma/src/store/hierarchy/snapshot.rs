@@ -9,6 +9,7 @@ use mongodb::{
 };
 
 use super::super::{
+    agent_task_status,
     agents::read_agent,
     sandbox_mongo::{is_transient, start_transaction, MongoSandboxStore, TRANSACTION_ATTEMPTS},
     sandboxes::read_sandbox,
@@ -143,17 +144,19 @@ async fn read_in_snapshot(
                 read_agent,
             )
             .await?;
-            let task_activity_at =
-                super::super::agent_task_status::activity::read_many(store, &agents, session)
-                    .await?;
-            let task_started_at =
-                super::super::agent_task_status::active_starts(store, &agents, session).await?;
-            let (task_statuses, task_turns) =
-                super::super::agent_task_status::read_many_with_turns(store, &agents, session)
-                    .await?
-                    .into_iter()
-                    .map(|(id, (status, turn))| ((id.clone(), status), (id, turn)))
-                    .unzip();
+            let evidence = agent_task_status::read_workspace(store, &agents, session).await?;
+            let task_started_at = agent_task_status::active_starts(store, &agents, session).await?;
+            let mut task_statuses = std::collections::HashMap::with_capacity(evidence.len());
+            let mut task_turns = std::collections::HashMap::with_capacity(evidence.len());
+            let mut task_activity_at = std::collections::HashMap::new();
+            for (id, evidence) in evidence {
+                let (status, turn) = evidence.observation;
+                task_statuses.insert(id.clone(), status);
+                task_turns.insert(id.clone(), turn);
+                if let Some(at) = evidence.activity_at {
+                    task_activity_at.insert(id, at);
+                }
+            }
             Ok(Reading::Workspace(Some(Box::new(
                 WorkspaceHierarchyRecord {
                     task_statuses,

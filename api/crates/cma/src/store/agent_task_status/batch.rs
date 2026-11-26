@@ -9,6 +9,11 @@ use super::*;
 const BATCH_SIZE: usize = 100;
 const EVIDENCE_BYTES: i32 = 64 * 1024;
 
+pub(in crate::store) struct TaskEvidence {
+    pub observation: Observation,
+    pub activity_at: Option<String>,
+}
+
 // Avoid combining several individually valid 16 MiB records into an invalid
 // Mongo result. Large evidence keeps the original sequential read contract.
 fn bounded() -> Document {
@@ -16,14 +21,20 @@ fn bounded() -> Document {
     doc! {"large": large.clone(), "document": {"$cond": [large, Bson::Null, "$$ROOT"]}}
 }
 
-fn pipeline(agents: &[&Agent]) -> Vec<Document> {
-    vec![
+pub(super) fn pipeline(agents: &[&Agent], include_activity: bool) -> Vec<Document> {
+    let read_status = if include_activity {
+        doc! {"$eq": ["$status", "ready"]}
+    } else {
+        doc! {"$literal": true}
+    };
+    let mut stages = vec![
         doc! {"$match": {"_id": {"$in": agents.iter().map(|a| a.id.as_str()).collect::<Vec<_>>()}}},
-        doc! {"$project": {"_id": 1, "last_seq": 1}},
+        doc! {"$project": {"_id": 1, "last_seq": 1, "read_status": read_status}},
         doc! {"$lookup": {
             "from": "agent_log", "localField": "_id", "foreignField": "agent_id", "as": "latest",
+            "let": {"read_status": "$read_status"},
             "pipeline": [
-                {"$match": {"record.kind.type": {"$in": ["created", "turn_started", "turn_completed", "turn_failed", "turn_interrupted", "conversation_gap"]}}},
+                {"$match": {"$expr": "$$read_status", "record.kind.type": {"$in": ["created", "turn_started", "turn_completed", "turn_failed", "turn_interrupted", "conversation_gap"]}}},
                 {"$sort": {"seq": -1}}, {"$limit": 1}, {"$replaceWith": bounded()},
             ],
         }},
@@ -43,17 +54,24 @@ fn pipeline(agents: &[&Agent]) -> Vec<Document> {
         }},
         doc! {"$lookup": {
             "from": "agent_commands", "localField": "_id", "foreignField": "agent_id", "as": "pending",
+            "let": {"read_status": "$read_status"},
             "pipeline": [
-                {"$match": {"status": {"$in": ["queued", "in_progress", "waiting_action"]}}},
+                {"$match": {"$expr": "$$read_status", "status": {"$in": ["queued", "in_progress", "waiting_action"]}}},
                 {"$limit": 1}, {"$replaceWith": bounded()},
             ],
         }},
         doc! {"$project": {
-            "_id": 1, "latest": 1,
+            "_id": 1, "last_seq": 1, "latest": 1,
             "gap": {"$arrayElemAt": ["$gap", 0]},
             "pending": {"$arrayElemAt": ["$pending", 0]},
         }},
-    ]
+    ];
+    // Activity uses a head-fenced gap and start. Status uses the gap between
+    // the observed start and completion, and also detects a row past the head.
+    if include_activity {
+        stages.extend(activity::lookups());
+    }
+    stages
 }
 
 pub(in crate::store) async fn read_many<'a>(
@@ -61,34 +79,46 @@ pub(in crate::store) async fn read_many<'a>(
     agents: impl IntoIterator<Item = &'a Agent>,
     session: &mut ClientSession,
 ) -> Result<HashMap<AgentId, AgentTaskStatus>, SandboxStoreError> {
-    Ok(read_many_with_turns(store, agents, session)
+    Ok(read_batch(store, agents, session, false)
         .await?
         .into_iter()
-        .map(|(id, (status, _))| (id, status))
+        .map(|(id, evidence)| (id, evidence.observation.0))
         .collect())
 }
 
-pub(in crate::store) async fn read_many_with_turns<'a>(
+pub(in crate::store) async fn read_workspace(
+    store: &MongoSandboxStore,
+    agents: &[Agent],
+    session: &mut ClientSession,
+) -> Result<HashMap<AgentId, TaskEvidence>, SandboxStoreError> {
+    read_batch(store, agents, session, true).await
+}
+
+async fn read_batch<'a>(
     store: &MongoSandboxStore,
     agents: impl IntoIterator<Item = &'a Agent>,
     session: &mut ClientSession,
-) -> Result<HashMap<AgentId, Observation>, SandboxStoreError> {
-    let mut statuses = HashMap::new();
-    let mut ready = Vec::new();
+    include_activity: bool,
+) -> Result<HashMap<AgentId, TaskEvidence>, SandboxStoreError> {
+    let mut results = HashMap::new();
+    let mut queried = Vec::new();
     for agent in agents {
-        if agent.status == AgentStatus::Ready {
-            ready.push(agent);
+        if include_activity || agent.status == AgentStatus::Ready {
+            queried.push(agent);
         } else {
-            statuses.insert(
+            results.insert(
                 agent.id.clone(),
-                (AgentTaskStatus::from_latest(agent, None, None, false), None),
+                TaskEvidence {
+                    observation: (AgentTaskStatus::from_latest(agent, None, None, false), None),
+                    activity_at: None,
+                },
             );
         }
     }
-    for batch in ready.chunks(BATCH_SIZE) {
+    for batch in queried.chunks(BATCH_SIZE) {
         let mut cursor = store
             .agents
-            .aggregate(pipeline(batch))
+            .aggregate(pipeline(batch, include_activity))
             .max_time(std::time::Duration::from_secs(10))
             .session(&mut *session)
             .await
@@ -101,20 +131,37 @@ pub(in crate::store) async fn read_many_with_turns<'a>(
             let row: Document = cursor.deserialize_current().map_err(unavailable)?;
             let id = row.get_str("_id").map_err(|_| corrupt())?;
             let agent = remaining.remove(id).ok_or_else(corrupt)?;
-            let status = match decode(agent, &row)? {
+            let activity_at = if include_activity {
+                activity::read(agent, &row)?
+            } else {
+                None
+            };
+            let observation = match decode(agent, &row)? {
                 Some(status) => status,
                 None => super::read_with_turn(store, agent, session).await?,
             };
-            statuses.insert(agent.id.clone(), status);
+            results.insert(
+                agent.id.clone(),
+                TaskEvidence {
+                    observation,
+                    activity_at,
+                },
+            );
         }
         if !remaining.is_empty() {
             return Err(corrupt());
         }
     }
-    Ok(statuses)
+    Ok(results)
 }
 
 fn decode(agent: &Agent, row: &Document) -> Result<Option<Observation>, SandboxStoreError> {
+    if agent.status != AgentStatus::Ready {
+        return Ok(Some((
+            AgentTaskStatus::from_latest(agent, None, None, false),
+            None,
+        )));
+    }
     for field in ["latest", "gap", "pending"] {
         if let Some(value) = row.get(field) {
             if value
