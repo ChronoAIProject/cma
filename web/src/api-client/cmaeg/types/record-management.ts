@@ -35,6 +35,7 @@ export type RecordedAddress = Output<typeof RecordedAddressSchema>;
 export const RecordedOperationSchema = enumeration(
   'create',
   'update',
+  'profile_revision',
   'delete',
   'audit_routing',
   'audit_attachments',

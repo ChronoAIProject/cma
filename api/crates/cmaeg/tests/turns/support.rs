@@ -7,19 +7,19 @@ use cmaeg::{
     providers::{ProviderClient, ProviderRegistry},
     turns::{
         outcomes::{DeliveryCommand, TurnOutcome},
-        TurnRunner, TurnTracker,
+        RecoveryChannelAuthority, TurnRunner, TurnTracker,
     },
     TurnConfig,
 };
 use cmaeg_core::{
-    activity::{Activity, ActivityKind},
+    activity::{Activity, ActivityKind, SourceKind},
     channel::{ChannelDefinition, Secret},
     ids::{ConversationId, IdempotencyKey},
     seal::{ChannelPointer, EventRef, EventRefPayload, MasterKeyRing, ReplyAddress},
 };
 use serde_json::json;
 use std::{
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
@@ -30,14 +30,42 @@ pub struct Fixture {
     pub tracker: Arc<TurnTracker>,
     pub readiness: Readiness,
     pub outcomes: mpsc::Receiver<DeliveryCommand>,
+    #[allow(dead_code)]
+    pub delivery_commands: mpsc::Sender<DeliveryCommand>,
     pub channel: Arc<ResolvedChannel>,
-    keys: MasterKeyRing,
+    // This fixture also compiles in turn_metrics, which exercises live streams only.
+    #[allow(dead_code)]
+    pub recovery_channel: Arc<TestRecoveryChannel>,
+    pub keys: Arc<MasterKeyRing>,
 }
+
+#[derive(Default)]
+pub struct TestRecoveryChannel(pub Mutex<Option<Arc<ResolvedChannel>>>);
+
+impl RecoveryChannelAuthority for TestRecoveryChannel {
+    fn current<'a>(
+        &'a self,
+        _turn: &'a LaunchRequest,
+    ) -> futures_util::future::BoxFuture<'a, Option<Arc<ResolvedChannel>>> {
+        Box::pin(async { self.0.lock().unwrap().clone() })
+    }
+}
+
 impl Fixture {
     pub async fn new(fake_config: FakeProviderConfig, config: TurnConfig, capacity: usize) -> Self {
+        let recovery = fake_config.recovery_status.is_some();
         let fake = FakeProvider::start(fake_config).await;
         // Two slugs on one fake, so a channel can be rebound to `nyxbot`.
-        let entry = |slug: &str| json!({"slug":slug,"base_url":fake.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":capacity});
+        let entry = |slug: &str| {
+            let mut entry = json!({"slug":slug,"base_url":fake.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":capacity});
+            if recovery {
+                entry["paths"]["recovery"] = json!({
+                    "response":"/api/v2/responses/{response_id}",
+                    "events":"/api/v2/responses/{response_id}/events"
+                });
+            }
+            entry
+        };
         let registry =
             ProviderRegistry::parse(&json!([entry("cma_codex"), entry("nyxbot")]).to_string())
                 .unwrap();
@@ -52,10 +80,17 @@ impl Fixture {
         );
         let readiness = Readiness::initialized();
         let tracker = TurnTracker::new(readiness.clone());
-        let (delivery, outcomes) = mpsc::channel(64);
-        let delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
-        let runner = TurnRunner::new(client, tracker.clone(), delivery, config);
-        let keys = MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([1; 32]))).unwrap();
+        let (delivery_commands, outcomes) = mpsc::channel(64);
+        let delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(
+            delivery_commands.clone(),
+        ));
+        let recovery_channel = Arc::new(TestRecoveryChannel::default());
+        let mut runner = TurnRunner::new(client, tracker.clone(), delivery, config);
+        if recovery {
+            runner = runner.with_recovery_authority(recovery_channel.clone());
+        }
+        let keys =
+            Arc::new(MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([1; 32]))).unwrap());
         let mut definition: ChannelDefinition = serde_json::from_str(include_str!(
             "../../../cmaeg-core/tests/fixtures/channel.json"
         ))
@@ -77,20 +112,35 @@ impl Fixture {
             loaded_at: Instant::now(),
             version: 1,
         });
+        *recovery_channel.0.lock().unwrap() = Some(channel.clone());
         Self {
             fake,
             runner,
             tracker,
             readiness,
             outcomes,
+            delivery_commands,
             channel,
+            recovery_channel,
             keys,
         }
     }
     pub fn request(&self, event: &str) -> LaunchRequest {
         self.request_with_kind(event, None)
     }
+    #[allow(dead_code)]
+    pub fn custom_recovery_request(&self, event: &str) -> LaunchRequest {
+        self.request_from(event, None, Some(SourceKind::Custom))
+    }
     pub fn request_with_kind(&self, event: &str, kind: Option<ActivityKind>) -> LaunchRequest {
+        self.request_from(event, kind, None)
+    }
+    fn request_from(
+        &self,
+        event: &str,
+        kind: Option<ActivityKind>,
+        source: Option<SourceKind>,
+    ) -> LaunchRequest {
         let mut activity: Activity = serde_json::from_str(include_str!(
             "../../../cmaeg-core/tests/fixtures/activity.json"
         ))
@@ -98,6 +148,9 @@ impl Fixture {
         activity.event_id = event.parse().unwrap();
         if let Some(kind) = kind {
             activity.kind = kind;
+        }
+        if let Some(source) = source {
+            activity.source = source;
         }
         let partition = activity.partition_key(&self.channel.definition.partition);
         let conversation_id = ConversationId::derive(&self.keys, &self.channel.id, 1, &partition);

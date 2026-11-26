@@ -32,13 +32,13 @@ impl AgentSandboxPools {
             self.pools.get_opt(&binding.name),
         );
         let template = template.map_err(api_error)?;
-        let pool = pool.map_err(api_error)?;
         if let Some(template) = &template {
             model::verify_identity(template, &desired)?;
             if template.uid().as_deref() != Some(&binding.template_uid) {
                 return Err(rejected("native pool template UID changed"));
             }
         }
+        let pool = pool.map_err(api_error)?;
         // The persisted template UID is sufficient to reconstruct the expected
         // pool identity for a read-only comparison when the original is absent.
         // It cannot be used to create a replacement or admit a claim.
