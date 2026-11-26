@@ -222,6 +222,11 @@ impl SandboxStore for InMemorySandboxStore {
         self.managed_machine_runtime_version.as_deref() == Some(target)
     }
 
+    #[cfg(test)]
+    fn managed_runtime_target_is_held(&self, target: &str) -> bool {
+        self.lock().held_runtime_target.as_deref() == Some(target)
+    }
+
     async fn unpublished_runtime_recovery_snapshot(
         &self,
         id: &SandboxId,
@@ -233,7 +238,12 @@ impl SandboxStore for InMemorySandboxStore {
         &self,
         request: crate::sandbox::SandboxUnpublishedRecoveryRequest,
     ) -> Result<Sandbox, SandboxStoreError> {
-        unpublished_recovery::admit(&mut self.lock(), request)
+        let mut state = self.lock();
+        #[cfg(test)]
+        if let Some(expected) = &state.expected_recovery_release {
+            assert_eq!(request.released_runtime.as_ref(), Some(expected));
+        }
+        unpublished_recovery::admit(&mut state, request)
     }
 
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
