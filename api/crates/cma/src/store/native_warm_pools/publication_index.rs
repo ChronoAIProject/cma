@@ -1,5 +1,6 @@
 //! Reserve the legacy activation key on the first authoritative pool target.
 use super::*;
+use crate::store::released_runtimes::{BootWriter, MongoReleasedRuntimes};
 use crate::store::{commit_transaction, is_duplicate_key, CommitOutcome};
 use mongodb::ClientSession;
 use sha2::{Digest, Sha256};
@@ -30,6 +31,8 @@ impl MongoNativeWarmPools {
     pub(super) async fn prepare_publication_index(
         &self,
         machine: bool,
+        lanes: &MongoReleasedRuntimes,
+        writer: &BootWriter,
     ) -> Result<(), WarmPoolError> {
         let version = if machine { 2_i64 } else { 1_i64 };
         let mut legacy = doc! {
@@ -54,6 +57,12 @@ impl MongoNativeWarmPools {
         // fence as publication. The original anchor keeps the key through retirement.
         legacy.insert("first_pointer_anchor", doc! {"$ne":true});
         let mut session = self.order_activation(machine).await?;
+        // Classification is itself a durable boot effect. A withdrawn writer
+        // must leave the predecessor's pool history and indexes untouched.
+        lanes
+            .protect_boot_effect_in(writer, Some(&mut session))
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?;
         self.targets
             .update_many(legacy, doc! {"$set":{"ordered_activation":true}})
             .session(&mut session)

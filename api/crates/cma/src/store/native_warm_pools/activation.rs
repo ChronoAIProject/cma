@@ -145,7 +145,8 @@ impl MongoNativeWarmPools {
         writer: &BootWriter,
         record: &ReleasedLaneRecord,
     ) -> Result<(), WarmPoolError> {
-        self.prepare_publication_index(target.machine).await?;
+        self.prepare_publication_index(target.machine, lanes, writer)
+            .await?;
         let mut session = self.order_activation(target.machine).await?;
         self.verify_bootstrap_in(target.machine, &record.active.image, Some(&mut session))
             .await?;

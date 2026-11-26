@@ -145,11 +145,44 @@ async fn first_pointer_publication_refuses_a_writer_lost_after_target_selection(
     .await
     .unwrap();
     assert!(outcome.is_err());
-    assert!(pointer
-        .controller
-        .release
-        .lanes
-        .load(ReleasedLane::Agent)
+    drop(pointer);
+    drop(original);
+    assert_legacy_rollback(&fixture, &target).await;
+    fixture.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn refused_first_lane_insert_allows_successive_legacy_releases() {
+    let fixture = Fixture::new().await;
+    let original = fixture.replica().await;
+    original.seed_defaults().await;
+    let target = original
+        .target_for(&fixture.plan(Lane::Agent, 'a', capacity()))
+        .await;
+    let pointer = bind_controller(&original, |_| panic!("bootstrap reads MongoDB"), true).await;
+    pointer.controller.register_boot().await.unwrap();
+    // Accept all coordination writes from the registered publisher, then refuse
+    // only the final Agent lane insert. The rule is local to this fixture database.
+    fixture
+        .database
+        .run_command(doc! {
+            "collMod": COLLECTION, "validator": {"_id": {"$ne": format!("{DEPLOYMENT}:agent")}}
+        })
+        .await
+        .unwrap();
+    assert!(pointer.controller.bootstrap().await.is_err());
+    drop(pointer);
+    drop(original);
+    assert_legacy_rollback(&fixture, &target).await;
+    fixture.database.drop().await.unwrap();
+}
+
+async fn assert_legacy_rollback(fixture: &Fixture, target: &PoolTarget) {
+    assert!(fixture
+        .database
+        .collection::<Document>(COLLECTION)
+        .find_one(doc! {"_id": format!("{DEPLOYMENT}:agent")})
         .await
         .unwrap()
         .is_none());
@@ -160,7 +193,6 @@ async fn first_pointer_publication_refuses_a_writer_lost_after_target_selection(
         .await
         .unwrap()
         .is_none());
-    drop(pointer);
     for release in ['b', 'c'] {
         let fixed = fixture.replica_pinned_to(release).await;
         let pin = image(Lane::Agent, release);
@@ -172,7 +204,7 @@ async fn first_pointer_publication_refuses_a_writer_lost_after_target_selection(
                 .unwrap()
                 .is_none()
         );
-        let next = fixed.pools.candidate_target(&pin, &target).unwrap();
+        let next = fixed.pools.candidate_target(&pin, target).unwrap();
         let staged = fixed.store.insert(next).await.unwrap();
         let written = legacy_activate(&fixed.database, &staged.id)
             .await
@@ -180,7 +212,6 @@ async fn first_pointer_publication_refuses_a_writer_lost_after_target_selection(
         assert_eq!(written.modified_count, 1);
         fixed.store.verify_bootstrap(false, &pin).await.unwrap();
     }
-    fixture.database.drop().await.unwrap();
 }
 
 #[tokio::test]
