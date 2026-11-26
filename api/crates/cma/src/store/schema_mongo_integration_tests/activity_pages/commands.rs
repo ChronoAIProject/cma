@@ -72,6 +72,125 @@ async fn activity_summary_reads_are_bounded_projected_and_never_count_or_write()
 
 #[tokio::test]
 #[ignore = "requires disposable replica-set MongoDB"]
+async fn audit_fallback_continuation_seeks_with_the_first_pages_global_index() {
+    let commands = Arc::new(Mutex::new(Vec::<Document>::new()));
+    let seen = commands.clone();
+    let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        if let CommandEvent::Started(event) = event {
+            if event.command_name == "find" {
+                seen.lock().unwrap().push(event.command);
+            }
+        }
+    }));
+    let client = Client::with_options(options).unwrap();
+    let name = format!("cma_activity_fallback_{}", uuid::Uuid::new_v4().simple());
+    let db = client.database(&name);
+    let at = DateTime::now();
+    let older = DateTime::from_millis(at.timestamp_millis() - 1);
+    let index_keys = doc! { "recorded_at": -1, "_id": -1 };
+    let collection = db.collection::<Document>(ACTIVITY);
+    collection
+        .create_index(
+            IndexModel::builder()
+                .keys(index_keys.clone())
+                .options(
+                    IndexOptions::builder()
+                        .name("activity_recorded_at_id_desc".to_owned())
+                        .build(),
+                )
+                .build(),
+        )
+        .await
+        .unwrap();
+    for start in (0..4096).step_by(1024) {
+        collection
+            .insert_many((start..start + 1024).map(|id| {
+                let mut doc = document(id, if id < 10 { older } else { at });
+                let record = doc.get_document_mut("record").unwrap();
+                let action = if (7..=12).contains(&id) && id != 10 {
+                    "update"
+                } else {
+                    "read"
+                };
+                record.insert("action", action);
+                if id == 10 {
+                    record.insert("outcome", doc! { "status":"failed", "code":"fixture" });
+                }
+                doc
+            }))
+            .await
+            .unwrap();
+    }
+    let store = MongoActivityStore::open(&client, &name, Duration::from_secs(90 * 86400))
+        .await
+        .unwrap();
+    commands.lock().unwrap().clear();
+    let mut query = ActivityQuery {
+        exclude_successful_reads: true,
+        limit: 2,
+        ..Default::default()
+    };
+    let first = store.list_summaries(&query).await.unwrap();
+    query.cursor = first.next_cursor;
+    assert!(query.cursor.is_some());
+    let second = store.list_summaries(&query).await.unwrap();
+    assert!(second.next_cursor.is_some());
+    assert_eq!(
+        first
+            .items
+            .iter()
+            .chain(&second.items)
+            .map(|row| row.id.0.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "act_000000012",
+            "act_000000011",
+            "act_000000010",
+            "act_000000009"
+        ]
+    );
+    assert!(matches!(
+        second.items[0].outcome,
+        ActivityOutcome::Failed(_)
+    ));
+
+    let pages = commands.lock().unwrap().clone();
+    assert_eq!(pages.len(), 2);
+    for command in &pages {
+        assert_eq!(command.get_document("hint").unwrap(), &index_keys);
+        assert_eq!(command.get_i64("limit").unwrap(), 3);
+        assert_eq!(command.get_i32("maxTimeMS").unwrap(), 5000);
+    }
+    assert!(!pages[0].contains_key("min"));
+    let mut continuation = pages[1].clone();
+    assert_eq!(
+        continuation.get_document("min").unwrap(),
+        &doc! { "recorded_at": at, "_id": "act_000000011" }
+    );
+    for key in ["$db", "lsid", "$clusterTime", "readConcern"] {
+        continuation.remove(key);
+    }
+    let explain = db
+        .run_command(doc! { "explain":continuation, "verbosity":"executionStats" })
+        .await
+        .unwrap();
+    let stats = explain.get_document("executionStats").unwrap();
+    for metric in ["totalDocsExamined", "totalKeysExamined"] {
+        let count = stats
+            .get_i32(metric)
+            .map(i64::from)
+            .or_else(|_| stats.get_i64(metric))
+            .unwrap();
+        assert!(count <= 4, "{metric}: {count}");
+    }
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable replica-set MongoDB"]
 async fn sparse_audit_pages_seek_past_successful_reads_and_tied_cursors() {
     let commands = Arc::new(Mutex::new(Vec::<Document>::new()));
     let seen = commands.clone();

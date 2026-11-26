@@ -291,6 +291,10 @@ pub(in crate::store) fn missing_activity_indexes(
     activity_indexes::missing(existing)
 }
 
+pub(in crate::store) fn activity_page_index_ready(existing: &[mongodb::bson::Document]) -> bool {
+    activity_page_index::missing(existing).is_ok_and(|pending| pending.is_empty())
+}
+
 #[cfg(test)]
 pub(in crate::store) use tests::startup_ddl::{
     apply_binding_indexes_for_test, apply_binding_indexes_with_pause_for_test,
