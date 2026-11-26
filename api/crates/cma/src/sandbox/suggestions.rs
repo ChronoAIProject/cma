@@ -60,12 +60,10 @@ impl HttpSuggestionGenerator {
         {
             return None;
         }
-        let path = endpoint
-            .path()
-            .trim_end_matches('/')
-            .trim_end_matches("/v1")
-            .to_string();
-        endpoint.set_path(&format!("{path}/v1/responses"));
+        let path = endpoint.path().trim_end_matches('/');
+        let suffix = super::titles::responses_path_suffix(path);
+        let responses_path = format!("{}{suffix}", path.trim_end_matches("/v1"));
+        endpoint.set_path(&responses_path);
         let client = reqwest::Client::builder()
             .retry(reqwest::retry::never())
             .user_agent("cma-contextual-suggestions/1")

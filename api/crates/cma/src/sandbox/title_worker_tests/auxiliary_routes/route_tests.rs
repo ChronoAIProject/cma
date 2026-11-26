@@ -30,15 +30,8 @@ async fn both_workers_select_the_exact_scoped_service_and_deployment_model() {
         );
         let calls = peer.calls.lock().unwrap();
         assert_eq!(calls.len(), 2);
-        assert_eq!(
-            calls[0].uri,
-            format!("/api/v1/proxy/s/{selected}/responses")
-        );
-        assert_eq!(
-            calls[1].uri,
-            format!("/api/v1/proxy/s/{selected}/v1/responses")
-        );
         for call in calls.iter() {
+            assert_eq!(call.uri, format!("/api/v1/proxy/s/{selected}/responses"));
             assert_eq!(call.headers["authorization"], format!("Bearer {KEY}"));
             assert!(!call.headers.contains_key("open-sandbox-api-key"));
             assert_eq!(call.body["model"], MODEL);
