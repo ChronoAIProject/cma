@@ -18,10 +18,42 @@ from fixture_no_secrets import NoSecretClient, synthetic_configmaps
 import manifests
 import legacy_manifests
 from run import Fixture
-from readiness_scaling import observe_scale
+from readiness_scaling import observe_never_ready, observe_scale
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_startup_witness_rejects_membership_before_ready_and_removes_pod(self):
+        changes = []
+        env = [{'name': 'POD_IP', 'valueFrom': {'fieldRef': {'fieldPath': 'status.podIP'}}}]
+        pod = {'metadata': {'uid': 'witness'}, 'status': {'podIP': '192.0.2.7',
+            'containerStatuses': [{'state': {'running': {}}, 'ready': False}]}}
+
+        def query(arguments):
+            if arguments[1] == 'nodes':
+                return {'items': [{'status': {'allocatable': {'cpu': '3500m'}}}]}
+            return pod
+
+        def create(objects):
+            obj, = objects
+            extra = obj['spec']['containers'][0]['env'][1:]
+            self.assertIn({'name': 'CHRONO_AGENT_MANAGER_SANDBOX_CPU', 'value': '4500m'}, extra)
+            self.assertEqual(obj['spec']['restartPolicy'], 'Never')
+
+        client = SimpleNamespace(namespace='fixture', apply=create, kjson=query,
+            wait=lambda predicate, *_: predicate(), forward=lambda *_: 'http://127.0.0.1:1234',
+            http_raw=lambda *_args, **_kwargs: (200,),
+            http=lambda *_args, **_kwargs: (503, {'reason': 'startup'}),
+            k=lambda arguments, **_: changes.append(arguments),
+            forwards={('am-startup-witness', 8080): (None, None)}, stop=lambda _: None)
+        fixture = SimpleNamespace(client=client, templates={'b': {'spec': {'template': {'spec': {
+            'containers': [{'env': env}], 'restartPolicy': 'Always'}}}}},
+            ownerOf=lambda **_: {'am': 'b', 'epoch': 4},
+            mongo=lambda _: [{'relay_address': 'http://192.0.2.7:8080'}])
+        with self.assertRaisesRegex(RuntimeError, 'startup_witness_joined'):
+            observe_never_ready(fixture, 'fixture-agent')
+        self.assertEqual(changes[0][:3], ['delete', 'pod', 'am-startup-witness'])
+        self.assertEqual(len(env), 1)
+
     def test_scale_counts_ready_members_and_removes_controller(self):
         actions = []
         image = 'localhost/api@sha256:' + 'a' * 64

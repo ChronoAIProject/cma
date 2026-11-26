@@ -17,6 +17,7 @@ import {writerCoverage} from './writer_coverage.mjs';
 import {queuedCommandCase} from './features/queued_commands.mjs';
 import {configurationDenials} from './features/configuration_denials.mjs';
 import {installSkillCase} from './features/skills.mjs';
+import {shareAgentArtifact} from './features/sharing.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -37,7 +38,7 @@ check(typeof config.outsider_bearer === 'string' && config.outsider_bearer.lengt
 'independent_outsider_required');
 const user = new API(normal, observation => apiObservations.push(observation));
 const admin = new API({...normal, bearer: config.admin_bearer}, observation => apiObservations.push(observation));
-const outsider = new API({...normal, bearer: config.outsider_bearer});
+const outsider = new API({...normal, bearer: config.outsider_bearer}, observation => apiObservations.push(observation));
 async function documentCase(iteration, name, operation) {
   const start = performance.now(), first = apiObservations.length;
   const row = {case: name, phase, iteration, verdict: 'RUNNING', routing: 'shared_document_has_no_agent_owner'};
@@ -185,6 +186,7 @@ try {
         },
         runCase: async (name, operation) => {
           const start = performance.now(), first = observations.length;
+          const firstRequest = apiObservations.length;
           const row = {case: name, phase: context.phase, iteration, verdict: 'RUNNING'};
           activeRow = row;
           try { await operation(); row.verdict = 'PASS'; }
@@ -193,11 +195,14 @@ try {
             const proofs = observations.slice(first);
             row.non_owner = proofs.length > 0 && proofs.every(p => p.verdict === 'PASS' && p.owner !== p.ingress);
             row.owner_proofs = proofs;
+            row.ams = [...new Set(apiObservations.slice(firstRequest).map(request => request.am))];
             row.elapsed_ms = performance.now() - start; await record(row);
           }
         }};
         if (iteration === 1) {
           await caseContext.runCase('writer.skill_installs_once', () => installSkillCase(caseContext));
+          await caseContext.runCase('writer.share_and_artifact_receipts',
+            () => shareAgentArtifact({...caseContext, user, outsider}));
         }
         await userCases(caseContext);
         await configurationDenials({...caseContext, outsider});
@@ -243,6 +248,8 @@ try {
     owner_restart_pass: result.journey?.steps.some(s => s.name === 'actual_owner_kill_and_recovery' && s.verdict === 'PASS') === true,
     autoscaler_ready_manager_counts: result.journey?.steps.find(s =>
       s.name === 'ready_autoscaler_two_three_two' && s.verdict === 'PASS')?.ready_managers ?? [],
+    never_ready_manager_samples: result.journey?.steps.find(s =>
+      s.name === 'never_ready_third_manager' && s.verdict === 'PASS')?.never_ready_samples ?? 0,
   }, null, 2), {mode: 0o600});
 }
 process.exitCode = result.verdict === 'PASS' ? 0 : 1;

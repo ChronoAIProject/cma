@@ -25,7 +25,7 @@ from common import Client, utc, write
 import manifests
 import legacy_manifests as old
 from login import login
-from readiness_scaling import observe_scale
+from readiness_scaling import observe_never_ready, observe_scale
 
 ROOT=Path(__file__).resolve().parent
 PROVIDER=ROOT.parent/'cma'/'provider.py'
@@ -253,6 +253,11 @@ class Fixture:
     def observeScale(self):
         return observe_scale(self)
 
+    def observeNeverReady(self, agentId=None):
+        if not isinstance(agentId, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', agentId):
+            raise ValueError('startup_witness_agent_required')
+        return observe_never_ready(self, agentId)
+
     def restoreAm(self, am=None, am_id=None, **_):
         am=am or am_id
         if am not in self.killed:raise RuntimeError('restore_without_owned_kill')
@@ -384,7 +389,7 @@ class Fixture:
                     allowed=['topology','runtimeFor','ownerOf','killAm','restoreAm','prepareTurn',
                              'releaseTurn','oracle','captureFailure','titleEffects','skillEffects',
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
-                             'observeScale']
+                             'observeScale','observeNeverReady']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

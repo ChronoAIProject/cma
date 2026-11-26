@@ -1,0 +1,71 @@
+import {createHash, randomBytes, randomUUID} from 'node:crypto';
+import {assertOwner, check, other} from '../cma/core.mjs';
+import {withRestoration} from '../failure.mjs';
+
+export async function shareAgentArtifact({adapter, user, outsider, record, recordFailure}) {
+  const {agentId} = record;
+  const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
+  const ingress = other(owner.am);
+  const agentPath = `/api/v1/agents/${encodeURIComponent(agentId)}`;
+  const access = `/api/v1/resource-access/agent/${encodeURIComponent(agentId)}`;
+  const links = agentPath + '/share-links';
+  const artifacts = agentPath + '/artifacts';
+  const data = Buffer.from('Synthetic share and artifact regression\n');
+  const artifactInput = {name: `fixture-${randomUUID()}.txt`, media_type: 'text/plain',
+    content_base64: data.toString('base64')};
+  const artifactKey = randomUUID();
+  const {body: artifact} = await user.request(ingress, 'POST', artifacts,
+    {body: artifactInput, key: artifactKey, allowed: [201]});
+  check(artifact.agent_id === agentId && typeof artifact.id === 'string' &&
+    artifact.size_bytes === data.length && artifact.sha256 === createHash('sha256').update(data).digest('hex'),
+  'artifact_admission_identity');
+  const artifactPath = artifacts + '/' + encodeURIComponent(artifact.id);
+  const {body: replay} = await user.request(owner.am, 'POST', artifacts,
+    {body: artifactInput, key: artifactKey, allowed: [201]});
+  check(replay.id === artifact.id && replay.created_at === artifact.created_at, 'artifact_replay_changed_receipt');
+  await user.request(owner.am, 'POST', artifacts,
+    {body: {...artifactInput, name: 'changed.txt'}, key: artifactKey, allowed: [409]});
+  await outsider.request(ingress, 'GET', access, {allowed: [404]});
+
+  const token = randomBytes(32).toString('hex');
+  const {body: link} = await user.request(ingress, 'POST', links, {
+    body: {audience: {kind: 'public'}, mode: 'view', token}, key: randomUUID(),
+  });
+  check(typeof link.id === 'string' && link.agent_id === agentId, 'share_link_admission_identity');
+  const redeem = '/api/v1/agent-share-links/' + encodeURIComponent(link.id) + '/redeem';
+  const publicationDenied = async am => outsider.request(am, 'POST', artifacts,
+    {body: artifactInput, key: randomUUID(), allowed: [404]});
+  await withRestoration(async () => {
+    check(link.mode === 'view' && !JSON.stringify(link).includes(token), 'share_link_scope_or_token');
+    await outsider.request(owner.am, 'POST', redeem, {
+      body: {token: randomBytes(32).toString('hex')}, allowed: [404],
+    });
+    const {body: accepted} = await outsider.request(owner.am, 'POST', redeem, {body: {token}});
+    const {body: repeated} = await outsider.request(ingress, 'POST', redeem, {body: {token}});
+    check(accepted.id === link.id && repeated.id === link.id && accepted.accepted_count === 1 &&
+      repeated.accepted_count === 1 && repeated.revision === accepted.revision, 'share_redemption_replayed_twice');
+    for (const am of [owner.am, ingress]) {
+      const {body: rights} = await outsider.request(am, 'GET', access);
+      check(rights.capabilities.includes('view_files') && !rights.capabilities.includes('manage_sharing'),
+        'share_view_capability_mismatch');
+      const {body: seen} = await outsider.request(am, 'GET', artifactPath);
+      check(seen.id === artifact.id && seen.sha256 === artifact.sha256, 'share_artifact_peer_readback');
+    }
+    await publicationDenied(ingress);
+  }, async () => {
+    const {body: listing} = await user.request(owner.am, 'GET', links);
+    const current = listing.items.find(row => row.id === link.id);
+    check(Number.isSafeInteger(current?.revision), 'share_link_cleanup_revision_missing');
+    await user.request(ingress, 'DELETE', links + '/' + encodeURIComponent(link.id) +
+      '?expected_revision=' + current.revision, {key: randomUUID()});
+    for (const am of [owner.am, ingress]) {
+      await outsider.request(am, 'GET', access, {allowed: [404]});
+      await outsider.request(am, 'GET', artifactPath, {allowed: [404]});
+    }
+    await outsider.request(owner.am, 'POST', redeem, {body: {token}, allowed: [404]});
+    await publicationDenied(owner.am);
+  }, recordFailure);
+  const {body: listing} = await user.request(owner.am, 'GET', artifacts);
+  check(listing.items.filter(row => row.id === artifact.id && row.name === artifactInput.name).length === 1,
+    'artifact_effect_missing_or_duplicated');
+}

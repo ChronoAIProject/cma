@@ -225,9 +225,16 @@
       "feature": "Sharing/access/artifact metadata",
       "requirement": "No raw conflict for internal contention; fresh authorization and policy snapshot checked on retry, immutable receipt recovered on unknown outcome, denied/revoked caller never admitted. Some share redemption retry already exists; preserve it.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Organization/shared access and artifact publication fixture plus contention barriers.",
+      "remaining": "Organization and access-request transitions, deterministic contention and unknown-outcome recovery, plus hosted execution of the share and artifact receipt case.",
       "trigger": "Agent-target share create/revoke/redemption, access request transitions and artifact publication concurrent with owner revision change",
-      "required_assertions": []
+      "required_assertions": [
+        {
+          "case": "writer.share_and_artifact_receipts",
+          "minimum_runs": 1,
+          "phases": ["before_restart", "after_restart"],
+          "routing": "both"
+        }
+      ]
     },
     {
       "id": "SW11",
@@ -245,7 +252,7 @@
       "feature": "Readiness and HPA",
       "requirement": "Never-Ready manager acquires no Agent; shared readiness predicate drops immediately on termination; serving peer owns any touched Agent within approved drain bound. Existing native65 PASS is not an integrated image PASS.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Never-Ready third Manager fixture and hosted execution of the HPA 2-to-3-to-2 case.",
+      "remaining": "Hosted execution of the never-Ready third Manager and HPA 2-to-3-to-2 cases with a live Agent.",
       "trigger": "Reuse existing never-Ready third-AM and early SIGTERM/delete tests plus final exact-image HPA2->3->2 journey",
       "required_assertions": [
         {
@@ -256,6 +263,12 @@
         },
         {
           "case": "ready_autoscaler_two_three_two",
+          "minimum_runs": 1,
+          "phases": [],
+          "routing": "journey"
+        },
+        {
+          "case": "never_ready_third_manager",
           "minimum_runs": 1,
           "phases": [],
           "routing": "journey"

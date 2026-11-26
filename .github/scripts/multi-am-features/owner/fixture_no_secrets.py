@@ -121,6 +121,7 @@ class LocalFixture(OriginalFixture):
             protected = {'CHRONO_AGENT_MANAGER_REPLICAS_ENABLED',
                          'CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED',
                          'CHRONO_USAGE_REPORT_VIEWS_ENABLED', 'CHRONO_USAGE_REPORT_WARMER_ENABLED',
+                         'CHRONO_USAGE_REPORT_VIEW_SCOPES',
                          'CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED', 'CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE'}
             if refs != [binding['name']] or any(x['name'].startswith('CHRONO_MONGODB_')
                     or x['name'] in protected for x in container.get('env', [])):

@@ -2,15 +2,29 @@ import {randomUUID} from 'node:crypto';
 import {assertOwner, assertRecovery, check, observeServingDuringRestart, poll} from '../cma/core.mjs';
 import {retainFailure, withRestoration} from '../failure.mjs';
 
-export async function scaleManagerCase({adapter, api, record}) {
+function readFromBoth(api, record) {
   const path = `/api/v1/agents/${record.agentId}`;
-  const observed = await observeServingDuringRestart(() => adapter.observeScale(), async () => {
+  return async () => {
     for (const am of ['a', 'b']) {
       const {body} = await api.rawRequest(am, 'GET', path);
       check(body.id === record.agentId && body.status === 'ready' && body.sandbox?.id === record.sandboxId,
-        'hpa_baseline_peer_stopped_serving');
+        'baseline_manager_stopped_serving');
     }
-  }, {interval: 2000});
+  };
+}
+
+export async function neverReadyManagerCase({adapter, api, record}) {
+  const observed = await observeServingDuringRestart(() => adapter.observeNeverReady({agentId: record.agentId}),
+    readFromBoth(api, record), {interval: 2000});
+  const witness = observed.restored;
+  check(witness.never_ready_samples >= 5 && witness.third_member_registered === false &&
+    witness.startup_witness_removed === true, 'never_ready_manager_evidence_incomplete');
+  return {never_ready_samples: witness.never_ready_samples, useful_reads: observed.servingSamples};
+}
+
+export async function scaleManagerCase({adapter, api, record}) {
+  const observed = await observeServingDuringRestart(() => adapter.observeScale(),
+    readFromBoth(api, record), {interval: 2000});
   const scale = observed.restored;
   check(scale.controller === 'HorizontalPodAutoscaler' && scale.trigger === 'replica_bounds' &&
     scale.ready_managers.join(',') === '2,3,2', 'hpa_scale_trajectory_incomplete');

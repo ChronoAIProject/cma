@@ -27,6 +27,7 @@ export function writerCoverage(registry, results, journey, fixture) {
         && Array.isArray(assertion.phases)
         && ['non_owner', 'both', 'journey'].includes(assertion.routing), 'writer_assertion_contract');
       if (assertion.routing === 'journey') {
+        requireValue(assertion.minimum_runs === 1 && assertion.phases.length === 0, 'writer_journey_repetition');
         const steps = journey?.steps?.filter(step => step.name === assertion.case) ?? [];
         return {case: assertion.case, verdict: !steps.length ? 'NOT_RUN'
           : journey.verdict === journeyPass && steps.length === 1

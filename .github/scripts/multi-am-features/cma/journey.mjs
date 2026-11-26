@@ -6,7 +6,7 @@ import {performance} from 'node:perf_hooks';
 import {API, check, hash, id, normalizeConfig, runtimeBindings, assertRuntimeBindings, poll, other, assertOwner, assertRecovery, assertResponse, assertOracle, observeServingDuringRestart, observeTwoAmServingHold, awaitInitialIdle, wait} from './core.mjs';
 import {NonOwnerRouter} from '../routing.mjs';
 import {desktopFrame, closeDesktop} from './desktop.mjs';
-import {drainOwnerCase, scaleManagerCase} from '../features/readiness.mjs';
+import {drainOwnerCase, neverReadyManagerCase, scaleManagerCase} from '../features/readiness.mjs';
 
 const terminal = value => ['completed', 'failed', 'incomplete', 'cancelled'].includes(value.status);
 const lineage = (record, detail) => detail?.id === record.agentId && detail.sandbox?.id === record.sandboxId
@@ -430,6 +430,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     await step('plain_send_and_interrupt_after_restart', () => interrupt(plain, 'b', 'after_restart'));
     await step('owner_drain_and_readiness', () => drainOwnerCase({adapter, api, record: plain, config}));
     await step('ready_autoscaler_two_three_two', () => scaleManagerCase({adapter, api, record: plain}));
+    await step('never_ready_third_manager', () => neverReadyManagerCase({adapter, api, record: plain}));
     await step('plain_public_stop_retire', async () => {await cleanup(plain); return {retired: true};});
     if (!runtimes.omarchy) {
       await step('await_omarchy_runtime_input', async () => {
