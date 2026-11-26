@@ -26,7 +26,7 @@ pub(super) fn matches(lineage: &ResourceLineage, request: &AgentOpenRequest) -> 
                 AgentWorkStep::RestartConversation | AgentWorkStep::RestartTeardown
             );
     };
-    if !incarnation.is_some_and(|incarnation| incarnation > 1)
+    if incarnation.is_none_or(|incarnation| incarnation <= 1)
         || request.resume_conversation.is_none()
         || sandbox.status != SandboxStatus::Active
         || sandbox.lifecycle.operation.is_some()
