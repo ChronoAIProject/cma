@@ -8,6 +8,7 @@ use crate::store::{
         commit_transaction, signed, start_transaction, CommitOutcome, MongoSandboxStore,
         TRANSACTION_ATTEMPTS,
     },
+    transaction_terminal::GuardedTerminal as _,
     work_claim_authority::sandbox_claim,
 };
 use futures_util::future::BoxFuture;
@@ -331,7 +332,7 @@ impl MongoSandboxStore {
             let (parent, slot) = match apply(&context, &mut session).await {
                 Ok(receipt) => receipt,
                 Err(error) => {
-                    if let Err(abort) = session.abort_transaction().await {
+                    if let Err(abort) = session.abort_guarded().await {
                         tracing::warn!(error = %abort, "retirement capture abort was not acknowledged");
                     }
                     match error {
