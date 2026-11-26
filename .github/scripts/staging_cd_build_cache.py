@@ -101,7 +101,11 @@ class BuildCache:
 
     def build_options(self):
         self.layer_export_requested = False
-        args = layer_options(self.env, self.component) if self.build_environment() else []
+        # Importing a legacy layer refreshes its access time and can prevent
+        # GitHub's normal expiry. Let the legacy family age during a drain.
+        args = []
+        if self.env.get("CD_LEGACY_BUILDKIT_DRAIN") != "enabled" and self.build_environment():
+            args = layer_options(self.env, self.component)
         if self.env.get("CD_LAYER_ARCHIVE_CACHE") == "enabled":
             restored = self.layer_root / "restored"
             pending = self.layer_root / "pending"

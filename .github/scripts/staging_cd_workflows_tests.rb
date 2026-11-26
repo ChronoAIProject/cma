@@ -197,6 +197,10 @@ class StagingWorkflowTest < Minitest::Test
       assert_operator producer.fetch('timeout-minutes'), :<=, 240
       assert_operator job['steps'].index(producer), :<, job['steps'].index(publication)
       assert_equal '${{ steps.producer.outputs.prepared }}', publication.fetch('env').fetch('CD_PREPARED_ARCHIVE')
+      [producer, publication].each do |step|
+        assert_equal "${{ vars.CMA_LEGACY_BUILDKIT_DRAIN == 'true' && 'enabled' || '' }}",
+          step.fetch('env').fetch('CD_LEGACY_BUILDKIT_DRAIN')
+      end
     end
     transport = File.read(File.join(ROOT, 'scripts/staging_cd_transport.sh'))
     %w[Acquire::http::Timeout DPkg::Lock::Timeout].each { |option| assert_includes transport, option }

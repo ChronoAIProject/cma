@@ -146,6 +146,7 @@ jobs:
           CD_COMPONENT: ${{ inputs.component }}
           CD_TASKS: ${{ inputs.tasks }}
           CD_BUILD_CACHE: enabled
+          CD_LEGACY_BUILDKIT_DRAIN: ${{ vars.CMA_LEGACY_BUILDKIT_DRAIN == 'true' && 'enabled' || '' }}
           CD_LAYER_ARCHIVE_CACHE: ${{ vars.CMA_BOUNDED_LAYER_CACHE == 'true' && 'enabled' || '' }}
           CD_LAYER_ARCHIVE_RESTORED: ${{ steps.layer-validate.outcome == 'success' }}
           CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
@@ -160,6 +161,7 @@ jobs:
           CD_RECEIPTS_PATH: ${{ runner.temp }}/public-receipts/receipts.json
           CD_PREPARED_ARCHIVE: ${{ steps.producer.outputs.prepared }}
           CD_BUILD_CACHE: enabled
+          CD_LEGACY_BUILDKIT_DRAIN: ${{ vars.CMA_LEGACY_BUILDKIT_DRAIN == 'true' && 'enabled' || '' }}
           CD_LAYER_ARCHIVE_CACHE: ${{ vars.CMA_BOUNDED_LAYER_CACHE == 'true' && 'enabled' || '' }}
           CD_LAYER_ARCHIVE_RESTORED: ${{ steps.layer-validate.outcome == 'success' }}
           CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}

@@ -216,6 +216,18 @@ class CacheTests(unittest.TestCase):
         self.assertFalse(pending.exists())
         self.assertFalse(cache.exports_layers())
 
+    def test_legacy_drain_keeps_cargo_and_validated_local_layer_cache(self):
+        env = dict(self.env, CD_LEGACY_BUILDKIT_DRAIN='enabled')
+        cache = BuildCache(ROOT, env, ROOT, 'eg')
+        mount = 'BUILDKIT_CACHE_MOUNT_NS=' + cache.namespace
+        self.assertEqual(cache.build_options(), ['--build-arg', mount])
+
+        restored = cache.layer_root / 'restored'
+        restored.mkdir(parents=True)
+        cache.env = dict(env, CD_LAYER_ARCHIVE_CACHE='enabled', CD_LAYER_ARCHIVE_RESTORED='true')
+        self.assertEqual(cache.build_options(), ['--cache-from', 'type=local,src=' + str(restored),
+                                                '--build-arg', mount])
+
     def test_only_develop_producers_can_prepare_or_transfer_cargo_caches(self):
         for key, value in (("GITHUB_EVENT_NAME", "pull_request"), ("GITHUB_EVENT_NAME", "workflow_dispatch"),
                            ("GITHUB_REF", "refs/pull/12/merge"), ("GITHUB_REPOSITORY", "fork/repo"),

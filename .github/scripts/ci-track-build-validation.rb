@@ -16,9 +16,10 @@ def check_component_cache_writers(documents)
   }, 'image Node setup must disable automatic and explicit dependency caching')
   scope = "matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component"
   builds = images.select { |s| s.fetch('uses', '').start_with?('docker/build-push-action@') }
+  legacy = "${{ vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true' && format('type=gha,version=2,scope={0}', #{scope}) || '' }}"
   bounded = "${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}"
   require_check(builds.size == 2 && builds.all? { |s| s.dig('with', 'cache-from').to_s.lines.map(&:strip) ==
-    ["type=gha,version=2,scope=${{ #{scope} }}", bounded] }, 'both image builds must restore validated component caches')
+    [legacy, bounded] }, 'both image builds must restore only the allowed component caches')
   exports = builds.map { |s| s.dig('with', 'cache-to') }.compact
   require_check(exports.empty?, 'CI image builds must not publish unbounded layers')
   {'docker/setup-qemu-action' => 'cache-image', 'docker/setup-buildx-action' => 'cache-binary',
