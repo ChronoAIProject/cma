@@ -12,8 +12,39 @@ on:
         default: false
 permissions: {}
 jobs:
-  sweep:
+  staging_activity:
+    name: Check the completed staging attempt for component work
     if: >-
+      github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
+      github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'develop' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.path == '.github/workflows/staging-cd.yml' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: read
+    outputs:
+      needed: ${{ steps.activity.outputs.needed }}
+    steps:
+      - name: Read the public workflow revision
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          git init --quiet
+          git -c credential.helper= fetch --quiet --no-tags --depth=1 https://github.com/ChronoAIProject/cma.git "$GITHUB_SHA"
+          git checkout --quiet --detach "$GITHUB_SHA"
+      - name: Check exact staging attempt jobs
+        id: activity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/actions_cache_workload.py
+  sweep:
+    needs: staging_activity
+    if: >-
+      always() && !cancelled() &&
+      (needs.staging_activity.result != 'success' || needs.staging_activity.outputs.needed != 'false') &&
       github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'develop' &&
@@ -72,19 +103,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 -B .github/scripts/actions_cache_buildkit_inventory.py "$RUNNER_TEMP/buildkit-cache-inventory.json"
       - name: Retain the read-only report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: buildkit-cache-inventory
           path: ${{ runner.temp }}/buildkit-cache-inventory.json
           if-no-files-found: error
           retention-days: 3
   recover:
+    needs: staging_activity
     outputs:
       status: ${{ steps.recovery.outputs.status }}
       before_bytes: ${{ steps.recovery.outputs.before_bytes }}
       after_bytes: ${{ steps.recovery.outputs.after_bytes }}
       observed_bytes_to_admit: ${{ steps.recovery.outputs.observed_bytes_to_admit }}
     if: >-
+      always() && !cancelled() &&
+      (needs.staging_activity.result != 'success' || needs.staging_activity.outputs.needed != 'false') &&
       github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
       github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'develop' &&
@@ -152,8 +186,9 @@ jobs:
         id: layer-candidate-download
         timeout-minutes: 5
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          digest-mismatch: error
           artifact-ids: ${{ steps.layer-candidate.outputs.artifact }}
           run-id: ${{ steps.layer-candidate.outputs.run_id }}
           github-token: ${{ github.token }}
@@ -163,8 +198,9 @@ jobs:
         id: layer-candidate-retry
         if: steps.layer-candidate.outputs.artifact != '' && steps.layer-candidate-download.outcome == 'failure'
         timeout-minutes: 5
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          digest-mismatch: error
           artifact-ids: ${{ steps.layer-candidate.outputs.artifact }}
           run-id: ${{ steps.layer-candidate.outputs.run_id }}
           github-token: ${{ github.token }}
@@ -194,7 +230,7 @@ jobs:
         if: steps.reserve-layer-archive.outputs.allowed == 'true'
         timeout-minutes: 5
         continue-on-error: true
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: |
             ${{ runner.temp }}/cma-layer-cache/archive.tar
@@ -233,7 +269,7 @@ jobs:
         id: verify-restore
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: |
             ${{ runner.temp }}/cma-layer-cache/archive.tar
@@ -248,7 +284,7 @@ jobs:
       - name: Set up the actual BuildKit importer
         if: steps.verify-archive.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
         timeout-minutes: 3
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
         with:
           cache-binary: false
       - name: Prove reuse from the exact restored archive

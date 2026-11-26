@@ -115,7 +115,8 @@ class ComponentAdmissionTests(unittest.TestCase):
 
     def test_every_lane_with_a_pending_successor_deploys_but_a_higher_final_is_withheld(self):
         keys, apps = sorted(DEPLOYABLES), ['am', 'eg', 'web']
-        successors = [DEPLOYABLES[key] + '/pending/v0.10.2' for key in keys]
+        newer = {key: DEPLOYABLES[key] + '/v' + ('0.10.3' if key == 'runtime' else '0.10.2') for key in keys}
+        successors = [tag.replace('/v', '/pending/v') for tag in newer.values()]
         pending = self.advertisement(*successors)
         self.api.require_current_versions.side_effect = pending
         value, failures = self.admit(keys)
@@ -125,7 +126,7 @@ class ComponentAdmissionTests(unittest.TestCase):
         self.execute(value, check=pending)
         for key in keys:
             with self.subTest(component=key):
-                final = self.advertisement(*successors, DEPLOYABLES[key] + '/v0.10.2')
+                final = self.advertisement(*successors, newer[key])
                 self.api.require_current_versions.side_effect = final
                 narrowed, failures = self.admit(keys)
                 self.assertEqual(set(narrowed['receipts']), set(keys) - {key})

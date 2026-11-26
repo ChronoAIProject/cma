@@ -19,21 +19,38 @@ registry_archive="$output/registry.tar.gz"
 target_archive="$output/target.tar.gz"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-mkfifo "$tmp/raw"
+mkfifo "$tmp/raw" "$tmp/members"
 
 archive_stream() {
     source=$1
     archive=$2
-    shift 2
-    # Count the actual tar stream without decompressing the completed archive
-    # a second time. Keep the independent member-list and seal checks.
+    expanded_limit=$3
+    compressed_limit=$4
+    shift 4
+    # A losing candidate can stop as soon as either byte budget is exceeded.
+    # Keep one extra byte as evidence of overflow and discard that stream.
     wc -c < "$tmp/raw" > "$tmp/raw-count" &
     counter=$!
-    tar -C "$source" -cf - "$@" | tee "$tmp/raw" | gzip -1 > "$archive"
+    # tar sends its creation listing to stderr when the archive is stdout.
+    # Count entries here instead of decompressing the completed archive again.
+    wc -l < "$tmp/members" > "$tmp/member-count" &
+    member_counter=$!
+    status=0
+    tar -C "$source" -cvf - "$@" 2> "$tmp/members" |
+        head -c "$((expanded_limit + 1))" | tee "$tmp/raw" |
+        gzip -1 | head -c "$((compressed_limit + 1))" > "$archive" || status=$?
     wait "$counter"
+    wait "$member_counter"
     archive_compressed=$(wc -c < "$archive")
     archive_expanded=$(cat "$tmp/raw-count")
-    archive_members=$(tar -tzf "$archive" | wc -l)
+    archive_members=0
+    if [ "$archive_compressed" -gt "$compressed_limit" ] ||
+       [ "$archive_expanded" -gt "$expanded_limit" ]; then
+        return 0
+    fi
+    # Within budget, any pipeline failure is a real transfer error.
+    [ "$status" -eq 0 ] || return "$status"
+    archive_members=$(cat "$tmp/member-count")
 }
 
 fits() {
@@ -56,7 +73,7 @@ refuse_budget() {
 }
 
 archive_registry() {
-    archive_stream "$registry" "$registry_archive" $skip_src .
+    archive_stream "$registry" "$registry_archive" "$max_expanded" "$max_compressed" $skip_src .
     registry_compressed=$archive_compressed
     registry_expanded=$archive_expanded
     registry_members=$archive_members
@@ -83,7 +100,8 @@ fi
 attempts=0
 if [ "$total" -le "$bound_kib" ]; then
     attempts=1
-    archive_stream "$target" "$target_archive" .
+    archive_stream "$target" "$target_archive" \
+        "$((max_expanded - registry_expanded))" "$((max_compressed - registry_compressed))" .
     if fits "$((registry_expanded + archive_expanded))" \
         "$((registry_compressed + archive_compressed))" \
         "$((registry_members + archive_members))"; then
@@ -164,9 +182,10 @@ while read -r relative expanded members; do
 done < "$tmp/candidates"
 cat "$tmp/primary" "$tmp/secondary" > "$tmp/candidates"
 
-# Estimate compressed contribution using the previous observed roughly 2:1
-# ratio. Every accepted artifact must still pass the exact compressed bound.
+# Measure the selected groups as a whole too. Per-group disk sizes only
+# estimate output, especially when files are sparse or linked across groups.
 set --
+: > "$tmp/picked"
 expanded_left=$remaining_expanded
 compressed_left=$remaining_compressed
 members_left=$remaining_members
@@ -176,6 +195,7 @@ while read -r relative expanded members; do
        [ "$compressed" -le "$compressed_left" ] &&
        [ "$members" -le "$members_left" ]; then
         set -- "$@" "$relative"
+        printf '%s\n' "$expanded" >> "$tmp/picked"
         expanded_left=$((expanded_left - expanded))
         compressed_left=$((compressed_left - compressed))
         members_left=$((members_left - members))
@@ -187,7 +207,7 @@ done < "$tmp/candidates"
 # preserve a deterministic prefix of the selected complete crate groups.
 while [ "$attempts" -lt 3 ] && [ "$#" -gt 0 ]; do
     attempts=$((attempts + 1))
-    archive_stream "$target" "$target_archive" "$@"
+    archive_stream "$target" "$target_archive" "$remaining_expanded" "$remaining_compressed" "$@"
     if fits "$((registry_expanded + archive_expanded))" \
         "$((registry_compressed + archive_compressed))" \
         "$((registry_members + archive_members))"; then
@@ -195,12 +215,18 @@ while [ "$attempts" -lt 3 ] && [ "$#" -gt 0 ]; do
         exit 0
     fi
     keep=$(($# - 1))
-    if [ "$archive_compressed" -gt "$remaining_compressed" ]; then
-        limit=$(($# * remaining_compressed / archive_compressed))
-        [ "$limit" -ge "$keep" ] || keep=$limit
-    fi
-    if [ "$archive_expanded" -gt "$remaining_expanded" ]; then
-        limit=$(($# * remaining_expanded / archive_expanded))
+    if [ "$archive_compressed" -gt "$remaining_compressed" ] ||
+       [ "$archive_expanded" -gt "$remaining_expanded" ]; then
+        # The stopped stream measures how many tar bytes the budget bought.
+        # Retry with a smaller complete prefix, keeping its priority order.
+        limit=0
+        estimated=0
+        while read -r expanded; do
+            estimated=$((estimated + expanded))
+            [ "$estimated" -lt "$archive_expanded" ] || break
+            limit=$((limit + 1))
+        done < "$tmp/picked"
+        [ "$limit" -gt 0 ] || limit=1
         [ "$limit" -ge "$keep" ] || keep=$limit
     fi
     if [ "$archive_members" -gt "$remaining_members" ]; then

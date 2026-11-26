@@ -103,7 +103,7 @@ jobs:
         run: npm run e2e -- --project=smoke
       - name: Upload curated evidence only
         if: always() && steps.harness.outputs.evidence_ready == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: staging-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -176,7 +176,7 @@ jobs:
         run: node .github/scripts/staging-authority.mjs audit "$CMA_E2E_OUTPUT_DIR" "$RUNNER_TEMP/staging-before.json" "$RUNNER_TEMP/staging-after.json"
       - name: Upload credential-checked screenshots, redacted results and cleanup journal
         if: always() && steps.audit.outputs.publishable == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: staging-journeys-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

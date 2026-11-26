@@ -137,14 +137,14 @@ def build(root, reservation, directory, runner=command, *, source=None, cache=No
 def inspect(archive, expected, runner=command, *, allow_qualified=False, compatibility=None):
     raw = runner(["skopeo", "inspect", "--raw", "oci-archive:" + str(archive)], timeout=120)
     manifest = json.loads(raw)
-    require(manifest.get("schemaVersion") == 2 and isinstance(manifest.get("config"), dict)
+    require(isinstance(manifest, dict) and manifest.get("schemaVersion") == 2 and isinstance(manifest.get("config"), dict)
             and isinstance(manifest.get("layers"), list), "Native archive contains an unexpected image index")
     config_raw = runner(["skopeo", "inspect", "--config", "oci-archive:" + str(archive)], timeout=120)
     config = json.loads(config_raw)
-    require(config.get("architecture") == "amd64" and config.get("os") == "linux"
+    require(isinstance(config, dict) and config.get("architecture") == "amd64" and config.get("os") == "linux"
             and isinstance(config.get("config"), dict), "Native image platform is invalid")
     labels = config["config"].get("Labels", {})
-    require((labels.get(IDENTITY_LABEL) == canonical(expected)
+    require(isinstance(labels, dict) and (labels.get(IDENTITY_LABEL) == canonical(expected)
              or (allow_qualified and compatibility is None and IDENTITY_LABEL not in labels))
             and labels.get("org.opencontainers.image.source") == "https://github.com/ChronoAIProject/cma"
             and labels.get("org.opencontainers.image.revision") == expected["source"]

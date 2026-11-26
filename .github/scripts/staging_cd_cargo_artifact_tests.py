@@ -16,10 +16,12 @@ SOURCE = "a" * 40
 CURRENT = "b" * 40
 FAMILY = "cma-cd-cargo-v4-am-" + "c" * 64 + "-"
 OTHER_FAMILY = "cma-cd-cargo-v4-am-" + "d" * 64 + "-"
+PREFIX = FAMILY + "e" * 64 + "-"
+INDEX = "graph-" + PREFIX.removesuffix("-")
 
 
-def manifest(family):
-    return json.dumps({"format": 1, "prefix": family + "e" * 64 + "-"}).encode()
+def manifest(family, graph="e" * 64):
+    return json.dumps({"format": 1, "prefix": family + graph + "-"}).encode()
 
 
 FILES = {"manifest.json": manifest(FAMILY), "registry.tar.gz": b"registry", "target.tar.gz": b"target"}
@@ -58,6 +60,13 @@ class Remote:
             name, _, rest = path.removeprefix(prefix + "artifacts?name=").partition("&")
             assert rest == "per_page=50"
             return {"artifacts": [spec["artifact"] for spec in self.runs if spec["artifact"]["name"] == name]}
+        if path.startswith(prefix + "runs/") and "/artifacts?name=" in path:
+            run_id, _, query = path.removeprefix(prefix + "runs/").partition("/artifacts?name=")
+            name, _, rest = query.partition("&")
+            assert rest == "per_page=2"
+            rows = [spec["artifact"] for spec in self.runs if spec["artifact"]["name"] == name
+                    and str(spec["artifact"]["workflow_run"]["id"]) == run_id]
+            return {"total_count": len(rows), "artifacts": rows[:2]}
         for spec in self.runs:
             run_id = spec["artifact"]["workflow_run"]["id"]
             if path == f"{prefix}runs/{run_id}":
@@ -97,7 +106,7 @@ class CargoArtifactTests(unittest.TestCase):
                                  ancestry=ancestry, **options)
 
     def spec(self, run_id, *, members=None, symlink=None, digest=None, **altered):
-        path = self.root / f"bundle-{run_id}.zip"
+        path = self.root / f"bundle-{run_id}-{altered.get('artifact', {}).get('id', run_id)}.zip"
         real = bundle(path, members, symlink=symlink)
         remote = Remote(self.root, [])
         artifact = remote.artifact(run_id, digest or real, **altered.pop("artifact", {}))
@@ -126,6 +135,67 @@ class CargoArtifactTests(unittest.TestCase):
         self.assertEqual({p.name: p.read_bytes() for p in self.accepted.iterdir()}, FILES)
         self.assertEqual([path.split("/")[-2] for path in remote.paths if path.endswith("/zip")],
                          ["420", "430", "410"])
+
+    def test_exact_graph_discovers_the_older_matching_bundle_without_downloading_the_newest(self):
+        family_name = FAMILY.removesuffix("-")
+        partial = {**FILES, "manifest.json": manifest(FAMILY, "f" * 64)}
+        remote = Remote(self.root, [self.spec(42, artifact={"name": family_name}, members=partial),
+                                    self.spec(41, artifact={"name": family_name}),
+                                    self.spec(41, artifact={"name": INDEX, "id": 411})])
+        result = self.restore(remote, self.env | {"CD_CARGO_CACHE_PREFIX": PREFIX})
+        self.assertEqual((result["state"], result["producer_run"], result["selection"]), ("RESTORED", 41, "exact-graph"))
+        self.assertEqual((self.accepted / "manifest.json").read_bytes(), FILES["manifest.json"])
+        self.assertEqual([path.split("/")[-2] for path in remote.paths if path.endswith("/zip")], ["410"])
+
+    def test_wrong_graph_behind_a_valid_marker_cannot_be_restored_as_an_exact_match(self):
+        family_name = FAMILY.removesuffix("-")
+        partial = {**FILES, "manifest.json": manifest(FAMILY, "f" * 64)}
+        remote = Remote(self.root, [self.spec(42, artifact={"name": family_name}, members=partial),
+                                    self.spec(42, artifact={"name": INDEX, "id": 421}),
+                                    self.spec(41)])
+        result = self.restore(remote, self.env | {"CD_CARGO_CACHE_PREFIX": PREFIX})
+        self.assertEqual((result["state"], result["producer_run"]), ("RESTORED", 41))
+        self.assertNotIn("selection", result)
+        self.assertEqual((self.accepted / "manifest.json").read_bytes(), FILES["manifest.json"])
+        self.assertEqual([path.split("/")[-2] for path in remote.paths if path.endswith("/zip")], ["420", "410"])
+
+    def test_marker_cannot_authorize_a_bulk_archive_outside_its_successful_publish_attempt(self):
+        family_name = FAMILY.removesuffix("-")
+        remote = Remote(self.root, [self.spec(42, artifact={"name": INDEX, "id": 421}),
+                                    self.spec(42, artifact={"name": family_name, "created_at": "2026-11-20T00:30:00Z"}),
+                                    self.spec(41)])
+        result = self.restore(remote, self.env | {"CD_CARGO_CACHE_PREFIX": PREFIX})
+        self.assertEqual((result["state"], result["producer_run"]), ("RESTORED", 41))
+        self.assertEqual([path.split("/")[-2] for path in remote.paths if path.endswith("/zip")], ["410"])
+
+    def test_unavailable_graph_index_preserves_family_fallback(self):
+        remote = Remote(self.root, [self.spec(41, artifact={"name": FAMILY.removesuffix("-")})])
+
+        def unavailable(path, **kwargs):
+            if f"artifacts?name={INDEX}&" in path:
+                raise transport.Refused("read")
+            return remote(path, **kwargs)
+
+        result = self.restore(unavailable, self.env | {"CD_CARGO_CACHE_PREFIX": PREFIX})
+        self.assertEqual((result["state"], result["producer_run"]), ("RESTORED", 41))
+        self.assertNotIn("selection", result)
+
+    def test_index_lookup_deadline_leaves_the_regular_bundle_download_budget(self):
+        remote = Remote(self.root, [self.spec(41, artifact={"name": FAMILY.removesuffix("-")})])
+        now = 0
+
+        def slow_index(path, *, timeout, output=None):
+            nonlocal now
+            if f"artifacts?name={INDEX}&" in path:
+                now = transport.EXACT_LOOKUP_SECONDS
+                raise subprocess.TimeoutExpired("gh", timeout)
+            if path.endswith("/zip"):
+                self.assertEqual(timeout, transport.DOWNLOAD_SECONDS)
+            return remote(path, timeout=timeout, output=output)
+
+        result = self.restore(slow_index, self.env | {"CD_CARGO_CACHE_PREFIX": PREFIX},
+                              clock=lambda: now, sleep=self.fail)
+        self.assertEqual(result["state"], "RESTORED")
 
     def test_legacy_fallback_shares_the_candidate_budget(self):
         bad = [self.spec(run, members={**FILES, "manifest.json": b"{}"},
@@ -218,7 +288,8 @@ class CargoArtifactTests(unittest.TestCase):
     def test_context_and_existing_destination_refuse_before_any_read(self):
         for altered in ({"GITHUB_REPOSITORY": "fork/cma"}, {"GITHUB_EVENT_NAME": "pull_request"},
                         {"GITHUB_REF": "refs/heads/feature"}, {"CD_COMPONENT": "web"}, {"GITHUB_RUN_ID": "0"},
-                        {"CD_CARGO_CACHE_FAMILY": ""}, {"CD_CARGO_CACHE_FAMILY": FAMILY.replace("-am-", "-eg-")}):
+                        {"CD_CARGO_CACHE_FAMILY": ""}, {"CD_CARGO_CACHE_FAMILY": FAMILY.replace("-am-", "-eg-")},
+                        {"CD_CARGO_CACHE_PREFIX": OTHER_FAMILY + "e" * 64 + "-"}):
             with self.subTest(altered=altered):
                 remote = Remote(self.root, [self.spec(61)])
                 with self.assertRaises(transport.Refused):

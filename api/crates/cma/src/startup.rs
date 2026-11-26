@@ -19,7 +19,9 @@ use crate::{
     image_manager_retirement, read_telemetry,
     shutdown::{self, signalled, ShutdownCoordinator},
     startup_timing::{observe, Phase},
-    telemetry, with_cors, with_request_context,
+    telemetry,
+    warm_pools::startup::WarmPoolStartup,
+    with_cors, with_request_context,
 };
 
 // Match the Gateway's longest accepted connection before draining workers.
@@ -116,7 +118,7 @@ async fn warm_pools(
     composition: &ControlPlaneComposition,
     admission: Option<&Admission>,
     shutdown: &mut ShutdownCoordinator,
-) -> Result<watch::Sender<bool>, String> {
+) -> Result<(watch::Sender<bool>, WarmPoolStartup), String> {
     let (writer_ready, booting) = watch::channel(false);
     if let Some(controller) = &composition.runtime_pointer {
         controller.register_boot().await?;
@@ -129,7 +131,8 @@ async fn warm_pools(
         }
     }
     if admission.is_some_and(Admission::is_draining) {
-        return Ok(writer_ready);
+        crate::warm_pools::telemetry::startup("stopped");
+        return Ok((writer_ready, WarmPoolStartup::Stopping));
     }
     observe(
         "default_warm_pool_configuration",
@@ -146,26 +149,32 @@ async fn warm_pools(
         |_| None,
     )
     .await?;
-    if !admission.is_some_and(Admission::is_draining) {
-        observe(
-            "default_warm_pool_readiness",
-            async {
-                match &composition.runtime_pointer {
-                    Some(controller) => controller.await_active_ready(admission).await,
-                    None => composition
-                        .native_warm_pools
-                        .await_default_ready_until(admission)
-                        .await
-                        .map_err(|error| {
-                            format!("native warm pool startup readiness failed: {error:?}")
-                        }),
-                }
-            },
-            |_| None,
-        )
-        .await?;
-    }
-    Ok(writer_ready)
+    let phase = Phase::new("default_warm_pool_readiness");
+    let result = if admission.is_some_and(Admission::is_draining) {
+        Ok(WarmPoolStartup::Stopping)
+    } else {
+        match &composition.runtime_pointer {
+            Some(controller) => controller.await_active_ready(admission).await,
+            None => composition
+                .native_warm_pools
+                .await_default_ready_until(admission)
+                .await
+                .map_err(|error| format!("native warm pool startup readiness failed: {error:?}")),
+        }
+    };
+    let (outcome, desired) = match &result {
+        Ok(WarmPoolStartup::Ready) => ("ok", None),
+        Ok(WarmPoolStartup::ZeroTarget) => ("zero_target", None),
+        Ok(WarmPoolStartup::ConfigurationDrift) => ("configuration_drift", None),
+        Ok(WarmPoolStartup::CapacityDeferred(proof)) => {
+            ("capacity_deferred", Some(proof.desired() as usize))
+        }
+        Ok(WarmPoolStartup::Stopping) => ("stopped", None),
+        Err(_) => ("error", None),
+    };
+    crate::warm_pools::telemetry::startup(outcome);
+    phase.finish(outcome, desired);
+    result.map(|result| (writer_ready, result))
 }
 
 async fn bind(address: SocketAddr) -> Result<TcpListener, String> {
@@ -331,7 +340,7 @@ async fn serve_after_initialization(
     startup_started: Instant,
 ) -> Result<(), String> {
     let mut shutdown = ShutdownCoordinator::new();
-    let writer_ready = warm_pools(&composition, None, &mut shutdown).await?;
+    let (writer_ready, _) = warm_pools(&composition, None, &mut shutdown).await?;
     let listener = bind(config.bind).await?;
     initialize_sandboxes(&composition, None).await?;
     listening(config);

@@ -98,8 +98,11 @@ class Develop:
                 raise GitHubNotFound("GitHub resource was not found")
             if parts[5:] == ["jobs"]:
                 state = self.runs[run_id]["attempts"][attempt - 1]
-                return {"jobs": [self.plan_job(state.get("plan", "success")), self.allocate_job(state["allocate"])]
-                        + [dict(job) for job in state["jobs"]]}
+                gate_jobs = [self.plan_job(state.get("plan", "success")), self.allocate_job(state["allocate"])]
+                jobs = [dict(job, id=run_id * 100 + index, run_id=run_id, run_attempt=attempt,
+                             head_sha=self.runs[run_id]["head"]) for index, job in enumerate(gate_jobs)]
+                jobs.extend(dict(job) for job in state["jobs"])
+                return {"jobs": jobs, "total_count": len(jobs)}
             return self.view(run_id, attempt)
         return self.view(run_id)
 

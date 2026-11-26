@@ -2,6 +2,7 @@ import { useId, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import { IconStopFill16 } from '../ui/icons';
 import type { ResponseControlAvailability } from './controlReadiness';
+import { RESPONSE_STOP_COMMAND_NOTICE } from './stopAgentCopy';
 
 const notices: Record<Exclude<ResponseControlAvailability, 'available'>, string> = {
   checking: 'Checking response controls…',
@@ -61,7 +62,10 @@ export function ResponseStop({
   shortcut: boolean;
 }) {
   const id = useId();
+  const scopeId = `${id}-scope`;
   const hint = control.notice ?? (shortcut ? 'Esc to stop' : undefined);
+  const description = [hint && id, control.enabled && scopeId].filter(Boolean).join(' ');
+  const action = shortcut ? 'Stop response (Esc)' : 'Stop response';
   return (
     <>
       {hint ? (
@@ -69,13 +73,18 @@ export function ResponseStop({
           {hint}
         </span>
       ) : null}
+      {control.enabled ? (
+        <span className="sr-only" id={scopeId}>
+          {RESPONSE_STOP_COMMAND_NOTICE}
+        </span>
+      ) : null}
       <Button
         placement="agent-composer__submit agent-composer__submit--stop"
         variant="primary"
         icon={<IconStopFill16 />}
         aria-label={control.inProgress ? 'Stopping response' : 'Stop response'}
-        aria-describedby={hint ? id : undefined}
-        title={control.notice ?? (shortcut ? 'Stop response (Esc)' : 'Stop response')}
+        aria-describedby={description || undefined}
+        title={control.notice ?? `${action}. ${RESPONSE_STOP_COMMAND_NOTICE}`}
         disabled={!control.enabled}
         onClick={control.stop}
       />

@@ -74,6 +74,8 @@ class BuildKitCacheInventory(unittest.TestCase):
         self.assertEqual(result["candidate_bytes"], 0)
         self.assertEqual(result["superseded_index_count"], 1)
         self.assertEqual(result["projected_candidate_bytes_after_index_retirement"], old_only.size)
+        self.assertEqual(result["next_index_batch_count"], 1)
+        self.assertEqual(result["projected_newly_unreachable_bytes"], old_only.size)
         api.delete.assert_not_called()
 
     def test_unordered_or_incomplete_replacements_hold_the_scope(self):

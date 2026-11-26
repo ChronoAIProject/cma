@@ -10,7 +10,7 @@ from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical, parse_annotation
 from staging_cd_release_tags import LocalTags
 from staging_cd_reservations import Reservations, claim_ref, pending_name, validate_reservation
-from staging_cd_versions import DEPLOYABLES, version_tuple
+from staging_cd_versions import DEPLOYABLES, require_publishable_release, version_tuple
 
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
 # Bound captured Git output even when the release inventory contains many tags.
@@ -64,12 +64,13 @@ class AllocationSnapshot(Reservations):
         refs = self.ref_oids()
         develop_head = refs.pop("refs/heads/develop", None)
         require(develop_head is not None, "Develop head could not be verified")
-        if event_source is not None and develop_head != event_source:
-            return False
-        # Head and watermarks come from the same advertisement. A delayed API
-        # head must not make the actual newest event silently lose its build.
+        # Head and watermarks come from the same advertisement. Skip this
+        # push only when the advertised head is proved to supersede it.
         self.progress("all", "history")
-        self.api.history_at(develop_head, root=self.root)
+        history = self.api.history_at(develop_head, root=self.root)
+        if event_source is not None and develop_head != event_source:
+            require(event_source in history.positions, "Develop history has not reached the push")
+            return False
         selected, claims = [], {}
         for reference, oid in refs.items():
             name = reference.removeprefix("refs/tags/")
@@ -184,6 +185,7 @@ class AllocationSnapshot(Reservations):
         require(self.loaded and not self.commit_started, "Allocation planning is closed")
         validate_reservation(value)
         require(value["component"] in DEPLOYABLES, "Unknown reservation component")
+        require_publishable_release(value)
         # The plan is computed from this complete inventory, so a version it
         # already holds is a planner defect, never a race with another run.
         require(pending_name(value) not in {pending_name(item) for item in self.pending + self.planned},

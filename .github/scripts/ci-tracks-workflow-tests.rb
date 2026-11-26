@@ -315,7 +315,7 @@ mutations = [
   ->(d) { d['ci-rust']['jobs']['mongo-shards']['steps'].first['uses'] = 'actions/checkout@v5' },
   ->(d) { d['ci-rust']['jobs']['mongo-eg']['steps'].last['run'] = 'true' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Scan tested Omarchy image' }['with'].delete('cache') },
-  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'] << {'uses' => 'actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830'} },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'] << {'uses' => 'actions/cache/save@caa296126883cff596d87d8935842f9db880ef25'} },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['cache-to'] = 'type=local,mode=min,dest=/tmp/omarchy' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['outputs'] = 'type=docker' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['build-args'].sub!('SOURCE_DATE_EPOCH=0', 'SOURCE_DATE_EPOCH=1') },

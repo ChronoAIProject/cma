@@ -1,4 +1,5 @@
 import { useRelayCapabilities } from '../RelayCapabilities';
+import { missingLarkAllowedSender } from './connectorValidation';
 import { Choice, Section, StringList } from './Fields';
 import { object, strings, type Fields } from './model';
 function IdentityFields({
@@ -42,6 +43,7 @@ export function AdmissionFields({
   privateChats = false,
   allowReplyToBot = true,
   allowGroupMentions = true,
+  requireAllowedSender = false,
 }: {
   path?: string;
   value: unknown;
@@ -51,9 +53,11 @@ export function AdmissionFields({
   privateChats?: boolean;
   allowReplyToBot?: boolean;
   allowGroupMentions?: boolean;
+  requireAllowedSender?: boolean;
 }) {
   const discovery = useRelayCapabilities();
   const admission = object(value);
+  const allowedSenders = strings(admission.sender_ids);
   return (
     <Section title={label} path={admission.type === 'allowlist' ? undefined : path}>
       <Choice
@@ -92,7 +96,12 @@ export function AdmissionFields({
         <StringList
           path={path}
           label="Allowed sender IDs"
-          value={strings(admission.sender_ids)}
+          value={allowedSenders}
+          validationMessage={
+            requireAllowedSender && allowedSenders.every((sender) => !sender.trim())
+              ? missingLarkAllowedSender
+              : undefined
+          }
           onChange={(sender_ids) => onChange({ ...admission, sender_ids })}
         />
       ) : null}
