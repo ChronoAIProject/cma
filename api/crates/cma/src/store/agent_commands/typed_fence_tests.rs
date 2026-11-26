@@ -1,12 +1,13 @@
 use crate::store::sandbox_maintenance::mongo_integration_tests::fixture as seed;
-use crate::store::sandbox_mongo::MongoSandboxStore;
+use crate::store::sandbox_mongo::{MongoSandboxStore, TRANSACTION_ATTEMPTS};
 use crate::store::sandbox_mongo_integration_tests::command_ledger_tests::{
     record, work_tests::live_request,
 };
 use layer2_core::sandbox::agent_io::{
-    AdmittedAgentCommand, AgentCommandStore, AgentCommandWorkerStore, CommandClaimRequest,
-    CommandFailureCode, CommandLedgerError,
+    AdmittedAgentCommand, AgentCommandStore, AgentCommandWorkerStore, AgentResponseStatus,
+    CommandClaimRequest, CommandFailureCode, CommandLedgerError,
 };
+use mongodb::bson::doc;
 use std::time::{Duration, SystemTime};
 #[path = "typed_fence_tests/fixture.rs"]
 pub(in crate::store) mod fixture;
@@ -99,6 +100,22 @@ async fn exercise(root: Root, failures: usize, labels: &[&str], stale: bool) {
         assert_eq!(after.receipt, admitted.receipt);
         return;
     }
+    let command_filter = doc! { "_id": admitted.receipt.envelope.command_id.as_str() };
+    let parent_filter = doc! { "_id": parent.id.as_str() };
+    let original_command = f
+        .store
+        .agent_commands
+        .find_one(command_filter.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut expected_parent = f
+        .store
+        .sandboxes
+        .find_one(parent_filter.clone())
+        .await
+        .unwrap()
+        .unwrap();
     f.arm_commands(failures, labels);
     let result = tokio::time::timeout(
         Duration::from_secs(20),
@@ -113,54 +130,60 @@ async fn exercise(root: Root, failures: usize, labels: &[&str], stale: bool) {
         .unwrap()
         .unwrap();
     let unknown = labels.contains(&"UnknownTransactionCommitResult");
-    let explicit_retry = if matches!(root, Root::Reject) && failures == 1 && !unknown {
-        Some(apply(&f.store, &admitted, root).await)
-    } else {
-        None
-    };
-    let final_record = f
-        .store
-        .get_command(&admitted.receipt.envelope.command_id)
-        .await
-        .unwrap()
-        .unwrap();
-    f.cleanup().await;
     let result = result.expect("must remain bounded").unwrap();
-    if matches!(root, Root::Reject) {
-        // This public rejection is a single revision CAS, not a transaction.
-        // An error leaves the original receipt intact; only an explicit later
-        // request may repeat the unchanged original revision after known abort.
-        assert_eq!(result, Err(CommandLedgerError::Unavailable));
-        assert_eq!(after, admitted);
-        assert_attempts(&commands, 0);
-        assert_eq!(hits, 1);
-        if let Some(retry) = explicit_retry {
-            assert_eq!(retry, Ok(true));
-            assert_eq!(final_record.revision, admitted.revision + 1);
-            assert_eq!(final_record.receipt, admitted.receipt);
-        } else {
-            assert_eq!(final_record, admitted);
-        }
-    } else if failures == 1 && !unknown {
+    if failures == 1 && !unknown {
         assert_eq!(result, Ok(true));
         assert_eq!(after.revision, admitted.revision + 1);
         assert_eq!(after.receipt, admitted.receipt);
         assert_attempts(&commands, 2);
         assert_eq!(hits, 1);
+        if matches!(root, Root::Reject) {
+            assert_eq!(after.status, AgentResponseStatus::Failed);
+            assert_eq!(
+                apply(&f.store, &admitted, root).await,
+                Err(CommandLedgerError::StaleClaim)
+            );
+            assert_eq!(
+                f.store
+                    .get_command(&admitted.receipt.envelope.command_id)
+                    .await
+                    .unwrap(),
+                Some(after)
+            );
+        }
+        let fence = "agent_command_worker_fence";
+        let next = expected_parent.get_i64(fence).unwrap_or(0) + 1;
+        expected_parent.insert(fence, next);
     } else {
-        assert!(
-            result.is_err(),
-            "uncertain or exhausted claim must not publish"
+        assert_eq!(
+            result,
+            Err(if unknown {
+                CommandLedgerError::Unavailable
+            } else {
+                CommandLedgerError::Conflict
+            })
         );
         assert_eq!(after, admitted);
-        assert_eq!(final_record, admitted);
-        let attempts = if unknown { 1 } else { 5 };
+        assert_eq!(
+            f.store
+                .agent_commands
+                .find_one(command_filter)
+                .await
+                .unwrap(),
+            Some(original_command)
+        );
+        let attempts = if unknown { 1 } else { TRANSACTION_ATTEMPTS };
         assert_attempts(&commands, attempts);
         assert_eq!(hits, attempts);
     }
+    assert_eq!(
+        f.store.sandboxes.find_one(parent_filter).await.unwrap(),
+        Some(expected_parent)
+    );
     assert!(!commands
         .iter()
         .any(|command| command.get_str("update").ok() == Some("cma_agent_manager_members")));
+    f.cleanup().await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires disposable failpoint Mongo"]
@@ -176,7 +199,7 @@ async fn typed_fence_commands_exhaustion_unknown_and_both_labels_case(
     root: Root,
     labels: Vec<&'static str>,
 ) {
-    exercise(root, 5, &labels, false).await;
+    exercise(root, TRANSACTION_ATTEMPTS, &labels, false).await;
 }
 async fn typed_fence_commands_recheck_stale_token_case(root: Root) {
     exercise(root, 1, &["TransientTransactionError"], true).await;

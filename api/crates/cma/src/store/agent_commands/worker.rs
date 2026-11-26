@@ -51,41 +51,11 @@ impl AgentCommandWorkerStore for MongoSandboxStore {
         now: String,
     ) -> Result<(), CommandLedgerError> {
         use layer2_core::sandbox::agent_io::AgentCommandStore;
-        use mongodb::bson::doc;
-        let mut command = self
+        let command = self
             .get_command(id)
             .await?
             .ok_or(CommandLedgerError::NotFound)?;
-        if matches!(
-            command.receipt.envelope.actor,
-            layer2_core::sandbox::agent_io::AgentActor::Trigger { .. }
-        ) {
-            return super::super::trigger_first_messages::reject_unclaimed(
-                self,
-                &command,
-                expected_revision,
-                code,
-                now,
-            )
-            .await;
-        }
-        command.reject_unclaimed(expected_revision, code, now)?;
-        let mut fields = super::records::document(&command)?;
-        fields.remove("_id");
-        let revision = super::super::sandbox_mongo::signed(expected_revision, "command revision")
-            .map_err(|_| CommandLedgerError::Invalid)?;
-        let result = self
-            .agent_commands
-            .update_one(
-                doc! { "_id": id.as_str(), "revision": revision },
-                doc! { "$set": fields },
-            )
-            .await
-            .map_err(|_| CommandLedgerError::Unavailable)?;
-        if result.matched_count != 1 {
-            return Err(CommandLedgerError::StaleClaim);
-        }
-        Ok(())
+        super::unclaimed::run(self, &command, expected_revision, code, now).await
     }
 
     async fn command_work_page(

@@ -173,7 +173,7 @@ async fn claim_next(
     Ok(None)
 }
 
-async fn load_agent(
+pub(super) async fn load_agent(
     store: &MongoSandboxStore,
     id: &AgentId,
     session: &mut ClientSession,
@@ -189,7 +189,7 @@ async fn load_agent(
         .map_err(|_| CommandLedgerError::Corrupt.into())
 }
 
-async fn fence_parent(
+pub(super) async fn fence_parent(
     store: &MongoSandboxStore,
     agent: Option<&Agent>,
     session: &mut ClientSession,
