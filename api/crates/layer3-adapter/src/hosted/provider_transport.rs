@@ -154,24 +154,6 @@ impl ProviderHostedControlTransport {
         self
     }
 
-    pub fn with_open_reply_loss(
-        mut self,
-        sandbox_id: String,
-        claim: Arc<dyn super::HostedOpenReplyLoss>,
-    ) -> Self {
-        self.open_reply_loss = Some((sandbox_id, claim));
-        self
-    }
-
-    async fn open_reply_loss_for(
-        &self,
-        handle: &RuntimeHandle,
-    ) -> Option<&dyn super::HostedOpenReplyLoss> {
-        let (sandbox_id, claim) = self.open_reply_loss.as_ref()?;
-        let bound = self.binding(handle).await.ok()?;
-        (bound.sandbox_id == *sandbox_id).then_some(claim.as_ref())
-    }
-
     pub fn with_subscriptions(mut self, source: Arc<dyn super::HostedSubscriptionSource>) -> Self {
         self.subscriptions = Some(source);
         self
