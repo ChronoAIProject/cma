@@ -147,6 +147,7 @@ impl RoutedToolReplies {
                 .admit_delayed_answer_payload(&plan, target, answer, &message)
                 .await?
             {
+                self.journal.require_reply_open(&plan, target).await?;
                 return Ok(Some(receipt));
             }
         } else {

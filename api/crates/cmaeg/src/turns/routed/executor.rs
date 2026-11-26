@@ -246,7 +246,8 @@ impl RoutedTargetExecutor {
                     &frame,
                     journal.accepted_answer_receipts,
                 )?
-                .is_some();
+                .is_some()
+                    && inspect_primary;
                 let effect = if let Some(effect) = projection.pending_effect(&frame)? {
                     effect
                 } else {
