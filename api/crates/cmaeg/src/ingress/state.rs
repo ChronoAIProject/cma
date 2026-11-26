@@ -23,6 +23,7 @@ pub struct IngressState {
     pub interactions: Option<Arc<crate::interactions::InteractionStore>>,
     pub inflight: Arc<Semaphore>,
     pub telegram: Option<Arc<crate::telegram::TelegramClient>>,
+    pub(crate) routing_notice_relay: Option<Arc<crate::delivery::relay_client::RelayClient>>,
     pub whatsapp_receipts: Option<Arc<crate::whatsapp::receipts::Store>>,
     pub receipt_observer: Option<Arc<dyn super::receipts::PlatformReceiptObserver>>,
     /// Shared media admission; native WhatsApp additionally requires its issuance gate.
@@ -123,6 +124,13 @@ impl IngressState {
         self.telegram = Some(client);
         self
     }
+    pub fn with_routing_notice_relay(
+        mut self,
+        relay: Option<crate::delivery::relay_client::RelayClient>,
+    ) -> Self {
+        self.routing_notice_relay = relay.map(Arc::new);
+        self
+    }
     pub fn with_receipt_observer(
         mut self,
         observer: Arc<dyn super::receipts::PlatformReceiptObserver>,
@@ -148,6 +156,7 @@ impl IngressState {
             profile_revisions_enabled: false,
             interactions: None,
             telegram: None,
+            routing_notice_relay: None,
             whatsapp_receipts: None,
             receipt_observer: None,
             media_enabled: false,
