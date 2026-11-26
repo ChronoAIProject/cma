@@ -58,7 +58,7 @@ test('recovery replay fails on a second command, another owner epoch or a second
   }
 });
 
-async function fixture(t, {wrongRun = false, wrongReplay = false} = {}) {
+async function fixture(t, {wrongRun = false, wrongReplay = false, recoveredRun = false} = {}) {
   t.mock.method(requestPacer, 'wait', async () => {});
   const agentId = 'fixture-agent', commandId = 'fixture-command', responseId = 'fixture-response';
   const calls = [], failures = [], outcomes = [];
@@ -69,6 +69,12 @@ async function fixture(t, {wrongRun = false, wrongReplay = false} = {}) {
   const frame = value => 'data: ' + JSON.stringify(value) + '\n\n';
   const readResponse = () => ({id: responseId, conversation: {id: agentId},
     status: 'completed', output: ['WS4 complete ' + armed.marker]});
+  const agentResponses = `/api/v2/agents/${agentId}/responses`;
+  if (recoveredRun) {
+    armed = {caseId: 'settled-key', marker: 'settled-marker'};
+    input = 'original input for ' + armed.marker;
+    released = answered = true;
+  }
 
   async function serve(am, req, res) {
     calls.push({am, route: req.url, method: req.method});
@@ -89,14 +95,14 @@ async function fixture(t, {wrongRun = false, wrongReplay = false} = {}) {
         res.write(frame({type: 'RUN_STARTED', threadId: wrongRun ? 'other-agent' : agentId, runId: '7'}));
         return;
       }
-      assert.equal(req.url, '/api/v2/responses');
-      assert.equal(body.conversation, agentId);
+      assert.equal(req.url, recoveredRun ? agentResponses : '/api/v2/responses');
+      if (!recoveredRun) assert.equal(body.conversation, agentId);
       assert.equal(body.stream, true);
       assert.ok(answered);
       if (body.input !== input) return sendJson(res, 409, {code: 'idempotency_key_reused'});
       assert.equal(am, 'a');
       res.writeHead(200, {'Content-Type': 'text/event-stream', 'x-cma-command-id': wrongReplay ? 'other-command' : commandId,
-        'x-cma-response-id': responseId});
+        'x-cma-response-id': responseId, 'x-request-id': 'replayed-request'});
       return res.end(frame({type: 'response.created', sequence_number: 0, response: readResponse()})
         + frame({type: 'response.completed', sequence_number: 1, response: readResponse()}));
     }
@@ -123,6 +129,7 @@ async function fixture(t, {wrongRun = false, wrongReplay = false} = {}) {
   t.after(() => api.close());
   api.router = {dispatch: async (agent, run) => {assert.equal(agent, agentId); return run('b');}};
   const adapter = {
+    async ownerOf() { return {am: 'b', epoch: 2, pod_uid: 'live-owner', agent_id: agentId}; },
     async prepareTurn(options) { armed = options; },
     async releaseTurn({caseId}) {
       assert.equal(caseId, armed.caseId);
@@ -139,9 +146,25 @@ async function fixture(t, {wrongRun = false, wrongReplay = false} = {}) {
     },
   };
   return {api, adapter, record: {agentId}, calls, failures, outcomes, released: () => released,
+    priorTurn: recoveredRun ? {caseId: armed.caseId, input, stream: {commandId, responseId,
+      timing: {request_id: 'original-request'}}} : undefined,
+    completed: recoveredRun ? readResponse() : undefined,
     recordState: async (stage, row) => { outcomes.push({stage, ...row}); },
     recordFailure: async (stage, error) => { failures.push([stage, error.message]); }};
 }
+
+test('the restarted ingress serves the frozen command over the real Responses transport', async t => {
+  const context = await fixture(t, {recoveredRun: true});
+  const {api, adapter, record: {agentId}} = context;
+  api.routingEnabled = false;
+  const owner = await adapter.ownerOf();
+  const proof = await verifyRecoveredReceipt({api, adapter, agentId, owner, turn: context.priorTurn,
+    completed: context.completed});
+  assert.deepEqual(context.failures, []);
+  assert.equal(proof.ingress, 'a');
+  assert.deepEqual(context.calls.filter(row => row.method === 'POST').map(row => [row.am, row.route]),
+    Array.from({length: 2}, () => ['a', `/api/v2/agents/${agentId}/responses`]));
+});
 
 test('AG-UI admission and root Responses replay share one command on distinct ingresses', async t => {
   const fixtureState = await fixture(t);
