@@ -54,10 +54,11 @@ pub(super) async fn production_adapter(
     crate::store::isolation::verify_with_authority(&runtime_database, config.mongodb_authority)
         .await
         .map_err(|error| format!("runtime database authority is not usable: {error}"))?;
-    let routing = crate::store::runtime_routing::MongoRuntimeRouting::open(
+    let routing = crate::store::runtime_routing::MongoRuntimeRouting::open_with_default_pool_holds(
         &runtime_database,
         &config.deployment_id,
         config.runtime.allocate_agent_sandbox,
+        store.default_pool_holds.clone(),
     )
     .await?;
     let mut backends = layer3_adapter::hosted::RuntimeBackends {
