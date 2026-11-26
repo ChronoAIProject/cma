@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::provenance_progress;
 
 const JOURNAL_ACTIONS: &[&str] = &["find", "insert", "update", "listIndexes"];
 
@@ -87,7 +88,7 @@ pub(super) fn validate_index_role(
                 && !replicas::COLLECTIONS.contains(&collection)
                 && !JOURNAL_COLLECTIONS.contains(&collection)
                 && collection != MIGRATION_COLLECTION
-                && collection != super::provenance_progress::COLLECTION)
+                && collection != provenance_progress::COLLECTION)
         {
             return Err(denied());
         }
@@ -95,8 +96,8 @@ pub(super) fn validate_index_role(
             let action = action.as_str().ok_or_else(&denied)?;
             if !(if collection.is_empty() {
                 action == "listCollections"
-            } else if collection == super::provenance_progress::COLLECTION {
-                super::provenance_progress::ACTIONS.contains(&action)
+            } else if collection == provenance_progress::COLLECTION {
+                provenance_progress::ACTIONS.contains(&action)
             } else if collection == USAGE_PROJECTIONS {
                 USAGE_PROJECTION_ACTIONS.contains(&action)
             } else if MEASURED_APPEND_ONLY.contains(&collection) {
@@ -130,9 +131,9 @@ pub(super) fn validate_index_role(
         }
     }
     if grants
-        .get(super::provenance_progress::COLLECTION)
+        .get(provenance_progress::COLLECTION)
         .is_some_and(|actions| {
-            !super::provenance_progress::ACTIONS
+            !provenance_progress::ACTIONS
                 .iter()
                 .all(|action| actions.contains(*action))
         })
