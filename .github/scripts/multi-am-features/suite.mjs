@@ -241,6 +241,8 @@ try {
     writer_coverage: result.writer_coverage,
     case_count: rows.length, non_owner_request_count: observations.length,
     owner_restart_pass: result.journey?.steps.some(s => s.name === 'actual_owner_kill_and_recovery' && s.verdict === 'PASS') === true,
+    autoscaler_ready_manager_counts: result.journey?.steps.find(s =>
+      s.name === 'ready_autoscaler_two_three_two' && s.verdict === 'PASS')?.ready_managers ?? [],
   }, null, 2), {mode: 0o600});
 }
 process.exitCode = result.verdict === 'PASS' ? 0 : 1;

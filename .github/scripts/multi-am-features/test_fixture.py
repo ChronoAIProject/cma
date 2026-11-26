@@ -18,9 +18,48 @@ from fixture_no_secrets import NoSecretClient, synthetic_configmaps
 import manifests
 import legacy_manifests
 from run import Fixture
+from readiness_scaling import observe_scale
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_scale_counts_ready_members_and_removes_controller(self):
+        actions = []
+        image = 'localhost/api@sha256:' + 'a' * 64
+        baseline = {'a': {'ready': True, 'pod_uid': 'a'}, 'b': {'ready': True, 'pod_uid': 'b'}}
+        replicas = 1
+
+        def command(arguments, **_):
+            nonlocal replicas
+            actions.append(arguments[:3])
+            if arguments[0] == 'patch':
+                replicas = json.loads(arguments[-1])['spec']['minReplicas']
+
+        def query(arguments):
+            if arguments[1] == 'hpa':
+                result = {'spec': {'minReplicas': replicas, 'maxReplicas': replicas}}
+                if len(actions) > 1:
+                    result['status'] = {'currentReplicas': replicas, 'desiredReplicas': replicas}
+                return result
+            return {'items': [{'metadata': {'uid': uid, 'name': uid}, 'status': {'podIP': uid,
+                'conditions': [{'type': 'Ready', 'status': 'True'}]},
+                'spec': {'containers': [{'image': image}]}} for uid in 'abc'[:replicas + 1]]}
+
+        def create(objects):
+            obj, = objects
+            self.assertEqual(obj['kind'], 'HorizontalPodAutoscaler')
+            self.assertEqual(obj['spec']['scaleTargetRef']['name'], 'am-b')
+
+        client = SimpleNamespace(namespace='fixture', k=command, kjson=query, apply=create,
+            wait=lambda predicate, *_: predicate(), forward=lambda *_: 'http://127.0.0.1:1234',
+            http_raw=lambda *_args, **_kwargs: (200,), forwards={('c', 8080): (None, None)},
+            stop=lambda _: actions.append(['stop']))
+        fixture = SimpleNamespace(client=client, topology=lambda: {'ams': baseline},
+            ready={'expected_api_image': image},
+            mongo=lambda _: [{'relay_address': 'http://' + uid + ':8080'} for uid in 'abc'[:replicas + 1]])
+        self.assertEqual(observe_scale(fixture)['ready_managers'], [2, 3, 2])
+        self.assertEqual(actions[-2:], [['delete', 'hpa', 'two-am-readiness'], ['stop']])
+        self.assertEqual(client.forwards, {})
+
     def test_peer_write_requires_matching_hash_operation_epoch_and_process(self):
         wanted = 'a' * 64
         records = [

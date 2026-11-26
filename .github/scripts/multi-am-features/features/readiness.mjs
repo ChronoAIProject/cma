@@ -2,6 +2,24 @@ import {randomUUID} from 'node:crypto';
 import {assertOwner, assertRecovery, check, observeServingDuringRestart, poll} from '../cma/core.mjs';
 import {retainFailure, withRestoration} from '../failure.mjs';
 
+export async function scaleManagerCase({adapter, api, record}) {
+  const path = `/api/v1/agents/${record.agentId}`;
+  const observed = await observeServingDuringRestart(() => adapter.observeScale(), async () => {
+    for (const am of ['a', 'b']) {
+      const {body} = await api.rawRequest(am, 'GET', path);
+      check(body.id === record.agentId && body.status === 'ready' && body.sandbox?.id === record.sandboxId,
+        'hpa_baseline_peer_stopped_serving');
+    }
+  }, {interval: 2000});
+  const scale = observed.restored;
+  check(scale.controller === 'HorizontalPodAutoscaler' && scale.trigger === 'replica_bounds' &&
+    scale.ready_managers.join(',') === '2,3,2', 'hpa_scale_trajectory_incomplete');
+  const owner = assertOwner(await poll(() => adapter.ownerOf({agentId: record.agentId}), current => current !== null,
+    {timeout: 23000, code: 'hpa_final_owner_unavailable'}), record.agentId);
+  return {ready_managers: scale.ready_managers, controller: scale.controller,
+    useful_reads_during_scale: observed.servingSamples, final_owner: owner.am};
+}
+
 export async function drainOwnerCase({adapter, api, record, config}) {
   const before = assertOwner(await adapter.ownerOf({agentId: record.agentId}), record.agentId);
   const peer = before.am === 'a' ? 'b' : 'a';

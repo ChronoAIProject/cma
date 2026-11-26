@@ -25,6 +25,7 @@ from common import Client, utc, write
 import manifests
 import legacy_manifests as old
 from login import login
+from readiness_scaling import observe_scale
 
 ROOT=Path(__file__).resolve().parent
 PROVIDER=ROOT.parent/'cma'/'provider.py'
@@ -249,6 +250,9 @@ class Fixture:
         del self.drained[am]
         return result
 
+    def observeScale(self):
+        return observe_scale(self)
+
     def restoreAm(self, am=None, am_id=None, **_):
         am=am or am_id
         if am not in self.killed:raise RuntimeError('restore_without_owned_kill')
@@ -379,7 +383,8 @@ class Fixture:
                     name=self.path.strip('/')
                     allowed=['topology','runtimeFor','ownerOf','killAm','restoreAm','prepareTurn',
                              'releaseTurn','oracle','captureFailure','titleEffects','skillEffects',
-                             'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence']
+                             'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
+                             'observeScale']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:
