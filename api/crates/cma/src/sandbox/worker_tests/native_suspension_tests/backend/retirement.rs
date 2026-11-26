@@ -104,12 +104,12 @@ impl NativeBackend {
         if let Some(pod) = pod {
             self.check_retirement_fixture_pod(pod)?;
         } else {
-            if !self
+            if self
                 .row
                 .lock()
                 .await
                 .as_ref()
-                .is_some_and(|row| row.observation.lifecycle.state == "suspended")
+                .is_none_or(|row| row.observation.lifecycle.state != "suspended")
             {
                 return Err(absent());
             }
