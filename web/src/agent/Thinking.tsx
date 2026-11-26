@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import markMarkup from '../assets/brand/cma-mark.svg?raw';
 import { elapsedTime } from './workspaceTime';
-import { ThinkingProgress } from './ThinkingProgress';
+import { ThinkingProgress, type recordedTurnActivity } from './ThinkingProgress';
 const markHtml = { __html: markMarkup };
 import './Thinking.css';
 
@@ -28,6 +28,7 @@ interface ThinkingProps {
   readonly text?: string;
   readonly activities?: readonly ThinkingActivity[];
   readonly startedAt?: string;
+  readonly recordedActivity?: ReturnType<typeof recordedTurnActivity>;
 }
 
 export function activityDuration(activity: ThinkingActivity): string {
@@ -53,6 +54,7 @@ export function Thinking({
   startedAt,
   progressKey,
   waitingForResponse = false,
+  recordedActivity,
 }: ThinkingProps) {
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(Date.now);
@@ -112,24 +114,50 @@ export function Thinking({
       </p>
       <ThinkingProgress key={progressKey ?? JSON.stringify([text, activities])} />
       {open ? (
-        <div className="thinking__body" id={bodyId} ref={bodyRef}>
-          {text === '' ? null : <div className="thinking__reasoning">{text}</div>}
-          {text === '' && activities.length === 0 ? 'Waiting for the next update.' : null}
-          {activities.length === 0 ? null : (
-            <ul className="thinking__activities">
-              {activities.map((item) => (
-                <li className="thinking__activity" key={item.id}>
-                  <p className="thinking__activityline">{activitySummary(item)}</p>
-                  <ActivityBody label="Arguments" body={item.arguments} />
-                  <ActivityBody label="Result" body={item.result} />
-                  <ActivityBody label="Details" body={item.detail} />
-                </li>
-              ))}
-            </ul>
+        <div id={bodyId}>
+          {recordedActivity === undefined ? null : (
+            <dl className="thinking__facts">
+              <dt>Current phase</dt>
+              <dd>{recordedActivity.phase}</dd>
+              <dt>Phase started</dt>
+              <dd>
+                <ActivityTime value={recordedActivity.since} />
+              </dd>
+              <dt>Last recorded progress</dt>
+              <dd>
+                <ActivityTime value={recordedActivity.lastAt} />
+              </dd>
+            </dl>
+          )}
+          {text === '' && activities.length === 0 ? null : (
+            <div className="thinking__body" ref={bodyRef}>
+              {text === '' ? null : <div className="thinking__reasoning">{text}</div>}
+              {activities.length === 0 ? null : (
+                <ul className="thinking__activities">
+                  {activities.map((item) => (
+                    <li className="thinking__activity" key={item.id}>
+                      <p className="thinking__activityline">{activitySummary(item)}</p>
+                      <ActivityBody label="Arguments" body={item.arguments} />
+                      <ActivityBody label="Result" body={item.result} />
+                      <ActivityBody label="Details" body={item.detail} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
         </div>
       ) : null}
     </section>
+  );
+}
+
+function ActivityTime({ value }: { readonly value?: string }) {
+  const timestamp = Date.parse(value ?? '');
+  return Number.isFinite(timestamp) ? (
+    <time dateTime={value}>{new Date(timestamp).toLocaleString()}</time>
+  ) : (
+    'Unavailable'
   );
 }
 
