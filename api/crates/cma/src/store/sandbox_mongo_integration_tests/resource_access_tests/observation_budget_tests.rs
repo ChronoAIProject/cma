@@ -10,6 +10,8 @@ use layer2_core::agent_ownership::{Member, OwnershipCoordinator, PROTOCOL_VERSIO
 use layer2_core::sandbox::agent_observation::AgentObservationService;
 use std::time::Duration;
 
+const OBSERVATION_ROUTES: [&str; 2] = ["v1_agui", "v2_agent_events"];
+
 #[path = "observation_fixture.rs"]
 mod serving;
 use serving::*;
@@ -43,12 +45,20 @@ async fn measure_idle(
     // Opening is measured separately, never confused with steady idle work.
     // The unshared baseline seeks the retained prefix for every observer.
     let open_timeout = Duration::from_secs(if shared_observation { 15 } else { 30 });
-    f.meter.clear();
+    let concurrent_opens = match (shared_observation, rows) {
+        (true, _) => 16,
+        (false, 10_000) => 2,
+        (false, _) => 4,
+    };
+    f.meter.start_opening();
+    let cohort_started = Instant::now();
     let opening = (0..100).map(|index| {
         let (agents, replicas, client) = (&agents, &replicas, &client);
         async move {
             let agent = &agents[index % agents.len()];
-            let path = if index % 2 == 0 {
+            let replica = index % 2;
+            let route = OBSERVATION_ROUTES[replica];
+            let path = if replica == 0 {
                 format!(
                     "/api/v1/agui/events?thread_id={}&starting_after={rows}&follow=true",
                     agent.id
@@ -63,37 +73,82 @@ async fn measure_idle(
                     agent.id
                 )
             };
-            let url = format!("{}{}", replicas[index % 2].address, path);
+            let url = format!("{}{}", replicas[replica].address, path);
             let started = Instant::now();
-            let response = tokio::time::timeout(
+            let open = tokio::time::timeout(
                 open_timeout,
                 client
                     .get(url)
                     .bearer_auth(format!("observer:{}", agent.owner))
                     .send(),
             )
-            .await
-            .unwrap_or_else(|_| panic!("observer {index} timed out opening history {rows} (shared={shared_observation})"))
-            .unwrap();
+            .await;
+            let elapsed = started.elapsed();
+            let failed = |reason: &str| {
+                format!(
+                    "observation_open_failed observer={index} route={route} replica={replica} \
+                    history={rows} shared={shared_observation} distinct={distinct} \
+                    elapsed={elapsed:?} cohort_elapsed={:?} reason={reason}",
+                    cohort_started.elapsed(),
+                )
+            };
+            let response = match open {
+                Ok(Ok(response)) => response,
+                Ok(Err(error)) if error.is_connect() => return Err(failed("connect")),
+                Ok(Err(_)) => return Err(failed("transport")),
+                Err(_) => return Err(failed("opening_deadline")),
+            };
             let status = response.status();
             if status != reqwest::StatusCode::OK {
-                let slots: Vec<_> = replicas.iter().map(|server| server.relay.available_test_slots()).collect();
-                let body = response.text().await.unwrap();
-                panic!("observer {index}: status={status} history={rows} elapsed={:?} available_slots={slots:?} body={body}", started.elapsed());
+                return Err(failed(&format!("http_status_{status}")));
             }
-            (response, started.elapsed())
+            Ok((response, elapsed, replica))
         }
     });
-    let mut longest_open = Duration::ZERO;
-    // The unshared route seeks the retained prefix per observer. Ramp it
-    // gradually so the idle window starts with a fully connected cohort.
-    let concurrent_opens = if shared_observation { 16 } else { 4 };
-    for (response, elapsed) in futures_util::stream::iter(opening)
-        .buffer_unordered(concurrent_opens)
-        .collect::<Vec<_>>()
-        .await
-    {
-        longest_open = longest_open.max(elapsed);
+    let mut opening = futures_util::stream::iter(opening).buffer_unordered(concurrent_opens);
+    let mut opened = Vec::with_capacity(100);
+    let mut count_by_route = [0; 2];
+    let mut longest_by_route = [Duration::ZERO; 2];
+    let report_opening = |phase, counts: [usize; 2], longest: [Duration; 2]| {
+        let cohort_elapsed = cohort_started.elapsed();
+        let mongo = f.meter.opening_stats();
+        eprintln!(
+            "observation_open phase={phase} shared={shared_observation} agents={} \
+            observers=100 history={rows} distinct={distinct} commands={} \
+            checkouts={} concurrent_opens={concurrent_opens} \
+            longest_checkout={:?} longest_command={:?} \
+            cohort_elapsed={cohort_elapsed:?} longest_open={:?}",
+            agents.len(),
+            mongo.commands,
+            mongo.checkouts,
+            mongo.longest_checkout,
+            mongo.longest_command,
+            longest[0].max(longest[1]),
+        );
+        for (replica, route) in OBSERVATION_ROUTES.into_iter().enumerate() {
+            eprintln!(
+                "observation_open_route phase={phase} route={route} replica={replica} history={rows} \
+                shared={shared_observation} distinct={distinct} opened={} longest_open={:?}",
+                counts[replica], longest[replica],
+            );
+        }
+    };
+    while let Some(result) = opening.next().await {
+        let (response, elapsed, replica) = result.unwrap_or_else(|failure| {
+            report_opening("failed", count_by_route, longest_by_route);
+            panic!("{failure}");
+        });
+        count_by_route[replica] += 1;
+        longest_by_route[replica] = longest_by_route[replica].max(elapsed);
+        opened.push(response);
+        if matches!(opened.len(), 25 | 50 | 75) && rows == 10_000 && !shared_observation {
+            report_opening("progress", count_by_route, longest_by_route);
+        }
+    }
+    drop(opening);
+    report_opening("complete", count_by_route, longest_by_route);
+    f.meter.finish_opening();
+    for response in opened {
         consumers.push(tokio::spawn(async move {
             let mut body = response.bytes_stream();
             while let Some(chunk) = body.next().await {
@@ -102,12 +157,6 @@ async fn measure_idle(
             panic!("idle shared stream closed unexpectedly");
         }));
     }
-    let cold = f.meter.stats.lock().unwrap().clone();
-    eprintln!(
-        "observation_open shared={shared_observation} agents={} observers=100 history={rows} distinct={distinct} commands={} longest_open={longest_open:?}",
-        agents.len(),
-        cold.commands.values().sum::<u64>()
-    );
     if shared_observation {
         assert_shared_slots(&replicas, &agents).await;
     }
@@ -226,7 +275,8 @@ fn assert_checkout_reduction(
     );
 }
 
-#[tokio::test]
+// Let the two in-process serving replicas make progress on separate workers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires the disposable Mongo replica-set runner"]
 async fn observation_two_serving_replicas_keep_idle_work_independent_of_history() {
     // Cover multiple three-second membership and ten-second driver heartbeat

@@ -1,6 +1,15 @@
 use super::*;
 use mongodb::event::cmap::CmapEvent;
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
+
+#[derive(Clone, Copy, Default)]
+pub(super) struct OpeningStats {
+    pub commands: u64,
+    pub checkouts: u64,
+    pub longest_checkout: Duration,
+    pub longest_command: Duration,
+}
 
 #[derive(Clone, Default)]
 pub(super) struct Stats {
@@ -15,6 +24,7 @@ pub(super) struct Stats {
     pub history_bytes: u64,
     snapshot_requests: BTreeMap<i32, Option<i64>>,
     snapshot_cursors: BTreeSet<i64>,
+    opening: Option<OpeningStats>,
 }
 
 #[derive(Default)]
@@ -26,19 +36,39 @@ impl Meter {
     pub fn clear(&self) {
         *self.stats.lock().unwrap() = Stats::default();
     }
+    pub fn start_opening(&self) {
+        self.stats.lock().unwrap().opening = Some(OpeningStats::default());
+    }
+    pub fn opening_stats(&self) -> OpeningStats {
+        self.stats.lock().unwrap().opening.unwrap()
+    }
+    pub fn finish_opening(&self) {
+        self.stats.lock().unwrap().opening = None;
+    }
     pub async fn client(self: &Arc<Self>) -> Client {
         let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
             .await
             .unwrap();
         let observed = self.clone();
         options.cmap_event_handler = Some(EventHandler::callback(move |event| {
-            if matches!(event, CmapEvent::ConnectionCheckedOut(_)) {
-                observed.stats.lock().unwrap().checkouts += 1;
+            if let CmapEvent::ConnectionCheckedOut(event) = event {
+                let mut stats = observed.stats.lock().unwrap();
+                if let Some(opening) = &mut stats.opening {
+                    opening.checkouts += 1;
+                    opening.longest_checkout = opening.longest_checkout.max(event.duration);
+                } else {
+                    stats.checkouts += 1;
+                }
             }
         }));
         let observed = self.clone();
         options.command_event_handler = Some(EventHandler::callback(move |event| match event {
             CommandEvent::Started(event) => {
+                let mut stats = observed.stats.lock().unwrap();
+                if let Some(opening) = &mut stats.opening {
+                    opening.commands += 1;
+                    return;
+                }
                 let collection = if event.command_name == "getMore" {
                     event.command.get_str("collection")
                 } else {
@@ -57,7 +87,6 @@ impl Meter {
                 } else {
                     "log"
                 };
-                let mut stats = observed.stats.lock().unwrap();
                 let cursor = event.command.get_i64("getMore").ok();
                 if matches!(event.command.get_bool("autocommit"), Ok(false))
                     || event
@@ -99,6 +128,12 @@ impl Meter {
             }
             CommandEvent::Succeeded(event) => {
                 let mut stats = observed.stats.lock().unwrap();
+                // Setup needs counts and latency. Detailed samples re-encode
+                // each reply document while holding the meter lock.
+                if let Some(opening) = &mut stats.opening {
+                    opening.longest_command = opening.longest_command.max(event.duration);
+                    return;
+                }
                 let snapshot = stats.snapshot_requests.remove(&event.request_id);
                 if let Some(Some(cursor)) = snapshot {
                     stats.snapshot_cursors.remove(&cursor);
@@ -128,12 +163,12 @@ impl Meter {
                 }
             }
             CommandEvent::Failed(event) => {
-                observed
-                    .stats
-                    .lock()
-                    .unwrap()
-                    .snapshot_requests
-                    .remove(&event.request_id);
+                let mut stats = observed.stats.lock().unwrap();
+                if let Some(opening) = &mut stats.opening {
+                    opening.longest_command = opening.longest_command.max(event.duration);
+                } else {
+                    stats.snapshot_requests.remove(&event.request_id);
+                }
             }
             _ => {}
         }));

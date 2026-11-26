@@ -56,7 +56,7 @@ function filterset(expression) {
   return select;
 }
 
-// Read per-test budgets (period x terminate-after) from the nextest profiles.
+// Read per-test budgets (period x terminate-after) and fixture output settings.
 function nextestBudgets(text) {
   const profiles = {};
   let table = null;
@@ -73,6 +73,8 @@ function nextestBudgets(text) {
       table = null;
     } else if (table && (match = /^filter = "([^"]+)"$/.exec(line))) {
       table.filter = match[1];
+    } else if (table && (match = /^success-output = "([^"]+)"$/.exec(line))) {
+      table.successOutput = match[1];
     } else if (table && line.startsWith('slow-timeout')) {
       match = /^slow-timeout = \{ period = "([1-9][0-9]*)s", terminate-after = ([1-9][0-9]*) \}$/.exec(line);
       assert.ok(match, `unreadable per-test budget: ${line}`);
@@ -241,7 +243,10 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
     assert.ok(ordinary.budget < 1800, 'the budget stops a thirty-minute qualification');
     assert.equal(budgets.default?.budget, undefined, 'dedicated modes keep the unbounded default profile');
     const timings = JSON.parse(readFileSync(new URL('mongo-contract-timings.json', import.meta.url), 'utf8')).tests;
-    const allowances = Object.fromEntries(ordinary.overrides.map(override => {
+    const outputOverrides = ordinary.overrides.filter(override => override.successOutput !== undefined);
+    assert.deepEqual(outputOverrides, [{filter: `test(=${sibling})`, successOutput: 'final'}]);
+    const budgetOverrides = ordinary.overrides.filter(override => override.successOutput === undefined);
+    const allowances = Object.fromEntries(budgetOverrides.map(override => {
       const name = /^test\(=([^()\s]+)\)$/.exec(override.filter ?? '')?.[1];
       assert.ok(name && override.budget > ordinary.budget, `override names one exact longer contract: ${override.filter}`);
       assert.ok(select.ordinary(name) && timings[name], `override is for a measured ordinary contract: ${name}`);
