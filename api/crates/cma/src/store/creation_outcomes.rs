@@ -18,10 +18,14 @@ use super::{durability::majority_collection, sandbox_mongo as transaction, schem
 use crate::{config::CreationOutcomesConfig, store::transaction_terminal::GuardedTerminal};
 
 mod coverage;
+mod expiry;
 mod legacy;
 mod publication;
 mod reads;
-pub(super) use publication::{link_operation, publish_sandbox, refuse_with_operation};
+pub(super) use publication::{
+    cancel_with_operation, cancellation_committed, link_operation, publish_sandbox,
+    refuse_with_operation,
+};
 
 pub(super) const COLLECTION: &str = "sandbox_creation_proofs";
 const VERSION: i64 = schema::DOCUMENT_SCHEMA_VERSION;
@@ -76,6 +80,19 @@ impl CreationOutcomes {
                     .options(
                         IndexOptions::builder()
                             .name("creation_proof_owner".to_owned())
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(driver)?;
+        records
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"epoch":1,"state.kind":1,"lease_until":1})
+                    .options(
+                        IndexOptions::builder()
+                            .name("creation_proof_pending_lease".to_owned())
                             .build(),
                     )
                     .build(),

@@ -168,6 +168,7 @@ pub struct Config {
     /// Allows new thread contracts only after every reader supports them.
     pub thread_contract_writes_enabled: bool,
     pub multi_consumer_writes_enabled: bool,
+    pub profile_revisions_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
     pub lark_resource_writes_enabled: bool,
@@ -296,6 +297,9 @@ impl Config {
             )?,
             thread_contract_writes_enabled: routing::write_flag(
                 "CMAEG_THREAD_CONTRACT_WRITES_ENABLED",
+            )?,
+            profile_revisions_enabled: routing::write_flag(
+                "CMAEG_CHANNEL_PROFILE_REVISIONS_ENABLED",
             )?,
             multi_consumer_writes_enabled: routing::write_flag(
                 "CMAEG_MULTI_CONSUMER_WRITES_ENABLED",

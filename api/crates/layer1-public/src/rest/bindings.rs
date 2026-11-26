@@ -175,10 +175,18 @@ fn routes(state: BindingRouteState) -> Router {
             put(put_binding).get(get_binding).delete(delete_binding),
         )
         .route(
+            "/api/v1/cmaeg/bindings/{binding_id}/conversations",
+            axum::routing::get(inspection::catalog),
+        )
+        .route(
             "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
             put(put_conversation)
                 .delete(delete_conversation)
                 .get(inspection::get),
+        )
+        .route(
+            "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-drift",
+            axum::routing::post(inspection::desired_drift),
         )
         .with_state(state)
         .layer(axum::middleware::from_fn(no_store))

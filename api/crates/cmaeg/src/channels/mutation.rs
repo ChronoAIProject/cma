@@ -72,7 +72,8 @@ impl Reservation {
             if previous.operation != intent.operation
                 || previous.original_version != intent.expected_version
                 || previous.fingerprint != intent.fingerprint
-                || previous.effect.is_some()
+                || (previous.effect.is_some()
+                    && intent.operation != ChannelMutationKind::ProfileRevision)
             {
                 return Err(conflict(version));
             }
@@ -89,6 +90,20 @@ impl Reservation {
                 return Err(conflict(version));
             }
             desired.validate().map_err(ManagementError::Invalid)?;
+            if let Some(effect) = &previous.effect {
+                // Profile preparation uses a deterministic new binding identity
+                // and the exact retained profile and credential. The provider PUT
+                // is idempotent under that identity, so an uncertain reply can
+                // be reconciled without sending a different effect.
+                if effect
+                    != &format!(
+                        "bind:{}:{}",
+                        desired.provider.slug, desired.provider.binding_id
+                    )
+                {
+                    return Err(conflict(version));
+                }
+            }
             completed = previous.completed.clone();
         } else if version != intent.expected_version {
             return Err(conflict(version));

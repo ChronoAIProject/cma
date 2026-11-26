@@ -65,6 +65,33 @@ class DetectorTransportTests(unittest.TestCase):
         self.assertEqual(result["state"], "RESTORED")
         self.assertEqual(json.loads(cache.paths(self.env)[0].read_bytes()), {"schema": "fixture"})
 
+    def test_failed_restore_leaves_no_partial_evidence_and_can_retry(self):
+        destination, _ = cache.paths(self.env)
+        write = Path.write_bytes
+
+        def interrupted(path, data):
+            write(path, data[:5])
+            raise OSError("interrupted")
+
+        with patch.object(Path, "write_bytes", interrupted):
+            self.assertEqual(self.restore()["state"], "MISS_FULL_SCAN")
+        self.assertFalse(destination.exists())
+        self.assertEqual(list(self.root.iterdir()), [])
+        self.assertEqual(self.restore()["state"], "RESTORED")
+        self.assertEqual(destination.read_bytes(), b'{"schema":"fixture"}')
+
+    def test_restore_never_replaces_a_racing_cache(self):
+        destination, _ = cache.paths(self.env)
+        link = cache.os.link
+
+        def competing_link(candidate, path):
+            path.write_bytes(b"existing")
+            return link(candidate, path)
+
+        with patch.object(cache.os, "link", competing_link):
+            self.assertEqual(self.restore()["state"], "MISS_FULL_SCAN")
+        self.assertEqual(destination.read_bytes(), b"existing")
+
     def test_live_run_requires_successful_finished_component_before_restoration(self):
         self.run.update(status="in_progress", conclusion=None)
         def get(path, **kwargs):
@@ -207,7 +234,7 @@ class DetectorTransportTests(unittest.TestCase):
         self.assertLess(text.index("Build once, scan every layer"), text.index("Retain complete layer detector evidence"))
         export = text.split("- name: Retain complete layer detector evidence", 1)[1].split("- name:", 1)[0]
         self.assertIn("if: success()", export)
-        self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", export)
+        self.assertIn("actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9", export)
         self.assertNotIn("restore-keys", export)
 
 

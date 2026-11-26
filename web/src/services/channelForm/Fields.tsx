@@ -248,6 +248,7 @@ export function StringList({
   onChange,
   max = 64,
   requiredItems = false,
+  validationMessage,
 }: {
   path?: string;
   label: string;
@@ -255,11 +256,18 @@ export function StringList({
   onChange: (v: string[]) => void;
   max?: number;
   requiredItems?: boolean;
+  validationMessage?: string;
 }) {
-  const error = useServerFieldError(useValidationPath(path));
+  const errorId = useId();
+  const serverError = useServerFieldError(useValidationPath(path));
+  const error = validationMessage ?? serverError;
   return (
     <Section title={label} path={path}>
-      {error ? <p className="channel-field-error">{error}</p> : null}
+      {error ? (
+        <p id={errorId} className="channel-field-error">
+          {error}
+        </p>
+      ) : null}
       {value.map((item, index) => (
         <div className="channel-form-row" key={index}>
           <TextField
@@ -277,7 +285,11 @@ export function StringList({
           </Button>
         </div>
       ))}
-      <Button disabled={value.length >= max} onClick={() => onChange([...value, ''])}>
+      <Button
+        aria-describedby={validationMessage ? errorId : undefined}
+        disabled={value.length >= max}
+        onClick={() => onChange([...value, ''])}
+      >
         Add {label}
       </Button>
     </Section>

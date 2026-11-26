@@ -30,7 +30,7 @@ use axum::{
 };
 use cmaeg_core::{
     channel::{PartitionKey, Source},
-    ids::RecordId,
+    ids::{EventId, RecordId},
     problem::ProblemCode,
 };
 use serde::Serialize;
@@ -213,7 +213,24 @@ async fn admit_callback(
     };
     // Authenticated from here on: every refusal is reported for the console.
     let record = channel.definition.record_id.clone();
-    let refuse = |reason| authenticated_refusal(state, &record, SOURCE, reason);
+    let media_event_id = (platform == cmaeg_core::channel::Platform::Telegram)
+        .then(|| EventId::new(verified.payload.message_id.clone()).ok())
+        .flatten();
+    let refuse = |reason| {
+        if let (Refusal::AttachmentUnsupported, Some(event_id)) = (reason, &media_event_id) {
+            state
+                .activity
+                .refused(&record, SOURCE, Some(event_id), "attachment_unsupported");
+            tracing::info!(
+                source = SOURCE,
+                channel = %crate::telemetry::channel_hash(channel_id),
+                media_enabled = state.media_enabled,
+                "Telegram relay attachment refused"
+            );
+            return refused(reason);
+        }
+        authenticated_refusal(state, &record, SOURCE, reason)
+    };
     let reject = |error| authenticated_invalid(state, &record, SOURCE, error);
     let observation = if state.relay_telegram_member_joins_enabled {
         crate::ingress::relay::telegram_member_joins::observe(source, &verified.payload)

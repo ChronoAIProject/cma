@@ -280,3 +280,25 @@ it('recovers legacy endpoints automatically when the original creation record is
   expect(screen.queryByLabelText('Original channel ID')).not.toBeInTheDocument();
   expect(fetcher).toHaveBeenCalledTimes(3);
 });
+
+it('moves keyboard focus to the create heading and back to the landing action on cancellation', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockImplementation(async () => json({ items: [] })),
+  );
+  const user = userEvent.setup();
+  render(<EventGateway session={session} denied={vi.fn()} />);
+  const action = () =>
+    within(screen.getByRole('region', { name: 'Channel workspace' })).getByRole('button', {
+      name: 'New channel',
+    });
+  for (let count = 0; count < 2; count++) {
+    action().focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('heading', { name: 'New channel' })).toHaveFocus();
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    cancel.focus();
+    await user.keyboard('{Enter}');
+    expect(action()).toHaveFocus();
+  }
+});

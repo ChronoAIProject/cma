@@ -3,6 +3,12 @@ import { useChannelWriteGuard } from './useChannelWriteGuard';
 import { HmacCredentialsScope } from './channelForm/HmacCredentialsScope';
 import { ValidationMessageScope } from './channelForm/ValidationPath';
 import { useDraftReloadWarning } from './channelForm/useDraftReloadWarning';
+import {
+  clearNewChannelDraft,
+  releaseNewChannelDraft,
+  writeNewChannelDraft,
+  type NewChannelDraft,
+} from './channelForm/newChannelDraft';
 import { validateConnectorFields } from './channelForm/connectorValidation';
 import { channelNameRequired } from './channelForm/ChannelPolicyFields';
 import { validateReplyFields } from './channelForm/replyValidation';
@@ -55,6 +61,8 @@ export function ChannelEditor({
   writable = true,
   section = { kind: 'channel' },
   ownerSubject = '',
+  recoverDraft = false,
+  initialDraft,
   onDone,
   denied,
 }: {
@@ -63,13 +71,17 @@ export function ChannelEditor({
   readonly writable?: boolean;
   readonly section?: EditorSection;
   readonly ownerSubject?: string;
+  readonly recoverDraft?: boolean;
+  readonly initialDraft?: NewChannelDraft;
   readonly onDone: (channel?: Channel) => void;
   readonly denied: Denied;
 }) {
   const editor = useRef<HTMLDivElement>(null);
   const discovery = useRelayCapabilities();
   const [baseline, setBaseline] = useState(channel);
-  const [draft, setDraft] = useState(() => channelDraft(channel, ownerSubject));
+  const [draft, setDraft] = useState(
+    () => initialDraft?.fields ?? channelDraft(channel, ownerSubject),
+  );
   const [routing, setRouting] = useState(() =>
     channel?.definition.routing ? object(channel.definition.routing) : initialRouting(),
   );
@@ -87,12 +99,19 @@ export function ChannelEditor({
     setEdited(true);
     setError(undefined);
     setDraft(next);
+    if (create && recoverDraft)
+      writeNewChannelDraft(
+        ownerSubject,
+        next,
+        initialDraft?.privateFields === true || Object.keys(credentials).length > 0,
+      );
   }
   function editCredentials(next: Fields) {
     if (!canWrite() || pending || busy) return;
     setEdited(true);
     setError(undefined);
     setCredentials(next);
+    if (create && recoverDraft) writeNewChannelDraft(ownerSubject, draft, true);
   }
   const checkingCustomSupport = create && customExecutionWaiting(discovery, draft);
   const additional = section.kind === 'consumer' && section.id !== 'default';
@@ -116,6 +135,7 @@ export function ChannelEditor({
         );
       setPending(undefined);
       setEdited(false);
+      if (create && recoverDraft) clearNewChannelDraft(ownerSubject, request.record);
       if (hasChannelAddress(value)) {
         setBaseline(value);
         if (request.kind === 'channel') {
@@ -147,16 +167,17 @@ export function ChannelEditor({
       if (e instanceof ServiceError && [401, 403].includes(e.status)) denied(e.status);
       if (
         e instanceof ServiceError &&
-        (e.status === 400 ||
+        ((e.status === 400 && (!create || e.code !== 'provider_rejected')) ||
           (e.status === 409 &&
             e.code === 'conflict' &&
             e.message.startsWith('channel_creation_pending:') &&
             !request.uncertain))
-      )
+      ) {
         // This precondition is checked before any update effect. Keep the
         // draft editable; an uncertain write or version conflict keeps its key.
         setPending(undefined);
-      else setPending({ ...request, uncertain: true });
+        if (create && recoverDraft) releaseNewChannelDraft(ownerSubject, request.record);
+      } else setPending({ ...request, uncertain: true });
       setError(
         e instanceof Error
           ? e.message
@@ -227,6 +248,8 @@ export function ChannelEditor({
           key === 'hmac_secrets' ? ['hmac_secrets', 'replace_hmac'] : [key],
         ),
       };
+      if (create && recoverDraft)
+        writeNewChannelDraft(ownerSubject, draft, Object.keys(credentials).length > 0, record);
       setPending(request);
       void send(request);
     } catch (e) {
@@ -263,6 +286,12 @@ export function ChannelEditor({
       : undefined;
   return (
     <div className="channel-node-editor" ref={editor}>
+      {create && initialDraft?.privateFields ? (
+        <p role="status">
+          Draft restored. Re-enter any private credentials, environment overrides or MCP server
+          settings before creating.
+        </p>
+      ) : null}
       {!additional ? (
         <form
           className="service-form"

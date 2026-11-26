@@ -328,6 +328,8 @@ pub enum BindingConversationState {
 #[serde(deny_unknown_fields)]
 pub struct BindingConversation {
     pub binding_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_transfer: Option<Box<super::ProfileTransferReceipt>>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub borrowed: bool,
     pub generation: u64,
@@ -354,6 +356,7 @@ impl BindingConversation {
         }
         let result = Self {
             binding_id: binding.binding_id.clone(),
+            profile_transfer: None,
             borrowed: binding.existing_agent.is_some(),
             generation: binding.generation,
             conversation_id: if binding.existing_agent.is_some() {
@@ -400,6 +403,9 @@ impl BindingConversation {
                 .is_none_or(|(created, updated)| updated < created)
         {
             return Err("invalid binding conversation record".into());
+        }
+        if let Some(transfer) = &self.profile_transfer {
+            transfer.validate_source(self)?;
         }
         Ok(())
     }

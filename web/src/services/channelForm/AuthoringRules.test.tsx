@@ -143,25 +143,27 @@ it('offers each single-use reply destination once', () => {
 
 it('refuses repeated and missing reply destinations, but keeps a saved empty list', () => {
   const webhook = { type: 'result_webhook', url: 'https://example.test/a', hmac_key_id: 'k' };
+  expect(replyIssue({ auto_final: true, sinks: [{ type: 'source' }, { type: 'source' }] })).toEqual(
+    expect.objectContaining({ path: '/reply/sinks/1' }),
+  );
   expect(
-    replyIssue({ auto_final: true, sinks: [{ type: 'source' }, { type: 'source' }] }, true),
-  ).toEqual(expect.objectContaining({ path: '/reply/sinks/1' }));
-  expect(
-    replyIssue({ sinks: [webhook, { ...webhook, url: ' https://example.test/a ' }] }, false)?.path,
+    replyIssue({ sinks: [webhook, { ...webhook, url: ' https://example.test/a ' }] })?.path,
   ).toBe('/reply/sinks/1');
-  expect(
-    replyIssue({ sinks: [webhook, { ...webhook, url: 'https://example.test/b' }] }, false),
-  ).toBe(undefined);
-  expect(replyIssue({ auto_final: true, sinks: [] }, false)?.path).toBe('/reply/sinks');
-  expect(replyIssue({ auto_final: false, sinks: [] }, false)).toBeUndefined();
-  expect(
-    replyIssue({ auto_final: true, sinks: [] }, false, { auto_final: true, sinks: [] }),
-  ).toBeUndefined();
-  // Chat replies return to their conversation without a listed destination.
-  expect(replyIssue({ auto_final: true, sinks: [] }, true)).toBeUndefined();
+  expect(replyIssue({ sinks: [webhook, { ...webhook, url: 'https://example.test/b' }] })).toBe(
+    undefined,
+  );
+  const automatic = { auto_final: true, sinks: [] };
+  const manual = { auto_final: false, sinks: [] };
+  expect(replyIssue(automatic)?.path).toBe('/reply/sinks');
+  expect(replyIssue(manual)).toBeUndefined();
+  expect(replyIssue(automatic, manual)?.path).toBe('/reply/sinks');
+  expect(replyIssue(automatic, { auto_final: true, sinks: [{ type: 'source' }] })?.path).toBe(
+    '/reply/sinks',
+  );
+  expect(replyIssue({ ...automatic, ack_after_ms: 10 }, automatic)).toBeUndefined();
   // Repeats a saved channel already had deliver nothing extra and are not re-judged.
   const repeated = { auto_final: true, sinks: [{ type: 'source' }, { type: 'source' }] };
-  expect(replyIssue({ ...repeated, ack_after_ms: 10 }, true, repeated)).toBeUndefined();
+  expect(replyIssue({ ...repeated, ack_after_ms: 10 }, repeated)).toBeUndefined();
 });
 
 it('drops HMAC replacement controls and credentials when a Custom source uses an agent key', () => {
@@ -264,13 +266,39 @@ it("keeps the owner's grouping when only the separate custom grouping is invalid
   expect(fitPartition(extended, draft).partition).toEqual({ version: 1, key: 'fixed' });
 });
 
-it('describes automatic chat replies as going to the original conversation', () => {
+it('requires an explicit destination again after removing the default chat reply', async () => {
   const fetcher = newChannel();
+  for (const [label, value] of [
+    ['Channel name', 'Chat replies'],
+    ['NyxID issuer', 'https://example.test'],
+    ['Signing key ID', 'relay-key'],
+    ['Route IDs 1', 'relay-route'],
+    ['NyxID channel key', 'fixture-channel-key'],
+    ['Provider agent key', 'fixture-agent-key'],
+  ] as const) {
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  }
   fireEvent.click(screen.getByRole('button', { name: 'Remove destination 1' }));
   const review = within(screen.getByRole('group', { name: 'Review' }));
+  expect(review.getByText(/Final answers have no reply destination/)).toBeVisible();
   expect(
-    review.getByText('Final answers sent automatically to the original conversation'),
-  ).toBeVisible();
-  expect(review.queryByText(/no reply destination/)).not.toBeInTheDocument();
+    review.queryByText(/sent automatically to the original conversation/),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Create channel' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Add a reply destination or turn off Send final answers automatically',
+  );
   expect(fetcher).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Add reply destination' }));
+  expect(screen.getByRole('button', { name: 'Destination 1 type' })).toHaveTextContent(
+    'Original conversation',
+  );
+  expect(review.getByText('Final answers sent automatically')).toBeVisible();
+  fetcher.mockResolvedValue(new Response(null, { status: 400 }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create channel' }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+  expect(JSON.parse(fetcher.mock.calls[0]![1].body).reply).toMatchObject({
+    auto_final: true,
+    sinks: [{ type: 'source' }],
+  });
 });

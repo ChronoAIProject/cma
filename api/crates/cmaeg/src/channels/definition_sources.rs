@@ -246,6 +246,7 @@ pub(super) fn build_sources(
 
 pub(super) fn build_secrets(credentials: &CredentialsRequest) -> ChannelSecrets {
     ChannelSecrets {
+        profile_revisions: None,
         native_lark: credentials.native_lark.clone(),
         whatsapp: credentials.whatsapp.clone(),
         agent_key_hash: hash_secret(credentials.agent_key.as_str()),
