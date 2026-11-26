@@ -216,10 +216,7 @@ async fn apply_publication_observed(
     store
         .fence_agent_effect_transaction(&mutation.agent.id, session)
         .await
-        .map_err(|error| match error {
-            crate::store::agent_ownership::FenceError::Domain(error) => ApplyError::Domain(error),
-            crate::store::agent_ownership::FenceError::Driver(error) => ApplyError::Driver(error),
-        })?;
+        .map_err(|error| contention::ownership_error(mutation, error))?;
     // Decide eligibility in the publication's own snapshot. The same consumed
     // preparation revision is fenced below; no independent preflight can turn
     // a different snapshot into an unnecessary ordinary startup fallback.
@@ -320,7 +317,7 @@ async fn apply_publication_observed(
             entry_count,
             mutation,
         )
-        .map_err(ApplyError::Domain)?;
+        .map_err(|error| contention::validation_error(&current, mutation, error))?;
         prepared_open_ready::fence(
             store,
             &current,
@@ -360,7 +357,7 @@ async fn apply_publication_observed(
             mutation,
             &sandbox,
         )
-        .map_err(ApplyError::Domain)?;
+        .map_err(|error| contention::validation_error(&current, mutation, error))?;
         // Serialize the no-runtime proof with any concurrent parent publication.
         let written = store
             .sandboxes
@@ -381,7 +378,7 @@ async fn apply_publication_observed(
         }
     } else {
         validate_agent_work_mutation(&current, &current_worktree, entry_count, mutation)
-            .map_err(ApplyError::Domain)?;
+            .map_err(|error| contention::validation_error(&current, mutation, error))?;
     }
 
     owner_stop::settle(

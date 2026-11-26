@@ -5,9 +5,11 @@ import json
 import re
 
 TARGET = 'agent_scheduler_failure'
-PHASES = {'discovery', 'reconciliation', 'execution'}
+PHASES = {'discovery', 'reconciliation', 'execution', 'publication'}
 FAILURES = {'conflict_unclassified', 'store_unavailable', 'stored_data_invalid',
             'domain_refusal', 'task_panicked', 'task_cancelled'}
+PUBLICATION_FAILURES = {'known_aborted_cas', 'owner_authority_refused',
+                        'work_lease_changed', 'unknown_commit'}
 
 
 def fields(line):
@@ -54,10 +56,11 @@ def summarize(directory):
             if value is None:
                 continue
             phase, failure = value.get('phase'), value.get('failure')
+            allowed = PUBLICATION_FAILURES if phase == 'publication' else FAILURES
             # External log values may be arrays or objects. Reject them before
             # set membership so one malformed event cannot abort the summary.
             if (not isinstance(phase, str) or not isinstance(failure, str)
-                    or phase not in PHASES or failure not in FAILURES):
+                    or phase not in PHASES or failure not in allowed):
                 rejected += 1
                 continue
             counts[am, phase, failure] += 1

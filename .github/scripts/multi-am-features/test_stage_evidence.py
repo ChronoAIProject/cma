@@ -48,6 +48,30 @@ class StageEvidenceTests(unittest.TestCase):
             self.assertFalse(result['complete_history'])
             self.assertNotIn('verdict', result)
 
+    def test_keeps_only_exact_publication_failure_fields_and_does_not_infer_transient_retry(self):
+        events = [
+            ('publication', 'known_aborted_cas'),
+            ('publication', 'owner_authority_refused'),
+            ('publication', 'work_lease_changed'),
+            ('publication', 'unknown_commit'),
+            ('publication', 'conflict_unclassified'),
+            ('execution', 'known_aborted_cas'),
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw = '\n'.join(json.dumps({'target': 'agent_scheduler_failure',
+                'fields': {'phase': phase, 'failure': failure, 'agent_sha256': 'a' * 64,
+                           'context': 'private-snapshot'}})
+                for phase, failure in events)
+            (root / 'am-b-0.full.private.log').write_text(raw)
+            result = summarize(root)
+            self.assertEqual(result['unrecognized_scheduler_events'], 2)
+            self.assertEqual({(row['phase'], row['failure']) for row in result['occurrences']}, set(events[:4]))
+            self.assertEqual({row['count'] for row in result['occurrences']}, {1})
+            self.assertFalse(result['root_cause_inferred'])
+            self.assertNotIn('private-snapshot', json.dumps(result))
+            self.assertNotIn('a' * 64, json.dumps(result))
+
     def test_malformed_typed_fields_do_not_drop_later_valid_events(self):
         for name in ['phase', 'failure']:
             for invalid in [None, True, 7, 1.5, [], {}, ['private-value'],

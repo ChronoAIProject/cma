@@ -212,6 +212,7 @@ async fn run(
             }
             Err(ApplyError::StaleProposal) => {
                 let _ = session.abort_guarded().await;
+                contention::diagnose(&mutation, contention::PublicationFailure::KnownAbortedCas);
                 return Ok(Completion::KnownAborted);
             }
             Err(ApplyError::Domain(error)) => {
@@ -223,6 +224,7 @@ async fn run(
             }
             Err(ApplyError::Driver(error)) if positively_aborted(&error) => {
                 let _ = session.abort_guarded().await;
+                contention::diagnose_write_conflict(&mutation, &error);
                 last_transient = Some(error);
                 continue;
             }
@@ -262,8 +264,12 @@ async fn run(
                 crate::telemetry::work::published(&receipt.logs, "committed");
                 return Ok(Completion::Published);
             }
-            CommitOutcome::Retry(error) => last_transient = Some(error),
+            CommitOutcome::Retry(error) => {
+                contention::diagnose_write_conflict(&mutation, &error);
+                last_transient = Some(error);
+            }
             CommitOutcome::Unknown(error) => {
+                contention::diagnose(&mutation, contention::PublicationFailure::UnknownCommit);
                 if receipt.pending_adoption() {
                     cohort(Stage::Blocked, Outcome::Unknown);
                 }
