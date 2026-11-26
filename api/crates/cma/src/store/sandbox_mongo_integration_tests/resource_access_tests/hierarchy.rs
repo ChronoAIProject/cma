@@ -66,7 +66,6 @@ async fn hierarchy_children_use_one_read_only_snapshot_and_preserve_retained_sta
                 doc! {"find": "worktrees", "filter": {"workspace_id": workspace.id.as_str()}, "sort": {"_id": 1}},
                 doc! {"find": "agents", "filter": {"workspace_id": workspace.id.as_str()}, "sort": {"_id": 1}},
                 doc! {"aggregate": "agents"},
-                doc! {"aggregate": "agents"},
             ]
         };
         let commands = trace.lock().unwrap().clone();
