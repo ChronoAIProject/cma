@@ -1,5 +1,7 @@
 """Verify the Web publisher's custody and interrupted publication without live writes."""
 
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 import shutil
 import tempfile
@@ -9,6 +11,7 @@ from unittest.mock import Mock, patch
 from image_scanner_policy import MANIFEST_SHA256
 from image_secret_gate import checksum
 from staging_cd_common import Refusal
+from staging_cd_publication_diagnostics import ImageCommandRefusal, run_publication
 from staging_cd_receipts_tests import fixture_identity
 from staging_cd_web_overlay import REPOSITORY, encoded
 from staging_cd_web_overlay_tests import fixture_archive
@@ -39,9 +42,12 @@ class WebPublicationTests(unittest.TestCase):
         self.events = []
         self.fail_version = False
         self.fail_pull = False
+        self.fail_archive = None
         self.stages = []
 
     def runner(self, args, **_options):
+        if args == ["skopeo", "--version"]:
+            return b"skopeo version 1.13.3 (commit: 123abcd)\n"
         if args[1] == "login":
             self.events.append("login")
             Path(args[3]).touch()
@@ -72,11 +78,14 @@ class WebPublicationTests(unittest.TestCase):
         self.assertTrue(reservation_check())
         self.events.append("push:" + reference)
         self.assertNotIn(reference, self.tags)
+        if archive.name == self.fail_archive:
+            raise ImageCommandRefusal(["skopeo", "copy", "oci-archive:private", "docker://private"],
+                                      b"copying blob: uploading layer to private: StatusCode: 413, private")
         self.tags[reference] = self.tags[digest] = (digest, {})
         if reference == self.identity["version"] and self.fail_version:
             raise Refusal("registry assigned version but the receipt was interrupted")
 
-    def protected_publish(self):
+    def protected_publish(self, mark=None):
         work = Path(tempfile.mkdtemp(dir=self.root))
         with (patch("staging_cd_web_publication.inspect", return_value=self.candidate.digest),
               patch("staging_cd_web_publication.verified_staging_scan", side_effect=self.scan),
@@ -85,7 +94,7 @@ class WebPublicationTests(unittest.TestCase):
             return publish(self.candidate.archive, self.identity, self.scope, work, self.registry,
                            "synthetic-publisher", "test-actor", source=self.root, reservation_check=lambda: True,
                            prepared_checksum=checksum(self.candidate.archive), max_files=16, max_bytes=512,
-                           runner=self.runner, mark=self.stages.append)
+                           runner=self.runner, mark=mark or self.stages.append)
 
     def test_all_scans_precede_any_write_and_only_promote_owns_the_version(self):
         receipt = self.protected_publish()
@@ -104,6 +113,18 @@ class WebPublicationTests(unittest.TestCase):
             self.protected_publish()
         self.assertEqual(self.stages[-2:], ["registry_login", "registry_preflight"])
         self.assertEqual(self.events, ["scan:c.oci.tar", "login"])
+        self.assertFalse(list(self.root.rglob("web-registry-auth.json")))
+
+    def test_prepare_copy_failure_reports_only_fixed_fields_and_stops_publication(self):
+        self.fail_archive = "web-prepare.oci.tar"
+        with redirect_stdout(StringIO()) as logs:
+            status = run_publication(lambda _, diagnostics: self.protected_publish(diagnostics.mark), component="web")
+        self.assertEqual(status, 1)
+        self.assertIn("Web registry copy failed image_role=prepare skopeo_phase=blob_upload "
+                      "skopeo_version=1.13.3 http_status=413", logs.getvalue())
+        self.assertNotIn("private", logs.getvalue())
+        self.assertIn("asset-sha256-" + self.candidate.digest[7:], self.tags)
+        self.assertNotIn(self.candidate.version, self.tags)
         self.assertFalse(list(self.root.rglob("web-registry-auth.json")))
 
     def test_interrupted_unfinalized_publication_burns_version_instead_of_rewriting_it(self):
