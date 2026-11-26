@@ -544,12 +544,11 @@ one-hour controller budget, because a production rollout takes far longer than s
 and the deploy job's timeout outlives it; staging's release and bootstrap budgets are
 unchanged. Deployment configuration, including
 which components production enables, is maintained privately.
-Production selects only the application components (`am`, `eg`, `web`), never the
-`runtime` or `runtime-omarchy` images: until a reviewed production runtime-promotion
-design exists, runtime images stay pinned in Agent Manager's privately maintained
-configuration, and an approved release set that holds one is refused rather than
-narrowed. Staging deploys runtime images together with Agent Manager until
-runtime pointer following is activated there.
+Production selects the application components (`am`, `eg`, `web`) and can select
+the Agent runtime after pointer publication is enabled. The runtime must come
+from the approved release's history and have an exact staging verification
+receipt. The Machine runtime is qualified in staging. Until pointer following
+is activated, staging deploys runtime images together with Agent Manager.
 
 For new managed allocations, managed-runtime updates and owner-requested revival
 under §5, each lane uses the active digest that Agent Manager has durably

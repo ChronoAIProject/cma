@@ -10,11 +10,14 @@ import urllib.request
 
 import ci_retry
 from staging_cd_common import Refusal, matches, require
+from staging_cd_targets import RUNTIME_TARGETS
 from staging_cd_versions import DEPLOYABLES, SEMVER
 
 MEDIA = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"
 WEB_AUXILIARY = r"asset-sha256-[0-9a-f]{64}"
 WEB_REPOSITORY = "ghcr.io/chronoaiproject/cma-web"
+RUNTIME_REPOSITORIES = frozenset("ghcr.io/chronoaiproject/" + DEPLOYABLES[key] for key in RUNTIME_TARGETS)
+RUNTIME_POINTER_TAGS = {"staging": "staging-current", "production": "production-current"}
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -62,9 +65,12 @@ class Registry:
         return ci_retry.call(once, name="registry-read", classify=ci_retry.classify, **policy)
 
     def token(self, repository):
+        return self._token(repository, "pull")
+
+    def _token(self, repository, actions):
         require(repository in {"ghcr.io/chronoaiproject/" + name for name in DEPLOYABLES.values()},
                 "Registry repository is not a canonical deployable")
-        scope = "repository:" + repository[len("ghcr.io/"):] + ":pull"
+        scope = "repository:" + repository[len("ghcr.io/"):] + ":" + actions
         headers = {}
         if self.credential:
             headers["Authorization"] = "Basic " + base64.b64encode((self.actor + ":" + self.credential).encode()).decode()
@@ -80,6 +86,34 @@ class Registry:
         auxiliary = repository == WEB_REPOSITORY and matches(WEB_AUXILIARY, reference)
         require(auxiliary or matches(SEMVER, reference) or matches(r"sha256:[0-9a-f]{64}", reference),
                 "Registry reference is not immutable")
+        return self._manifest(repository, reference, absent=absent, settle=settle)
+
+    def runtime_pointer(self, repository, environment, *, settle=False):
+        require(repository in RUNTIME_REPOSITORIES and environment in RUNTIME_POINTER_TAGS,
+                "Runtime pointer repository or environment is invalid")
+        result = self._manifest(repository, RUNTIME_POINTER_TAGS[environment], absent=not settle, settle=settle)
+        return result[0] if result else None
+
+    def prepare_runtime_pointer(self, repository, environment, digest):
+        require(repository in RUNTIME_REPOSITORIES and environment in RUNTIME_POINTER_TAGS
+                and matches(r"sha256:[0-9a-f]{64}", digest), "Runtime pointer write is invalid")
+        require(self.credential is not None, "Runtime pointer writer needs a registry credential")
+        manifest = self._manifest(repository, digest, absent=False, settle=False, raw=True)
+        _, body, data = manifest
+        token = self._token(repository, "pull,push")
+        url = "https://ghcr.io/v2/" + repository[len("ghcr.io/"):] + "/manifests/" + RUNTIME_POINTER_TAGS[environment]
+        return urllib.request.Request(url, data=data, method="PUT", headers={
+            "Authorization": "Bearer " + token, "Content-Type": body["mediaType"],
+        })
+
+    def write_runtime_pointer(self, request, digest):
+        timeout = ci_retry.attempt_timeout(30, self.deadline, self.retry.get("clock", time.monotonic))
+        require(timeout is not None, "Registry write budget expired")
+        with self.opener.open(request, timeout=timeout) as response:
+            require(response.status == 201 and response.headers.get("Docker-Content-Digest", digest) == digest,
+                    "Registry did not confirm the runtime pointer manifest")
+
+    def _manifest(self, repository, reference, *, absent, settle, raw=False):
         token = self.token(repository)
         result = self.read("https://ghcr.io/v2/" + repository[len("ghcr.io/"):] + "/manifests/" + reference,
                            {"Authorization": "Bearer " + token, "Accept": MEDIA}, absent=absent, settle=settle)
@@ -89,14 +123,14 @@ class Registry:
         digest = "sha256:" + hashlib.sha256(data).hexdigest()
         require(headers.get("Docker-Content-Digest") == digest
                 and (not reference.startswith("sha256:") or reference == digest)
-                and (not auxiliary or reference.removeprefix("asset-sha256-") == digest[7:]),
+                and (not reference.startswith("asset-sha256-") or reference == "asset-sha256-" + digest[7:]),
                 "Registry returned a different manifest digest")
         body = json.loads(data)
         require(isinstance(body, dict) and body.get("schemaVersion") == 2
                 and body.get("mediaType") in MEDIA.split(", ")
                 and isinstance(body.get("config"), dict) and isinstance(body.get("layers"), list),
                 "Staging registry manifest must be a single platform image")
-        return digest, body
+        return (digest, body, data) if raw else (digest, body)
 
     def exists(self, repository, digest, *, settle=False):
         return self.manifest(repository, digest, settle=settle) is not None

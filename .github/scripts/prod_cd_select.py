@@ -10,13 +10,12 @@ written by staging-cd.yml or redeploy-staging.yml on develop, must record it
 as controller-verified. The set is then rebuilt and re-verified by the same
 dispatch_set path staging redeploys use.
 
-Production selects only the application components (am, eg, web). It has no
-reviewed runtime-promotion design, so the runtime images stay pinned in
-Agent Manager's private configuration and are never selected, and an
-approved set that holds one is refused. Staging still deploys runtime images
-with Agent Manager; that rule lives in staging_cd_policy and is unchanged.
+Once pointer publication is activated, production can also select the Agent
+runtime with exact pointer-mode staging evidence and the initial two-lane
+qualification. The Machine Included runtime is restricted to staging.
 """
 
+import hashlib
 import heapq
 import io
 import json
@@ -29,6 +28,7 @@ import zipfile
 from pathlib import Path
 
 from staging_cd_common import Refusal, matches, require
+from staging_cd_deploy_result import pointer_verified
 from staging_cd_history import DevelopHistory
 
 EVIDENCE_PREFIX = "staging-deployment-"
@@ -178,9 +178,11 @@ def newest_first(item):
     return -run["id"] if isinstance(run, dict) and isinstance(run.get("id"), int) else 0
 
 
-def staging_verified(images, request, download):
+def staging_verified(images, request, download, *, pointer_source=None, pointer_evidence=None):
     """Return the components whose exact image staging recorded as controller-verified."""
     pending, verified, downloads, listings = dict(images), set(), 0, 0
+    if not pending:
+        return verified
     # Read the workflows page by page together, newest run first within each
     # page round (not across rounds; acceptance never depends on order). Searching one
     # workflow to its end before the next starved redeploy-staging: its evidence
@@ -214,16 +216,58 @@ def staging_verified(images, request, download):
                     continue
                 require(downloads < MAX_DOWNLOADS, "Staging deployment evidence search exceeded its bound")
                 downloads += 1
-                for component, row in evidence_rows(download(artifact)).items():
+                archive = download(artifact)
+                for component, row in evidence_rows(archive).items():
                     if (component in pending and isinstance(row, dict) and row.get("state") == VERIFIED
-                            and row.get("image") == pending[component]):
+                            and row.get("image") == pending[component]
+                            and (component != "runtime" or pointer_source is None
+                                 or (row.get("source_sha") == pointer_source and pointer_verified(component, row, "staging")))):
                         verified.add(component)
                         del pending[component]
+                        if component == "runtime" and pointer_evidence is not None:
+                            pointer_evidence.append(f"{run['id']}:{artifact['id']}:{hashlib.sha256(archive).hexdigest()}")
                 if not pending:
                     return verified
         if not remaining:
             break
     return verified
+
+
+def pointer_artifact(reference, request, download):
+    require(matches(r"[1-9][0-9]*:[1-9][0-9]*:[0-9a-f]{64}", reference),
+            "Production pointer activation requires immutable staging evidence")
+    run_text, artifact_text, digest = reference.split(":")
+    run_id, artifact_id = int(run_text), int(artifact_text)
+    run = request(f"actions/runs/{run_id}")
+    require(trusted_view(run) and run["id"] == run_id, "Staging pointer qualification workflow is untrusted")
+    listing = request(f"actions/runs/{run_id}/artifacts?per_page=100")
+    matches_id = [artifact for artifact in listing["artifacts"] if artifact.get("id") == artifact_id
+                  and not artifact.get("expired") and evidence_lane(artifact.get("name"), run_id) is not None]
+    require(len(matches_id) == 1, "Staging pointer qualification artifact is missing")
+    archive = download(matches_id[0])
+    require(hashlib.sha256(archive).hexdigest() == digest, "Staging pointer qualification changed")
+    return run, evidence_rows(archive)
+
+
+def initial_pointer_qualification(reference, request, download, *, tags, history):
+    """The reviewed activation names an immutable staging two-lane artifact."""
+    run, evidence = pointer_artifact(reference, request, download)
+    require(run["conclusion"] == "success", "Initial staging pointer qualification workflow did not pass")
+    lanes = ("runtime", "runtime-omarchy")
+    require(all(pointer_verified(lane, evidence.get(lane), "staging", transition=True)
+                for lane in lanes), "Initial staging qualification lacks both pointer promotions")
+    require(all(evidence["runtime"]["pointer"][key] == evidence["runtime-omarchy"]["pointer"][key]
+                for key in ("build", "build_digest")),
+            "Initial staging qualification used different Agent Manager builds")
+    for lane in lanes:
+        row = evidence[lane]
+        history.position(row["source_sha"])
+        publications = [tag for tag in tags(lane) if tag.get("target") == row["source_sha"]
+                        and isinstance(tag.get("receipt"), dict)
+                        and tag["receipt"].get("source") == row["source_sha"]
+                        and tag.get("name") == tag["receipt"].get("tag")
+                        and row["image"] == tag["receipt"].get("repository", "") + "@" + tag["receipt"].get("digest", "")]
+        require(len(publications) == 1, "Initial staging pointer promotion has no matching final publication")
 
 
 def gh_download(token):
@@ -249,11 +293,12 @@ def gh_download(token):
     return download
 
 
-def plan(env, api, registry, policy, *, root, download, deployables, runner=subprocess.run):
+def plan(env, api, registry, policy, *, root, download, deployables, runner=subprocess.run, pointer_evidence=None):
     """Return (release_set or None, release commit) for the production event in env."""
     from staging_cd_admission import event_identity, maintainer_dispatch
     from staging_cd_receipts import canonical
-    from staging_cd_set import dispatch_set
+    from staging_cd_resolve import resolve
+    from staging_cd_set import dispatch_set, release_set
     from staging_cd_targets import RUNTIME_TARGETS, TARGETS
 
     require(env.get("CD_TARGET") == "production", "Production selection requires the production target")
@@ -264,14 +309,52 @@ def plan(env, api, registry, policy, *, root, download, deployables, runner=subp
         event_identity(env)
     released = release_commit(env["GITHUB_SHA"], root, runner=runner)
     components = enabled_components(policy, TARGETS, RUNTIME_TARGETS)
-    if not components:
+    pointers = env.get("CD_RUNTIME_POINTER_PUBLICATION_ENABLED") == "true"
+    if not components and not pointers:
         return None, released
-    versions = select_versions(released, {c: deployables[c] for c in components}, api.tags, api.history())
-    inputs = {"deployables": ",".join(components), "versions": canonical(versions), "mode": "release"}
-    _, value = dispatch_set(inputs, api, registry)
+    history = api.history()
+    if components:
+        versions = select_versions(released, {c: deployables[c] for c in components}, api.tags, history)
+        inputs = {"deployables": ",".join(components), "versions": canonical(versions), "mode": "release"}
+        _, value = dispatch_set(inputs, api, registry)
+    if pointers:
+        initial = env.get("CD_RUNTIME_POINTER_STAGING_QUALIFICATION")
+        approved = env.get("CD_APPROVED_POINTER_EVIDENCE")
+        if "CD_RELEASE_SET" in env:
+            require(isinstance(approved, str) and approved.count("/") == 1,
+                    "The production approval has no bound pointer evidence")
+            approved_initial, approved_promotion = approved.split("/")
+            require(approved_initial == initial, "The initial staging qualification differs from production approval")
+        else:
+            approved_promotion = None
+        initial_pointer_qualification(initial, api.request, download, tags=api.tags, history=history)
+        if pointer_evidence is not None:
+            pointer_evidence.append(initial)
+        # Only finals on the approved production release are eligible, even
+        # while newer runtimes continue publishing on develop.
+        limit = history.position(released)
+        tags = [tag for tag in api.tags("runtime") if history.position(tag["target"]) <= limit]
+        runtime = resolve("runtime", "latest", tags, registry, history)
+        value = release_set((value["receipts"] if components else {}) | {"runtime": runtime})
     # The same image string staging_cd_set gives the controller and its evidence records.
     images = {c: r["repository"] + "@" + r["digest"] for c, r in value["receipts"].items()}
-    missing = sorted(set(images) - staging_verified(images, api.request, download))
+    if pointers:
+        if approved_promotion is not None:
+            _, evidence = pointer_artifact(approved_promotion, api.request, download)
+            row = evidence.get("runtime")
+            require(isinstance(row, dict) and row.get("image") == images["runtime"]
+                    and row.get("source_sha") == runtime["source"] and pointer_verified("runtime", row, "staging"),
+                    "The approved staging pointer promotion differs from the release")
+            verified = staging_verified({key: image for key, image in images.items() if key != "runtime"},
+                                        api.request, download) | {"runtime"}
+        else:
+            options = {"pointer_source": runtime["source"]}
+            if pointer_evidence is not None:
+                options["pointer_evidence"] = pointer_evidence
+            verified = staging_verified(images, api.request, download, **options)
+    else:
+        verified = staging_verified(images, api.request, download)
+    missing = sorted(set(images) - verified)
     if missing:
         print("::error::Staging never verified the released image for: " + ", ".join(missing), file=sys.stderr)
     require(not missing, "Staging never verified a released image")
@@ -286,8 +369,8 @@ def main():
     re-selection reproduces the identical set, not when the run was created.
     The re-selection covers exactly the approved components; the controller
     invocation then applies production's deploy switches as the final word.
-    Selection never yields a runtime image, so an approved set holding one is
-    refused before anything is re-selected, never silently narrowed.
+    Runtime pointer publication must remain enabled across approval. Omarchy
+    publications may be qualified in staging and are excluded from production.
     """
     from staging_cd_clock import timestamp
     from staging_cd_github import GitHub
@@ -309,12 +392,16 @@ def main():
             policy = switches(Path(env["CD_PRIVATE_CONTROLLER"]) / "scripts" / "deploy_set.py")
         else:
             components = set(document(approved)["receipts"])
-            require(not components & RUNTIME_TARGETS,
+            runtime = components & RUNTIME_TARGETS
+            require(not runtime or (runtime == {"runtime"}
+                                    and env.get("CD_RUNTIME_POINTER_PUBLICATION_ENABLED") == "true"),
                     "An approved production release set must not hold a runtime image")
             policy = {key: key in components for key in sorted(APP_TARGETS)}
         api, registry = GitHub(env.get("GH_TOKEN")), Registry()
+        pointer_evidence = []
         value, released = plan(env, api, registry, policy, root=Path.cwd(),
-                               download=gh_download(env["GH_TOKEN"]), deployables=DEPLOYABLES)
+                               download=gh_download(env["GH_TOKEN"]), deployables=DEPLOYABLES,
+                               pointer_evidence=pointer_evidence)
         output(env, "released", released)
         if approved is not None:
             require(value is not None and canonical(value) == canonical(document(approved)),
@@ -323,6 +410,9 @@ def main():
         elif value is None:
             output(env, "release_set", "")
             return True
+        elif pointer_evidence:
+            require(len(pointer_evidence) == 2, "Selected Agent promotion has no unique staging evidence")
+            output(env, "pointer_evidence", "/".join(pointer_evidence))
         output(env, "release_set", canonical(value))
         output(env, "mode", "release")
         return True

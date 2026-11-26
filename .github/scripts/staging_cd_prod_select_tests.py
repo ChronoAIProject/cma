@@ -1,5 +1,6 @@
 """Production selection: release commit proof, version choice and staging evidence."""
 
+import hashlib
 import io
 import json
 import tempfile
@@ -10,6 +11,7 @@ from unittest.mock import Mock, patch
 
 import prod_cd_select as select
 from staging_cd_common import Refusal
+from staging_cd_deploy_result import POINTER_SCHEMA
 from staging_cd_policy import selected, switches
 from staging_cd_targets import RUNTIME_TARGETS, TARGETS
 from staging_cd_versions import DEPLOYABLES
@@ -144,6 +146,65 @@ class EvidenceTests(unittest.TestCase):
         for bad in (run_view(7, path=".github/workflows/ci.yml"), run_view(7, branch="feature"),
                     run_view(7, event="pull_request"), dict(run_view(7), id=8)):
             self.assertFalse(select.trusted_run(Mock(return_value=bad), 7))
+
+    def test_runtime_requires_the_exact_staging_pointer_row(self):
+        image = "ghcr.io/chronoaiproject/cma-runtime@sha256:" + "8" * 64
+        request = self.staging_runs([run_view(14)], {14: [artifact(7, 14)]})
+        row = {"state": select.VERIFIED, "image": image, "source_sha": RELEASED}
+        proof = {"schema": POINTER_SCHEMA, "environment": "staging", "revision": 2,
+                 "build": MERGE, "build_digest": "sha256:" + "9" * 64,
+                 "previous": {"digest": "sha256:" + "7" * 64, "revision": 1}}
+        artifacts = (row, dict(row, pointer=dict(proof, environment="production")),
+                     dict(row, source_sha=PREVIOUS, pointer=proof), dict(row, pointer=proof))
+        for index, artifact_row in enumerate(artifacts):
+            with self.subTest(case=index):
+                download = Mock(return_value=evidence({"runtime": artifact_row}))
+                result = select.staging_verified({"runtime": image}, request, download, pointer_source=RELEASED)
+                self.assertEqual(result, {"runtime"} if index == 3 else set())
+
+    def test_initial_runtime_qualification_requires_two_promotions_on_one_build(self):
+        proof = {"schema": POINTER_SCHEMA, "environment": "staging", "revision": 2,
+                 "build": MERGE, "build_digest": "sha256:" + "9" * 64,
+                 "previous": {"digest": "sha256:" + "7" * 64, "revision": 1}}
+        agent_digest, machine_digest = "sha256:" + "8" * 64, "sha256:" + "6" * 64
+        agent = {"state": select.VERIFIED, "pointer": proof, "source_sha": RELEASED,
+                 "image": "ghcr.io/chronoaiproject/cma-runtime@" + agent_digest}
+        machine = {"state": select.VERIFIED, "pointer": dict(proof, revision=3), "source_sha": RELEASED,
+                   "image": "ghcr.io/chronoaiproject/cma-runtime-omarchy@" + machine_digest}
+        request = Mock(side_effect=[run_view(14), {"artifacts": [artifact(7, 14)]}])
+        archive = evidence({"runtime": agent, "runtime-omarchy": machine})
+        reference = "14:7:" + hashlib.sha256(archive).hexdigest()
+        def final(component):
+            image = agent["image"] if component == "runtime" else machine["image"]
+            repository, digest = image.split("@")
+            name = repository.rsplit("/", 1)[-1] + "/v0.10.1"
+            return [{"name": name, "target": RELEASED, "receipt": {
+                "source": RELEASED, "tag": name, "repository": repository, "digest": digest,
+            }}]
+        authority = {"tags": final, "history": History([RELEASED])}
+        select.initial_pointer_qualification(reference, request, Mock(return_value=archive), **authority)
+        same_agent = dict(agent, pointer=dict(proof, revision=1, previous={"digest": agent_digest, "revision": 1}))
+        same_machine = dict(machine, pointer=dict(proof, revision=1, previous={"digest": machine_digest, "revision": 1}))
+        cases = (
+            {"runtime": agent},
+            {"runtime": agent, "runtime-omarchy": dict(machine, pointer=dict(proof, build=PREVIOUS))},
+            {"runtime": same_agent, "runtime-omarchy": same_machine},
+            {"runtime": agent, "runtime-omarchy": dict(machine, image=agent["image"])},
+            {"runtime": agent, "runtime-omarchy": dict(machine, source_sha="unqualified")},
+        )
+        for rows in cases:
+            request = Mock(side_effect=[run_view(14), {"artifacts": [artifact(7, 14)]}])
+            incomplete = evidence(rows)
+            with self.assertRaises(Refusal):
+                select.initial_pointer_qualification(
+                    "14:7:" + hashlib.sha256(incomplete).hexdigest(), request, Mock(return_value=incomplete), **authority)
+        request = Mock(side_effect=[run_view(14), {"artifacts": [artifact(7, 14)]}])
+        with self.assertRaisesRegex(Refusal, "no matching final publication"):
+            select.initial_pointer_qualification(reference, request, Mock(return_value=archive),
+                                                 tags=lambda _: [], history=authority["history"])
+        request = Mock(side_effect=[run_view(14), {"artifacts": [artifact(7, 14)]}])
+        with self.assertRaisesRegex(Refusal, "qualification changed"):
+            select.initial_pointer_qualification(reference, request, Mock(return_value=evidence(cases[0])), **authority)
 
     def staging_runs(self, runs, artifacts, workflow="staging-cd.yml"):
         """A request stub: workflow run listings, then each run's own artifacts."""
@@ -302,6 +363,68 @@ class PlanTests(unittest.TestCase):
             with self.assertRaises(Refusal):
                 select.plan(dict(env, CD_TARGET="staging"), Mock(), Mock(), off, root=Path(directory),
                             download=Mock(), deployables={}, runner=runner)
+
+    def test_production_pointer_selects_only_staging_verified_agent_runtime_within_release(self):
+        from staging_cd_receipts_tests import fixture_runtime_receipt, fixture_tag
+
+        candidate = fixture_runtime_receipt(source=RELEASED)
+        newer = fixture_runtime_receipt(source=MERGE, version="0.10.2", previous="0.10.1")
+        api = Mock(tags=lambda component: [fixture_tag(candidate), fixture_tag(newer)],
+                   history=Mock(return_value=History([MERGE, RELEASED])))
+        registry = Mock()
+        registry.exists.return_value = True
+        registry.manifest.return_value = (candidate["digest"], {})
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            env["CD_RUNTIME_POINTER_PUBLICATION_ENABLED"] = "true"
+            policy = {"am": False, "eg": False, "web": False}
+            args = (env, api, registry, policy)
+            kwargs = dict(root=Path(directory), download=Mock(), deployables=DEPLOYABLES,
+                          runner=git_runner([MERGE, PREVIOUS, RELEASED]))
+            with patch.object(select, "initial_pointer_qualification"), \
+                    patch.object(select, "staging_verified", return_value={"runtime"}) as evidence:
+                value, source = select.plan(*args, **kwargs)
+                self.assertEqual(source, RELEASED)
+                self.assertEqual(value["receipts"], {"runtime": candidate})
+                self.assertEqual(evidence.call_args.args[0], {
+                    "runtime": candidate["repository"] + "@" + candidate["digest"],
+                })
+                self.assertEqual(evidence.call_args.kwargs, {"pointer_source": RELEASED})
+            with patch.object(select, "initial_pointer_qualification"), \
+                    patch.object(select, "staging_verified", return_value=set()), \
+                    self.assertRaisesRegex(Refusal, "never verified"):
+                select.plan(*args, **kwargs)
+
+    def test_production_reproduces_the_exact_approved_promotion_evidence(self):
+        from staging_cd_receipts_tests import fixture_runtime_receipt, fixture_tag
+
+        candidate = fixture_runtime_receipt(source=RELEASED)
+        api = Mock(tags=lambda _component: [fixture_tag(candidate)],
+                   history=Mock(return_value=History([RELEASED])))
+        registry = Mock()
+        registry.exists.return_value = True
+        registry.manifest.return_value = (candidate["digest"], {})
+        image = candidate["repository"] + "@" + candidate["digest"]
+        active = {"state": select.VERIFIED, "image": image, "source_sha": RELEASED,
+                  "pointer": {"schema": POINTER_SCHEMA, "environment": "staging", "revision": 2,
+                              "build": MERGE, "build_digest": "sha256:" + "9" * 64,
+                              "previous": {"digest": candidate["digest"], "revision": 2}}}
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            env.update(CD_RELEASE_SET="fixture", CD_RUNTIME_POINTER_PUBLICATION_ENABLED="true",
+                       CD_RUNTIME_POINTER_STAGING_QUALIFICATION="initial", CD_APPROVED_POINTER_EVIDENCE="initial/agent")
+            policy = {"am": False, "eg": False, "web": False}
+            args = (env, api, registry, policy)
+            kwargs = dict(root=Path(directory), download=Mock(), deployables=DEPLOYABLES,
+                          runner=git_runner([MERGE, PREVIOUS, RELEASED]))
+            with patch.object(select, "initial_pointer_qualification"), \
+                    patch.object(select, "pointer_artifact", return_value=({}, {"runtime": active})) as proof:
+                selected, _ = select.plan(*args, **kwargs)
+                self.assertEqual(selected["receipts"], {"runtime": candidate})
+                self.assertEqual(proof.call_args.args[0], "agent")
+                proof.return_value = ({}, {"runtime": dict(active, source_sha=PREVIOUS)})
+                with self.assertRaisesRegex(Refusal, "differs from the release"):
+                    select.plan(*args, **kwargs)
 
     def test_a_dispatch_retry_requires_maintainer_actors(self):
         with tempfile.TemporaryDirectory() as directory:
