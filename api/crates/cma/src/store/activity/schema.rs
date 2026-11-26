@@ -15,7 +15,7 @@ use crate::store::{
 pub(super) async fn inspect(
     database: &Database,
     retention: Duration,
-) -> Result<Assessment<()>, SchemaFinding> {
+) -> Result<Assessment<bool>, SchemaFinding> {
     let mut assessment = Assessment::default();
     let Some(existing) = inspect_collection(database, super::ACTIVITY).await? else {
         assessment.findings.insert(SchemaFinding::MissingCollection);
@@ -34,6 +34,14 @@ pub(super) async fn inspect(
     }
     if let Some(finding) = ttl_finding(&existing, retention) {
         assessment.findings.insert(finding);
+    }
+    match migrations::activity_audit_index::ready(&existing) {
+        Ok(ready) => assessment.capability = ready,
+        Err(_) => {
+            assessment
+                .findings
+                .insert(SchemaFinding::DefinitionMismatch);
+        }
     }
     Ok(assessment)
 }

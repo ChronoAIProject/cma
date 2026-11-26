@@ -4,6 +4,7 @@ use std::time::Duration;
 use mongodb::{bson::doc, options::ClientOptions, Client};
 use serde_json::{json, Value};
 
+pub(in crate::store) mod activity_audit_index;
 mod activity_indexes;
 mod activity_page_index;
 pub(in crate::store) mod agent_log_active_proofs;
