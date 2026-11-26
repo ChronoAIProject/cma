@@ -131,10 +131,7 @@ impl MongoNativeWarmPools {
                         && !row.retired
                         && !row.retiring
                         && row.activated_at.is_some()
-                }) =>
-            {
-                ()
-            }
+                }) => {}
             CommitOutcome::Retry(_) => return Err(WarmPoolError::Conflict),
             _ => return Err(WarmPoolError::Unavailable),
         }
