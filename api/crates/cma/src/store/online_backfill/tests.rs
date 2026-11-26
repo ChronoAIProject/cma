@@ -9,8 +9,15 @@ use crate::store::{
     sandbox_mongo_integration_tests::sandbox,
     sandboxes::sandbox_document,
 };
-use layer2_core::sandbox::{store::AgentStore, AgentOperationIntent, AgentOperationRecord};
-use layer3_adapter::{hosted::HostedAccessToolSource, RuntimeHandle};
+use layer2_core::sandbox::{
+    store::{AgentProvenanceStore, AgentStore},
+    AgentCleanupDebt, AgentOperationIntent, AgentOperationRecord, AgentStatus, AgentWorkLease,
+    AgentWorkReceipt, AgentWorkStep,
+};
+use layer3_adapter::{
+    hosted::HostedAccessToolSource, AgentOpenRequest, AgentProcessAction, AgentRestartRuntime,
+    RuntimeHandle, RuntimeStatusRequest,
+};
 use mongodb::Client;
 
 fn run_id() -> String {
@@ -334,6 +341,7 @@ async fn online_backfill_endpoints_require_an_acknowledged_transport() {
     let receipt = endpoint_receipt(&db, &cohort).await;
     assert_eq!(receipt["counts"]["changed"], 1);
     assert_eq!(receipt["complete"], true);
+    verify_restarted_endpoint(&db, &cohort, &store, &access, &runtime, &agent.id).await;
 
     let access_rows = db.collection::<Document>("agent_access_tools");
     let accepted = access_rows
@@ -361,4 +369,109 @@ async fn online_backfill_endpoints_require_an_acknowledged_transport() {
     assert_eq!(refused["counts"]["errors"], 1);
     assert_eq!(refused["complete"], false);
     db.drop().await.unwrap();
+}
+
+async fn verify_restarted_endpoint(
+    database: &Database,
+    cohort: &Cohort,
+    store: &crate::store::MongoSandboxStore,
+    access: &MongoAgentAccessToolSource,
+    runtime: &RuntimeHandle,
+    agent_id: &layer2_core::AgentId,
+) {
+    let snapshot = store.agent_provenance_snapshot(agent_id).await.unwrap();
+    let lineage = &snapshot.resource.lineage;
+    let sandbox = &lineage.sandbox;
+    let pin = sandbox.runtime.as_ref().unwrap();
+    let mut agent = lineage.agent.clone().unwrap();
+    let tree = lineage.worktree.as_ref().unwrap();
+    let mut open = AgentOpenRequest::new(
+        AgentProcessAction::Open.operation_id(agent.id.as_str(), 2),
+        crate::sandbox::runtime_options(&agent, sandbox, tree),
+        agent.conversation.conversation_id.clone(),
+    );
+    open.restart_runtime = Some(AgentRestartRuntime {
+        boot_id: pin.boot_id.clone().unwrap(),
+        runtime: RuntimeStatusRequest {
+            sandbox_id: sandbox.id.to_string(),
+            generation: pin.provision_generation.unwrap(),
+            home_identity: sandbox
+                .lifecycle
+                .home
+                .as_ref()
+                .unwrap()
+                .attachment()
+                .unwrap()
+                .identity()
+                .unwrap(),
+        },
+    });
+    let fence = agent.work.next_fence;
+    agent.status = AgentStatus::Starting;
+    agent.work.step = AgentWorkStep::RestartConversation;
+    agent.work.next_fence += 1;
+    agent.work.lease = Some(AgentWorkLease {
+        holder: "restart-fixture".into(),
+        fence,
+        expires_at: layer2_core::rfc3339_at(
+            std::time::SystemTime::now() + std::time::Duration::from_secs(120),
+        ),
+    });
+    agent
+        .work
+        .receipts
+        .retain(|receipt| receipt.step != AgentWorkStep::OpenConversation);
+    agent.work.cleanup_debt = vec![AgentCleanupDebt {
+        step: AgentWorkStep::OpenConversation,
+        operation_id: open.operation_id.clone(),
+        request_sha256: open.request_sha256.clone(),
+    }];
+    agent.revision += 1;
+    store
+        .save_agent(agent.revision - 1, agent.clone())
+        .await
+        .unwrap();
+    let enrolled = access
+        .resolve(runtime, &open, fence)
+        .await
+        .unwrap()
+        .unwrap();
+    access
+        .confirm_open(&enrolled, "original-native")
+        .await
+        .unwrap();
+
+    agent.status = AgentStatus::Ready;
+    agent.work.step = AgentWorkStep::None;
+    agent.work.lease = None;
+    agent.work.cleanup_debt.clear();
+    agent.revision += 1;
+    store
+        .save_agent(agent.revision - 1, agent.clone())
+        .await
+        .unwrap();
+    let agents = database.collection::<Document>("agents");
+    agents
+        .update_one(
+            doc! {"_id": agent.id.as_str()},
+            doc! {"$set": {"record.conversation.runtime_generation": 2_i64}},
+        )
+        .await
+        .unwrap();
+    let missing = endpoint_receipt(database, cohort).await;
+    assert_eq!(missing["counts"]["pending"], 1);
+    assert_eq!(missing["complete"], false);
+
+    agent = store.get_agent(agent_id).await.unwrap().unwrap();
+    agent.work.receipts.push(AgentWorkReceipt {
+        step: AgentWorkStep::OpenConversation,
+        operation_id: open.operation_id,
+        request_sha256: open.request_sha256,
+        completed_at: layer2_core::now_rfc3339(),
+    });
+    agent.revision += 1;
+    store.save_agent(agent.revision - 1, agent).await.unwrap();
+    let confirmed = endpoint_receipt(database, cohort).await;
+    assert_eq!(confirmed["counts"]["changed"], 1);
+    assert_eq!(confirmed["complete"], true);
 }

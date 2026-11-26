@@ -107,22 +107,22 @@ impl AccessRecordAuthority {
         Some(doc! {"_id": {"$in": ids}})
     }
 
-    pub(in crate::store) fn confirmed_transport(
+    pub(in crate::store) fn acknowledged_transport_open(
         &self,
         document: &Document,
         creation: &AgentCreationProvenance,
         runtime: &RuntimeBinding,
         conversation: &str,
         target: &str,
-    ) -> Option<bool> {
-        let record = self.read(document).ok()?;
+    ) -> std::result::Result<Option<AgentOpenRequest>, ()> {
+        let record = self.read(document).map_err(|_| ())?;
         if record.scope.creation != *creation
             || record.scope.runtime != *runtime
             || record.conversation.as_deref() != Some(conversation)
         {
-            return None;
+            return Err(());
         }
-        Some(record.transport_origin.as_deref() == Some(target))
+        Ok((record.transport_origin.as_deref() == Some(target)).then_some(record.request))
     }
 }
 

@@ -1,7 +1,9 @@
 use super::super::agent_access_tools::AccessRecordAuthority;
 use super::{Observation, Result, Snapshot};
 use crate::config::AgentAccessMigration;
+use layer2_core::resource_access::ResourceLineage;
 use layer2_core::sandbox::{Agent, AgentOperationIntent, AgentStatus, Sandbox, SandboxStatus};
+use layer3_adapter::{AgentOpenRequest, AgentProcessAction};
 use mongodb::bson::{doc, Document};
 
 pub(super) enum Cohort {
@@ -21,8 +23,9 @@ const SANDBOXES: &str = "sandboxes";
 const ACCESS: &str = "agent_access_tools";
 
 const PROVENANCE: &str = "agent_creation_provenance";
+const WORKTREES: &str = "worktrees";
 
-pub(super) const SOURCES: [&str; 5] = [ROUTES, AGENTS, SANDBOXES, ACCESS, PROVENANCE];
+pub(super) const SOURCES: [&str; 6] = [ROUTES, AGENTS, SANDBOXES, ACCESS, PROVENANCE, WORKTREES];
 
 impl Cohort {
     pub(super) fn name(&self) -> &'static str {
@@ -101,7 +104,7 @@ impl Cohort {
                 let Ok(agent) = super::super::agents::read_agent(row) else {
                     return Ok(Observation::Error);
                 };
-                endpoint(snapshot, migration, authority, &agent).await
+                endpoint(snapshot, migration, authority, agent).await
             }
         }
     }
@@ -185,7 +188,7 @@ async fn endpoint(
     snapshot: &Snapshot<'_>,
     migration: &AgentAccessMigration,
     authority: &AccessRecordAuthority,
-    agent: &Agent,
+    agent: Agent,
 ) -> Result<Observation> {
     if agent.status == AgentStatus::Deleted {
         return Ok(Observation::Skipped);
@@ -223,9 +226,7 @@ async fn endpoint(
     ) else {
         return Ok(Observation::Pending);
     };
-    if conversation.runtime_generation.is_none()
-        || runtime.provision_generation != conversation.runtime_generation
-    {
+    if conversation.runtime_generation.is_none() {
         return Ok(Observation::Pending);
     }
     let Some(provenance) = snapshot
@@ -237,7 +238,7 @@ async fn endpoint(
     let Ok(creation) = super::super::agent_provenance::read(&provenance) else {
         return Ok(Observation::Error);
     };
-    if creation.validate_against(agent, &sandbox).is_err() {
+    if creation.validate_against(&agent, &sandbox).is_err() {
         return Ok(Observation::Error);
     }
 
@@ -251,17 +252,77 @@ async fn endpoint(
         _ => return Ok(Observation::Error),
     };
     let target = url::Url::parse(&migration.origin).map_err(|_| super::INVALID)?;
-    match authority.confirmed_transport(
+    let open = match authority.acknowledged_transport_open(
         record,
         &creation,
         runtime,
         conversation_id,
         target.as_str(),
     ) {
-        Some(true) if conversation.managed_guidance_revision >= migration.revision => {
-            Ok(Observation::Changed)
-        }
-        Some(_) => Ok(Observation::Pending),
-        None => Ok(Observation::Error),
+        Ok(Some(open)) if conversation.managed_guidance_revision >= migration.revision => open,
+        Ok(_) => return Ok(Observation::Pending),
+        Err(()) => return Ok(Observation::Error),
+    };
+    if open.restart_runtime.is_none() {
+        return Ok(
+            if runtime.provision_generation == conversation.runtime_generation {
+                Observation::Changed
+            } else {
+                Observation::Pending
+            },
+        );
     }
+    restarted_endpoint(snapshot, sandbox, agent, &open).await
+}
+
+async fn restarted_endpoint(
+    snapshot: &Snapshot<'_>,
+    sandbox: Sandbox,
+    agent: Agent,
+    open: &AgentOpenRequest,
+) -> Result<Observation> {
+    let Some(row) = snapshot
+        .one(WORKTREES, doc! {"_id": agent.worktree_id.as_str()})
+        .await?
+    else {
+        return Ok(Observation::Pending);
+    };
+    let Ok(tree) = super::super::worktrees::read_worktree(&row) else {
+        return Ok(Observation::Error);
+    };
+    if tree.id != agent.worktree_id
+        || tree.sandbox_id != agent.sandbox_id
+        || tree.workspace_id != agent.workspace_id
+        || tree.owner != agent.owner
+        || tree.agent_id.as_ref() != Some(&agent.id)
+    {
+        return Ok(Observation::Error);
+    }
+
+    // The connection generation advances independently of the runtime pin.
+    // The current process must come from the same completed Open as the tools.
+    let Some(incarnation) =
+        AgentProcessAction::Open.incarnation(agent.id.as_str(), &open.operation_id)
+    else {
+        return Ok(Observation::Error);
+    };
+    if !agent.close_process_request().is_ok_and(|current| {
+        current.operation_id
+            == AgentProcessAction::Close.operation_id(agent.id.as_str(), incarnation)
+    }) {
+        return Ok(Observation::Pending);
+    }
+    let lineage = ResourceLineage {
+        sandbox,
+        workspace: None,
+        worktree: Some(tree),
+        agent: Some(agent),
+    };
+    Ok(
+        if super::super::agent_tool_open::published(&lineage, open) {
+            Observation::Changed
+        } else {
+            Observation::Pending
+        },
+    )
 }
