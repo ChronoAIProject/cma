@@ -283,6 +283,9 @@ impl MongoNativeWarmPools {
         promotion_at: DateTime,
         session: &mut ClientSession,
     ) -> Result<(), WarmPoolError> {
+        if active.machine {
+            retirement::fence_machine_selection(self, session).await?;
+        }
         let observed = lane.candidate.as_ref().ok_or(WarmPoolError::Conflict)?;
         if !ready.observed
             || candidate.binding.as_ref() != Some(&ready.binding)

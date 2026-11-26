@@ -101,44 +101,36 @@ pub(super) async fn activate(
     Err(WarmPoolError::Unavailable)
 }
 
+/// Every Desktop selection and promotion writes the same deployment-scoped
+/// document, even when no pool has ever been activated. The coordination
+/// record is independent of target identity and survives their retirement.
+pub(super) async fn selection_fence(
+    store: &MongoNativeWarmPools,
+    session: &mut ClientSession,
+) -> mongodb::error::Result<()> {
+    let coordination = majority_collection::<Document>(
+        &store.database,
+        crate::store::released_runtimes::COLLECTION,
+    );
+    let key = format!("{}:machine-plan-selection", store.deployment);
+    coordination
+        .update_one(
+            doc! {"_id":key, "deployment":&store.deployment,
+            "document_schema_version":1_i64},
+            doc! {"$inc":{"selection_fence":1_i64}},
+        )
+        .upsert(true)
+        .session(&mut *session)
+        .await?;
+    Ok(())
+}
+
 async fn select_once(
     store: &MongoNativeWarmPools,
     candidate: &PoolTarget,
     session: &mut ClientSession,
 ) -> Result<bool, SelectionError> {
-    let mut scope = release_scope(store, true);
-    scope.insert("activated_at", doc! {"$type":"date"});
-    // The earliest released row remains as a tombstone. Contenders modifying
-    // different sizing rows must share its transaction write fence.
-    let anchor = store
-        .targets
-        .find_one(scope)
-        .sort(doc! {"activated_at":1,"_id":1})
-        .session(&mut *session)
-        .await?;
-    let anchor = match anchor {
-        Some(row) => row,
-        None => store
-            .targets
-            .find_one(release_scope(store, true))
-            .sort(doc! {"_id":1})
-            .session(&mut *session)
-            .await?
-            .ok_or(WarmPoolError::Conflict)?,
-    };
-    let mut anchor_filter = release_scope(store, true);
-    anchor_filter.insert("_id", &anchor.id);
-    let fenced = store
-        .targets
-        .update_one(
-            anchor_filter,
-            doc! {"$inc":{"machine_plan_selection_fence":1_i64}},
-        )
-        .session(&mut *session)
-        .await?;
-    if fenced.matched_count != 1 {
-        return Err(WarmPoolError::Conflict.into());
-    }
+    selection_fence(store, session).await?;
 
     let mut exact = release_scope(store, true);
     exact.extend(doc! {"_id":&candidate.id,"retiring":{"$ne":true},"retired":{"$ne":true}});
@@ -201,4 +193,63 @@ async fn select_once(
         }
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+    async fn late_lower_id_target_cannot_bypass_the_stable_selection_fence() {
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+        let client = mongodb::Client::with_uri_str(uri).await.unwrap();
+        let database = client.database(&format!("cma_selection_{}", uuid::Uuid::new_v4().simple()));
+        let store = MongoNativeWarmPools::open(&database, "test").await.unwrap();
+        let mut first = crate::warm_pools::tests::target();
+        first.id = "z-pending".into();
+        first.machine = true;
+        first.document_schema_version = 2;
+        store.insert(first.clone()).await.unwrap();
+        let mut stale = client.start_session().await.unwrap();
+        start_transaction(&mut stale).await.unwrap();
+        assert!(store
+            .targets
+            .find_one(doc! {"_id": &first.id})
+            .session(&mut stale)
+            .await
+            .unwrap()
+            .is_some());
+
+        let mut later = first.clone();
+        later.id = "a-pending".into();
+        later.plan.config_sha256 = "b".repeat(64);
+        later.plan.spec.memory_mib *= 2;
+        later.requested.memory_mib = later.plan.spec.memory_mib;
+        store.insert(later.clone()).await.unwrap();
+        store.activate(&later.id).await.unwrap();
+        let winner = store.find(&later.id).await.unwrap().unwrap();
+        match select_once(&store, &first, &mut stale).await {
+            Err(SelectionError::Driver(error)) if is_confirmed_body_retry(&error) => {
+                let _ = stale.abort_guarded().await;
+            }
+            Ok(true) => assert!(matches!(
+                commit_transaction(&mut stale).await,
+                CommitOutcome::Retry(_)
+            )),
+            _ => panic!("a stale snapshot must conflict on the stable fence"),
+        }
+        assert!(store
+            .find(&first.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .machine_plan_activated_at
+            .is_none());
+        store.activate(&first.id).await.unwrap();
+        let retried = store.find(&first.id).await.unwrap().unwrap();
+        assert_eq!(retried.activated_at, winner.activated_at);
+        assert!(retried.machine_plan_activated_at > winner.machine_plan_activated_at);
+        database.drop().await.unwrap();
+    }
 }

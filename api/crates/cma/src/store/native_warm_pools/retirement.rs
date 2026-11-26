@@ -7,6 +7,15 @@ mod eligibility;
 mod machine_selection;
 use eligibility::{owned_home, warm_blocks};
 
+pub(super) async fn fence_machine_selection(
+    store: &MongoNativeWarmPools,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), WarmPoolError> {
+    machine_selection::selection_fence(store, session)
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)
+}
+
 const MAX_RECORDS: i64 = 10_000;
 
 pub(super) fn release_scope(store: &MongoNativeWarmPools, machine: bool) -> Document {
