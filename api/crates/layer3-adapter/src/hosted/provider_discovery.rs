@@ -77,6 +77,7 @@ impl ProviderHostedControlTransport {
             bounded_raw_output: false,
             shared_runtime_output: false,
             native_close_agent_lane: false,
+            open_reply_loss: None,
             native_transport: NativeRuntimeTransport::Direct,
             legacy_receiver_image: None,
             stale_turn_image: None,

@@ -48,6 +48,7 @@ mod public_streams;
 mod rate_default_lease;
 mod rate_limits;
 pub use rate_limits::RateLimitConfig;
+mod open_reply_loss;
 mod relay_capacity;
 mod runtime;
 pub(crate) use runtime::deployment_id_from_lookup;

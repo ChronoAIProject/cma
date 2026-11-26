@@ -2,6 +2,24 @@
 use super::*;
 
 impl ProviderHostedControlTransport {
+    pub fn with_open_reply_loss(
+        mut self,
+        sandbox_id: String,
+        claim: Arc<dyn crate::hosted::HostedOpenReplyLoss>,
+    ) -> Self {
+        self.open_reply_loss = Some((sandbox_id, claim));
+        self
+    }
+
+    pub(super) async fn open_reply_loss_for(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::hosted::HostedOpenReplyLoss> {
+        let (sandbox_id, claim) = self.open_reply_loss.as_ref()?;
+        let bound = self.binding(handle).await.ok()?;
+        (bound.sandbox_id == *sandbox_id).then_some(claim.as_ref())
+    }
+
     pub(super) async fn binding(&self, handle: &RuntimeHandle) -> crate::Result<BoundRuntime> {
         self.state
             .lock()
