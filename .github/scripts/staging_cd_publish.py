@@ -399,6 +399,9 @@ def main():
 
     outcome = {}
     result = run_publication(operation, on_superseded=superseded, component=env.get("CD_COMPONENT"), outcome=outcome)
+    if env.get("CD_WEB_CONTINUITY") == "required" and outcome.get("registry_failure"):
+        registry_operation, status = outcome["registry_failure"]
+        print(f"Web registry authorization refused operation={registry_operation} http_status={status}", flush=True)
     # run_private has restored the public descriptors; only fixed stage records
     # cross that boundary, including the failing phase on an unsuccessful run.
     component = env.get("CD_COMPONENT")

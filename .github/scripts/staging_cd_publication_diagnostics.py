@@ -33,10 +33,19 @@ class ImageCommandRefusal(Refusal):
         # Match only diagnostic tokens; never interpolate remote text or argv.
         registry = len(args) > 1 and args[0] == "skopeo" and args[1] in {"login", "copy", "inspect"}
         diagnostic = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else ""
-        denied = re.search(r"\b(?:UNAUTHORIZED|DENIED|permission_denied|write_package)\b"
-                           r"|(?:status(?: code)?|response status)\s*:?\s*(?:401|403)\b",
-                           diagnostic, re.IGNORECASE)
+        status = re.search(r"(?:status(?: code)?|response status)\s*:?\s*(401|403)\b", diagnostic, re.IGNORECASE)
+        denied = status or re.search(r"\b(?:UNAUTHORIZED|DENIED|permission_denied|write_package)\b",
+                                     diagnostic, re.IGNORECASE)
         self.reason = "registry_denied" if registry and denied else "command_failed"
+        self.registry_failure = None
+        if self.reason == "registry_denied":
+            operation = args[1]
+            if operation == "copy" and len(args) >= 4:
+                if args[-2].startswith("docker://"):
+                    operation = "pull"
+                elif args[-1].startswith("docker://"):
+                    operation = "push"
+            self.registry_failure = (operation, status[1] if status else "unknown")
         super().__init__("Image operation failed; captured output is private")
 
 
@@ -94,6 +103,11 @@ def run_publication(operation, *, on_superseded=None, component=None, outcome=No
         except Exception as error:
             diagnostics.reason = diagnostics.classify(error)
             diagnostics.site = error_site(error)
+            if outcome is not None and diagnostics.reason == "registry_denied":
+                if isinstance(error, ImageCommandRefusal):
+                    outcome["registry_failure"] = error.registry_failure
+                elif isinstance(error.__cause__, urllib.error.HTTPError):
+                    outcome["registry_failure"] = ("read", str(error.__cause__.code))
             raise
 
     status = run_private(guarded, None, subject="publication", explain=False)
