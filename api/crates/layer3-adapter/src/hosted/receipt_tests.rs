@@ -28,6 +28,7 @@ enum Corruption {
     Credential,
     WorkspacePath,
     WorkspaceCommit,
+    WorkspaceFailure(WireOperation),
     SetupHash,
     WorktreePath,
     WorktreeRemovalIdentity,
@@ -85,6 +86,17 @@ impl CorruptingBackend {
             }
             (Corruption::WorkspaceCommit, ResponseFrame::PrepareWorkspace(receipt)) => {
                 receipt.resolved_commit = "A".repeat(64);
+            }
+            (
+                Corruption::WorkspaceFailure(operation),
+                response @ ResponseFrame::PrepareWorkspace(_),
+            ) => {
+                *response = ResponseFrame::Failure(crate::wire::WireFailure {
+                    operation,
+                    code: "unsupported_fixture_code".into(),
+                    detail: "opaque fixture detail".into(),
+                    retryable: false,
+                });
             }
             (Corruption::SetupHash, ResponseFrame::WorkspaceSetup(receipt)) => {
                 receipt.commands[0].stdout_sha256 = "A".repeat(64);
@@ -738,4 +750,58 @@ async fn corrupt_outer_fences_are_rejected_and_higher_retries_do_not_repeat_effe
         )
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn workspace_prepare_observation_distinguishes_wire_local_and_receipt_failures() {
+    use crate::workspace_prepare_observation::{observe, Code, Observation, Stage};
+
+    let backend = Arc::new(CorruptingBackend::default());
+    let adapter = CodexAdapter::new(backend.clone(), CodexSandboxSpec::default());
+    let (handle, _) = ready_runtime(&adapter, "sbx-diagnostic", "diagnostic").await;
+    let mut request = WorkspaceRequest::new(
+        "workspace:wks-diagnostic:prepare:v1",
+        "wks-diagnostic",
+        "diagnostic",
+        WorkspaceSource::Init,
+    );
+    for (corruption, expected) in [
+        (
+            Corruption::WorkspaceFailure(WireOperation::PrepareWorkspace),
+            Some(Observation {
+                stage: Stage::PrepareRpc,
+                code: Code::Unknown,
+                wire_retryable: Some(false),
+            }),
+        ),
+        (Corruption::WorkspaceFailure(WireOperation::Install), None),
+        (
+            Corruption::WorkspacePath,
+            Some(Observation {
+                stage: Stage::ReceiptValidation,
+                code: Code::InvalidReceipt,
+                wire_retryable: None,
+            }),
+        ),
+    ] {
+        backend.corrupt_next(corruption);
+        let (result, observation) = observe(adapter.prepare_workspace(&handle, &request)).await;
+        rejected(result);
+        assert_eq!(observation, expected);
+    }
+    let missing = RuntimeHandle::new("missing-runtime");
+    let (result, observation) = observe(adapter.prepare_workspace(&missing, &request)).await;
+    assert!(result.is_err());
+    assert_eq!(
+        observation,
+        Some(Observation {
+            stage: Stage::RuntimeInspection,
+            code: Code::Local,
+            wire_retryable: None,
+        })
+    );
+    request.clone_depth = 0;
+    let (result, observation) = observe(adapter.prepare_workspace(&handle, &request)).await;
+    rejected(result);
+    assert_eq!(observation, None);
 }
