@@ -68,6 +68,14 @@ pub async fn capabilities(State(service): State<ConnectionService>, _creator: Cr
                 if let Some(capability) = service.management.providers.turn_trace_capability() {
                     features.push(capability.into());
                 }
+                if service
+                    .tools
+                    .routed_replies
+                    .as_ref()
+                    .is_some_and(|routed| routed.accepted_answer_receipts_enabled())
+                {
+                    features.push("accepted_answer_delivery_receipts_v1".into());
+                }
                 features
             },
             relay_authoring: Some(super::relay_capabilities::view(&service.management)),

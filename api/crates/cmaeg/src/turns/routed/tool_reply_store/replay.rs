@@ -15,6 +15,31 @@ impl ReplyStore {
             .and_then(|attempt| attempt.receipt))
     }
 
+    pub(in crate::turns::routed) async fn recover_answer(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        operation: &str,
+        content_hash: &str,
+    ) -> Result<Option<StoredReceipt>, ExecutionError> {
+        let record = self.load(plan, target).await?;
+        if !record.operation_keys.contains(operation) {
+            return Ok(None);
+        }
+        let ops = OperationStore(self.0.clone());
+        if let Some(receipt) = ops
+            .retained_receipt(&record, operation, content_hash)
+            .await?
+        {
+            return Ok(Some(receipt));
+        }
+        let attempt = record.keyed_attempt(operation)?;
+        if attempt.content_hash.as_deref() != Some(content_hash) {
+            return Err(ExecutionError::IdempotencyConflict);
+        }
+        ops.recover_answer(&self.1, &record, attempt).await
+    }
+
     pub async fn replay(
         &self,
         plan: &AdmittedPlan,
@@ -31,11 +56,7 @@ impl ReplyStore {
                 {
                     return Ok(Some(Admission::Replay(receipt)));
                 }
-                let attempt = record
-                    .tool
-                    .as_ref()
-                    .filter(|attempt| attempt.operation == operation)
-                    .ok_or(ExecutionError::Corrupt)?;
+                let attempt = record.keyed_attempt(operation)?;
                 if attempt.content_hash.as_deref() != Some(content_hash) {
                     return Err(ExecutionError::IdempotencyConflict);
                 }

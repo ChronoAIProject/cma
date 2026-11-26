@@ -10,8 +10,34 @@ impl ReplyStore {
         content_hash: String,
     ) -> Result<Admission, ExecutionError> {
         self.0.require_reply_open(plan, target).await?;
-        self.admit_keyed_inner(plan, target, operation, content_hash, true, true)
-            .await
+        self.admit_keyed_inner(
+            plan,
+            target,
+            (operation, content_hash, None),
+            Kind::Tool,
+            true,
+            true,
+        )
+        .await
+    }
+    pub async fn admit_delayed_answer(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        operation: String,
+        content_hash: String,
+        answer: &AcceptedAnswerIdentity,
+    ) -> Result<Admission, ExecutionError> {
+        self.0.require_reply_open(plan, target).await?;
+        self.admit_keyed_inner(
+            plan,
+            target,
+            (operation, content_hash, Some(answer)),
+            Kind::Tool,
+            true,
+            true,
+        )
+        .await
     }
     pub async fn recover_delayed(
         &self,
@@ -27,6 +53,24 @@ impl ReplyStore {
             .await?;
         if let Some(Admission::Replay(receipt)) = replay {
             return Ok(receipt);
+        }
+        if let Some(attempt) = [&record.tool, &record.automatic]
+            .into_iter()
+            .flatten()
+            .find(|attempt| attempt.operation == operation)
+            .filter(|attempt| attempt.content_hash.as_deref() == Some(content_hash))
+        {
+            if let Some(receipt) = OperationStore(self.0.clone())
+                .recover_answer(&self.1, &record, attempt)
+                .await?
+            {
+                return self
+                    .0
+                    .receipts(operation, &record.owner, record.retained_until)
+                    .load(&receipt)
+                    .await
+                    .map_err(|_| ExecutionError::Unavailable);
+            }
         }
         let stored = retained.cloned().unwrap_or_else(|| {
             crate::delivery::durable::receipt_for(DeliveryOutcome::Unknown {

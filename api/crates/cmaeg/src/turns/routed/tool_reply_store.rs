@@ -3,7 +3,7 @@
 use super::{
     storage,
     tool_operation::{valid_hash, OperationStore},
-    ExecutionError, Journal,
+    AcceptedAnswerIdentity, ExecutionError, Journal,
 };
 use crate::replicas::partition::PartitionLease;
 use crate::{
@@ -66,6 +66,15 @@ pub(super) struct Record {
     pub(super) automatic: Option<Attempt>,
     #[serde(skip)]
     pub(super) version: u64,
+}
+impl Record {
+    fn keyed_attempt(&self, operation: &str) -> Result<&Attempt, ExecutionError> {
+        [&self.tool, &self.automatic]
+            .into_iter()
+            .flatten()
+            .find(|attempt| attempt.operation == operation)
+            .ok_or(ExecutionError::Corrupt)
+    }
 }
 #[derive(Clone)]
 pub(super) struct ReplyClaim {
@@ -252,19 +261,28 @@ impl ReplyStore {
         self.admit_keyed_inner(
             plan,
             target,
-            operation,
-            content_hash,
+            (operation, content_hash, None),
+            Kind::Tool,
             self.0.partitions.is_some(),
             false,
         )
         .await
     }
+    pub async fn admit_keyed_answer(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        key: (String, String, Option<&AcceptedAnswerIdentity>),
+    ) -> Result<Admission, ExecutionError> {
+        self.admit_keyed_inner(plan, target, key, Kind::Automatic, true, false)
+            .await
+    }
     async fn admit_keyed_inner(
         &self,
         plan: &AdmittedPlan,
         target: &StoredTarget,
-        operation: String,
-        content_hash: String,
+        (operation, content_hash, answer): (String, String, Option<&AcceptedAnswerIdentity>),
+        kind: Kind,
         preserve_legacy: bool,
         allow_closed: bool,
     ) -> Result<Admission, ExecutionError> {
@@ -276,11 +294,7 @@ impl ReplyStore {
             {
                 return Ok(Admission::Replay(receipt));
             }
-            let attempt = record
-                .tool
-                .as_ref()
-                .filter(|attempt| attempt.operation == operation)
-                .ok_or(ExecutionError::Corrupt)?;
+            let attempt = record.keyed_attempt(&operation)?;
             if attempt.content_hash.as_ref() != Some(&content_hash) {
                 return Err(ExecutionError::IdempotencyConflict);
             }
@@ -310,13 +324,17 @@ impl ReplyStore {
             return Err(ExecutionError::OperationLimit);
         }
         record.operation_keys.insert(operation.clone());
-        record.tool = Some(Attempt {
+        let attempt = Attempt {
             claim: uuid::Uuid::new_v4().to_string(),
-            operation,
+            operation: operation.clone(),
             content_hash: Some(content_hash),
             until: (self.0.clock)() + 30,
             receipt: None,
-        });
+        };
+        match kind {
+            Kind::Tool => record.tool = Some(attempt),
+            Kind::Automatic => record.automatic = Some(attempt),
+        }
         if storage::bytes(&record)?.len() > 40 * 1024 {
             return Err(ExecutionError::OperationLimit);
         }
@@ -334,11 +352,11 @@ impl ReplyStore {
         // Only the CAS winner creates a retained key record; failed competing
         // admissions cannot consume records outside the 64-operation bound.
         OperationStore(self.0.clone())
-            .prepare(&self.1, &record, record.tool.as_ref().unwrap())
+            .prepare(&self.1, &record, record.keyed_attempt(&operation)?, answer)
             .await?;
         Ok(Admission::Claimed(Box::new(ReplyClaim {
             record,
-            kind: Kind::Tool,
+            kind,
             partition: self.1.clone(),
         })))
     }

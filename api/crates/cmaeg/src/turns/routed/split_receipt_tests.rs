@@ -113,17 +113,35 @@ async fn partial_split_receipt_replays_after_restart_without_new_delivery_and_mi
 
 #[tokio::test]
 async fn automatic_partial_split_keeps_receipt_without_acknowledgement_or_resend() {
-    check_automatic_partial_split(false).await;
+    check_automatic_partial_split(false, None).await;
 }
 
 #[tokio::test]
 async fn automatic_partial_split_recovers_paged_receipt_after_checkpoint_loss() {
-    check_automatic_partial_split(true).await;
+    check_automatic_partial_split(true, None).await;
 }
 
-async fn check_automatic_partial_split(lose_checkpoint: bool) {
+#[tokio::test]
+async fn rejected_later_part_remains_unresolved_on_delivery_and_replay() {
+    check_automatic_partial_split(
+        false,
+        Some(DeliveryOutcome::Rejected {
+            reason: "fixture_later_part_refusal".into(),
+        }),
+    )
+    .await;
+}
+
+async fn check_automatic_partial_split(
+    lose_checkpoint: bool,
+    final_outcome: Option<DeliveryOutcome>,
+) {
     let h = Harness::new().await;
     let expected = partial(&h);
+    let mut platform_receipt = expected.clone();
+    if let Some(outcome) = final_outcome {
+        platform_receipt.delivery = outcome;
+    }
     h.setup.server.memory.clock.fetch_add(31, Ordering::SeqCst);
     let mut lease = accepted(&h.setup).await;
     let (delivery, mut rx) = lane(&h.setup);
@@ -145,7 +163,7 @@ async fn check_automatic_partial_split(lose_checkpoint: bool) {
                     .server
                     .fault(h.setup.target().id.clone(), false, true);
             }
-            reply.receipt.send(expected.clone()).unwrap();
+            reply.receipt.send(platform_receipt).unwrap();
         }
     );
     if lose_checkpoint {
@@ -202,6 +220,13 @@ async fn check_automatic_partial_split(lose_checkpoint: bool) {
         storage::bytes(&expected).unwrap()
     );
     assert!(!state.delivery.as_ref().unwrap().status.settled());
+    assert_eq!(
+        ReplyStore(h.setup.journal().clone(), None)
+            .status(&h.setup.plan, h.setup.target())
+            .await
+            .unwrap(),
+        ToolReplyStatus::Unknown
+    );
     assert!(rx.try_recv().is_err());
     assert!(restarted_rx.try_recv().is_err());
 }

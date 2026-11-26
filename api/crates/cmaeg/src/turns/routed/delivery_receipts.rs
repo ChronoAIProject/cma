@@ -1,5 +1,7 @@
 //! Persist exact delivery receipts before acknowledging a provider cursor.
 use super::{
+    answer_dispatch::AnswerDispatch,
+    answer_identity::FrameOperation,
     delivery_state::DeliveryStatus,
     dispatcher::{admission_error, current_target},
     storage,
@@ -45,18 +47,31 @@ impl RoutedDelivery {
         plan: &AdmittedPlan,
         target: &StoredTarget,
         lease: &mut Lease,
-        operation: &str,
+        operation: &FrameOperation,
     ) -> Result<Option<DeliveryStatus>, ExecutionError> {
         let store = ReplyStore(self.journal.clone(), lease.partition.clone());
-        let Some(stored) = store.automatic_receipt(plan, target, operation).await? else {
+        let Some(stored) = operation.recover(&store, plan, target).await? else {
             return Ok(None);
         };
-        let receipt = self
-            .journal
-            .receipts(operation, &lease.state.owner, lease.state.retained_until)
+        let receipts = self.journal.receipts(
+            &operation.id,
+            &lease.state.owner,
+            lease.state.retained_until,
+        );
+        let mut receipt = receipts
             .load(&stored)
             .await
             .map_err(|_| ExecutionError::Unavailable)?;
+        let stored = match normalize_partial_refusal(&receipt) {
+            Some(normalized) => {
+                receipt = normalized;
+                receipts
+                    .retain(&receipt)
+                    .await
+                    .map_err(|_| ExecutionError::Unavailable)?
+            }
+            None => stored,
+        };
         // The reply guard can settle before the cursor checkpoint is written.
         // The operation already binds the target, response and exact effect.
         let status = receipt_status(Some(stored), Some(&receipt));
@@ -155,11 +170,14 @@ impl RoutedDelivery {
         operation: &str,
         automatic: Option<&ReplyClaim>,
         receipt: Option<&IntentReceipt>,
+        dispatch: AnswerDispatch,
     ) -> Result<bool, ExecutionError> {
+        let normalized = receipt.and_then(normalize_partial_refusal);
+        let receipt = normalized.as_ref().or(receipt);
         let stored = match (automatic, receipt) {
             (Some(claim), Some(receipt)) => Some(
                 ReplyStore(self.journal.clone(), lease.partition.clone())
-                    .finish(claim, receipt)
+                    .finish_observed(claim, receipt, dispatch)
                     .await?,
             ),
             (None, Some(receipt)) => Some(
@@ -178,15 +196,34 @@ impl RoutedDelivery {
     }
 }
 
+fn normalize_partial_refusal(receipt: &IntentReceipt) -> Option<IntentReceipt> {
+    if receipt.message_parts.is_empty()
+        || matches!(
+            receipt.delivery,
+            DeliveryOutcome::Confirmed { .. } | DeliveryOutcome::Unknown { .. }
+        )
+    {
+        return None;
+    }
+    // Older checkpoint readers accept Unknown for an incomplete multipart send.
+    let mut normalized = receipt.clone();
+    normalized.delivery = DeliveryOutcome::Unknown {
+        reason: "partial_delivery".into(),
+    };
+    Some(normalized)
+}
+
 fn receipt_status(
     stored: Option<StoredReceipt>,
     receipt: Option<&IntentReceipt>,
 ) -> DeliveryStatus {
-    let unresolved = receipt.is_some_and(|value| {
-        matches!(value.delivery, DeliveryOutcome::Unknown { .. })
-            || (value.message_parts.is_empty()
-                && storage::bytes(value).map_or(true, |bytes| bytes.len() > INLINE_LIMIT))
-    });
+    let unresolved = stored
+        .as_ref()
+        .is_some_and(StoredReceipt::requires_reconciliation)
+        || receipt.is_some_and(|value| {
+            value.message_parts.is_empty()
+                && storage::bytes(value).map_or(true, |bytes| bytes.len() > INLINE_LIMIT)
+        });
     if !unresolved {
         return DeliveryStatus::Settled { receipt: stored };
     }

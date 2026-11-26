@@ -236,6 +236,10 @@ impl RoutedTargetExecutor {
                 // rollback, without regenerating IDs or requiring new headers.
                 projection.retain_trace_contract(&mut frame);
                 journal.guard(lease).await?;
+                super::AcceptedAnswerIdentity::from_frame(
+                    &frame,
+                    journal.accepted_answer_receipts,
+                )?;
                 let effect = if let Some(effect) = projection.pending_effect(&frame)? {
                     effect
                 } else {

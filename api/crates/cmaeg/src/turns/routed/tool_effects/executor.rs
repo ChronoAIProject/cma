@@ -18,10 +18,7 @@ use crate::{
     turns::routed::{dispatcher::admission_error, ExecutionError, RoutedToolReplies},
 };
 use futures_util::future::BoxFuture;
-use std::{
-    sync::{atomic::AtomicBool, Arc},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 fn is_no_send(outcome: &DeliveryOutcome) -> bool {
     matches!(
@@ -110,6 +107,7 @@ impl Handler {
                 &payload.capability,
                 plan,
                 target,
+                root.answer.as_ref(),
             )
             .await;
         let current = match current {
@@ -132,14 +130,29 @@ impl Handler {
             Err(error) => return Err(error),
         };
         let replies = ReplyStore(self.0.journal.clone(), Some(token.clone()));
-        let admission = replies
-            .admit_delayed(
-                plan,
-                target,
-                root.operation.clone(),
-                root.content_hash.clone(),
-            )
-            .await;
+        let admission = match &root.answer {
+            Some(answer) => {
+                replies
+                    .admit_delayed_answer(
+                        plan,
+                        target,
+                        root.operation.clone(),
+                        root.content_hash.clone(),
+                        answer,
+                    )
+                    .await
+            }
+            None => {
+                replies
+                    .admit_delayed(
+                        plan,
+                        target,
+                        root.operation.clone(),
+                        root.content_hash.clone(),
+                    )
+                    .await
+            }
+        };
         let claim = match admission {
             Ok(Admission::Claimed(claim)) => claim,
             Ok(Admission::Pending) => {
@@ -210,7 +223,7 @@ impl Handler {
             scope: scope.clone(),
             channel_version: current.version,
             deadline: tokio::time::Instant::now() + Duration::from_secs(20),
-            cancelled: AtomicBool::new(false),
+            boundary: Default::default(),
         });
         let cancel = Cancel(gate.clone());
         let receipt = scope
@@ -222,7 +235,7 @@ impl Handler {
                         current,
                         payload.capability.event,
                         payload.message,
-                        gate,
+                        gate.clone(),
                         ReplySource::Tool,
                     ),
                 ),
@@ -235,9 +248,10 @@ impl Handler {
                 reason: "delayed_reply_deadline".into(),
             })
         });
+        let dispatch = gate.boundary.close();
         drop(cancel);
         super::super::live_scope::receipt(async {
-            replies.finish(&claim, &receipt).await?;
+            replies.finish_observed(&claim, &receipt, dispatch).await?;
             self.settle(&store, &mut root, token, receipt).await
         })
         .await
@@ -258,7 +272,7 @@ impl Handler {
             .await
             .map_err(|_| ExecutionError::Unavailable)?;
         let no_send = is_no_send(&stored.delivery);
-        let unknown = super::model::unresolved(&stored);
+        let unknown = stored.requires_reconciliation();
         let next = if unknown {
             State::Unknown {
                 receipt: Some(stored),

@@ -38,7 +38,7 @@ use super::{
     dispatcher::{admission_error, current_target},
     model::delivery_event,
     tool_replies::same_event,
-    ExecutionError, Phase, RoutedToolReplies, TargetState,
+    AcceptedAnswerIdentity, ExecutionError, Phase, RoutedToolReplies, TargetState,
 };
 use crate::{
     auth::AgentCaller,
@@ -67,12 +67,38 @@ impl RoutedToolReplies {
         key: &str,
         message: OutboundMessage,
     ) -> Result<Option<IntentReceipt>, ExecutionError> {
+        self.reply_delayed_inner(caller, capability, key, message, None)
+            .await
+    }
+
+    pub(crate) async fn reply_delayed_answer(
+        &self,
+        caller: AgentCaller,
+        capability: &ReplyTargetPayload,
+        answer: AcceptedAnswerIdentity,
+        message: OutboundMessage,
+    ) -> Result<IntentReceipt, ExecutionError> {
+        if !self.journal.accepted_answer_receipts {
+            return Err(ExecutionError::Unsupported);
+        }
+        self.reply_delayed_inner(caller, capability, "", message, Some(answer))
+            .await?
+            .ok_or(ExecutionError::Unsupported)
+    }
+
+    async fn reply_delayed_inner(
+        &self,
+        caller: AgentCaller,
+        capability: &ReplyTargetPayload,
+        key: &str,
+        message: OutboundMessage,
+        answer: Option<AcceptedAnswerIdentity>,
+    ) -> Result<Option<IntentReceipt>, ExecutionError> {
         if self.journal.partitions.is_none() {
             return Ok(None);
         }
-        if key.is_empty()
-            || key.len() > 128
-            || !key.bytes().all(|b| (33..=126).contains(&b))
+        if (answer.is_none()
+            && (key.is_empty() || key.len() > 128 || !key.bytes().all(|b| (33..=126).contains(&b))))
             || message.structured_content.is_some()
         {
             return Err(ExecutionError::Invalid);
@@ -111,21 +137,25 @@ impl RoutedToolReplies {
         {
             return Err(ExecutionError::Corrupt);
         }
-        self.authorize_delayed(caller, capability, &plan, target)
+        self.authorize_delayed(caller, capability, &plan, target, answer.as_ref())
             .await?;
-        let legacy = crate::tools::reply_targets::receipts::Store::new(
-            self.journal.records.clone(),
-            self.journal.keys.clone(),
-        );
-        if let Some(receipt) = legacy
-            .lookup_target(capability, key, &message, &plan.identity.owner)
-            .await
-            .map_err(|error| match error.code {
-                cmaeg_core::problem::ProblemCode::Conflict => ExecutionError::IdempotencyConflict,
-                _ => ExecutionError::Unavailable,
-            })?
-        {
-            return Ok(Some(receipt));
+        if answer.is_none() {
+            let legacy = crate::tools::reply_targets::receipts::Store::new(
+                self.journal.records.clone(),
+                self.journal.keys.clone(),
+            );
+            if let Some(receipt) = legacy
+                .lookup_target(capability, key, &message, &plan.identity.owner)
+                .await
+                .map_err(|error| match error.code {
+                    cmaeg_core::problem::ProblemCode::Conflict => {
+                        ExecutionError::IdempotencyConflict
+                    }
+                    _ => ExecutionError::Unavailable,
+                })?
+            {
+                return Ok(Some(receipt));
+            }
         }
         let payload = Payload {
             capability: capability.clone(),
@@ -133,7 +163,10 @@ impl RoutedToolReplies {
             message,
         };
         let store = Store(self.journal.clone());
-        let root = store.admit(&plan, target, key, &payload).await?;
+        let root = match answer {
+            Some(answer) => store.admit_answer(&plan, target, &payload, answer).await?,
+            None => store.admit(&plan, target, key, &payload).await?,
+        };
         self.journal.require_reply_open(&plan, target).await?;
         if let Some(receipt) = store.receipt(&root).await? {
             return Ok(Some(receipt));
@@ -165,6 +198,7 @@ impl RoutedToolReplies {
         capability: &ReplyTargetPayload,
         plan: &AdmittedPlan,
         target: &StoredTarget,
+        answer: Option<&AcceptedAnswerIdentity>,
     ) -> Result<Arc<crate::channels::resolver::ResolvedChannel>, ExecutionError> {
         self.journal.require_reply_open(plan, target).await?;
         let current = current_target(self.authority.as_ref(), plan, target).await?;
@@ -201,6 +235,23 @@ impl RoutedToolReplies {
         })?;
         if !same_event(&delivery_event(plan, target), &capability.event, true) {
             return Err(ExecutionError::AuthorityChanged);
+        }
+        if let Some(answer) = answer {
+            super::journal::validate(&execution, plan, target)?;
+            if !matches!(&execution.phase,
+                Phase::Accepted { response_id, .. } | Phase::Completed { response_id, .. }
+                if response_id == &answer.response_id)
+                || !matches!(
+                    self.journal
+                        .retained_body(&execution)
+                        .await?
+                        .delivery
+                        .destination,
+                    cmaeg_core::channel::ReplyChoice::Origin
+                )
+            {
+                return Err(ExecutionError::AuthorityChanged);
+            }
         }
         Ok(current)
     }
