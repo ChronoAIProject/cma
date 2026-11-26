@@ -73,7 +73,9 @@ pub(super) async fn apply_observed(
         {
             return Err(CommandLedgerError::StaleClaim.into());
         }
-        require_unheld_parent(store, &agent, session).await?;
+        if !worker_apply::write_parent_fence(store, &agent, session).await? {
+            return Err(CommandLedgerError::Conflict.into());
+        }
         store
             .fence_agent_effect(&agent.id, session)
             .await
@@ -97,8 +99,8 @@ pub(super) async fn apply_observed(
     let written =
         evidence.apply_with_continuation_retry(&mut command, &mut lane, &agent, retry_current)?;
     if written {
-        if !source_deferred {
-            require_unheld_parent(store, &agent, session).await?;
+        if !source_deferred && !worker_apply::fence_parent(store, Some(&agent), session).await? {
+            return Err(CommandLedgerError::Conflict.into());
         }
         worker_apply::write(store, &command, revision, &lane, session).await?;
     }
@@ -110,18 +112,6 @@ pub(super) async fn apply_observed(
         Outcome::Advanced
     };
     Ok((command, outcome))
-}
-
-async fn require_unheld_parent(
-    store: &MongoSandboxStore,
-    agent: &layer2_core::sandbox::Agent,
-    session: &mut ClientSession,
-) -> Result<(), ApplyError> {
-    if worker_apply::fence_parent(store, Some(agent), session).await? {
-        Ok(())
-    } else {
-        Err(CommandLedgerError::Conflict.into())
-    }
 }
 
 async fn legacy_evidence(
