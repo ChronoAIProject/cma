@@ -347,11 +347,14 @@ jobs:
               git diff --quiet "$PREVIOUS_SHA" "$GITHUB_SHA" -- \
                 .dockerignore api/Cargo.toml api/Cargo.lock api/rust-toolchain.toml \
                 api/crates/cma-image-manager/Dockerfile api/crates/cma-journey-probe \
-                .github/workflows/staging-cd.yml .github/scripts/staging_cd_journey_probe.py \
-                .github/scripts/staging_cd_registry.py .github/scripts/staging_cd_build.py \
+                .github/workflows/staging-cd.yml .github/image-secret-classifications \
                 .github/scripts/staging_cd_transport.sh .github/scripts/install-image-gitleaks.sh \
-                .github/scripts/image-secret-scanner .github/scripts/image_secret_gate.py \
-                .github/scripts/image_scanner_policy.py; then
+                .github/scripts/image-secret-scanner .github/scripts/deployables.py .github/scripts/deployables.json \
+                .github/scripts/ci_tracks/deployable_manifest.py .github/scripts/eg_schema.py \
+                .github/scripts/ci_outcome.py .github/scripts/ci_outcomes.json \
+                .github/scripts/ci_retry.py .github/scripts/os_refresh_key.py \
+                ':(glob).github/scripts/staging_cd_*.py' ':(glob).github/scripts/image_*' \
+                ':(exclude,glob).github/scripts/*_tests.py'; then
             changed=false
           fi
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
