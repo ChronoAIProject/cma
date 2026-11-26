@@ -226,6 +226,19 @@ def diagnose(root, work, evidence):
     members = [p for p in layers.rglob("*") if p.is_file() and not p.is_symlink()]
     evidence["layer_bytes"] = sum(p.stat().st_size for p in members)
     evidence["layer_members"] = len(members)
+    directory_shapes = []
+    known = {"blobs", "sha256", "ingest", "tmp", "temp", "metadata", "refs", "snapshots"}
+    for path in sorted(layers.rglob("*")):
+        if not path.is_dir() and not path.is_symlink():
+            continue
+        parts = path.relative_to(layers).parts
+        if parts in (("blobs",), ("blobs", "sha256"), ("ingest",)) and not path.is_symlink():
+            continue
+        directory_shapes.append({"shape": [part if part in known else "opaque" for part in parts],
+                                 "symlink": path.is_symlink(),
+                                 "empty": path.is_dir() and not path.is_symlink() and not any(path.iterdir())})
+    evidence["unexpected_directory_shapes"] = directory_shapes[:64]
+    evidence["unexpected_directory_count"] = len(directory_shapes)
     # The validator is unmodified. Report only its fixed literal refusal,
     # never names, arbitrary exception messages, or OCI metadata payloads.
     classify = '''import ast, json, sys
