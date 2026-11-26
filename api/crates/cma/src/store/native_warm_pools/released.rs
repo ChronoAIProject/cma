@@ -62,25 +62,6 @@ impl MongoNativeWarmPools {
             .map_err(|_| WarmPoolError::Unavailable)?;
         Ok(true)
     }
-    pub(crate) async fn retain_release_authority(
-        &self,
-        target: &PoolTarget,
-    ) -> Result<(), WarmPoolError> {
-        let mut filter = self.scope();
-        filter.extend(doc! {"_id": &target.id, "activated_at": {"$type": "date"},
-        "retiring": {"$ne": true}, "retired": {"$ne": true}});
-        self.check_fenced_write(
-            self.targets
-                .update_one(
-                    filter,
-                    doc! {
-                        "$set": {"durable_release_authority": true},
-                    },
-                )
-                .await,
-        )
-        .await
-    }
     pub(crate) async fn historical_candidate(
         &self,
         machine: bool,
@@ -131,14 +112,26 @@ impl MongoNativeWarmPools {
         machine: bool,
         image: &str,
     ) -> Result<(), WarmPoolError> {
+        self.verify_bootstrap_in(machine, image, None).await
+    }
+
+    pub(super) async fn verify_bootstrap_in(
+        &self,
+        machine: bool,
+        image: &str,
+        mut session: Option<&mut ClientSession>,
+    ) -> Result<(), WarmPoolError> {
         let mut scope = retirement::release_scope(self, machine);
         scope.insert("activated_at", doc! {"$type": "date"});
-        let Some(latest) = self
+        let query = self
             .targets
             .find_one(scope.clone())
-            .sort(doc! {"activated_at": -1})
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?
+            .sort(doc! {"activated_at": -1});
+        let Some(latest) = (match session.as_deref_mut() {
+            Some(session) => query.session(session).await,
+            None => query.await,
+        })
+        .map_err(|_| WarmPoolError::Unavailable)?
         else {
             return Ok(());
         };
@@ -149,12 +142,13 @@ impl MongoNativeWarmPools {
             "activated_at": latest.activated_at,
             "plan.spec.image.uri": {"$ne": image},
         });
-        if self
-            .targets
-            .find_one(scope)
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?
-            .is_some()
+        let query = self.targets.find_one(scope);
+        if (match session {
+            Some(session) => query.session(session).await,
+            None => query.await,
+        })
+        .map_err(|_| WarmPoolError::Unavailable)?
+        .is_some()
         {
             return Err(WarmPoolError::Conflict);
         }

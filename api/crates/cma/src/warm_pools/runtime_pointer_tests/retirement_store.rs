@@ -18,6 +18,8 @@ pub(super) struct RetirementStore {
     store: Arc<MongoNativeWarmPools>,
     hold: Mutex<Option<RetirementHold>>,
     activation: Mutex<Option<RetirementHold>>,
+    selection: Mutex<Option<RetirementHold>>,
+    selected: Mutex<Option<RetirementHold>>,
 }
 
 impl RetirementStore {
@@ -26,14 +28,28 @@ impl RetirementStore {
             store,
             hold: Mutex::new(None),
             activation: Mutex::new(None),
+            selection: Mutex::new(None),
+            selected: Mutex::new(None),
         }
     }
 
     pub(super) fn hold_activation(&self, id: &str) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        Self::install_hold(&self.activation, id)
+    }
+
+    /// Capture the default target list returned after activation, before the
+    /// controller publishes the first pointer from the selected target.
+    pub(super) fn hold_selection(&self, id: &str) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        Self::install_hold(&self.selection, id)
+    }
+
+    fn install_hold(
+        slot: &Mutex<Option<RetirementHold>>,
+        id: &str,
+    ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
         let (reached, observation) = oneshot::channel();
         let (release, resume) = oneshot::channel();
-        assert!(self
-            .activation
+        assert!(slot
             .lock()
             .unwrap()
             .replace(RetirementHold {
@@ -49,19 +65,7 @@ impl RetirementStore {
         &self,
         plan: &NativePoolConfiguration,
     ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
-        let (reached, observation) = oneshot::channel();
-        let (release, resume) = oneshot::channel();
-        assert!(self
-            .hold
-            .lock()
-            .unwrap()
-            .replace(RetirementHold {
-                config_sha256: plan.config_sha256.clone(),
-                reached,
-                resume,
-            })
-            .is_none());
-        (observation, release)
+        Self::install_hold(&self.hold, &plan.config_sha256)
     }
 }
 
@@ -93,7 +97,16 @@ impl PoolTargetStore for RetirementStore {
             gate.reached.send(()).expect("activation observer dropped");
             gate.resume.await.expect("activation was not released");
         }
-        self.store.activate(id).await
+        self.store.activate(id).await?;
+        if let Some(gate) = self
+            .selection
+            .lock()
+            .unwrap()
+            .take_if(|gate| gate.config_sha256 == id)
+        {
+            *self.selected.lock().unwrap() = Some(gate);
+        }
+        Ok(())
     }
 
     async fn default_pin_conflicts(
@@ -140,7 +153,13 @@ impl PoolTargetStore for RetirementStore {
     }
 
     async fn list(&self) -> Result<Vec<PoolTarget>, WarmPoolError> {
-        self.store.list().await
+        let rows = self.store.list().await?;
+        let gate = self.selected.lock().unwrap().take();
+        if let Some(gate) = gate {
+            gate.reached.send(()).expect("selection observer dropped");
+            gate.resume.await.expect("selection was not released");
+        }
+        Ok(rows)
     }
 
     async fn find(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {

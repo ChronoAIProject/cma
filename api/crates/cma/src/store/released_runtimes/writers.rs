@@ -102,6 +102,14 @@ impl MongoReleasedRuntimes {
         &self,
         writer: &BootWriter,
     ) -> Result<(), SandboxStoreError> {
+        self.protect_boot_effect_in(writer, None).await
+    }
+
+    pub(in crate::store) async fn protect_boot_effect_in(
+        &self,
+        writer: &BootWriter,
+        session: Option<&mut ClientSession>,
+    ) -> Result<(), SandboxStoreError> {
         let path = format!("writers.{}", writer.incarnation);
         let mut filter =
             doc! {"_id": self.coordination_id(), "document_schema_version": SCHEMA_VERSION};
@@ -121,11 +129,20 @@ impl MongoReleasedRuntimes {
             format!("{path}.expires_at"),
             doc! {"$add":["$$NOW", WRITER_LEASE_MS]},
         );
-        let result = self
-            .coordination()
-            .update_one(filter, vec![doc! {"$set": fields}])
-            .await
-            .map_err(unavailable)?;
+        if session.is_some() {
+            // Force a write even when the preflight and publication share a millisecond.
+            fields.insert(
+                "boot_publication_fence",
+                doc! {"$add": [{"$ifNull": ["$boot_publication_fence", 0_i64]}, 1_i64]},
+            );
+        }
+        let coordination = self.coordination();
+        let update = coordination.update_one(filter, vec![doc! {"$set": fields}]);
+        let result = match session {
+            Some(session) => update.session(session).await,
+            None => update.await,
+        }
+        .map_err(unavailable)?;
         matched(result.matched_count)
     }
 

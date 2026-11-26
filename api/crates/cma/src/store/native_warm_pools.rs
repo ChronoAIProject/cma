@@ -14,6 +14,7 @@ use super::durability::majority_collection;
 use crate::warm_pools::{OperatorReplicas, PoolTarget, PoolTargetStore};
 
 pub(super) const COLLECTION: &str = "native_warm_pool_targets";
+mod activation;
 mod released;
 mod retirement;
 mod schema;
@@ -130,7 +131,7 @@ impl PoolTargetStore for MongoNativeWarmPools {
             .is_some())
     }
     async fn activate(&self, id: &str) -> Result<(), WarmPoolError> {
-        retirement::activate(self, id).await
+        self.activate_target(id).await
     }
     async fn default_pin_conflicts(
         &self,
