@@ -22,6 +22,7 @@ fn startup_loads_bundled_switches_through_their_existing_readers() {
             "CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED=true, ",
             "CHRONO_V2_UI_TRANSPORT_ENABLED=false, ",
             "CHRONO_AGENT_MODEL_CREDIT_REQUIRED=true, ",
+            "CHRONO_AGENT_SESSION_GUIDANCE_V8_ENABLED=true, ",
             "CHRONO_AM_BATCH_OWNERSHIP_RENEWAL=true",
         ),
     )])
@@ -30,6 +31,7 @@ fn startup_loads_bundled_switches_through_their_existing_readers() {
     assert!(config.rate_limits.response_input_tier_enabled);
     assert!(!config.features.v2_ui_transport);
     assert!(config.features.model_credit_required);
+    assert!(config.features.session_guidance_v8);
     assert!(config.features.batch_ownership_renewal);
 }
 
