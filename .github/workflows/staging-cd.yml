@@ -346,7 +346,7 @@ jobs:
           if git cat-file -e "${PREVIOUS_SHA}^{commit}" 2>/dev/null &&
               git diff --quiet "$PREVIOUS_SHA" "$GITHUB_SHA" -- \
                 .dockerignore api/Cargo.toml api/Cargo.lock api/rust-toolchain.toml \
-                api/crates/cma-image-manager/Dockerfile api/crates/cma-journey-probe \
+                api/crates/cma-journey-probe \
                 .github/workflows/staging-cd.yml .github/image-secret-classifications \
                 .github/scripts/staging_cd_transport.sh .github/scripts/install-image-gitleaks.sh \
                 .github/scripts/image-secret-scanner .github/scripts/deployables.py .github/scripts/deployables.json \

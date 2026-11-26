@@ -102,12 +102,20 @@ async fn full_sandbox_quota_is_a_typed_terminal_failure_without_another_admissio
     .unwrap_err();
     assert_eq!(
         error,
-        SandboxServiceError::SandboxLimitReached { limit: 1, live: 1 }
+        SandboxServiceError::SandboxLimitReached {
+            limit: 1,
+            live: 1,
+            usage: Default::default()
+        }
     );
     // Only Unavailable is automatically retried by the lifecycle worker.
     assert!(matches!(
         sandbox_error(error),
-        AgentLifecycleProvisioningError::SandboxLimitReached { limit: 1, live: 1 }
+        AgentLifecycleProvisioningError::SandboxLimitReached {
+            limit: 1,
+            live: 1,
+            ..
+        }
     ));
     assert_eq!(
         store

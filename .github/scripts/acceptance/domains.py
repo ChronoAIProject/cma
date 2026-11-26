@@ -43,7 +43,6 @@ def run(p):
         check(p, "domain_owned_rest_" + str(number), response[0] == 200, response)
     for number, origin in enumerate((CMA_ORIGIN,)):
         for service, route in (("agent", "/agent-manager/openapi.json"),
-                               ("image", "/image-manager/openapi.json"),
                                ("gateway", "/event-gateway/openapi.json")):
             response = p.http.request(origin, route)
             headers = {k.lower(): v for k, v in response[1].items()}

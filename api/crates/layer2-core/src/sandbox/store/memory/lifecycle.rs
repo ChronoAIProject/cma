@@ -52,13 +52,29 @@ impl SandboxAdmissionStore for InMemorySandboxStore {
             .sandboxes
             .values()
             .filter(|sandbox| {
-                sandbox.owner == admission.sandbox.owner && sandbox.retired_at.is_none()
+                sandbox.owner == admission.sandbox.owner
+                    && sandbox.retired_at.is_none()
+                    && !sandbox.retirement_released_owner_slot()
             })
             .count();
         if live >= usize::from(admission.live_limit) {
+            let mut usage = crate::sandbox::SandboxQuotaUsage::default();
+            for sandbox in state.sandboxes.values().filter(|sandbox| {
+                sandbox.owner == admission.sandbox.owner && sandbox.retired_at.is_none()
+            }) {
+                match sandbox.status {
+                    SandboxStatus::Active => usage.active += 1,
+                    SandboxStatus::Retiring if sandbox.retirement_released_owner_slot() => {
+                        usage.retiring_released += 1;
+                    }
+                    SandboxStatus::Retiring => usage.retiring_charged += 1,
+                    _ => {}
+                }
+            }
             return Err(SandboxStoreError::LimitReached {
                 limit: admission.live_limit,
                 live: u16::try_from(live).unwrap_or(u16::MAX),
+                usage,
             });
         }
         let mut sandbox = admission.sandbox;

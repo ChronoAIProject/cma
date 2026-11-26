@@ -67,7 +67,7 @@ fn media_continuation_indexes_refuse_partial_sparse_hidden_and_non_expiring_head
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn optional_media_continuation_storage_has_bounded_scans_original_expiry_and_exact_grants() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_media_heads_{}", uuid::Uuid::new_v4().simple());
     let result = exercise(&uri, &admin.database(&name)).await;

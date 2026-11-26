@@ -209,7 +209,7 @@ def run_fixture():
     try:
         docker("run", "--detach", "--pull=never", "--name", backend, "--network", network,
                "--network-alias", "cma-agent-manager", "--network-alias", "cma-event-gateway",
-               "--network-alias", "cma-image-manager", "--mount", script_mount,
+               "--mount", script_mount,
                python_image, "python", "/fixture.py", "upstream")
         containers.append(backend)
         docker("run", "--detach", "--pull=never", "--name", proxy, "--network", network,

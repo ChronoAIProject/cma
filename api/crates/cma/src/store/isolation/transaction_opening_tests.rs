@@ -121,7 +121,7 @@ async fn barrier_allows_new_agent_index_and_independent_sandbox_write(
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn collectionless_and_indexed_transaction_opening_under_runtime_grants() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let build = admin
         .database("admin")

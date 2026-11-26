@@ -17,7 +17,7 @@ mod rename;
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn persistent_thread_fences_survive_claim_expiry_and_restart_on_real_mongo() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!(
         "cma_thread_fence_contract_{}",

@@ -64,7 +64,7 @@ async fn retiring(h: &Harness) -> (Sandbox, SystemTime) {
 }
 
 #[tokio::test]
-async fn sandbox_retry_budget_survives_worker_replacement_and_probe_success_resets_attempts() {
+async fn retirement_retry_budget_survives_worker_replacement_and_success_resets_attempts() {
     for external in [false, true] {
         let h = Harness::new(vec![], 0, Duration::from_secs(60)).await;
         let (initial, mut now) = retiring(&h).await;
@@ -73,11 +73,9 @@ async fn sandbox_retry_budget_survives_worker_replacement_and_probe_success_rese
             external,
         });
         let delays: &[u64] = if external {
-            &[30, 60, 120, 1800, 1800]
+            &[30, 60, 120]
         } else {
-            &[
-                30, 60, 120, 240, 300, 300, 300, 300, 300, 300, 300, 300, 1800, 1800,
-            ]
+            &[30, 60, 120, 240, 300, 300, 300, 300, 300, 300, 300, 300]
         };
         for (attempt, &delay) in delays.iter().enumerate() {
             let worker = retry_worker(&h, &format!("retry-{attempt}"), true, stopper.clone());
@@ -102,8 +100,8 @@ async fn sandbox_retry_budget_survives_worker_replacement_and_probe_success_rese
             now += Duration::from_secs(delay);
         }
         stopper.fail.store(false, Ordering::SeqCst);
-        let probe = retry_worker(&h, "successful-probe", true, stopper);
-        assert!(probe.run_one(&initial.id, now).await.unwrap());
+        let successor = retry_worker(&h, "successful-successor", true, stopper);
+        assert!(successor.run_one(&initial.id, now).await.unwrap());
         let advanced = h.stored(&initial.id).await;
         assert_eq!(advanced.work.attempts, 0);
         assert_eq!(
@@ -115,7 +113,7 @@ async fn sandbox_retry_budget_survives_worker_replacement_and_probe_success_rese
 }
 
 #[tokio::test]
-async fn disabled_sandbox_policy_keeps_even_security_refusals_pending_at_the_old_interval() {
+async fn disabled_retry_pacing_still_gives_retirement_a_terminal_result() {
     let h = Harness::new(vec![], 0, Duration::from_secs(60)).await;
     let (initial, mut now) = retiring(&h).await;
     let stopper = Arc::new(RetryStopper {
@@ -123,7 +121,7 @@ async fn disabled_sandbox_policy_keeps_even_security_refusals_pending_at_the_old
         external: true,
     });
     let worker = retry_worker(&h, "legacy", false, stopper);
-    for attempt in 1..=14 {
+    for attempt in 1..=3 {
         assert!(worker.run_one(&initial.id, now).await.unwrap());
         let stored = h.stored(&initial.id).await;
         assert_eq!(stored.work.attempts, attempt);
@@ -134,6 +132,14 @@ async fn disabled_sandbox_policy_keeps_even_security_refusals_pending_at_the_old
         assert_eq!(stored.status, SandboxStatus::Retiring);
         now += Duration::from_secs(30);
     }
+    assert!(worker.run_one(&initial.id, now).await.unwrap());
+    let stored = h.stored(&initial.id).await;
+    assert!(stored.retirement_retry_exhausted());
+    assert_eq!(stored.runtime, initial.runtime);
+    assert!(!worker
+        .run_one(&initial.id, now + Duration::from_secs(3600))
+        .await
+        .unwrap());
 }
 
 #[tokio::test]

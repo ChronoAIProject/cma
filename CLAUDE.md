@@ -23,8 +23,7 @@ traffic. A Sandbox is not an Agent: multiple Agents may work concurrently in
 distinct Worktrees inside one Sandbox.
 
 **Consumers.** CMA is a backend service for product frontends and backends.
-Its own `web/` frontend contains the Agent Manager, Image Manager and Event
-Gateway portals, operational dashboard, Trigger publisher, public visitor
+Its own `web/` frontend contains the Agent Manager and Event Gateway portals, operational dashboard, Trigger publisher, public visitor
 journey, and reference client for the public interfaces. The main working
 surface is one Agent conversation in its Worktree, Workspace, and Sandbox.
 There is no terminal plane, separate Chat model, sponsorship, or contribution-specific workflow.
@@ -86,7 +85,7 @@ required by an external protocol.
 - 1.4 **CMA Agent** — the agent (e.g. a codex process) opened in one worktree; one worktree has one and only one agent.
 
 **2. CMA Environment Config (internal persistence)**
-Users select an image and inline Agent settings. Profiles are private immutable
+New configurations use the deployment runtime and inline Agent settings. Profiles are private immutable
 configuration records, not a user creation or marketplace concept. Historical
 profile APIs and records remain compatibility/recovery surfaces; they must not
 be reintroduced into the normal portal journey.
@@ -98,14 +97,12 @@ be reintroduced into the normal portal journey.
 **3. Mutability.** A Sandbox pins its immutable environment at provisioning.
 Owners add Workspaces from inline empty-directory or GitHub configuration and
 Agents from inline settings within its recorded limits. Existing-workspace
-Agent creation retains the parent image and service scope. Image Manager owns
-image builds, immutable versions and private/shared/public visibility.
+Agent creation retains the parent image and service scope.
 
 **4. Interaction.** A user always interacts with one agent, in one worktree, in one workspace, in one sandbox. The research use case is exactly: an agent in a worktree of `/home/cma/trureturing` (cloned from `https://github.com/the-omega-institute/trureturing`) inside a sandbox with the required software installed.
 
 **5. CMA Trigger.** An external button that brings the clicking user to an agent
-**of their own** (never the trigger owner's). New authoring selects an image,
-inline Agent settings and optional GitHub workspace. The backend stores the
+**of their own** (never the trigger owner's). New authoring selects inline Agent settings and optional GitHub workspace. The backend stores the
 immutable target under a trigger id and gives the owner integration snippets
 for web pages and Markdown. The owner lists permitted embedding origins.
 Historical profile-based targets retain their recorded reuse policy for replay.
@@ -137,7 +134,6 @@ api/crates/
   cma/               binary: composition, persistence and production adapters
   cmaeg-core/        pure CMA Event Gateway protocol library
   cmaeg/             CMA Event Gateway service binary
-  cma-image-manager/ independent image build, catalog and sharing service
   cma-service-auth/  technical NyxID transport with per-service sessions
 ```
 
@@ -298,22 +294,18 @@ A dependency edge not in this list is a CI failure, not a review comment.
 
 ### Service extraction in progress
 
-The revised authorized split is Event Gateway, Agent Manager and Image Manager,
-specified in private maintainer guidance. There is no CMA Sandbox Manager.
+The deployed services are Event Gateway and Agent Manager. There is no CMA Sandbox Manager.
 Agent Manager integrates directly with infra-owned agent-sandbox CRDs/controllers,
 including resources, persistent mounts and exact CMA Sandbox/Pod UID authority.
 It never adopts, pauses or reclaims another application's workloads.
 
-Image Manager owns builds, catalog versions, sharing and image lifecycle in
-the configured image registry, using its own
-Google identity. The service names are `cma-agent-manager`,
-`cma-event-gateway` and `cma-image-manager`. Each has independent NyxID
+The service names are `cma-agent-manager` and `cma-event-gateway`. Each has independent NyxID
 permissions, schema and migrations. The current authorized deployment shares the
-existing the configured service database database credential through explicit `shared-schema` mode;
+configured service database credential through explicit `shared-schema` mode;
 service stores still access only their named collections. Default `isolated` mode
 requires separate collection-scoped credentials. No cross-service collection
 access or domain/store implementation dependency is allowed. The old local `cma-sandbox-manager`
-foundation is superseded and must not become a fourth deployment.
+foundation is superseded.
 
 Agent Manager retains Agent homes, models, prompts, ACP and runtime/conversation
 recovery. New Agent creation uses the deployment runtime and an empty workspace;
@@ -372,7 +364,7 @@ repository. Infrastructure lives outside GitHub. The ignored `infra/`, `sdk/`
 and `docs/` root paths must stay untracked.
 
 Build recipes live only at `web/Dockerfile`, `api/crates/cma/Dockerfile`,
-`api/crates/cmaeg/Dockerfile`, `api/crates/cma-image-manager/Dockerfile`, and
+`api/crates/cmaeg/Dockerfile`, `api/crates/cma-journey-probe/Dockerfile`, and
 `api/crates/layer4-runtime/Dockerfile`. Their build context remains the repository
 root. Use build arguments for environment-specific image inputs; never encode
 private registry or project identities in a recipe. Synthetic deployment data

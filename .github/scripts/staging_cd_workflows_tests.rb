@@ -645,7 +645,7 @@ class StagingWorkflowTest < Minitest::Test
     assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
   end
 
-  def test_journey_selector_rebuilds_for_a_shared_identity_label_change
+  def test_journey_selector_rebuilds_for_recipe_and_shared_identity_changes
     steps = workflow('staging-cd').dig('jobs', 'release_journey_probe', 'steps')
     selector = steps.find { |row| row['id'] == 'select' }.fetch('run')
     Dir.mktmpdir('journey-selector-') do |root|
@@ -659,13 +659,17 @@ class StagingWorkflowTest < Minitest::Test
       FileUtils.mkdir_p(checkout)
       receipt = File.join(checkout, 'staging_cd_receipts.py')
       File.write(receipt, "IDENTITY_LABEL = 'fixture.before'\n")
+      recipe = File.join(root, 'api', 'crates', 'cma-journey-probe', 'Dockerfile')
+      FileUtils.mkdir_p(File.dirname(recipe))
+      File.write(recipe, "FROM scratch AS journey-probe\n")
       git.call('init', '-q')
       git.call('add', '.')
       git.call('commit', '-qm', 'Baseline')
 
       changes = {
         File.join(root, 'README.md') => ['unrelated change', false],
-        receipt => ["IDENTITY_LABEL = 'fixture.after'\n", true]
+        receipt => ["IDENTITY_LABEL = 'fixture.after'\n", true],
+        recipe => ["FROM scratch AS journey-probe\nUSER 10001:10001\n", true]
       }
       changes.each do |path, (content, selected)|
         before = git.call('rev-parse', 'HEAD')

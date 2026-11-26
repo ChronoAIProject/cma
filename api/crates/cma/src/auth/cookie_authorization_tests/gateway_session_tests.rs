@@ -194,7 +194,7 @@ async fn session_authority_scenario() {
         base_url,
         client_secret,
         ..
-    } = &fixture.auth.mode
+    } = fixture.auth.fixture_mode()
     else {
         panic!("the session fixture requires provider auth");
     };
@@ -202,8 +202,12 @@ async fn session_authority_scenario() {
     let am_secret = client_secret.clone();
     let am_resource = format!("{issuer}/api/v1/proxy/s/cma-agent-manager");
     let gateway_resource = format!("{issuer}/api/v1/proxy/s/cma-event-gateway");
-    fixture.auth = AuthState::with_store(fixture.auth.mode.clone(), None, fixture.store.clone())
-        .with_oauth_api_resource(Some(am_resource.clone()));
+    fixture.auth = AuthState::with_store(
+        fixture.auth.fixture_mode().clone(),
+        None,
+        fixture.store.clone(),
+    )
+    .with_oauth_api_resource(Some(am_resource.clone()));
     let access = crate::auth::token::random_token();
     let refresh = crate::auth::token::random_token();
     let gateway_secret = crate::auth::token::random_token();
@@ -227,20 +231,18 @@ async fn session_authority_scenario() {
     );
 
     let gateway = GatewayFixture::new(&issuer, &access, gateway_secret.clone()).await;
-    let config = crate::config::GatewayConfig {
-        binding_preparation_enabled: false,
-        conversation_reset_enabled: false,
-        base_url: gateway.origin.clone(),
-        public_url: "https://gateway.example.test".into(),
-        public_api_url: "https://gateway.example.test".into(),
-        public_api_aliases: vec![],
-    };
     let app = crate::auth::router(fixture.auth.clone())
         .layer(middleware::from_fn_with_state(
             fixture.auth.clone(),
             crate::auth::attach_subject,
         ))
-        .merge(crate::auth::service_portal::router(fixture.auth.clone(), Some(&config)).unwrap());
+        .merge(
+            crate::auth::service_portal::router(
+                fixture.auth.clone(),
+                Some(gateway.origin.as_str()),
+            )
+            .unwrap(),
+        );
     let cookie = sign_in(&app).await;
     let cookie_value = cookie.split_once('=').unwrap().1;
     let secrets = [

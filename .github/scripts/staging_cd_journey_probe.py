@@ -15,7 +15,7 @@ from staging_cd_registry import JOURNEY_REPOSITORY, Registry
 from staging_cd_runtime import run_private
 
 COMPONENT = "journey-probe"
-DOCKERFILE = "api/crates/cma-image-manager/Dockerfile"
+DOCKERFILE = "api/crates/cma-journey-probe/Dockerfile"
 
 
 def identity(root, source):

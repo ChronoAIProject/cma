@@ -17,7 +17,6 @@ import { createOperatorClient } from './operator/client';
 import { createTriggerPublisherClient } from './trigger-publisher/client';
 import { createPublicClient } from './public/client';
 import { prepareHistoryDocument } from './routing/historyDocument';
-import { ImageManagerRetirement } from './services/ImageManagerRetirement';
 
 /*
  * Before the first render, so the page never paints in the wrong theme and
@@ -70,9 +69,7 @@ if (prepareHistoryDocument()) {
           publisher={publisher}
           publicClient={publicClient}
         >
-          <ImageManagerRetirement>
-            <App />
-          </ImageManagerRetirement>
+          <App />
         </CmaClientProvider>
       </AuthContextProvider>
     </StrictMode>,

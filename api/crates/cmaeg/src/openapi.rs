@@ -98,6 +98,8 @@ use utoipa::OpenApi;
         http::media::download_media,
         http::reply_targets::create_reply_target,
         http::reply_targets::reply_to_target,
+        http::reply_targets::reply_accepted_answer,
+        http::reply_targets::read_accepted_answer_receipt,
     )
 )]
 pub struct ApiDoc;
