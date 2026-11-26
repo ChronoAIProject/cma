@@ -1,6 +1,6 @@
 use super::*;
 use layer2_core::sandbox::store::{InMemorySandboxStore, SandboxStore};
-use layer2_core::sandbox::{FixedSandboxCredentialPrerequisite, SandboxStatus};
+use layer2_core::sandbox::{FixedSandboxCredentialPrerequisite, SandboxQuotaUsage, SandboxStatus};
 use mongodb::bson::{doc, Document};
 
 #[tokio::test]
@@ -206,7 +206,11 @@ async fn worker_quota_failure_metadata_is_gated_and_survives_restart() {
             layer1_public::rest::AgentLifecycleFailure::SandboxLimitReached {
                 limit: 1,
                 live: 1,
-                quota_usage: Some(Default::default()),
+                quota_usage: Some(SandboxQuotaUsage {
+                    active: 1,
+                    retiring_charged: 0,
+                    retiring_released: 0,
+                }),
             },
         );
         assert_eq!(record.failure, expected);
@@ -216,7 +220,12 @@ async fn worker_quota_failure_metadata_is_gated_and_survives_restart() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(raw.contains_key("failure"), enabled);
+        let expected_bson = expected
+            .as_ref()
+            .map(mongodb::bson::serialize_to_bson)
+            .transpose()
+            .unwrap();
+        assert_eq!(raw.get("failure"), expected_bson.as_ref());
         let restarted = MongoAgentLifecycleStore::open(&db).await.unwrap();
         let replay = restarted
             .replay(&owner.caller.subject, "race", &input)
