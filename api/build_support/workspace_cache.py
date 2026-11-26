@@ -26,11 +26,13 @@ UNCHANGED_MTIME = 946684800  # A fixed epoch for source files verified byte for 
 RELEASE_AUDITS = {
     "cma": (("cma", "cma-allocator-qualification", "cma-am-auth",
              "cma-am-mongo-primitives", "cma-am-reporting", "cma-qualification",
-             "cma-service-auth", "layer1-public", "layer2-core", "layer3-adapter"),
-            "d4027da1ab8fd0916493725f9515e3a9932ee494e8cd53c3dc23fff882603105", "17f7e9dbe46bc1227676d7eb9172d3b1ad25a801ffff02bc1ac5c60d97ae8beb"),
-    "cmaeg": (("cma-allocator-qualification", "cma-service-auth", "cmaeg", "cmaeg-core",
+             "cma-service-auth", "cma-service-migrations", "layer1-public", "layer2-core",
+             "layer3-adapter"),
+            "7d43a451cbae28f07d63a67ba965134fe13ab374fc9aaa0ec41c8f7fbe39f0d2", "30e3b17af281441b59125cef35ee6e8910ec5d4c680e0b169a8ac56e6d16f3f8"),
+    "cmaeg": (("cma-allocator-qualification", "cma-service-auth", "cma-service-migrations",
+               "cmaeg", "cmaeg-core",
                "cmaeg-engine", "cmaeg-execution", "cmaeg-http"),
-              "56a6d0fb7d99cf234ff7168594585e401597e8e59d8158d605c3e917b82c2e70", "e245743ea4994f8e722166df663428a4ac9b4721d862694f00bc1c6e122eb03b"),
+              "171cd6b9951e329e6f728c03b45411f8ed217e49d0dbe4147f85dd63b60ae3ae", "c1eac023fbf0a902ec4bb01ad302687b45e93bce9f8b4c8c39d836dc3e2522e1"),
 }
 COMPILER_ENV = (
     "AR", "CC", "CFLAGS", "CXX", "CXXFLAGS", "LDFLAGS", "RUSTC", "RUSTFLAGS",

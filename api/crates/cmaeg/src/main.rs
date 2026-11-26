@@ -9,6 +9,8 @@ use std::{ffi::OsString, io::Write, path::Path};
 
 use cma_allocator_qualification as allocator_self_test;
 
+const BUILD_SOURCE: Option<&str> = option_env!("CHRONO_BUILD_SHA");
+
 const USAGE: &str = "usage: cmaeg [--replica-drain | --replica-list-unresolved | --replica-abandon-unknown --dry-run|--apply --partition ID --head-work ID --head-version N --request-id UUID --reason REASON [--plan-digest DIGEST] | --replica-abandonment-audit --request-id UUID | --print-openapi | --migrate | --attest-activity-history FROM UNTIL_OR_OPEN REVISION --all-writers-capable | --backfill-activity-history | --migrate-activity-history | --print-activity-history-runtime-role | --print-activity-history-migration-role | --migrate-console-sessions | --print-console-sessions-runtime-role | --print-console-sessions-migration-role | --migrate-replicas | --print-runtime-role | --print-migration-role | --migrate-channel-create-fence-floor --all-writers-drained | --print-channel-create-fence-runtime-role | --print-channel-create-fence-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir> | --allocator-self-test]";
 
 fn main() {
@@ -96,7 +98,12 @@ fn main() {
                 let client = mongodb::Client::with_uri_str(uri)
                     .await
                     .map_err(|_| "database client unavailable")?;
-                cmaeg::migrations::cli(&client.database(&database), &arguments).await
+                cmaeg::migrations::cli(
+                    &client.database(&database),
+                    &arguments,
+                    BUILD_SOURCE.unwrap_or("development"),
+                )
+                .await
             }) {
                 fail(error);
             }
@@ -199,10 +206,8 @@ fn serve() {
     };
     // Keep the immutable release stamp in the executable so a version-only
     // rebuild can reuse the gateway library.
-    let build = cmaeg::http::readiness::ReleaseBuild::from_stamp(
-        option_env!("CHRONO_BUILD_SHA"),
-        option_env!("CHRONO_BUILD"),
-    );
+    let build =
+        cmaeg::http::readiness::ReleaseBuild::from_stamp(BUILD_SOURCE, option_env!("CHRONO_BUILD"));
     if let Err(error) = runtime.block_on(cmaeg::run(build)) {
         tracing::error!(%error, "CMAEG stopped");
         std::process::exit(1);
