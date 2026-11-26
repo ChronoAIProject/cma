@@ -42,7 +42,7 @@ async fn assert_discovery_index(rows: &Collection<Document>) {
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn replica_migration_recovers_after_second_index_conflict() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(uri).await.unwrap();
     let db = admin.database(&format!(
         "cma_eg_replica_schema_{}",

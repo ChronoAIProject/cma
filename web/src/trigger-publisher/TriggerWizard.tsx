@@ -51,7 +51,6 @@ export function TriggerWizard({
   const [step, setStep] = useState(initialStep);
   const [profiles, setProfiles] = useState<SelectedProfiles>({});
   const [reconciling, setReconciling] = useState(false);
-  const [imageResolving, setImageResolving] = useState(false);
   const [profilesKey, setProfilesKey] = useState('');
   const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -87,9 +86,9 @@ export function TriggerWizard({
     },
   );
   useEffect(() => {
-    onLock(command.locked || placementLocked || imageResolving);
+    onLock(command.locked || placementLocked);
     return () => onLock(false);
-  }, [command.locked, placementLocked, imageResolving, onLock]);
+  }, [command.locked, placementLocked, onLock]);
   const targetsKey = JSON.stringify(content.target);
   const profileRequestKey = `${targetsKey}:${String(profileReload)}`;
   const profileBusy =
@@ -179,7 +178,6 @@ export function TriggerWizard({
     return saved;
   };
   const save = (publish: boolean) => {
-    if (imageResolving) return;
     setErrors(allErrors);
     if (Object.keys(allErrors).length > 0) {
       setStep(Object.keys(validateStep(0, content, profiles)).length > 0 ? 0 : 2);
@@ -267,7 +265,6 @@ export function TriggerWizard({
             disabled={locked || unavailable}
             onChange={update}
             onSelect={select}
-            onImageResolving={setImageResolving}
           />
           {Object.keys(profileErrors).length === 0 ? null : (
             <Button
@@ -399,7 +396,7 @@ export function TriggerWizard({
       <footer className="trigger-actions">
         <Button
           icon={<IconChevronLeftOutline14 />}
-          disabled={locked || imageResolving || step === 0}
+          disabled={locked || step === 0}
           onClick={() => {
             setStep((value) => value - 1);
             setErrors({});
@@ -408,7 +405,7 @@ export function TriggerWizard({
           Back
         </Button>
         <Button
-          disabled={locked || imageResolving || unavailable || conflict}
+          disabled={locked || unavailable || conflict}
           onClick={() => save(false)}
         >
           Save draft
@@ -417,7 +414,7 @@ export function TriggerWizard({
           <Button
             variant="primary"
             icon={<IconChevronRightOutline14 />}
-            disabled={locked || imageResolving || unavailable}
+            disabled={locked || unavailable}
             onClick={() => {
               const validation = validateStep(step, content, profiles);
               setErrors(validation);

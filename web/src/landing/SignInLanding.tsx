@@ -5,7 +5,6 @@ import { Button } from '../ui/Button';
 import { LegalNotice } from '../auth/LegalNotice';
 import type { LegalTerms } from '../auth/types';
 import './SignInLanding.css';
-import { useImageManagerAvailability } from '../services/ImageManagerRetirement';
 
 /** Where each service card returns after sign-in; every path is a canonical CMA route. */
 const SERVICES = [
@@ -44,7 +43,6 @@ export function SignInLanding({
   /** Published terms the person accepts by continuing. */
   readonly legalTerms?: LegalTerms;
 }) {
-  const imageManager = useImageManagerAvailability();
   const [entering, setEntering] = useState<{ readonly returnTo?: string }>();
   const [failed, setFailed] = useState(false);
   const pending = useRef(false);
@@ -164,14 +162,6 @@ export function SignInLanding({
                 </Button>
               </article>
             ))}
-            {imageManager !== 'retired' ? (
-              <article className="sign-in-landing__card sign-in-landing__card--soon">
-                <h3>
-                  Image Manager <span className="sign-in-landing__soon">Coming soon</span>
-                </h3>
-                <p>Build runtime images and share them privately, with your team, or publicly.</p>
-              </article>
-            ) : null}
           </div>
         </section>
       </div>

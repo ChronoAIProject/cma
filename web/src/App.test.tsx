@@ -91,10 +91,7 @@ describe('the retained application shell', () => {
     for (const name of ['Agent Manager', 'Event Gateway']) {
       expect(within(services).getByRole('menuitemradio', { name })).toHaveAttribute('href');
     }
-    expect(within(services).getByRole('menuitemradio', { name: /^Image Manager/ })).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
+    expect(within(services).queryByRole('menuitemradio', { name: /^Image Manager/ })).not.toBeInTheDocument();
   });
 
   it('continues a shared Agent link after sign-in without sending its bearer fragment to OAuth', async () => {

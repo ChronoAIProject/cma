@@ -91,7 +91,7 @@ async fn snapshot(db: &Database) -> (Vec<Document>, Vec<Document>, Vec<Document>
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture with failpoints"]
 async fn channel_writer_floor_command_refuses_strict_and_unresolved_gateway_ledger() {
-    let mut uri = url::Url::parse(&std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap()).unwrap();
+    let mut uri = url::Url::parse(&std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap()).unwrap();
     let admin = Client::with_uri_str(uri.as_str()).await.unwrap();
     let app = format!("channel_floor_{}", uuid::Uuid::new_v4().simple());
     uri.query_pairs_mut().append_pair("appName", &app);
@@ -148,7 +148,7 @@ async fn channel_writer_floor_command_refuses_strict_and_unresolved_gateway_ledg
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn channel_writer_floor_command_records_a_completed_gateway_attempt() {
-    let uri = url::Url::parse(&std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap()).unwrap();
+    let uri = url::Url::parse(&std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap()).unwrap();
     let admin = Client::with_uri_str(uri.as_str()).await.unwrap();
     let db = admin.database(&format!("channel_floor_{}", uuid::Uuid::new_v4().simple()));
     let base = cli(&db, &uri, &["--migrate"]).await;
@@ -199,7 +199,7 @@ async fn channel_writer_floor_command_records_a_completed_gateway_attempt() {
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn channel_writer_floor_requires_drain_and_refuses_unknown_catalog_before_phase_change() {
-    let uri = url::Url::parse(&std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap()).unwrap();
+    let uri = url::Url::parse(&std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap()).unwrap();
     let admin = Client::with_uri_str(uri.as_str()).await.unwrap();
     let db = admin.database(&format!("channel_floor_{}", uuid::Uuid::new_v4().simple()));
     let base = cli(&db, &uri, &["--migrate"]).await;
@@ -252,7 +252,7 @@ async fn channel_writer_floor_requires_drain_and_refuses_unknown_catalog_before_
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn channel_writer_floor_refuses_extra_fence_index_and_missing_required_collection() {
-    let uri = url::Url::parse(&std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap()).unwrap();
+    let uri = url::Url::parse(&std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap()).unwrap();
     let admin = Client::with_uri_str(uri.as_str()).await.unwrap();
     let seed = admin.database(&format!(
         "channel_floor_seed_{}",

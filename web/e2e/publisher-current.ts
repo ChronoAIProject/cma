@@ -15,34 +15,19 @@ export async function publishCurrentTrigger(
   h: Harness,
   page: Page,
   role: PublisherRole,
-  managedImage = false,
 ) {
   const subject = h.fixture.accounts[role].subject;
   const identity = await h.get<{ subject: string }>(page, '/auth/session');
   assertPublisherIdentity(identity, subject);
   const fixture = h.fixture.publicJourneys.owners[role];
-  const { name: imageName, ...image } = fixture.image;
   const target = currentTriggerTarget(
     h.fixture,
     role,
     `Private journey configuration ${role} ${randomUUID()}`,
-    managedImage,
   );
   const commandsBefore = h.commands.length;
   await page.goto(`${h.config.baseURL}/triggers/manage`);
-  await expect(page.getByRole('button', { name: 'Image', exact: true })).toBeVisible();
-  if (!managedImage) {
-    const catalog = await h.get<{
-      id: string;
-      name: string;
-      visibility: string;
-      retired?: boolean;
-    }>(page, `/api/image-manager/v1/images/${image.id}`);
-    expect(catalog).toMatchObject({ id: image.id, name: imageName, visibility: 'public' });
-    expect(catalog.retired).not.toBe(true);
-    await page.getByRole('button', { name: 'Image', exact: true }).click();
-    await page.getByRole('menuitemradio', { name: `${imageName} (Public)`, exact: true }).click();
-  }
+  await expect(page.getByRole('button', { name: 'Image', exact: true })).toHaveCount(0);
   await page.getByLabel('Model', { exact: true }).fill(fixture.model);
   await page.getByRole('button', { name: 'Reasoning effort', exact: true }).click();
   await page

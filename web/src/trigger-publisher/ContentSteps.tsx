@@ -22,7 +22,6 @@ export function TargetStep({
   disabled,
   onChange,
   onSelect,
-  onImageResolving,
 }: {
   readonly client: TriggerPublisherClient;
   readonly value: TriggerContent;
@@ -30,7 +29,6 @@ export function TargetStep({
   readonly errors: Readonly<Record<string, string>>;
   readonly disabled: boolean;
   readonly onChange: (value: SetStateAction<TriggerContent>) => void;
-  readonly onImageResolving: (resolving: boolean) => void;
   readonly onSelect: (kind: ProfileKind, choice: PublisherProfileChoice) => void;
 }) {
   if (value.target.inline !== undefined) {
@@ -40,7 +38,6 @@ export function TargetStep({
         errors={errors}
         disabled={disabled}
         onChange={onChange}
-        onImageResolving={onImageResolving}
       />
     );
   }

@@ -55,7 +55,7 @@ pub(super) async fn verify_runtime() {
         options::{ClientOptions, Credential},
         Client,
     };
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("allocation_authority_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);

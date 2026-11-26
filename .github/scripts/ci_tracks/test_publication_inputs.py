@@ -84,7 +84,7 @@ class PublicationInputsTests(unittest.TestCase):
             '.github/scripts/image-scanner-policy-tests.py',
             '.github/scripts/staging_cd_publication_cache_tests.py',
             '.github/scripts/image_secret_gate_tests.py',
-            '.github/scripts/image-manager-mongo-contract.py',
+            '.github/scripts/authenticated-mongo-contract.sh',
             '.github/workflows/staging-release.yml.notes',
             'api/crates/layer3-adapter/runtime-versions.json.notes',
             'README.md'), [])

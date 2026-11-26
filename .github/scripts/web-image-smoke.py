@@ -65,7 +65,6 @@ def verify_image(reference):
             "-p", "127.0.0.1::8080",
             "--add-host", "cma-agent-manager:127.0.0.1",
             "--add-host", "cma-event-gateway:127.0.0.1",
-            "--add-host", "cma-image-manager:127.0.0.1",
             "--mount", f"type=bind,source={retained},target=/usr/share/nginx/html/assets,readonly",
             image_id,
         )

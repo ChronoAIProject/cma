@@ -247,7 +247,7 @@ export class Harness {
       ...proof,
       schema: 'cma-public-journey-v1',
       execution: 'configured_remote_origin',
-      scope: 'current_image_inline',
+      scope: 'managed_default_inline',
       run: this.journal.run,
     };
     assertCredentialFree(JSON.stringify(this.journeyProof), this.forbidden);
@@ -299,7 +299,6 @@ export class Harness {
   async get<T>(page: Page, path: string): Promise<T> {
     if (
       !publicApiPath(path).startsWith('/api/v1/') &&
-      !path.startsWith('/api/image-manager/v1/') &&
       path !== '/auth/session'
     )
       throw new Error('Read path is out of scope');

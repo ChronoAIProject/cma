@@ -16,9 +16,7 @@ const gatewayResetJourneys = 'package(=cma) and (test(=store::bindings::reset_te
 const selections = [
   ['package(=cmaeg) and kind(lib) and test(~console::session_backend::)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=console) and test(~shared_)', 'only', true],
-  ['package(=cma-image-manager) and kind(test) and (binary(=mongo_isolation) or binary(=browser_session))', 'only', true],
   ['package(=cma-service-migrations) and kind(lib)', 'only', true],
-  ['package(=cma-image-manager) and kind(lib) and test(~migrations::tests::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~migrations::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~optional_forms_storage)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~optional_media_continuation_storage)', 'only', true],
@@ -58,13 +56,13 @@ const selections = [
 ];
 
 function fixture(reuse, scenario = 'success') {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cma-image-manager-runner-')));
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cma-authenticated-mongo-runner-')));
   const root = join(directory, 'repo');
   const scripts = join(root, '.github/scripts');
   const metadata = join(root, 'api/target/nextest');
   mkdirSync(scripts, {recursive: true});
   mkdirSync(metadata, {recursive: true});
-  for (const name of ['image-manager-mongo-contract.sh', 'authenticated-mongo-readiness.js', 'backend-nextest.sh',
+  for (const name of ['authenticated-mongo-contract.sh', 'authenticated-mongo-readiness.js', 'backend-nextest.sh',
     'pull-pinned-image.sh']) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
@@ -79,7 +77,7 @@ const command = path.basename(process.argv[1]);
 const log = process.env.CMA_TEST_LOG;
 const scenario = process.env.CMA_TEST_SCENARIO;
 if (command === 'openssl') { console.log('ab'.repeat(Number(args[2]))); process.exit(0); }
-fs.appendFileSync(log, JSON.stringify({command,args,uri:process.env.CMA_IM_TEST_MONGODB_URI,
+fs.appendFileSync(log, JSON.stringify({command,args,uri:process.env.CMA_AUTHENTICATED_TEST_MONGODB_URI,
   caller:process.env.CHRONO_TEST_MONGODB_URI,failpoint:process.env.CHRONO_TEST_MONGODB_FAILPOINT_URI,
   cma:process.env.CMA_TEST_CMA_EXECUTABLE})+'\\n');
 if (command === 'cargo') {
@@ -93,19 +91,19 @@ else if (args[0] === 'rm' && scenario === 'cleanup-error') process.exit(10);
 `;
   for (const command of ['cargo', 'docker', 'openssl']) writeFileSync(join(directory, command), cli, {mode: 0o755});
   const env = {...process.env, CI: reuse ? 'true' : 'false', PATH: `${directory}:${process.env.PATH}`,
-    CMA_TEST_LOG: log, CMA_TEST_SCENARIO: scenario, CMA_IM_TEST_MONGODB_URI: 'caller-uri',
+    CMA_TEST_LOG: log, CMA_TEST_SCENARIO: scenario, CMA_AUTHENTICATED_TEST_MONGODB_URI: 'caller-uri',
     CHRONO_TEST_MONGODB_URI: 'caller-uri', CHRONO_TEST_MONGODB_FAILPOINT_URI: 'caller-uri'};
   if (reuse) env.CMA_NEXTEST_REUSE = '1'; else delete env.CMA_NEXTEST_REUSE;
   return {
     metadata, env, log,
-    run: (track = 'all') => execFileSync('bash', [join(scripts, 'image-manager-mongo-contract.sh'), track], {env, stdio: 'pipe', timeout: 15000}),
+    run: (track = 'all') => execFileSync('bash', [join(scripts, 'authenticated-mongo-contract.sh'), track], {env, stdio: 'pipe', timeout: 15000}),
     calls: () => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(row => JSON.parse(row)) : [],
     close: () => rmSync(directory, {recursive: true}),
   };
 }
 
 for (const reuse of [false, true]) {
-  test(`${reuse ? 'archive' : 'source'}: every Image Manager selection is serial and uses its owned authenticated fixture`, () => {
+  test(`${reuse ? 'archive' : 'source'}: every authenticated Mongo selection is serial and uses its owned authenticated fixture`, () => {
     const f = fixture(reuse);
     try {
       f.run();

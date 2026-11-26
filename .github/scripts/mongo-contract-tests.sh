@@ -4,7 +4,7 @@ set -euo pipefail
 script_directory=$(dirname -- "${BASH_SOURCE[0]}")
 repo_root=$(CDPATH='' cd -- "${script_directory}/../.." && pwd -P)
 readonly repo_root
-unset CHRONO_TEST_MONGODB_URI CHRONO_TEST_MONGODB_FAILPOINT_URI CMA_IM_TEST_MONGODB_URI
+unset CHRONO_TEST_MONGODB_URI CHRONO_TEST_MONGODB_FAILPOINT_URI CMA_AUTHENTICATED_TEST_MONGODB_URI
 # Retries come only from the explicit merge-queue flag below, never the environment.
 unset NEXTEST_RETRIES NEXTEST_FLAKY_RESULT
 # Owner-approved merge-queue flaky retry: only the workflow's policy step
@@ -87,7 +87,7 @@ nextest_contracts() {
       "$CMA_MONGO_FLAKY_REPORT_DIR/junit-$flaky_stem.xml" > "$flaky_config"
     set -- "$@" --retries 1 --flaky-result pass --tool-config-file "cma-flaky-retry:$flaky_config"
   fi
-  # Isolated role proof belongs to image-manager-mongo-contract.sh, which owns
+  # Isolated role proof belongs to authenticated-mongo-contract.sh, which owns
   # an authenticated fixture. Never run it against this unauthenticated set.
   # Process children need their parent's request/database; their parents invoke
   # them explicitly. Desktop latency is a separate matched-measurement fixture.

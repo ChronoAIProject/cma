@@ -1,4 +1,4 @@
-export type Service = 'event-gateway' | 'image-manager';
+export type Service = 'event-gateway';
 export interface ServiceSession {
   authenticated: true;
   subject: string;
@@ -48,8 +48,8 @@ export async function serviceRequest<T>(
   }
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
 }
-export function can(session: ServiceSession, service: Service, permission: string): boolean {
-  const prefix = service === 'image-manager' ? 'cma-im' : 'cma-eg';
+export function can(session: ServiceSession, permission: string): boolean {
+  const prefix = 'cma-eg';
   return (
     session.permissions.includes(`${prefix}:admin`) ||
     session.permissions.includes(`${prefix}:${permission}`)

@@ -21,7 +21,7 @@ async fn real_cancelled_terminal_command_can_end_its_own_session_under_the_exact
         options::{ClientOptions, Credential},
         Client,
     };
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_terminal_grant_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);
@@ -83,7 +83,7 @@ async fn real_transaction_barrier_is_authorized_by_the_exact_runtime_grant() {
         options::{ClientOptions, Credential},
         Client,
     };
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_barrier_grant_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);
@@ -149,7 +149,7 @@ async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
         options::{ClientOptions, Credential},
         Client,
     };
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_am_contract_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);
@@ -586,7 +586,7 @@ async fn real_progress_grants_cannot_delete_receipts_or_access_another_service()
         options::{ClientOptions, Credential},
         Client,
     };
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_progress_auth_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);
@@ -665,7 +665,7 @@ async fn real_measured_custody_role_can_be_added_and_revoked_with_capture_off() 
     };
     use std::{sync::Arc, time::Duration};
 
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_measured_role_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);

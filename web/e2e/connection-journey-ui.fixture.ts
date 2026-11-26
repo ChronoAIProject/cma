@@ -117,9 +117,6 @@ export async function connectionWizardFixture(
         response.end(JSON.stringify(value));
       };
       if (path === '/auth/session') return reply(session);
-      if (request.method === 'GET' && path === '/api/v1/ui/image-manager-retirement') {
-        return reply(false);
-      }
       if (path === '/auth/connections/start') {
         const intent = readConnectionIntent(body, launch.id);
         assert.equal(intent.service_id, selectedService.serviceId);

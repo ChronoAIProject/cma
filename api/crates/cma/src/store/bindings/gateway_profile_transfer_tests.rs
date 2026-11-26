@@ -22,7 +22,7 @@ fn profile_revision_fixture(owner: &SubjectId, prompt: &str) -> EventWorkerProfi
 }
 
 #[tokio::test]
-#[ignore = "requires image-manager-mongo-contract.sh am and the compiled gateway"]
+#[ignore = "requires authenticated-mongo-contract.sh am and the compiled gateway"]
 async fn profile_reset_receipt_replays_after_a_later_channel_revision() {
     use cmaeg::channels::definition::hash_secret;
     use cmaeg::connections::store::index_id;

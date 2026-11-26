@@ -1,63 +1,23 @@
 import { Picker } from '../ui/Picker';
-import * as React from 'react';
+import type { SetStateAction } from 'react';
 import type { TriggerContent, TriggerInlineTarget } from '@cma/client';
 import { Presence } from '../ui/Presence';
 import { Input } from '../ui/Input';
-import {
-  imageVisibilityLabel,
-  listAgentImages,
-  resolveAgentImage,
-  type AgentImageChoice,
-} from '../create/imageCatalog';
 import { inlineResultSentence } from './model';
-import { useImageManagerAvailability } from '../services/ImageManagerRetirement';
 
 export function InlineTargetStep({
   value,
   errors,
   disabled,
   onChange,
-  onImageResolving,
 }: {
   readonly value: TriggerContent;
   readonly errors: Readonly<Record<string, string>>;
   readonly disabled: boolean;
-  readonly onChange: (value: React.SetStateAction<TriggerContent>) => void;
-  readonly onImageResolving: (resolving: boolean) => void;
+  readonly onChange: (value: SetStateAction<TriggerContent>) => void;
 }) {
   const target = value.target.inline as TriggerInlineTarget;
-  const imageManager = useImageManagerAvailability();
-  const [images, setImages] = React.useState<readonly AgentImageChoice[]>([]);
-  const [imageFailure, setImageFailure] = React.useState<string>();
-  const [imageResolving, setImageResolving] = React.useState(false);
-  React.useEffect(() => {
-    onImageResolving(imageResolving);
-    return () => onImageResolving(false);
-  }, [imageResolving, onImageResolving]);
-  const imageRequest = React.useRef(0);
-  const imageController = React.useRef<AbortController | undefined>(undefined);
-  React.useEffect(() => {
-    if (imageManager !== 'legacy') return;
-    const controller = new AbortController();
-    void listAgentImages(controller.signal)
-      .then((next) => {
-        if (!controller.signal.aborted) {
-          setImages(next.filter((image) => image.retired !== true));
-          setImageFailure(undefined);
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted)
-          setImageFailure(
-            'Image Manager is unavailable. Use the system default image or try again later.',
-          );
-      });
-    return () => {
-      controller.abort();
-      imageController.current?.abort();
-    };
-  }, [imageManager]);
-  const updateTarget = (next: React.SetStateAction<TriggerInlineTarget>) =>
+  const updateTarget = (next: SetStateAction<TriggerInlineTarget>) =>
     onChange((current) => ({
       ...current,
       target: {
@@ -65,8 +25,6 @@ export function InlineTargetStep({
         inline: typeof next === 'function' ? next(current.target.inline!) : next,
       },
     }));
-  // Merge into the latest target: an image resolution may have committed since
-  // this render, and an edit must never restore the unresolved image.
   const updateAgent = (patch: Partial<TriggerInlineTarget['agent']>) =>
     updateTarget((current) => ({ ...current, agent: { ...current.agent, ...patch } }));
   const workspace = target.workspace ?? {};
@@ -78,66 +36,9 @@ export function InlineTargetStep({
     }));
   return (
     <>
-      {imageManager !== 'retired' ? (
-        <div className="trigger-field">
-          <label htmlFor="trigger-inline-image">Image</label>
-          <Picker
-            id="trigger-inline-image"
-            value={target.image?.id ?? ''}
-            disabled={disabled || imageResolving || imageManager === 'loading'}
-            onChange={(choice) => {
-              const id = choice;
-              const request = ++imageRequest.current;
-              if (id === '') {
-                setImageFailure(undefined);
-                updateTarget((current) => ({ ...current, image: undefined }));
-                return;
-              }
-              updateTarget((current) => ({ ...current, image: { id } }));
-              setImageResolving(true);
-              setImageFailure(undefined);
-              imageController.current?.abort();
-              const controller = new AbortController();
-              imageController.current = controller;
-              void resolveAgentImage(id, controller.signal)
-                .then((resolved) => {
-                  if (request !== imageRequest.current || controller.signal.aborted) return;
-                  updateTarget((current) => ({ ...current, image: resolved }));
-                })
-                .catch(() => {
-                  if (request !== imageRequest.current || controller.signal.aborted) return;
-                  setImageFailure('The selected image has no successful immutable version.');
-                })
-                .finally(() => {
-                  if (request === imageRequest.current) setImageResolving(false);
-                });
-            }}
-            label="Image"
-            options={[
-              { value: '', label: 'System default image' },
-              ...images.map((image) => ({
-                value: image.id,
-                label: `${image.name} (${imageVisibilityLabel(image.visibility)})`,
-              })),
-            ]}
-          />
-          <Presence>
-            <div>
-              {imageResolving ? (
-                <p className="trigger-caption">Resolving immutable image version…</p>
-              ) : null}
-              {imageFailure === undefined ? null : (
-                <p className="trigger-caption">{imageFailure}</p>
-              )}
-              {errors['target.inline.image'] === undefined ? null : (
-                <p className="trigger-error" role="alert">
-                  {errors['target.inline.image']}
-                </p>
-              )}
-            </div>
-          </Presence>
-        </div>
-      ) : null}
+      {errors['target.inline.image'] === undefined ? null : (
+        <p className="trigger-error" role="alert">{errors['target.inline.image']}</p>
+      )}
       <div className="trigger-field">
         <label htmlFor="trigger-inline-model">Model</label>
         <Input

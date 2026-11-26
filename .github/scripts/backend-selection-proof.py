@@ -156,13 +156,14 @@ def main():
     compare("layer4-exact", old_libtest(args, suites), list_tests([
         "-E", f"package(=layer4-runtime) and test(={layer4})", "--run-ignored", "only"])[0])
     before = commands(baseline / "image-manager-mongo-contract.sh", "cargo ")
-    before = [args for args in before if args[1] != "build"]
-    after = commands(ROOT / ".github/scripts/image-manager-mongo-contract.sh", "nextest_build ")
+    before = [args for args in before if args[1] != "build"
+              and not any("cma-image-manager" in arg for arg in args)]
+    after = commands(ROOT / ".github/scripts/authenticated-mongo-contract.sh", "contract_nextest ")
     if len(before) != len(after):
-        raise AssertionError("Image Manager invocation count changed")
+        raise AssertionError("Authenticated Mongo invocation count changed")
     for index, (old, new) in enumerate(zip(before, after), 1):
         expected = old_libtest(old, suites) if old[1] == "test" else old_nextest(old)
-        compare(f"image-manager-{index:02}", expected, old_nextest(new))
+        compare(f"authenticated-mongo-{index:02}", expected, old_nextest(new))
     old_source = (baseline / "mongo-contract-tests.sh").read_text()
     new_source = (ROOT / ".github/scripts/mongo-contract-tests.sh").read_text()
     before_filters = mongo_filters(old_source, baseline / "mongo-contract-suites")
