@@ -22,25 +22,26 @@ fn bounded() -> Document {
 }
 
 pub(super) fn pipeline(agents: &[&Agent], include_activity: bool) -> Vec<Document> {
-    let read_status = if include_activity {
-        doc! {"$eq": ["$status", "ready"]}
+    let status_agent_id = if include_activity {
+        // Foreign agent IDs are BSON strings. A non-Ready Agent must seek a
+        // disjoint index range, even when its retained history is large.
+        Bson::Document(doc! {"$cond": [{"$eq": ["$status", "ready"]}, "$_id", false]})
     } else {
-        doc! {"$literal": true}
+        Bson::String("$_id".into())
     };
     let mut stages = vec![
         doc! {"$match": {"_id": {"$in": agents.iter().map(|a| a.id.as_str()).collect::<Vec<_>>()}}},
-        doc! {"$project": {"_id": 1, "last_seq": 1, "read_status": read_status}},
+        doc! {"$project": {"_id": 1, "last_seq": 1, "status_agent_id": status_agent_id}},
         doc! {"$lookup": {
-            "from": "agent_log", "localField": "_id", "foreignField": "agent_id", "as": "latest",
-            "let": {"read_status": "$read_status"},
+            "from": "agent_log", "localField": "status_agent_id", "foreignField": "agent_id", "as": "latest",
             "pipeline": [
-                {"$match": {"$expr": "$$read_status", "record.kind.type": {"$in": ["created", "turn_started", "turn_completed", "turn_failed", "turn_interrupted", "conversation_gap"]}}},
+                {"$match": {"record.kind.type": {"$in": ["created", "turn_started", "turn_completed", "turn_failed", "turn_interrupted", "conversation_gap"]}}},
                 {"$sort": {"seq": -1}}, {"$limit": 1}, {"$replaceWith": bounded()},
             ],
         }},
         doc! {"$set": {"latest": {"$arrayElemAt": ["$latest", 0]}}},
         doc! {"$lookup": {
-            "from": "agent_log", "localField": "_id", "foreignField": "agent_id", "as": "gap",
+            "from": "agent_log", "localField": "status_agent_id", "foreignField": "agent_id", "as": "gap",
             "let": {"latest": "$latest.document", "head": "$last_seq"},
             "pipeline": [
                 {"$match": {"record.kind.type": "conversation_gap", "$expr": {"$and": [
@@ -53,10 +54,9 @@ pub(super) fn pipeline(agents: &[&Agent], include_activity: bool) -> Vec<Documen
             ],
         }},
         doc! {"$lookup": {
-            "from": "agent_commands", "localField": "_id", "foreignField": "agent_id", "as": "pending",
-            "let": {"read_status": "$read_status"},
+            "from": "agent_commands", "localField": "status_agent_id", "foreignField": "agent_id", "as": "pending",
             "pipeline": [
-                {"$match": {"$expr": "$$read_status", "status": {"$in": ["queued", "in_progress", "waiting_action"]}}},
+                {"$match": {"status": {"$in": ["queued", "in_progress", "waiting_action"]}}},
                 {"$limit": 1}, {"$replaceWith": bounded()},
             ],
         }},
