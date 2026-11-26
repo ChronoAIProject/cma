@@ -6,6 +6,7 @@
 //! effects keep their order; routed delivery supplies a gate that applies
 //! its stages.
 use super::intents::DeliveryOutcome;
+use cmaeg_core::channel::Secret;
 use futures_util::future::{ready, BoxFuture};
 
 /// The route a send enters when it addresses no chat, as a custom event's
@@ -25,6 +26,11 @@ pub trait SendGate: Send + Sync {
     fn attempt<'a>(&'a self) -> BoxFuture<'a, Result<AttemptPermit, GateRefusal>>;
     /// Stamps the send's slot as making progress.
     fn progress(&self);
+
+    /// Revalidate a result webhook after DNS resolution and before its POST.
+    fn authorize_webhook<'a>(&'a self, _url: &'a str, _secret: &'a Secret) -> BoxFuture<'a, bool> {
+        Box::pin(ready(true))
+    }
 
     /// Deadline for transport and pacing, when the caller supplies one.
     fn transport_deadline(&self) -> Option<tokio::time::Instant> {
