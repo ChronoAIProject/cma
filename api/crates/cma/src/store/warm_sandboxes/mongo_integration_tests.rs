@@ -17,18 +17,18 @@ mod retirement_tests;
 
 #[path = "test_fixture.rs"]
 mod fixture;
-use fixture::{admission, bounds, expire, fixture, make_ready, reconcile, records, stamp};
+use fixture::{admission, bounds, expire, fixture, make_ready, reconcile, records};
 #[path = "lease_tests.rs"]
 mod lease_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn concurrent_replenishment_caps_reservations_and_claims_are_exclusive() {
-    let (client, name, store, _, profile) = fixture(5).await;
+    let (client, name, store, _, profile, clock) = fixture(5).await;
     let mut tasks = tokio::task::JoinSet::new();
     for _ in 0..8 {
         let (store, profile) = (store.clone(), profile.clone());
-        tasks.spawn(async move { reconcile(&store, &profile).await });
+        tasks.spawn(async move { reconcile(&store, &profile, clock).await });
     }
     while let Some(result) = tasks.join_next().await {
         result.unwrap();
@@ -36,7 +36,7 @@ async fn concurrent_replenishment_caps_reservations_and_claims_are_exclusive() {
     assert_eq!(records(&store).await.len(), 5);
     let mut prepared = std::collections::BTreeSet::new();
     for _ in 0..5 {
-        prepared.insert(make_ready(&store).await);
+        prepared.insert(make_ready(&store, clock).await);
     }
     let mut tasks = tokio::task::JoinSet::new();
     for number in 0..10 {
@@ -46,11 +46,16 @@ async fn concurrent_replenishment_caps_reservations_and_claims_are_exclusive() {
                 &format!("sbx_cold_{number}"),
                 &format!("launch_{number}"),
                 20,
+                clock,
             );
             request.sandbox.owner = SubjectId::new(format!("visitor_{number}"));
-            let request =
-                SandboxAdmission::new(request.sandbox, request.name, 20, stamp(0).as_str().into())
-                    .unwrap();
+            let request = SandboxAdmission::new(
+                request.sandbox,
+                request.name,
+                20,
+                clock.stamp(0).as_str().into(),
+            )
+            .unwrap();
             store.admit_sandbox(request).await.unwrap()
         });
     }
@@ -77,7 +82,7 @@ async fn concurrent_replenishment_caps_reservations_and_claims_are_exclusive() {
             .count(),
         5
     );
-    reconcile(&store, &profile).await;
+    reconcile(&store, &profile, clock).await;
     let remaining = records(&store).await;
     assert_eq!(
         remaining
@@ -96,18 +101,18 @@ async fn concurrent_replenishment_caps_reservations_and_claims_are_exclusive() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn warm_trigger_replay_precedes_quota_and_does_not_claim_again() {
-    let (client, name, store, _, profile) = fixture(2).await;
-    reconcile(&store, &profile).await;
-    let first = make_ready(&store).await;
-    make_ready(&store).await;
-    let request = admission("sbx_cold", "launch-retry", 1);
+    let (client, name, store, _, profile, clock) = fixture(2).await;
+    reconcile(&store, &profile, clock).await;
+    let first = make_ready(&store, clock).await;
+    make_ready(&store, clock).await;
+    let request = admission("sbx_cold", "launch-retry", 1, clock);
     let SandboxAdmissionResult::Created(created) =
         store.admit_sandbox(request.clone()).await.unwrap()
     else {
         panic!("expected creation")
     };
     assert_eq!(created.id, first);
-    let mut retry = admission("sbx_different_candidate", "launch-retry", 0);
+    let mut retry = admission("sbx_different_candidate", "launch-retry", 0, clock);
     retry.admission_fingerprint = request.admission_fingerprint;
     let SandboxAdmissionResult::Existing(replayed) = store.admit_sandbox(retry).await.unwrap()
     else {
@@ -124,7 +129,7 @@ async fn warm_trigger_replay_precedes_quota_and_does_not_claim_again() {
     );
     assert!(matches!(
         store
-            .admit_sandbox(admission("sbx_overquota", "launch-other", 1))
+            .admit_sandbox(admission("sbx_overquota", "launch-other", 1, clock))
             .await,
         Err(SandboxStoreError::LimitReached { .. })
     ));
@@ -150,16 +155,16 @@ async fn warm_trigger_replay_precedes_quota_and_does_not_claim_again() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn private_copies_and_unshared_profiles_cannot_consume_source_pool() {
-    let (client, name, store, profiles, profile) = fixture(1).await;
-    reconcile(&store, &profile).await;
-    let ready = make_ready(&store).await;
+    let (client, name, store, profiles, profile, clock) = fixture(1).await;
+    reconcile(&store, &profile, clock).await;
+    let ready = make_ready(&store, clock).await;
     let locator = MarketplaceLocator::Sandbox(profile.id.clone());
     let layer2_core::profiles::ForkedProfile::Sandbox(fork) = profiles
         .fork_profile(
             &SubjectId::new("visitor"),
             &locator,
             1,
-            stamp(0).as_str().into(),
+            clock.stamp(0).as_str().into(),
         )
         .await
         .unwrap()
@@ -168,7 +173,13 @@ async fn private_copies_and_unshared_profiles_cannot_consume_source_pool() {
     };
     let scanner: [String; 0] = [];
     let revision = profiles
-        .publish_sandbox_profile(&fork.id, 1, stamp(0).as_str().into(), bounds(), &scanner)
+        .publish_sandbox_profile(
+            &fork.id,
+            1,
+            clock.stamp(0).as_str().into(),
+            bounds(),
+            &scanner,
+        )
         .await
         .unwrap();
     let mut copy = sandbox("sbx_copy", "copy");
@@ -177,7 +188,7 @@ async fn private_copies_and_unshared_profiles_cannot_consume_source_pool() {
         copy,
         SandboxAdmissionName::Allocate("trigger-research".into()),
         10,
-        stamp(0).as_str().into(),
+        clock.stamp(0).as_str().into(),
     )
     .unwrap();
     let SandboxAdmissionResult::Created(copy) = store.admit_sandbox(request).await.unwrap() else {
@@ -193,21 +204,21 @@ async fn private_copies_and_unshared_profiles_cannot_consume_source_pool() {
             &profile.owner,
             &locator,
             ProfileVisibility::Private,
-            stamp(0).as_str().into(),
+            clock.stamp(0).as_str().into(),
             bounds(),
             &scanner,
         )
         .await
         .unwrap();
     let SandboxAdmissionResult::Created(cold) = store
-        .admit_sandbox(admission("sbx_unshared", "unshared", 10))
+        .admit_sandbox(admission("sbx_unshared", "unshared", 10, clock))
         .await
         .unwrap()
     else {
         panic!("unshared")
     };
     assert!(cold.runtime.is_none());
-    reconcile(&store, &profile).await;
+    reconcile(&store, &profile, clock).await;
     assert_eq!(
         store.warm_sandbox(&ready).await.unwrap().unwrap().state,
         WarmSandboxState::Retiring
@@ -219,10 +230,10 @@ async fn private_copies_and_unshared_profiles_cannot_consume_source_pool() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn changing_environment_retires_old_pool_and_fences_inflight_workers() {
-    let (client, name, store, profiles, mut profile) = fixture(1).await;
-    reconcile(&store, &profile).await;
+    let (client, name, store, profiles, mut profile, clock) = fixture(1).await;
+    reconcile(&store, &profile, clock).await;
     let old = store
-        .claim_warmup_work(stamp(0).as_str(), stamp(60).as_str())
+        .claim_warmup_work(clock.stamp(0).as_str(), clock.stamp(60).as_str())
         .await
         .unwrap()
         .unwrap();
@@ -238,10 +249,16 @@ async fn changing_environment_retires_old_pool_and_fences_inflight_workers() {
         .unwrap();
     let scanner: [String; 0] = [];
     profiles
-        .publish_sandbox_profile(&profile.id, 3, stamp(0).as_str().into(), bounds(), &scanner)
+        .publish_sandbox_profile(
+            &profile.id,
+            3,
+            clock.stamp(0).as_str().into(),
+            bounds(),
+            &scanner,
+        )
         .await
         .unwrap();
-    reconcile(&store, &profile).await;
+    reconcile(&store, &profile, clock).await;
     assert_eq!(
         store
             .warm_sandbox(&old.record.id)
@@ -252,7 +269,9 @@ async fn changing_environment_retires_old_pool_and_fences_inflight_workers() {
         WarmSandboxState::Retiring
     );
     assert!(matches!(
-        store.renew_warmup_work(&old, stamp(60).as_str()).await,
+        store
+            .renew_warmup_work(&old, clock.stamp(60).as_str())
+            .await,
         Err(SandboxStoreError::Conflict)
     ));
     assert!(matches!(
@@ -260,8 +279,8 @@ async fn changing_environment_retires_old_pool_and_fences_inflight_workers() {
             .finish_warmup_work(
                 &old,
                 old.record.clone(),
-                stamp(0).as_str(),
-                stamp(0).as_str()
+                clock.stamp(0).as_str(),
+                clock.stamp(0).as_str()
             )
             .await,
         Err(SandboxStoreError::Conflict)
@@ -278,7 +297,7 @@ async fn changing_environment_retires_old_pool_and_fences_inflight_workers() {
     // an unbounded population of failed runtimes.
     expire(&store, &old.record.id).await;
     let cleanup = store
-        .claim_warmup_work(stamp(60).as_str(), stamp(120).as_str())
+        .claim_warmup_work(clock.stamp(60).as_str(), clock.stamp(120).as_str())
         .await
         .unwrap()
         .unwrap();
@@ -286,10 +305,15 @@ async fn changing_environment_retires_old_pool_and_fences_inflight_workers() {
     let mut retired = cleanup.record.clone();
     retired.state = WarmSandboxState::Retired;
     store
-        .finish_warmup_work(&cleanup, retired, stamp(60).as_str(), stamp(60).as_str())
+        .finish_warmup_work(
+            &cleanup,
+            retired,
+            clock.stamp(60).as_str(),
+            clock.stamp(60).as_str(),
+        )
         .await
         .unwrap();
-    reconcile(&store, &profile).await;
+    reconcile(&store, &profile, clock).await;
     assert_eq!(
         records(&store)
             .await
@@ -304,9 +328,9 @@ async fn changing_environment_retires_old_pool_and_fences_inflight_workers() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn claimed_reservation_transfers_reclaim_authority_to_owned_sandbox() {
-    let (client, name, store, _, profile) = fixture(1).await;
-    reconcile(&store, &profile).await;
-    let id = make_ready(&store).await;
+    let (client, name, store, _, profile, clock) = fixture(1).await;
+    reconcile(&store, &profile, clock).await;
+    let id = make_ready(&store, clock).await;
     let binding = store
         .warm_sandbox(&id)
         .await
@@ -323,7 +347,7 @@ async fn claimed_reservation_transfers_reclaim_authority_to_owned_sandbox() {
         .await
         .unwrap());
     let SandboxAdmissionResult::Created(created) = store
-        .admit_sandbox(admission("sbx_cold", "launch-handoff", 1))
+        .admit_sandbox(admission("sbx_cold", "launch-handoff", 1, clock))
         .await
         .unwrap()
     else {
@@ -341,10 +365,10 @@ async fn claimed_reservation_transfers_reclaim_authority_to_owned_sandbox() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn claimed_home_transfers_atomically_and_refuses_the_previous_warm_worker() {
-    let (client, name, mut store, _, profile) = fixture(1).await;
-    reconcile(&store, &profile).await;
+    let (client, name, mut store, _, profile, clock) = fixture(1).await;
+    reconcile(&store, &profile, clock).await;
     let preparing = store
-        .claim_warmup_work(stamp(0).as_str(), stamp(60).as_str())
+        .claim_warmup_work(clock.stamp(0).as_str(), clock.stamp(60).as_str())
         .await
         .unwrap()
         .unwrap();
@@ -375,23 +399,28 @@ async fn claimed_home_transfers_atomically_and_refuses_the_previous_warm_worker(
         runtime_id: format!("runtime-{}", next.id),
         runtime_version: IMAGE.into(),
         provision_generation: Some(1),
-        bound_at: stamp(0).as_str().into(),
+        bound_at: clock.stamp(0).as_str().into(),
     });
     next.installed_request_sha256 = Some("a".repeat(64));
     next.state = WarmSandboxState::Ready;
     store
-        .finish_warmup_work(&preparing, next, stamp(0).as_str(), stamp(0).as_str())
+        .finish_warmup_work(
+            &preparing,
+            next,
+            clock.stamp(0).as_str(),
+            clock.stamp(0).as_str(),
+        )
         .await
         .unwrap();
     assert!(store.unowned_home_authority(&home.request).await.unwrap());
-    let expiry = stamp(10);
+    let expiry = clock.stamp(10);
     let expired_at = expiry.as_str();
     let stale = store
-        .claim_warmup_work(stamp(0).as_str(), expired_at)
+        .claim_warmup_work(clock.stamp(0).as_str(), expired_at)
         .await
         .unwrap()
         .unwrap();
-    let mut request = admission("sbx_cold", "launch-home-handoff", 1);
+    let mut request = admission("sbx_cold", "launch-home-handoff", 1, clock);
     request.event_at = expired_at.into();
     let SandboxAdmissionResult::Created(created) = store.admit_sandbox(request).await.unwrap()
     else {
