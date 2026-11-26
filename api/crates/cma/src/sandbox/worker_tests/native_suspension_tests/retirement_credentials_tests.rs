@@ -175,7 +175,7 @@ async fn older_cleanup_phases_hold_the_home_until_parent_only_debt_is_settled() 
 }
 
 #[tokio::test]
-async fn retirement_suspends_native_compute_while_initial_issuance_is_uncertain() {
+async fn retirement_suspends_native_compute_when_the_final_issuance_check_is_uncertain() {
     let f = Fixture::native().await;
     let created = f.harness.create().await;
     let mut now = start_time(&created);
@@ -200,9 +200,14 @@ async fn retirement_suspends_native_compute_while_initial_issuance_is_uncertain(
         stopped.work.step,
         SandboxWorkStep::RevokeRetirementCredentials
     );
+    assert!(stopped.credential.current.is_some());
 
     use crate::sandbox::credential::CredentialError;
-    *f.harness.credentials.settlement_failure.lock().unwrap() = Some(CredentialError::Uncertain);
+    *f.harness
+        .credentials
+        .late_settlement_failure
+        .lock()
+        .unwrap() = Some(CredentialError::Uncertain);
     now = stamp_time(&stopped.work.ready_at);
     f.backend.lose_suspend.store(true, Ordering::SeqCst);
     f.step(&active.id, now, &runtime_image()).await;
@@ -210,6 +215,7 @@ async fn retirement_suspends_native_compute_while_initial_issuance_is_uncertain(
     assert_eq!(unconfirmed.runtime, active.runtime);
     assert!(unconfirmed.lifecycle.suspended_runtime.is_none());
     assert_eq!(unconfirmed.lifecycle.home, active.lifecycle.home);
+    assert!(unconfirmed.work.lease.is_none());
 
     now = stamp_time(&unconfirmed.work.ready_at);
     f.step(&active.id, now, &runtime_image()).await;
@@ -238,7 +244,11 @@ async fn retirement_suspends_native_compute_while_initial_issuance_is_uncertain(
     assert!(!calls.iter().any(|call| call == "delete-retained"));
     assert!(!f.backend.home_destroyed.load(Ordering::SeqCst));
 
-    *f.harness.credentials.settlement_failure.lock().unwrap() = None;
+    *f.harness
+        .credentials
+        .late_settlement_failure
+        .lock()
+        .unwrap() = None;
     now = stamp_time(&suspended.work.ready_at);
     let retired = f
         .drive(

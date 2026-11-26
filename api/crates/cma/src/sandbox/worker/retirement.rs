@@ -80,6 +80,8 @@ impl SandboxWorker {
             }
             let mut cleaned = sandbox.clone();
             if let Some(failure) = self.prepare_retirement_cleanup(&mut cleaned, now).await? {
+                // Dispatch custody continues to own the original runtime binding.
+                self.suspend_retiring_compute(&sandbox, &failure).await?;
                 return self.retry_failure(sandbox, failure, now).await;
             }
             sandbox = cleaned;

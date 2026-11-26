@@ -24,6 +24,27 @@ impl AgentSandboxClient {
         home: &HomeVolumeAttachment,
         receiver: Option<&crate::RetirementPod>,
     ) -> Result<()> {
+        self.retire_exact(runtime, request, home, receiver, false)
+            .await
+    }
+
+    pub(crate) async fn retire_suspended(
+        &self,
+        runtime: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.retire_exact(runtime, request, home, None, true).await
+    }
+
+    async fn retire_exact(
+        &self,
+        runtime: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        receiver: Option<&crate::RetirementPod>,
+        require_suspended: bool,
+    ) -> Result<()> {
         let identity = crate::hosted::provider_request_identity(request)?;
         home.validate_for(&identity.sandbox_id)?;
         if request.metadata.get("cma/home-identity") != Some(&home.identity()?) {
@@ -36,10 +57,23 @@ impl AgentSandboxClient {
             .await?;
         if let Some(mut actual) = object.clone() {
             let (name, _) = parse_handle(runtime)?;
-            let desired = self.desired_at(request, name).await?;
+            let mut desired = self.desired_at(request, name).await?;
+            if require_suspended {
+                desired.data["spec"]["operatingMode"] = serde_json::json!("Suspended");
+                if actual.resource_version().is_none() {
+                    return Err(rejected("missing retirement resource version"));
+                }
+            }
             // An accepted foreground delete is retried with the original UID.
             actual.metadata.deletion_timestamp = None;
             self.matches(&actual, &desired)?;
+            if require_suspended
+                && object
+                    .as_ref()
+                    .is_some_and(|object| object.metadata.deletion_timestamp.is_none())
+            {
+                self.wait_suspended(runtime, &desired).await?;
+            }
         }
         if let Some(receiver) = receiver {
             let binding = self.pod_binding(runtime).await?;

@@ -438,15 +438,15 @@ impl HostedBackend for NativeBackend {
         self.challenge_retirement_fixture(handle, request, receiver)
             .await
     }
-    async fn retire_unreachable(
+    async fn retire_verified(
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
         home: &layer3_adapter::HomeVolumeAttachment,
-        pod: &layer3_adapter::RetirementPod,
+        pod: Option<&layer3_adapter::RetirementPod>,
     ) -> layer3_adapter::Result<()> {
-        self.check_retirement_fixture_pod(pod)?;
-        self.retire_verified_fixture(handle, request, home).await
+        self.retire_verified_fixture(handle, request, home, pod)
+            .await
     }
     async fn verify_retired(
         &self,

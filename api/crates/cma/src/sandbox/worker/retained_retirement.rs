@@ -57,26 +57,38 @@ impl SandboxWorker {
         sandbox: &mut Sandbox,
         failure: &WorkerFailure,
     ) -> Result<(), SandboxStoreError> {
+        if self
+            .config
+            .retirement_finalizer
+            .as_ref()
+            .is_some_and(|finalizer| finalizer.admission_enabled())
+            && self.suspend_retiring_compute(sandbox, failure).await?
+        {
+            sandbox.lifecycle.suspended_runtime = sandbox.runtime.take().map(Box::new);
+        }
+        Ok(())
+    }
+
+    pub(super) async fn suspend_retiring_compute(
+        &self,
+        sandbox: &Sandbox,
+        failure: &WorkerFailure,
+    ) -> Result<bool, SandboxStoreError> {
         if !failure.credential_issuance_pending
             || sandbox.status != SandboxStatus::Retiring
-            || !self
-                .config
-                .retirement_finalizer
-                .as_ref()
-                .is_some_and(|finalizer| finalizer.admission_enabled())
             || sandbox.lifecycle.suspended_runtime.is_some()
             || sandbox.lifecycle.home.as_ref().is_none_or(|home| {
                 home.released || home.attachment().is_none() || home.validate(&sandbox.id).is_err()
             })
         {
-            return Ok(());
+            return Ok(false);
         }
         let Some(binding) = sandbox
             .runtime
             .as_ref()
             .filter(|binding| binding.runtime_id.starts_with("agent-sandbox:"))
         else {
-            return Ok(());
+            return Ok(false);
         };
         let request = match crate::sandbox::runtime_attachment::retained_runtime_request(
             sandbox,
@@ -84,7 +96,7 @@ impl SandboxWorker {
             &self.config.deployment_id,
         ) {
             Ok(request) => request,
-            Err(_) => return Ok(()),
+            Err(_) => return Ok(false),
         };
         let current = self.dependencies.store.get_sandbox(&sandbox.id).await?;
         if !sandbox_content_matches(current.as_ref(), sandbox) {
@@ -93,12 +105,11 @@ impl SandboxWorker {
         WorkAuthority::current()?;
         if let Err(error) = self.dependencies.adapter.suspend_runtime(&request).await {
             tracing::debug!(error = %error, "retirement compute suspension remains unconfirmed");
-            return Ok(());
+            return Ok(false);
         }
         WorkAuthority::current()?;
-        sandbox.lifecycle.suspended_runtime = sandbox.runtime.take().map(Box::new);
         tracing::info!("Retiring Sandbox compute stopped while credential settlement is pending");
-        Ok(())
+        Ok(true)
     }
 
     async fn stopped_native_runtime(

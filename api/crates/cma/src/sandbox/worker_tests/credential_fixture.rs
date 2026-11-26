@@ -5,6 +5,7 @@ pub(crate) struct MemoryCredentials {
     pub(super) revoke_failure_ids: Mutex<std::collections::BTreeSet<String>>,
     pub(super) census_failure: Mutex<Option<CredentialError>>,
     pub(super) settlement_failure: Mutex<Option<CredentialError>>,
+    pub(super) late_settlement_failure: Mutex<Option<CredentialError>>,
     pub(super) materials: Mutex<BTreeMap<(SandboxId, u64), CredentialMaterial>>,
     pub(super) issue_failures: Mutex<VecDeque<CredentialError>>,
     pub(super) revoke_failures: AtomicUsize,
@@ -20,6 +21,7 @@ impl MemoryCredentials {
             revoke_failure_ids: Default::default(),
             census_failure: Default::default(),
             settlement_failure: Default::default(),
+            late_settlement_failure: Default::default(),
             materials: Mutex::new(BTreeMap::new()),
             issue_failures: Mutex::new(VecDeque::new()),
             revoke_failures: AtomicUsize::new(0),
@@ -194,11 +196,16 @@ impl SandboxCredentialController for MemoryCredentials {
             Ok(())
         }
     }
-    async fn settle_revocations(&self, _: &Sandbox) -> Result<(), CredentialError> {
-        match self.settlement_failure.lock().unwrap().clone() {
-            Some(error) => Err(error),
-            None => Ok(()),
+    async fn settle_revocations(&self, sandbox: &Sandbox) -> Result<(), CredentialError> {
+        if let Some(error) = self.settlement_failure.lock().unwrap().clone() {
+            return Err(error);
         }
+        if sandbox.credential.current.is_none() {
+            if let Some(error) = self.late_settlement_failure.lock().unwrap().clone() {
+                return Err(error);
+            }
+        }
+        Ok(())
     }
 }
 

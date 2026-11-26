@@ -29,6 +29,38 @@ async fn bound(
 }
 
 #[tokio::test]
+async fn verified_retirement_of_a_suspended_runtime_requires_suspended_provider_mode() {
+    let (fixture, home, request, handle) = bound(true).await;
+    let client = client(&fixture, false);
+    assert!(client
+        .retire_suspended(&handle, &request, &home)
+        .await
+        .is_err());
+    {
+        let mut state = fixture.state.lock().unwrap();
+        assert!(!state
+            .calls
+            .iter()
+            .any(|(call, _)| call.starts_with("DELETE ")));
+        state.rows.get_mut(MEMBER).unwrap()["spec"]["operatingMode"] =
+            serde_json::json!("Suspended");
+    }
+    client
+        .retire_suspended(&handle, &request, &home)
+        .await
+        .unwrap();
+    let state = fixture.state.lock().unwrap();
+    let (_, delete) = state
+        .calls
+        .iter()
+        .find(|(call, _)| call == &format!("DELETE {MEMBER}"))
+        .unwrap();
+    assert_eq!(delete["preconditions"]["uid"], "member-uid");
+    assert!(delete["preconditions"]["resourceVersion"].is_string());
+    assert_eq!(delete["propagationPolicy"], "Foreground");
+}
+
+#[tokio::test]
 async fn verified_retirement_retries_lost_deletion_without_reconstructing_a_receipt() {
     for native in [false, true] {
         for lost in [false, true] {
