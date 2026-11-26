@@ -192,10 +192,10 @@ fn defer_idle_polls(
     use axum::http::header::CONTENT_TYPE;
 
     if !response.status().is_success()
-        || !response
+        || response
             .headers()
             .get(CONTENT_TYPE)
-            .is_some_and(|value| value == "text/event-stream")
+            .is_none_or(|value| value != "text/event-stream")
     {
         return response;
     }

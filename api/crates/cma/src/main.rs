@@ -40,6 +40,7 @@ mod home_backup_expiry;
 mod http_serving;
 mod image_manager_retirement;
 mod media_continuations;
+#[cfg(test)]
 use cma_am_auth::permissions;
 mod producer_token;
 mod profile_authoring;
