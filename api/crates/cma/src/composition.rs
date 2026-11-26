@@ -54,8 +54,8 @@ impl ControlPlaneComposition {
         let activity = ActivityService::new(stores.activity.clone());
         let documents::DocumentComposition {
             service: documents,
-            maintenance: document_blob_maintenance,
-        } = documents::compose(config, &stores, standing.clone())?;
+            reclaimer: document_reclaimer,
+        } = documents::compose(config, &stores, standing.clone()).await?;
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
@@ -468,7 +468,7 @@ impl ControlPlaneComposition {
             creation_outcomes,
             activity_worker,
             workers,
-            document_blob_maintenance,
+            document_reclaimer,
             worker_observations: runtime::worker_observations(config, &stores),
             router: agent_manager::internal_router(&relay, &agent_manager, router),
             agent_manager,

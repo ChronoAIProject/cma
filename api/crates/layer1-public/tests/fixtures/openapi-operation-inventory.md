@@ -893,6 +893,7 @@ Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_
 | `POST /api/v1/documents` | Create owned Markdown document. |
 | `GET /api/v1/documents/{id}` | Read effective document metadata. |
 | `PATCH /api/v1/documents/{id}` | Owner source/title compare-and-swap. |
+| `DELETE /api/v1/documents/{id}` | Owner logical deletion with expected revision and durable receipt. |
 | `GET /api/v1/documents/{id}/source` | Read current or specific source revision. |
 | `GET /api/v1/documents/{id}/revisions` | Page immutable source revision metadata. |
 | `GET /api/v1/documents/{id}/shares` | Owner direct recipient inventory. |

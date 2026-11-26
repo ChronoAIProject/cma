@@ -41,3 +41,16 @@ fn document_source_commits_default_off_and_require_a_strict_opt_in() {
             .is_err()
     );
 }
+
+#[test]
+fn document_reclamation_and_storage_effects_require_separate_opt_ins() {
+    const KEY: &str = "CHRONO_DOCUMENT_RECLAIM_ENABLED";
+    let defaults = FeatureFlags::from_lookup(&mut |_| Ok(None)).unwrap();
+    assert!(!defaults.document_reclamation);
+    for (value, enabled) in [("false", false), ("true", true)] {
+        let flags =
+            FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| value.into()))).unwrap();
+        assert_eq!(flags.document_reclamation, enabled);
+        assert!(!flags.document_object_deletion);
+    }
+}
