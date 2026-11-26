@@ -1,9 +1,11 @@
 use super::*;
 use crate::{
+    auth::test_resources,
     startup::fixed_pool_startup,
     store::{runtime_routing::MongoRuntimeRouting, MongoSandboxStore},
     warm_pools::{startup::WarmPoolStartup, WarmPoolError},
 };
+use layer2_core::sandbox::{RuntimeBinding, SandboxRuntimeUpdateService};
 use layer3_adapter::{
     hosted::{HostedDeployment, RuntimeBackends, RuntimeRoutingStore},
     AdapterError, SandboxAdapter, SandboxSpec,
@@ -16,10 +18,12 @@ async fn fixed_pin_rollback_serves_with_the_conflicting_lane_held() {
     let fixture = Fixture::new().await;
     let db = &fixture.database;
     let store = Arc::new(MongoNativeWarmPools::open(db, DEPLOYMENT).await.unwrap());
-    let sandbox_store = MongoSandboxStore::open(db.client(), db.name())
-        .await
-        .unwrap()
-        .with_managed_runtime_version(image(Lane::Agent, 'a'));
+    let sandbox_store = Arc::new(
+        MongoSandboxStore::open(db.client(), db.name())
+            .await
+            .unwrap()
+            .with_managed_runtime_version(image(Lane::Agent, 'a')),
+    );
     let holds = sandbox_store.default_pool_holds.clone();
     let routing =
         MongoRuntimeRouting::open_with_default_pool_holds(db, DEPLOYMENT, true, holds.clone())
@@ -52,7 +56,6 @@ async fn fixed_pin_rollback_serves_with_the_conflicting_lane_held() {
             machine,
         )
     };
-    let a = fixture.plan(Lane::Agent, 'a', capacity());
     let b = fixture.plan(Lane::Agent, 'b', capacity());
     let machine = fixture.plan(Lane::Machine, '1', capacity());
     let rows = db.collection::<Document>("native_warm_pool_targets");
@@ -90,6 +93,17 @@ async fn fixed_pin_rollback_serves_with_the_conflicting_lane_held() {
         .map(|row| serialize_to_document(row).unwrap())
         .collect::<Vec<_>>();
     let effect_count = fixture.provider.inventory.lock().unwrap().effects.len();
+    let mut retained = test_resources::sandbox("retained-on-b", "owner");
+    retained.runtime = Some(RuntimeBinding {
+        runtime_id: "agent-sandbox:retained:uid".into(),
+        runtime_version: image(Lane::Agent, 'b'),
+        provision_generation: Some(1),
+        boot_id: None,
+        bound_at: layer2_core::now_rfc3339(),
+    });
+    let old_pin = image(Lane::Agent, 'a');
+    let updates = SandboxRuntimeUpdateService::new(sandbox_store.clone(), old_pin.clone());
+    assert!(updates.target_is_qualified(&retained, &old_pin));
     let rollback =
         pools('a', 0, Some((image(Lane::Machine, '1'), TARGET))).with_default_pool_holds(holds);
     assert!(matches!(
@@ -98,6 +112,7 @@ async fn fixed_pin_rollback_serves_with_the_conflicting_lane_held() {
     ));
     assert!(rollback.fixed_agent_default_held());
     assert_eq!(sandbox_store.managed_agent_release(), None);
+    assert!(!updates.target_is_qualified(&retained, &old_pin));
     assert!(matches!(
         rollback.ensure_default().await,
         Err(WarmPoolError::Conflict)
@@ -131,7 +146,6 @@ async fn fixed_pin_rollback_serves_with_the_conflicting_lane_held() {
         let machine_effects = &inventory.effects[effect_count..];
         assert!(machine_effects.iter().all(|effect| matches!(effect,
             Effect::Configure(hash, _) | Effect::Resize(hash, _) if hash == &machine.config_sha256)));
-        assert!(!machine_effects.contains(&Effect::Claim(a.config_sha256)));
     }
     db.drop().await.unwrap();
 }

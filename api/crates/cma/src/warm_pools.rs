@@ -37,7 +37,7 @@ impl DefaultPoolHolds {
         self.0.write().expect("default pool holds")[usize::from(machine)] = Some(image);
     }
 
-    fn lane(&self, machine: bool) -> bool {
+    pub(crate) fn lane(&self, machine: bool) -> bool {
         self.0.read().expect("default pool holds")[usize::from(machine)].is_some()
     }
 
