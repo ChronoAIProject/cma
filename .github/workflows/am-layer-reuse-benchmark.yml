@@ -1,0 +1,35 @@
+name: AM layer reuse benchmark
+on:
+  push:
+    branches: [tl/developer-52/2703-detached-layer-benchmark]
+permissions:
+  contents: read
+jobs:
+  measure:
+    if: github.repository == 'ChronoAIProject/cma'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: 2268efc52d738845d245d3b49b2409e404724d26
+          path: profile-candidate
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          cache-binary: false
+      - name: Install archive transport
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq skopeo
+      - name: Measure bounded intermediate layer reuse
+        run: python3 -B .github/scripts/am-layer-reuse-benchmark.py --candidate profile-candidate --output "$RUNNER_TEMP/am-layer-reuse.json"
+      - name: Retain measurement
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: am-layer-reuse
+          path: ${{ runner.temp }}/am-layer-reuse.json
+          if-no-files-found: error
+          retention-days: 7
