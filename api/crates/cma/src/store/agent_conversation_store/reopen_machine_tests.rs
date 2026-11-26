@@ -1,5 +1,6 @@
 use super::*;
 use layer2_core::released_runtime::{ReleasedLane, ReleasedLaneRecord};
+use layer2_core::sandbox::store::{SandboxAdmission, SandboxAdmissionName};
 use layer2_core::sandbox::{Sandbox, SandboxOrigin, SandboxRuntimeImageOrigin};
 use layer3_adapter::ReleasedLaneRevisions;
 
@@ -36,6 +37,7 @@ pub(super) async fn setup_release(
     parent.profile.content.runtime_image = Some("image-v1".into());
     parent.profile.digest = layer2_core::profiles::content_digest(&parent.profile.content).unwrap();
     parent.lifecycle.runtime_image_origin = Some(SandboxRuntimeImageOrigin::ManagedMachine);
+    install_admission(store, parent, &at).await;
     ReleasedRuntime {
         revision: 1,
         agent: agent_image,
@@ -45,6 +47,40 @@ pub(super) async fn setup_release(
             machine: Some(1),
         }),
     }
+}
+
+async fn install_admission(store: &MongoSandboxStore, parent: &Sandbox, at: &str) {
+    let mut fresh = crate::store::sandbox_admission_mongo_integration_tests::sandbox(
+        parent.id.as_str(),
+        "prepared-machine",
+    );
+    fresh.owner = parent.owner.clone();
+    fresh.origin = parent.origin.clone();
+    fresh.name = parent.name.clone();
+    fresh.profile = parent.profile.clone();
+    fresh.limits = parent.limits;
+    fresh.credential.source = parent.credential.source.clone();
+    fresh.credential.reaches = parent.credential.reaches.clone();
+    fresh.credential.sign_in = parent.credential.sign_in;
+    let admission = SandboxAdmission::new(
+        fresh,
+        SandboxAdmissionName::Exact(parent.name.clone()),
+        4,
+        at.into(),
+    )
+    .unwrap();
+    let row = crate::store::sandboxes::admitted_sandbox_document(
+        parent,
+        0,
+        &admission.name,
+        &admission.admission_fingerprint,
+    )
+    .unwrap();
+    store
+        .sandboxes
+        .replace_one(doc! {"_id": parent.id.as_str()}, row)
+        .await
+        .unwrap();
 }
 
 pub(super) async fn assert_stale_release_refused(
