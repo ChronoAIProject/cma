@@ -232,13 +232,22 @@ pub fn init_logging() {
 /// Initialize the same logger on stderr, for operator commands whose stdout
 /// carries a machine-readable report.
 pub fn init_logging_to_stderr() {
-    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
+    use tracing_subscriber::{
+        filter::{FilterExt, LevelFilter, Targets},
+        fmt,
+        layer::SubscriberExt,
+        util::SubscriberInitExt,
+        Layer,
+    };
+    let migrations = Targets::new().with_target("cma_service_migrations", LevelFilter::WARN);
     tracing_subscriber::registry()
         .with(
             fmt::layer()
                 .with_ansi(false)
                 .with_writer(std::io::stderr)
-                .with_filter(log_layer_filter(std::env::var("RUST_LOG").ok().as_deref())),
+                .with_filter(
+                    log_layer_filter(std::env::var("RUST_LOG").ok().as_deref()).or(migrations),
+                ),
         )
         .init();
 }

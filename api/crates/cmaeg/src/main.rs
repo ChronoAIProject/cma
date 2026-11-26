@@ -261,6 +261,9 @@ fn fail(reason: &str) -> ! {
 }
 
 fn run_database_command(command: &str) {
+    if command.starts_with("--migrate") {
+        cmaeg::init_logging_to_stderr();
+    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

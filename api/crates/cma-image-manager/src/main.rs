@@ -18,10 +18,26 @@ fn required(name: &str) -> Result<String, Box<dyn std::error::Error>> {
 }
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
     let args: Vec<_> = std::env::args().skip(1).collect();
+    let filter = tracing_subscriber::EnvFilter::from_default_env();
+    if args
+        .first()
+        .is_some_and(|arg| arg == "--migrate" || arg.starts_with("--migration-"))
+    {
+        use tracing_subscriber::filter::{FilterExt, LevelFilter, Targets};
+        use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
+        let migrations = Targets::new().with_target("cma_service_migrations", LevelFilter::WARN);
+        tracing_subscriber::registry()
+            .with(
+                fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(std::io::stderr)
+                    .with_filter(filter.or(migrations)),
+            )
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    }
     let db_name = required(CMA_IM_MONGODB_DATABASE)?;
     if args == ["--print-runtime-role"] {
         println!("{}", schema::runtime_role(&db_name));
