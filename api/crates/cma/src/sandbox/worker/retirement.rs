@@ -36,6 +36,12 @@ impl SandboxWorker {
         {
             return self.retry_failure(sandbox, failure, now).await;
         }
+        if let Some(finalizer) = finalizer {
+            if let Err(error) = finalizer.offer_capture(&sandbox).await {
+                // Continue the regular finalizer checks, including complete provider absence.
+                tracing::debug!(%error, "retirement capture offer was not confirmed");
+            }
+        }
         match self.request_agent_stop(&sandbox).await {
             Ok(()) => {
                 self.advance(

@@ -47,6 +47,8 @@ pub(super) struct NativeBackend {
     pub status_override: Arc<Mutex<Option<layer3_adapter::RuntimeStatus>>>,
     pub close_transport:
         Arc<Mutex<Option<Arc<layer3_adapter::hosted::ProviderHostedControlTransport>>>>,
+    pub inspection_transport:
+        Arc<Mutex<Option<Arc<layer3_adapter::hosted::ProviderHostedControlTransport>>>>,
     pub deny_inventory: Arc<AtomicBool>,
     pub deny_teardown: Arc<AtomicBool>,
     pub hold_finality: Arc<AtomicBool>,
@@ -365,15 +367,9 @@ impl HostedBackend for NativeBackend {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> layer3_adapter::Result<ResponseFrame> {
-        let close_transport = self.close_transport.lock().unwrap().clone();
-        if matches!(request, RequestFrame::CloseAgent(_)) {
-            if let Some(transport) = close_transport {
-                use layer3_adapter::hosted::HostedControlTransport;
-                self.calls.push("receiver-close-attempt");
-                return transport
-                    .exchange(&RuntimeHandle("local-runtime".into()), request)
-                    .await;
-            }
+        if let Some((transport, target)) = self.retirement_exchange(handle, &request) {
+            use layer3_adapter::hosted::HostedControlTransport;
+            return transport.exchange(&target, request).await;
         }
         if matches!(request, RequestFrame::PrepareWorkspace(_))
             && self.interrupted_workspace.load(Ordering::SeqCst)
