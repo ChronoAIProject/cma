@@ -237,6 +237,7 @@ pub trait HostedBackend: Send + Sync {
         &self,
         _handle: &RuntimeHandle,
         _request: &ProviderSandboxRequest,
+        _for_retirement: bool,
     ) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "provider suspension observation is unavailable".into(),

@@ -312,9 +312,10 @@ impl HostedBackend for RuntimeBackends {
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
+        for_retirement: bool,
     ) -> Result<()> {
         self.for_handle(handle)?
-            .verify_suspended(handle, request)
+            .verify_suspended(handle, request, for_retirement)
             .await
     }
     fn retained_startup_policy(&self) -> Option<&dyn crate::hosted::HostedRetainedStartupPolicy> {

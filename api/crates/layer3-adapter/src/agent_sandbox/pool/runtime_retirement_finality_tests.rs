@@ -29,22 +29,54 @@ async fn bound(
 }
 
 #[tokio::test]
-async fn verified_retirement_of_a_suspended_runtime_requires_suspended_provider_mode() {
+async fn verified_retirement_requires_suspension_and_absence_of_unlabeled_owned_pods() {
     let (fixture, home, request, handle) = bound(true).await;
     let client = client(&fixture, false);
     assert!(client
         .retire_suspended(&handle, &request, &home)
         .await
         .is_err());
+    let pod = "/api/v1/namespaces/cma-test/pods/retiring-original";
     {
         let mut state = fixture.state.lock().unwrap();
         assert!(!state
             .calls
             .iter()
             .any(|(call, _)| call.starts_with("DELETE ")));
-        state.rows.get_mut(MEMBER).unwrap()["spec"]["operatingMode"] =
-            serde_json::json!("Suspended");
+        state.rows.insert(
+            pod.into(),
+            json!({
+                "apiVersion":"v1", "kind":"Pod", "metadata":{
+                    "name":"retiring-original", "namespace":"cma-test", "uid":"original-pod",
+                    "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox",
+                        "name":"warm-member","uid":"member-uid","controller":true}]
+                },
+                "status":{"phase":"Running"}
+            }),
+        );
     }
+    client.suspend(&handle, &request).await.unwrap();
+    for outcome in [
+        client.verify_retirement_suspension(&handle, &request).await,
+        client.retire_suspended(&handle, &request, &home).await,
+    ] {
+        assert!(matches!(
+            outcome,
+            Err(AdapterError::Unavailable(reason)) if reason == "native member Pods remain present"
+        ));
+    }
+    {
+        let mut state = fixture.state.lock().unwrap();
+        assert!(!state
+            .calls
+            .iter()
+            .any(|(call, _)| call.starts_with("DELETE ")));
+        state.rows.remove(pod).unwrap();
+    }
+    client
+        .verify_retirement_suspension(&handle, &request)
+        .await
+        .unwrap();
     client
         .retire_suspended(&handle, &request, &home)
         .await

@@ -4,6 +4,16 @@ use crate::{provider::ProviderSandboxRequest, HomeVolumeAttachment, Result, Runt
 use kube::ResourceExt;
 
 impl AgentSandboxClient {
+    pub(crate) async fn verify_retirement_suspension(
+        &self,
+        runtime: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        self.verify_suspended(runtime, request).await?;
+        let (_, uid) = parse_handle(runtime)?;
+        self.pools.prove_member_pods_absent(uid).await
+    }
+
     pub(crate) async fn retirement_receiver(
         &self,
         runtime: &RuntimeHandle,
@@ -60,20 +70,21 @@ impl AgentSandboxClient {
             let mut desired = self.desired_at(request, name).await?;
             if require_suspended {
                 desired.data["spec"]["operatingMode"] = serde_json::json!("Suspended");
-                if actual.resource_version().is_none() {
+                if actual
+                    .resource_version()
+                    .as_deref()
+                    .is_none_or(str::is_empty)
+                {
                     return Err(rejected("missing retirement resource version"));
                 }
             }
             // An accepted foreground delete is retried with the original UID.
             actual.metadata.deletion_timestamp = None;
             self.matches(&actual, &desired)?;
-            if require_suspended
-                && object
-                    .as_ref()
-                    .is_some_and(|object| object.metadata.deletion_timestamp.is_none())
-            {
-                self.wait_suspended(runtime, &desired).await?;
-            }
+        }
+        if require_suspended {
+            let (_, uid) = parse_handle(runtime)?;
+            self.pools.prove_member_pods_absent(uid).await?;
         }
         if let Some(receiver) = receiver {
             let binding = self.pod_binding(runtime).await?;

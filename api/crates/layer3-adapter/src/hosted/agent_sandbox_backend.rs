@@ -216,7 +216,14 @@ impl HostedBackend for AgentSandboxBackend {
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
+        for_retirement: bool,
     ) -> Result<()> {
+        if for_retirement {
+            return self
+                .client
+                .verify_retirement_suspension(handle, request)
+                .await;
+        }
         self.client.verify_suspended(handle, request).await
     }
     fn retained_startup_policy(&self) -> Option<&dyn super::HostedRetainedStartupPolicy> {

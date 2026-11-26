@@ -314,6 +314,7 @@ impl HostedBackend for NativeBackend {
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
+        _for_retirement: bool,
     ) -> layer3_adapter::Result<()> {
         let rows = self.row.lock().await;
         let row = rows.as_ref().ok_or_else(absent)?;

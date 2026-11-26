@@ -90,6 +90,16 @@ impl crate::RuntimeRetirement for HostedAdapter {
     ) -> crate::Result<()> {
         self.retire_exact(request, Some(receiver)).await
     }
+    async fn suspend_for_retirement(
+        &self,
+        request: &crate::RuntimeAdoptionRequest,
+    ) -> crate::Result<()> {
+        self.suspend_exact(request, false).await?;
+        let rendered = self.retained_request(request, request.generation)?;
+        self.backend
+            .verify_suspended(&request.handle, &rendered, true)
+            .await
+    }
     async fn retire_suspended(&self, request: &crate::RuntimeAdoptionRequest) -> crate::Result<()> {
         self.retire_exact(request, None).await
     }

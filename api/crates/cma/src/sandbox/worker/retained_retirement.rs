@@ -90,6 +90,9 @@ impl SandboxWorker {
         else {
             return Ok(false);
         };
+        let Some(provider) = self.dependencies.adapter.runtime_retirement() else {
+            return Ok(false);
+        };
         let request = match crate::sandbox::runtime_attachment::retained_runtime_request(
             sandbox,
             binding,
@@ -103,7 +106,7 @@ impl SandboxWorker {
             return Err(SandboxStoreError::Conflict);
         }
         WorkAuthority::current()?;
-        if let Err(error) = self.dependencies.adapter.suspend_runtime(&request).await {
+        if let Err(error) = provider.suspend_for_retirement(&request).await {
             tracing::debug!(error = %error, "retirement compute suspension remains unconfirmed");
             return Ok(false);
         }
