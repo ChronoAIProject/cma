@@ -111,7 +111,7 @@
       "feature": "Skill installation",
       "requirement": "Existing owner route and authority scope survive; bounded intent CAS retry succeeds or returns bounded availability outcome, never duplicates installation. Do not presume missing route: /skills is already allowlisted in exact4eaf.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Deterministic concurrent publication barrier and native execution of skill installation.",
+      "remaining": "The provider oracle requires one newly advertised skill in the runtime catalog after installation and replay. Deterministic publication contention and integrated execution remain pending.",
       "trigger": "New eligible skill intent through POST /skills while ordinary publication races",
       "required_assertions": [
         {

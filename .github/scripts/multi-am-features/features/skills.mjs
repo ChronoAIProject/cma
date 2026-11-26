@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual as equal} from 'node:util';
 import {check, poll} from '../cma/core.mjs';
+import {probeProvider} from './provider_probe.mjs';
 
 export async function installSkillCase({api, adapter, record, phase}) {
   const id = phase === 'before_restart' ? 'two-am-before-restart' : 'two-am-after-restart';
@@ -9,8 +10,11 @@ export async function installSkillCase({api, adapter, record, phase}) {
   const path = `/api/v1/agents/${record.agentId}/skills`;
   const intent = {key: randomUUID(), body: {id, version}, allowed: [202]};
   const read = async () => (await api.request('a', 'GET', path)).body;
+  const observeSkill = present => probeProvider({api, adapter, record},
+    {skill: {id, present}}, 'skill_matches', 'native_skill_catalog_mismatch');
   const before = await read();
   check(before.can_install === true && !before.items.some(item => item.id === id), 'skill_fixture_not_idle_or_fresh');
+  await observeSkill(false);
   const admission = (await api.request('a', 'POST', path, intent)).body;
   check(admission.items.filter(item => item.id === id && item.version === version).length === 1,
     'skill_install_admission_missing');
@@ -22,6 +26,11 @@ export async function installSkillCase({api, adapter, record, phase}) {
   check(installed.items.find(item => item.id === id).version === version, 'installed_skill_version_changed');
   const replay = (await api.request('a', 'POST', path, intent)).body;
   check(equal(admission, replay), 'skill_install_replay_changed_receipt');
-  check(equal(await adapter.skillEffects({agentId: record.agentId, skillId: id}),
-    [{status: 'installed', version}]), 'one_durable_skill_install_required');
+  const witness = await adapter.skillEffects({agentId: record.agentId, skillId: id});
+  const [pending, installedChange] = witness.changes ?? [];
+  check(witness.agentFound === true && equal(witness.entries, [{status: 'installed', version}])
+    && witness.changes?.length === 2 && pending?.status === 'pending' && installedChange?.status === 'installed'
+    && Number.isSafeInteger(pending.seq) && Number.isSafeInteger(installedChange.seq)
+    && pending.seq > 0 && installedChange.seq > pending.seq, 'one_durable_skill_install_required');
+  await observeSkill(true);
 }

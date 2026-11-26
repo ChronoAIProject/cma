@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual as equal} from 'node:util';
 import {check} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
-import {probeConfiguration} from './configuration_probe.mjs';
+import {probeProvider} from './provider_probe.mjs';
 
 const settingsBody = value => Object.fromEntries(
   ['model', 'reasoning_effort', 'permission_mode'].map(key => [key, value[key]]));
@@ -40,7 +40,8 @@ async function confirmConfigurationDispatch(adapter, agentId, owner, sequence) {
 export async function configurationCases({api, record: resource, runCase, recordFailure,
   recordState = async () => {}, adapter, conversationApi = api}) {
   const preferences = preferencesPath(resource), settings = settingsPath(resource);
-  const probe = expected => probeConfiguration({api: conversationApi, adapter, record: resource}, expected);
+  const probe = configuration => probeProvider({api: conversationApi, adapter, record: resource},
+    {configuration}, 'configuration_matches', 'native_configuration_mismatch');
   const readLog = after => adapter.configurationLog({agentId: resource.agentId, after});
   await runCase('user.system_prompt_roundtrip', async () => {
     const before = await read(api, preferences);

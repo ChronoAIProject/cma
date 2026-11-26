@@ -325,8 +325,7 @@ class Fixture:
     def prepareTurn(self, caseId=None, marker=None, **extra):
         self.provider_observation('prepare_turn',input={'case_id':caseId,'marker':marker,**extra})
         value=self.provider('POST','/__ws4/arm',{'case_id':caseId,'marker':marker,
-            'suggestions': extra.get('suggestions', False),
-            **({'configuration': extra['configuration']} if 'configuration' in extra else {}),
+            **{key: extra[key] for key in ('suggestions', 'configuration', 'skill') if key in extra},
             **({'access_request': extra['accessRequest']} if 'accessRequest' in extra else {})})
         self.provider_observation('prepare_turn_result',snapshot=value)
         return value
@@ -361,11 +360,8 @@ class Fixture:
             raise ValueError('agent_id_required')
         if skillId not in ('two-am-before-restart', 'two-am-after-restart'):
             raise ValueError('fixture_skill_required')
-        return self.mongo(
-            "const a=d.agents.findOne({_id:" + json.dumps(agentId) + "},{_id:0,'record.work.live_skills':1});"
-            "const id=" + json.dumps(skillId) + ";"
-            "print(JSON.stringify(a? (a.record.work.live_skills||[]).filter(row=>row.reference.id===id)"
-            ".map(row=>({status:row.status,version:row.material?.version})):null));")
+        scope = json.dumps({'agentId': agentId, 'skillId': skillId})
+        return self.mongo(f'const scope = {scope};\n' + (ROOT / 'skill_evidence.js').read_text())
 
     def preparedReady(self):
         return self.mongo(
