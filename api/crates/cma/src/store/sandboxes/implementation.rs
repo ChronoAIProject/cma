@@ -127,6 +127,10 @@ impl SandboxStore for MongoSandboxStore {
             && crate::agent_lifecycle::valid_immutable_image(target)
     }
 
+    fn managed_runtime_target_is_held(&self, target: &str) -> bool {
+        self.default_pool_holds.image(target)
+    }
+
     async fn qualify_retained_machine(
         &self,
         sandbox: &Sandbox,

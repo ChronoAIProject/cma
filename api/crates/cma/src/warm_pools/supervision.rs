@@ -1,8 +1,43 @@
 //! Keep optional capacity reconciliation separate from scheduler-loop health.
-use super::NativeWarmPools;
+use super::{reconcile_claimed, NativeWarmPools, WarmPoolError};
 use std::{sync::Arc, time::Duration};
 
 impl NativeWarmPools {
+    pub(super) async fn reconcile_one(&self) -> Result<bool, WarmPoolError> {
+        let Some(provider) = self.adapter.native_pools() else {
+            return Ok(false);
+        };
+        let target = if self.default_holds.lane(false) || self.default_holds.lane(true) {
+            let mut claimed = None;
+            for target in self.store.list().await? {
+                if !self.default_holds.lane(target.machine) {
+                    claimed = self.store.claim_retirement(&target.id).await?;
+                    if claimed.is_some() {
+                        break;
+                    }
+                }
+            }
+            claimed
+        } else {
+            self.store.claim().await?
+        };
+        let Some(target) = target else {
+            return Ok(false);
+        };
+        if target.retiring {
+            return self.retire_claimed(provider, target).await;
+        }
+        if !self.current_plan(&target)? {
+            if !self.store.candidate_protected(&target).await? {
+                return self.retire_claimed(provider, target).await;
+            }
+            return self.reconcile_candidate(provider, target).await;
+        }
+        reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing)
+            .await
+            .map(|_| true)
+    }
+
     pub(crate) fn spawn_supervised(
         self: Arc<Self>,
         shutdown: tokio::sync::watch::Receiver<bool>,

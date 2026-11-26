@@ -39,7 +39,7 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
             content.clone(),
             workspace.content.clone(),
             agent_content.clone(),
-            machine.warm.reaches.clone(),
+            content.nyxid_connection_services(),
             machine.warm.runtime_version.clone(),
             machine.warm.execution,
             machine.home_policy.clone(),
@@ -55,6 +55,7 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
         sandbox.runtime = native.payload.runtime.clone();
         sandbox.lifecycle.home = native.payload.home.clone();
         sandbox.work.step = SandboxWorkStep::None;
+        sandbox.credential.reaches = native.plan.warm.reaches.clone();
         sandbox.profile.id =
             private_sandbox_profile_id(&sandbox.owner, &format!("agent-manager:{key}:sandbox"))
                 .unwrap();

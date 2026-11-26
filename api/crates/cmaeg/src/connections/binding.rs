@@ -6,6 +6,7 @@ use crate::{
         management::{ManagementError, ManagementState},
         ChannelCreateRequest, ChannelUpdateRequest, SourceRequest,
     },
+    records::CreateConnectionClaim,
 };
 use cmaeg_core::{
     channel::{AdmissionPolicy, ChannelDefinition, Secret, Source},
@@ -67,13 +68,13 @@ fn source(
         admission: admission.ok_or_else(|| invalid("connection_admission is required"))?,
     })
 }
-pub async fn expand_create(
+pub(crate) async fn expand_create(
     state: &ManagementState,
     creator: &Creator,
     request: &mut ChannelCreateRequest,
-) -> Result<(), ManagementError> {
+) -> Result<Option<CreateConnectionClaim>, ManagementError> {
     let Some(id) = request.connection_ref.clone() else {
-        return Ok(());
+        return Ok(None);
     };
     if !request.sources.is_empty()
         || request.credentials.telegram_bot_token.is_some()
@@ -115,12 +116,18 @@ pub async fn expand_create(
     }
     if connection.channel_record.is_none() {
         connection.channel_record = Some(record_id.to_string());
+        if state.records.channel_creates_fenced() {
+            return store(state)
+                .prepare_create_claim(connection, version)
+                .map(Some)
+                .map_err(error);
+        }
         store(state)
             .save_connection(&connection, Some(version))
             .await
             .map_err(error)?;
     }
-    Ok(())
+    Ok(None)
 }
 pub async fn expand_update(
     state: &ManagementState,

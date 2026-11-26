@@ -105,6 +105,15 @@ impl NativeStartup {
         refuse_status: bool,
         policy: Option<NativeFsGroupChangePolicy>,
     ) -> Self {
+        Self::with_default_image(record_boot, refuse_status, policy, None).await
+    }
+
+    async fn with_default_image(
+        record_boot: bool,
+        refuse_status: bool,
+        policy: Option<NativeFsGroupChangePolicy>,
+        released_image: Option<String>,
+    ) -> Self {
         let (original, mut active, now) = active_fixture().await;
         let native = fixture::NativeFixture::with_fs_group_policy(&mut active, policy).await;
         active.revision = 1;
@@ -170,6 +179,9 @@ impl NativeStartup {
         let homes = Arc::new(
             NativeHomeVolumes::new(native.api.client.clone(), native_config, "fixture").unwrap(),
         );
+        if let Some(image) = &released_image {
+            config.deployment.image.uri.clone_from(image);
+        }
         let adapter = Arc::new(
             CodexAdapter::with_backend(
                 backend::Backend {
@@ -203,12 +215,15 @@ impl NativeStartup {
             .into_iter()
             .map(|row| (row.id.clone(), row))
             .collect();
-        let reconciler = SandboxReconciler::new(
+        let mut reconciler = SandboxReconciler::new(
             store.clone(),
             adapter,
             Arc::new(original.harness.policy.clone()),
             "test".into(),
         );
+        if let Some(image) = released_image {
+            reconciler = reconciler.with_runtime_version(image);
+        }
         assert_eq!(
             reconciler.startup_binding_schedule(&authority, &inventory, true),
             (8, "none")
@@ -332,6 +347,9 @@ async fn startup_native_proof_status_and_durable_fence_keep_order_with_held_sibl
 
 #[path = "startup_native_pool_drift.rs"]
 mod pool_drift;
+
+#[path = "startup_admitted_spec.rs"]
+mod admitted_spec;
 
 #[path = "startup_native_conflict.rs"]
 mod conflicts;

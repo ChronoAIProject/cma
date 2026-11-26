@@ -132,6 +132,10 @@ pub trait SandboxStore: Send + Sync {
         false
     }
 
+    fn managed_runtime_target_is_held(&self, _target: &str) -> bool {
+        false
+    }
+
     async fn qualify_retained_machine(
         &self,
         _sandbox: &Sandbox,
@@ -151,7 +155,8 @@ pub trait SandboxStore: Send + Sync {
             }
             _ => true,
         };
-        (!target.is_empty() && qualified).then_some(target)
+        (!target.is_empty() && qualified && !self.managed_runtime_target_is_held(target))
+            .then_some(target)
     }
 
     /// The compatible target from one captured release. Explicitly pinned

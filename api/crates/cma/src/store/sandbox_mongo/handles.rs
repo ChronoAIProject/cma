@@ -118,6 +118,7 @@ impl MongoSandboxStore {
             native_prepared: majority_collection(&database, store::native_prepared::COLLECTION),
             warm_runtime_version: None,
             managed_runtime_version: None,
+            default_pool_holds: Default::default(),
             runtime_image_origin_enabled: false,
             managed_machine_updates: Default::default(),
             desktop_verified_runtime_image: None,
