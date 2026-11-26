@@ -356,7 +356,7 @@ impl RuntimeConfig {
     }
 }
 
-pub(super) fn deployment_id_from_lookup(
+pub(crate) fn deployment_id_from_lookup(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
 ) -> Result<String, String> {
     let value = required(lookup, "CHRONO_DEPLOYMENT_ID")?;
