@@ -217,14 +217,31 @@ fn failure_and_retirement_never_advertise_unavailable_retries_or_retirement() {
         vec![SandboxLifecycleAction::Observe]
     );
     sandbox.begin_retirement(crate::rfc3339_at(at(3))).unwrap();
-    assert!(SandboxLifecycleResult::observe_with_admission(
+    let retirement_without_admission = SandboxLifecycleResult::observe_with_admission(
         &sandbox,
         None,
         Some(&admission),
         at(100),
-        true
+        true,
     )
-    .is_none());
+    .unwrap();
+    assert_eq!(
+        retirement_without_admission.state,
+        SandboxLifecycleResultState::InProgress
+    );
+    assert_eq!(
+        retirement_without_admission.actions,
+        vec![SandboxLifecycleAction::Observe]
+    );
+    assert!(retirement_without_admission.continuing);
+    assert_eq!(retirement_without_admission.retry_after_seconds, Some(5));
+    assert_eq!(
+        retirement_without_admission.owner_slot_released,
+        Some(false)
+    );
+    assert!(retirement_without_admission.operation_id.is_none());
+    assert!(retirement_without_admission.started_at.is_none());
+    assert!(retirement_without_admission.result_due_at.is_none());
     let retirement =
         SandboxLifecycleResult::observe(&sandbox, Some(lifecycle_test_support::NOW), at(90), true)
             .unwrap();
