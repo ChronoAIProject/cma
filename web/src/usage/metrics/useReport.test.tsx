@@ -280,3 +280,30 @@ it('uses the legacy report flow only for an explicitly unsupported latest route'
   expect(latest).toHaveBeenCalledTimes(1);
   expect(api.create).toHaveBeenCalledTimes(1);
 });
+
+it('caches only typed disabled view capability in the current owner scope and retries after its TTL', async () => {
+  vi.useFakeTimers();
+  const api = metricsClient(true);
+  const latest = vi.fn().mockRejectedValue(new ApiError(501, 'disabled', 'report_view_disabled'));
+  const client = Object.assign(api, { latest });
+  const owner = { cacheKey: 'owner-first', principal: 'owner-1' };
+  const { result, rerender } = renderHook(
+    ({ scope, selection }) => useUsageReport(client, selection, true, true, scope),
+    { initialProps: { scope: owner, selection: defaultSelection } },
+  );
+  await act(async () => {});
+  expect(result.current.report?.status).toBe('ready');
+  expect(latest).toHaveBeenCalledTimes(1);
+  expect(api.create).toHaveBeenCalledTimes(1);
+  rerender({ scope: owner, selection: { ...defaultSelection, range: '7d' } });
+  await act(async () => {});
+  expect(result.current.report?.status).toBe('ready');
+  expect(latest).toHaveBeenCalledTimes(1);
+  expect(api.create).toHaveBeenCalledTimes(2);
+  await act(async () => vi.advanceTimersByTimeAsync(300_000));
+  expect(latest.mock.calls.length).toBeGreaterThan(1);
+  const before = latest.mock.calls.length;
+  rerender({ scope: { ...owner, cacheKey: 'owner-next-epoch' }, selection: defaultSelection });
+  await act(async () => {});
+  expect(latest.mock.calls.length).toBeGreaterThan(before);
+});

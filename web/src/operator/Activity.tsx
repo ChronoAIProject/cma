@@ -199,6 +199,7 @@ function ActivitySummarys({
         actor: filters.actor || undefined,
         action: filters.action === 'audit' ? undefined : filters.action || undefined,
         excludeSuccessfulReads: filters.action === 'audit' || undefined,
+        excludeCompatibilityProbes: filters.action === 'audit' || undefined,
       }),
     [client, filters],
   );
@@ -250,9 +251,13 @@ function ActivitySummarys({
               )}
             </TableCell>
             <TableCell>
-              <Badge tone={OUTCOMES[row.outcome.status].tone}>
-                {OUTCOMES[row.outcome.status].label}
-              </Badge>
+              {row.outcome.status === 'refused' && row.outcome.code === 'report_view_disabled' ? (
+                <Badge tone="neutral">Capability unsupported</Badge>
+              ) : (
+                <Badge tone={OUTCOMES[row.outcome.status].tone}>
+                  {OUTCOMES[row.outcome.status].label}
+                </Badge>
+              )}
             </TableCell>
             <TableCell mono>{'code' in row.outcome ? row.outcome.code : null}</TableCell>
           </tr>

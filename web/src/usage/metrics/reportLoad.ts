@@ -1,7 +1,6 @@
 import {
   ApiError,
   ProtocolError,
-  isUsageInitialUnavailable,
   type UsageInitialData,
   type UsageInitialProjection,
   type UsageInitialReport,
@@ -25,6 +24,7 @@ import {
   UsageObservationLimit,
 } from './retry';
 import { reportRequest } from './reportRequests';
+import { loadCompatibleReport } from './reportCompatibility';
 import {
   abortWhenIdle,
   clearReportOwner,
@@ -223,13 +223,20 @@ async function loadLatest(
   if (!latest || selection.range === '1h') return false;
   // After admission observe the exact job. Repeating latest while it fails can
   // create another job and hide generation failures behind an endless 202 loop.
+  let settled: UsageMetricReport | undefined;
+  const readView = (refresh: boolean) =>
+    observeReport(api, entry, signal, (requestSignal) =>
+      latest.call(api, latestQuery(selection, admin, refresh), { signal: requestSignal }),
+    ).catch((error: unknown) => {
+      signal.throwIfAborted();
+      // A mixed replica may refuse the view after the exact admitted report
+      // completed. Legacy fallback must consume that result, never re-admit.
+      if (settled && unsupportedLatestRoute(error)) entry.pending = settled;
+      throw error;
+    });
   if (entry.latestPending && entry.refreshReportId && !once)
-    await observePending(api, entry, signal, principal, admin);
-  let view = await observeReport(api, entry, signal, (requestSignal) =>
-    latest.call(api, latestQuery(selection, admin, forceRefresh && !entry.latestPending), {
-      signal: requestSignal,
-    }),
-  );
+    settled = await observePending(api, entry, signal, principal, admin);
+  let view = await readView(forceRefresh && !entry.latestPending);
   while (!signal.aborted) {
     if (view.report.status === 'ready' && view.report.summary) {
       commitLatest(entry, view, principal, admin);
@@ -249,10 +256,8 @@ async function loadLatest(
       entry.observationStartedAt = 0;
       return true;
     }
-    await observePending(api, entry, signal, principal, admin);
-    view = await observeReport(api, entry, signal, (requestSignal) =>
-      latest.call(api, latestQuery(selection, admin, false), { signal: requestSignal }),
-    );
+    settled = await observePending(api, entry, signal, principal, admin);
+    view = await readView(false);
   }
   return true;
 }
@@ -389,28 +394,23 @@ export function startReportLoad(
     signal.throwIfAborted();
     // A deliberate retry may start a replacement, but never erase a server floor.
     if (entry.pollAt > Date.now()) await waitForRetry(entry.pollAt - Date.now(), signal);
-    const latestClient = api as LatestMetricsClient;
-    let usedInitial = false;
-    let usedLatest = false;
-    try {
-      usedInitial = initialEnabled
-        ? await loadInitial(api, selection, admin, entry, signal, principal, forceRefresh, measured)
-        : false;
-    } catch (error) {
-      if (background || !isUsageInitialUnavailable(error)) throw error;
-      if (entry.initialPending) {
-        if (!entry.refreshReportId)
-          throw new ProtocolError('Missing admitted initial report identity');
-        const ready = await observePending(api, entry, signal, principal, admin);
-        signal.throwIfAborted();
-        commitLegacy(entry, ready, principal, admin);
-        return;
-      }
-    }
-    if (!usedInitial) {
-      try {
-        usedLatest = await loadLatest(
-          latestClient,
+    await loadCompatibleReport({
+      api,
+      owner,
+      admin,
+      entry,
+      signal,
+      background,
+      initialMode: initialEnabled
+        ? selection.range !== '1h' && api.latestInitial
+          ? 'initial-view'
+          : 'initial-report'
+        : undefined,
+      initial: () =>
+        loadInitial(api, selection, admin, entry, signal, principal, forceRefresh, measured),
+      latest: () =>
+        loadLatest(
+          api as LatestMetricsClient,
           selection,
           admin,
           entry,
@@ -418,14 +418,16 @@ export function startReportLoad(
           principal,
           forceRefresh,
           background,
-        );
-      } catch (latestError) {
-        if (background || !unsupportedLatestRoute(latestError)) throw latestError;
-      }
-    }
-    signal.throwIfAborted();
-    if (!usedInitial && !usedLatest)
-      await loadLegacy(api, selection, admin, entry, signal, principal);
+        ),
+      resumeInitial: async () => {
+        if (!entry.refreshReportId)
+          throw new ProtocolError('Missing admitted initial report identity');
+        const ready = await observePending(api, entry, signal, principal, admin);
+        signal.throwIfAborted();
+        commitLegacy(entry, ready, principal, admin);
+      },
+      legacy: () => loadLegacy(api, selection, admin, entry, signal, principal),
+    });
   })();
   entry.inFlight = run;
   void run

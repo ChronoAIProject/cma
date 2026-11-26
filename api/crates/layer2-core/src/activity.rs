@@ -123,6 +123,8 @@ pub struct ActivityQuery {
     pub action: Option<ActivityAction>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclude_successful_reads: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exclude_compatibility_probes: bool,
     pub limit: u32,
     pub cursor: Option<String>,
 }
@@ -133,6 +135,7 @@ impl Default for ActivityQuery {
             actor: None,
             action: None,
             exclude_successful_reads: false,
+            exclude_compatibility_probes: false,
             limit: DEFAULT_ACTIVITY_LIMIT,
             cursor: None,
         }

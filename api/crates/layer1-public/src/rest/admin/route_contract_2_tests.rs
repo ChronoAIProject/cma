@@ -270,10 +270,15 @@ async fn activity_audit_filter_keeps_security_events_and_requires_read_authority
             ActivityOutcome::Refused("forbidden".into()),
         ),
         ActivityRecord::new(ActivityAction::Configure, ActivityOutcome::Succeeded),
+        ActivityRecord::new(
+            ActivityAction::Read,
+            ActivityOutcome::Refused("report_view_disabled".into()),
+        ),
+        ActivityRecord::new(ActivityAction::Read, ActivityOutcome::Failed("501".into())),
     ] {
         fixture.activity.append(&row).await.unwrap();
     }
-    let path = "/api/v1/admin/activity?view=summary&exclude_successful_reads=true";
+    let path = "/api/v1/admin/activity?view=summary&exclude_successful_reads=true&exclude_compatibility_probes=true";
     let denied = send(&fixture.app, Method::GET, path, None, []).await;
     assert_eq!(denied.status(), StatusCode::FORBIDDEN);
     let response = send(
@@ -288,6 +293,10 @@ async fn activity_audit_filter_keeps_security_events_and_requires_read_authority
     let body = response_json(response).await;
     let items = body["items"].as_array().unwrap();
     assert!(items.iter().any(|row| row["action"] == "configure"));
+    assert!(items
+        .iter()
+        .all(|row| row["outcome"]["code"] != "report_view_disabled"));
+    assert!(items.iter().any(|row| row["outcome"]["code"] == "501"));
     assert!(items
         .iter()
         .any(|row| row["outcome"]["status"] == "refused"));

@@ -164,6 +164,7 @@ describe('Activity summary pages', () => {
         actor: undefined,
         action: undefined,
         excludeSuccessfulReads: true,
+        excludeCompatibilityProbes: true,
       }),
     );
     await user.click(screen.getByRole('button', { name: 'Refresh records' }));
@@ -193,6 +194,7 @@ describe('Activity summary pages', () => {
         cursor: undefined,
         action: 'read',
         excludeSuccessfulReads: undefined,
+        excludeCompatibilityProbes: undefined,
       }),
     );
   });
@@ -247,4 +249,20 @@ describe('Activity summary pages', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Page 1 · 0 records · Last page');
     await waitFor(() => expect(client.admin.listActivitySummary).toHaveBeenCalledTimes(3));
   });
+});
+
+it('shows the retained compatibility refusal as unsupported and keeps genuine failures distinct', async () => {
+  const client = operatorClient();
+  client.admin.listActivitySummary.mockResolvedValue({
+    items: [
+      { ...row('disabled-view'), outcome: { status: 'refused', code: 'report_view_disabled' } },
+      { ...row('ordinary-failure'), outcome: { status: 'failed', code: '501' } },
+      { ...row('legacy-report'), action: 'create', outcome: { status: 'succeeded' } },
+    ],
+    next: null,
+  });
+  render(<Activity client={client} />);
+  expect(await screen.findByText('Capability unsupported')).toBeVisible();
+  expect(screen.getByText('Failed')).toBeVisible();
+  expect(screen.getByText('Succeeded')).toBeVisible();
 });

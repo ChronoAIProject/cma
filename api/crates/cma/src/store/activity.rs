@@ -180,6 +180,15 @@ impl MongoActivityStore {
                 }],
             });
         }
+        if query.exclude_compatibility_probes {
+            clauses.push(doc! {
+                "$nor": [{
+                    "record.action": action_bson(ActivityAction::Read)?,
+                    "record.outcome.status": "refused",
+                    "record.outcome.code": "report_view_disabled",
+                }],
+            });
+        }
         if let Some(cursor) = query.cursor.as_deref() {
             let (recorded_at, id) = decode_cursor(cursor)?;
             clauses.push(doc! {

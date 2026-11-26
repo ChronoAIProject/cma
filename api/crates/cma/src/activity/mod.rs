@@ -63,8 +63,17 @@ pub(crate) struct PendingActivity {
 impl PendingActivity {
     pub(crate) async fn record(self, status: StatusCode) {
         let action = classify(&self.method, &self.path);
+        self.record_outcome(status, action, outcome(status)).await;
+    }
+
+    async fn record_outcome(
+        self,
+        status: StatusCode,
+        action: ActivityAction,
+        outcome: ActivityOutcome,
+    ) {
         let mut activity =
-            ActivityRecord::new(action, outcome(status)).on(ActivityTarget::Resource(self.path));
+            ActivityRecord::new(action, outcome).on(ActivityTarget::Resource(self.path));
         activity.actor = self.actor;
         if !self.recorder.policy.retain(
             &self.method,
@@ -136,10 +145,42 @@ pub async fn record(
             .is_some()
     {
         response.extensions_mut().insert(pending);
+    } else if response.status() == StatusCode::NOT_IMPLEMENTED
+        && response
+            .extensions()
+            .get::<layer1_public::rest::UsageViewDisabled>()
+            .is_some()
+        && expected_usage_probe(&pending.method, pending.matched_route.as_deref())
+    {
+        pending
+            .record_outcome(
+                response.status(),
+                ActivityAction::Read,
+                ActivityOutcome::Refused("report_view_disabled".into()),
+            )
+            .await;
     } else {
         pending.record(response.status()).await;
     }
     response
+}
+
+fn expected_usage_probe(method: &Method, route: Option<&str>) -> bool {
+    matches!(
+        (method, route),
+        (
+            &Method::GET,
+            Some("/api/v1/admin/usage/metrics/view" | "/api/v1/usage/metrics/view")
+        ) | (
+            &Method::POST,
+            Some(
+                "/api/v1/admin/usage/metrics/initial/view"
+                    | "/api/v1/usage/metrics/initial/view"
+                    | "/api/v1/admin/usage/metrics/initial/reports"
+                    | "/api/v1/usage/metrics/initial/reports"
+            )
+        )
+    )
 }
 
 fn classify(method: &Method, path: &str) -> ActivityAction {
