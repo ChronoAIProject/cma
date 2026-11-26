@@ -1,5 +1,6 @@
 use super::*;
 use crate::{startup::pointer_pool_startup, warm_pools::startup::WarmPoolStartup};
+use layer3_adapter::hosted::RuntimeRoutingStore;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
