@@ -521,6 +521,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v1/launches/{id}/requirements` | - | - | 200 RequirementsSnapshotView |
 | `POST /api/v1/launches/{id}/start` | StartLaunchRequest; key | - | 202 LaunchView |
 | `POST /api/v1/triggers/public/{public_id}/launches` | CreateLaunchRequest; key | - | 201 LaunchView; 202 LaunchView |
+| `POST /api/v2/triggers/public/{public_id}/launches` | Require canonical `X-CMA-Expected-Subject` matching the authenticated caller before operation or quota access. Preserve v1 key/body/receipts and verify `X-CMA-Verified-Subject` before accepting terminal results. |
 | `POST /api/v1/triggers/public/{public_id}/entry-intent` | - | - | 200 TriggerEntryIntentView |
 
 ### Discovery

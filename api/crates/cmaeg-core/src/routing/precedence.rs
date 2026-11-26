@@ -105,7 +105,7 @@ pub(super) fn select(
             RouteError::InteractionDenied,
         ));
     }
-    if let Some(form) = addressing::recognize(roster, input) {
+    if let Some(form) = addressing::recognize(roster, input.activity, input.chat_source) {
         let refused = at(form.resolution());
         if let Some(addressed) = form.resolve(roster).map_err(&refused)? {
             let resolution = addressed.resolution;

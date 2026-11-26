@@ -12,8 +12,8 @@ from staging_cd_set import dispatch_set, release_set, verify_set
 
 class RuntimeOrderTests(unittest.TestCase):
     def fixture(self, component):
-        old = fixture_runtime_receipt(component=component)
-        new = fixture_runtime_receipt(component=component, previous="0.10.1", version="0.10.2", source="f" * 40)
+        old = fixture_runtime_receipt(component=component, previous="0.10.1", version="0.10.2")
+        new = fixture_runtime_receipt(component=component, previous="0.10.2", version="0.10.3", source="f" * 40)
         registry, api = Mock(), Mock()
         registry.exists.return_value = True
         registry.manifest.return_value = (old["digest"], {})
@@ -37,7 +37,7 @@ class RuntimeOrderTests(unittest.TestCase):
             for mixed in (False, True):
                 old, new, registry, api, tags = self.fixture(component)
                 app = fixture_receipt(component="am")
-                versions = {component: "0.10.1", **({"am": "0.10.1"} if mixed else {})}
+                versions = {component: old["identity"]["version"], **({"am": "0.10.1"} if mixed else {})}
                 inputs = {"deployables": ("am," if mixed else "") + component,
                           "versions": json.dumps(versions)}
                 api.tags.side_effect = lambda key: [fixture_tag(app)] if key == "am" else [tags[0]]
@@ -51,7 +51,7 @@ class RuntimeOrderTests(unittest.TestCase):
                     writer.assert_not_called()
                 api.request.assert_not_called()
                 self.assertEqual(verify_set(release_set({component: new}), api, registry, automatic=False,
-                                           inputs={"deployables": component, "version": "0.10.2"}),
+                                           inputs={"deployables": component, "version": new["identity"]["version"]}),
                                  release_set({component: new}))
 
     def test_newest_runtime_replay_and_app_manual_rollback_remain_eligible(self):

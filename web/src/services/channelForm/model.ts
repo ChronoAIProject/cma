@@ -191,8 +191,27 @@ export function channelRequest(
   const selected = channelCredentials(credentials, draft, !channel);
   validateHmacCredentials(draft, selected, !channel);
   const patch = credentialsPatch(selected, !channel);
+  const provider = object(draft.provider);
+  const target = object(provider.target).type;
+  const profile = object(draft.profile);
+  const usesDefaultEnvironment =
+    !channel &&
+    provider.slug === 'cma_codex' &&
+    (target === undefined || target === 'profile') &&
+    profile.environment == null;
   return {
     ...without(draft, ['durable_custom_execution']),
+    ...(usesDefaultEnvironment
+      ? {
+          profile: {
+            ...profile,
+            environment: {
+              size: { cpu_cores: 1, memory_gib: 2 },
+              workspace: { type: 'directory', name: 'workspace' },
+            },
+          },
+        }
+      : {}),
     ...(patch ? { credentials: patch } : {}),
     ...(channel ? { expected_version: channel.version } : { record_id: record }),
   };

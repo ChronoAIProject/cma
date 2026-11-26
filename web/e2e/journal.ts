@@ -73,7 +73,7 @@ export class Journal {
       row.agent_id !== undefined
     )
       this.own('agents', row.agent_id, subject);
-    if (/^\/api\/v1\/triggers\/public\/[^/]+\/launches$/.test(path) && method === 'POST')
+    if (/^\/api\/v[12]\/triggers\/public\/[^/]+\/launches$/.test(path) && method === 'POST')
       this.own('launches', row.id, subject);
     const direct = path.match(
       /^\/api\/v1\/(sandboxes|agent-profiles|workspace-profiles|sandbox-profiles|triggers)$/,

@@ -170,7 +170,8 @@ class BuildTests(unittest.TestCase):
             "org.opencontainers.image.version": expected["version"]}}}
         self.assertTrue(inspect(Path("fixture.tar"), expected, Mock(side_effect=[manifest, json.dumps(config).encode()])).startswith("sha256:"))
         for mutated in (dict(config, architecture="arm64"), dict(config, config=dict(config["config"], User="0")),
-                        dict(config, config=dict(config["config"], Labels={}))):
+                        dict(config, config=dict(config["config"], Labels={})),
+                        dict(config, config=dict(config["config"], Labels=None)), ["invalid"]):
             with self.assertRaises(Refusal):
                 inspect(Path("fixture.tar"), expected, Mock(side_effect=[manifest, json.dumps(mutated).encode()]))
 

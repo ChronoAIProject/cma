@@ -1,3 +1,4 @@
+import { verifiedEntryHeaders } from './public-entry-binding.fixture';
 import { createHash } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import { entryReloadFixture } from './public-entry-reload.fixture';
@@ -22,11 +23,12 @@ for (const variant of [
     const choice = variant === 'new' || variant === 'resume' ? variant : undefined;
     let selectionKey: string | undefined;
     if (choice !== undefined) {
-      await page.route('**/api/v1/triggers/public/public_contract/launches', async (route) => {
+      await page.route('**/api/v2/triggers/public/public_contract/launches', async (route) => {
         if (selectionKey !== undefined) return route.fallback();
         selectionKey = route.request().headers()['idempotency-key'];
         await route.fulfill({
           status: 409,
+          headers: verifiedEntryHeaders(route.request(), 'local-owner'),
           contentType: 'application/json',
           body: JSON.stringify({
             code: 'trigger_repeat_choice_required',
