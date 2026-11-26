@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 import legacy_manifests as old
+from publication_evidence import PREPARED_MONGO_APP
 
 API = None
 SOURCE = None
@@ -29,6 +30,9 @@ def dependencies(secret, ready):
     configure(ready)
     objects=old.dependencies(secret)
     role=next(o for o in objects if o['kind']=='Pod' and o['metadata']['name']=='am-role')
+    if ready.get('fixture') == 'prepared':
+        mongo = next(o for o in objects if o['kind'] == 'Pod' and o['metadata']['name'] == 'mongo')
+        mongo['spec']['containers'][0]['args'][0] += ' --setParameter enableTestCommands=1'
     # The exact image prints different least-privilege roles for OFF and ON.
     role['spec']['containers'][0]['env'].append(
         {'name':'CHRONO_AGENT_MANAGER_REPLICAS_ENABLED','value':'true'})
@@ -107,6 +111,7 @@ def managers(secret, ready):
     prepared = ready.get('fixture') == 'prepared'
     if prepared:
         env['stringData']['CHRONO_NATIVE_PREPARED_TARGET'] = '1'
+        env['stringData']['CHRONO_MONGODB_URI'] += '&appName=' + PREPARED_MONGO_APP
     if desktop:
         env['stringData']['CHRONO_MACHINE_SANDBOX_IMAGE']=desktop
         env['stringData']['CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE']=desktop

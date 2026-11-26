@@ -18,6 +18,7 @@ from fixture_no_secrets import NoSecretClient, synthetic_configmaps
 import manifests
 import legacy_manifests
 from run import Fixture
+from publication_evidence import PREPARED_MONGO_APP
 from readiness_scaling import observe_never_ready, observe_scale
 
 
@@ -182,6 +183,35 @@ class OwnershipTests(unittest.TestCase):
         logs['am-b-0'].append(entry('unexpected_classification'))
         with self.assertRaisesRegex(RuntimeError, 'publication_evidence_invalid_diagnostic'):
             fixture.publicationEvidence('fixture-agent')
+
+    def test_prepared_publication_abort_is_one_exact_fixture_write(self):
+        fixture = Fixture.__new__(Fixture)
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture.client = SimpleNamespace(namespace='cma-native-am')
+        fixture.ready = {'fixture': 'prepared', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345'}
+        commands = []
+
+        def mongo(script):
+            command, _ = json.JSONDecoder().raw_decode(script.removeprefix('const result = admin.runCommand('))
+            commands.append(command)
+            return {'count': 0}
+
+        fixture.mongo = mongo
+        fixture.preparedPublicationAbort(True)
+        fixture.preparedPublicationAbort(False)
+        self.assertEqual(commands, [
+            {'configureFailPoint': 'failCommand', 'mode': {'times': 1}, 'data': {
+                'failCommands': ['update'], 'namespace': 'cma_native_am.worktrees', 'appName': PREPARED_MONGO_APP,
+                'errorCode': 112, 'errorLabels': ['TransientTransactionError']}},
+            {'configureFailPoint': 'failCommand', 'mode': 'off'},
+        ])
+        with self.assertRaisesRegex(ValueError, 'prepared_publication_abort_action_required'):
+            fixture.preparedPublicationAbort(1)
+        fixture.ready['fixture'] = 'features'
+        with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
+            fixture.preparedPublicationAbort(True)
+        self.assertEqual(len(commands), 2)
 
     def test_retirement_purge_writes_are_scoped_to_the_local_feature_fixture(self):
         run_id = 'cma-ci-' + 'a' * 12

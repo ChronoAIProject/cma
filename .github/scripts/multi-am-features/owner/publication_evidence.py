@@ -1,6 +1,9 @@
 """Collect sanitized, Agent-scoped publication diagnostics from both Managers."""
 import hashlib
+import json
 import re
+
+from common import require_feature_fixture
 
 
 FAILURES = frozenset(('known_aborted_cas', 'owner_authority_refused', 'work_lease_changed', 'unknown_commit'))
@@ -9,6 +12,23 @@ STARTUP_STEPS = frozenset(('install_skill', 'wait_for_workspace', 'add_worktree'
 LOG_BOUND_BYTES = 2 * 1024 * 1024
 LOG_TARGET = ' agent_scheduler_failure: '
 FIELDS = re.compile(r'(?<!\S)(phase|failure|next_step|agent_sha256)="?([a-z0-9_]+)"?(?=\s|$)')
+PREPARED_MONGO_APP = 'cma-two-am-prepared-fixture'
+
+
+def prepared_publication_abort(fixture, arm=None):
+    require_feature_fixture(fixture, kind='prepared')
+    if type(arm) is not bool:
+        raise ValueError('prepared_publication_abort_action_required')
+    command = {'configureFailPoint': 'failCommand', 'mode': 'off'}
+    if arm:
+        command.update(mode={'times': 1}, data={
+            'failCommands': ['update'], 'namespace': 'cma_native_am.worktrees',
+            'appName': PREPARED_MONGO_APP, 'errorCode': 112,
+            'errorLabels': ['TransientTransactionError'],
+        })
+    return fixture.mongo(f'const result = admin.runCommand({json.dumps(command)});'
+                         "if (result.ok !== 1 || result.count == null) throw Error('prepared_abort_not_configured');"
+                         'print(JSON.stringify({count: Number(result.count)}));')
 
 
 def publication_evidence(fixture, agentId=None):

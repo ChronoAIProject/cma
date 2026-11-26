@@ -7,7 +7,8 @@ import {preparedJourney} from '../prepared_suite.mjs';
 function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], repeatReservation = false,
   schemas = [4, 3, 1], readyFences = [1, 1, 1, 1], startupReceipts = [1, 1, 1],
   starting = true, ready = true, effects = 1, changedOwner = false, changedIngress = false,
-  admissionRequest = 'fixture-admission', repeatRequest = false} = {}) {
+  admissionRequest = 'fixture-admission', repeatRequest = false, injected = 1, observed = 1,
+  failCreation = false} = {}) {
   const actions = [];
   const records = [];
   let ownerReads = 0;
@@ -18,6 +19,7 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
     const record = {agentId: 'fixture-agent', sandboxId, operationId: 'fixture-operation', am, admissionRequest};
     records.push(record);
     actions.push('create-' + am + '-' + sandboxId);
+    if (failCreation && am === 'b' && onAgentId) throw new Error('fixture_admission_failed');
     onAgentId?.(record);
     return record;
   };
@@ -38,7 +40,11 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
     },
     ownerOf: async () => ({agent_id: 'fixture-agent', am: 'b', epoch: ++ownerReads > 1 && changedOwner ? 2 : 1,
       instance_id: 'fixture-manager', pod_uid: 'fixture-pod'}),
-    publicationEvidence: async () => ({a: {}, b: {known_aborted_cas: {publish_connection: 1}}}),
+    publicationEvidence: async () => ({a: {}, b: {known_aborted_cas: {publish_connection: observed}}}),
+    preparedPublicationAbort: async ({arm}) => {
+      actions.push(arm ? 'arm-publication-abort' : 'disarm-publication-abort');
+      return {count: arm ? 0 : injected};
+    },
   };
   const results = [];
   const step = async (name, operation) => { results.push({name, ...await operation()}); };
@@ -70,7 +76,8 @@ test('cold comparison and two ingress checks join the exact prepared reservation
     'create-a-cold-a', 'cleanup-cold-a',
     'create-a-candidate-a', 'starting-a', 'open-both', 'reply-a', 'cleanup-candidate-a',
     'create-b-cold-b', 'cleanup-cold-b',
-    'create-b-candidate-b', 'starting-b', 'open-both', 'reply-b', 'cleanup-candidate-b',
+    'arm-publication-abort', 'create-b-candidate-b', 'starting-b', 'disarm-publication-abort',
+    'open-both', 'reply-b', 'cleanup-candidate-b',
   ]);
   assert.equal(context.results[1].atomic_publication_fence_count, 4);
   assert.equal(context.results[1].startup_receipt_count, 3);
@@ -84,7 +91,17 @@ test('cold comparison and two ingress checks join the exact prepared reservation
   assert.equal(context.results[1].request_sha256.browser_send, 'd'.repeat(64));
   assert.match(context.results[1].request_sha256.admission, /^[a-f0-9]{64}$/);
   assert.deepEqual(context.results[1].publication_diagnostics.b, {known_aborted_cas: {publish_connection: 1}});
+  assert.equal(context.results[1].observed_known_abort, false);
+  assert.equal(context.results[3].observed_known_abort, true);
   assert.deepEqual(context.results[1].parent_schema_versions, [4, 3, 1]);
+});
+
+test('prepared publication proves a consumed and attributed abort and always removes the failpoint', async () => {
+  await assert.rejects(preparedJourney(fixture({injected: 0})), /prepared_publication_abort_not_consumed_once/);
+  await assert.rejects(preparedJourney(fixture({observed: 0})), /prepared_publication_abort_not_attributed/);
+  const failed = fixture({failCreation: true});
+  await assert.rejects(preparedJourney(failed), /fixture_admission_failed/);
+  assert.equal(failed.actions.at(-1), 'disarm-publication-abort');
 });
 
 test('prepared coverage requires separate correlated requests and stable owner and ingress identities', async () => {

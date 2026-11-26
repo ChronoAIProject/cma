@@ -25,7 +25,7 @@ from configuration_log import configuration_dispatch, configuration_log
 import manifests
 import legacy_manifests as old
 from login import login
-from publication_evidence import publication_evidence
+from publication_evidence import prepared_publication_abort, publication_evidence
 from readiness_scaling import observe_never_ready, observe_scale
 from retirement_purge import retirement_purge
 from runtime_loss import remove_runtime_pod
@@ -47,6 +47,7 @@ class Fixture:
     configurationLog = configuration_log
     configurationDispatch = configuration_dispatch
     publicationEvidence = publication_evidence
+    preparedPublicationAbort = prepared_publication_abort
     retirementPurge = retirement_purge
     removeRuntimePod = remove_runtime_pod
     titleEffects = title_effects
@@ -410,7 +411,7 @@ class Fixture:
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
                              'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
                              'organizationMembership','configurationLog','configurationDispatch','publicationEvidence',
-                             'retirementPurge','removeRuntimePod']
+                             'retirementPurge','removeRuntimePod','preparedPublicationAbort']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:
