@@ -186,6 +186,22 @@
   min-height: 0;
   overflow: auto;
 }
+@media (max-height: 480px) {
+  .sidebar__navigation:has(> .manager-navigation[data-navigation-view='sandbox']) {
+    overflow-y: auto;
+  }
+  .manager-navigation[data-navigation-view='sandbox'],
+  .manager-navigation[data-navigation-view='sandbox'] > .manager-navigation__list {
+    flex: none;
+  }
+  .manager-navigation[data-navigation-view='sandbox'] > .manager-navigation__list,
+  .manager-navigation[data-navigation-view='sandbox'] > [data-navigation-footer] {
+    overflow: visible;
+  }
+  .manager-navigation[data-navigation-view='sandbox'] > [data-navigation-footer] {
+    max-height: none;
+  }
+}
 .sidebar__account {
   min-width: 0;
   flex: none;
