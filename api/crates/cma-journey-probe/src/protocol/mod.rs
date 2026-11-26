@@ -140,7 +140,8 @@ impl Protocol {
 
     fn gateway_url(&self, path: &str) -> Url {
         let mut url = self.config.gateway.clone();
-        url.set_path(path);
+        let path = format!("{}{path}", url.path().trim_end_matches('/'));
+        url.set_path(&path);
         url
     }
 
