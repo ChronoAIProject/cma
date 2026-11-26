@@ -335,15 +335,18 @@ test('archive: only ordinary partitions retry once, and only when the merge-queu
         assert.equal(row.retriesEnv, undefined, `${setting}: NEXTEST_RETRIES never reaches a run`);
         assert.equal(row.flakyResultEnv, undefined, `${setting}: NEXTEST_FLAKY_RESULT never reaches a run`);
         const partition = row.args.includes('--partition') ? row.args[row.args.indexOf('--partition') + 1] : null;
-        const stem = partition?.replace(/[:/]/g, '-');
-        const expected = setting === '1' && partition
-          ? ['--retries', '1', '--flaky-result', 'pass', '--tool-config-file', `cma-flaky-retry:${reports}/nextest-${stem}.toml`] : [];
-        const options = row.args.slice(row.args.indexOf(partition ? '--profile' : '--success-output') + 2, row.args.indexOf('--run-ignored'));
-        assert.deepEqual(options, expected, `${setting}: ${partition ?? 'isolated'} retry options`);
-        if (expected.length) {
+        const selection = row.args[row.args.indexOf('-E') + 1];
+        const rankedProjection = selection.startsWith(`package(=cma) and test(=${rankedProjectionTest})`);
+        const expected = partition || rankedProjection ? ['--profile', 'mongo-ordinary'] : [];
+        if (setting === '1' && partition) {
+          const stem = partition.replace(/[:/]/g, '-');
+          expected.push('--retries', '1', '--flaky-result', 'pass', '--tool-config-file', `cma-flaky-retry:${reports}/nextest-${stem}.toml`);
           assert.equal(readFileSync(join(reports, `nextest-${stem}.toml`), 'utf8'),
             `[profile.mongo-ordinary.junit]\npath = "${reports}/junit-${stem}.xml"\n`, 'the tool config only sets the JUnit path');
         }
+        const firstOption = row.args.indexOf(partition ? '--partition' : '--success-output') + 2;
+        const options = row.args.slice(firstOption, row.args.indexOf('--run-ignored'));
+        assert.deepEqual(options, expected, `${setting}: ${partition ?? 'isolated'} profile and retry options`);
       }
       assert.equal(cargo.filter(row => row.args.includes('--retries')).length, setting === '1' ? 2 : 0);
     } finally { f.close(); }
