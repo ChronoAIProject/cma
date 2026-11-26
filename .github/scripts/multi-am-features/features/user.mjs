@@ -15,7 +15,7 @@ export async function userCases({record: resource, api, runCase, recordFailure})
     const text = 'two AM file ' + randomUUID() + '\n';
     const read = async () => (await api.request('a', 'GET', base + '/files/content?path=' + encodeURIComponent(file))).body;
     let createdDirectory = false;
-    try {
+    await withRestoration(async () => {
       const folder = await api.request('a', 'POST', base + '/files', {
         body: {path: directory, content_base64: '', directory: true}});
       check(folder.body.path === directory, 'directory_create_identity'); createdDirectory = true;
@@ -37,15 +37,17 @@ export async function userCases({record: resource, api, runCase, recordFailure})
         const response = await fetch(api.url(am, base + '/files/download?path=' + encodeURIComponent(file)), {
           headers: api.headers(), redirect: 'error', signal: AbortSignal.timeout(30000)});
         check(response.status === 200 && await response.text() === updated, 'file_download_bytes');
+        return {status: response.status, timing: {am, method: 'GET', route: '/api/v1/agents/{id}/files/download',
+          request_id: response.headers.get('x-request-id')}};
       });
-    } finally {
+    }, async () => {
       if (createdDirectory) {
         const deleted = await api.request('a', 'DELETE', base + '/files?recursive=true&path=' + encodeURIComponent(directory));
         check(deleted.body.deleted === true, 'file_cleanup_ack');
         const listing = (await api.request('a', 'GET', base + '/files/tree')).body;
         check(!listing.entries.some(entry => entry.name === directory), 'file_cleanup_not_visible');
       }
-    }
+    }, recordFailure);
   });
   await runCase('user.rename_cas', async () => {
     const before = (await api.request('a', 'GET', base + '/preferences')).body;
