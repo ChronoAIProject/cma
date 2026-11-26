@@ -74,7 +74,7 @@ jobs:
       - "changes"
     # Superseded workflows must not turn cancelled selection into a label error.
     # Active selector failures still reach the validator and fail closed.
-    if: "${{ !cancelled() }}"
+    if: "!cancelled() && ((github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop')"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5
     steps:
@@ -190,7 +190,7 @@ jobs:
       - "changes"
       - "repo"
       - "version-label"
-    if: "always()"
+    if: "always() && ((github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop')"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5
     steps:
@@ -211,7 +211,7 @@ jobs:
       - "am-images"
       - "runtime-images"
       - "omarchy"
-    if: "always()"
+    if: "always() && ((github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop')"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5
     steps:
@@ -231,7 +231,7 @@ jobs:
       - "eg-images"
       - "runtime-images"
       - "omarchy"
-    if: "always()"
+    if: "always() && ((github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop')"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5
     steps:
@@ -248,7 +248,7 @@ jobs:
       - "changes"
       - "web"
       - "web-images"
-    if: "always()"
+    if: "always() && ((github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop')"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5
     steps:

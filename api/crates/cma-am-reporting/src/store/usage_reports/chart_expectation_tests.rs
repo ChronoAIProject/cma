@@ -115,3 +115,28 @@ fn disk_compaction_reduces_payload_with_legacy_readable_chart_fields() {
         serde_json::to_value(new).unwrap()
     );
 }
+
+#[test]
+fn raw_chart_cursor_preserves_exact_record_and_required_schema() {
+    let record = ChartChunk {
+        buckets: vec![Bucket {
+            from: 0,
+            to: 60,
+            integral: -0.0,
+            display_integral: f64::from_bits(1),
+            mean: Some(0.125),
+            min: None,
+            max: Some(1.5),
+            ..Default::default()
+        }],
+        expectations: vec![expectation(0, 60, Some(true), None)],
+    };
+    let document = doc! {"document_schema_version":1_i64,"sandbox_id":"sandbox","owner":"owner","record":encode(&record).unwrap()};
+    let raw = mongodb::bson::RawDocumentBuf::try_from(&document).unwrap();
+    assert_eq!(raw.sandbox().unwrap(), document.sandbox().unwrap());
+    assert_eq!(raw.owner().unwrap(), document.owner().unwrap());
+    assert_eq!(
+        mongodb::bson::serialize_to_vec(&raw.record().unwrap()).unwrap(),
+        mongodb::bson::serialize_to_vec(&document.record().unwrap()).unwrap()
+    );
+}

@@ -88,6 +88,7 @@
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr) auto;
   grid-template-areas:
+    'stop-scope stop-scope stop-scope stop-scope'
     'attach steering settings send'
     'settings-panel settings-panel settings-panel settings-panel'
     'status status status status';
@@ -224,6 +225,7 @@
   .agent-composer__controls {
     grid-template-areas:
       'settings settings settings settings'
+      'stop-scope stop-scope stop-scope stop-scope'
       'attach steering . send'
       'settings-panel settings-panel settings-panel settings-panel'
       'status status status status';
@@ -253,8 +255,18 @@
   }
 }
 
-.agent-composer__stop-hint {
+.agent-composer__stop-hint,
+.agent-composer__stop-scope {
   color: var(--dsw-alias-workspace-secondary);
   font-size: 12px;
+}
+
+.agent-composer__stop-hint {
   white-space: nowrap;
+}
+
+.agent-composer__stop-scope {
+  grid-area: stop-scope;
+  justify-self: end;
+  padding-block-end: 4px;
 }

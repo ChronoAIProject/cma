@@ -14,6 +14,9 @@ impl ReportingStore {
             .await
             .map_err(unavailable)?
             .ok_or(MetricsError::NotFound)?;
+        if job.contains_key(INVALIDATED_FIELD) {
+            return Err(MetricsError::Unavailable);
+        }
         if job.get_str("kind").ok() != Some(VIEW_KIND) {
             if job.contains_key("retain_until")
                 || job

@@ -1,4 +1,10 @@
-//! Shared BSON envelope and integer boundaries for Agent Manager MongoDB stores.
+//! MongoDB driver conventions shared by Agent Manager persistence adapters.
+
+mod durability;
+pub mod topology;
+pub mod transactions;
+
+pub use durability::majority_collection;
 
 use bson::{Bson, Document};
 use serde::{de::DeserializeOwned, Serialize};

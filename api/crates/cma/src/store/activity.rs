@@ -51,7 +51,7 @@ impl<T> ActivityDoc<T> {
 /// Durable activity adapter with bounded, cursor-based reads.
 pub struct MongoActivityStore {
     entries: Collection<ActivityDoc>,
-    audit_index_ready: bool,
+    indexes: schema::PageIndexes,
 }
 
 impl MongoActivityStore {
@@ -82,12 +82,13 @@ impl MongoActivityStore {
             .assess(Contract::Activity, schema::inspect(&database, retention))
             .await?;
         tracing::info!(
-            audit_index_ready = assessment.capability,
+            audit_index_ready = assessment.capability.audit,
+            global_page_index_ready = assessment.capability.global,
             "Activity query index observation"
         );
         Ok(Self {
             entries: majority_collection(&database, ACTIVITY),
-            audit_index_ready: assessment.capability,
+            indexes: assessment.capability,
         })
     }
 }
@@ -165,10 +166,10 @@ impl MongoActivityStore {
         query
             .validate()
             .map_err(|error| StoreError::Malformed(error.to_string()))?;
-        let use_audit_index = self.audit_index_ready
-            && query.exclude_successful_reads
-            && query.actor.is_none()
-            && query.action.is_none();
+        let default_audit =
+            query.exclude_successful_reads && query.actor.is_none() && query.action.is_none();
+        let use_audit_index = default_audit && self.indexes.audit;
+        let use_global_index = default_audit && !use_audit_index && self.indexes.global;
         let mut clauses = Vec::<Document>::new();
         if let Some(actor) = &query.actor {
             clauses.push(doc! { "record.actor": actor.as_str() });
@@ -195,7 +196,11 @@ impl MongoActivityStore {
             });
         }
         let boundary = query.cursor.as_deref().map(decode_cursor).transpose()?;
-        if let Some((recorded_at, id)) = boundary.filter(|_| !use_audit_index) {
+        if let Some((recorded_at, id)) = boundary.filter(|_| use_global_index) {
+            // MongoDB's min bound is inclusive on the two-key global index.
+            // Exclude only the exact cursor tuple to keep pagination exclusive.
+            clauses.push(doc! { "$nor": [{ "recorded_at": recorded_at, "_id": id }] });
+        } else if let Some((recorded_at, id)) = boundary.filter(|_| !use_audit_index) {
             clauses.push(doc! {
                 "$or": [
                     { "recorded_at": { "$lt": recorded_at } },
@@ -210,6 +215,7 @@ impl MongoActivityStore {
         };
         let fetch = i64::from(query.limit.saturating_add(1));
         let entries = self.entries.clone_with_type::<ActivityDoc<T>>();
+        let sort = doc! { "recorded_at": -1, "_id": -1 };
         let find = entries
             .find(filter)
             .with_options(
@@ -219,7 +225,7 @@ impl MongoActivityStore {
                     .max_time(Duration::from_secs(5))
                     .build(),
             )
-            .sort(doc! { "recorded_at": -1, "_id": -1 })
+            .sort(sort.clone())
             .limit(fetch);
         let find = if use_audit_index {
             let find = find.hint(Hint::Name(activity_audit_index::INDEX.into()));
@@ -227,6 +233,13 @@ impl MongoActivityStore {
                 // The prefix identifies exactly one row. Start beyond its
                 // trailing action key to seek directly to the next page.
                 find.min(doc! {"recorded_at":recorded_at,"_id":id,"record.action":Bson::MaxKey})
+            } else {
+                find
+            }
+        } else if use_global_index {
+            let find = find.hint(Hint::Keys(sort));
+            if let Some((recorded_at, id)) = boundary {
+                find.min(doc! { "recorded_at": recorded_at, "_id": id })
             } else {
                 find
             }
