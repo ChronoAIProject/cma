@@ -174,10 +174,13 @@ describe('browser chrome metadata', () => {
       link.getAttribute('href'),
     );
     expect(icons).toEqual([
-      './src/assets/brand/png/favicon-16.png?no-inline',
-      './src/assets/brand/png/favicon-32.png?no-inline',
-      './src/assets/brand/png/favicon-48.png?no-inline',
-      './src/assets/brand/cma-favicon.svg?no-inline',
+      './src/assets/brand/pixel/favicon-16.png?no-inline',
+      './src/assets/brand/pixel/favicon-32.png?no-inline',
+      './src/assets/brand/pixel/favicon-48.png?no-inline',
+      './src/assets/brand/pixel/favicon.svg?no-inline',
     ]);
+    expect(document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute('href')).toBe(
+      './src/assets/brand/pixel/apple-touch-icon.png?no-inline',
+    );
   });
 });
