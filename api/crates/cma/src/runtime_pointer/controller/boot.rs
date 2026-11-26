@@ -127,6 +127,21 @@ impl RuntimePointerController {
                 continue;
             }
             if observed.is_some() {
+                if machine
+                    && crate::warm_pools::startup::boot_effect(writer, async {
+                        // A released image can have a newer exact Desktop
+                        // sizing plan. Only hold the lane after confirming
+                        // that the durable image itself still agrees.
+                        self.targets.verify_bootstrap(true, image).await?;
+                        self.pools
+                            .hold_conflicting_pin(&deployment_image(image.into()), true)
+                            .await
+                    })
+                    .await
+                    .map_err(|error| format!("verify {lane:?} released pool plan: {error:?}"))?
+                {
+                    return Ok(());
+                }
                 return Err(format!(
                     "durable {lane:?} pointer conflicts with pool authority"
                 ));
