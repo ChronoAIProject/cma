@@ -195,9 +195,7 @@ async fn retirement_refuses_fresh_bot_images_and_replays_an_admitted_pin() {
         Some(reference.as_str())
     );
 
-    let retired =
-        crate::agent_lifecycle::ImageManagerResolver::new("http://127.0.0.1:1".into(), true)
-            .unwrap();
+    let retired = Arc::new(crate::agent_lifecycle::RetiredImageResolver);
     let new = BotService::new(store, Arc::new(NoExternalResolver), "cma_codex".into())
         .with_inline_profiles(resolver(profiles, SandboxCapacity::default(), retired));
     assert_eq!(

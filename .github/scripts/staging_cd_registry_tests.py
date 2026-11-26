@@ -8,7 +8,7 @@ import urllib.error
 from unittest.mock import Mock
 
 from staging_cd_common import Refusal
-from staging_cd_registry import Registry, NoRedirect
+from staging_cd_registry import JOURNEY_REPOSITORY, Registry, NoRedirect
 
 NO_WAIT = {"sleep": lambda _seconds: None}
 
@@ -89,6 +89,25 @@ class RegistryTests(unittest.TestCase):
         opener.open.side_effect = [self.response({"token": "fixture"}), missing]
         self.assertIsNone(registry.runtime_pointer(repository, "staging"))
         self.assertTrue(opener.open.call_args.args[0].full_url.endswith("/manifests/staging-current"))
+
+    def test_journey_tag_is_content_addressed_in_its_own_repository(self):
+        manifest = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "config": {"digest": "sha256:" + "a" * 64}, "layers": []}
+        raw = json.dumps(manifest).encode()
+        digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+        tag = digest.replace(":", "-", 1)
+        opener = Mock()
+        token = self.response({"token": "fixture"})
+        response = self.response(raw, {"Docker-Content-Digest": digest})
+        opener.open.side_effect = [token, response, token, response]
+        registry = Registry(opener)
+        self.assertEqual(registry.manifest(JOURNEY_REPOSITORY, tag), (digest, manifest))
+        with self.assertRaisesRegex(Refusal, "different manifest digest"):
+            registry.manifest(JOURNEY_REPOSITORY, "sha256-" + "b" * 64)
+        for repository, reference in (("ghcr.io/chronoaiproject/cma-web", tag), (JOURNEY_REPOSITORY, "0.1.0")):
+            with self.subTest(repository=repository, reference=reference), self.assertRaises(Refusal):
+                registry.manifest(repository, reference)
+        self.assertEqual(opener.open.call_count, 4)
 
     def test_runtime_pointer_write_copies_the_exact_manifest_to_the_environment_tag(self):
         repository = "ghcr.io/chronoaiproject/cma-runtime"

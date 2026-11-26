@@ -29,7 +29,7 @@ fn runtime_history_indexes_are_permanent() {
 #[tokio::test]
 #[ignore = "requires authenticated disposable Mongo replica set"]
 async fn worker_history_cross_client_visibility_append_only_grants_and_cutover_barrier() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_worker_keys_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);

@@ -11,7 +11,6 @@ impl std::fmt::Debug for Config {
                 "agent_access_retained_origins",
                 &self.agent_access_retained_origins,
             )
-            .field("image_manager_base_url", &self.image_manager_base_url)
             .field("nyxid_public_url", &self.nyxid_public_url)
             .field("cors_origins", &self.cors_origins)
             .field("rate_limits", &self.rate_limits)

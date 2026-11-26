@@ -113,8 +113,6 @@ export async function identityFixture(page: Page, baseURL: string, credentialFlo
         row.status,
       );
     }
-    if (url.pathname === '/api/v1/ui/image-manager-retirement' && request.method() === 'GET')
-      return reply(false);
     if (url.pathname === '/api/v1/profile-authoring/services' && request.method() === 'GET')
       return reply([{ id: 'api-github', catalog_id: 'catalog-github', name: 'GitHub' }]);
     if (url.pathname === '/auth/login') {

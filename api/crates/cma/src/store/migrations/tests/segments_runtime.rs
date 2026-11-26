@@ -33,7 +33,7 @@ async fn principal(uri: &str, db: &mongodb::Database, role: Document, user: &str
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn canonical_migrator_and_isolated_runtime_cover_controls_and_format2_work() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_seg_role_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);

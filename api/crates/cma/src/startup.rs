@@ -101,13 +101,9 @@ async fn serve_inner(
         std::mem::take(&mut composition.router),
         std::mem::take(&mut config.cors_origins),
     );
-    let app = with_request_context(image_manager_retirement::mount(
-        router,
-        config.features.image_manager_retirement,
-    ))
-    .layer(axum::Extension(telemetry::http::ContextDiagnosticsEnabled(
-        config.features.context_diagnostics,
-    )));
+    let app = with_request_context(image_manager_retirement::mount(router)).layer(axum::Extension(
+        telemetry::http::ContextDiagnosticsEnabled(config.features.context_diagnostics),
+    ));
     if config.features.am_startup_health_serving {
         return early::serve(&config, composition, app, startup_started).await;
     }

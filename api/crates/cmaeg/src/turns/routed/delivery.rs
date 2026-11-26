@@ -1,6 +1,8 @@
 //! Fenced delivery of one already authenticated provider replay frame.
 //! Projection chooses the effect; observing a frame never implicitly sends.
 use super::{
+    answer_dispatch::AnswerDispatch,
+    answer_identity::FrameOperation,
     custom_delivery::{effect_for, CustomFrame},
     delivery_gate::{CancelSend, DeliveryGate, SEND_WINDOW},
     delivery_receipts::answer_response_id,
@@ -8,7 +10,7 @@ use super::{
     dispatcher::{admission_error, current_target},
     storage,
     tool_reply_gate::{CancelReply, ReplyGate},
-    tool_reply_store::{Admission, Kind, ReplyStore},
+    tool_reply_store::{Admission, ReplyStore},
     Authority, CustomCheckpoint, ExecutionError, Journal, Lease, Phase, RoutedToolReplies,
     ToolReplyStatus,
 };
@@ -159,13 +161,15 @@ impl RoutedDelivery {
                     | ResponsesEvent::Incomplete { .. }
             ),
         };
-        let operation = storage::hash(&storage::bytes(&(
-            &target.id,
-            &checkpoint.response_id,
-            checkpoint.cursor,
-            &checkpoint.frame_hash,
-            &checkpoint.effect_hash,
-        ))?);
+        let frame_operation = FrameOperation::new(
+            target,
+            frame,
+            &effect,
+            &checkpoint,
+            body.delivery.destination,
+            self.journal.accepted_answer_receipts,
+        )?;
+        let operation = &frame_operation.id;
         if let Some(previous) = &lease.state.delivery {
             if previous.cursor == checkpoint.cursor {
                 if previous.response_id != checkpoint.response_id
@@ -175,13 +179,23 @@ impl RoutedDelivery {
                 {
                     return Err(ExecutionError::Invalid);
                 }
-                match &previous.status {
-                    DeliveryStatus::Settled { receipt } if previous.status.settled() => {
+                let mut status = previous.status.clone();
+                if matches!(status, DeliveryStatus::Intent)
+                    && matches!(effect, ReplayEffect::Reply(_))
+                    && custom_effect.is_none()
+                {
+                    status = self
+                        .recover_automatic_receipt(&plan, target, lease, &frame_operation)
+                        .await?
+                        .unwrap_or(status);
+                }
+                match &status {
+                    DeliveryStatus::Settled { receipt } if status.settled() => {
                         let receipt = match receipt {
                             Some(receipt) => Some(
                                 self.journal
                                     .receipts(
-                                        &operation,
+                                        operation,
                                         &lease.state.owner,
                                         lease.state.retained_until,
                                     )
@@ -330,10 +344,7 @@ impl RoutedDelivery {
         let mut suppressed = false;
         let mut replayed = None;
         if matches!(effect, ReplayEffect::Reply(_)) {
-            match store
-                .admit(&plan, target, Kind::Automatic, operation.clone())
-                .await?
-            {
+            match frame_operation.admit(&store, &plan, target).await? {
                 Admission::Claimed(claim) => automatic = Some(claim),
                 Admission::Replay(receipt) => replayed = Some(receipt),
                 Admission::Suppressed => suppressed = true,
@@ -346,6 +357,7 @@ impl RoutedDelivery {
         let mut next = lease.state.clone();
         next.delivery = Some(checkpoint);
         self.journal.commit(lease, next).await?;
+        let mut dispatch = AnswerDispatch::NotDispatched;
         let receipt = match effect {
             ReplayEffect::Custom(_) => return Err(ExecutionError::Corrupt),
             ReplayEffect::NoEffect => None,
@@ -413,6 +425,7 @@ impl RoutedDelivery {
                             reason: "delivery_deadline".into(),
                         })
                     });
+                    dispatch = cancel.0.close_dispatch();
                     drop(cancel_reply);
                     drop(cancel);
                     Some(result)
@@ -421,9 +434,10 @@ impl RoutedDelivery {
         };
         if !super::live_scope::receipt(self.record_receipt(
             lease,
-            &operation,
+            operation,
             automatic.as_deref(),
             receipt.as_ref(),
+            dispatch,
         ))
         .await?
         {

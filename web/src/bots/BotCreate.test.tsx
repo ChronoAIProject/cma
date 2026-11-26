@@ -9,7 +9,6 @@ import { BotCreate, type CreationIntent } from './BotCreate';
 import { useCreationIntent } from './creationIntent';
 import { bot, botClient } from './fixtures.test-support';
 import type { BotClient } from './model';
-import { ImageManagerRetirement } from '../services/ImageManagerRetirement';
 
 function Form({ client, navigate }: { client: BotClient; navigate: () => void }) {
   const { intent, retain } = useCreationIntent('owner');
@@ -125,20 +124,16 @@ it('shows the public problem detail and permits correction after an explicit ref
   expect(screen.getByRole('button', { name: 'Back' })).toBeEnabled();
 });
 
-it('creates a default-image consumer without contacting the catalog when retirement is enabled', async () => {
-  const fetcher = vi.fn().mockResolvedValue(new Response('true'));
+it('creates a default-image consumer without contacting the catalog', async () => {
+  const fetcher = vi.fn();
   vi.stubGlobal('fetch', fetcher);
   const create = vi.fn().mockResolvedValue(bot);
-  render(
-    <ImageManagerRetirement>
-      <Form client={botClient({ create })} navigate={vi.fn()} />
-    </ImageManagerRetirement>,
-  );
+  render(<Form client={botClient({ create })} navigate={vi.fn()} />);
   const user = await fill();
   expect(screen.queryByRole('group', { name: 'Runtime image' })).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Create consumer' }));
   expect(create.mock.calls[0]?.[0]).not.toHaveProperty('image');
-  expect(fetcher).toHaveBeenCalledOnce();
+  expect(fetcher).not.toHaveBeenCalled();
 });
 
 it('submits image-free inline Agent setup without any profile authoring choice', async () => {

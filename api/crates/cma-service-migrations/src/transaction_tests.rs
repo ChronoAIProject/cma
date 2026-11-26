@@ -97,9 +97,10 @@ async fn cancel_in_flight(
 #[ignore = "requires authenticated disposable replica-set MongoDB fixture with failpoints"]
 async fn cancelled_migration_calls_keep_opening_and_terminal_outcomes_consistent() {
     let db = fixture().await;
-    let mut options = ClientOptions::parse(std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap())
-        .await
-        .unwrap();
+    let mut options =
+        ClientOptions::parse(std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
     let app = format!("migration_terminal_{}", uuid::Uuid::new_v4().simple());
     options.app_name = Some(app.clone());
     let worker = Client::with_options(options).unwrap().database(db.name());
@@ -207,9 +208,10 @@ async fn cancelled_migration_calls_keep_opening_and_terminal_outcomes_consistent
 #[ignore = "requires authenticated disposable replica-set MongoDB fixture with failpoints"]
 async fn server_abort_failure_is_reported_and_preserves_the_refusal() {
     let db = fixture().await;
-    let mut options = ClientOptions::parse(std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap())
-        .await
-        .unwrap();
+    let mut options =
+        ClientOptions::parse(std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
     let app = format!("migration_abort_{}", uuid::Uuid::new_v4().simple());
     options.app_name = Some(app.clone());
     let worker = Client::with_options(options).unwrap().database(db.name());

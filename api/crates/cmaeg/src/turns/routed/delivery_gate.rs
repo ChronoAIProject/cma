@@ -1,3 +1,4 @@
+use super::answer_dispatch::{AnswerDispatch, DispatchBoundary};
 use super::live_scope::Scope;
 use super::{dispatcher::current_target, Authority, ExecutionError, Journal, Lease};
 use crate::{
@@ -5,10 +6,7 @@ use crate::{
     ingress::routing_store::{AdmittedPlan, StoredTarget},
 };
 use futures_util::future::BoxFuture;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 use tokio::time::{Duration, Instant};
 
 pub(super) const SEND_WINDOW: Duration = Duration::from_secs(20);
@@ -22,7 +20,7 @@ pub(super) struct DeliveryGate {
     destination: Option<super::DefaultDestination>,
     origin_webhook: Option<crate::delivery::destination::WebhookDestination>,
     deadline: Instant,
-    cancelled: AtomicBool,
+    boundary: DispatchBoundary,
     scope: Option<Arc<Scope>>,
 }
 impl DeliveryGate {
@@ -45,7 +43,7 @@ impl DeliveryGate {
             destination,
             origin_webhook: None,
             deadline: Instant::now() + SEND_WINDOW,
-            cancelled: AtomicBool::new(false),
+            boundary: DispatchBoundary::default(),
             scope: None,
         })
     }
@@ -63,6 +61,9 @@ impl DeliveryGate {
         Arc::get_mut(&mut self).expect("unshared gate").scope = Some(scope);
         self
     }
+    pub(super) fn close_dispatch(&self) -> AnswerDispatch {
+        self.boundary.close()
+    }
     fn live(&self) -> bool {
         let lease = self
             .scope
@@ -70,7 +71,7 @@ impl DeliveryGate {
             .map(|s| s.execution())
             .unwrap_or_else(|| self.lease.clone());
         let now = (self.journal.clock)();
-        !self.cancelled.load(Ordering::SeqCst)
+        !self.boundary.is_closed()
             && self.scope.as_ref().is_none_or(|s| s.live())
             && Instant::now() < self.deadline
             && lease.state.ownership.until > now
@@ -130,7 +131,7 @@ impl SendGate for DeliveryGate {
         })
     }
     fn commit(&self) -> bool {
-        self.live()
+        self.live() && self.boundary.commit()
     }
     fn progress(&self) {}
 }
@@ -144,6 +145,6 @@ fn refused() -> GateRefusal {
 pub(super) struct CancelSend(pub Arc<DeliveryGate>);
 impl Drop for CancelSend {
     fn drop(&mut self) {
-        self.0.cancelled.store(true, Ordering::SeqCst);
+        self.0.close_dispatch();
     }
 }
