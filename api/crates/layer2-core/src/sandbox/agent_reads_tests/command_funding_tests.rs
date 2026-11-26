@@ -103,6 +103,18 @@ fn gateway(lose_reply: bool) -> Arc<Gateway> {
     })
 }
 
+pub(in crate::sandbox::agent_reads_tests::command_admission_tests) fn funded_admission_fixture(
+) -> (Arc<AgentTurnFunding>, Arc<Ledger>, PayerBinding) {
+    let payer = payer(credential(CredentialSource::Managed));
+    let ledger = Arc::new(Ledger::default());
+    ledger.lock().unwrap().add(&payer, 5);
+    (
+        AgentTurnFunding::new(ledger.clone(), gateway(false)),
+        ledger,
+        payer,
+    )
+}
+
 struct NoRedispatch;
 
 #[async_trait]
