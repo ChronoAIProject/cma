@@ -84,6 +84,8 @@ def run(args):
             'control_origin': fixture.serve(), 'control_token': fixture.control_token,
             'output_dir': str(private / 'journey'), 'matrix_output': str(private / 'matrix'),
             'summary_dir': str(summary), 'run_id': ready['run_id'], 'fixture': args.fixture}
+        if args.fixture == 'prepared':
+            config['browser_session_cookie'] = fixture.browser_cookie
         result['processes_ready_at'] = utc()
         result['stage'] = 'feature_journey'
         script = 'prepared_suite.mjs' if args.fixture == 'prepared' else 'suite.mjs'

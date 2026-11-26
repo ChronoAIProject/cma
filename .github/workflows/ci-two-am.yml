@@ -21,7 +21,7 @@ jobs:
   features:
     name: "Feature regression and owner recovery (${{ matrix.fixture }})"
     runs-on: ubuntu-24.04
-    timeout-minutes: 110
+    timeout-minutes: 125
     strategy:
       fail-fast: false
       matrix:
@@ -79,6 +79,16 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm test
           python3 -B -m unittest discover -p 'test_*.py'
+      - name: Build the checked-out Web and install Chromium
+        if: matrix.fixture == 'prepared'
+        timeout-minutes: 12
+        working-directory: web
+        env:
+          CHRONO_BUILD_SHA: "${{ github.sha }}"
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          npm exec -- playwright install --with-deps chromium
       - name: Download tested native images from this attempt
         timeout-minutes: 35
         env:

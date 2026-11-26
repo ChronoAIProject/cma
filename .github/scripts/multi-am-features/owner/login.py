@@ -29,7 +29,16 @@ def login(client, am_origin, public_host='native-am.local.test'):
                                       headers={**headers, 'Cookie': binding})
     if status not in [302, 303] or not final.get_all('Set-Cookie', []):
         raise RuntimeError('real_am_callback_failed_' + str(status))
+    session = SimpleCookie()
+    for value in final.get_all('Set-Cookie', []):
+        session.load(value)
+    cookie = session.get('cma_session')
+    if (cookie is None or not cookie.value or not cookie['httponly'] or not cookie['secure']
+            or cookie['path'] != '/' or cookie['samesite'].lower() != 'lax'
+            or not cookie['max-age'].isdigit() or int(cookie['max-age']) <= 0):
+        raise RuntimeError('real_browser_session_cookie_missing')
     write(client.output / 'owner-login.json', {'at': utc(), 'flow': 'real_am_browser_pkce_callback',
         'identity_provider': 'local_dependency', 'authorization_code_used_once': True,
         'callback_status': status, 'secret_cookies_and_code_retained': False,
         'database_authority_injection': False})
+    return cookie.value

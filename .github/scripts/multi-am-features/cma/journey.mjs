@@ -55,7 +55,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     if (!lineage(record, r.body)) {const error = new Error('agent_lineage_mismatch'); error.response = r; throw error;}
     return r.body;
   }
-  async function create(am, desktop, overrides = {}) {
+  async function create(am, desktop, overrides = {}, onAgentId) {
     const record = {name: 'e2e-slo-ws4-' + randomUUID(), key: randomUUID(), desktop, am,
       sharedSandbox: Boolean(overrides.workspace_id)};
     records.push(record);
@@ -69,7 +69,11 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     const op = await poll(async () => {
       const {body} = await api.request(other(am), 'GET', `/api/v1/agent-lifecycle/${record.operationId}`);
       check(body?.id === record.operationId, 'lifecycle_identity_mismatch');
-      if (id(body.agent_id)) record.agentId = body.agent_id;
+      if (id(body.agent_id) && !record.agentId) {
+        record.agentId = body.agent_id;
+        onAgentId?.(record);
+      }
+      check(!record.agentId || !body.agent_id || body.agent_id === record.agentId, 'lifecycle_agent_identity_changed');
       if (['failed', 'waiting_for_connection'].includes(body.status)) {
         const failurePath = join(config.output_dir, 'create-failure-' + hash(record.operationId) + '.private.json');
         await writeFile(failurePath, JSON.stringify(body, null, 2) + '\n', {mode: 0o600, flag: 'wx'});
@@ -79,7 +83,8 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
         await save();
       }
       check(!['failed', 'waiting_for_connection'].includes(body.status), 'create_operation_failed'); return body;
-    }, value => value.status === 'succeeded' && id(record.agentId), {timeout: 420000, code: 'create_lifecycle_timeout'});
+    }, value => value.status === 'succeeded' && id(record.agentId),
+    {timeout: 420000, interval: onAgentId ? 250 : 1000, code: 'create_lifecycle_timeout'});
     let ready;
     const readinessObservations = [];
     try {

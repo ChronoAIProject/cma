@@ -306,7 +306,7 @@
     {
       "id": "SW13",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Validate prepared consumption and the cold comparison in hosted CI, then cover supported and refused parent schemas and real-Web Starting/Open/Send.",
+      "remaining": "Hosted coverage of actual prepared consumption, cold comparison and real-Web Starting/Open/Send, and explicit execution for all supported and refused parent schemas.",
       "issues": "#2168/#2156",
       "feature": "Prepared startup with renewed parent schemas",
       "requirement": "Supported parent1/3/4 publication succeeds; no repeated schema-filterConflict, no18minute lease stall. Unknown Worktree schema, cleanup and paused parents still refuse. Record request/ingress/owner/epoch and distinguish targetenabled from actualpreparedhit.",

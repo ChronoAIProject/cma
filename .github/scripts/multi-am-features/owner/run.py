@@ -117,7 +117,7 @@ class Fixture:
             self.record('am_created',am=am)
             self.wait_am(am)
             self.record('am_ready',am=am)
-        login(self.client,self.origins['a'],public_host='api.localhost.direct')
+        self.browser_cookie=login(self.client,self.origins['a'],public_host='api.localhost.direct')
         # Prove the runtime-visible public API route before a real Agent create.
         probe="import urllib.request; r=urllib.request.urlopen('https://api.localhost.direct/ready',timeout=10); print(r.status)"
         self.client.wait(lambda:self.client.k(['exec','provider','--','python3','-c',probe],check=False)[0]==0,
