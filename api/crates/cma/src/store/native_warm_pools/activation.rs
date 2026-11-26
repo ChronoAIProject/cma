@@ -7,12 +7,12 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::ClientSession;
 
 impl MongoNativeWarmPools {
-    async fn order_activation(&self, machine: bool) -> Result<ClientSession, WarmPoolError> {
+    pub(super) async fn order_activation(
+        &self,
+        machine: bool,
+    ) -> Result<ClientSession, WarmPoolError> {
         // Fixed-pin writers can lack access to the optional released-runtime collections.
         // The required settings collection already hosts deployment coordination records.
-        let guards =
-            majority_collection::<Document>(&self.database, crate::store::settings::SETTINGS);
-        let key = doc! {"_id": {"native_pool_activation": &self.deployment, "machine": machine}};
         for attempt in 0..5 {
             if attempt > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(1 << attempt)).await;
@@ -26,18 +26,25 @@ impl MongoNativeWarmPools {
             crate::store::sandbox_mongo::start_transaction(&mut session)
                 .await
                 .map_err(|_| WarmPoolError::Unavailable)?;
-            match guards
-                .update_one(
-                    key.clone(),
-                    doc! {
-                        "$setOnInsert": {"document_schema_version": 1_i64},
-                        "$inc": {"decision_fence": 1_i64},
-                    },
-                )
-                .upsert(true)
-                .session(&mut session)
-                .await
-            {
+            let ordered = if machine {
+                retirement::machine_selection::selection_fence(self, &mut session).await
+            } else {
+                let guards = majority_collection::<Document>(
+                    &self.database,
+                    crate::store::settings::SETTINGS,
+                );
+                guards
+                    .update_one(
+                        doc! {"_id":format!("agent_pool_activation:{}",self.deployment),
+                        "deployment": &self.deployment, "document_schema_version":1_i64},
+                        doc! {"$inc":{"decision_fence":1_i64}},
+                    )
+                    .upsert(true)
+                    .session(&mut session)
+                    .await
+                    .map(|_| ())
+            };
+            match ordered {
                 Ok(_) => return Ok(session),
                 Err(error) if is_confirmed_body_retry(&error) => continue,
                 Err(_) => return Err(WarmPoolError::Unavailable),
@@ -53,27 +60,17 @@ impl MongoNativeWarmPools {
             .filter(|row| !row.retiring && !row.retired)
             .ok_or(WarmPoolError::Conflict)?;
         let image = &target.plan.spec.image.uri;
+        if target.machine {
+            retirement::machine_selection::activate(self, &target).await?;
+            return self.verify_bootstrap(true, image).await;
+        }
         if target.activated_at.is_some() {
             return self.verify_bootstrap(target.machine, image).await;
         }
         let mut session = self.order_activation(target.machine).await?;
-        let scope = retirement::release_scope(self, target.machine);
-        let mut floor = scope.clone();
-        floor.insert("durable_release_authority", true);
-        if self
-            .targets
-            .find_one(floor)
-            .session(&mut session)
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?
-            .is_some()
-        {
-            // Once a pointer owns the lane, only a qualified promotion can introduce
-            // another image. A new sizing plan for the current image can still activate.
-            self.verify_bootstrap_in(target.machine, image, Some(&mut session))
-                .await?;
-        }
-        let mut historical = scope;
+        self.verify_activation_floor(target.machine, image, &mut session)
+            .await?;
+        let mut historical = retirement::release_scope(self, target.machine);
         historical.extend(doc! {"plan.spec.image.uri": image, "activated_at": {"$type": "date"}});
         let first = self
             .targets
@@ -83,8 +80,10 @@ impl MongoNativeWarmPools {
             .await
             .map_err(|_| WarmPoolError::Unavailable)?;
         let update = match first.and_then(|row| row.activated_at) {
-            Some(at) => doc! {"$set": {"activated_at": at}},
-            None => doc! {"$currentDate": {"activated_at": true}},
+            Some(at) => doc! {"$set": {"activated_at": at, "ordered_activation":true}},
+            None => {
+                doc! {"$currentDate": {"activated_at": true}, "$set":{"ordered_activation":true}}
+            }
         };
         let mut filter = self.scope();
         filter.extend(doc! {"_id": id, "activated_at": mongodb::bson::Bson::Null, "retiring": {"$ne": true}, "retired": {"$ne": true}});
@@ -132,19 +131,30 @@ impl MongoNativeWarmPools {
         writer: &BootWriter,
         record: &ReleasedLaneRecord,
     ) -> Result<(), WarmPoolError> {
+        self.prepare_publication_index(target.machine).await?;
         let mut session = self.order_activation(target.machine).await?;
         self.verify_bootstrap_in(target.machine, &record.active.image, Some(&mut session))
             .await?;
         let mut filter = self.scope();
         filter.extend(doc! {"_id": &target.id, "plan.spec.image.uri": &record.active.image, "activated_at": {"$type": "date"},
             "retiring": {"$ne": true}, "retired": {"$ne": true}});
-        self.check_fenced_write(
-            self.targets
-                .update_one(filter, doc! {"$set": {"durable_release_authority": true}})
-                .session(&mut session)
-                .await,
-        )
-        .await?;
+        let claimed = self
+            .targets
+            .update_one(
+                filter,
+                doc! {
+                    "$set": {"durable_release_authority":true,"first_pointer_anchor":true},
+                    "$unset": {"ordered_activation":""},
+                },
+            )
+            .session(&mut session)
+            .await;
+        match claimed {
+            Err(ref error) if crate::store::is_duplicate_key(error) => {
+                return Err(WarmPoolError::Conflict)
+            }
+            result => self.check_fenced_write(result).await?,
+        }
         lanes
             .protect_boot_effect_in(writer, Some(&mut session))
             .await

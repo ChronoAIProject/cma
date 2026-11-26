@@ -50,16 +50,21 @@ pub(super) async fn selection(
     }
     // A future or unversioned ownership shape cannot disappear behind a v1
     // selector. Inspect schema admission for the whole supported namespace.
-    if !matches!(policy, Policy::Independent | Policy::Empty)
-        && db
-            .collection::<Document>(name)
-            .find_one(doc! {"document_schema_version":{"$ne":1_i64}})
-            .projection(doc! {"_id":1})
-            .max_time(std::time::Duration::from_secs(30))
-            .session(&mut *session)
-            .await
-            .map_err(|_| REFUSED)?
-            .is_some()
+    if matches!(policy, Policy::Documents) {
+        require_known_document_shapes(db, name, session).await?;
+    }
+    if !matches!(
+        policy,
+        Policy::Independent | Policy::Empty | Policy::Documents
+    ) && db
+        .collection::<Document>(name)
+        .find_one(doc! {"document_schema_version":{"$ne":1_i64}})
+        .projection(doc! {"_id":1})
+        .max_time(std::time::Duration::from_secs(30))
+        .session(&mut *session)
+        .await
+        .map_err(|_| REFUSED)?
+        .is_some()
     {
         return Err(REFUSED);
     }
@@ -74,9 +79,15 @@ pub(super) async fn selection(
         Policy::Activity => activity::selection(db, closure, session).await?,
         // Public document creation accepts an origin annotation. It is not
         // authority to archive another account's body under a guessed Agent ID.
-        Policy::Documents => doc! {"$and":[
-            {"owner_subject":&closure.owner,"record.metadata.owner_subject":&closure.owner},
-            fields(&["record.metadata.origin_agent_id", "record.runtime_author_agent_id"], &closure.agents)
+        Policy::Documents => doc! {"$or":[
+            {"$and":[
+                {"document_schema_version":1_i64,"owner_subject":&closure.owner,"record.metadata.owner_subject":&closure.owner},
+                fields(&["record.metadata.origin_agent_id", "record.runtime_author_agent_id"], &closure.agents)
+            ]},
+            {"$and":[
+                {"document_schema_version":2_i64,"audit_owner_subject":&closure.owner,"audit.metadata.owner_subject":&closure.owner},
+                fields(&["audit.metadata.origin_agent_id", "audit.runtime_author_agent_id"], &closure.agents)
+            ]}
         ]},
         Policy::Budget => doc! {"$or":[
             // Full shapes were checked above. Only reservation families carry
@@ -115,6 +126,31 @@ pub(super) async fn selection(
         }
     })
 }
+async fn require_known_document_shapes(
+    db: &Database,
+    name: &str,
+    session: &mut ClientSession,
+) -> Result<()> {
+    let mut rows = db
+        .collection::<Document>(name)
+        .find(doc! {"document_schema_version":{"$ne":1_i64}})
+        .batch_size(16)
+        .max_time(std::time::Duration::from_secs(30))
+        .session(&mut *session)
+        .await
+        .map_err(|_| REFUSED)?;
+    while rows.advance(&mut *session).await.map_err(|_| REFUSED)? {
+        let row = rows.deserialize_current().map_err(|_| REFUSED)?;
+        if crate::document_artifacts::deletion::decode_audit(&row)
+            .map_err(|_| REFUSED)?
+            .is_none()
+        {
+            return Err(REFUSED);
+        }
+    }
+    Ok(())
+}
+
 fn fields(paths: &[&str], ids: &[String]) -> Document {
     let clauses: Vec<_> = paths
         .iter()

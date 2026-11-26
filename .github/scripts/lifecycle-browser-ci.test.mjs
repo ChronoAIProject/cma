@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { jobRunning } from "./ci-web-jobs.mjs";
 
 const workflow = readFileSync(
   new URL("../workflows/ci-web.yml", import.meta.url),
@@ -41,7 +42,8 @@ function invocation(suite) {
   return `node node_modules/playwright/cli.js test --config e2e/${suite.config}.config.ts`;
 }
 
-function verify(job, config, suite) {
+function verify(workflow, config, suite) {
+  const job = jobRunning(workflow, suite.name);
   const step = job.split(`name: "${suite.name}"`)[1]?.split("\n      -")[0];
   assert.ok(step, `Web must execute ${suite.config}`);
   assert.match(step, /timeout-minutes: 5/);
@@ -67,7 +69,9 @@ function verify(job, config, suite) {
     assert.ok(position >= 0 && position < job.indexOf(`name: "${suite.name}"`));
   }
   assert.equal(job.match(/name: "Production build"/g)?.length, 1);
-  assert.ok(job.includes("../.github/scripts/lifecycle-browser-ci.test.mjs"));
+  assert.ok(
+    workflow.includes("../.github/scripts/lifecycle-browser-ci.test.mjs"),
+  );
   const upload = job
     .split(`if: "failure() && steps.${suite.id}.outcome == 'failure'"`)[1]
     ?.split("\n      -")[0];
@@ -170,7 +174,8 @@ function requireLiteral(config, property, value) {
   );
 }
 
-function verifyDocuments(job, config) {
+function verifyDocuments(workflow, config) {
+  const job = jobRunning(workflow, "Document navigation and creation recovery");
   const step = job
     .split('name: "Document navigation and creation recovery"')[1]
     ?.split("\n      -")[0];

@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # These are authority/concurrency regressions, not snapshots of YAML layout.
 require 'minitest/autorun'
-require 'yaml'
+require_relative 'workflow-yaml'
 require 'json'
 require 'open3'
 
@@ -9,7 +9,7 @@ class StagingWorkflowTest < Minitest::Test
   ROOT = File.expand_path('..', __dir__)
 
   def workflow(name)
-    YAML.load_file(File.join(ROOT, 'workflows', name + '.yml'))
+    WorkflowYAML.load_file(File.join(ROOT, 'workflows', name + '.yml'))
   end
 
   def test_allocator_reads_controller_outcomes_and_only_the_controller_can_emit_the_proof
@@ -73,6 +73,62 @@ class StagingWorkflowTest < Minitest::Test
     end
     publication = steps[index.call('Build once, scan every layer, and publish exact bytes')]
     refute publication.key?('if'), 'publication must always run and decide the outcome'
+  end
+
+  def test_independent_runtime_promotions_wait_for_verified_am_when_selected
+    jobs = workflow('staging-cd').fetch('jobs')
+    %w[runtime runtime_omarchy].each do |lane|
+      release = "release_#{lane}"
+      assert_equal %w[allocate infrastructure], jobs.fetch(release).fetch('needs')
+      promotion = jobs.fetch("promote_#{lane}")
+      assert_equal ['allocate', 'infrastructure', release, 'promote_am'], promotion.fetch('needs')
+      condition = promotion.fetch('if')
+      assert_includes condition, '!cancelled()'
+      assert_includes condition, "needs.#{release}.result == 'success'"
+      assert_includes condition, "needs.#{release}.outputs.finalized == 'success'"
+      assert_includes condition, "fromJSON(needs.allocate.outputs.lanes)['am'] != 'am' ||"
+      assert_includes condition, "needs.promote_am.result == 'success' &&"
+      assert_includes condition, "fromJSON(needs.promote_am.outputs.component_result || '{}').components.am.state == 'controller-verified'"
+
+      runtime = lane.tr('_', '-')
+      successful_job = {result: 'success', outputs: {finalized: 'success'}}
+      verified_result = JSON.generate(components: {am: {state: 'controller-verified'}})
+      # Admission can obtain the exact AM resume proof under the lock while
+      # this independent Runtime lane has just published a new release.
+      resume = {admit: 'success', admit_disposition: 'already-verified', admitted: '["am"]'}
+      cases = [
+        ['new Runtime and resumed AM', 'am', 'success', resume, true],
+        ['fresh verified AM', 'am', 'success', {admit: 'success', component_result: verified_result}, true],
+        ['empty AM membership', 'am', 'success', resume.merge(admitted: '[]'), false],
+        ['overtaken AM', 'am', 'success', resume.merge(admit_disposition: 'superseded_by_newer_final'), false],
+        ['failed admission', 'am', 'success', resume.merge(admit: 'failure'), false],
+        ['failed promotion', 'am', 'failure', resume, false],
+        ['Runtime-only recovery', nil, 'skipped', {}, true]
+      ]
+      # GitHub's dereference of a missing property is empty. Use optional
+      # chaining for that dereference while running the workflow predicate.
+      expression = condition.sub('.components.am.state', '.components?.am?.state')
+      script = <<~JS
+        const fromJSON = JSON.parse;
+        const cancelled = () => false;
+        const cases = JSON.parse(process.argv[1]);
+        for (const [name, needs, expected] of cases) {
+          if (Boolean(#{expression}) !== expected) throw new Error(name);
+        }
+      JS
+      inputs = cases.map do |name, am, result, outputs, expected|
+        lanes = {runtime => runtime, 'am' => am}
+        needs = {
+          allocate: {result: 'success', outputs: {changed: 'true', lanes: JSON.generate(lanes)}},
+          infrastructure: successful_job, release => successful_job,
+          promote_am: {result: result, outputs: outputs}
+        }
+        [name, needs, expected]
+      end
+      output, status = Open3.capture2e('node', '-e', script, JSON.generate(inputs))
+      assert status.success?, output
+    end
+    refute_includes jobs.fetch('promote_contract').fetch('needs'), 'promote_am'
   end
 
   def test_omarchy_releases_check_pinned_signing_keys_before_any_build_work
@@ -157,7 +213,7 @@ class StagingWorkflowTest < Minitest::Test
     deploy = workflow('staging-deploy')['jobs']['deploy']
     refute deploy.key?('concurrency'), 'a nested acquisition of the caller lock deadlocks the writer'
     assert_equal 'chrono-ai-staging', deploy['environment']
-    assert_equal 20, deploy['timeout-minutes']
+    assert_equal "${{ inputs.mode == 'release' && 50 || 20 }}", deploy['timeout-minutes']
     assert_equal 'release', automatic['with']['mode']
     verification = deploy['steps'].index { |step| step.dig('env', 'CD_RESOLVE_MODE') == 'verify' }
     writer = deploy['steps'].index { |step| step['run'].to_s.include?('staging_cd_invoke.py') }
@@ -177,7 +233,7 @@ class StagingWorkflowTest < Minitest::Test
     calls = []
     Dir.glob(File.join(ROOT, 'workflows', '*.{yml,yaml}')).each do |file|
       name = File.basename(file, File.extname(file))
-      YAML.load_file(file)['jobs'].each do |id, job|
+      WorkflowYAML.load_file(file)['jobs'].each do |id, job|
         next unless [promote, writer].include?(job['uses'])
         if name == 'staging-promote' && %w[deploy redeploy].include?(id)
           # Jobs inside one reusable call share the caller's slot; a nested
@@ -288,7 +344,9 @@ class StagingWorkflowTest < Minitest::Test
       assert_equal './.github/workflows/staging-release.yml', publisher['uses']
       assert_equal component, publisher.dig('with', 'component')
       assert_equal "Release #{component}", publisher['name'] # detector-cache producer identity
-      assert_equal %W[allocate infrastructure release_#{id}], promote['needs']
+      promotion_needs = %W[allocate infrastructure release_#{id}]
+      promotion_needs << 'promote_am' if component.start_with?('runtime')
+      assert_equal promotion_needs, promote['needs']
       assert_includes promote['if'], "needs.release_#{id}.outputs.finalized == 'success'"
       assert_includes promote['if'], "outputs.lanes)['#{component}'] == '#{component}'"
       assert_equal './.github/workflows/staging-promote.yml', promote['uses']

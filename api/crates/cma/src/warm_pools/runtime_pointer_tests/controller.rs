@@ -15,6 +15,8 @@ use layer2_core::{
 use layer3_adapter::{PinnedReleasedRuntime, ReleasedRuntimeSource};
 use mongodb::bson::{DateTime, Document};
 
+#[path = "first_publication.rs"]
+mod first_publication;
 #[path = "lifecycle.rs"]
 mod lifecycle;
 #[path = "lifecycle_release.rs"]

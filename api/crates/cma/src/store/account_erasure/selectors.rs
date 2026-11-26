@@ -113,7 +113,8 @@ pub(super) fn matches(rule: Erasure, row: &Document, context: &Context) -> bool 
                     "recipient_subjects",
                     "record.shares.subject",
                     "record.comments.author_subject",
-                    "record.receipts.*.outcome.comment.author_subject",
+                    "audit.shares.subject",
+                    "audit.comments.author_subject",
                 ],
                 std::slice::from_ref(&context.subject),
             ) || receipt_author(row, &context.subject)
@@ -156,15 +157,17 @@ pub(super) fn matches(rule: Erasure, row: &Document, context: &Context) -> bool 
     }
 }
 fn receipt_author(row: &Document, subject: &str) -> bool {
-    super::context::value(row, "record.receipts")
-        .and_then(Bson::as_document)
-        .is_some_and(|receipts| {
-            receipts.values().any(|receipt| {
-                receipt.as_document().is_some_and(|receipt| {
-                    strings(receipt, "outcome.comment.author_subject").contains(&subject)
+    ["record.receipts", "audit.receipts"].iter().any(|path| {
+        super::context::value(row, path)
+            .and_then(Bson::as_document)
+            .is_some_and(|receipts| {
+                receipts.values().any(|receipt| {
+                    receipt.as_document().is_some_and(|receipt| {
+                        strings(receipt, "outcome.comment.author_subject").contains(&subject)
+                    })
                 })
             })
-        })
+    })
 }
 pub(super) fn destructive(rule: Erasure) -> bool {
     matches!(

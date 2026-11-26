@@ -360,8 +360,18 @@ jobs:
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
   promote_runtime:
     name: Promote runtime
-    needs: [allocate, infrastructure, release_runtime]
-    if: needs.allocate.outputs.changed == 'true' && needs.release_runtime.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime'] == 'runtime'
+    needs: [allocate, infrastructure, release_runtime, promote_am]
+    # A runtime pin rolls the AM deployment. Let this run's independently
+    # selected AM release converge before changing the pin.
+    if: >-
+      !cancelled() && needs.allocate.result == 'success' && needs.infrastructure.result == 'success' &&
+      needs.allocate.outputs.changed == 'true' && needs.release_runtime.result == 'success' &&
+      needs.release_runtime.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime'] == 'runtime' &&
+      (fromJSON(needs.allocate.outputs.lanes)['am'] != 'am' ||
+       (needs.promote_am.result == 'success' && needs.promote_am.outputs.admit == 'success' &&
+        (fromJSON(needs.promote_am.outputs.component_result || '{}').components.am.state == 'controller-verified' ||
+         (needs.promote_am.outputs.admit_disposition == 'already-verified' &&
+          needs.promote_am.outputs.admitted == '["am"]'))))
     concurrency:
       group: cma-staging-deploy-set
       queue: max
@@ -381,8 +391,16 @@ jobs:
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
   promote_runtime_omarchy:
     name: Promote runtime-omarchy
-    needs: [allocate, infrastructure, release_runtime_omarchy]
-    if: needs.allocate.outputs.changed == 'true' && needs.release_runtime_omarchy.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime-omarchy'] == 'runtime-omarchy'
+    needs: [allocate, infrastructure, release_runtime_omarchy, promote_am]
+    if: >-
+      !cancelled() && needs.allocate.result == 'success' && needs.infrastructure.result == 'success' &&
+      needs.allocate.outputs.changed == 'true' && needs.release_runtime_omarchy.result == 'success' &&
+      needs.release_runtime_omarchy.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime-omarchy'] == 'runtime-omarchy' &&
+      (fromJSON(needs.allocate.outputs.lanes)['am'] != 'am' ||
+       (needs.promote_am.result == 'success' && needs.promote_am.outputs.admit == 'success' &&
+        (fromJSON(needs.promote_am.outputs.component_result || '{}').components.am.state == 'controller-verified' ||
+         (needs.promote_am.outputs.admit_disposition == 'already-verified' &&
+          needs.promote_am.outputs.admitted == '["am"]'))))
     concurrency:
       group: cma-staging-deploy-set
       queue: max

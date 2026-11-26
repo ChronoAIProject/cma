@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { jobRunning } from "./ci-web-jobs.mjs";
 
 const workflow = readFileSync(
   new URL("../workflows/ci-web.yml", import.meta.url),
@@ -22,7 +23,8 @@ const config = readFileSync(
 const invocation =
   "node node_modules/playwright/cli.js test --config e2e/channel-setup.config.ts";
 
-function verify(job, suite) {
+function verify(workflow, suite) {
+  const job = jobRunning(workflow, "Local channel setup validation");
   const step = job
     .split('name: "Local channel setup validation"')[1]
     ?.split("\n      -")[0];
@@ -97,8 +99,9 @@ function authoringRun(job) {
     .map((line) => line.trim())
     .join("\n");
 }
-function verifyAuthoring(job, shared, hmacSuite, authoringSuite) {
-  verify(job, shared);
+function verifyAuthoring(workflow, shared, hmacSuite, authoringSuite) {
+  verify(workflow, shared);
+  const job = jobRunning(workflow, "Local channel authoring contracts");
   const execution = step(job, "Local channel authoring contracts");
   assert.match(execution, /id: channel_authoring\n/);
   assert.match(execution, /shell: bash\n/);

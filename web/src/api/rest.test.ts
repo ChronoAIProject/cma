@@ -14,11 +14,27 @@ import {
   wireSandboxUsage,
 } from '../test/rest';
 import { CreatedResourceReadError, createRestWebClient } from './rest';
+import { WorkspaceReadUnavailable } from './rest/workspaceRead';
 import { profileFailure } from '../profiles/failure';
 
 const options = { idempotencyKey: 'command-819' };
 
 describe('public REST web binding', () => {
+  it('identifies a Workspace status 503 and preserves instance-keyed reads', async () => {
+    const test = restTransport();
+    const client = createRestWebClient(test.sdk);
+    test.reply({ status: 503, code: 'store_failed', detail: 'The store could not be read.' }, 503);
+    test.reply(WIRE_WORKSPACE_DETAIL);
+
+    await expect(client.readWorkspace('workspace-1')).rejects.toMatchObject({
+      status: 503,
+      code: 'store_failed',
+      isRetryable: true,
+      message: 'Workspace status is temporarily unavailable (HTTP 503).',
+    } satisfies Partial<WorkspaceReadUnavailable>);
+    await expect(client.readWorkspace('workspace-1')).resolves.toMatchObject({ id: 'workspace-1' });
+  });
+
   it('maps runtime status and a base-view update receipt without an extra detail request', async () => {
     const test = restTransport();
     const client = createRestWebClient(test.sdk);

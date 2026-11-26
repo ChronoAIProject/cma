@@ -126,7 +126,7 @@ impl MongoNativeWarmPools {
         let query = self
             .targets
             .find_one(scope.clone())
-            .sort(doc! {"activated_at": -1});
+            .sort(retirement::release_order(machine));
         let Some(latest) = (match session.as_deref_mut() {
             Some(session) => query.session(session).await,
             None => query.await,
@@ -277,6 +277,9 @@ impl MongoNativeWarmPools {
         promotion_at: DateTime,
         session: &mut ClientSession,
     ) -> Result<(), WarmPoolError> {
+        if active.machine {
+            retirement::fence_machine_selection(self, session).await?;
+        }
         let observed = lane.candidate.as_ref().ok_or(WarmPoolError::Conflict)?;
         if !ready.observed
             || candidate.binding.as_ref() != Some(&ready.binding)
@@ -297,7 +300,7 @@ impl MongoNativeWarmPools {
         let latest = self
             .targets
             .find_one(scope.clone())
-            .sort(doc! {"activated_at": -1})
+            .sort(retirement::release_order(active.machine))
             .session(&mut *session)
             .await
             .map_err(|_| WarmPoolError::Unavailable)?
@@ -305,6 +308,7 @@ impl MongoNativeWarmPools {
         if latest.plan.spec.image.uri != lane.active.image
             || latest.retiring
             || latest.retired
+            || (active.machine && latest.id != active.id)
             || latest.activated_at.is_none_or(|at| at >= promotion_at)
         {
             return Err(WarmPoolError::Conflict);
@@ -356,7 +360,10 @@ impl MongoNativeWarmPools {
             "activated_at": mongodb::bson::Bson::Null,
             "retired": {"$ne": true}, "retiring": {"$ne": true},
         });
-        let mut fields = doc! {"activated_at": promotion_at};
+        let mut fields = doc! {"activated_at": promotion_at, "ordered_activation":true};
+        if candidate.machine {
+            fields.insert("machine_plan_activated_at", promotion_at);
+        }
         if let Some(choice) = active.operator_replicas {
             fields.insert(
                 "operator_replicas",

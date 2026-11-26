@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "yaml"
+require_relative "workflow-yaml"
 require_relative "backend-ci-contract"
 require_relative "ledger-ci-contract"
 
@@ -14,7 +14,7 @@ module CIContract
 
   def self.load_inputs
     Dir.glob(File.join(ROOT, ".github/workflows/*.{yml,yaml}")).to_h do |path|
-      [File.basename(path, File.extname(path)), YAML.safe_load(File.read(path), aliases: false)]
+      [File.basename(path, File.extname(path)), WorkflowYAML.load_file(path)]
     end
   end
 

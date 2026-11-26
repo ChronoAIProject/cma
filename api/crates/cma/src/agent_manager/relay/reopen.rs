@@ -227,10 +227,27 @@ fn failure_response(error: layer3_adapter::AdapterError) -> Response {
 /// The refusals the lifecycle treats as terminal validation.
 fn terminal(error: &layer3_adapter::AdapterError) -> bool {
     use layer3_adapter::AdapterError::*;
-    matches!(
-        error,
-        Rejected(_) | Unsupported(_) | OperationIdentityConflict(_) | SkillUpgradeRefused(_)
-    )
+    // Keep the wire decision explicit when the adapter adds a failure class.
+    match error {
+        Rejected(_)
+        | Unsupported(_)
+        | OperationIdentityConflict(_)
+        | SkillUpgradeRefused(_)
+        | AdmittedSandboxSpecDrift
+        | NativePoolConfigurationDrift
+        | DesktopFailed => true,
+        PromptNotWritten(_)
+        | InputAuthorityUnavailable(_)
+        | Unavailable(_)
+        | NativeClaimNotReady(_)
+        | NativePoolDefinitionAbsent { .. }
+        | AccessRevoked
+        | RuntimeLedgerHold(_)
+        | RuntimeStartupHold(_)
+        | AtCapacity(_)
+        | RuntimeCapacity(_)
+        | RuntimeContractMismatch(_) => false,
+    }
 }
 
 fn rejected_response(code: &'static str) -> Response {

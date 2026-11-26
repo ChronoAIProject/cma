@@ -109,6 +109,8 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         "owner-erasing" => service.with_account_standing(Arc::new(ErasingDocumentOwner)),
         _ => service,
     };
+    let service =
+        service.with_deletion_enabled(name.ends_with("__delete") && mode != "deletion-disabled");
     Some(Scenario {
         router: super::super::documents_router(service),
         subject: match mode {
@@ -145,6 +147,9 @@ impl DocumentStore for Faults {
         } else {
             self.rows.get(id).await
         }
+    }
+    async fn delete(&self, _: &str, _: &DocumentTombstone) -> Result<bool, DocumentError> {
+        Err(DocumentError::Capacity)
     }
     async fn list(
         &self,

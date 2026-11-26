@@ -219,6 +219,7 @@ async fn native_create_retry_excludes_crashes_credentials_retirement_and_recover
         Duration::from_secs(1)
     );
     for error in [
+        AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Unschedulable),
         AdapterError::NativeClaimNotReady(NativeClaimGuardReason::CrashLoop),
         AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Restarting),
         AdapterError::Unavailable("transport failure".into()),

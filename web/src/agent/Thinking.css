@@ -72,6 +72,21 @@
   box-shadow: var(--focus-ring);
 }
 
+.thinking__facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0 0 10px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.thinking__facts dd {
+  margin: 0;
+}
+
 /*
  * Height-capped with its own scroll: reasoning is unbounded and arrives
  * fast, and a band that grew without limit would push the conversation off

@@ -4,7 +4,17 @@ use layer2_core::sandbox::{Sandbox, SandboxStatus, WarmSandbox, WarmSandboxState
 use layer3_adapter::HomeVolumeAttachment;
 
 mod eligibility;
+pub(super) mod machine_selection;
 use eligibility::{owned_home, warm_blocks};
+
+pub(super) async fn fence_machine_selection(
+    store: &MongoNativeWarmPools,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), WarmPoolError> {
+    machine_selection::selection_fence(store, session)
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)
+}
 
 const MAX_RECORDS: i64 = 10_000;
 
@@ -21,18 +31,26 @@ pub(super) fn release_scope(store: &MongoNativeWarmPools, machine: bool) -> Docu
     scope
 }
 
+pub(super) fn release_order(machine: bool) -> Document {
+    let mut order = doc! {"activated_at": -1};
+    if machine {
+        order.insert("machine_plan_activated_at", -1);
+    }
+    order
+}
+
 async fn authorized(
     store: &MongoNativeWarmPools,
     target: &PoolTarget,
     image: &str,
 ) -> Result<bool, WarmPoolError> {
-    if store
+    let observed = store
         .targets
         .find_one(fence(target))
         .await
         .map_err(|_| WarmPoolError::Unavailable)?
-        .is_none()
-    {
+        .ok_or(WarmPoolError::Conflict)?;
+    if observed.machine_plan_activated_at != target.machine_plan_activated_at {
         return Err(WarmPoolError::Conflict);
     }
     // Tombstones retain release order even after old capacity is removed.
@@ -41,33 +59,73 @@ async fn authorized(
     let latest_row = store
         .targets
         .find_one(scope)
-        .sort(doc! {"activated_at":-1})
+        .sort(release_order(target.machine))
         .await
         .map_err(|_| WarmPoolError::Unavailable)?;
-    let Some(latest) = latest_row.and_then(|row| row.activated_at) else {
+    let Some(selected) = latest_row else {
         return Ok(false);
+    };
+    let Some(latest) = selected.activated_at else {
+        return Ok(false);
+    };
+    if selected.plan.spec.image.uri != image || selected.retiring || selected.retired {
+        return Ok(false);
+    }
+    let same_image = target.plan.spec.image.uri == image;
+    let exact_machine_retirement = target.machine && same_image;
+    let settle_from = if exact_machine_retirement {
+        let Some(selected_at) = selected.machine_plan_activated_at else {
+            return Ok(false);
+        };
+        if target.id == selected.id
+            || target.activated_at.is_some_and(|at| at != latest)
+            || target
+                .machine_plan_activated_at
+                .is_some_and(|at| at >= selected_at)
+        {
+            return Ok(false);
+        }
+        selected_at
+    } else {
+        if target.activated_at.is_some_and(|at| at >= latest) {
+            return Ok(false);
+        }
+        latest
     };
     // Allow rollout and bounded pre-selection work to settle; ownership safety
     // still comes from the complete durable scan and provider graph proof.
     if DateTime::now()
         .timestamp_millis()
-        .saturating_sub(latest.timestamp_millis())
+        .saturating_sub(settle_from.timestamp_millis())
         < crate::warm_pools::RELEASE_SETTLE.as_millis() as i64
     {
         return Ok(false);
     }
-    // A same-millisecond tie between different releases is ambiguous: defer.
+    // A same-millisecond tie between different releases is ambiguous. Retired
+    // Desktop plans on the selected image do not invalidate its selected plan.
     let mut conflict = release_scope(store, target.machine);
-    conflict.extend(doc! {"activated_at":latest,"$or":[
-        {"retiring":true},{"retired":true},{"plan.spec.image.uri":{"$ne":image}}
-    ]});
+    conflict.insert("activated_at", latest);
+    if target.machine && selected.machine_plan_activated_at.is_some() {
+        conflict.insert("plan.spec.image.uri", doc! {"$ne": image});
+        if machine_selection_ambiguous(store, &selected).await? {
+            return Ok(false);
+        }
+    } else {
+        conflict.insert(
+            "$or",
+            vec![
+                doc! {"retiring":true},
+                doc! {"retired":true},
+                doc! {"plan.spec.image.uri":{"$ne":image}},
+            ],
+        );
+    }
     Ok(store
         .targets
         .find_one(conflict)
         .await
         .map_err(|_| WarmPoolError::Unavailable)?
-        .is_none()
-        && target.activated_at.is_none_or(|at| at < latest))
+        .is_none())
 }
 
 async fn documents(
@@ -122,6 +180,12 @@ async fn scan(
             &store.database,
             target.machine,
             &target.plan.spec.image.uri,
+            (target.machine && target.plan.spec.image.uri == image).then_some(
+                layer3_adapter::SandboxCapacity {
+                    cpu_millis: target.plan.spec.cpu_millis,
+                    memory_mib: target.plan.spec.memory_mib,
+                },
+            ),
         )
         .await
         .map_err(|_| WarmPoolError::Unavailable)?
@@ -176,7 +240,7 @@ async fn scan(
         if let Some(warm) = crate::store::native_prepared::unowned_for_retirement(&document)
             .map_err(|_| WarmPoolError::Unavailable)?
         {
-            if warm_blocks(&warm, target) {
+            if warm_blocks(&warm, target, image)? {
                 return Ok(deferred(target, "prepared_reservation"));
             }
         }
@@ -184,7 +248,7 @@ async fn scan(
     for document in documents(store, "warm_sandboxes", doc! {}).await? {
         let warm = crate::store::warm_sandboxes::read(&document)
             .map_err(|_| WarmPoolError::Unavailable)?;
-        if warm_blocks(&warm, target) {
+        if warm_blocks(&warm, target, image)? {
             return Ok(deferred(target, "legacy_warm_sandbox"));
         }
     }
@@ -222,6 +286,11 @@ pub(super) async fn begin(
     filter.insert(
         "activated_at",
         mongodb::bson::serialize_to_bson(&target.activated_at)
+            .map_err(|_| WarmPoolError::Unavailable)?,
+    );
+    filter.insert(
+        "machine_plan_activated_at",
+        mongodb::bson::serialize_to_bson(&target.machine_plan_activated_at)
             .map_err(|_| WarmPoolError::Unavailable)?,
     );
     let updated = store

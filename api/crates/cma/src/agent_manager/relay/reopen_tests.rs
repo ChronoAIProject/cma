@@ -1,7 +1,9 @@
 use super::*;
 use layer3_adapter::{agent_sandbox::RuntimeWorkloadClass, AdapterError};
 
-async fn serve_once(response: fn() -> Response) -> (String, tokio::task::JoinHandle<()>) {
+async fn serve_once(
+    response: impl Fn() -> Response + Clone + Send + Sync + 'static,
+) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let app = axum::Router::new().route(
@@ -31,6 +33,25 @@ fn only_refusals_the_lifecycle_treats_as_terminal_use_the_closed_code() {
         AdapterError::AtCapacity("slot".into()),
     ] {
         assert!(!terminal(&error), "{error}");
+    }
+}
+
+#[tokio::test]
+async fn runtime_drift_and_desktop_failure_reach_the_caller_as_terminal_validation() {
+    for error in [
+        AdapterError::AdmittedSandboxSpecDrift,
+        AdapterError::NativePoolConfigurationDrift,
+        AdapterError::DesktopFailed,
+    ] {
+        let (url, server) = serve_once(move || failure_response(error.clone())).await;
+        let response = post(&url).await;
+        assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+        assert!(matches!(
+            rejected_from(response).await,
+            CallFailure::Runtime(AdapterError::Rejected(detail))
+                if detail == "Agent owner rejected the lifecycle reopen"
+        ));
+        server.abort();
     }
 }
 

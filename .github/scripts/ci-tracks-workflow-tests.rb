@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 require 'yaml'
 require_relative 'ci-track-validation'
+require_relative 'workflow-yaml'
 root = File.expand_path('../..', __dir__)
 
 # Every artifact download ends within a bound. Composite steps accept no
@@ -99,14 +100,16 @@ def check_artifact_downloads(workflows, actions)
   require_check(unbounded == UNBOUNDED_DOWNLOADS, 'every new artifact download must be bounded; update the follow-up count when one is fixed')
 end
 
-documents = Dir.glob(File.join(root, '.github/workflows/ci*.yml')).to_h { |file| [File.basename(file, '.yml'), YAML.load_file(file)] }
+documents = Dir.glob(File.join(root, '.github/workflows/ci*.yml')).to_h do |file|
+  [File.basename(file, '.yml'), WorkflowYAML.load_file(file)]
+end
 actions = Dir.glob(File.join(root, '.github/actions/**/action.{yml,yaml}')).to_h do |file|
   ["./#{File.dirname(file).delete_prefix(root + '/')}", YAML.load_file(file)]
 end
 validate(documents, actions)
 check_repo_secret_gate(root)
 workflows = Dir.glob(File.join(root, '.github/workflows/*.{yml,yaml}')).to_h do |file|
-  [File.basename(file, File.extname(file)), YAML.load_file(file)]
+  [File.basename(file, File.extname(file)), WorkflowYAML.load_file(file)]
 end
 check_merge_group_triggers(workflows)
 [->(w) { w['staging-cd'][true]['merge_group'] = nil },
@@ -254,6 +257,21 @@ mutations = [
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-from') }['with']['cache-to'] = 'type=gha,mode=max' },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-from') }['with']['cache-from'].sub!("steps.layer-validate.outcome == 'success'", 'true') },
   ->(d) { d['ci-web']['jobs']['web']['steps'].find { |s| s['name'] == 'Restore npm download cache' }['uses'] = 'actions/cache@v4' },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['steps'].find { |s| s['name'] == 'Restore npm download cache' }['uses'] = 'actions/cache@v4' },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['steps'].find { |s| s.fetch('uses', '').start_with?('actions/setup-node@') }['with']['cache'] = 'npm' },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['steps'].delete_at(4) },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['continue-on-error'] = true },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['timeout-minutes'] = 120 },
+  ->(d) { d['ci-web']['jobs'].delete('web-conversation'); d['ci-web']['jobs']['web-result']['needs'].delete('web-conversation') },
+  ->(d) { d['ci-web']['jobs']['web-result']['needs'].delete('web-design') },
+  ->(d) { d['ci-web']['jobs']['web-result']['if'] = 'success()' },
+  ->(d) { d['ci-web']['jobs'].delete('web-result') },
+  ->(d) { d['ci-web']['jobs']['web-result']['continue-on-error'] = true },
+  ->(d) { d['ci-web']['jobs']['web-result']['steps'].last['run'] = 'true' },
+  ->(d) { d['ci-web']['jobs']['web-result']['steps'].last['if'] = 'false' },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['steps'].reject! { |s| s['name'] == 'Install pinned local browser' } },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['steps'] << d['ci-web']['jobs']['web']['steps'].find { |s| s['name'] == 'Tests and critical Agent browser coverage' }.dup },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['steps'].find { |s| s['name'] == 'Production build' }['env'].delete('CHRONO_BUILD_ARTIFACT') },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Restore Trivy databases' }['with'].delete('restore-keys') },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['with'].delete('cache') },
   ->(d) { d['ci'][true].delete('push') },

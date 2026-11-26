@@ -88,7 +88,7 @@ impl NyxidServiceConnectionBroker {
             .next()
             .filter(|_| values.next().is_none())
             .and_then(|value| value.to_str().ok())
-            .ok_or_else(malformed)?;
+            .ok_or_else(|| unavailable("selected GitHub credential scope was not observed"))?;
         let scopes = header.trim().split(',').map(str::trim);
         if !header.trim().is_empty()
             && (scopes.clone().count() > 100 || !scopes.clone().all(valid_git_scope))

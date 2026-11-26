@@ -215,7 +215,9 @@ function ConnectionDetails({ target, owner, selection }: ConnectionDetailsProps)
                       ? 'Granted scopes unavailable'
                       : `Reported scopes: ${row.granted_scopes.join(', ') || 'None'}`}
                 </p>
-                {selection && row.granted_scopes?.includes('repo') ? (
+                {selection &&
+                row.granted_scopes?.includes('repo') &&
+                (row.account?.observed_scopes?.includes('repo') ?? true) ? (
                   <Button
                     size="sm"
                     aria-pressed={selection.id === row.id}
