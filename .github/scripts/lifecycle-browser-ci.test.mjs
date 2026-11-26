@@ -34,7 +34,7 @@ const suites = [
     config: "sandbox-status-filter",
     evidence: "CMA_SANDBOX_FILTER_EVIDENCE_DIR",
     directory: "cma-sandbox-filter",
-    files: ["sandbox-status-filter"],
+    files: ["sandbox-status-filter", "sandbox-sidebar-scroll"],
   },
 ];
 

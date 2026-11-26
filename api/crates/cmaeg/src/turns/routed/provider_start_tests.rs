@@ -80,6 +80,71 @@ fn http_port(
 }
 
 #[tokio::test]
+async fn frozen_partition_refusal_is_terminal_only_for_the_documented_response() {
+    for (status, code) in [
+        (409, "partition_agent_unavailable"),
+        (410, "partition_agent_missing"),
+    ] {
+        for fault in [
+            None,
+            Some("code"),
+            Some("status"),
+            Some("param"),
+            Some("receipt"),
+        ] {
+            let setup = setup(None).await;
+            let http = HttpServer::start().await;
+            let mut problem = json!({"error": {
+                "type": "invalid_request_error",
+                "code": code,
+                "message": "The binding Agent cannot accept input.",
+                "param": "conversation"
+            }});
+            {
+                let mut memory = http.memory.lock().unwrap();
+                let config = &mut memory.config;
+                config.post_status = match fault {
+                    Some("status") if status == 409 => 410,
+                    Some("status") => 409,
+                    _ => status,
+                };
+                match fault {
+                    Some("code") => problem["error"]["code"] = "other_conflict".into(),
+                    Some("param") => problem["error"]["param"] = "input".into(),
+                    Some("receipt") => config.post_error_response_id = true,
+                    _ => {}
+                }
+                config.post_error_body = Some(problem.to_string());
+            }
+            let dispatcher = http_port(&setup, &http, None).dispatcher();
+            let observed = dispatcher
+                .dispatch(&setup.plan.identity, &setup.target().id, "first")
+                .await
+                .unwrap();
+            if fault.is_none() {
+                assert!(matches!(
+                    observed,
+                    DispatchOutcome::Terminal(Phase::Refused { code: observed }) if observed == code
+                ));
+                assert!(matches!(
+                    dispatcher
+                        .dispatch(&setup.plan.identity, &setup.target().id, "again")
+                        .await
+                        .unwrap(),
+                    DispatchOutcome::Terminal(Phase::Refused { code: observed }) if observed == code
+                ));
+            } else {
+                assert!(
+                    matches!(observed, DispatchOutcome::Unknown),
+                    "{status} {fault:?}"
+                );
+            }
+            assert_eq!(http.seen().len(), 1);
+        }
+    }
+}
+
+#[tokio::test]
 async fn real_post_and_terminal_are_distinct_from_task_start_and_retry() {
     let measurement = Measurement::new(4).unwrap();
     let setup = setup(Some(measurement.clone())).await;
